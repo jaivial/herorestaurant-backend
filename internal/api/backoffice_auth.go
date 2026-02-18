@@ -143,12 +143,13 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	secure := r.TLS != nil
 	http.SetCookie(w, &http.Cookie{
 		Name:     boSessionCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  expiresAt,
 		MaxAge:   int(ttl.Seconds()),
@@ -179,12 +180,13 @@ func (s *Server) handleBOLogout(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.db.ExecContext(r.Context(), "DELETE FROM bo_sessions WHERE token_sha256 = ?", sha256Hex(c.Value))
 	}
 
+	secure := r.TLS != nil
 	http.SetCookie(w, &http.Cookie{
 		Name:     boSessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,

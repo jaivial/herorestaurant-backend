@@ -55,6 +55,18 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	// Backoffice (new React SSR dashboard).
+	// Strip /api prefix for /api/admin/* routes to make them work with /admin handlers
+	r.With(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/admin") {
+				r.URL.Path = strings.Replace(r.URL.Path, "/api/admin", "/admin", 1)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}).Route("/api/admin", func(r chi.Router) {
+		// No routes needed - the middleware rewrites to /admin
+	})
+
 	r.Route("/admin", func(r chi.Router) {
 		reservasGate := s.requireBOSection(boSectionReservas)
 		menusGate := s.requireBOSection(boSectionMenus)

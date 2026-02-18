@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"strings"
 
@@ -21,6 +22,7 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(boSessionCookieName)
 		if err != nil || strings.TrimSpace(c.Value) == "" {
+			log.Printf("[requireBOSession] UNAUTHORIZED no cookie, path=%s", r.URL.Path)
 			httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
@@ -54,9 +56,11 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 		`, tokenSHA).Scan(&sessionID, &userID, &activeRestaurantID, &email, &name, &isSuper, &role)
 		if err != nil {
 			if err == sql.ErrNoRows {
+				log.Printf("[requireBOSession] token not found in DB, tokenSHA=%s", tokenSHA[:16])
 				httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 				return
 			}
+			log.Printf("[requireBOSession] DB error: %v", err)
 			httpx.WriteError(w, http.StatusInternalServerError, "Error validating session")
 			return
 		}

@@ -136,6 +136,8 @@ func normalizeBOSection(section string) string {
 		return boSectionFichaje
 	case boSectionHorarios:
 		return boSectionHorarios
+	case boSectionFacturas:
+		return boSectionFacturas
 	default:
 		return ""
 	}
