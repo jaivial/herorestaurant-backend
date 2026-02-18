@@ -389,7 +389,4 @@ func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 	})
-
-	// Broadcast to connected WebSocket clients
-	go bookingsHub.BroadcastToRestaurant(restaurantID, "BookingDeleted", map[string]int{"id": bookingID})
 }

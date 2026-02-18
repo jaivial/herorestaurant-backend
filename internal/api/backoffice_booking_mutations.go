@@ -166,9 +166,6 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		"booking": out,
 	})
 
-	// Broadcast to connected WebSocket clients
-	go bookingsHub.BroadcastToRestaurant(a.ActiveRestaurantID, "BookingCreated", out)
-
 	s.emitN8nWebhookAsync(a.ActiveRestaurantID, "booking.created", map[string]any{
 		"source":          "backoffice",
 		"bookingId":       id,
@@ -365,9 +362,6 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"booking": out,
 	})
-
-	// Broadcast to connected WebSocket clients
-	go bookingsHub.BroadcastToRestaurant(a.ActiveRestaurantID, "BookingUpdated", out)
 }
 
 func (s *Server) handleBOArrozTypes(w http.ResponseWriter, r *http.Request) {

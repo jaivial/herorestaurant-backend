@@ -169,24 +169,3 @@ func (s *Server) UploadWineImage(ctx context.Context, tipo string, num int, img 
 	}
 	return objectPath, nil
 }
-
-// UploadFoodImage uploads a food image to bunnycdn storage
-// folder format: restaurants/{restaurant_id}/{type}/{num}.{ext}
-func (s *Server) UploadFoodImage(ctx context.Context, restaurantID int, foodType string, num int, img []byte) (string, error) {
-	if num <= 0 {
-		return "", errors.New("invalid food num")
-	}
-	if len(img) == 0 {
-		return "", errors.New("empty image")
-	}
-
-	contentType := http.DetectContentType(img)
-	ext := fileExtForContentType(contentType)
-	typeSlug := strings.ToLower(strings.TrimSpace(foodType))
-
-	objectPath := path.Join("restaurants", strconv.Itoa(restaurantID), typeSlug, strconv.Itoa(num)+ext)
-	if err := s.bunnyPut(ctx, objectPath, img, contentType); err != nil {
-		return "", err
-	}
-	return objectPath, nil
-}

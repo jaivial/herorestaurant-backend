@@ -69,7 +69,6 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/logout", s.handleBOLogout)
 
 		r.With(s.requireBOSession).Get("/me", s.handleBOMe)
-		r.With(s.requireBOSession).Get("/restaurant", s.handleBORestaurant)
 		r.With(s.requireBOSession).Post("/active-restaurant", s.handleBOSetActiveRestaurant)
 
 		r.With(s.requireBOSession, reservasGate).Get("/dashboard/metrics", s.handleBODashboardMetrics)
@@ -82,17 +81,6 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Post("/bookings", s.handleBOBookingCreate)
 		r.With(s.requireBOSession, reservasGate).Patch("/bookings/{id}", s.handleBOBookingPatch)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings/{id}/cancel", s.handleBOBookingCancel)
-
-		// TableManager - Restaurant tables
-		r.With(s.requireBOSession, reservasGate).Get("/tables", s.handleBOTablesList)
-		r.With(s.requireBOSession, reservasGate).Get("/tables/{id}", s.handleBOTableGet)
-		r.With(s.requireBOSession, reservasGate).Post("/tables", s.handleBOTableCreate)
-		r.With(s.requireBOSession, reservasGate).Put("/tables/{id}", s.handleBOTableUpdate)
-		r.With(s.requireBOSession, reservasGate).Delete("/tables/{id}", s.handleBOTableDelete)
-		r.With(s.requireBOSession, reservasGate).Post("/tables/auto-assign", s.handleBOTableAutoAssign)
-
-		// Booking WebSocket for real-time updates
-		r.With(s.requireBOSession).Get("/bookings/ws", s.handleBookingWebSocket)
 
 		r.With(s.requireBOSession, reservasGate).Get("/arroz-types", s.handleBOArrozTypes)
 
@@ -121,25 +109,6 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Post("/vinos", s.handleBOVinoCreate)
 		r.With(s.requireBOSession, menusGate).Patch("/vinos/{id}", s.handleBOVinoPatch)
 		r.With(s.requireBOSession, menusGate).Delete("/vinos/{id}", s.handleBOVinoDelete)
-
-		// Food management (cafes, bebidas, platos)
-		r.With(s.requireBOSession, menusGate).Get("/cafes", s.handleBOFoodList)
-		r.With(s.requireBOSession, menusGate).Post("/cafes", s.handleBOFoodCreate)
-		r.With(s.requireBOSession, menusGate).Patch("/cafes/{id}", s.handleBOFoodPatch)
-		r.With(s.requireBOSession, menusGate).Delete("/cafes/{id}", s.handleBOFoodDelete)
-		r.With(s.requireBOSession, menusGate).Post("/cafes/{id}/toggle", s.handleBOFoodToggleActive)
-
-		r.With(s.requireBOSession, menusGate).Get("/bebidas", s.handleBOFoodList)
-		r.With(s.requireBOSession, menusGate).Post("/bebidas", s.handleBOFoodCreate)
-		r.With(s.requireBOSession, menusGate).Patch("/bebidas/{id}", s.handleBOFoodPatch)
-		r.With(s.requireBOSession, menusGate).Delete("/bebidas/{id}", s.handleBOFoodDelete)
-		r.With(s.requireBOSession, menusGate).Post("/bebidas/{id}/toggle", s.handleBOFoodToggleActive)
-
-		r.With(s.requireBOSession, menusGate).Get("/platos", s.handleBOFoodList)
-		r.With(s.requireBOSession, menusGate).Post("/platos", s.handleBOFoodCreate)
-		r.With(s.requireBOSession, menusGate).Patch("/platos/{id}", s.handleBOFoodPatch)
-		r.With(s.requireBOSession, menusGate).Delete("/platos/{id}", s.handleBOFoodDelete)
-		r.With(s.requireBOSession, menusGate).Post("/platos/{id}/toggle", s.handleBOFoodToggleActive)
 
 		r.With(s.requireBOSession, menusGate).Get("/group-menus", s.handleBOGroupMenusList)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus/{id}", s.handleBOGroupMenuGet)

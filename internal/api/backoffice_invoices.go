@@ -19,7 +19,6 @@ import (
 type Invoice struct {
 	ID                      int             `json:"id"`
 	RestaurantID            int             `json:"restaurant_id"`
-	InvoiceNumber           *string         `json:"invoice_number"`
 	CustomerName            string          `json:"customer_name"`
 	CustomerSurname         *string         `json:"customer_surname"`
 	CustomerEmail           string          `json:"customer_email"`
@@ -32,9 +31,6 @@ type Invoice struct {
 	CustomerAddressProvince *string         `json:"customer_address_province"`
 	CustomerAddressCountry  *string         `json:"customer_address_country"`
 	Amount                 float64         `json:"amount"`
-	IvaRate                *float64        `json:"iva_rate"`
-	IvaAmount              *float64        `json:"iva_amount"`
-	Total                  *float64        `json:"total"`
 	PaymentMethod          *string         `json:"payment_method"`
 	AccountImageURL        *string         `json:"account_image_url"`
 	InvoiceDate            string          `json:"invoice_date"`
@@ -63,9 +59,6 @@ type InvoiceInput struct {
 	CustomerAddressProvince *string `json:"customer_address_province"`
 	CustomerAddressCountry  *string `json:"customer_address_country"`
 	Amount                 float64 `json:"amount"`
-	IvaRate                *float64 `json:"iva_rate"`
-	IvaAmount              *float64 `json:"iva_amount"`
-	Total                  *float64 `json:"total"`
 	PaymentMethod          *string `json:"payment_method"`
 	AccountImageURL        *string `json:"account_image_url"`
 	InvoiceDate            string  `json:"invoice_date"`
@@ -150,12 +143,12 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 
 	// Build query
 	query := `
-		SELECT
-			id, restaurant_id, invoice_number,
+		SELECT 
+			id, restaurant_id,
 			customer_name, customer_surname, customer_email, customer_dni_cif, customer_phone,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
-			amount, iva_rate, iva_amount, total, payment_method, account_image_url, invoice_date, payment_date,
+			amount, payment_method, account_image_url, invoice_date, payment_date,
 			status, is_reservation, reservation_id, reservation_date,
 			reservation_customer_name, reservation_party_size, pdf_url,
 			created_at, updated_at
@@ -292,23 +285,23 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 
 	var inv Invoice
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT
-			id, restaurant_id, invoice_number,
+		SELECT 
+			id, restaurant_id,
 			customer_name, customer_surname, customer_email, customer_dni_cif, customer_phone,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
-			amount, iva_rate, iva_amount, total, payment_method, account_image_url, invoice_date, payment_date,
+			amount, payment_method, account_image_url, invoice_date, payment_date,
 			status, is_reservation, reservation_id, reservation_date,
 			reservation_customer_name, reservation_party_size, pdf_url,
 			created_at, updated_at
 		FROM invoices
 		WHERE id = ? AND restaurant_id = ?
 	`, invoiceID, a.ActiveRestaurantID).Scan(
-		&inv.ID, &inv.RestaurantID, &inv.InvoiceNumber,
+		&inv.ID, &inv.RestaurantID,
 		&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &inv.CustomerPhone,
 		&inv.CustomerAddressStreet, &inv.CustomerAddressNumber, &inv.CustomerAddressPostalCode,
 		&inv.CustomerAddressCity, &inv.CustomerAddressProvince, &inv.CustomerAddressCountry,
-		&inv.Amount, &inv.IvaRate, &inv.IvaAmount, &inv.Total, &inv.PaymentMethod, &inv.AccountImageURL, &inv.InvoiceDate, &inv.PaymentDate,
+		&inv.Amount, &inv.PaymentMethod, &inv.AccountImageURL, &inv.InvoiceDate, &inv.PaymentDate,
 		&inv.Status, &inv.IsReservation, &inv.ReservationID, &inv.ReservationDate,
 		&inv.ReservationCustomerName, &inv.ReservationPartySize, &inv.PdfURL,
 		&inv.CreatedAt, &inv.UpdatedAt,
@@ -366,15 +359,15 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 			restaurant_id, customer_name, customer_surname, customer_email, customer_dni_cif, customer_phone,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
-			amount, iva_rate, iva_amount, total, payment_method, account_image_url, invoice_date, payment_date,
+			amount, payment_method, account_image_url, invoice_date, payment_date,
 			status, is_reservation, reservation_id, reservation_date,
 			reservation_customer_name, reservation_party_size
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, a.ActiveRestaurantID,
 		input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerPhone,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
-		input.Amount, input.IvaRate, input.IvaAmount, input.Total, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
+		input.Amount, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
 		input.Status, input.IsReservation, input.ReservationID, input.ReservationDate,
 		input.ReservationCustomerName, input.ReservationPartySize)
 
@@ -430,14 +423,14 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 			customer_name = ?, customer_surname = ?, customer_email = ?, customer_dni_cif = ?, customer_phone = ?,
 			customer_address_street = ?, customer_address_number = ?, customer_address_postal_code = ?,
 			customer_address_city = ?, customer_address_province = ?, customer_address_country = ?,
-			amount = ?, iva_rate = ?, iva_amount = ?, total = ?, payment_method = ?, account_image_url = ?, invoice_date = ?, payment_date = ?,
+			amount = ?, payment_method = ?, account_image_url = ?, invoice_date = ?, payment_date = ?,
 			status = ?, is_reservation = ?, reservation_id = ?, reservation_date = ?,
 			reservation_customer_name = ?, reservation_party_size = ?
 		WHERE id = ? AND restaurant_id = ?
 	`, input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerPhone,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
-		input.Amount, input.IvaRate, input.IvaAmount, input.Total, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
+		input.Amount, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
 		input.Status, input.IsReservation, input.ReservationID, input.ReservationDate,
 		input.ReservationCustomerName, input.ReservationPartySize,
 		invoiceID, a.ActiveRestaurantID)
@@ -584,16 +577,16 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get invoice with restaurant details
+	// Get invoice
 	var inv Invoice
 	var restaurant Restaurant
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT
-			i.id, i.restaurant_id, i.invoice_number,
+		SELECT 
+			i.id, i.restaurant_id,
 			i.customer_name, i.customer_surname, i.customer_email, i.customer_dni_cif, i.customer_phone,
 			i.customer_address_street, i.customer_address_number, i.customer_address_postal_code,
 			i.customer_address_city, i.customer_address_province, i.customer_address_country,
-			i.amount, i.iva_rate, i.iva_amount, i.total, i.payment_method, i.account_image_url, i.invoice_date, i.payment_date,
+			i.amount, i.payment_method, i.account_image_url, i.invoice_date, i.payment_date,
 			i.status, i.is_reservation, i.reservation_id, i.reservation_date,
 			i.reservation_customer_name, i.reservation_party_size, i.pdf_url,
 			i.created_at, i.updated_at,
@@ -602,11 +595,11 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 		JOIN restaurants r ON i.restaurant_id = r.id
 		WHERE i.id = ? AND i.restaurant_id = ?
 	`, invoiceID, a.ActiveRestaurantID).Scan(
-		&inv.ID, &inv.RestaurantID, &inv.InvoiceNumber,
+		&inv.ID, &inv.RestaurantID,
 		&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &inv.CustomerPhone,
 		&inv.CustomerAddressStreet, &inv.CustomerAddressNumber, &inv.CustomerAddressPostalCode,
 		&inv.CustomerAddressCity, &inv.CustomerAddressProvince, &inv.CustomerAddressCountry,
-		&inv.Amount, &inv.IvaRate, &inv.IvaAmount, &inv.Total, &inv.PaymentMethod, &inv.AccountImageURL, &inv.InvoiceDate, &inv.PaymentDate,
+		&inv.Amount, &inv.PaymentMethod, &inv.AccountImageURL, &inv.InvoiceDate, &inv.PaymentDate,
 		&inv.Status, &inv.IsReservation, &inv.ReservationID, &inv.ReservationDate,
 		&inv.ReservationCustomerName, &inv.ReservationPartySize, &inv.PdfURL,
 		&inv.CreatedAt, &inv.UpdatedAt,
@@ -622,10 +615,16 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate PDF and upload to BunnyCDN
-	pdfURL, err := s.UpdateInvoicePDF(r.Context(), invoiceID, a.ActiveRestaurantID)
+	// Generate PDF (placeholder - would need PDF generation library)
+	// For now, just update status to 'enviada'
+	pdfURL := fmt.Sprintf("https://villacarmenmedia.b-cdn.net/%d/facturas/pdf/pdf_%d.pdf", restaurant.ID, inv.ID)
+
+	_, err = s.db.ExecContext(r.Context(), `
+		UPDATE invoices SET status = 'enviada', pdf_url = ? WHERE id = ?
+	`, pdfURL, invoiceID)
+
 	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error generating PDF: "+err.Error())
+		httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice status: "+err.Error())
 		return
 	}
 

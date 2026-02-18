@@ -253,40 +253,6 @@ func (s *Server) handleBOMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleBORestaurant(w http.ResponseWriter, r *http.Request) {
-	a, ok := boAuthFromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
-
-	restaurantID := a.ActiveRestaurantID
-	if restaurantID == 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "No active restaurant")
-		return
-	}
-
-	type restaurant struct {
-		ID      int    `json:"id"`
-		Name    string `json:"name"`
-		Address string `json:"address,omitempty"`
-		Phone   string `json:"phone,omitempty"`
-	}
-
-	var rest restaurant
-	err := s.db.QueryRowContext(r.Context(),
-		`SELECT id, name, address, phone FROM restaurants WHERE id = ?`,
-		restaurantID,
-	).Scan(&rest.ID, &rest.Name, &rest.Address, &rest.Phone)
-
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Restaurant not found")
-		return
-	}
-
-	httpx.WriteJSON(w, http.StatusOK, rest)
-}
-
 func (s *Server) handleBOSetActiveRestaurant(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
