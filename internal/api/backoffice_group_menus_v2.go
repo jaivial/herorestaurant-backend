@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -31,6 +34,7 @@ type boV2Dish struct {
 	Allergens         []string `json:"allergens"`
 	SupplementEnabled bool     `json:"supplement_enabled"`
 	SupplementPrice   *float64 `json:"supplement_price"`
+	Price             *float64 `json:"price"`
 	Active            bool     `json:"active"`
 	Position          int      `json:"position"`
 }
@@ -42,6 +46,8 @@ func normalizeV2MenuType(raw string) string {
 		return "closed_group"
 	case "a_la_carte", "a_la_carta":
 		return "a_la_carte"
+	case "a_la_carte_group", "a_la_carta_grupo":
+		return "a_la_carte_group"
 	case "a_la_carte_time":
 		return "a_la_carte_time"
 	case "special":
@@ -412,7 +418,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 
 	dRows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
-		       supplement_enabled, supplement_price, active, position
+		       supplement_enabled, supplement_price, price, active, position
 		FROM group_menu_section_dishes_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY section_id ASC, position ASC, id ASC
@@ -428,6 +434,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 			catalogID      sql.NullInt64
 			allergensRaw   sql.NullString
 			suppPriceRaw   sql.NullFloat64
+			priceRaw       sql.NullFloat64
 			suppEnabledInt int
 			activeInt      int
 		)
@@ -440,6 +447,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 			&allergensRaw,
 			&suppEnabledInt,
 			&suppPriceRaw,
+			&priceRaw,
 			&activeInt,
 			&d.Position,
 		); err != nil {
@@ -454,6 +462,10 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 		if suppPriceRaw.Valid {
 			p := suppPriceRaw.Float64
 			d.SupplementPrice = &p
+		}
+		if priceRaw.Valid {
+			p := priceRaw.Float64
+			d.Price = &p
 		}
 		d.Active = activeInt != 0
 
@@ -954,6 +966,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			Allergens         []string `json:"allergens"`
 			SupplementEnabled bool     `json:"supplement_enabled"`
 			SupplementPrice   *float64 `json:"supplement_price"`
+			Price             *float64 `json:"price"`
 			Active            *bool    `json:"active"`
 		} `json:"dishes"`
 	}
@@ -1034,6 +1047,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 				    allergens_json = ?,
 				    supplement_enabled = ?,
 				    supplement_price = ?,
+				    price = ?,
 				    active = ?,
 				    position = ?
 				WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
@@ -1044,6 +1058,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 				mustJSON(allergens, []any{}),
 				boolToTinyint(dish.SupplementEnabled),
 				dish.SupplementPrice,
+				dish.Price,
 				boolToTinyint(active),
 				position,
 				dish.ID,
@@ -1062,8 +1077,8 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 		res, err := tx.ExecContext(r.Context(), `
 			INSERT INTO group_menu_section_dishes_v2
 				(restaurant_id, menu_id, section_id, catalog_dish_id, title_snapshot, description_snapshot,
-				 allergens_json, supplement_enabled, supplement_price, active, position)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 allergens_json, supplement_enabled, supplement_price, price, active, position)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			a.ActiveRestaurantID,
 			menuID,
@@ -1074,6 +1089,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			mustJSON(allergens, []any{}),
 			boolToTinyint(dish.SupplementEnabled),
 			dish.SupplementPrice,
+			dish.Price,
 			boolToTinyint(active),
 			position,
 		)
@@ -1407,4 +1423,112 @@ func (s *Server) handleBOGroupMenusV2Delete(w http.ResponseWriter, r *http.Reque
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+
+	// Check menu exists and belongs to restaurant
+	var menuType string
+	err = s.db.QueryRowContext(r.Context(), `SELECT menu_type FROM menusDeGrupos WHERE id = ? AND restaurant_id = ?`, menuID, a.ActiveRestaurantID).Scan(&menuType)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	// Verify it's a special menu
+	if menuType != "special" {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu is not a special menu"})
+		return
+	}
+
+	// Parse multipart form
+	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB max
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error parsing form"})
+		return
+	}
+
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No image file provided"})
+		return
+	}
+	defer file.Close()
+
+	// Read file content
+	imgData, err := io.ReadAll(file)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reading file"})
+		return
+	}
+
+	// Validate file type
+	contentType := http.DetectContentType(imgData)
+	allowedTypes := map[string]bool{
+		"image/jpeg":                                                                 true,
+		"image/png":                                                                  true,
+		"image/webp":                                                                  true,
+		"image/gif":                                                                   true,
+		"application/pdf":                                                             true,
+		"application/msword":                                                         true,
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document":     true,
+		"text/plain":                                                                 true,
+	}
+	if !allowedTypes[contentType] {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "File type not allowed"})
+		return
+	}
+
+	// Determine file extension
+	ext := ".jpg"
+	switch contentType {
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/png":
+		ext = ".png"
+	case "image/webp":
+		ext = ".webp"
+	case "image/gif":
+		ext = ".gif"
+	case "application/pdf":
+		ext = ".pdf"
+	case "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		ext = ".docx"
+	case "text/plain":
+		ext = ".txt"
+	}
+
+	// Generate object path: restaurant_id/menus/special/menu_id/timestamp.ext
+	objectPath := path.Join(
+		strconv.Itoa(a.ActiveRestaurantID),
+		"menus",
+		"special",
+		fmt.Sprintf("menu-%d-%d%s", menuID, time.Now().Unix(), ext),
+	)
+
+	// Upload to BunnyCDN
+	if err := s.bunnyPut(r.Context(), objectPath, imgData, contentType); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading file: " + err.Error()})
+		return
+	}
+
+	// Update menu record with image URL
+	imageURL := s.bunnyPullURL(objectPath)
+	_, err = s.db.ExecContext(r.Context(), `UPDATE menusDeGrupos SET special_menu_image_url = ? WHERE id = ?`, imageURL, menuID)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error saving image URL"})
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "imageUrl": imageURL, "filename": header.Filename})
 }

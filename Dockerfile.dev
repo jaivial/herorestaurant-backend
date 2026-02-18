@@ -1,0 +1,20 @@
+FROM golang:1.25-alpine
+RUN go install github.com/cosmtrek/air@v1.29.0
+
+WORKDIR /app
+
+# Copy go mod files first for better caching
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+
+# Copy all source files
+COPY backend/cmd ./cmd
+COPY backend/internal ./internal
+COPY backend/.air.toml .
+
+# Copy .env from host location
+COPY backend/.env .env
+
+EXPOSE 8080
+
+CMD ["air", "-c", ".air.toml"]

@@ -124,6 +124,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2PutSectionDishes)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/publish", s.handleBOGroupMenusV2Publish)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/toggle-active", s.handleBOGroupMenusV2ToggleActive)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/special-image", s.handleBOSpecialMenuImageUpload)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}", s.handleBOGroupMenusV2Delete)
 		r.With(s.requireBOSession, menusGate).Get("/dishes-catalog/search", s.handleBODishesCatalogSearch)
 		r.With(s.requireBOSession, menusGate).Post("/dishes-catalog/upsert", s.handleBODishesCatalogUpsert)
@@ -167,6 +168,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/members/{id}", s.handleBOMemberPatch)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/avatar", s.handleBOMemberAvatarUpload)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/stats", s.handleBOMemberStats)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/stats-year", s.handleBOMemberStatsYear)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/stats-range", s.handleBOMemberStatsRange)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/table-data", s.handleBOMemberTableData)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/time-balance", s.handleBOMemberQuarterBalance)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/ensure-user", s.handleBOMemberEnsureUser)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/roles", s.handleBORolesGet)
@@ -186,7 +190,10 @@ func (s *Server) Routes() http.Handler {
 
 		r.With(s.requireBOSession, horariosGate).Get("/horarios", s.handleBOHorariosList)
 		r.With(s.requireBOSession, horariosGate).Post("/horarios", s.handleBOHorariosAssign)
+		r.With(s.requireBOSession, horariosGate).Put("/horarios/{id}", s.handleBOHorariosUpdate)
+		r.With(s.requireBOSession, horariosGate).Delete("/horarios/{id}", s.handleBOHorariosDelete)
 		r.With(s.requireBOSession, horariosGate).Get("/horarios/month", s.handleBOHorariosMonth)
+		r.With(s.requireBOSession, fichajeGate).Get("/horarios/my-schedule", s.handleBOHorariosMySchedule)
 
 		// Invoices management
 		r.With(s.requireBOSession, facturasGate).Get("/invoices", s.handleBOInvoicesList)

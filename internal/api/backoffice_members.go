@@ -418,7 +418,7 @@ func (s *Server) handleBOMemberStats(w http.ResponseWriter, r *http.Request) {
 
 	view := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("view")))
 	switch view {
-	case "", "weekly", "monthly", "quarterly":
+	case "", "weekly", "monthly", "quarterly", "yearly":
 	default:
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
@@ -558,6 +558,352 @@ func (s *Server) handleBOMemberQuarterBalance(w http.ResponseWriter, r *http.Req
 		"workedHours":         round2(workedHours),
 		"expectedHours":       round2(expectedHours),
 		"balanceHours":        round2(balance),
+	})
+}
+
+func (s *Server) handleBOMemberStatsYear(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	memberID, err := parseBOIDParam(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "id invalido",
+		})
+		return
+	}
+	member, err := s.getBOMemberByID(r.Context(), a.ActiveRestaurantID, memberID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+				"success": false,
+				"message": "Miembro no encontrado",
+			})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo miembro")
+		return
+	}
+
+	yearStr := strings.TrimSpace(r.URL.Query().Get("year"))
+	year := time.Now().Year()
+	if yearStr != "" {
+		y, err := strconv.Atoi(yearStr)
+		if err != nil || y < 2000 || y > 2100 {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"message": "año invalido",
+			})
+			return
+		}
+		year = y
+	}
+
+	start := time.Date(year, 1, 1, 0, 0, 0, 0, boMadridTZ)
+	end := time.Date(year, 12, 31, 23, 59, 59, 0, boMadridTZ)
+
+	totalWorked, err := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, start, end)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error calculando horas trabajadas")
+		return
+	}
+
+	daysInYear := 365
+	if (year%4 == 0 && year%100 != 0) || year%400 == 0 {
+		daysInYear = 366
+	}
+	expectedHours := (member.WeeklyContractHours / 7.0) * float64(daysInYear)
+	balance := totalWorked - expectedHours
+
+	monthNames := []string{"Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"}
+
+	// Generate monthly rows
+	monthRows := make([]map[string]any, 0, 12)
+	for month := 1; month <= 12; month++ {
+		mStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, boMadridTZ)
+		mEnd := mStart.AddDate(0, 1, -1)
+		mWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, mStart, mEnd)
+		mDays := int(mEnd.Sub(mStart).Hours()/24) + 1
+		mExpected := (member.WeeklyContractHours / 7.0) * float64(mDays)
+		monthRows = append(monthRows, map[string]any{
+			"date":          mStart.Format("2006-01-02"),
+			"label":         monthNames[month-1],
+			"workedHours":   round2(mWorked),
+			"expectedHours": round2(mExpected),
+			"difference":    round2(mWorked - mExpected),
+		})
+	}
+
+	// Generate quarterly rows
+	quarterRows := make([]map[string]any, 0, 4)
+	for q := 1; q <= 4; q++ {
+		qStart := time.Date(year, time.Month((q-1)*3+1), 1, 0, 0, 0, 0, boMadridTZ)
+		qEnd := qStart.AddDate(0, 3, -1)
+		qWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, qStart, qEnd)
+		qDays := int(qEnd.Sub(qStart).Hours()/24) + 1
+		qExpected := (member.WeeklyContractHours / 7.0) * float64(qDays)
+		quarterRows = append(quarterRows, map[string]any{
+			"date":          qStart.Format("2006-01-02"),
+			"label":         fmt.Sprintf("Q%d", q),
+			"workedHours":   round2(qWorked),
+			"expectedHours": round2(qExpected),
+			"difference":    round2(qWorked - qExpected),
+		})
+	}
+
+	// Generate weekly rows
+	weekRows := make([]map[string]any, 0, 53)
+	current := start
+	weekNum := 1
+	for current.Before(end) || current.Equal(end) {
+		weekEnd := current.AddDate(0, 0, 6)
+		if weekEnd.After(end) {
+			weekEnd = end
+		}
+		wWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, current, weekEnd)
+		wDays := int(weekEnd.Sub(current).Hours()/24) + 1
+		wExpected := (member.WeeklyContractHours / 7.0) * float64(wDays)
+		weekRows = append(weekRows, map[string]any{
+			"date":          current.Format("2006-01-02"),
+			"label":         fmt.Sprintf("S%d", weekNum),
+			"workedHours":   round2(wWorked),
+			"expectedHours": round2(wExpected),
+			"difference":    round2(wWorked - wExpected),
+		})
+		current = current.AddDate(0, 0, 7)
+		weekNum++
+		if weekNum > 53 {
+			break
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":            true,
+		"year":               year,
+		"totalWorkedHours":   round2(totalWorked),
+		"totalExpectedHours": round2(expectedHours),
+		"balance":            round2(balance),
+		"months":             monthRows,
+		"quarters":          quarterRows,
+		"weeks":              weekRows,
+	})
+}
+
+func (s *Server) handleBOMemberStatsRange(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	memberID, err := parseBOIDParam(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "id invalido",
+		})
+		return
+	}
+
+	fromStr := strings.TrimSpace(r.URL.Query().Get("from"))
+	toStr := strings.TrimSpace(r.URL.Query().Get("to"))
+	if fromStr == "" || toStr == "" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "from y to son requeridos",
+		})
+		return
+	}
+
+	from, err := parseBODate(fromStr)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "from invalido",
+		})
+		return
+	}
+	to, err := parseBODate(toStr)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "to invalido",
+		})
+		return
+	}
+
+	member, err := s.getBOMemberByID(r.Context(), a.ActiveRestaurantID, memberID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+				"success": false,
+				"message": "Miembro no encontrado",
+			})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo miembro")
+		return
+	}
+
+	worked, err := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, from, to)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error calculando horas")
+		return
+	}
+
+	days := int(to.Sub(from).Hours()/24) + 1
+	expected := (member.WeeklyContractHours / 7.0) * float64(days)
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"rows": []map[string]any{
+			{
+				"date":          from.Format("2006-01-02"),
+				"label":         from.Format("02/01/2006") + " - " + to.Format("02/01/2006"),
+				"workedHours":   round2(worked),
+				"expectedHours": round2(expected),
+				"difference":    round2(worked - expected),
+			},
+		},
+	})
+}
+
+func (s *Server) handleBOMemberTableData(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	memberID, err := parseBOIDParam(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "id invalido",
+		})
+		return
+	}
+
+	view := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("view")))
+	if view == "" {
+		view = "monthly"
+	}
+	if view != "weekly" && view != "monthly" && view != "quarterly" && view != "yearly" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "view invalida",
+		})
+		return
+	}
+
+	yearStr := strings.TrimSpace(r.URL.Query().Get("year"))
+	year := time.Now().Year()
+	if yearStr != "" {
+		y, err := strconv.Atoi(yearStr)
+		if err != nil || y < 2000 || y > 2100 {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"message": "año invalido",
+			})
+			return
+		}
+		year = y
+	}
+
+	member, err := s.getBOMemberByID(r.Context(), a.ActiveRestaurantID, memberID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+				"success": false,
+				"message": "Miembro no encontrado",
+			})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo miembro")
+		return
+	}
+
+	var rows []map[string]any
+	monthNamesShort := []string{"Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"}
+
+	if view == "yearly" {
+		// Return monthly rows for the year
+		for month := 1; month <= 12; month++ {
+			mStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, boMadridTZ)
+			mEnd := mStart.AddDate(0, 1, -1)
+			mWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, mStart, mEnd)
+			mDays := int(mEnd.Sub(mStart).Hours()/24) + 1
+			mExpected := (member.WeeklyContractHours / 7.0) * float64(mDays)
+			rows = append(rows, map[string]any{
+				"date":          mStart.Format("2006-01-02"),
+				"label":         monthNamesShort[month-1],
+				"workedHours":   round2(mWorked),
+				"expectedHours": round2(mExpected),
+				"difference":    round2(mWorked - mExpected),
+			})
+		}
+	} else if view == "quarterly" {
+		for q := 1; q <= 4; q++ {
+			qStart := time.Date(year, time.Month((q-1)*3+1), 1, 0, 0, 0, 0, boMadridTZ)
+			qEnd := qStart.AddDate(0, 3, -1)
+			qWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, qStart, qEnd)
+			qDays := int(qEnd.Sub(qStart).Hours()/24) + 1
+			qExpected := (member.WeeklyContractHours / 7.0) * float64(qDays)
+			rows = append(rows, map[string]any{
+				"date":          qStart.Format("2006-01-02"),
+				"label":         fmt.Sprintf("Q%d %d", q, year),
+				"workedHours":   round2(qWorked),
+				"expectedHours": round2(qExpected),
+				"difference":    round2(qWorked - qExpected),
+			})
+		}
+	} else if view == "monthly" {
+		for month := 1; month <= 12; month++ {
+			mStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, boMadridTZ)
+			mEnd := mStart.AddDate(0, 1, -1)
+			mWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, mStart, mEnd)
+			mDays := int(mEnd.Sub(mStart).Hours()/24) + 1
+			mExpected := (member.WeeklyContractHours / 7.0) * float64(mDays)
+			rows = append(rows, map[string]any{
+				"date":          mStart.Format("2006-01-02"),
+				"label":         monthNamesShort[month-1],
+				"workedHours":   round2(mWorked),
+				"expectedHours": round2(mExpected),
+				"difference":    round2(mWorked - mExpected),
+			})
+		}
+	} else {
+		// weekly - return weeks of the year
+		current := time.Date(year, 1, 1, 0, 0, 0, 0, boMadridTZ)
+		endDate := time.Date(year, 12, 31, 23, 59, 59, 0, boMadridTZ)
+		weekNum := 1
+		for current.Before(endDate) || current.Equal(endDate) {
+			weekEnd := current.AddDate(0, 0, 6)
+			if weekEnd.After(endDate) {
+				weekEnd = endDate
+			}
+			wWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, current, weekEnd)
+			wDays := int(weekEnd.Sub(current).Hours()/24) + 1
+			wExpected := (member.WeeklyContractHours / 7.0) * float64(wDays)
+			rows = append(rows, map[string]any{
+				"date":          current.Format("2006-01-02"),
+				"label":         fmt.Sprintf("S%d", weekNum),
+				"workedHours":   round2(wWorked),
+				"expectedHours": round2(wExpected),
+				"difference":    round2(wWorked - wExpected),
+			})
+			current = current.AddDate(0, 0, 7)
+			weekNum++
+			if weekNum > 53 {
+				break
+			}
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"rows":    rows,
 	})
 }
 
@@ -709,6 +1055,10 @@ func boDateRangeForView(ref time.Time, view string) (time.Time, time.Time) {
 	case "quarterly":
 		start := boQuarterStart(ref)
 		end := start.AddDate(0, 3, -1)
+		return start, end
+	case "yearly":
+		start := time.Date(ref.Year(), 1, 1, 0, 0, 0, 0, boMadridTZ)
+		end := time.Date(ref.Year(), 12, 31, 23, 59, 59, 0, boMadridTZ)
 		return start, end
 	default:
 		weekday := int(ref.Weekday())

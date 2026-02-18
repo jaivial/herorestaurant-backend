@@ -32,6 +32,7 @@ type boAuth struct {
 	User               boUser
 	Role               string
 	ActiveRestaurantID int
+	MemberID           *int64
 }
 
 type boCtxKey int
