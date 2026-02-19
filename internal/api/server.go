@@ -131,6 +131,34 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Patch("/vinos/{id}", s.handleBOVinoPatch)
 		r.With(s.requireBOSession, menusGate).Delete("/vinos/{id}", s.handleBOVinoDelete)
 
+		// New comida module endpoints (typed routes).
+		r.With(s.requireBOSession, menusGate).Get("/comida/platos/categorias", s.handleBOComidaPlatoCategoriesList)
+		r.With(s.requireBOSession, menusGate).Post("/comida/platos/categorias", s.handleBOComidaPlatoCategoriesCreate)
+		r.With(s.requireBOSession, menusGate).Get("/comida/{tipo}", s.handleBOComidaList)
+		r.With(s.requireBOSession, menusGate).Get("/comida/{tipo}/{id}", s.handleBOComidaGet)
+		r.With(s.requireBOSession, menusGate).Post("/comida/{tipo}", s.handleBOComidaCreate)
+		r.With(s.requireBOSession, menusGate).Patch("/comida/{tipo}/{id}", s.handleBOComidaPatch)
+		r.With(s.requireBOSession, menusGate).Delete("/comida/{tipo}/{id}", s.handleBOComidaDelete)
+
+		// Legacy aliases consumed by current backoffice comida screen.
+		r.With(s.requireBOSession, menusGate).Get("/platos", s.handleBOPlatosList)
+		r.With(s.requireBOSession, menusGate).Post("/platos", s.handleBOPlatosCreate)
+		r.With(s.requireBOSession, menusGate).Patch("/platos/{id}", s.handleBOPlatosPatch)
+		r.With(s.requireBOSession, menusGate).Delete("/platos/{id}", s.handleBOPlatosDelete)
+		r.With(s.requireBOSession, menusGate).Post("/platos/{id}/toggle", s.handleBOPlatosToggle)
+
+		r.With(s.requireBOSession, menusGate).Get("/bebidas", s.handleBOBebidasList)
+		r.With(s.requireBOSession, menusGate).Post("/bebidas", s.handleBOBebidasCreate)
+		r.With(s.requireBOSession, menusGate).Patch("/bebidas/{id}", s.handleBOBebidasPatch)
+		r.With(s.requireBOSession, menusGate).Delete("/bebidas/{id}", s.handleBOBebidasDelete)
+		r.With(s.requireBOSession, menusGate).Post("/bebidas/{id}/toggle", s.handleBOBebidasToggle)
+
+		r.With(s.requireBOSession, menusGate).Get("/cafes", s.handleBOCafesList)
+		r.With(s.requireBOSession, menusGate).Post("/cafes", s.handleBOCafesCreate)
+		r.With(s.requireBOSession, menusGate).Patch("/cafes/{id}", s.handleBOCafesPatch)
+		r.With(s.requireBOSession, menusGate).Delete("/cafes/{id}", s.handleBOCafesDelete)
+		r.With(s.requireBOSession, menusGate).Post("/cafes/{id}/toggle", s.handleBOCafesToggle)
+
 		r.With(s.requireBOSession, menusGate).Get("/group-menus", s.handleBOGroupMenusList)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus/{id}", s.handleBOGroupMenuGet)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus", s.handleBOGroupMenuCreate)
@@ -242,6 +270,13 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/menus/finde", s.handleMenuFinde)
 		r.Get("/postres", s.handlePostres)
 		r.Get("/vinos", s.handleVinos)
+		r.Get("/comida/platos/categorias", s.handleComidaPublicPlatoCategoriesList)
+		r.Get("/comida/{tipo}", s.handleComidaPublicList)
+		r.Get("/comida/{tipo}/{id}", s.handleComidaPublicGet)
+		r.With(s.requireAdmin).Post("/comida/platos/categorias", s.handleComidaPublicPlatoCategoriesCreate)
+		r.With(s.requireAdmin).Post("/comida/{tipo}", s.handleComidaPublicCreate)
+		r.With(s.requireAdmin).Patch("/comida/{tipo}/{id}", s.handleComidaPublicPatch)
+		r.With(s.requireAdmin).Delete("/comida/{tipo}/{id}", s.handleComidaPublicDelete)
 
 		// Admin actions for wines (legacy admin UI uses api_vinos.php).
 		r.With(s.requireAdmin).Post("/vinos", s.handleVinosAdmin)

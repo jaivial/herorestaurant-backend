@@ -548,6 +548,97 @@ Returns available rice types from `FINDE` (active `TIPO='ARROZ'`), as a bare JSO
 Response:
 - `string[]`
 
+### Comida Module (`/api/admin/comida/*` and `/api/comida/*`)
+
+Nuevo contrato unificado para carta/comida por tipo:
+- `platos`, `postres`, `vinos`, `bebidas`, `cafes`.
+- Auth:
+  - Backoffice: cookie `bo_session` en `/api/admin/comida/*`.
+  - Público multi-tenant: `/api/comida/*`.
+  - Escritura en `/api/comida/*` requiere `ADMIN_TOKEN` (`X-Admin-Token` o `Authorization: Bearer`).
+
+#### `GET /api/admin/comida/{tipo}` (alias público: `GET /api/comida/{tipo}`)
+Listado paginado + filtros.
+
+Query params:
+- `page` (default `1`)
+- `pageSize` (default `24`, max `100`) (aliases: `limit`, `count`)
+- `q` (búsqueda por texto)
+- `active` (`0|1`)
+- `tipo` (subtipo, por ejemplo vino tinto o tipo de plato)
+- `categoria|category` (especialmente para `platos`)
+- `alergeno|allergen` (especialmente para `platos`/`postres`)
+- `suplemento` (`0|1`, especialmente `platos`)
+
+Response base:
+- `{ success: true, items: Item[], total: number, page: number, limit: number, pageSize: number }`
+
+Aliases por tipo:
+- `vinos`: además incluye `vinos: Vino[]`
+- `postres`: además incluye `postres: Postre[]`
+
+#### `GET /api/admin/comida/{tipo}/{id}` (alias público: `GET /api/comida/{tipo}/{id}`)
+Detalle por item.
+
+Response:
+- `{ success: true, item: Item }`
+- `vinos`: también `vino`
+- `postres`: también `postre`
+
+#### `POST /api/admin/comida/{tipo}` (alias admin público: `POST /api/comida/{tipo}`)
+Crear item.
+
+Body (JSON):
+- Campos comunes según tipo: `nombre`, `descripcion`, `tipo`, `precio`, `active`, `alergenos[]`, `imageBase64`.
+- `platos`: soporta `categoria|category|category_id`, `titulo`, `suplemento`.
+- `vinos`: `bodega`, `denominacion_origen`, `graduacion`, `anyo`.
+- `postres`: usa `descripcion` (o fallback `nombre`) + `alergenos`.
+
+Response:
+- `{ success: true, num: number, item: Item }`
+- `vinos`: también `vino`
+- `postres`: también `postre`
+
+#### `PATCH /api/admin/comida/{tipo}/{id}` (alias admin público: `PATCH /api/comida/{tipo}/{id}`)
+Actualización parcial.
+
+Response:
+- `{ success: true, item: Item }` (según tipo incluye alias `vino`/`postre` cuando aplica)
+- Error de validación: `{ success: false, message: string }`
+
+#### `DELETE /api/admin/comida/{tipo}/{id}` (alias admin público: `DELETE /api/comida/{tipo}/{id}`)
+Eliminación.
+
+Response:
+- `{ success: true }`
+
+#### Categorías de platos
+- `GET /api/admin/comida/platos/categorias`
+- `POST /api/admin/comida/platos/categorias`
+- Alias público:
+  - `GET /api/comida/platos/categorias`
+  - `POST /api/comida/platos/categorias` (requiere `ADMIN_TOKEN`)
+
+Modelo:
+- Base + custom por restaurante en `comida_plato_categories`.
+- Seeds base automáticos: `Entrantes`, `Principal`, `Arroz`, `Postre`.
+
+Response list:
+- `{ success: true, categories: Category[] }`
+- aliases legacy: `categorias`, `tipos`.
+
+Response create:
+- `{ success: true, category: Category }`
+- alias legacy: `categoria`.
+
+#### Aliases legacy backoffice (`/api/admin/*`)
+Para compatibilidad con pantalla anterior de carta:
+- `GET/POST/PATCH/DELETE /api/admin/platos` (+ `POST /api/admin/platos/{id}/toggle`)
+- `GET/POST/PATCH/DELETE /api/admin/bebidas` (+ `POST /api/admin/bebidas/{id}/toggle`)
+- `GET/POST/PATCH/DELETE /api/admin/cafes` (+ `POST /api/admin/cafes/{id}/toggle`)
+
+Estos aliases delegan internamente al módulo `/api/admin/comida/*`.
+
 ### Group Menus V2 (`/api/admin/group-menus-v2*`)
 Backoffice wizard API for the new menu editor. Uses cookie session auth.
 
