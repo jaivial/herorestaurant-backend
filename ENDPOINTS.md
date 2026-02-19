@@ -59,12 +59,13 @@ RBAC:
 
 ### `POST /api/admin/login`
 Body (JSON):
-- `email` (string)
+- `identifier` (string, recomendado; acepta email o username)
+- `email` (string, compat legacy)
 - `password` (string)
 
 Response:
 - `{ success: true, session: { user, restaurants, activeRestaurantId } }`
-- `session.user` incluye `role`, `roleImportance` y `sectionAccess`.
+- `session.user` incluye `role`, `roleImportance`, `sectionAccess`, `username?` y `mustChangePassword`.
 - `{ success: false, message: string }`
 
 ### `POST /api/admin/logout`
@@ -74,7 +75,18 @@ Response:
 ### `GET /api/admin/me`
 Response:
 - `{ success: true, session: { user, restaurants, activeRestaurantId } }`
-- `session.user` incluye `role`, `roleImportance` y `sectionAccess`.
+- `session.user` incluye `role`, `roleImportance`, `sectionAccess`, `username?` y `mustChangePassword`.
+
+### `POST /api/admin/me/password`
+Set password for current authenticated backoffice user.
+
+Body (JSON):
+- `password` (string)
+- `confirmPassword` (string) (alias legacy: `passwordRepeat`)
+
+Response:
+- `{ success: true }`
+- `{ success: false, message }`
 
 ### `POST /api/admin/active-restaurant`
 Body (JSON):
@@ -106,11 +118,39 @@ Create member.
 Body (JSON):
 - `firstName` (string, required)
 - `lastName` (string, required)
+- `roleSlug` (string, required in new flow; fallback `admin`)
 - Optional: `email`, `dni`, `bankAccount`, `phone`, `photoUrl`
+- Optional: `username`, `temporaryPassword`
 - Optional: `weeklyContractHours` (number, default `40`)
 
+Behavior:
+- Con `email` y/o `phone`: crea/vincula `bo_users`, asigna rol y genera invitación (token de un solo uso).
+- Sin `email` ni `phone`: exige `username` + `temporaryPassword`, crea usuario manual con `must_change_password=1`.
+
 Response:
-- `{ success: true, member: Member }`
+- `{ success: true, member: Member, user?, role?, invitation?, provisioning? }`
+
+### `POST /api/admin/members/{id}/invitation/resend`
+Regenera invitación para un miembro activo.
+
+Behavior:
+- Invalida tokens activos anteriores del mismo miembro.
+- Requiere que el miembro tenga al menos email o teléfono.
+
+Response:
+- `{ success: true, member: { id, boUserId, username? }, invitation: { expiresAt, delivery[] } }`
+- `{ success: false, message }`
+
+### `POST /api/admin/members/{id}/password-reset/send`
+Genera y envía enlace de restablecimiento de password para un miembro.
+
+Behavior:
+- Invalida tokens activos anteriores de reset del mismo miembro.
+- Requiere que el miembro tenga al menos email o teléfono.
+
+Response:
+- `{ success: true, reset: { expiresAt, delivery[] } }`
+- `{ success: false, message }`
 
 ### `GET /api/admin/members/{id}`
 Get member detail.
@@ -204,6 +244,85 @@ Rules:
 
 Response:
 - `{ success: true, user: { id, role, roleImportance } }`
+
+### `POST /api/admin/invitations/validate`
+Public endpoint (sin sesión) para validar token de invitación.
+
+Body (JSON):
+- `token` (string)
+
+Response:
+- `{ success: true, invitation: { memberId, firstName, lastName, email?, dni?, phone?, photoUrl?, roleSlug, roleLabel, expiresAt } }`
+- `{ success: false, message }`
+
+### `POST /api/admin/invitations/onboarding/start`
+Public endpoint (sin sesión) para iniciar onboarding desde token.
+
+Body (JSON):
+- `token` (string)
+
+Response:
+- `{ success: true, onboardingGuid, member }`
+- `{ success: false, message }`
+
+### `GET /api/admin/invitations/onboarding/{guid}`
+Public endpoint (sin sesión) para recuperar estado/datos de onboarding.
+
+Response:
+- `{ success: true, member, expiresAt }`
+- `{ success: false, message }`
+
+### `POST /api/admin/invitations/onboarding/{guid}/profile`
+Public endpoint (sin sesión) para actualizar perfil en onboarding.
+
+Body (JSON):
+- `firstName` (string)
+- `lastName` (string)
+- Optional: `photoUrl` (string)
+
+Response:
+- `{ success: true, member }`
+- `{ success: false, message }`
+
+### `POST /api/admin/invitations/onboarding/{guid}/avatar`
+Public endpoint (sin sesión) para subir avatar (multipart `avatar`) en onboarding.
+
+Response:
+- `{ success: true, avatarUrl, member }`
+- `{ success: false, message }`
+
+### `POST /api/admin/invitations/onboarding/{guid}/password`
+Public endpoint (sin sesión) para establecer password final y consumir invitación.
+
+Body (JSON):
+- `password` (string)
+- `confirmPassword` (string) (alias legacy: `passwordRepeat`)
+
+Response:
+- `{ success: true, next: "/login" }`
+- `{ success: false, message }`
+
+### `POST /api/admin/password-resets/validate`
+Public endpoint (sin sesión) para validar token de reset.
+
+Body (JSON):
+- `token` (string)
+
+Response:
+- `{ success: true, reset: { memberId, firstName, lastName, email?, username?, expiresAt } }`
+- `{ success: false, message }`
+
+### `POST /api/admin/password-resets/confirm`
+Public endpoint (sin sesión) para confirmar nueva password usando token de reset.
+
+Body (JSON):
+- `token` (string)
+- `password` (string)
+- `confirmPassword` (string) (alias legacy: `passwordRepeat`)
+
+Response:
+- `{ success: true, next: "/login" }`
+- `{ success: false, message }`
 
 ### `GET /api/admin/fichaje/ping`
 Lightweight endpoint for clients with access to the `fichaje` section.
@@ -370,7 +489,8 @@ Legacy compatibility:
 - If `page`/`count` are absent, the endpoint also accepts `limit`/`offset`.
 
 Response:
-- `{ success: true, bookings: Booking[], total_count: number, total: number, page: number, count: number }`
+- `{ success: true, bookings: Booking[], floors: Floor[], total_count: number, total: number, page: number, count: number }`
+- `floors` usa la misma estructura `Floor` de config y representa el estado activo del dia consultado.
 
 ### `GET /api/admin/bookings/export`
 Exports **all** bookings for a date (no filters; used for PDF export).
@@ -468,6 +588,15 @@ Body (JSON, any subset):
 Response:
 - `{ success: true }`
 
+### `PATCH /api/admin/group-menus-v2/{id}/menu-type`
+Changes only the menu type from list/editor quick action.
+
+Body (JSON):
+- `menu_type` (required string)
+
+Response:
+- `{ success: true, menu_id, menu_type }`
+
 ### `PUT /api/admin/group-menus-v2/{id}/sections`
 Replaces the ordered sections list for a menu.
 
@@ -536,7 +665,8 @@ Response:
 Returns restaurant-level default config used as fallback in daily config.
 
 Response:
-- `{ success: true, openingMode, morningHours, nightHours, hours, dailyLimit, mesasDeDosLimit, mesasDeTresLimit }`
+- `{ success: true, openingMode, morningHours, nightHours, weekdayOpen, hours, dailyLimit, mesasDeDosLimit, mesasDeTresLimit }`
+- `weekdayOpen`: objeto por dia con claves `monday..sunday` y valor booleano `open/closed`.
 
 ### `POST /api/admin/config/defaults`
 Partial update of defaults (patch semantics).
@@ -545,6 +675,7 @@ Body (JSON, any subset):
 - `openingMode`: `morning|night|both`
 - `morningHours`: `string[]` (`HH:MM`)
 - `nightHours`: `string[]` (`HH:MM`)
+- `weekdayOpen`: objeto parcial o completo con claves `monday..sunday` y valores booleanos
 - `dailyLimit`: number
 - `mesasDeDosLimit`: string (`0..999`, `sin_limite` supported)
 - `mesasDeTresLimit`: string (`0..999`, `sin_limite` supported)
@@ -554,6 +685,7 @@ Response:
 
 ### `GET /api/admin/config/day?date=YYYY-MM-DD`
 Returns open/closed day state.
+- Fallback si no existe override en `restaurant_days`: se usa `weekdayOpen` de `restaurant_reservation_defaults`.
 
 Response:
 - `{ success: true, date, isOpen }`
@@ -681,6 +813,62 @@ Returns the current visibility flags used by navigation.
 
 Response:
 - `{ success: true, menuVisibility: { menudeldia: boolean, menufindesemana: boolean, ... } }`
+
+### `GET /api/menus/public`
+Returns the active public menu catalog sourced from `menusDeGrupos` + V2 sections/dishes.
+
+Behavior:
+- Returns only menus with `active=1` and `is_draft=0`.
+- Returns only supported public types:
+  - `closed_conventional`
+  - `a_la_carte`
+  - `special`
+  - `closed_group`
+  - `a_la_carte_group`
+- If a menu has no V2 sections/dishes, fallback sections are derived from legacy snapshot fields (`entrantes`, `principales`, `postre`).
+
+Response:
+- `{ success: true, count, menus: PublicMenu[] }`
+
+`PublicMenu`:
+- `id` (number)
+- `slug` (string; stable route slug built from title + id)
+- `menu_title` (string)
+- `menu_type` (string)
+- `price` (string)
+- `active` (boolean)
+- `menu_subtitle` (`string[]`)
+- `entrantes` (`string[]`)
+- `principales` (`{ titulo_principales: string, items: string[] }`)
+- `postre` (`string[]`)
+- `settings`:
+  - `included_coffee` (boolean)
+  - `beverage` (object)
+  - `comments` (`string[]`)
+  - `min_party_size` (number)
+  - `main_dishes_limit` (boolean)
+  - `main_dishes_limit_number` (number)
+- `sections` (`PublicMenuSection[]`)
+- `special_menu_image_url` (string; empty when not set)
+- `legacy_source_table` (string; optional, e.g. `DIA|FINDE`)
+- `created_at`, `modified_at` (string)
+
+`PublicMenuSection`:
+- `id` (number)
+- `title` (string)
+- `kind` (string; normalized kind)
+- `position` (number)
+- `dishes` (`PublicMenuDish[]`)
+
+`PublicMenuDish`:
+- `id` (number)
+- `title` (string)
+- `description` (string)
+- `allergens` (`string[]`)
+- `supplement_enabled` (boolean)
+- `supplement_price` (number|null)
+- `price` (number|null)
+- `position` (number)
 
 ### `GET /api/menus/dia`
 Response:

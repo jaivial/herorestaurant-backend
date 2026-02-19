@@ -36,10 +36,21 @@ var defaultNightHours = []string{
 	"23:30", "00:00", "00:30",
 }
 
+var defaultWeekdayOpen = map[string]bool{
+	"monday":    false,
+	"tuesday":   false,
+	"wednesday": false,
+	"thursday":  true,
+	"friday":    true,
+	"saturday":  true,
+	"sunday":    true,
+}
+
 type reservationDefaults struct {
 	OpeningMode      string
 	MorningHours     []string
 	NightHours       []string
+	WeekdayOpen      map[string]bool
 	DailyLimit       int
 	MesasDeDosLimit  string
 	MesasDeTresLimit string
@@ -56,6 +67,19 @@ type boConfigFloor struct {
 func cloneStrings(in []string) []string {
 	out := make([]string, 0, len(in))
 	out = append(out, in...)
+	return out
+}
+
+func cloneWeekdayOpen(in map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for k, v := range defaultWeekdayOpen {
+		out[k] = v
+	}
+	for k, v := range in {
+		if key := normalizeWeekdayKey(k); key != "" {
+			out[key] = v
+		}
+	}
 	return out
 }
 
@@ -132,6 +156,88 @@ func parseHoursJSON(raw sql.NullString) ([]string, bool) {
 		return nil, false
 	}
 	return normalizeHoursList(arr), true
+}
+
+func normalizeWeekdayKey(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "monday", "lunes":
+		return "monday"
+	case "tuesday", "martes":
+		return "tuesday"
+	case "wednesday", "miercoles", "miércoles":
+		return "wednesday"
+	case "thursday", "jueves":
+		return "thursday"
+	case "friday", "viernes":
+		return "friday"
+	case "saturday", "sabado", "sábado":
+		return "saturday"
+	case "sunday", "domingo":
+		return "sunday"
+	default:
+		return ""
+	}
+}
+
+func normalizeWeekdayOpen(raw map[string]bool, fallback map[string]bool) map[string]bool {
+	out := cloneWeekdayOpen(fallback)
+	for k, v := range raw {
+		if key := normalizeWeekdayKey(k); key != "" {
+			out[key] = v
+		}
+	}
+	return out
+}
+
+func parseWeekdayOpenJSON(raw sql.NullString, fallback map[string]bool) (map[string]bool, bool) {
+	if !raw.Valid {
+		return nil, false
+	}
+	s := strings.TrimSpace(raw.String)
+	if s == "" {
+		return nil, false
+	}
+	var m map[string]bool
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil, false
+	}
+	return normalizeWeekdayOpen(m, fallback), true
+}
+
+func weekdayKeyFromTime(wd time.Weekday) string {
+	switch wd {
+	case time.Monday:
+		return "monday"
+	case time.Tuesday:
+		return "tuesday"
+	case time.Wednesday:
+		return "wednesday"
+	case time.Thursday:
+		return "thursday"
+	case time.Friday:
+		return "friday"
+	case time.Saturday:
+		return "saturday"
+	case time.Sunday:
+		return "sunday"
+	default:
+		return ""
+	}
+}
+
+func isWeekdayOpen(date string, weekdayOpen map[string]bool) bool {
+	t, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	if err != nil {
+		return true
+	}
+	key := weekdayKeyFromTime(t.Weekday())
+	if key == "" {
+		return true
+	}
+	if v, ok := normalizeWeekdayOpen(nil, weekdayOpen)[key]; ok {
+		return v
+	}
+	return true
 }
 
 func hhmmToMinutes(hhmm string) (int, bool) {
@@ -227,6 +333,7 @@ func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) 
 		OpeningMode:      defaultOpeningMode,
 		MorningHours:     cloneStrings(defaultMorningHours),
 		NightHours:       cloneStrings(defaultNightHours),
+		WeekdayOpen:      cloneWeekdayOpen(defaultWeekdayOpen),
 		DailyLimit:       defaultDailyLimit,
 		MesasDeDosLimit:  defaultMesasLimit,
 		MesasDeTresLimit: defaultMesasLimit,
@@ -236,16 +343,17 @@ func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) 
 		modeRaw       sql.NullString
 		morningRaw    sql.NullString
 		nightRaw      sql.NullString
+		weekdayRaw    sql.NullString
 		dailyLimitRaw sql.NullInt64
 		mesas2Raw     sql.NullString
 		mesas3Raw     sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT opening_mode, morning_hours_json, night_hours_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit
+		SELECT opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit
 		FROM restaurant_reservation_defaults
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&modeRaw, &morningRaw, &nightRaw, &dailyLimitRaw, &mesas2Raw, &mesas3Raw)
+	`, restaurantID).Scan(&modeRaw, &morningRaw, &nightRaw, &weekdayRaw, &dailyLimitRaw, &mesas2Raw, &mesas3Raw)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return out, nil
@@ -261,6 +369,9 @@ func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) 
 	}
 	if list, ok := parseHoursJSON(nightRaw); ok {
 		out.NightHours = list
+	}
+	if weekdayOpen, ok := parseWeekdayOpenJSON(weekdayRaw, out.WeekdayOpen); ok {
+		out.WeekdayOpen = weekdayOpen
 	}
 	if dailyLimitRaw.Valid && dailyLimitRaw.Int64 >= 0 && dailyLimitRaw.Int64 <= 500 {
 		out.DailyLimit = int(dailyLimitRaw.Int64)
@@ -284,23 +395,26 @@ func (s *Server) upsertReservationDefaults(ctx context.Context, restaurantID int
 	}
 	mesas2 := normalizeLimitOrFallback(next.MesasDeDosLimit, defaultMesasLimit)
 	mesas3 := normalizeLimitOrFallback(next.MesasDeTresLimit, defaultMesasLimit)
+	weekdayOpen := normalizeWeekdayOpen(next.WeekdayOpen, defaultWeekdayOpen)
 
 	morningJSON, _ := json.Marshal(morning)
 	nightJSON, _ := json.Marshal(night)
+	weekdayJSON, _ := json.Marshal(weekdayOpen)
 
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO restaurant_reservation_defaults (
-			restaurant_id, opening_mode, morning_hours_json, night_hours_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit
+			restaurant_id, opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			opening_mode = VALUES(opening_mode),
 			morning_hours_json = VALUES(morning_hours_json),
 			night_hours_json = VALUES(night_hours_json),
+			weekday_open_json = VALUES(weekday_open_json),
 			daily_limit = VALUES(daily_limit),
 			mesas_de_dos_limit = VALUES(mesas_de_dos_limit),
 			mesas_de_tres_limit = VALUES(mesas_de_tres_limit)
-	`, restaurantID, mode, string(morningJSON), string(nightJSON), dailyLimit, mesas2, mesas3)
+	`, restaurantID, mode, string(morningJSON), string(nightJSON), string(weekdayJSON), dailyLimit, mesas2, mesas3)
 	return err
 }
 
@@ -478,8 +592,14 @@ func (s *Server) handleBOConfigDayGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defaults, err := s.loadReservationDefaults(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando defaults")
+		return
+	}
+
 	var isOpenInt sql.NullInt64
-	err := s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), `
 		SELECT is_open
 		FROM restaurant_days
 		WHERE restaurant_id = ? AND date = ?
@@ -490,15 +610,7 @@ func (s *Server) handleBOConfigDayGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Default: open unless explicitly closed.
-	isOpen := true
-	if t, err := time.ParseInLocation("2006-01-02", date, time.Local); err == nil {
-		wd := t.Weekday() // 0=Sun .. 6=Sat
-		// Legacy behavior: Mon/Tue/Wed are closed unless explicitly overridden.
-		if wd == time.Monday || wd == time.Tuesday || wd == time.Wednesday {
-			isOpen = false
-		}
-	}
+	isOpen := isWeekdayOpen(date, defaults.WeekdayOpen)
 	if isOpenInt.Valid {
 		isOpen = isOpenInt.Int64 != 0
 	}
@@ -1113,12 +1225,13 @@ func (s *Server) handleBOConfigDailyLimitSet(w http.ResponseWriter, r *http.Requ
 }
 
 type boConfigDefaultsSetRequest struct {
-	OpeningMode      *string   `json:"openingMode,omitempty"`
-	MorningHours     *[]string `json:"morningHours,omitempty"`
-	NightHours       *[]string `json:"nightHours,omitempty"`
-	DailyLimit       *int      `json:"dailyLimit,omitempty"`
-	MesasDeDosLimit  *string   `json:"mesasDeDosLimit,omitempty"`
-	MesasDeTresLimit *string   `json:"mesasDeTresLimit,omitempty"`
+	OpeningMode      *string          `json:"openingMode,omitempty"`
+	MorningHours     *[]string        `json:"morningHours,omitempty"`
+	NightHours       *[]string        `json:"nightHours,omitempty"`
+	WeekdayOpen      *map[string]bool `json:"weekdayOpen,omitempty"`
+	DailyLimit       *int             `json:"dailyLimit,omitempty"`
+	MesasDeDosLimit  *string          `json:"mesasDeDosLimit,omitempty"`
+	MesasDeTresLimit *string          `json:"mesasDeTresLimit,omitempty"`
 }
 
 func (s *Server) handleBOConfigDefaultsGet(w http.ResponseWriter, r *http.Request) {
@@ -1140,6 +1253,7 @@ func (s *Server) handleBOConfigDefaultsGet(w http.ResponseWriter, r *http.Reques
 		"openingMode":      defaults.OpeningMode,
 		"morningHours":     defaults.MorningHours,
 		"nightHours":       defaults.NightHours,
+		"weekdayOpen":      defaults.WeekdayOpen,
 		"hours":            hours,
 		"dailyLimit":       defaults.DailyLimit,
 		"mesasDeDosLimit":  defaults.MesasDeDosLimit,
@@ -1177,6 +1291,9 @@ func (s *Server) handleBOConfigDefaultsSet(w http.ResponseWriter, r *http.Reques
 	}
 	if req.NightHours != nil {
 		current.NightHours = normalizeHoursList(*req.NightHours)
+	}
+	if req.WeekdayOpen != nil {
+		current.WeekdayOpen = normalizeWeekdayOpen(*req.WeekdayOpen, current.WeekdayOpen)
 	}
 	if req.DailyLimit != nil {
 		if *req.DailyLimit < 0 || *req.DailyLimit > 500 {
@@ -1222,6 +1339,7 @@ func (s *Server) handleBOConfigDefaultsSet(w http.ResponseWriter, r *http.Reques
 		"openingMode":      current.OpeningMode,
 		"morningHours":     current.MorningHours,
 		"nightHours":       current.NightHours,
+		"weekdayOpen":      current.WeekdayOpen,
 		"hours":            hours,
 		"dailyLimit":       current.DailyLimit,
 		"mesasDeDosLimit":  current.MesasDeDosLimit,

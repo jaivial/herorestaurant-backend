@@ -5,10 +5,12 @@ import "context"
 type boUser struct {
 	ID             int      `json:"id"`
 	Email          string   `json:"email"`
+	Username       string   `json:"username,omitempty"`
 	Name           string   `json:"name"`
 	Role           string   `json:"role"`
 	RoleImportance int      `json:"roleImportance"`
 	SectionAccess  []string `json:"sectionAccess"`
+	MustChangePass bool     `json:"mustChangePassword"`
 
 	// Internal flags (not returned to clients).
 	isSuperadmin bool

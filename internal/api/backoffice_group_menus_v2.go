@@ -802,6 +802,66 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+func (s *Server) handleBOGroupMenusV2PatchMenuType(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+
+	var req struct {
+		MenuType string `json:"menu_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid JSON body"})
+		return
+	}
+
+	if strings.TrimSpace(req.MenuType) == "" {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu type is required"})
+		return
+	}
+
+	var existingID int64
+	if err := s.db.QueryRowContext(r.Context(), `
+		SELECT id
+		FROM menusDeGrupos
+		WHERE id = ? AND restaurant_id = ?
+		LIMIT 1
+	`, menuID, a.ActiveRestaurantID).Scan(&existingID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menu")
+		return
+	}
+
+	menuType := normalizeV2MenuType(req.MenuType)
+
+	if _, err := s.db.ExecContext(r.Context(), `
+		UPDATE menusDeGrupos
+		SET menu_type = ?,
+		    editor_version = 2
+		WHERE id = ? AND restaurant_id = ?
+	`, menuType, menuID, a.ActiveRestaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menu")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"menu_id":   menuID,
+		"menu_type": menuType,
+	})
+}
+
 func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -1475,14 +1535,14 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 	// Validate file type
 	contentType := http.DetectContentType(imgData)
 	allowedTypes := map[string]bool{
-		"image/jpeg":                                                                 true,
-		"image/png":                                                                  true,
-		"image/webp":                                                                  true,
-		"image/gif":                                                                   true,
-		"application/pdf":                                                             true,
-		"application/msword":                                                         true,
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document":     true,
-		"text/plain":                                                                 true,
+		"image/jpeg":         true,
+		"image/png":          true,
+		"image/webp":         true,
+		"image/gif":          true,
+		"application/pdf":    true,
+		"application/msword": true,
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+		"text/plain": true,
 	}
 	if !allowedTypes[contentType] {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "File type not allowed"})

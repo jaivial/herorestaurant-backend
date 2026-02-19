@@ -34,8 +34,10 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 			userID             int
 			activeRestaurantID int
 			email              string
+			username           sql.NullString
 			name               string
 			isSuper            int
+			mustChangePassword int
 			role               sql.NullString
 		)
 		err = s.db.QueryRowContext(r.Context(), `
@@ -44,8 +46,10 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 				s.user_id,
 				s.active_restaurant_id,
 				u.email,
+				u.username,
 				u.name,
 				u.is_superadmin,
+				u.must_change_password,
 				ur.role
 			FROM bo_sessions s
 			JOIN bo_users u ON u.id = s.user_id
@@ -53,7 +57,7 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 				ON ur.user_id = s.user_id AND ur.restaurant_id = s.active_restaurant_id
 			WHERE s.token_sha256 = ? AND s.expires_at > NOW()
 			LIMIT 1
-		`, tokenSHA).Scan(&sessionID, &userID, &activeRestaurantID, &email, &name, &isSuper, &role)
+		`, tokenSHA).Scan(&sessionID, &userID, &activeRestaurantID, &email, &username, &name, &isSuper, &mustChangePassword, &role)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				log.Printf("[requireBOSession] token not found in DB, tokenSHA=%s", tokenSHA[:16])
@@ -97,10 +101,12 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 			User: boUser{
 				ID:             userID,
 				Email:          email,
+				Username:       strings.TrimSpace(username.String),
 				Name:           name,
 				Role:           roleSlug,
 				RoleImportance: roleImportance,
 				SectionAccess:  sectionAccess,
+				MustChangePass: mustChangePassword != 0,
 				isSuperadmin:   isSuper != 0,
 			},
 			Role:               roleSlug,

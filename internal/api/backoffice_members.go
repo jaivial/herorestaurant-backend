@@ -45,6 +45,9 @@ type boMemberCreateRequest struct {
 	BankAccount         *string  `json:"bankAccount"`
 	Phone               *string  `json:"phone"`
 	PhotoURL            *string  `json:"photoUrl"`
+	RoleSlug            *string  `json:"roleSlug"`
+	Username            *string  `json:"username"`
+	TemporaryPassword   *string  `json:"temporaryPassword"`
 	WeeklyContractHours *float64 `json:"weeklyContractHours"`
 }
 
@@ -127,81 +130,26 @@ func (s *Server) handleBOMemberCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	firstName := strings.TrimSpace(req.FirstName)
-	lastName := strings.TrimSpace(req.LastName)
-	if firstName == "" || lastName == "" {
+	out, err := s.createBOMemberAndBootstrapAccess(r.Context(), a, req, r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando miembro")
+		return
+	}
+	if !out.Success {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
-			"message": "Nombre y apellidos son obligatorios",
+			"message": out.Message,
 		})
-		return
-	}
-
-	weeklyHours := 40.0
-	if req.WeeklyContractHours != nil {
-		weeklyHours = *req.WeeklyContractHours
-	}
-	if weeklyHours < 0 {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "weeklyContractHours debe ser >= 0",
-		})
-		return
-	}
-
-	email := normalizeOptionalEmail(req.Email)
-	dni := normalizeOptionalString(req.DNI)
-	bank := normalizeOptionalString(req.BankAccount)
-	phone := normalizeOptionalString(req.Phone)
-	photo := normalizeOptionalString(req.PhotoURL)
-
-	tx, err := s.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error iniciando transaccion")
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	res, err := tx.ExecContext(r.Context(), `
-		INSERT INTO restaurant_members
-			(restaurant_id, first_name, last_name, email, dni, bank_account, phone, photo_url, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-	`, a.ActiveRestaurantID, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(photo))
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "No se pudo crear el miembro (email/usuario duplicado)",
-		})
-		return
-	}
-
-	memberID64, _ := res.LastInsertId()
-	memberID := int(memberID64)
-
-	if _, err := tx.ExecContext(r.Context(), `
-		INSERT INTO member_contracts (restaurant_member_id, restaurant_id, weekly_hours)
-		VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			weekly_hours = VALUES(weekly_hours)
-	`, memberID, a.ActiveRestaurantID, weeklyHours); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando contrato")
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error finalizando transaccion")
-		return
-	}
-
-	member, err := s.getBOMemberByID(r.Context(), a.ActiveRestaurantID, memberID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo miembro")
 		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"member":  member,
+		"success":      true,
+		"member":       out.Member,
+		"user":         out.User,
+		"role":         out.RoleSlug,
+		"invitation":   out.Invitation,
+		"provisioning": out.Provisioning,
 	})
 }
 
@@ -687,7 +635,7 @@ func (s *Server) handleBOMemberStatsYear(w http.ResponseWriter, r *http.Request)
 		"totalExpectedHours": round2(expectedHours),
 		"balance":            round2(balance),
 		"months":             monthRows,
-		"quarters":          quarterRows,
+		"quarters":           quarterRows,
 		"weeks":              weekRows,
 	})
 }
@@ -993,6 +941,10 @@ func (s *Server) queryBOMemberPoints(ctx context.Context, restaurantID, memberID
 			return nil, 0, err
 		}
 		minutesByDate[dateISO] = minutes
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterating member stats rows: %w", err)
 	}
 
 	out := make([]boMemberStatsPoint, 0, 64)

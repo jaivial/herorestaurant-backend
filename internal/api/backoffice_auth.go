@@ -18,12 +18,19 @@ import (
 )
 
 type boLoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email      string `json:"email"`
+	Identifier string `json:"identifier"`
+	Password   string `json:"password"`
 }
 
 type boActiveRestaurantRequest struct {
 	RestaurantID int `json:"restaurantId"`
+}
+
+type boSetPasswordRequest struct {
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirmPassword"`
+	PasswordRepeat  string `json:"passwordRepeat"`
 }
 
 func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
@@ -47,29 +54,47 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := strings.ToLower(strings.TrimSpace(req.Email))
+	identifier := strings.ToLower(strings.TrimSpace(req.Identifier))
+	if identifier == "" {
+		identifier = strings.ToLower(strings.TrimSpace(req.Email))
+	}
 	password := req.Password
-	if email == "" || password == "" {
+	if identifier == "" || password == "" {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
-			"message": "Email y password son requeridos",
+			"message": "Usuario/email y password son requeridos",
 		})
 		return
 	}
 
 	var (
-		userID  int
-		dbEmail string
-		name    string
-		hash    string
-		isSuper int
+		userID             int
+		dbEmail            string
+		dbUsername         sql.NullString
+		name               string
+		hash               string
+		isSuper            int
+		mustChangePassword int
 	)
 	err := s.db.QueryRowContext(r.Context(), `
-		SELECT id, email, name, password_hash, is_superadmin
+		SELECT
+			id,
+			email,
+			username,
+			name,
+			password_hash,
+			is_superadmin,
+			must_change_password
 		FROM bo_users
-		WHERE email = ?
+		WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))
+			OR LOWER(TRIM(COALESCE(username, ''))) = LOWER(TRIM(?))
+		ORDER BY
+			CASE
+				WHEN LOWER(TRIM(email)) = LOWER(TRIM(?)) THEN 0
+				ELSE 1
+			END ASC
 		LIMIT 1
-	`, email).Scan(&userID, &dbEmail, &name, &hash, &isSuper)
+	`, identifier, identifier, identifier).Scan(&userID, &dbEmail, &dbUsername, &name, &hash, &isSuper, &mustChangePassword)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -159,10 +184,12 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 		User: boUser{
 			ID:             userID,
 			Email:          dbEmail,
+			Username:       strings.TrimSpace(dbUsername.String),
 			Name:           name,
 			Role:           roleSlug,
 			RoleImportance: roleImportance,
 			SectionAccess:  sectionAccess,
+			MustChangePass: mustChangePassword != 0,
 		},
 		Restaurants:        restaurants,
 		ActiveRestaurantID: activeRestaurantID,
@@ -244,14 +271,101 @@ func (s *Server) handleBOMe(w http.ResponseWriter, r *http.Request) {
 			User: boUser{
 				ID:             a.User.ID,
 				Email:          a.User.Email,
+				Username:       a.User.Username,
 				Name:           a.User.Name,
 				Role:           roleSlug,
 				RoleImportance: roleImportance,
 				SectionAccess:  sectionAccess,
+				MustChangePass: a.User.MustChangePass,
 			},
 			Restaurants:        restaurants,
 			ActiveRestaurantID: activeID,
 		},
+	})
+}
+
+func (s *Server) handleBOSetPassword(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	var req boSetPasswordRequest
+	if err := readJSONBody(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "Invalid JSON",
+		})
+		return
+	}
+	password := strings.TrimSpace(req.Password)
+	confirm := strings.TrimSpace(req.ConfirmPassword)
+	if confirm == "" {
+		confirm = strings.TrimSpace(req.PasswordRepeat)
+	}
+	if password == "" || confirm == "" {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Password requerida",
+		})
+		return
+	}
+	if password != confirm {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Las passwords no coinciden",
+		})
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo guardar password")
+		return
+	}
+
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error iniciando transaccion")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE bo_users
+		SET password_hash = ?, must_change_password = 0
+		WHERE id = ?
+	`, string(hash), a.User.ID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo actualizar password")
+		return
+	}
+
+	_, _ = tx.ExecContext(r.Context(), `
+		UPDATE bo_password_reset_tokens
+		SET invalidated_at = NOW(), invalidated_reason = 'password-updated'
+		WHERE bo_user_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > NOW()
+	`, a.User.ID)
+
+	_, _ = tx.ExecContext(r.Context(), `
+		UPDATE bo_member_invitation_tokens
+		SET invalidated_at = NOW(), invalidated_reason = 'password-updated'
+		WHERE bo_user_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+			AND expires_at > NOW()
+	`, a.User.ID)
+
+	if err := tx.Commit(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando password")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
 	})
 }
 

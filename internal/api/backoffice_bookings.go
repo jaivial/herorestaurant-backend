@@ -94,6 +94,11 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	restaurantID := a.ActiveRestaurantID
+	floors, err := s.loadDateFloors(r.Context(), restaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando plantas")
+		return
+	}
 
 	where := "WHERE reservation_date = ? AND restaurant_id = ?"
 	args := []any{date, restaurantID}
@@ -234,6 +239,7 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
 		"bookings":    bookings,
+		"floors":      floors,
 		"total_count": totalCount,
 		"total":       totalCount,
 		"page":        page,

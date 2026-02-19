@@ -79,8 +79,17 @@ func (s *Server) Routes() http.Handler {
 
 		r.Post("/login", s.handleBOLogin)
 		r.Post("/logout", s.handleBOLogout)
+		r.Post("/invitations/validate", s.handleBOInvitationValidate)
+		r.Post("/invitations/onboarding/start", s.handleBOInvitationOnboardingStart)
+		r.Get("/invitations/onboarding/{guid}", s.handleBOInvitationOnboardingGet)
+		r.Post("/invitations/onboarding/{guid}/profile", s.handleBOInvitationOnboardingProfile)
+		r.Post("/invitations/onboarding/{guid}/avatar", s.handleBOInvitationOnboardingAvatar)
+		r.Post("/invitations/onboarding/{guid}/password", s.handleBOInvitationOnboardingPassword)
+		r.Post("/password-resets/validate", s.handleBOPasswordResetValidate)
+		r.Post("/password-resets/confirm", s.handleBOPasswordResetConfirm)
 
 		r.With(s.requireBOSession).Get("/me", s.handleBOMe)
+		r.With(s.requireBOSession).Post("/me/password", s.handleBOSetPassword)
 		r.With(s.requireBOSession).Post("/active-restaurant", s.handleBOSetActiveRestaurant)
 
 		r.With(s.requireBOSession, reservasGate).Get("/dashboard/metrics", s.handleBODashboardMetrics)
@@ -132,6 +141,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/drafts", s.handleBOGroupMenusV2CreateDraft)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}", s.handleBOGroupMenusV2Get)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/basics", s.handleBOGroupMenusV2PatchBasics)
+		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/menu-type", s.handleBOGroupMenusV2PatchMenuType)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections", s.handleBOGroupMenusV2PutSections)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2PutSectionDishes)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/publish", s.handleBOGroupMenusV2Publish)
@@ -185,6 +195,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/table-data", s.handleBOMemberTableData)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/time-balance", s.handleBOMemberQuarterBalance)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/ensure-user", s.handleBOMemberEnsureUser)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/invitation/resend", s.handleBOMemberInvitationResend)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/password-reset/send", s.handleBOMemberPasswordResetSend)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/roles", s.handleBORolesGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/roles", s.handleBORoleCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/users/{id}/role", s.handleBOUserRolePatch)
@@ -225,6 +237,7 @@ func (s *Server) Routes() http.Handler {
 		// Public endpoints (used by the Preact client).
 		r.Get("/menu-visibility", s.handleMenuVisibility)
 		r.With(s.requireAdmin).Post("/menu-visibility", s.handleMenuVisibilityToggle)
+		r.Get("/menus/public", s.handlePublicMenus)
 		r.Get("/menus/dia", s.handleMenuDia)
 		r.Get("/menus/finde", s.handleMenuFinde)
 		r.Get("/postres", s.handlePostres)
