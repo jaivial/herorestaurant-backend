@@ -131,13 +131,18 @@ func (s *Server) createBOMemberAndBootstrapAccess(ctx context.Context, a boAuth,
 	dni := normalizeOptionalString(req.DNI)
 	bank := normalizeOptionalString(req.BankAccount)
 	phone := normalizeOptionalString(req.Phone)
+	whatsappNumber := normalizeOptionalString(req.WhatsAppNumber)
 	photo := normalizeOptionalString(req.PhotoURL)
 	roleSlug := normalizeBORole(ptrToValue(req.RoleSlug))
 	if roleSlug == "" {
 		roleSlug = "admin"
 	}
 
-	hasAnyContact := email != "" || phone != ""
+	whatsappTarget := strings.TrimSpace(whatsappNumber)
+	if whatsappTarget == "" {
+		whatsappTarget = strings.TrimSpace(phone)
+	}
+	hasAnyContact := email != "" || whatsappTarget != ""
 	username := normalizeUsername(ptrToValue(req.Username))
 	temporaryPassword := strings.TrimSpace(ptrToValue(req.TemporaryPassword))
 	manualCredentials := !hasAnyContact
@@ -166,9 +171,9 @@ func (s *Server) createBOMemberAndBootstrapAccess(ctx context.Context, a boAuth,
 
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO restaurant_members
-			(restaurant_id, first_name, last_name, email, dni, bank_account, phone, photo_url, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-	`, a.ActiveRestaurantID, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(photo))
+			(restaurant_id, first_name, last_name, email, dni, bank_account, phone, whatsapp_number, photo_url, is_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+	`, a.ActiveRestaurantID, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(whatsappNumber), nullableString(photo))
 	if err != nil {
 		return boMemberCreateResult{Success: false, Message: "No se pudo crear el miembro (email/usuario duplicado)"}, nil
 	}
@@ -247,7 +252,7 @@ func (s *Server) createBOMemberAndBootstrapAccess(ctx context.Context, a boAuth,
 	invitation := map[string]any{"created": false}
 	if invitationToken != "" {
 		inviteURL := buildBackofficeAbsoluteURL(r, "/invitacion/"+invitationToken)
-		delivery = s.sendMemberInvitation(ctx, a.ActiveRestaurantID, email, phone, inviteURL)
+		delivery = s.sendMemberInvitation(ctx, a.ActiveRestaurantID, email, whatsappTarget, inviteURL)
 		invitation = map[string]any{
 			"created":   true,
 			"expiresAt": invitationExpiresAt.Format(time.RFC3339),

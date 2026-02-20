@@ -23,6 +23,9 @@ type Config struct {
 	BunnyMemberPullBaseURL string
 	BunnyMemberStorageZone string
 	BunnyMemberStorageKey  string
+	CloudflareAPIToken     string
+	CloudflareAccountID    string
+	CloudflareZoneID       string
 	MySQL                  MySQLConfig
 }
 
@@ -43,6 +46,9 @@ func Load() Config {
 		BunnyMemberPullBaseURL: defaultMembersPull,
 		BunnyMemberStorageZone: getenv("BUNNY_MEMBERS_STORAGE_ZONE", "herorestaurant"),
 		BunnyMemberStorageKey:  getenv("BUNNY_MEMBERS_STORAGE_ACCESS_KEY", defaultKey),
+		CloudflareAPIToken:     os.Getenv("CLOUDFLARE_API_TOKEN"),
+		CloudflareAccountID:    os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
+		CloudflareZoneID:       os.Getenv("CLOUDFLARE_ZONE_ID"),
 		MySQL: MySQLConfig{
 			Host:     getenv("DB_HOST", "127.0.0.1"),
 			Port:     getenv("DB_PORT", "3306"),

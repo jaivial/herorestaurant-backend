@@ -710,6 +710,15 @@ Body (JSON):
 Response:
 - `{ success: true }`
 
+### `PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}`
+Updates a single dish in-place (without replacing the whole section list).
+
+Body (JSON):
+- Any subset of: `{ catalog_dish_id, title, description, allergens, supplement_enabled, supplement_price, price, active }`
+
+Response:
+- `{ success: true, dish }`
+
 ### `POST /api/admin/group-menus-v2/{id}/publish`
 Validates menu has at least one section and one active dish, marks `is_draft=0`, and syncs legacy snapshot fields.
 
@@ -1424,3 +1433,307 @@ JSON or form:
 
 Response:
 - `{ success: true }`
+
+## Backoffice Premium API (`/api/admin/premium/*`)
+
+Auth:
+- Requires authenticated backoffice session cookie (`bo_session`).
+- Uses the same RBAC model as `/api/admin/*` (typically `ajustes` access for management actions).
+
+Endpoints:
+- `GET /api/admin/premium/website`
+- `PUT /api/admin/premium/website`
+- `GET /api/admin/premium/areas`
+- `POST /api/admin/premium/areas`
+- `PATCH /api/admin/premium/areas/{id}`
+- `DELETE /api/admin/premium/areas/{id}`
+- `GET /api/admin/premium/tables`
+- `POST /api/admin/premium/tables`
+- `PATCH /api/admin/premium/tables/{id}`
+- `DELETE /api/admin/premium/tables/{id}`
+- `GET /api/admin/premium/recurring-invoices`
+- `POST /api/admin/premium/recurring-invoices`
+- `PATCH /api/admin/premium/recurring-invoices/{id}`
+- `GET /api/admin/premium/domains`
+- `POST /api/admin/premium/domains`
+
+Response basics:
+- Success: `{ "success": true, ... }`
+- Error: `{ "success": false, "message": "..." }`
+
+## WhatsApp Premium Multi-Tenant Onboarding (`/api/admin/members/whatsapp/*`)
+
+Requires backoffice session + `miembros` section + high-admin role (same as existing WhatsApp premium endpoints).
+
+### `POST /api/admin/members/whatsapp/subscribe`
+
+Activates WhatsApp Pack recurring feature and now attempts automatic provisioning + connect bootstrap.
+
+Request body:
+
+```json
+{}
+```
+
+Response (`200`):
+
+```json
+{
+  "success": true,
+  "message": "Conexion iniciada. Escanea el QR en WhatsApp para completar el enlace",
+  "connected": false,
+  "subscription": {
+    "feature_key": "whatsapp_pack",
+    "frequency": "monthly",
+    "amount": 29,
+    "currency": "EUR",
+    "is_active": true
+  },
+  "connection": {
+    "status": "pending",
+    "connected": false,
+    "instance_name": "nv-1-1739999999999999999",
+    "qr": "..."
+  }
+}
+```
+
+### `POST /api/admin/members/whatsapp/connect`
+
+Creates/assigns a tenant instance (if missing) and starts connection handshake.
+
+Request body:
+
+```json
+{
+  "phone": "34600111222"
+}
+```
+
+Notes:
+
+- Without `phone`, UAZAPI returns QR-style handshake.
+- With `phone`, UAZAPI may return pair-code style handshake.
+
+Response (`200`):
+
+```json
+{
+  "success": true,
+  "message": "Conexion iniciada. Escanea el QR en WhatsApp para completar el enlace",
+  "connected": false,
+  "connection": {
+    "status": "pending",
+    "connected": false,
+    "instance_name": "nv-1-1739999999999999999",
+    "provider_instance_id": "...",
+    "server_base_url": "https://your-uazapi-server",
+    "qr": "...",
+    "pair_code": null,
+    "phone": null,
+    "updated_at": "2026-02-20T..."
+  }
+}
+```
+
+Failure without active subscription:
+
+```json
+{
+  "success": false,
+  "code": "NEEDS_SUBSCRIPTION",
+  "message": "Necesitas una suscripcion activa de WhatsApp Pack"
+}
+```
+
+### `GET /api/admin/members/whatsapp/connection`
+
+Returns latest connection state and tries to refresh from UAZAPI `/instance/status`.
+
+Response (`200`):
+
+```json
+{
+  "success": true,
+  "connected": true,
+  "message": "WhatsApp conectado y listo para enviar mensajes",
+  "connection": {
+    "status": "connected",
+    "connected": true,
+    "instance_name": "nv-1-1739999999999999999",
+    "phone": "34600111222"
+  }
+}
+```
+
+### `POST /api/admin/members/whatsapp/disconnect`
+
+Disconnects active WhatsApp instance. Optional hard delete.
+
+Request body:
+
+```json
+{
+  "delete_instance": false
+}
+```
+
+If `delete_instance=true`, backend also removes the remote instance and local mapping.
+
+Response (`200`):
+
+```json
+{
+  "success": true,
+  "message": "WhatsApp desconectado",
+  "connected": false
+}
+```
+
+### Sending behavior impact
+
+`POST /api/admin/members/whatsapp/send` now returns:
+
+- `NEEDS_SUBSCRIPTION` when feature is not active.
+- `NEEDS_CONNECTION` when subscription exists but provider connection/token is missing.
+
+## UAZAPI Server Pool Admin (`/api/admin/integrations/uazapi/servers`)
+
+Requires backoffice session + `ajustes` section + high-admin role (`importance >= 90`).
+
+Response style for this block:
+
+- Success: `{ "success": true, "data": ... }` (and optional `message`)
+- Error: `{ "success": false, "code": "...", "message": "..." }`
+
+`adminToken` is accepted on create/update, stored in DB, and never returned raw. Responses expose `adminTokenMasked` only.
+
+### `GET /api/admin/integrations/uazapi/servers`
+
+Lists current server pool ordered by active/priority. Includes capacity and current usage.
+
+Response (`200`):
+
+```json
+{
+  "success": true,
+  "data": {
+    "servers": [
+      {
+        "id": 1,
+        "name": "Primary Madrid",
+        "baseUrl": "https://uazapi-1.example.com",
+        "adminTokenMasked": "abc********xyz",
+        "capacity": 300,
+        "used": 184,
+        "priority": 100,
+        "isActive": true,
+        "metadata": {
+          "region": "eu-west"
+        }
+      }
+    ]
+  }
+}
+```
+
+### `POST /api/admin/integrations/uazapi/servers`
+
+Creates a server entry for multi-tenant provisioning.
+
+Request body:
+
+```json
+{
+  "name": "Primary Madrid",
+  "baseUrl": "https://uazapi-1.example.com/",
+  "adminToken": "super-secret-admin-token",
+  "capacity": 300,
+  "priority": 100,
+  "isActive": true,
+  "metadata": {
+    "region": "eu-west"
+  }
+}
+```
+
+Validation:
+
+- `baseUrl` must be `http` or `https`, and is normalized with trailing `/` removed.
+- `capacity` must be `> 0` and `<= 10000`.
+
+Response (`200`):
+
+```json
+{
+  "success": true,
+  "message": "Servidor UAZAPI creado",
+  "data": {
+    "server": {
+      "id": 2,
+      "name": "Primary Madrid",
+      "baseUrl": "https://uazapi-1.example.com",
+      "adminTokenMasked": "sup****************ken",
+      "capacity": 300,
+      "used": 0,
+      "priority": 100,
+      "isActive": true,
+      "metadata": {
+        "region": "eu-west"
+      }
+    }
+  }
+}
+```
+
+### `PATCH /api/admin/integrations/uazapi/servers/{id}`
+
+Updates allowed fields:
+
+- `name`
+- `baseUrl`
+- `adminToken`
+- `capacity`
+- `priority`
+- `isActive`
+- `metadata` (object or `null`)
+
+Request body example:
+
+```json
+{
+  "capacity": 500,
+  "isActive": false
+}
+```
+
+Response (`200`):
+
+```json
+{
+  "success": true,
+  "message": "Servidor UAZAPI actualizado",
+  "data": {
+    "server": {
+      "id": 2,
+      "name": "Primary Madrid",
+      "baseUrl": "https://uazapi-1.example.com",
+      "adminTokenMasked": "sup****************ken",
+      "capacity": 500,
+      "used": 184,
+      "priority": 100,
+      "isActive": false,
+      "metadata": {
+        "region": "eu-west"
+      }
+    }
+  }
+}
+```
+
+Common errors:
+
+- `BAD_REQUEST`
+- `NOT_FOUND`
+- `DUPLICATE_BASE_URL`
+- `UAZAPI_POOL_UNAVAILABLE`

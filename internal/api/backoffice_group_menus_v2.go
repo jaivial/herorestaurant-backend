@@ -479,6 +479,65 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 	return sections, nil
 }
 
+func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, menuID int64, sectionID int64) ([]boV2Dish, error) {
+	dRows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
+		       supplement_enabled, supplement_price, price, active, position
+		FROM group_menu_section_dishes_v2
+		WHERE restaurant_id = ? AND menu_id = ? AND section_id = ?
+		ORDER BY position ASC, id ASC
+	`, restaurantID, menuID, sectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer dRows.Close()
+
+	out := make([]boV2Dish, 0, 16)
+	for dRows.Next() {
+		var (
+			d              boV2Dish
+			catalogID      sql.NullInt64
+			allergensRaw   sql.NullString
+			suppPriceRaw   sql.NullFloat64
+			priceRaw       sql.NullFloat64
+			suppEnabledInt int
+			activeInt      int
+		)
+		if err := dRows.Scan(
+			&d.ID,
+			&d.SectionID,
+			&catalogID,
+			&d.Title,
+			&d.Description,
+			&allergensRaw,
+			&suppEnabledInt,
+			&suppPriceRaw,
+			&priceRaw,
+			&activeInt,
+			&d.Position,
+		); err != nil {
+			return nil, err
+		}
+		if catalogID.Valid {
+			v := catalogID.Int64
+			d.CatalogDishID = &v
+		}
+		d.Allergens = anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{}))
+		d.SupplementEnabled = suppEnabledInt != 0
+		if suppPriceRaw.Valid {
+			p := suppPriceRaw.Float64
+			d.SupplementPrice = &p
+		}
+		if priceRaw.Valid {
+			p := priceRaw.Float64
+			d.Price = &p
+		}
+		d.Active = activeInt != 0
+		out = append(out, d)
+	}
+	return out, nil
+}
+
 func (s *Server) syncBOMenuV2LegacySnapshot(r *http.Request, restaurantID int, menuID int64) error {
 	sections, err := s.loadBOMenuV2SectionsWithDishes(r, restaurantID, menuID)
 	if err != nil {
@@ -1056,9 +1115,14 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 		return
 	}
 
-	existing := map[int64]bool{}
+	type existingDishState struct {
+		Title    string
+		Active   bool
+		Position int
+	}
+	existing := map[int64]existingDishState{}
 	rows, err := tx.QueryContext(r.Context(), `
-		SELECT id
+		SELECT id, title_snapshot, active, position
 		FROM group_menu_section_dishes_v2
 		WHERE section_id = ? AND menu_id = ? AND restaurant_id = ?
 	`, sectionID, menuID, a.ActiveRestaurantID)
@@ -1067,17 +1131,28 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 		return
 	}
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var (
+			id       int64
+			title    string
+			active   int
+			position int
+		)
+		if err := rows.Scan(&id, &title, &active, &position); err != nil {
 			rows.Close()
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo platos")
 			return
 		}
-		existing[id] = true
+		existing[id] = existingDishState{
+			Title:    strings.TrimSpace(title),
+			Active:   active != 0,
+			Position: position,
+		}
 	}
 	rows.Close()
 
 	keep := make([]int64, 0, len(req.Dishes))
+	keepSet := make(map[int64]struct{}, len(req.Dishes))
+	needsLegacySync := false
 	for idx, dish := range req.Dishes {
 		title := strings.TrimSpace(dish.Title)
 		if title == "" {
@@ -1098,7 +1173,17 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 		}
 		position := idx
 
-		if dish.ID > 0 && existing[dish.ID] {
+		if dish.ID > 0 {
+			prev, ok := existing[dish.ID]
+			if !ok {
+				// Invalid/foreign id for this section: treat as new dish to avoid touching unrelated rows.
+				dish.ID = 0
+			} else if prev.Title != title || prev.Active != active || (active && prev.Position != position) {
+				needsLegacySync = true
+			}
+		}
+
+		if dish.ID > 0 {
 			_, err := tx.ExecContext(r.Context(), `
 				UPDATE group_menu_section_dishes_v2
 				SET catalog_dish_id = ?,
@@ -1131,9 +1216,13 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 				return
 			}
 			keep = append(keep, dish.ID)
+			keepSet[dish.ID] = struct{}{}
 			continue
 		}
 
+		if active {
+			needsLegacySync = true
+		}
 		res, err := tx.ExecContext(r.Context(), `
 			INSERT INTO group_menu_section_dishes_v2
 				(restaurant_id, menu_id, section_id, catalog_dish_id, title_snapshot, description_snapshot,
@@ -1159,9 +1248,16 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 		}
 		newID, _ := res.LastInsertId()
 		keep = append(keep, newID)
+		keepSet[newID] = struct{}{}
 	}
 
 	if len(keep) == 0 {
+		for _, prev := range existing {
+			if prev.Active {
+				needsLegacySync = true
+				break
+			}
+		}
 		if _, err := tx.ExecContext(r.Context(), `
 			DELETE FROM group_menu_section_dishes_v2
 			WHERE section_id = ? AND menu_id = ? AND restaurant_id = ?
@@ -1170,6 +1266,15 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			return
 		}
 	} else {
+		for id, prev := range existing {
+			if _, ok := keepSet[id]; ok {
+				continue
+			}
+			if prev.Active {
+				needsLegacySync = true
+				break
+			}
+		}
 		args := make([]any, 0, 3+len(keep))
 		args = append(args, sectionID, menuID, a.ActiveRestaurantID)
 		for _, id := range keep {
@@ -1190,25 +1295,272 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 		return
 	}
 
-	if err := s.syncBOMenuV2LegacySnapshot(r, a.ActiveRestaurantID, menuID); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando snapshot")
-		return
+	// Legacy snapshot only depends on active dish titles/order. Skip expensive sync for
+	// description/supplement/catalog-only edits where legacy payload remains unchanged.
+	if needsLegacySync {
+		if err := s.syncBOMenuV2LegacySnapshot(r, a.ActiveRestaurantID, menuID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando snapshot")
+			return
+		}
 	}
 
-	sections, err := s.loadBOMenuV2SectionsWithDishes(r, a.ActiveRestaurantID, menuID)
+	dishes, err := s.loadBOMenuV2SectionDishes(r, a.ActiveRestaurantID, menuID, sectionID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error recargando platos")
 		return
 	}
 
-	for _, sec := range sections {
-		if sec.ID == sectionID {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "dishes": sec.Dishes})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "dishes": dishes})
+}
+
+func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+	sectionID, err := parseChiPositiveInt64(r, "sectionId")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid section id"})
+		return
+	}
+	dishID, err := parseChiPositiveInt64(r, "dishId")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid dish id"})
+		return
+	}
+
+	var input map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid JSON body"})
+		return
+	}
+
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando plato")
+		return
+	}
+	defer tx.Rollback()
+
+	var sectionExists int
+	if err := tx.QueryRowContext(r.Context(), `
+		SELECT COUNT(*)
+		FROM group_menu_sections_v2
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`, sectionID, menuID, a.ActiveRestaurantID).Scan(&sectionExists); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error verificando seccion")
+		return
+	}
+	if sectionExists == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
+		return
+	}
+
+	var (
+		currentCatalogID sql.NullInt64
+		currentTitle     string
+		currentDesc      string
+		currentAllergens sql.NullString
+		currentSuppInt   int
+		currentSuppPrice sql.NullFloat64
+		currentPrice     sql.NullFloat64
+		currentActiveInt int
+		currentPosition  int
+	)
+	err = tx.QueryRowContext(r.Context(), `
+		SELECT catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
+		       supplement_enabled, supplement_price, price, active, position
+		FROM group_menu_section_dishes_v2
+		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
+		LIMIT 1
+	`, dishID, sectionID, menuID, a.ActiveRestaurantID).Scan(
+		&currentCatalogID,
+		&currentTitle,
+		&currentDesc,
+		&currentAllergens,
+		&currentSuppInt,
+		&currentSuppPrice,
+		&currentPrice,
+		&currentActiveInt,
+		&currentPosition,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Dish not found"})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo plato")
+		return
+	}
+
+	var catalogDishID *int64
+	if currentCatalogID.Valid {
+		v := currentCatalogID.Int64
+		catalogDishID = &v
+	}
+	title := strings.TrimSpace(currentTitle)
+	description := strings.TrimSpace(currentDesc)
+	allergens := anySliceToStringList(decodeJSONOrFallback(currentAllergens.String, []any{}))
+	supplementEnabled := currentSuppInt != 0
+	var supplementPrice *float64
+	if currentSuppPrice.Valid {
+		v := currentSuppPrice.Float64
+		supplementPrice = &v
+	}
+	var price *float64
+	if currentPrice.Valid {
+		v := currentPrice.Float64
+		price = &v
+	}
+	active := currentActiveInt != 0
+
+	if raw, ok := input["catalog_dish_id"]; ok {
+		if raw == nil {
+			catalogDishID = nil
+		} else if parsed, err := anyToInt(raw); err == nil && parsed > 0 {
+			v := int64(parsed)
+			catalogDishID = &v
+		}
+	}
+	if raw, ok := input["title"]; ok {
+		if v := strings.TrimSpace(anyToString(raw)); v != "" {
+			title = v
+		}
+	}
+	if raw, ok := input["description"]; ok {
+		description = strings.TrimSpace(anyToString(raw))
+	}
+	if raw, ok := input["allergens"]; ok {
+		allergens = anySliceToStringList(raw)
+	}
+	if raw, ok := input["supplement_enabled"]; ok {
+		supplementEnabled = parseLooseBoolOrDefault(raw, supplementEnabled)
+	}
+	if raw, ok := input["supplement_price"]; ok {
+		if raw == nil {
+			supplementPrice = nil
+		} else if parsed, err := anyToFloat64(raw); err == nil {
+			v := parsed
+			supplementPrice = &v
+		}
+	}
+	if raw, ok := input["price"]; ok {
+		if raw == nil {
+			price = nil
+		} else if parsed, err := anyToFloat64(raw); err == nil {
+			v := parsed
+			price = &v
+		}
+	}
+	if raw, ok := input["active"]; ok {
+		active = parseLooseBoolOrDefault(raw, active)
+	}
+
+	_, err = tx.ExecContext(r.Context(), `
+		UPDATE group_menu_section_dishes_v2
+		SET catalog_dish_id = ?,
+		    title_snapshot = ?,
+		    description_snapshot = ?,
+		    allergens_json = ?,
+		    supplement_enabled = ?,
+		    supplement_price = ?,
+		    price = ?,
+		    active = ?,
+		    position = ?
+		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
+	`,
+		catalogDishID,
+		title,
+		description,
+		mustJSON(allergens, []any{}),
+		boolToTinyint(supplementEnabled),
+		supplementPrice,
+		price,
+		boolToTinyint(active),
+		currentPosition,
+		dishID,
+		sectionID,
+		menuID,
+		a.ActiveRestaurantID,
+	)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando plato")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando plato")
+		return
+	}
+
+	needsLegacySync := (currentActiveInt != boolToTinyint(active)) || (currentActiveInt != 0 && active && strings.TrimSpace(currentTitle) != title)
+	if needsLegacySync {
+		if err := s.syncBOMenuV2LegacySnapshot(r, a.ActiveRestaurantID, menuID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando snapshot")
 			return
 		}
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "dishes": []boV2Dish{}})
+	var (
+		d              boV2Dish
+		catalogID      sql.NullInt64
+		allergensRaw   sql.NullString
+		suppPriceRaw   sql.NullFloat64
+		priceRaw       sql.NullFloat64
+		suppEnabledInt int
+		activeInt      int
+	)
+	err = s.db.QueryRowContext(r.Context(), `
+		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
+		       supplement_enabled, supplement_price, price, active, position
+		FROM group_menu_section_dishes_v2
+		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
+		LIMIT 1
+	`, dishID, sectionID, menuID, a.ActiveRestaurantID).Scan(
+		&d.ID,
+		&d.SectionID,
+		&catalogID,
+		&d.Title,
+		&d.Description,
+		&allergensRaw,
+		&suppEnabledInt,
+		&suppPriceRaw,
+		&priceRaw,
+		&activeInt,
+		&d.Position,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Dish not found after update"})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error recargando plato")
+		return
+	}
+	if catalogID.Valid {
+		v := catalogID.Int64
+		d.CatalogDishID = &v
+	}
+	d.Allergens = anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{}))
+	d.SupplementEnabled = suppEnabledInt != 0
+	if suppPriceRaw.Valid {
+		v := suppPriceRaw.Float64
+		d.SupplementPrice = &v
+	}
+	if priceRaw.Valid {
+		v := priceRaw.Float64
+		d.Price = &v
+	}
+	d.Active = activeInt != 0
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "dish": d})
 }
 
 func (s *Server) handleBODishesCatalogSearch(w http.ResponseWriter, r *http.Request) {

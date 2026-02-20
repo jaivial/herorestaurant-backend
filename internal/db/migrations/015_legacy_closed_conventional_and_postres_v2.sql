@@ -4,9 +4,278 @@
 -- 2) Copy data into menusDeGrupos + group_menu_sections_v2 + group_menu_section_dishes_v2.
 -- 3) Populate menu_dishes_catalog with legacy traceability.
 
+SET @legacy_dia_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.TABLES
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'DIA'
+);
+SET @ddl := IF(
+  @legacy_dia_exists = 0,
+  'CREATE TEMPORARY TABLE `tmp_legacy_dia` (
+     `restaurant_id` INT NOT NULL,
+     `NUM` INT NOT NULL,
+     `DESCRIPCION` LONGTEXT NULL,
+     `TIPO` VARCHAR(64) NULL,
+     `alergenos` LONGTEXT NULL,
+     `active` TINYINT(1) NULL
+   )',
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl := IF(
+  @legacy_dia_exists = 1,
+  'INSERT INTO `tmp_legacy_dia` SELECT restaurant_id, NUM, DESCRIPCION, TIPO, alergenos, active FROM `DIA`',
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @legacy_finde_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.TABLES
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'FINDE'
+);
+SET @ddl := IF(
+  @legacy_finde_exists = 0,
+  'CREATE TEMPORARY TABLE `tmp_legacy_finde` (
+     `restaurant_id` INT NOT NULL,
+     `NUM` INT NOT NULL,
+     `DESCRIPCION` LONGTEXT NULL,
+     `TIPO` VARCHAR(64) NULL,
+     `alergenos` LONGTEXT NULL,
+     `active` TINYINT(1) NULL
+   )',
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl := IF(
+  @legacy_finde_exists = 1,
+  'INSERT INTO `tmp_legacy_finde` SELECT restaurant_id, NUM, DESCRIPCION, TIPO, alergenos, active FROM `FINDE`',
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @legacy_postres_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.TABLES
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'POSTRES'
+);
+SET @ddl := IF(
+  @legacy_postres_exists = 0,
+  'CREATE TEMPORARY TABLE `tmp_legacy_postres` (
+     `restaurant_id` INT NOT NULL,
+     `NUM` INT NOT NULL,
+     `DESCRIPCION` LONGTEXT NULL,
+     `TIPO` VARCHAR(64) NULL,
+     `alergenos` LONGTEXT NULL,
+     `active` TINYINT(1) NULL
+   )',
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @ddl := IF(
+  @legacy_postres_exists = 1,
+  'INSERT INTO `tmp_legacy_postres` SELECT restaurant_id, NUM, DESCRIPCION, TIPO, alergenos, active FROM `POSTRES`',
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl := 'ALTER TABLE `tmp_legacy_dia` ADD INDEX `idx_tmp_legacy_dia_restaurant_tipo_active_num` (`restaurant_id`, `TIPO`, `active`, `NUM`)';
+SET @ddl := IF(
+  (SELECT COUNT(*)
+   FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'tmp_legacy_dia'
+     AND INDEX_NAME = 'idx_tmp_legacy_dia_restaurant_tipo_active_num') = 0,
+  @ddl,
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl := 'ALTER TABLE `tmp_legacy_finde` ADD INDEX `idx_tmp_legacy_finde_restaurant_tipo_active_num` (`restaurant_id`, `TIPO`, `active`, `NUM`)';
+SET @ddl := IF(
+  (SELECT COUNT(*)
+   FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'tmp_legacy_finde'
+     AND INDEX_NAME = 'idx_tmp_legacy_finde_restaurant_tipo_active_num') = 0,
+  @ddl,
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @ddl := 'ALTER TABLE `tmp_legacy_postres` ADD INDEX `idx_tmp_legacy_postres_restaurant_tipo_active_num` (`restaurant_id`, `TIPO`, `active`, `NUM`)';
+SET @ddl := IF(
+  (SELECT COUNT(*)
+   FROM INFORMATION_SCHEMA.STATISTICS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'tmp_legacy_postres'
+     AND INDEX_NAME = 'idx_tmp_legacy_postres_restaurant_tipo_active_num') = 0,
+  @ddl,
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+DROP TEMPORARY TABLE IF EXISTS `tmp_legacy_dia_price_meta`;
+DROP TEMPORARY TABLE IF EXISTS `tmp_legacy_dia_price_choice`;
+DROP TEMPORARY TABLE IF EXISTS `tmp_legacy_dia_price`;
+DROP TEMPORARY TABLE IF EXISTS `tmp_legacy_dia_active`;
+DROP TEMPORARY TABLE IF EXISTS `tmp_legacy_finde_price_meta`;
+DROP TEMPORARY TABLE IF EXISTS `tmp_legacy_finde_price_choice`;
+DROP TEMPORARY TABLE IF EXISTS `tmp_legacy_finde_price`;
+DROP TEMPORARY TABLE IF EXISTS `tmp_legacy_finde_active`;
+
+CREATE TEMPORARY TABLE `tmp_legacy_dia_price` (
+  `restaurant_id` INT NOT NULL,
+  `price` DECIMAL(10,2) NULL,
+  PRIMARY KEY (`restaurant_id`)
+);
+INSERT INTO `tmp_legacy_dia_price` (`restaurant_id`, `price`)
+SELECT
+  d.`restaurant_id`,
+  CAST(
+    CAST(
+      RIGHT(
+        MAX(
+          CONCAT(
+            LPAD(COALESCE(d.`active`, 1), 1, '0'),
+            LPAD(d.`NUM`, 20, '0'),
+            LPAD(
+              CAST(
+                FLOOR(
+                  COALESCE(
+                    CAST(
+                      NULLIF(
+                        REGEXP_REPLACE(REPLACE(d.`DESCRIPCION`, ',', '.'), '[^0-9.]', ''),
+                        ''
+                      ) AS DECIMAL(10,2)
+                    ),
+                    0
+                  )
+                  * 100
+                )
+              ) AS UNSIGNED
+              ),
+              12,
+              '0'
+            )
+          )
+        ),
+        12
+      ) AS UNSIGNED
+    ) / 100 AS DECIMAL(10,2)
+  ) AS `price`
+FROM `tmp_legacy_dia` d
+WHERE UPPER(TRIM(d.`TIPO`)) = 'PRECIO'
+GROUP BY d.`restaurant_id`;
+
+CREATE TEMPORARY TABLE `tmp_legacy_dia_active` (
+  `restaurant_id` INT NOT NULL,
+  PRIMARY KEY (`restaurant_id`)
+);
+INSERT INTO `tmp_legacy_dia_active` (`restaurant_id`)
+SELECT DISTINCT `restaurant_id`
+FROM `tmp_legacy_dia`
+WHERE UPPER(TRIM(TIPO)) <> 'PRECIO'
+  AND COALESCE(active, 1) = 1;
+
+CREATE TEMPORARY TABLE `tmp_legacy_finde_price` (
+  `restaurant_id` INT NOT NULL,
+  `price` DECIMAL(10,2) NULL,
+  PRIMARY KEY (`restaurant_id`)
+);
+INSERT INTO `tmp_legacy_finde_price` (`restaurant_id`, `price`)
+SELECT
+  f.`restaurant_id`,
+  CAST(
+    CAST(
+      RIGHT(
+        MAX(
+          CONCAT(
+            LPAD(COALESCE(f.`active`, 1), 1, '0'),
+            LPAD(f.`NUM`, 20, '0'),
+            LPAD(
+              CAST(
+                FLOOR(
+                  COALESCE(
+                    CAST(
+                      NULLIF(
+                        REGEXP_REPLACE(REPLACE(f.`DESCRIPCION`, ',', '.'), '[^0-9.]', ''),
+                        ''
+                      ) AS DECIMAL(10,2)
+                    ),
+                    0
+                  )
+                  * 100
+                )
+              ) AS UNSIGNED
+              ),
+              12,
+              '0'
+            )
+          )
+        ),
+        12
+      ) AS UNSIGNED
+    ) / 100 AS DECIMAL(10,2)
+  ) AS `price`
+FROM `tmp_legacy_finde` f
+WHERE UPPER(TRIM(f.`TIPO`)) = 'PRECIO'
+GROUP BY f.`restaurant_id`;
+
+CREATE TEMPORARY TABLE `tmp_legacy_finde_active` (
+  `restaurant_id` INT NOT NULL,
+  PRIMARY KEY (`restaurant_id`)
+);
+INSERT INTO `tmp_legacy_finde_active` (`restaurant_id`)
+SELECT DISTINCT `restaurant_id`
+FROM `tmp_legacy_finde`
+WHERE UPPER(TRIM(TIPO)) <> 'PRECIO'
+  AND COALESCE(active, 1) = 1;
+
 -- ---------------------------------------------------------------------
 -- Add traceability columns/indexes (idempotent)
 -- ---------------------------------------------------------------------
+SET @menus_table_exists := (
+  SELECT COUNT(*)
+  FROM INFORMATION_SCHEMA.TABLES
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'menusDeGrupos'
+);
+
+SET @ddl := IF(
+  @menus_table_exists = 0,
+  'CREATE TABLE `menusDeGrupos` (
+     `id` INT AUTO_INCREMENT PRIMARY KEY,
+     `restaurant_id` INT NOT NULL DEFAULT 1,
+     `menu_title` VARCHAR(255) NOT NULL,
+     `price` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+     `included_coffee` TINYINT(1) NOT NULL DEFAULT 0,
+     `active` TINYINT(1) NOT NULL DEFAULT 1,
+     `menu_type` VARCHAR(64) NOT NULL DEFAULT ''closed_conventional'',
+     `is_draft` TINYINT(1) NOT NULL DEFAULT 0,
+     `editor_version` INT NOT NULL DEFAULT 2,
+     `legacy_source_table` VARCHAR(16) NULL,
+     `menu_subtitle` LONGTEXT NULL,
+     `entrantes` LONGTEXT NULL,
+     `principales` LONGTEXT NULL,
+     `postre` LONGTEXT NULL,
+     `beverage` LONGTEXT NULL,
+     `comments` LONGTEXT NULL,
+     `min_party_size` INT NOT NULL DEFAULT 1,
+     `main_dishes_limit` TINYINT(1) NOT NULL DEFAULT 0,
+     `main_dishes_limit_number` INT NOT NULL DEFAULT 1,
+     `created_at` DATETIME NULL,
+     `modified_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+     `deleted_at` DATETIME NULL,
+     INDEX `idx_menusDeGrupos_restaurant_active` (`restaurant_id`, `active`),
+     UNIQUE KEY `uniq_menusDeGrupos_restaurant_legacy_source` (`restaurant_id`, `legacy_source_table`)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci',
+  'SELECT 1'
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @col_exists = (
   SELECT COUNT(*)
@@ -163,7 +432,7 @@ SET @ddl = IF(
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ---------------------------------------------------------------------
--- Create one closed_conventional menu per source table (DIA / FINDE)
+-- Create one closed_conventional menu per source table (tmp_legacy_dia / tmp_legacy_finde)
 -- ---------------------------------------------------------------------
 
 INSERT INTO menusDeGrupos
@@ -173,27 +442,9 @@ INSERT INTO menusDeGrupos
 SELECT
   src.restaurant_id,
   'Menu del Dia',
-  COALESCE(
-    (
-      SELECT CAST(NULLIF(REGEXP_REPLACE(REPLACE(d2.DESCRIPCION, ',', '.'), '[^0-9.]', ''), '') AS DECIMAL(10,2))
-      FROM DIA d2
-      WHERE d2.restaurant_id = src.restaurant_id
-        AND UPPER(TRIM(d2.TIPO)) = 'PRECIO'
-      ORDER BY COALESCE(d2.active, 1) DESC, d2.NUM DESC
-      LIMIT 1
-    ),
-    0.00
-  ),
+  COALESCE(dia_price.price, 0.00),
   0,
-  CASE
-    WHEN EXISTS (
-      SELECT 1
-      FROM DIA d3
-      WHERE d3.restaurant_id = src.restaurant_id
-        AND UPPER(TRIM(d3.TIPO)) <> 'PRECIO'
-        AND COALESCE(d3.active, 1) = 1
-    ) THEN 1 ELSE 0
-  END,
+  CASE WHEN dia_active.restaurant_id IS NOT NULL THEN 1 ELSE 0 END,
   'closed_conventional',
   0,
   2,
@@ -209,8 +460,12 @@ SELECT
   1
 FROM (
   SELECT DISTINCT restaurant_id
-  FROM DIA
+  FROM tmp_legacy_dia
 ) src
+LEFT JOIN `tmp_legacy_dia_price` dia_price
+  ON dia_price.`restaurant_id` = src.`restaurant_id`
+LEFT JOIN `tmp_legacy_dia_active` dia_active
+  ON dia_active.`restaurant_id` = src.`restaurant_id`
 ON DUPLICATE KEY UPDATE
   menu_type = VALUES(menu_type),
   is_draft = VALUES(is_draft),
@@ -225,27 +480,9 @@ INSERT INTO menusDeGrupos
 SELECT
   src.restaurant_id,
   'Menu Fin de Semana',
-  COALESCE(
-    (
-      SELECT CAST(NULLIF(REGEXP_REPLACE(REPLACE(f2.DESCRIPCION, ',', '.'), '[^0-9.]', ''), '') AS DECIMAL(10,2))
-      FROM FINDE f2
-      WHERE f2.restaurant_id = src.restaurant_id
-        AND UPPER(TRIM(f2.TIPO)) = 'PRECIO'
-      ORDER BY COALESCE(f2.active, 1) DESC, f2.NUM DESC
-      LIMIT 1
-    ),
-    0.00
-  ),
+  COALESCE(finde_price.price, 0.00),
   0,
-  CASE
-    WHEN EXISTS (
-      SELECT 1
-      FROM FINDE f3
-      WHERE f3.restaurant_id = src.restaurant_id
-        AND UPPER(TRIM(f3.TIPO)) <> 'PRECIO'
-        AND COALESCE(f3.active, 1) = 1
-    ) THEN 1 ELSE 0
-  END,
+  CASE WHEN finde_active.restaurant_id IS NOT NULL THEN 1 ELSE 0 END,
   'closed_conventional',
   0,
   2,
@@ -261,8 +498,12 @@ SELECT
   1
 FROM (
   SELECT DISTINCT restaurant_id
-  FROM FINDE
+  FROM tmp_legacy_finde
 ) src
+LEFT JOIN `tmp_legacy_finde_price` finde_price
+  ON finde_price.`restaurant_id` = src.`restaurant_id`
+LEFT JOIN `tmp_legacy_finde_active` finde_active
+  ON finde_active.`restaurant_id` = src.`restaurant_id`
 ON DUPLICATE KEY UPDATE
   menu_type = VALUES(menu_type),
   is_draft = VALUES(is_draft),
@@ -324,7 +565,7 @@ SELECT
   d.NUM,
   UPPER(TRIM(d.TIPO)),
   COALESCE(d.active, 1)
-FROM DIA d
+FROM tmp_legacy_dia d
 WHERE TRIM(COALESCE(d.DESCRIPCION, '')) <> ''
 ON DUPLICATE KEY UPDATE
   title = VALUES(title),
@@ -353,7 +594,7 @@ SELECT
   f.NUM,
   UPPER(TRIM(f.TIPO)),
   COALESCE(f.active, 1)
-FROM FINDE f
+FROM tmp_legacy_finde f
 WHERE TRIM(COALESCE(f.DESCRIPCION, '')) <> ''
 ON DUPLICATE KEY UPDATE
   title = VALUES(title),
@@ -382,7 +623,7 @@ SELECT
   p.NUM,
   'POSTRE',
   COALESCE(p.active, 1)
-FROM POSTRES p
+FROM tmp_legacy_postres p
 WHERE TRIM(COALESCE(p.DESCRIPCION, '')) <> ''
 ON DUPLICATE KEY UPDATE
   title = VALUES(title),
@@ -392,7 +633,7 @@ ON DUPLICATE KEY UPDATE
   legacy_active = VALUES(legacy_active);
 
 -- ---------------------------------------------------------------------
--- Copy DIA and FINDE dishes into migrated menus
+-- Copy tmp_legacy_dia and tmp_legacy_finde dishes into migrated menus
 -- ---------------------------------------------------------------------
 
 INSERT INTO group_menu_section_dishes_v2
@@ -421,7 +662,7 @@ SELECT
   'DIA',
   d.NUM,
   UPPER(TRIM(d.TIPO))
-FROM DIA d
+FROM tmp_legacy_dia d
 JOIN menusDeGrupos m
   ON m.restaurant_id = d.restaurant_id
  AND m.legacy_source_table = 'DIA'
@@ -476,7 +717,7 @@ SELECT
   'FINDE',
   f.NUM,
   UPPER(TRIM(f.TIPO))
-FROM FINDE f
+FROM tmp_legacy_finde f
 JOIN menusDeGrupos m
   ON m.restaurant_id = f.restaurant_id
  AND m.legacy_source_table = 'FINDE'
@@ -506,7 +747,7 @@ ON DUPLICATE KEY UPDATE
   legacy_source_tipo = VALUES(legacy_source_tipo);
 
 -- ---------------------------------------------------------------------
--- Copy POSTRES into the "Postres" section of both migrated menus
+-- Copy tmp_legacy_postres into the "Postres" section of both migrated menus
 -- ---------------------------------------------------------------------
 
 INSERT INTO group_menu_section_dishes_v2
@@ -535,7 +776,7 @@ SELECT
   'POSTRES',
   p.NUM,
   'POSTRE'
-FROM POSTRES p
+FROM tmp_legacy_postres p
 JOIN menusDeGrupos m
   ON m.restaurant_id = p.restaurant_id
  AND m.legacy_source_table IN ('DIA', 'FINDE')
@@ -568,7 +809,7 @@ SET
     WHEN m.legacy_source_table = 'DIA' THEN COALESCE(
       (
         SELECT CAST(NULLIF(REGEXP_REPLACE(REPLACE(d.DESCRIPCION, ',', '.'), '[^0-9.]', ''), '') AS DECIMAL(10,2))
-        FROM DIA d
+        FROM tmp_legacy_dia d
         WHERE d.restaurant_id = m.restaurant_id
           AND UPPER(TRIM(d.TIPO)) = 'PRECIO'
         ORDER BY COALESCE(d.active, 1) DESC, d.NUM DESC
@@ -579,7 +820,7 @@ SET
     WHEN m.legacy_source_table = 'FINDE' THEN COALESCE(
       (
         SELECT CAST(NULLIF(REGEXP_REPLACE(REPLACE(f.DESCRIPCION, ',', '.'), '[^0-9.]', ''), '') AS DECIMAL(10,2))
-        FROM FINDE f
+        FROM tmp_legacy_finde f
         WHERE f.restaurant_id = m.restaurant_id
           AND UPPER(TRIM(f.TIPO)) = 'PRECIO'
         ORDER BY COALESCE(f.active, 1) DESC, f.NUM DESC
@@ -593,7 +834,7 @@ SET
     WHEN m.legacy_source_table = 'DIA' THEN
       CASE WHEN EXISTS (
         SELECT 1
-        FROM DIA d
+        FROM tmp_legacy_dia d
         WHERE d.restaurant_id = m.restaurant_id
           AND UPPER(TRIM(d.TIPO)) <> 'PRECIO'
           AND COALESCE(d.active, 1) = 1
@@ -601,7 +842,7 @@ SET
     WHEN m.legacy_source_table = 'FINDE' THEN
       CASE WHEN EXISTS (
         SELECT 1
-        FROM FINDE f
+        FROM tmp_legacy_finde f
         WHERE f.restaurant_id = m.restaurant_id
           AND UPPER(TRIM(f.TIPO)) <> 'PRECIO'
           AND COALESCE(f.active, 1) = 1

@@ -78,6 +78,33 @@ type restaurantIntegrationsCfg struct {
 	RestaurantWhatsappNumbers  []string
 }
 
+func (s *Server) loadProvisionedUAZAPICredentials(ctx context.Context, restaurantID int) (uazURL string, uazToken string, err error) {
+	var (
+		baseURL sql.NullString
+		token   sql.NullString
+	)
+	err = s.db.QueryRowContext(ctx, `
+		SELECT s.base_url, i.instance_token
+		FROM restaurant_uazapi_instances i
+		JOIN uazapi_servers s ON s.id = i.server_id
+		WHERE i.restaurant_id = ? AND i.is_active = 1
+		LIMIT 1
+	`, restaurantID).Scan(&baseURL, &token)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || isSQLSchemaError(err) {
+			return "", "", nil
+		}
+		return "", "", err
+	}
+
+	uazURL = strings.TrimRight(strings.TrimSpace(baseURL.String), "/")
+	uazToken = strings.TrimSpace(token.String)
+	if uazURL == "" || uazToken == "" {
+		return "", "", nil
+	}
+	return uazURL, uazToken, nil
+}
+
 func (s *Server) loadRestaurantIntegrations(ctx context.Context, restaurantID int) (restaurantIntegrationsCfg, error) {
 	var (
 		webhook    sql.NullString
@@ -149,6 +176,12 @@ func normalizeWhatsappRecipients(list []string) []string {
 }
 
 func (s *Server) uazapiBaseAndToken(ctx context.Context, restaurantID int) (uazURL string, uazToken string) {
+	if provisionedURL, provisionedToken, err := s.loadProvisionedUAZAPICredentials(ctx, restaurantID); err == nil {
+		if provisionedURL != "" && provisionedToken != "" {
+			return provisionedURL, provisionedToken
+		}
+	}
+
 	cfg, err := s.loadRestaurantIntegrations(ctx, restaurantID)
 	if err != nil {
 		return "", ""
