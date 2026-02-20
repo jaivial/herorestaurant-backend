@@ -23,6 +23,7 @@ type Server struct {
 	cfg         config.Config
 	tenantCache tenantDomainCache
 	fichajeHub  *boFichajeHub
+	tablesHub   *boTablesHub
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -30,6 +31,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		db:         db,
 		cfg:        cfg,
 		fichajeHub: newBOFichajeHub(),
+		tablesHub:  newBOTablesHub(),
 	}
 	go s.runBOFichajeAutoCutLoop()
 	return s
@@ -208,8 +210,26 @@ func (s *Server) Routes() http.Handler {
 		// Restaurant-level settings (integrations/branding).
 		r.With(s.requireBOSession, ajustesGate).Get("/integrations", s.handleBOIntegrationsGet)
 		r.With(s.requireBOSession, ajustesGate).Post("/integrations", s.handleBOIntegrationsSet)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/integrations/uazapi/servers", s.handleBOUAZAPIServersList)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Post("/integrations/uazapi/servers", s.handleBOUAZAPIServersCreate)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Patch("/integrations/uazapi/servers/{id}", s.handleBOUAZAPIServersPatch)
 		r.With(s.requireBOSession, ajustesGate).Get("/branding", s.handleBOBrandingGet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding", s.handleBOBrandingSet)
+		r.With(s.requireBOSession, ajustesGate).Get("/website", s.handleBOPremiumWebsiteGet)
+		r.With(s.requireBOSession, ajustesGate).Put("/website", s.handleBOPremiumWebsiteUpsert)
+		r.With(s.requireBOSession, ajustesGate).Post("/website", s.handleBOPremiumWebsiteUpsert)
+		r.With(s.requireBOSession, ajustesGate).Get("/website/templates", s.handleBOPremiumWebsiteTemplates)
+		r.With(s.requireBOSession, ajustesGate).Post("/website/ai-generate", s.handleBOPremiumWebsiteAIGenerate)
+		r.With(s.requireBOSession, ajustesGate).Get("/domains/search", s.handleBOPremiumDomainsSearch)
+		r.With(s.requireBOSession, ajustesGate).Post("/domains/quote", s.handleBOPremiumDomainsQuote)
+		r.With(s.requireBOSession, ajustesGate).Post("/domains/register", s.handleBOPremiumDomainsRegister)
+		r.With(s.requireBOSession, ajustesGate).Post("/domains/verify", s.handleBOPremiumDomainsVerify)
+
+		// Tables premium endpoints.
+		r.With(s.requireBOSession, reservasGate).Get("/tables", s.handleBOPremiumTablesList)
+		r.With(s.requireBOSession, reservasGate).Post("/tables", s.handleBOPremiumTablesCreate)
+		r.With(s.requireBOSession, reservasGate).Put("/tables", s.handleBOPremiumTablesUpdate)
+		r.With(s.requireBOSession, reservasGate).Get("/tables/ws", s.handleBOPremiumTablesWS)
 
 		// Members and role administration.
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members", s.handleBOMembersList)
@@ -228,6 +248,11 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/roles", s.handleBORolesGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/roles", s.handleBORoleCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/users/{id}/role", s.handleBOUserRolePatch)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/send", s.handleBOMembersWhatsAppSend)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/subscribe", s.handleBOMembersWhatsAppSubscribe)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
 
 		// Fichaje and schedules.
 		r.With(s.requireBOSession, fichajeGate).Get("/fichaje/ping", s.handleBOFichajePing)

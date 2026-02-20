@@ -33,6 +33,7 @@ type boMember struct {
 	DNI                 *string `json:"dni"`
 	BankAccount         *string `json:"bankAccount"`
 	Phone               *string `json:"phone"`
+	WhatsAppNumber      *string `json:"whatsappNumber"`
 	PhotoURL            *string `json:"photoUrl"`
 	WeeklyContractHours float64 `json:"weeklyContractHours"`
 }
@@ -44,6 +45,7 @@ type boMemberCreateRequest struct {
 	DNI                 *string  `json:"dni"`
 	BankAccount         *string  `json:"bankAccount"`
 	Phone               *string  `json:"phone"`
+	WhatsAppNumber      *string  `json:"whatsappNumber"`
 	PhotoURL            *string  `json:"photoUrl"`
 	RoleSlug            *string  `json:"roleSlug"`
 	Username            *string  `json:"username"`
@@ -58,6 +60,7 @@ type boMemberPatchRequest struct {
 	DNI                 *string  `json:"dni"`
 	BankAccount         *string  `json:"bankAccount"`
 	Phone               *string  `json:"phone"`
+	WhatsAppNumber      *string  `json:"whatsappNumber"`
 	PhotoURL            *string  `json:"photoUrl"`
 	WeeklyContractHours *float64 `json:"weeklyContractHours"`
 }
@@ -85,6 +88,7 @@ func (s *Server) handleBOMembersList(w http.ResponseWriter, r *http.Request) {
 			m.dni,
 			m.bank_account,
 			m.phone,
+			m.whatsapp_number,
 			m.photo_url,
 			COALESCE(c.weekly_hours, 40.00) AS weekly_hours
 		FROM restaurant_members m
@@ -232,6 +236,7 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 	dni := ptrToValue(current.DNI)
 	bank := ptrToValue(current.BankAccount)
 	phone := ptrToValue(current.Phone)
+	whatsappNumber := ptrToValue(current.WhatsAppNumber)
 	photo := ptrToValue(current.PhotoURL)
 	weekly := current.WeeklyContractHours
 
@@ -252,6 +257,9 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Phone != nil {
 		phone = strings.TrimSpace(*req.Phone)
+	}
+	if req.WhatsAppNumber != nil {
+		whatsappNumber = strings.TrimSpace(*req.WhatsAppNumber)
 	}
 	if req.PhotoURL != nil {
 		photo = strings.TrimSpace(*req.PhotoURL)
@@ -291,9 +299,10 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 			dni = ?,
 			bank_account = ?,
 			phone = ?,
+			whatsapp_number = ?,
 			photo_url = ?
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(photo), memberID, a.ActiveRestaurantID)
+	`, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(whatsappNumber), nullableString(photo), memberID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -866,6 +875,7 @@ func (s *Server) getBOMemberByID(ctx context.Context, restaurantID, memberID int
 			m.dni,
 			m.bank_account,
 			m.phone,
+			m.whatsapp_number,
 			m.photo_url,
 			COALESCE(c.weekly_hours, 40.00) AS weekly_hours
 		FROM restaurant_members m
@@ -888,6 +898,7 @@ func scanBOMember(scanner boMemberScanner) (boMember, error) {
 		dni        sql.NullString
 		bank       sql.NullString
 		phone      sql.NullString
+		whatsapp   sql.NullString
 		photo      sql.NullString
 		weeklyHour float64
 	)
@@ -900,6 +911,7 @@ func scanBOMember(scanner boMemberScanner) (boMember, error) {
 		&dni,
 		&bank,
 		&phone,
+		&whatsapp,
 		&photo,
 		&weeklyHour,
 	)
@@ -914,6 +926,7 @@ func scanBOMember(scanner boMemberScanner) (boMember, error) {
 	m.DNI = nullStringPtr(dni)
 	m.BankAccount = nullStringPtr(bank)
 	m.Phone = nullStringPtr(phone)
+	m.WhatsAppNumber = nullStringPtr(whatsapp)
 	m.PhotoURL = nullStringPtr(photo)
 	m.WeeklyContractHours = weeklyHour
 	return m, nil
