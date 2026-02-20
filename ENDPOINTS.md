@@ -710,6 +710,15 @@ Body (JSON):
 Response:
 - `{ success: true }`
 
+### `PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}`
+Updates a single dish in-place (without replacing the whole section list).
+
+Body (JSON):
+- Any subset of: `{ catalog_dish_id, title, description, allergens, supplement_enabled, supplement_price, price, active }`
+
+Response:
+- `{ success: true, dish }`
+
 ### `POST /api/admin/group-menus-v2/{id}/publish`
 Validates menu has at least one section and one active dish, marks `is_draft=0`, and syncs legacy snapshot fields.
 
