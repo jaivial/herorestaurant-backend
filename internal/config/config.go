@@ -2,6 +2,9 @@ package config
 
 import (
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 type MySQLConfig struct {
@@ -26,6 +29,14 @@ type Config struct {
 	CloudflareAPIToken     string
 	CloudflareAccountID    string
 	CloudflareZoneID       string
+	OpenAIAPIKey           string
+	OpenAIImageEditModel   string
+	OpenAIImageEditURL     string
+	OpenAITimeout          time.Duration
+	OpenAIFetchTimeout     time.Duration
+	OpenAIMaxInputBytes    int
+	OpenAIMaxOutputBytes   int
+	OpenAIConcurrency      int
 	MySQL                  MySQLConfig
 }
 
@@ -49,6 +60,14 @@ func Load() Config {
 		CloudflareAPIToken:     os.Getenv("CLOUDFLARE_API_TOKEN"),
 		CloudflareAccountID:    os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
 		CloudflareZoneID:       os.Getenv("CLOUDFLARE_ZONE_ID"),
+		OpenAIAPIKey:           strings.TrimSpace(getenvFirst([]string{"WAVESPEED_API_KEY"}, "")),
+		OpenAIImageEditModel:   getenvFirst([]string{"WAVESPEED_IMAGE_EDIT_MODEL", "OPENAI_IMAGE_EDIT_MODEL", "OPENAI_IMAGE_MODEL"}, "openai/gpt-image-1.5/edit"),
+		OpenAIImageEditURL:     getenvFirst([]string{"WAVESPEED_IMAGE_EDIT_URL", "OPENAI_IMAGE_EDIT_URL", "OPENAI_IMAGE_URL"}, "https://api.wavespeed.ai/api/v3/openai/gpt-image-1.5/edit"),
+		OpenAITimeout:          time.Duration(getenvIntFirst([]string{"WAVESPEED_IMAGE_TIMEOUT_SECONDS", "OPENAI_IMAGE_TIMEOUT_SECONDS", "OPENAI_IMAGE_EDIT_TIMEOUT_SECONDS"}, 180, 5, 600)) * time.Second,
+		OpenAIFetchTimeout:     time.Duration(getenvIntFirst([]string{"WAVESPEED_IMAGE_FETCH_TIMEOUT_SECONDS", "OPENAI_IMAGE_FETCH_TIMEOUT_SECONDS", "OPENAI_IMAGE_EDIT_FETCH_TIMEOUT_SECONDS"}, 30, 5, 180)) * time.Second,
+		OpenAIMaxInputBytes:    getenvIntFirst([]string{"WAVESPEED_IMAGE_MAX_INPUT_BYTES", "OPENAI_IMAGE_MAX_INPUT_BYTES"}, 8<<20, 1<<20, 32<<20),
+		OpenAIMaxOutputBytes:   getenvIntFirst([]string{"WAVESPEED_IMAGE_MAX_OUTPUT_BYTES", "OPENAI_IMAGE_MAX_OUTPUT_BYTES"}, 8<<20, 64*1024, 64<<20),
+		OpenAIConcurrency:      getenvIntFirst([]string{"WAVESPEED_IMAGE_CONCURRENCY", "OPENAI_IMAGE_CONCURRENCY", "OPENAI_IMAGE_EDIT_CONCURRENCY"}, 2, 1, 32),
 		MySQL: MySQLConfig{
 			Host:     getenv("DB_HOST", "127.0.0.1"),
 			Port:     getenv("DB_PORT", "3306"),
@@ -65,4 +84,53 @@ func getenv(key, fallback string) string {
 		return fallback
 	}
 	return val
+}
+
+func getenvFirst(keys []string, fallback string) string {
+	for _, key := range keys {
+		val := strings.TrimSpace(os.Getenv(key))
+		if val != "" {
+			return val
+		}
+	}
+	return fallback
+}
+
+func getenvInt(key string, fallback int, min int, max int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	if min > 0 && v < min {
+		return fallback
+	}
+	if max > 0 && v > max {
+		return fallback
+	}
+	return v
+}
+
+func getenvIntFirst(keys []string, fallback int, min int, max int) int {
+	for _, key := range keys {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			return fallback
+		}
+		if min > 0 && v < min {
+			return fallback
+		}
+		if max > 0 && v > max {
+			return fallback
+		}
+		return v
+	}
+	return fallback
 }

@@ -24,9 +24,26 @@ import (
 const (
 	boPremiumDomainMarkupFactor = 1.5
 	boPremiumWhatsAppFeatureKey = "whatsapp_pack"
+	boWebsiteDefaultThemeID     = "villa-carmen"
 )
 
 var boPremiumDomainRe = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$`)
+
+var boWebsiteMenuTypes = map[string]struct{}{
+	"closed_conventional": {},
+	"closed_group":        {},
+	"a_la_carte":          {},
+	"a_la_carte_group":    {},
+	"special":             {},
+}
+
+var boWebsiteThemeCatalog = []map[string]any{
+	{"id": "villa-carmen", "name": "Villa Carmen", "thumbnail_url": "", "active": true},
+	{"id": "lumen-gold", "name": "Lumen Gold", "thumbnail_url": "", "active": true},
+	{"id": "terra-olive", "name": "Terra Olive", "thumbnail_url": "", "active": true},
+	{"id": "nocturne-copper", "name": "Nocturne Copper", "thumbnail_url": "", "active": true},
+	{"id": "sea-breeze", "name": "Sea Breeze", "thumbnail_url": "", "active": true},
+}
 
 type boSQLExecutor interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -49,11 +66,11 @@ type boTablesClient struct {
 
 type boPremiumWebsiteUpsertRequest struct {
 	TemplateID   *string `json:"template_id"`
-	CustomHTML *string `json:"custom_html"`
+	CustomHTML   *string `json:"custom_html"`
 	Domain       *string `json:"domain"`
 	DomainStatus *string `json:"domain_status"`
 	IsPublished  *bool   `json:"is_published"`
-	Draft      *struct {
+	Draft        *struct {
 		HTMLContent *string        `json:"html_content"`
 		Meta        map[string]any `json:"meta"`
 	} `json:"draft"`
@@ -61,6 +78,11 @@ type boPremiumWebsiteUpsertRequest struct {
 
 type boPremiumWebsiteAIGenerateRequest struct {
 	Prompt string `json:"prompt"`
+}
+
+type boPremiumWebsiteMenuTemplatesUpsertRequest struct {
+	DefaultThemeID *string           `json:"default_theme_id"`
+	Overrides      map[string]string `json:"overrides"`
 }
 
 type boPremiumDomainQuoteRequest struct {
@@ -360,22 +382,292 @@ func (s *Server) handleBOPremiumWebsiteTemplates(w http.ResponseWriter, r *http.
 		return
 	}
 
-	templates := []map[string]any{
-		{"id": "classic-hero", "name": "Classic Hero", "thumbnail_url": "/premium/templates/classic-hero.jpg", "active": true},
-		{"id": "minimal-bistro", "name": "Minimal Bistro", "thumbnail_url": "/premium/templates/minimal-bistro.jpg", "active": true},
-		{"id": "sunset-terrace", "name": "Sunset Terrace", "thumbnail_url": "/premium/templates/sunset-terrace.jpg", "active": true},
-		{"id": "rustic-garden", "name": "Rustic Garden", "thumbnail_url": "/premium/templates/rustic-garden.jpg", "active": true},
-		{"id": "chef-special", "name": "Chef Special", "thumbnail_url": "/premium/templates/chef-special.jpg", "active": true},
-		{"id": "events-night", "name": "Events Night", "thumbnail_url": "/premium/templates/events-night.jpg", "active": true},
-		{"id": "wine-cellar", "name": "Wine Cellar", "thumbnail_url": "/premium/templates/wine-cellar.jpg", "active": true},
-		{"id": "family-brunch", "name": "Family Brunch", "thumbnail_url": "/premium/templates/family-brunch.jpg", "active": true},
-		{"id": "modern-fine-dining", "name": "Modern Fine Dining", "thumbnail_url": "/premium/templates/modern-fine-dining.jpg", "active": true},
-		{"id": "mediterranean", "name": "Mediterranean", "thumbnail_url": "/premium/templates/mediterranean.jpg", "active": true},
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"templates": boWebsiteThemeCatalog,
+	})
+}
+
+func isValidWebsiteThemeID(themeID string) bool {
+	normalized := normalizeWebsiteThemeID(themeID)
+	if normalized == "" {
+		return false
+	}
+	for _, item := range boWebsiteThemeCatalog {
+		if strings.EqualFold(strings.TrimSpace(firstStringFromMap(item, "id")), normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeWebsiteThemeAlias(raw string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	if trimmed == "" {
+		return ""
+	}
+	replaced := strings.NewReplacer("_", "-", " ", "-").Replace(trimmed)
+	var out strings.Builder
+	prevDash := false
+	for _, r := range replaced {
+		isAlphaNum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAlphaNum {
+			out.WriteRune(r)
+			prevDash = false
+			continue
+		}
+		if r == '-' {
+			if !prevDash && out.Len() > 0 {
+				out.WriteRune('-')
+				prevDash = true
+			}
+			continue
+		}
+	}
+	return strings.Trim(out.String(), "-")
+}
+
+func compactWebsiteThemeAlias(raw string) string {
+	return strings.ReplaceAll(normalizeWebsiteThemeAlias(raw), "-", "")
+}
+
+func normalizeWebsiteThemeID(themeID string) string {
+	trimmed := strings.TrimSpace(themeID)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "preact-copy") {
+		return boWebsiteDefaultThemeID
+	}
+	candidateAlias := normalizeWebsiteThemeAlias(trimmed)
+	candidateCompact := compactWebsiteThemeAlias(trimmed)
+	for _, item := range boWebsiteThemeCatalog {
+		id := strings.TrimSpace(firstStringFromMap(item, "id"))
+		name := strings.TrimSpace(firstStringFromMap(item, "name"))
+		if strings.EqualFold(id, trimmed) {
+			return id
+		}
+		if candidateAlias != "" {
+			if candidateAlias == normalizeWebsiteThemeAlias(id) || candidateAlias == normalizeWebsiteThemeAlias(name) {
+				return id
+			}
+		}
+		if candidateCompact != "" {
+			if candidateCompact == compactWebsiteThemeAlias(id) || candidateCompact == compactWebsiteThemeAlias(name) {
+				return id
+			}
+		}
+		if strings.EqualFold(name, trimmed) {
+			return id
+		}
+	}
+	return trimmed
+}
+
+func normalizeWebsiteMenuType(menuType string) string {
+	out := strings.TrimSpace(strings.ToLower(menuType))
+	if out == "group" {
+		return "closed_group"
+	}
+	return out
+}
+
+func (s *Server) loadBOPremiumWebsiteMenuTemplates(ctx context.Context, restaurantID int) (string, map[string]string, bool, error) {
+	defaultThemeID := ""
+	hasDefaultAssignment := false
+	if row, found, err := s.queryOneAsMap(ctx, `SELECT template_id FROM restaurant_websites WHERE restaurant_id = ? LIMIT 1`, restaurantID); err != nil {
+		return "", nil, false, err
+	} else if found {
+		defaultThemeID = strings.TrimSpace(firstStringFromMap(row, "template_id"))
+		if isValidWebsiteThemeID(defaultThemeID) || strings.EqualFold(defaultThemeID, "preact-copy") {
+			hasDefaultAssignment = true
+		}
+	}
+	defaultThemeID = normalizeWebsiteThemeID(defaultThemeID)
+	if !isValidWebsiteThemeID(defaultThemeID) {
+		defaultThemeID = boWebsiteDefaultThemeID
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT menu_type, theme_id
+		FROM restaurant_menu_templates
+		WHERE restaurant_id = ?
+	`, restaurantID)
+	if err != nil {
+		return "", nil, false, err
+	}
+	defer rows.Close()
+
+	overrides := map[string]string{}
+	for rows.Next() {
+		var menuTypeRaw string
+		var themeIDRaw string
+		if scanErr := rows.Scan(&menuTypeRaw, &themeIDRaw); scanErr != nil {
+			return "", nil, false, scanErr
+		}
+		menuType := normalizeWebsiteMenuType(menuTypeRaw)
+		if _, ok := boWebsiteMenuTypes[menuType]; !ok {
+			continue
+		}
+		themeID := normalizeWebsiteThemeID(themeIDRaw)
+		if !isValidWebsiteThemeID(themeID) {
+			continue
+		}
+		overrides[menuType] = themeID
+	}
+	if err := rows.Err(); err != nil {
+		return "", nil, false, err
+	}
+	hasAssignment := hasDefaultAssignment || len(overrides) > 0
+	return defaultThemeID, overrides, hasAssignment, nil
+}
+
+func (s *Server) upsertBOPremiumWebsiteMenuTemplateOverrides(ctx context.Context, restaurantID int, overrides map[string]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM restaurant_menu_templates WHERE restaurant_id = ?`, restaurantID); err != nil {
+		return err
+	}
+
+	for menuType, themeID := range overrides {
+		if _, ok := boWebsiteMenuTypes[menuType]; !ok {
+			continue
+		}
+		if !isValidWebsiteThemeID(themeID) {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO restaurant_menu_templates
+				(restaurant_id, menu_type, theme_id, created_at, updated_at)
+			VALUES (?, ?, ?, NOW(), NOW())
+			ON DUPLICATE KEY UPDATE
+				theme_id = VALUES(theme_id),
+				updated_at = NOW()
+		`, restaurantID, menuType, themeID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *Server) handleBOPremiumWebsiteMenuTemplatesGet(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	defaultThemeID, overrides, hasAssignment, err := s.loadBOPremiumWebsiteMenuTemplates(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "WEBSITE_MENU_TEMPLATES_READ_FAILED", "No se pudo cargar configuracion de plantillas")
+		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"templates": templates,
+		"success":          true,
+		"default_theme_id": defaultThemeID,
+		"overrides":        overrides,
+		"themes":           boWebsiteThemeCatalog,
+		"assigned":         hasAssignment,
+	})
+}
+
+func (s *Server) handleBOPremiumWebsiteMenuTemplatesUpsert(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	var req boPremiumWebsiteMenuTemplatesUpsertRequest
+	if err := readJSONBody(r, &req); err != nil {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "JSON invalido")
+		return
+	}
+
+	defaultThemeID := boWebsiteDefaultThemeID
+	if req.DefaultThemeID != nil {
+		candidate := normalizeWebsiteThemeID(*req.DefaultThemeID)
+		if candidate != "" {
+			if !isValidWebsiteThemeID(candidate) {
+				writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "Plantilla por defecto invalida")
+				return
+			}
+			defaultThemeID = candidate
+		}
+	}
+
+	overrides := map[string]string{}
+	for menuTypeRaw, themeIDRaw := range req.Overrides {
+		menuType := normalizeWebsiteMenuType(menuTypeRaw)
+		if _, ok := boWebsiteMenuTypes[menuType]; !ok {
+			continue
+		}
+		themeID := normalizeWebsiteThemeID(themeIDRaw)
+		if themeID == "" {
+			continue
+		}
+		if !isValidWebsiteThemeID(themeID) {
+			writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "Plantilla invalida para tipo de menu")
+			return
+		}
+		overrides[menuType] = themeID
+	}
+
+	currentWebsite, currentFound, err := s.loadBOPremiumWebsite(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "WEBSITE_READ_FAILED", "No se pudo cargar website")
+		return
+	}
+
+	customHTML := ""
+	domain := ""
+	domainStatus := "pending"
+	isPublished := false
+	draftHTML := ""
+	draftMeta := map[string]any{}
+	if currentFound {
+		customHTML = firstStringFromMap(currentWebsite, "custom_html")
+		domain = firstStringFromMap(currentWebsite, "domain")
+		domainStatus = firstStringFromMap(currentWebsite, "domain_status")
+		isPublished = anyToBool(currentWebsite["is_published"])
+		if draftMap, ok := asStringAnyMap(currentWebsite["draft"]); ok {
+			draftHTML = firstStringFromMap(draftMap, "html_content")
+			if metaMap, ok := asStringAnyMap(draftMap["meta"]); ok {
+				draftMeta = metaMap
+			}
+		}
+	}
+
+	if err := s.upsertBOPremiumWebsite(r.Context(), a.ActiveRestaurantID, defaultThemeID, customHTML, domain, domainStatus, isPublished, draftHTML, draftMeta); err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "WEBSITE_UPSERT_FAILED", "No se pudo guardar plantilla por defecto")
+		return
+	}
+	if err := s.upsertBOPremiumWebsiteMenuTemplateOverrides(r.Context(), a.ActiveRestaurantID, overrides); err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "WEBSITE_MENU_TEMPLATES_UPSERT_FAILED", "No se pudo guardar configuracion de plantillas")
+		return
+	}
+
+	defaultThemeOut, overridesOut, hasAssignmentOut, err := s.loadBOPremiumWebsiteMenuTemplates(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "WEBSITE_MENU_TEMPLATES_READ_FAILED", "No se pudo cargar configuracion de plantillas")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":          true,
+		"default_theme_id": defaultThemeOut,
+		"overrides":        overridesOut,
+		"themes":           boWebsiteThemeCatalog,
+		"assigned":         hasAssignmentOut,
 	})
 }
 
@@ -1014,8 +1306,8 @@ func (s *Server) handleBOPremiumTablesList(w http.ResponseWriter, r *http.Reques
 			"areas":        areas,
 			"generated_at": time.Now().UTC().Format(time.RFC3339),
 		},
-		"areas":   areas,
-		"tables":  tables,
+		"areas":  areas,
+		"tables": tables,
 	})
 }
 
@@ -1263,11 +1555,11 @@ func (s *Server) createBOPremiumArea(ctx context.Context, restaurantID int, req 
 
 	id, _ := insertRes.LastInsertId()
 	out := map[string]any{
-		"id":           id,
+		"id":            id,
 		"restaurant_id": restaurantID,
-		"name":         name,
+		"name":          name,
 		"display_order": displayOrder,
-		"is_active":    isActive,
+		"is_active":     isActive,
 	}
 	if req.Metadata != nil {
 		out["metadata"] = req.Metadata

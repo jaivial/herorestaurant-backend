@@ -19,19 +19,27 @@ import (
 )
 
 type Server struct {
-	db          *sql.DB
-	cfg         config.Config
-	tenantCache tenantDomainCache
-	fichajeHub  *boFichajeHub
-	tablesHub   *boTablesHub
+	db                  *sql.DB
+	cfg                 config.Config
+	tenantCache         tenantDomainCache
+	fichajeHub          *boFichajeHub
+	tablesHub           *boTablesHub
+	groupMenusV2AIHub   *boGroupMenuV2AIHub
+	groupMenusV2AIQueue chan struct{}
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
+	aiConcurrency := cfg.OpenAIConcurrency
+	if aiConcurrency <= 0 {
+		aiConcurrency = 1
+	}
 	s := &Server{
-		db:         db,
-		cfg:        cfg,
-		fichajeHub: newBOFichajeHub(),
-		tablesHub:  newBOTablesHub(),
+		db:                  db,
+		cfg:                 cfg,
+		fichajeHub:          newBOFichajeHub(),
+		tablesHub:           newBOTablesHub(),
+		groupMenusV2AIHub:   newBOGroupMenuV2AIHub(),
+		groupMenusV2AIQueue: make(chan struct{}, aiConcurrency),
 	}
 	go s.runBOFichajeAutoCutLoop()
 	return s
@@ -169,13 +177,16 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus/{id}", s.handleBOGroupMenuDelete)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2", s.handleBOGroupMenusV2List)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/drafts", s.handleBOGroupMenusV2CreateDraft)
+		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/ws", s.handleBOGroupMenusV2AIWS)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}", s.handleBOGroupMenusV2Get)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/basics", s.handleBOGroupMenusV2PatchBasics)
-			r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/menu-type", s.handleBOGroupMenusV2PatchMenuType)
-			r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections", s.handleBOGroupMenusV2PutSections)
-			r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2PutSectionDishes)
-			r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}", s.handleBOGroupMenusV2PatchSectionDish)
-			r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/publish", s.handleBOGroupMenusV2Publish)
+		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/menu-type", s.handleBOGroupMenusV2PatchMenuType)
+		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections", s.handleBOGroupMenusV2PutSections)
+		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2PutSectionDishes)
+		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}", s.handleBOGroupMenusV2PatchSectionDish)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image", s.handleBOGroupMenusV2UploadSectionDishImage)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image/ai", s.handleBOGroupMenusV2GenerateSectionDishAIImage)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/publish", s.handleBOGroupMenusV2Publish)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/toggle-active", s.handleBOGroupMenusV2ToggleActive)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/special-image", s.handleBOSpecialMenuImageUpload)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}", s.handleBOGroupMenusV2Delete)
@@ -220,6 +231,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, ajustesGate).Put("/website", s.handleBOPremiumWebsiteUpsert)
 		r.With(s.requireBOSession, ajustesGate).Post("/website", s.handleBOPremiumWebsiteUpsert)
 		r.With(s.requireBOSession, ajustesGate).Get("/website/templates", s.handleBOPremiumWebsiteTemplates)
+		r.With(s.requireBOSession, ajustesGate).Get("/website/menu-templates", s.handleBOPremiumWebsiteMenuTemplatesGet)
+		r.With(s.requireBOSession, ajustesGate).Put("/website/menu-templates", s.handleBOPremiumWebsiteMenuTemplatesUpsert)
 		r.With(s.requireBOSession, ajustesGate).Post("/website/ai-generate", s.handleBOPremiumWebsiteAIGenerate)
 		r.With(s.requireBOSession, ajustesGate).Get("/domains/search", s.handleBOPremiumDomainsSearch)
 		r.With(s.requireBOSession, ajustesGate).Post("/domains/quote", s.handleBOPremiumDomainsQuote)

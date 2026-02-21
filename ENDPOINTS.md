@@ -662,6 +662,7 @@ Returns full editor payload:
 - basics (`menu_title`, `price`, `active`, `is_draft`, `menu_type`, `menu_subtitle`)
 - settings (`included_coffee`, `beverage`, `comments`, `min_party_size`, `main_dishes_limit`, `main_dishes_limit_number`)
 - `sections[]` and nested `dishes[]`
+- `ai_images` tracker for dish image generation (`total_requested`, `total_generating`, `items[]`)
 
 Response:
 - `{ success: true, menu: { ... } }`
@@ -708,7 +709,11 @@ Body (JSON):
 - `dishes`: array of `{ id?, catalog_dish_id?, title, description, allergens, supplement_enabled, supplement_price, active? }`
 
 Response:
-- `{ success: true }`
+- `{ success: true, dishes: [{ ..., foto_url?, image_url? }] }`
+- Dish fields include AI image state:
+  - `ai_requested_img` (boolean)
+  - `ai_generating_img` (boolean)
+  - `ai_generated_img` (string|null)
 
 ### `PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}`
 Updates a single dish in-place (without replacing the whole section list).
@@ -718,6 +723,68 @@ Body (JSON):
 
 Response:
 - `{ success: true, dish }`
+- `dish` may include `foto_url` and `image_url` when the dish has an uploaded image.
+- `dish` includes `ai_requested_img`, `ai_generating_img`, `ai_generated_img`.
+
+### `POST /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image`
+Uploads/replaces an image for one V2 dish.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Body (`multipart/form-data`):
+- `image`: image file (`jpeg`, `png`, `webp`, `gif`; max 8MB)
+
+Storage path:
+- `{restaurantId}/pictures/{menuId}/dish-{dishId}-{timestamp}.{ext}`
+
+Response:
+- `{ success: true, dish }`
+- `dish` includes `foto_url` + `image_url` aliases to the Bunny pull URL.
+
+### `POST /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image/ai`
+Starts asynchronous AI enhancement for one V2 dish image.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Body (`multipart/form-data`):
+- `image`: source image (`jpeg`, `png`, `webp`; max bytes controlled by backend env)
+
+Behavior:
+- Validates menu/section/dish ownership.
+- Sets dish flags immediately: `ai_requested_img=1`, `ai_generating_img=1`.
+- Emits websocket event `ai_image_started`.
+- Runs background worker (bounded concurrency) to call OpenAI images edit API.
+- Uploads generated result to Bunny path:
+  - `{restaurant_id}/pictures/{menu_id}/ai-generated/{dish_id}.webp`
+- Persists:
+  - `ai_generated_img` (full Bunny pull URL),
+  - `ai_generating_img=0`,
+  - `foto_path` (object path).
+- Emits `ai_image_completed` (or `ai_image_failed` on errors).
+
+Response:
+- `{ success: true, message: \"AI image generation started\", dish_id }`
+- `{ success: false, message }`
+
+### `GET /api/admin/group-menus-v2/ws?menuId={id}`
+WebSocket endpoint for realtime V2 dish AI image updates (scoped by active restaurant + menu id).
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Behavior:
+- Requires query `menuId` (positive integer and owned by active restaurant).
+- Server sends `hello` with current `tracker` snapshot.
+- Client can send `sync`, `refresh`, `join`, `join_menu`, or `join_group_menu` messages to request fresh snapshot.
+- Broadcast event types:
+  - `ai_image_started`
+  - `ai_image_completed`
+  - `ai_image_failed`
+
+Tracker payload shape:
+- `{ total_requested, total_generating, items: [{ dish_id, ai_requested, ai_generating, ai_generated_img }] }`
 
 ### `POST /api/admin/group-menus-v2/{id}/publish`
 Validates menu has at least one section and one active dish, marks `is_draft=0`, and syncs legacy snapshot fields.
@@ -948,8 +1015,9 @@ Response:
   - `min_party_size` (number)
   - `main_dishes_limit` (boolean)
   - `main_dishes_limit_number` (number)
+- `show_dish_images` (boolean; legacy toggle for preview image cards)
 - `sections` (`PublicMenuSection[]`)
-- `special_menu_image_url` (string; empty when not set)
+- `special_menu_image_url` (string; full Bunny pull URL when set, empty when not set)
 - `legacy_source_table` (string; optional, e.g. `DIA|FINDE`)
 - `created_at`, `modified_at` (string)
 
@@ -969,6 +1037,7 @@ Response:
 - `supplement_price` (number|null)
 - `price` (number|null)
 - `position` (number)
+- `foto_url` (string|null; full Bunny pull URL when dish image exists)
 
 ### `GET /api/menus/dia`
 Response:
@@ -1443,6 +1512,8 @@ Auth:
 Endpoints:
 - `GET /api/admin/premium/website`
 - `PUT /api/admin/premium/website`
+- `GET /api/admin/website/menu-templates`
+- `PUT /api/admin/website/menu-templates`
 - `GET /api/admin/premium/areas`
 - `POST /api/admin/premium/areas`
 - `PATCH /api/admin/premium/areas/{id}`
@@ -1460,6 +1531,12 @@ Endpoints:
 Response basics:
 - Success: `{ "success": true, ... }`
 - Error: `{ "success": false, "message": "..." }`
+
+`GET /api/admin/website/menu-templates` response:
+- `default_theme_id`: plantilla fallback para la web premium.
+- `overrides`: map por tipo de menu (`closed_conventional`, `a_la_carte`, `closed_group`, `a_la_carte_group`, `special`).
+- `themes`: catalogo de plantillas disponibles.
+- `assigned`: `true` cuando el restaurante tiene al menos una plantilla asignada en configuracion (default o override), `false` en caso contrario.
 
 ## WhatsApp Premium Multi-Tenant Onboarding (`/api/admin/members/whatsapp/*`)
 

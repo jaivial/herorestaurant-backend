@@ -41,6 +41,7 @@ type publicMenuDish struct {
 	ID                int64    `json:"id"`
 	Title             string   `json:"title"`
 	Description       string   `json:"description"`
+	FotoURL           string   `json:"foto_url"`
 	Allergens         []string `json:"allergens"`
 	SupplementEnabled bool     `json:"supplement_enabled"`
 	SupplementPrice   *float64 `json:"supplement_price"`
@@ -78,6 +79,7 @@ type publicMenuItem struct {
 	Price               string                `json:"price"`
 	Active              bool                  `json:"active"`
 	MenuSubtitle        []string              `json:"menu_subtitle"`
+	ShowDishImages      bool                  `json:"show_dish_images"`
 	Entrantes           []string              `json:"entrantes"`
 	Principales         publicMenuPrincipales `json:"principales"`
 	Postre              []string              `json:"postre"`
@@ -107,6 +109,18 @@ func buildPublicMenuSlug(title string, menuID int64) string {
 		base = "menu"
 	}
 	return fmt.Sprintf("%s-%d", base, menuID)
+}
+
+func (s *Server) publicMenuMediaURL(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return value
+	}
+	return s.bunnyPullURL(value)
 }
 
 func buildFallbackPublicSectionDishes(items []string) []publicMenuDish {
@@ -185,7 +199,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, price, active, menu_type, menu_subtitle,
-		       entrantes, principales, postre, beverage, comments,
+		       show_dish_images, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
 		       special_menu_image_url, legacy_source_table, created_at, modified_at
 		FROM menusDeGrupos
@@ -226,6 +240,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			activeInt          int
 			menuTypeRaw        sql.NullString
 			menuSubtitleRaw    sql.NullString
+			showDishImagesInt  int
 			entrantesRaw       sql.NullString
 			principalesRaw     sql.NullString
 			postreRaw          sql.NullString
@@ -248,6 +263,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			&activeInt,
 			&menuTypeRaw,
 			&menuSubtitleRaw,
+			&showDishImagesInt,
 			&entrantesRaw,
 			&principalesRaw,
 			&postreRaw,
@@ -315,7 +331,8 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			MenuSubtitle: anySliceToStringList(
 				decodeJSONOrFallback(menuSubtitleRaw.String, []any{}),
 			),
-			Entrantes: anySliceToStringList(decodeJSONOrFallback(entrantesRaw.String, []any{})),
+			ShowDishImages: showDishImagesInt != 0,
+			Entrantes:      anySliceToStringList(decodeJSONOrFallback(entrantesRaw.String, []any{})),
 			Principales: publicMenuPrincipales{
 				TituloPrincipales: principalesTitle,
 				Items:             principalesItems,
@@ -330,7 +347,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				MainDishesLimitCount: mainDishesLimitNum,
 			},
 			Sections:            []publicMenuSection{},
-			SpecialMenuImageURL: strings.TrimSpace(specialImageURLRaw.String),
+			SpecialMenuImageURL: s.publicMenuMediaURL(specialImageURLRaw.String),
 			LegacySourceTable:   strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),
 			CreatedAt:           createdAtRaw.String,
 			ModifiedAt:          modifiedAtRaw.String,
@@ -410,7 +427,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		dishesQuery := fmt.Sprintf(`
-			SELECT id, menu_id, section_id, title_snapshot, description_snapshot, allergens_json,
+			SELECT id, menu_id, section_id, title_snapshot, description_snapshot, allergens_json, foto_path,
 			       supplement_enabled, supplement_price, price, position
 			FROM group_menu_section_dishes_v2
 			WHERE restaurant_id = ?
@@ -435,6 +452,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				title           string
 				description     string
 				allergensRaw    sql.NullString
+				fotoPath        sql.NullString
 				supplementInt   int
 				supplementPrice sql.NullFloat64
 				priceRaw        sql.NullFloat64
@@ -447,6 +465,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				&title,
 				&description,
 				&allergensRaw,
+				&fotoPath,
 				&supplementInt,
 				&supplementPrice,
 				&priceRaw,
@@ -472,6 +491,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				ID:                dishID,
 				Title:             strings.TrimSpace(title),
 				Description:       strings.TrimSpace(description),
+				FotoURL:           s.publicMenuMediaURL(fotoPath.String),
 				Allergens:         anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
 				SupplementEnabled: supplementInt != 0,
 				SupplementPrice:   nil,

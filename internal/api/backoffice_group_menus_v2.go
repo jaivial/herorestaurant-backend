@@ -37,6 +37,11 @@ type boV2Dish struct {
 	Price             *float64 `json:"price"`
 	Active            bool     `json:"active"`
 	Position          int      `json:"position"`
+	FotoURL           *string  `json:"foto_url,omitempty"`
+	ImageURL          *string  `json:"image_url,omitempty"`
+	AIRequestedImg    bool     `json:"ai_requested_img"`
+	AIGeneratingImg   bool     `json:"ai_generating_img"`
+	AIGeneratedImg    *string  `json:"ai_generated_img,omitempty"`
 }
 
 func normalizeV2MenuType(raw string) string {
@@ -418,7 +423,8 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 
 	dRows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
-		       supplement_enabled, supplement_price, price, active, position
+		       supplement_enabled, supplement_price, price, active, position, COALESCE(foto_path, ''),
+		       COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
 		FROM group_menu_section_dishes_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY section_id ASC, position ASC, id ASC
@@ -430,13 +436,17 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 
 	for dRows.Next() {
 		var (
-			d              boV2Dish
-			catalogID      sql.NullInt64
-			allergensRaw   sql.NullString
-			suppPriceRaw   sql.NullFloat64
-			priceRaw       sql.NullFloat64
-			suppEnabledInt int
-			activeInt      int
+			d               boV2Dish
+			catalogID       sql.NullInt64
+			allergensRaw    sql.NullString
+			suppPriceRaw    sql.NullFloat64
+			priceRaw        sql.NullFloat64
+			suppEnabledInt  int
+			activeInt       int
+			fotoPath        string
+			aiRequestedInt  int
+			aiGeneratingInt int
+			aiGeneratedRaw  sql.NullString
 		)
 		if err := dRows.Scan(
 			&d.ID,
@@ -450,6 +460,10 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 			&priceRaw,
 			&activeInt,
 			&d.Position,
+			&fotoPath,
+			&aiRequestedInt,
+			&aiGeneratingInt,
+			&aiGeneratedRaw,
 		); err != nil {
 			return nil, err
 		}
@@ -468,6 +482,18 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 			d.Price = &p
 		}
 		d.Active = activeInt != 0
+		d.AIRequestedImg = aiRequestedInt != 0
+		d.AIGeneratingImg = aiGeneratingInt != 0
+		if aiGeneratedRaw.Valid {
+			if v := strings.TrimSpace(aiGeneratedRaw.String); v != "" {
+				d.AIGeneratedImg = &v
+			}
+		}
+		if p := strings.TrimSpace(fotoPath); p != "" {
+			url := s.bunnyPullURL(p)
+			d.FotoURL = &url
+			d.ImageURL = &url
+		}
 
 		idx, ok := sectionByID[d.SectionID]
 		if !ok {
@@ -482,7 +508,8 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, menuID int64, sectionID int64) ([]boV2Dish, error) {
 	dRows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
-		       supplement_enabled, supplement_price, price, active, position
+		       supplement_enabled, supplement_price, price, active, position, COALESCE(foto_path, ''),
+		       COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
 		FROM group_menu_section_dishes_v2
 		WHERE restaurant_id = ? AND menu_id = ? AND section_id = ?
 		ORDER BY position ASC, id ASC
@@ -495,13 +522,17 @@ func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, me
 	out := make([]boV2Dish, 0, 16)
 	for dRows.Next() {
 		var (
-			d              boV2Dish
-			catalogID      sql.NullInt64
-			allergensRaw   sql.NullString
-			suppPriceRaw   sql.NullFloat64
-			priceRaw       sql.NullFloat64
-			suppEnabledInt int
-			activeInt      int
+			d               boV2Dish
+			catalogID       sql.NullInt64
+			allergensRaw    sql.NullString
+			suppPriceRaw    sql.NullFloat64
+			priceRaw        sql.NullFloat64
+			suppEnabledInt  int
+			activeInt       int
+			fotoPath        string
+			aiRequestedInt  int
+			aiGeneratingInt int
+			aiGeneratedRaw  sql.NullString
 		)
 		if err := dRows.Scan(
 			&d.ID,
@@ -515,6 +546,10 @@ func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, me
 			&priceRaw,
 			&activeInt,
 			&d.Position,
+			&fotoPath,
+			&aiRequestedInt,
+			&aiGeneratingInt,
+			&aiGeneratedRaw,
 		); err != nil {
 			return nil, err
 		}
@@ -533,9 +568,92 @@ func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, me
 			d.Price = &p
 		}
 		d.Active = activeInt != 0
+		d.AIRequestedImg = aiRequestedInt != 0
+		d.AIGeneratingImg = aiGeneratingInt != 0
+		if aiGeneratedRaw.Valid {
+			if v := strings.TrimSpace(aiGeneratedRaw.String); v != "" {
+				d.AIGeneratedImg = &v
+			}
+		}
+		if p := strings.TrimSpace(fotoPath); p != "" {
+			url := s.bunnyPullURL(p)
+			d.FotoURL = &url
+			d.ImageURL = &url
+		}
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+func (s *Server) loadBOMenuV2DishByID(r *http.Request, restaurantID int, menuID int64, sectionID int64, dishID int64) (boV2Dish, error) {
+	var (
+		d               boV2Dish
+		catalogID       sql.NullInt64
+		allergensRaw    sql.NullString
+		suppPriceRaw    sql.NullFloat64
+		priceRaw        sql.NullFloat64
+		suppEnabledInt  int
+		activeInt       int
+		fotoPath        string
+		aiRequestedInt  int
+		aiGeneratingInt int
+		aiGeneratedRaw  sql.NullString
+	)
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
+		       supplement_enabled, supplement_price, price, active, position, COALESCE(foto_path, ''),
+		       COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
+		FROM group_menu_section_dishes_v2
+		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
+		LIMIT 1
+	`, dishID, sectionID, menuID, restaurantID).Scan(
+		&d.ID,
+		&d.SectionID,
+		&catalogID,
+		&d.Title,
+		&d.Description,
+		&allergensRaw,
+		&suppEnabledInt,
+		&suppPriceRaw,
+		&priceRaw,
+		&activeInt,
+		&d.Position,
+		&fotoPath,
+		&aiRequestedInt,
+		&aiGeneratingInt,
+		&aiGeneratedRaw,
+	)
+	if err != nil {
+		return boV2Dish{}, err
+	}
+	if catalogID.Valid {
+		v := catalogID.Int64
+		d.CatalogDishID = &v
+	}
+	d.Allergens = anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{}))
+	d.SupplementEnabled = suppEnabledInt != 0
+	if suppPriceRaw.Valid {
+		v := suppPriceRaw.Float64
+		d.SupplementPrice = &v
+	}
+	if priceRaw.Valid {
+		v := priceRaw.Float64
+		d.Price = &v
+	}
+	d.Active = activeInt != 0
+	d.AIRequestedImg = aiRequestedInt != 0
+	d.AIGeneratingImg = aiGeneratingInt != 0
+	if aiGeneratedRaw.Valid {
+		if v := strings.TrimSpace(aiGeneratedRaw.String); v != "" {
+			d.AIGeneratedImg = &v
+		}
+	}
+	if p := strings.TrimSpace(fotoPath); p != "" {
+		url := s.bunnyPullURL(p)
+		d.FotoURL = &url
+		d.ImageURL = &url
+	}
+	return d, nil
 }
 
 func (s *Server) syncBOMenuV2LegacySnapshot(r *http.Request, restaurantID int, menuID int64) error {
@@ -610,6 +728,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		draftInt          int
 		menuType          sql.NullString
 		menuSubtitleRaw   sql.NullString
+		showDishImagesInt int
 		beverageRaw       sql.NullString
 		commentsRaw       sql.NullString
 		minPartySize      int
@@ -619,7 +738,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, beverage, comments,
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee
 		FROM menusDeGrupos
 		WHERE id = ? AND restaurant_id = ?
@@ -631,6 +750,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		&draftInt,
 		&menuType,
 		&menuSubtitleRaw,
+		&showDishImagesInt,
 		&beverageRaw,
 		&commentsRaw,
 		&minPartySize,
@@ -652,17 +772,23 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando secciones")
 		return
 	}
+	aiImages, err := s.loadBOMenuV2AIImageTracker(r.Context(), a.ActiveRestaurantID, menuID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando tracker AI")
+		return
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"menu": map[string]any{
-			"id":            menuID,
-			"menu_title":    title,
-			"price":         price,
-			"active":        activeInt != 0,
-			"is_draft":      draftInt != 0,
-			"menu_type":     normalizeV2MenuType(menuType.String),
-			"menu_subtitle": anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
+			"id":               menuID,
+			"menu_title":       title,
+			"price":            price,
+			"active":           activeInt != 0,
+			"is_draft":         draftInt != 0,
+			"menu_type":        normalizeV2MenuType(menuType.String),
+			"menu_subtitle":    anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
+			"show_dish_images": showDishImagesInt != 0,
 			"settings": map[string]any{
 				"included_coffee":          includedCoffeeInt != 0,
 				"beverage":                 decodeJSONOrFallback(beverageRaw.String, map[string]any{"type": "no_incluida", "price_per_person": nil, "has_supplement": false, "supplement_price": nil}),
@@ -671,7 +797,8 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 				"main_dishes_limit":        mainLimitInt != 0,
 				"main_dishes_limit_number": mainLimitNumber,
 			},
-			"sections": sections,
+			"sections":  sections,
+			"ai_images": aiImages,
 		},
 	})
 }
@@ -702,6 +829,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		currentDraftInt          int
 		currentType              sql.NullString
 		currentMenuSubtitle      sql.NullString
+		currentShowDishImagesInt int
 		currentBeverage          sql.NullString
 		currentComments          sql.NullString
 		currentMinParty          int
@@ -711,7 +839,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, beverage, comments,
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee
 		FROM menusDeGrupos
 		WHERE id = ? AND restaurant_id = ?
@@ -723,6 +851,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		&currentDraftInt,
 		&currentType,
 		&currentMenuSubtitle,
+		&currentShowDishImagesInt,
 		&currentBeverage,
 		&currentComments,
 		&currentMinParty,
@@ -781,6 +910,11 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		menuSubtitleJSON = mustJSON(anySliceToStringList(v), []any{})
 	}
 
+	showDishImages := currentShowDishImagesInt != 0
+	if v, ok := input["show_dish_images"]; ok {
+		showDishImages = parseLooseBoolOrDefault(v, showDishImages)
+	}
+
 	beverageJSON := currentBeverage.String
 	if v, ok := input["beverage"]; ok {
 		beverageJSON = mustJSON(v, map[string]any{"type": "no_incluida", "price_per_person": nil, "has_supplement": false, "supplement_price": nil})
@@ -823,16 +957,17 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 
 	_, err = s.db.ExecContext(r.Context(), `
 		UPDATE menusDeGrupos
-		SET menu_title = ?,
-		    price = ?,
-		    active = ?,
-		    is_draft = ?,
-		    menu_type = ?,
-		    menu_subtitle = ?,
-		    beverage = ?,
-		    comments = ?,
-		    min_party_size = ?,
-		    main_dishes_limit = ?,
+			SET menu_title = ?,
+			    price = ?,
+			    active = ?,
+			    is_draft = ?,
+			    menu_type = ?,
+			    menu_subtitle = ?,
+			    show_dish_images = ?,
+			    beverage = ?,
+			    comments = ?,
+			    min_party_size = ?,
+			    main_dishes_limit = ?,
 		    main_dishes_limit_number = ?,
 		    included_coffee = ?,
 		    editor_version = 2
@@ -844,6 +979,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		boolToTinyint(isDraft),
 		menuType,
 		menuSubtitleJSON,
+		boolToTinyint(showDishImages),
 		beverageJSON,
 		commentsJSON,
 		minParty,
@@ -1508,34 +1644,7 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 		}
 	}
 
-	var (
-		d              boV2Dish
-		catalogID      sql.NullInt64
-		allergensRaw   sql.NullString
-		suppPriceRaw   sql.NullFloat64
-		priceRaw       sql.NullFloat64
-		suppEnabledInt int
-		activeInt      int
-	)
-	err = s.db.QueryRowContext(r.Context(), `
-		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
-		       supplement_enabled, supplement_price, price, active, position
-		FROM group_menu_section_dishes_v2
-		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
-		LIMIT 1
-	`, dishID, sectionID, menuID, a.ActiveRestaurantID).Scan(
-		&d.ID,
-		&d.SectionID,
-		&catalogID,
-		&d.Title,
-		&d.Description,
-		&allergensRaw,
-		&suppEnabledInt,
-		&suppPriceRaw,
-		&priceRaw,
-		&activeInt,
-		&d.Position,
-	)
+	d, err := s.loadBOMenuV2DishByID(r, a.ActiveRestaurantID, menuID, sectionID, dishID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Dish not found after update"})
@@ -1544,21 +1653,6 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 		httpx.WriteError(w, http.StatusInternalServerError, "Error recargando plato")
 		return
 	}
-	if catalogID.Valid {
-		v := catalogID.Int64
-		d.CatalogDishID = &v
-	}
-	d.Allergens = anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{}))
-	d.SupplementEnabled = suppEnabledInt != 0
-	if suppPriceRaw.Valid {
-		v := suppPriceRaw.Float64
-		d.SupplementPrice = &v
-	}
-	if priceRaw.Valid {
-		v := priceRaw.Float64
-		d.Price = &v
-	}
-	d.Active = activeInt != 0
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "dish": d})
 }
@@ -1805,6 +1899,121 @@ func (s *Server) handleBOGroupMenusV2ToggleActive(w http.ResponseWriter, r *http
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"active":  next != 0,
+	})
+}
+
+func (s *Server) handleBOGroupMenusV2UploadSectionDishImage(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	if !s.bunnyConfigured() {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+	sectionID, err := parseChiPositiveInt64(r, "sectionId")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid section id"})
+		return
+	}
+	dishID, err := parseChiPositiveInt64(r, "dishId")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid dish id"})
+		return
+	}
+
+	var exists int
+	if err := s.db.QueryRowContext(r.Context(), `
+		SELECT COUNT(*)
+		FROM group_menu_section_dishes_v2
+		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
+	`, dishID, sectionID, menuID, a.ActiveRestaurantID).Scan(&exists); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error verificando plato")
+		return
+	}
+	if exists == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Dish not found"})
+		return
+	}
+
+	const maxImageSize = 8 << 20
+	if err := r.ParseMultipartForm(maxImageSize); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error parsing form"})
+		return
+	}
+
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No image file provided"})
+		return
+	}
+	defer file.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(file, maxImageSize+1))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reading file"})
+		return
+	}
+	if len(raw) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Empty file"})
+		return
+	}
+	if len(raw) > maxImageSize {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image too large (max 8MB)"})
+		return
+	}
+
+	contentType := http.DetectContentType(raw)
+	allowedTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+		"image/webp": true,
+		"image/gif":  true,
+	}
+	if !allowedTypes[contentType] {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "File type not allowed"})
+		return
+	}
+
+	ext := fileExtForContentType(contentType)
+	pictureID := fmt.Sprintf("dish-%d-%d", dishID, time.Now().UnixMilli())
+	objectPath := path.Join(
+		strconv.Itoa(a.ActiveRestaurantID),
+		"pictures",
+		strconv.FormatInt(menuID, 10),
+		pictureID+ext,
+	)
+
+	if err := s.bunnyPut(r.Context(), objectPath, raw, contentType); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image: " + err.Error()})
+		return
+	}
+
+	if _, err := s.db.ExecContext(r.Context(), `
+		UPDATE group_menu_section_dishes_v2
+		SET foto_path = ?
+		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
+	`, objectPath, dishID, sectionID, menuID, a.ActiveRestaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando imagen")
+		return
+	}
+
+	dish, err := s.loadBOMenuV2DishByID(r, a.ActiveRestaurantID, menuID, sectionID, dishID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error recargando plato")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"dish":    dish,
 	})
 }
 
