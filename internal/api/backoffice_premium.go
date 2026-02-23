@@ -7,18 +7,22 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"math"
 	"net"
 	"net/http"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/lib/specialmenuimage"
 )
 
 const (
@@ -102,19 +106,26 @@ type boPremiumDomainVerifyRequest struct {
 }
 
 type boPremiumTablesMutationRequest struct {
-	Entity       string         `json:"entity"`
-	ID           int64          `json:"id"`
-	AreaID       *int64         `json:"area_id"`
-	Name         *string        `json:"name"`
-	Capacity     *int           `json:"capacity"`
-	Seats        *int           `json:"seats"`
-	Status       *string        `json:"status"`
-	XPos         *float64       `json:"x_pos"`
-	YPos         *float64       `json:"y_pos"`
-	DisplayOrder *int           `json:"display_order"`
-	SortOrder    *int           `json:"sort_order"`
-	IsActive     *bool          `json:"is_active"`
-	Metadata     map[string]any `json:"metadata"`
+	Entity          string         `json:"entity"`
+	ID              int64          `json:"id"`
+	Date            string         `json:"date"`
+	FloorNumber     *int           `json:"floor_number"`
+	AreaID          *int64         `json:"area_id"`
+	Name            *string        `json:"name"`
+	Capacity        *int           `json:"capacity"`
+	Seats           *int           `json:"seats"`
+	Status          *string        `json:"status"`
+	XPos            *float64       `json:"x_pos"`
+	YPos            *float64       `json:"y_pos"`
+	DisplayOrder    *int           `json:"display_order"`
+	SortOrder       *int           `json:"sort_order"`
+	IsActive        *bool          `json:"is_active"`
+	Shape           *string        `json:"shape"`
+	FillColor       *string        `json:"fill_color"`
+	OutlineColor    *string        `json:"outline_color"`
+	StylePreset     *string        `json:"style_preset"`
+	TextureImageURL *string        `json:"texture_image_url"`
+	Metadata        map[string]any `json:"metadata"`
 }
 
 type boMembersWhatsAppSendRequest struct {
@@ -1293,7 +1304,22 @@ func (s *Server) handleBOPremiumTablesList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	areas, tables, err := s.loadBOPremiumTablesSnapshot(r.Context(), a.ActiveRestaurantID)
+	dateISO := strings.TrimSpace(r.URL.Query().Get("date"))
+	if dateISO != "" && !isDateISO(dateISO) {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "date invalida")
+		return
+	}
+	var floorNumber *int
+	if raw := strings.TrimSpace(r.URL.Query().Get("floor_number")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "floor_number invalido")
+			return
+		}
+		floorNumber = &parsed
+	}
+
+	areas, tables, layout, err := s.loadBOPremiumTablesSnapshot(r.Context(), a.ActiveRestaurantID, dateISO, floorNumber)
 	if err != nil {
 		writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_READ_FAILED", "No se pudieron cargar mesas")
 		return
@@ -1304,6 +1330,9 @@ func (s *Server) handleBOPremiumTablesList(w http.ResponseWriter, r *http.Reques
 		"data":    areas,
 		"layout": map[string]any{
 			"areas":        areas,
+			"map":          layout,
+			"date":         dateISO,
+			"floor_number": intPtrValue(floorNumber, 0),
 			"generated_at": time.Now().UTC().Format(time.RFC3339),
 		},
 		"areas":  areas,
@@ -1321,6 +1350,15 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 	var req boPremiumTablesMutationRequest
 	if err := readJSONBody(r, &req); err != nil {
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "JSON inválido")
+		return
+	}
+	req.Date = strings.TrimSpace(req.Date)
+	if req.Date != "" && !isDateISO(req.Date) {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "date invalida")
+		return
+	}
+	if req.Date != "" && (req.FloorNumber == nil || *req.FloorNumber < 0) {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "floor_number invalido")
 		return
 	}
 
@@ -1348,6 +1386,23 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_CREATE_FAILED", "No se pudo crear mesa")
 			return
 		}
+		if req.Date != "" && req.FloorNumber != nil {
+			tableID, _ := anyToInt64OK(item["id"])
+			if tableID > 0 {
+				x := int64(0)
+				y := int64(0)
+				if rawX, ok := anyToInt64OK(item["x_pos"]); ok {
+					x = rawX
+				}
+				if rawY, ok := anyToInt64OK(item["y_pos"]); ok {
+					y = rawY
+				}
+				if _, err := s.upsertBOPremiumTableLayoutPosition(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, tableID, x, y); err != nil {
+					writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_CREATE_FAILED", "No se pudo guardar posicion de layout")
+					return
+				}
+			}
+		}
 		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "table_created", item)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true,
@@ -1373,14 +1428,38 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "JSON inválido")
 		return
 	}
-	if req.ID <= 0 {
-		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "id requerido")
+	req.Date = strings.TrimSpace(req.Date)
+	if req.Date != "" && !isDateISO(req.Date) {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "date invalida")
 		return
 	}
 
 	entity := strings.ToLower(strings.TrimSpace(req.Entity))
 	if entity == "" {
 		entity = "table"
+	}
+
+	if entity == "layout" {
+		if req.Date == "" || req.FloorNumber == nil || *req.FloorNumber < 0 {
+			writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "date y floor_number requeridos")
+			return
+		}
+		layout, err := s.patchBOPremiumTableLayout(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, req.Metadata)
+		if err != nil {
+			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar layout")
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"entity":  "layout",
+			"layout":  layout,
+		})
+		return
+	}
+
+	if req.ID <= 0 {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "id requerido")
+		return
 	}
 
 	switch entity {
@@ -1397,10 +1476,36 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 			"item":    item,
 		})
 	case "table":
-		item, err := s.updateBOPremiumTable(r.Context(), a.ActiveRestaurantID, req)
+		reqForDB := req
+		if req.Date != "" && req.FloorNumber != nil {
+			reqForDB.XPos = nil
+			reqForDB.YPos = nil
+		}
+		item, err := s.updateBOPremiumTable(r.Context(), a.ActiveRestaurantID, reqForDB)
 		if err != nil {
 			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar mesa")
 			return
+		}
+		if req.Date != "" && req.FloorNumber != nil && (req.XPos != nil || req.YPos != nil) {
+			tableID, _ := anyToInt64OK(item["id"])
+			if tableID > 0 {
+				x := int64(0)
+				y := int64(0)
+				if req.XPos != nil {
+					x = int64(math.Round(*req.XPos))
+				} else if rawX, ok := anyToInt64OK(item["x_pos"]); ok {
+					x = rawX
+				}
+				if req.YPos != nil {
+					y = int64(math.Round(*req.YPos))
+				} else if rawY, ok := anyToInt64OK(item["y_pos"]); ok {
+					y = rawY
+				}
+				if _, err := s.upsertBOPremiumTableLayoutPosition(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, tableID, x, y); err != nil {
+					writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar posicion del layout")
+					return
+				}
+			}
 		}
 		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "table_updated", item)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -1439,13 +1544,14 @@ func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request)
 		return conn.SetReadDeadline(time.Now().Add(70 * time.Second))
 	})
 
-	if areas, tables, err := s.loadBOPremiumTablesSnapshot(r.Context(), a.ActiveRestaurantID); err == nil {
+	if areas, tables, layout, err := s.loadBOPremiumTablesSnapshot(r.Context(), a.ActiveRestaurantID, "", nil); err == nil {
 		_ = client.writeJSON(map[string]any{
 			"type":         "hello",
 			"restaurantId": a.ActiveRestaurantID,
 			"at":           time.Now().UTC().Format(time.RFC3339),
 			"areas":        areas,
 			"tables":       tables,
+			"layout":       layout,
 		})
 	}
 
@@ -1470,7 +1576,7 @@ func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request)
 			if typ != "sync" && typ != "refresh" && typ != "join_tables" {
 				continue
 			}
-			areas, tables, err := s.loadBOPremiumTablesSnapshot(r.Context(), a.ActiveRestaurantID)
+			areas, tables, layout, err := s.loadBOPremiumTablesSnapshot(r.Context(), a.ActiveRestaurantID, "", nil)
 			if err != nil {
 				continue
 			}
@@ -1480,6 +1586,7 @@ func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request)
 				"at":           time.Now().UTC().Format(time.RFC3339),
 				"areas":        areas,
 				"tables":       tables,
+				"layout":       layout,
 			})
 		}
 	}()
@@ -1499,6 +1606,105 @@ func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
+}
+
+func (s *Server) handleBOPremiumTablesTextureImageUpload(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	if !s.bunnyConfigured() {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "BunnyCDN no configurado"})
+		return
+	}
+
+	tableID, err := strconv.ParseInt(strings.TrimSpace(chi.URLParam(r, "id")), 10, 64)
+	if err != nil || tableID <= 0 {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "id invalido"})
+		return
+	}
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Error parsing form"})
+		return
+	}
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "No image file provided"})
+		return
+	}
+	defer file.Close()
+
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Error reading file"})
+		return
+	}
+
+	normalizedWebP, err := specialmenuimage.NormalizeToWebP(
+		r.Context(),
+		raw,
+		header.Filename,
+		header.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Error processing file: " + err.Error()})
+		return
+	}
+
+	objectPath := path.Join(
+		strconv.Itoa(a.ActiveRestaurantID),
+		"pictures",
+		"tables",
+		fmt.Sprintf("%d.webp", tableID),
+	)
+	if err := s.bunnyPut(r.Context(), objectPath, normalizedWebP, "image/webp"); err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error uploading file: " + err.Error()})
+		return
+	}
+	imageURL := s.bunnyPullURL(objectPath)
+
+	_, err = s.db.ExecContext(
+		r.Context(),
+		`UPDATE restaurant_tables
+		 SET texture_image_url = ?, updated_at = NOW()
+		 WHERE id = ? AND restaurant_id = ?`,
+		imageURL,
+		tableID,
+		a.ActiveRestaurantID,
+	)
+	if err != nil {
+		if !isSQLSchemaError(err) {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error guardando URL de imagen"})
+			return
+		}
+		metaPatch := boPremiumTablesMutationRequest{
+			ID:              tableID,
+			TextureImageURL: &imageURL,
+			Metadata: map[string]any{
+				"texture_image_url": imageURL,
+			},
+		}
+		if _, upErr := s.updateBOPremiumTable(r.Context(), a.ActiveRestaurantID, metaPatch); upErr != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error guardando URL de imagen"})
+			return
+		}
+	}
+
+	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "table_updated", map[string]any{
+		"id":                tableID,
+		"texture_image_url": imageURL,
+		"metadata": map[string]any{
+			"texture_image_url": imageURL,
+		},
+	})
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"id":       tableID,
+		"imageUrl": imageURL,
+	})
 }
 
 func (s *Server) createBOPremiumArea(ctx context.Context, restaurantID int, req boPremiumTablesMutationRequest) (map[string]any, error) {
@@ -1662,6 +1868,11 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 	capacity := intPtrValue(req.Capacity, intPtrValue(req.Seats, 4))
 	isActive := boolPtrValue(req.IsActive, true)
 	status := normalizePremiumTableStatus(stringPtrOr(req.Status, "available"))
+	shape := normalizePremiumTableShape(stringPtrOr(req.Shape, "round"))
+	fillColor := strings.TrimSpace(stringPtrOr(req.FillColor, ""))
+	outlineColor := strings.TrimSpace(stringPtrOr(req.OutlineColor, ""))
+	stylePreset := strings.TrimSpace(stringPtrOr(req.StylePreset, ""))
+	textureImageURL := strings.TrimSpace(stringPtrOr(req.TextureImageURL, ""))
 	xPos := int(math.Round(floatPtrValue(req.XPos, 0)))
 	yPos := int(math.Round(floatPtrValue(req.YPos, 0)))
 
@@ -1672,11 +1883,41 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 	metaMap["status"] = status
 	metaMap["x_pos"] = xPos
 	metaMap["y_pos"] = yPos
+	metaMap["shape"] = shape
+	if fillColor != "" {
+		metaMap["fill_color"] = fillColor
+	}
+	if outlineColor != "" {
+		metaMap["outline_color"] = outlineColor
+	}
+	if stylePreset != "" {
+		metaMap["style_preset"] = stylePreset
+	}
+	if textureImageURL != "" {
+		metaMap["texture_image_url"] = textureImageURL
+	}
 	metaRaw, _ := json.Marshal(metaMap)
 	metaArg := nullableString(string(metaRaw))
 	statusArg := nullableString(status)
+	shapeArg := nullableString(shape)
+	fillColorArg := nullableString(fillColor)
+	outlineColorArg := nullableString(outlineColor)
+	stylePresetArg := nullableString(stylePreset)
+	textureImageURLArg := nullableString(textureImageURL)
 
 	variants := []boSQLVariant{
+		{
+			query: `INSERT INTO restaurant_tables
+				(restaurant_id, area_id, name, capacity, status, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			args: []any{restaurantID, areaID, name, capacity, statusArg, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
+		},
+		{
+			query: `INSERT INTO restaurant_tables
+				(restaurant_id, area_id, name, capacity, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			args: []any{restaurantID, areaID, name, capacity, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
+		},
 		{
 			query: `INSERT INTO restaurant_tables
 				(restaurant_id, area_id, name, capacity, status, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
@@ -1745,16 +1986,21 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 
 	id, _ := insertRes.LastInsertId()
 	out := map[string]any{
-		"id":            id,
-		"restaurant_id": restaurantID,
-		"area_id":       areaID,
-		"name":          name,
-		"capacity":      capacity,
-		"status":        status,
-		"x_pos":         xPos,
-		"y_pos":         yPos,
-		"is_active":     isActive,
-		"metadata":      metaMap,
+		"id":                id,
+		"restaurant_id":     restaurantID,
+		"area_id":           areaID,
+		"name":              name,
+		"capacity":          capacity,
+		"status":            status,
+		"shape":             shape,
+		"fill_color":        fillColor,
+		"outline_color":     outlineColor,
+		"style_preset":      stylePreset,
+		"texture_image_url": textureImageURL,
+		"x_pos":             xPos,
+		"y_pos":             yPos,
+		"is_active":         isActive,
+		"metadata":          metaMap,
 	}
 	return normalizeBOPremiumTableRow(out), nil
 }
@@ -1782,6 +2028,36 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 		status = normalizePremiumTableStatus(*req.Status)
 		statusArg = nullableString(status)
 	}
+	shape := ""
+	shapeArg := any(nil)
+	if req.Shape != nil {
+		shape = normalizePremiumTableShape(*req.Shape)
+		shapeArg = nullableString(shape)
+	}
+	fillColor := ""
+	fillColorArg := any(nil)
+	if req.FillColor != nil {
+		fillColor = strings.TrimSpace(*req.FillColor)
+		fillColorArg = emptyStringToNil(fillColor)
+	}
+	outlineColor := ""
+	outlineColorArg := any(nil)
+	if req.OutlineColor != nil {
+		outlineColor = strings.TrimSpace(*req.OutlineColor)
+		outlineColorArg = emptyStringToNil(outlineColor)
+	}
+	stylePreset := ""
+	stylePresetArg := any(nil)
+	if req.StylePreset != nil {
+		stylePreset = strings.TrimSpace(*req.StylePreset)
+		stylePresetArg = emptyStringToNil(stylePreset)
+	}
+	textureImageURL := ""
+	textureImageURLArg := any(nil)
+	if req.TextureImageURL != nil {
+		textureImageURL = strings.TrimSpace(*req.TextureImageURL)
+		textureImageURLArg = emptyStringToNil(textureImageURL)
+	}
 	xPos := 0
 	xPosArg := any(nil)
 	if req.XPos != nil {
@@ -1808,6 +2084,21 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 	if req.YPos != nil {
 		metaMap["y_pos"] = yPos
 	}
+	if req.Shape != nil {
+		metaMap["shape"] = shape
+	}
+	if req.FillColor != nil {
+		metaMap["fill_color"] = fillColor
+	}
+	if req.OutlineColor != nil {
+		metaMap["outline_color"] = outlineColor
+	}
+	if req.StylePreset != nil {
+		metaMap["style_preset"] = stylePreset
+	}
+	if req.TextureImageURL != nil {
+		metaMap["texture_image_url"] = textureImageURL
+	}
 	metaArg := any(nil)
 	if len(metaMap) > 0 {
 		b, _ := json.Marshal(metaMap)
@@ -1815,6 +2106,43 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 	}
 
 	variants := []boSQLVariant{
+		{
+			query: `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    status = COALESCE(?, status),
+				    shape = COALESCE(?, shape),
+				    fill_color = COALESCE(?, fill_color),
+				    outline_color = COALESCE(?, outline_color),
+				    style_preset = COALESCE(?, style_preset),
+				    texture_image_url = COALESCE(?, texture_image_url),
+				    x_pos = COALESCE(?, x_pos),
+				    y_pos = COALESCE(?, y_pos),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = NOW()
+				WHERE id = ? AND restaurant_id = ?`,
+			args: []any{nameArg, areaArg, capacityArg, statusArg, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPosArg, yPosArg, isActiveArg, metaArg, req.ID, restaurantID},
+		},
+		{
+			query: `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    shape = COALESCE(?, shape),
+				    fill_color = COALESCE(?, fill_color),
+				    outline_color = COALESCE(?, outline_color),
+				    style_preset = COALESCE(?, style_preset),
+				    texture_image_url = COALESCE(?, texture_image_url),
+				    x_pos = COALESCE(?, x_pos),
+				    y_pos = COALESCE(?, y_pos),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = NOW()
+				WHERE id = ? AND restaurant_id = ?`,
+			args: []any{nameArg, areaArg, capacityArg, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPosArg, yPosArg, isActiveArg, metaArg, req.ID, restaurantID},
+		},
 		{
 			query: `UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
@@ -1931,6 +2259,21 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 	if req.Status != nil {
 		out["status"] = status
 	}
+	if req.Shape != nil {
+		out["shape"] = shape
+	}
+	if req.FillColor != nil {
+		out["fill_color"] = fillColor
+	}
+	if req.OutlineColor != nil {
+		out["outline_color"] = outlineColor
+	}
+	if req.StylePreset != nil {
+		out["style_preset"] = stylePreset
+	}
+	if req.TextureImageURL != nil {
+		out["texture_image_url"] = textureImageURL
+	}
 	if req.XPos != nil {
 		out["x_pos"] = xPos
 	}
@@ -1946,19 +2289,50 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 	return normalizeBOPremiumTableRow(out), nil
 }
 
-func (s *Server) loadBOPremiumTablesSnapshot(ctx context.Context, restaurantID int) ([]map[string]any, []map[string]any, error) {
+func (s *Server) loadBOPremiumTablesSnapshot(ctx context.Context, restaurantID int, dateISO string, floorNumber *int) ([]map[string]any, []map[string]any, map[string]any, error) {
 	areas, err := s.queryAllAsMaps(ctx, `SELECT * FROM restaurant_areas WHERE restaurant_id = ? ORDER BY id ASC`, restaurantID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	rawTables, err := s.queryAllAsMaps(ctx, `SELECT * FROM restaurant_tables WHERE restaurant_id = ? ORDER BY id ASC`, restaurantID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+
+	layout := map[string]any{
+		"table_positions": map[string]any{},
+		"elements":        []any{},
+		"booking_states":  map[string]any{},
+	}
+	if dateISO != "" && floorNumber != nil {
+		loaded, lerr := s.loadBOPremiumTableLayout(ctx, restaurantID, dateISO, *floorNumber)
+		if lerr != nil {
+			return nil, nil, nil, lerr
+		}
+		for k, v := range loaded {
+			layout[k] = v
+		}
+	}
+
+	layoutPositions := map[string]any{}
+	if raw, ok := asStringAnyMap(layout["table_positions"]); ok {
+		layoutPositions = raw
 	}
 
 	tables := make([]map[string]any, 0, len(rawTables))
 	for _, row := range rawTables {
-		tables = append(tables, normalizeBOPremiumTableRow(row))
+		table := normalizeBOPremiumTableRow(row)
+		if tableID, ok := anyToInt64OK(table["id"]); ok && tableID > 0 {
+			if pos, exists := asStringAnyMap(layoutPositions[strconv.FormatInt(tableID, 10)]); exists {
+				if x, ok := anyToInt64OK(pos["x_pos"]); ok {
+					table["x_pos"] = x
+				}
+				if y, ok := anyToInt64OK(pos["y_pos"]); ok {
+					table["y_pos"] = y
+				}
+			}
+		}
+		tables = append(tables, table)
 	}
 
 	areasOut := make([]map[string]any, 0, len(areas))
@@ -1976,7 +2350,80 @@ func (s *Server) loadBOPremiumTablesSnapshot(ctx context.Context, restaurantID i
 		areasOut = append(areasOut, out)
 	}
 
-	return areasOut, tables, nil
+	return areasOut, tables, layout, nil
+}
+
+func (s *Server) loadBOPremiumTableLayout(ctx context.Context, restaurantID int, dateISO string, floorNumber int) (map[string]any, error) {
+	if dateISO == "" || floorNumber < 0 {
+		return map[string]any{}, nil
+	}
+	var raw sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT data_json
+		FROM restaurant_table_layouts
+		WHERE restaurant_id = ? AND layout_date = ? AND floor_number = ?
+		LIMIT 1
+	`, restaurantID, dateISO, floorNumber).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return map[string]any{}, nil
+		}
+		if isSQLSchemaError(err) {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	parsed, ok := asStringAnyMap(raw.String)
+	if !ok {
+		return map[string]any{}, nil
+	}
+	return parsed, nil
+}
+
+func (s *Server) upsertBOPremiumTableLayout(ctx context.Context, restaurantID int, dateISO string, floorNumber int, data map[string]any) (map[string]any, error) {
+	if dateISO == "" || floorNumber < 0 {
+		return map[string]any{}, nil
+	}
+	raw, _ := json.Marshal(data)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO restaurant_table_layouts (restaurant_id, layout_date, floor_number, data_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NOW(), NOW())
+		ON DUPLICATE KEY UPDATE
+			data_json = VALUES(data_json),
+			updated_at = NOW()
+	`, restaurantID, dateISO, floorNumber, string(raw))
+	if err != nil {
+		if isSQLSchemaError(err) {
+			return data, nil
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
+func (s *Server) upsertBOPremiumTableLayoutPosition(ctx context.Context, restaurantID int, dateISO string, floorNumber int, tableID int64, xPos int64, yPos int64) (map[string]any, error) {
+	layout, err := s.loadBOPremiumTableLayout(ctx, restaurantID, dateISO, floorNumber)
+	if err != nil {
+		return nil, err
+	}
+	tablePositions := map[string]any{}
+	if raw, ok := asStringAnyMap(layout["table_positions"]); ok {
+		tablePositions = raw
+	}
+	tablePositions[strconv.FormatInt(tableID, 10)] = map[string]any{"x_pos": xPos, "y_pos": yPos}
+	layout["table_positions"] = tablePositions
+	return s.upsertBOPremiumTableLayout(ctx, restaurantID, dateISO, floorNumber, layout)
+}
+
+func (s *Server) patchBOPremiumTableLayout(ctx context.Context, restaurantID int, dateISO string, floorNumber int, patch map[string]any) (map[string]any, error) {
+	layout, err := s.loadBOPremiumTableLayout(ctx, restaurantID, dateISO, floorNumber)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range patch {
+		layout[k] = v
+	}
+	return s.upsertBOPremiumTableLayout(ctx, restaurantID, dateISO, floorNumber, layout)
 }
 
 func (s *Server) broadcastBOTablesEvent(restaurantID int, eventType string, data any) {
@@ -2719,6 +3166,15 @@ func normalizePremiumTableStatus(raw string) string {
 	}
 }
 
+func normalizePremiumTableShape(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "square":
+		return "square"
+	default:
+		return "round"
+	}
+}
+
 func emptyStringToNil(raw string) any {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -2797,6 +3253,27 @@ func normalizeBOPremiumTableRow(row map[string]any) map[string]any {
 		status = firstStringFromMap(meta, "status")
 	}
 	status = normalizePremiumTableStatus(status)
+	shape := firstStringFromMap(row, "shape")
+	if shape == "" {
+		shape = firstStringFromMap(meta, "shape")
+	}
+	shape = normalizePremiumTableShape(shape)
+	fillColor := firstStringFromMap(row, "fill_color")
+	if fillColor == "" {
+		fillColor = firstStringFromMap(meta, "fill_color")
+	}
+	outlineColor := firstStringFromMap(row, "outline_color")
+	if outlineColor == "" {
+		outlineColor = firstStringFromMap(meta, "outline_color")
+	}
+	stylePreset := firstStringFromMap(row, "style_preset")
+	if stylePreset == "" {
+		stylePreset = firstStringFromMap(meta, "style_preset")
+	}
+	textureImageURL := firstStringFromMap(row, "texture_image_url")
+	if textureImageURL == "" {
+		textureImageURL = firstStringFromMap(meta, "texture_image_url")
+	}
 
 	xPos, hasXPos := anyToInt64OK(row["x_pos"])
 	if !hasXPos {
@@ -2808,14 +3285,19 @@ func normalizeBOPremiumTableRow(row map[string]any) map[string]any {
 	}
 
 	out := map[string]any{
-		"id":            id,
-		"restaurant_id": restaurantID,
-		"area_id":       areaID,
-		"name":          name,
-		"capacity":      capacity,
-		"status":        status,
-		"x_pos":         xPos,
-		"y_pos":         yPos,
+		"id":                id,
+		"restaurant_id":     restaurantID,
+		"area_id":           areaID,
+		"name":              name,
+		"capacity":          capacity,
+		"status":            status,
+		"shape":             shape,
+		"fill_color":        fillColor,
+		"outline_color":     outlineColor,
+		"style_preset":      stylePreset,
+		"texture_image_url": textureImageURL,
+		"x_pos":             xPos,
+		"y_pos":             yPos,
 	}
 	if updatedAt := firstStringFromMap(row, "updated_at"); updatedAt != "" {
 		out["updated_at"] = updatedAt
@@ -2848,4 +3330,13 @@ func isSQLDuplicateError(err error) bool {
 	return strings.Contains(msg, "duplicate entry") ||
 		strings.Contains(msg, "unique constraint") ||
 		strings.Contains(msg, "already exists")
+}
+
+func isDateISO(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 10 {
+		return false
+	}
+	_, err := time.Parse("2006-01-02", raw)
+	return err == nil
 }

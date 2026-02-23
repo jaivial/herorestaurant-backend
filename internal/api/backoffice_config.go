@@ -328,6 +328,16 @@ func floorNameForNumber(number int) string {
 	return fmt.Sprintf("Planta %d", number)
 }
 
+func countActiveFloors(floors []boConfigFloor) int {
+	count := 0
+	for _, floor := range floors {
+		if floor.Active {
+			count++
+		}
+	}
+	return count
+}
+
 func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) (reservationDefaults, error) {
 	out := reservationDefaults{
 		OpeningMode:      defaultOpeningMode,
@@ -424,8 +434,7 @@ func (s *Server) loadDefaultFloors(ctx context.Context, restaurantID int) ([]boC
 		VALUES (?, 0, 'Planta baja', 1, 1)
 		ON DUPLICATE KEY UPDATE
 			floor_name = VALUES(floor_name),
-			is_ground = VALUES(is_ground),
-			is_active = 1
+			is_ground = VALUES(is_ground)
 	`, restaurantID)
 	if err != nil {
 		return nil, err
@@ -452,9 +461,6 @@ func (s *Server) loadDefaultFloors(ctx context.Context, restaurantID int) ([]boC
 		}
 		row.IsGround = isGroundInt != 0
 		row.Active = activeInt != 0
-		if row.IsGround {
-			row.Active = true
-		}
 		if strings.TrimSpace(row.Name) == "" {
 			row.Name = floorNameForNumber(row.FloorNumber)
 		}
@@ -483,7 +489,7 @@ func (s *Server) ensureFloorCount(ctx context.Context, restaurantID int, count i
 			ON DUPLICATE KEY UPDATE
 				floor_name = VALUES(floor_name),
 				is_ground = VALUES(is_ground),
-				is_active = IF(VALUES(floor_number) = 0, 1, is_active)
+				is_active = is_active
 		`, restaurantID, i, name, isGround); err != nil {
 			return err
 		}
@@ -560,10 +566,6 @@ func (s *Server) loadDateFloors(ctx context.Context, restaurantID int, date stri
 	}
 
 	for i := range floors {
-		if floors[i].IsGround {
-			floors[i].Active = true
-			continue
-		}
 		if v, ok := override[floors[i].ID]; ok {
 			floors[i].Active = v
 		}
@@ -1437,8 +1439,20 @@ func (s *Server) handleBOConfigFloorsDefaultsSet(w http.ResponseWriter, r *http.
 		}
 
 		nextActive := *req.Active
-		if target.IsGround {
-			nextActive = true
+		nextFloors := make([]boConfigFloor, len(floors))
+		copy(nextFloors, floors)
+		for i := range nextFloors {
+			if nextFloors[i].FloorNumber == floorNumber {
+				nextFloors[i].Active = nextActive
+				break
+			}
+		}
+		if countActiveFloors(nextFloors) == 0 {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Debe haber al menos una planta activa",
+			})
+			return
 		}
 		_, err = s.db.ExecContext(r.Context(), `
 			UPDATE restaurant_floors
@@ -1552,12 +1566,26 @@ func (s *Server) handleBOConfigFloorsSet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if target.IsGround {
-		_, _ = s.db.ExecContext(r.Context(), `
-			DELETE FROM restaurant_floor_overrides
-			WHERE restaurant_id = ? AND date = ? AND floor_id = ?
-		`, a.ActiveRestaurantID, date, target.ID)
-	} else if req.Active == target.Active {
+	nextFloors, err := s.loadDateFloors(r.Context(), a.ActiveRestaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando plantas")
+		return
+	}
+	for i := range nextFloors {
+		if nextFloors[i].FloorNumber == req.FloorNumber {
+			nextFloors[i].Active = req.Active
+			break
+		}
+	}
+	if countActiveFloors(nextFloors) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Debe haber al menos una planta activa",
+		})
+		return
+	}
+
+	if req.Active == target.Active {
 		_, _ = s.db.ExecContext(r.Context(), `
 			DELETE FROM restaurant_floor_overrides
 			WHERE restaurant_id = ? AND date = ? AND floor_id = ?

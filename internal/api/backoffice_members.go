@@ -562,11 +562,12 @@ func (s *Server) handleBOMemberStatsYear(w http.ResponseWriter, r *http.Request)
 	start := time.Date(year, 1, 1, 0, 0, 0, 0, boMadridTZ)
 	end := time.Date(year, 12, 31, 23, 59, 59, 0, boMadridTZ)
 
-	totalWorked, err := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, start, end)
+	dailyMinutesByDate, err := s.queryBOMemberMinutesByDate(r.Context(), a.ActiveRestaurantID, memberID, start, end)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error calculando horas trabajadas")
 		return
 	}
+	totalWorked := boHoursFromMinutesRange(dailyMinutesByDate, start, end)
 
 	daysInYear := 365
 	if (year%4 == 0 && year%100 != 0) || year%400 == 0 {
@@ -582,7 +583,7 @@ func (s *Server) handleBOMemberStatsYear(w http.ResponseWriter, r *http.Request)
 	for month := 1; month <= 12; month++ {
 		mStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, boMadridTZ)
 		mEnd := mStart.AddDate(0, 1, -1)
-		mWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, mStart, mEnd)
+		mWorked := boHoursFromMinutesRange(dailyMinutesByDate, mStart, mEnd)
 		mDays := int(mEnd.Sub(mStart).Hours()/24) + 1
 		mExpected := (member.WeeklyContractHours / 7.0) * float64(mDays)
 		monthRows = append(monthRows, map[string]any{
@@ -599,7 +600,7 @@ func (s *Server) handleBOMemberStatsYear(w http.ResponseWriter, r *http.Request)
 	for q := 1; q <= 4; q++ {
 		qStart := time.Date(year, time.Month((q-1)*3+1), 1, 0, 0, 0, 0, boMadridTZ)
 		qEnd := qStart.AddDate(0, 3, -1)
-		qWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, qStart, qEnd)
+		qWorked := boHoursFromMinutesRange(dailyMinutesByDate, qStart, qEnd)
 		qDays := int(qEnd.Sub(qStart).Hours()/24) + 1
 		qExpected := (member.WeeklyContractHours / 7.0) * float64(qDays)
 		quarterRows = append(quarterRows, map[string]any{
@@ -620,7 +621,7 @@ func (s *Server) handleBOMemberStatsYear(w http.ResponseWriter, r *http.Request)
 		if weekEnd.After(end) {
 			weekEnd = end
 		}
-		wWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, current, weekEnd)
+		wWorked := boHoursFromMinutesRange(dailyMinutesByDate, current, weekEnd)
 		wDays := int(weekEnd.Sub(current).Hours()/24) + 1
 		wExpected := (member.WeeklyContractHours / 7.0) * float64(wDays)
 		weekRows = append(weekRows, map[string]any{
@@ -783,13 +784,20 @@ func (s *Server) handleBOMemberTableData(w http.ResponseWriter, r *http.Request)
 
 	var rows []map[string]any
 	monthNamesShort := []string{"Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"}
+	yearStart := time.Date(year, 1, 1, 0, 0, 0, 0, boMadridTZ)
+	yearEnd := time.Date(year, 12, 31, 23, 59, 59, 0, boMadridTZ)
+	dailyMinutesByDate, err := s.queryBOMemberMinutesByDate(r.Context(), a.ActiveRestaurantID, memberID, yearStart, yearEnd)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error calculando horas")
+		return
+	}
 
 	if view == "yearly" {
 		// Return monthly rows for the year
 		for month := 1; month <= 12; month++ {
 			mStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, boMadridTZ)
 			mEnd := mStart.AddDate(0, 1, -1)
-			mWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, mStart, mEnd)
+			mWorked := boHoursFromMinutesRange(dailyMinutesByDate, mStart, mEnd)
 			mDays := int(mEnd.Sub(mStart).Hours()/24) + 1
 			mExpected := (member.WeeklyContractHours / 7.0) * float64(mDays)
 			rows = append(rows, map[string]any{
@@ -804,7 +812,7 @@ func (s *Server) handleBOMemberTableData(w http.ResponseWriter, r *http.Request)
 		for q := 1; q <= 4; q++ {
 			qStart := time.Date(year, time.Month((q-1)*3+1), 1, 0, 0, 0, 0, boMadridTZ)
 			qEnd := qStart.AddDate(0, 3, -1)
-			qWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, qStart, qEnd)
+			qWorked := boHoursFromMinutesRange(dailyMinutesByDate, qStart, qEnd)
 			qDays := int(qEnd.Sub(qStart).Hours()/24) + 1
 			qExpected := (member.WeeklyContractHours / 7.0) * float64(qDays)
 			rows = append(rows, map[string]any{
@@ -819,7 +827,7 @@ func (s *Server) handleBOMemberTableData(w http.ResponseWriter, r *http.Request)
 		for month := 1; month <= 12; month++ {
 			mStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, boMadridTZ)
 			mEnd := mStart.AddDate(0, 1, -1)
-			mWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, mStart, mEnd)
+			mWorked := boHoursFromMinutesRange(dailyMinutesByDate, mStart, mEnd)
 			mDays := int(mEnd.Sub(mStart).Hours()/24) + 1
 			mExpected := (member.WeeklyContractHours / 7.0) * float64(mDays)
 			rows = append(rows, map[string]any{
@@ -840,7 +848,7 @@ func (s *Server) handleBOMemberTableData(w http.ResponseWriter, r *http.Request)
 			if weekEnd.After(endDate) {
 				weekEnd = endDate
 			}
-			wWorked, _ := s.queryBOMemberWorkedHours(r.Context(), a.ActiveRestaurantID, memberID, current, weekEnd)
+			wWorked := boHoursFromMinutesRange(dailyMinutesByDate, current, weekEnd)
 			wDays := int(weekEnd.Sub(current).Hours()/24) + 1
 			wExpected := (member.WeeklyContractHours / 7.0) * float64(wDays)
 			rows = append(rows, map[string]any{
@@ -933,31 +941,9 @@ func scanBOMember(scanner boMemberScanner) (boMember, error) {
 }
 
 func (s *Server) queryBOMemberPoints(ctx context.Context, restaurantID, memberID int, start, end time.Time, view string) ([]boMemberStatsPoint, float64, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT DATE_FORMAT(work_date, '%Y-%m-%d') AS d, COALESCE(SUM(minutes_worked), 0) AS total_minutes
-		FROM member_time_entries
-		WHERE restaurant_id = ? AND restaurant_member_id = ? AND work_date BETWEEN ? AND ?
-		GROUP BY work_date
-	`, restaurantID, memberID, start.Format("2006-01-02"), end.Format("2006-01-02"))
+	minutesByDate, err := s.queryBOMemberMinutesByDate(ctx, restaurantID, memberID, start, end)
 	if err != nil {
 		return nil, 0, err
-	}
-	defer rows.Close()
-
-	minutesByDate := make(map[string]int)
-	for rows.Next() {
-		var (
-			dateISO string
-			minutes int
-		)
-		if err := rows.Scan(&dateISO, &minutes); err != nil {
-			return nil, 0, err
-		}
-		minutesByDate[dateISO] = minutes
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("iterating member stats rows: %w", err)
 	}
 
 	out := make([]boMemberStatsPoint, 0, 64)
@@ -975,6 +961,37 @@ func (s *Server) queryBOMemberPoints(ctx context.Context, restaurantID, memberID
 	return out, round2(totalHours), nil
 }
 
+func (s *Server) queryBOMemberMinutesByDate(ctx context.Context, restaurantID, memberID int, start, end time.Time) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT work_date, COALESCE(SUM(minutes_worked), 0) AS total_minutes
+		FROM member_time_entries FORCE INDEX (idx_member_time_entries_rest_member_date)
+		WHERE restaurant_id = ? AND restaurant_member_id = ? AND work_date BETWEEN ? AND ?
+		GROUP BY work_date
+	`, restaurantID, memberID, start.Format("2006-01-02"), end.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	minutesByDate := make(map[string]int)
+	for rows.Next() {
+		var (
+			workDate time.Time
+			minutes  int
+		)
+		if err := rows.Scan(&workDate, &minutes); err != nil {
+			return nil, err
+		}
+		minutesByDate[workDate.Format("2006-01-02")] = minutes
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating member stats rows: %w", err)
+	}
+
+	return minutesByDate, nil
+}
+
 func (s *Server) queryBOMemberWorkedHours(ctx context.Context, restaurantID, memberID int, start, end time.Time) (float64, error) {
 	var minutes sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `
@@ -986,6 +1003,14 @@ func (s *Server) queryBOMemberWorkedHours(ctx context.Context, restaurantID, mem
 		return 0, err
 	}
 	return round2(float64(minutes.Int64) / 60.0), nil
+}
+
+func boHoursFromMinutesRange(minutesByDate map[string]int, start, end time.Time) float64 {
+	totalMinutes := 0
+	for cur := start; !cur.After(end); cur = cur.AddDate(0, 0, 1) {
+		totalMinutes += minutesByDate[cur.Format("2006-01-02")]
+	}
+	return round2(float64(totalMinutes) / 60.0)
 }
 
 func parseBOIDParam(r *http.Request, key string) (int, error) {

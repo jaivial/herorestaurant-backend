@@ -22,6 +22,10 @@ The new React SSR backoffice uses a cookie-based session (`bo_session`) and live
 - `POST /api/admin/login` sets `Set-Cookie: bo_session=...` (Secure, HttpOnly, SameSite=Lax).
 - Subsequent `/api/admin/*` requests must send the cookie.
 - `POST /api/admin/logout` clears the cookie.
+- Sliding expiration is enabled:
+  - Default session TTL is `21h` (configurable with `BO_SESSION_TTL_*` envs).
+  - High-security routes/pages can use a shorter TTL (default `30m`, configurable with `BO_SESSION_HIGH_SECURITY_TTL_MINUTES` and `BO_SESSION_HIGH_SECURITY_PATH_PREFIXES`).
+  - Each authenticated response includes `moving_expiration_date` (RFC3339 UTC) with the renewed expiration timestamp.
 
 ## Conventions
 
@@ -67,6 +71,7 @@ Response:
 - `{ success: true, session: { user, restaurants, activeRestaurantId } }`
 - `session.user` incluye `role`, `roleImportance`, `sectionAccess`, `username?` y `mustChangePassword`.
 - `{ success: false, message: string }`
+- On success also returns `moving_expiration_date` and refreshes `bo_session` cookie expiry.
 
 ### `POST /api/admin/logout`
 Response:
@@ -76,6 +81,7 @@ Response:
 Response:
 - `{ success: true, session: { user, restaurants, activeRestaurantId } }`
 - `session.user` incluye `role`, `roleImportance`, `sectionAccess`, `username?` y `mustChangePassword`.
+- Also returns `moving_expiration_date` and refreshes `bo_session` cookie expiry.
 
 ### `POST /api/admin/me/password`
 Set password for current authenticated backoffice user.
@@ -479,7 +485,9 @@ List bookings for a date (paginated).
 Query params:
 - `date` (required `YYYY-MM-DD`)
 - `status` (optional): `pending|confirmed`
-- `q` (optional): searches **only** by `customer_name` (`LIKE %q%`)
+- `q` (optional): optimized search over `customer_name`, `contact_email` y `contact_phone`.
+  - Uses prefix matching (`q%`) for index-friendly filtering.
+  - When query terms are long enough (`>= 3` chars), also attempts MySQL FULLTEXT on `customer_name/contact_email/commentary` (with automatic prefix fallback).
 - `sort` (optional, default `reservation_time`): `reservation_time|added_date`
 - `dir` (optional, default `asc`): `asc|desc`
 - `page` (optional, default `1`) (1-based)
@@ -491,6 +499,7 @@ Legacy compatibility:
 Response:
 - `{ success: true, bookings: Booking[], floors: Floor[], total_count: number, total: number, page: number, count: number }`
 - `floors` usa la misma estructura `Floor` de config y representa el estado activo del dia consultado.
+- `Booking` incluye `preferred_floor_number` (`number|null`) para la preferencia de salón/planta.
 
 ### `GET /api/admin/bookings/export`
 Exports **all** bookings for a date (no filters; used for PDF export).
@@ -515,6 +524,7 @@ Body (JSON):
 - `customer_name` (string)
 - `contact_phone` (string; digits-only validated)
 - Optional: `contact_email` (string), `table_number` (string), `commentary` (string), `babyStrollers` (number), `highChairs` (number)
+- Optional: `preferred_floor_number` (number)
 - `special_menu` (boolean)
 - If `special_menu=true`:
   - `menu_de_grupo_id` (number, required)
@@ -660,8 +670,18 @@ Response:
 ### `GET /api/admin/group-menus-v2/{id}`
 Returns full editor payload:
 - basics (`menu_title`, `price`, `active`, `is_draft`, `menu_type`, `menu_subtitle`)
+- preview toggles/media:
+  - `show_dish_images`
+  - `show_menu_preview_image`
+  - `menu_preview_image_url`
+  - `menu_preview_ai_requested`
+  - `menu_preview_ai_generating`
+  - `ai_requested_img` (alias for preview state)
+  - `ai_generating_img` (alias for preview state)
+  - `ai_generated_img` (alias URL/null for preview state)
+  - `menu_preview` object with the same fields above (for WS/fetch parity)
 - settings (`included_coffee`, `beverage`, `comments`, `min_party_size`, `main_dishes_limit`, `main_dishes_limit_number`)
-- `sections[]` and nested `dishes[]`
+- `sections[]` and nested `dishes[]` (`sections[].annotations` is `string[]`)
 - `ai_images` tracker for dish image generation (`total_requested`, `total_generating`, `items[]`)
 
 Response:
@@ -673,6 +693,8 @@ Upserts menu metadata and settings (patch semantics).
 Body (JSON, any subset):
 - `menu_title`, `price`, `active`, `is_draft`, `menu_type`
 - `menu_subtitle` (`string[]`)
+- `show_dish_images` (boolean)
+- `show_menu_preview_image` (boolean)
 - `beverage` (object)
 - `comments` (`string[]`)
 - `min_party_size`, `main_dishes_limit`, `main_dishes_limit_number`, `included_coffee`
@@ -693,14 +715,32 @@ Response:
 Replaces the ordered sections list for a menu.
 
 Body (JSON):
-- `sections`: array of `{ id?, title, kind }`
+- `sections`: array of `{ id?, title, kind, annotations? }`
 
 Rules:
 - At least 1 section is required.
 - Removed section IDs are deleted.
 
 Response:
-- `{ success: true }`
+- `{ success: true, sections }`
+
+### `PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/annotations`
+Updates only section annotations (ordered list).
+
+Body (JSON):
+- `annotations`: `string[]`
+
+Response:
+- `{ success: true, section_id, annotations, menu_id }`
+
+### `GET /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes`
+Lazy-loads dishes for a single section. Enables accordion-style UI where sections load on-demand.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Response:
+- `{ success: true, dishes: [{ id, section_id, catalog_dish_id, title, description, allergens, supplement_enabled, supplement_price, price, active, position, foto_url?, image_url?, ai_requested_img, ai_generating_img, ai_generated_img? }] }`
 
 ### `PUT /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes`
 Replaces dishes for one section (ordered).
@@ -768,6 +808,148 @@ Response:
 - `{ success: true, message: \"AI image generation started\", dish_id }`
 - `{ success: false, message }`
 
+### `POST /api/admin/group-menus-v2/{id}/preview-image`
+Uploads/replaces one menu-level preview image.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Body (`multipart/form-data`):
+- `image`: image file (`jpeg`, `png`, `webp`, `gif`; max 8MB)
+
+Behavior:
+- Validates menu ownership.
+- Converts input to `image/webp` and enforces output max size `150KB`.
+- Uploads to Bunny Storage path:
+  - `{restaurant_id}/pictures/menupreviewpictures/{menu_id}/{image_id}.webp`
+- Persists:
+  - `menu_preview_image_path` (object path),
+  - `show_menu_preview_image=1`,
+  - `menu_preview_ai_requested=0`,
+  - `menu_preview_ai_generating=0`.
+
+Response:
+- `{ success: true, imageUrl }`
+- `{ success: false, message }`
+
+### `POST /api/admin/group-menus-v2/{id}/preview-image/ai`
+Starts asynchronous AI enhancement for one menu-level preview image.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Body (`multipart/form-data`):
+- `image`: source image (`jpeg`, `png`, `webp`; max bytes controlled by backend env)
+
+Behavior:
+- Validates menu ownership.
+- Sets menu flags immediately:
+  - `menu_preview_ai_requested=1`
+  - `menu_preview_ai_generating=1`
+- Emits websocket event `preview_image_started`.
+- Runs background worker (bounded concurrency) using the same AI provider path as dish images.
+- Normalizes generated output to `image/webp` with max size `150KB`.
+- Uploads to Bunny Storage path:
+  - `{restaurant_id}/pictures/menupreviewpictures/{menu_id}/{image_id}.webp`
+- Persists:
+  - `menu_preview_image_path` (object path),
+  - `show_menu_preview_image=1`,
+  - `menu_preview_ai_generating=0`.
+- Emits `preview_image_completed` (or `preview_image_failed` on errors).
+
+Response:
+- `{ success: true, message, menu_id }`
+- `{ success: false, message }`
+
+### `GET /api/admin/group-menus-v2/{id}/slider`
+Get menu-level slider state and images.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Response:
+- `{ success: true, slider: { show_slider: bool, images: [{ id, image_url, position, created_at }] } }`
+- `{ success: false, message }`
+
+### `PATCH /api/admin/group-menus-v2/{id}/slider`
+Toggle menu slider visibility.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Body (`application/json`):
+- `show_slider`: boolean
+
+Response:
+- `{ success: true, show_slider: bool }`
+- `{ success: false, message }`
+
+### `POST /api/admin/group-menus-v2/{id}/slider/images`
+Upload a new slider image for a menu. Supports 16:9 crop via ImageMagick normalization.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Body (`multipart/form-data`):
+- `image`: source image (`jpeg`, `png`, `webp`, `gif`; max 8MB)
+
+Behavior:
+- Validates menu ownership.
+- Normalizes to WebP via `specialmenuimage.NormalizeToWebP` (respects 16:9 output).
+- Uploads to Bunny Storage path: `{restaurant_id}/pictures/menusliderpictures/{menu_id}/{image_id}.webp`
+- Inserts row into `menu_slider_images` table with auto-incremented position.
+- Sets `show_menu_slider=1` on the menu.
+
+Response:
+- `{ success: true, image: { id, image_url, position, created_at } }`
+- `{ success: false, message }`
+
+### `DELETE /api/admin/group-menus-v2/{id}/slider/images/{imageId}`
+Delete a slider image.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Response:
+- `{ success: true }`
+- `{ success: false, message }`
+
+### `PUT /api/admin/group-menus-v2/{id}/slider/images`
+Reorder slider images by passing new position order.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Body (`application/json`):
+- `image_ids`: array of image IDs in desired order
+
+Response:
+- `{ success: true }`
+- `{ success: false, message }`
+
+### `POST /api/admin/group-menus-v2/{id}/slider/images/ai`
+Starts asynchronous AI enhancement for a slider image. Uses adjusted prompt for 16:9 ambiance framing (less dish focus).
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+- Requires `OpenAIAPIKey` configured (WaveSpeed AI)
+
+Body (`multipart/form-data`):
+- `image`: source image (`jpeg`, `png`, `webp`; max bytes controlled by backend env)
+
+Behavior:
+- Validates menu ownership.
+- Uses custom AI prompt: `boGroupMenuV2SliderAIPrompt` - emphasizes wide-angle restaurant ambiance/table setting, dish as secondary subject, 16:9 output.
+- Output size: `1792x1024` (16:9).
+- Uploads to Bunny Storage path: `{restaurant_id}/pictures/menusliderpictures/{menu_id}/{image_id}.webp`
+- Inserts row into `menu_slider_images` table.
+- Sets `show_menu_slider=1` on the menu.
+- Emits `slider_image_completed` websocket event.
+
+Response:
+- `{ success: true, message, menu_id }`
+- `{ success: false, message }`
+
 ### `GET /api/admin/group-menus-v2/ws?menuId={id}`
 WebSocket endpoint for realtime V2 dish AI image updates (scoped by active restaurant + menu id).
 
@@ -777,14 +959,42 @@ Auth:
 Behavior:
 - Requires query `menuId` (positive integer and owned by active restaurant).
 - Server sends `hello` with current `tracker` snapshot.
+- `hello/snapshot` may include `menu_preview`:
+  - `{ show_menu_preview_image, menu_preview_image_url, menu_preview_ai_requested, menu_preview_ai_generating, ai_requested_img, ai_generating_img, ai_generated_img }`
 - Client can send `sync`, `refresh`, `join`, `join_menu`, or `join_group_menu` messages to request fresh snapshot.
 - Broadcast event types:
   - `ai_image_started`
   - `ai_image_completed`
   - `ai_image_failed`
+  - `preview_image_started`
+  - `preview_image_completed`
+  - `preview_image_failed`
 
 Tracker payload shape:
 - `{ total_requested, total_generating, items: [{ dish_id, ai_requested, ai_generating, ai_generated_img }] }`
+
+### `POST /api/admin/group-menus-v2/{id}/special-image`
+Uploads/replaces the image for one special menu.
+
+Auth:
+- Backoffice session cookie (`bo_session`)
+
+Body (`multipart/form-data`):
+- `image`: source file
+  - Supported: `jpeg`, `png`, `webp`, `gif`, `pdf`, `doc`, `docx`, `txt`
+  - Max input size: `10MB`
+
+Behavior:
+- Validates the menu belongs to the active restaurant and is `menu_type = special`.
+- Converts input to `image/webp` server-side.
+- Enforces output max size `150KB` (best-effort compression and resize).
+- Uploads to Bunny Storage path:
+  - `{restaurant_id}/pictures/menus_especiales/{menu_id}.webp`
+- Persists `special_menu_image_url` in `menusDeGrupos`.
+
+Response:
+- `{ success: true, imageUrl, filename }`
+- `{ success: false, message }`
 
 ### `POST /api/admin/group-menus-v2/{id}/publish`
 Validates menu has at least one section and one active dish, marks `is_draft=0`, and syncs legacy snapshot fields.
@@ -1016,6 +1226,8 @@ Response:
   - `main_dishes_limit` (boolean)
   - `main_dishes_limit_number` (number)
 - `show_dish_images` (boolean; legacy toggle for preview image cards)
+- `show_menu_preview_image` (boolean; toggles menu-level preview hero image)
+- `menu_preview_image_url` (string; Bunny pull URL when menu preview image exists)
 - `sections` (`PublicMenuSection[]`)
 - `special_menu_image_url` (string; full Bunny pull URL when set, empty when not set)
 - `legacy_source_table` (string; optional, e.g. `DIA|FINDE`)
@@ -1026,6 +1238,7 @@ Response:
 - `title` (string)
 - `kind` (string; normalized kind)
 - `position` (number)
+- `annotations` (`string[]`)
 - `dishes` (`PublicMenuDish[]`)
 
 `PublicMenuDish`:
@@ -1097,13 +1310,6 @@ Actions:
 ---
 
 ## Menu Visibility (Legacy Admin)
-
-### `GET /api/menuVisibilityBackend/getMenuVisibility.php`
-Query params:
-- `menu_key` (optional). If absent, returns all menus.
-
-Response:
-- `{ success: true, menu: {...} }` or `{ success: true, menus: [...] }`
 
 ### `POST /api/menuVisibilityBackend/toggleMenuVisibility.php` (admin)
 Body:
@@ -1207,9 +1413,11 @@ Body:
 
 ## Reservations Availability Helpers
 
-### `GET /api/fetch_arroz.php`
-Returns a bare JSON array of rice dish descriptions:
-- `string[]`
+### `GET /api/reservations/rice-types`
+Returns active rice options for the reservation UI.
+
+Response:
+- `{ success: true, riceTypes: string[] }`
 
 ### `POST /api/fetch_daily_limit.php`
 Form:
@@ -1218,13 +1426,21 @@ Form:
 Response:
 - `{ success: true, date, dailyLimit, totalPeople, freeBookingSeats }`
 
-### `POST /api/fetch_month_availability.php`
-Form:
+### `GET /api/reservations/month-availability`
+Query params:
 - `month` (int `1-12`)
 - `year` (int)
 
 Response:
 - `{ success: true, month: number, year: number, availability: { [YYYY-MM-DD]: { dailyLimit: number, totalPeople: number, freeBookingSeats: number } } }`
+
+### `GET /api/reservations/closed-days`
+Query params:
+- `from` (`YYYY-MM-DD`)
+- `to` (`YYYY-MM-DD`)
+
+Response:
+- `{ success: true, closed_days: string[], opened_days: string[] }`
 
 ---
 
@@ -1340,10 +1556,6 @@ Notes:
 - Email sending is stubbed (no SMTP configured in Go).
 - WhatsApp is sent via UAZAPI if `UAZAPI_URL` + `UAZAPI_TOKEN` are configured.
 
-### `GET /api/fetch_closed_days.php`
-Response:
-- `{ success: true, closed_days: string[], opened_days: string[] }`
-
 ### `POST /api/fetch_mesas_de_dos.php`
 Form:
 - `date` (`YYYY-MM-DD`)
@@ -1423,6 +1635,9 @@ Upserts into `hour_configuration`.
 ### `POST /api/insert_booking_front.php`
 Form:
 - Standard reservation fields (name/email/date/time/party_size/phone, etc.)
+- Optional: `preferred_floor_number` (number).  
+  - Si hay una sola planta activa para ese día se autoasigna.
+  - Si hay varias plantas activas, el frontend debe enviar selección.
 - Optional arroz selection JSON fields (as in legacy JS)
 - Optional group menu fields:
   - `special_menu=1`
@@ -1432,6 +1647,15 @@ Form:
 
 Response:
 - `{ success: true, booking_id: number, notifications_sent: false, email_sent: false, whatsapp_sent: false }`
+
+### `GET /api/get_reservation_day_context.php?date=YYYY-MM-DD`
+Contexto operativo del día para el formulario público de reservas.
+
+Response:
+- `{ success: true, date, openingMode, morningHours, nightHours, floors, activeFloors }`
+- `openingMode`: `both | morning | night`
+- `floors`: estado de plantas para la fecha
+- `activeFloors`: subconjunto de `floors` con `active=true`
 
 ### `POST /api/insert_booking.php` (admin)
 Form:
@@ -1531,6 +1755,63 @@ Endpoints:
 Response basics:
 - Success: `{ "success": true, ... }`
 - Error: `{ "success": false, "message": "..." }`
+
+## Backoffice Tables Map (`/api/admin/tables*`)
+
+Auth:
+- Requires backoffice session cookie (`bo_session`) and `reservas` section access.
+
+### `GET /api/admin/tables`
+
+Query params (optional):
+- `date` (`YYYY-MM-DD`): aplica overrides de layout por dia.
+- `floor_number` (int >= 0): combinado con `date`, aplica overrides por salon/planta.
+
+Response:
+- `{ success: true, data: Area[], areas: Area[], tables: Table[] }`
+- `Area`: incluye `tables` (mesas de esa area).
+- `Table` incluye como minimo:
+  - `id`, `area_id`, `name`, `capacity`, `status`, `x_pos`, `y_pos`
+  - `shape` (`round|square`)
+  - `fill_color`, `outline_color`, `style_preset`, `texture_image_url`
+  - `metadata` (si existe en DB)
+
+### `POST /api/admin/tables`
+
+Body JSON:
+- `entity`: `"table"` (default) o `"area"`.
+- Para `table`: admite `area_id`, `name`, `capacity|seats`, `status`, `shape`, `fill_color`, `outline_color`, `style_preset`, `texture_image_url`, `x_pos`, `y_pos`, `is_active`, `metadata`.
+- Para `area`: admite `name`, `display_order|sort_order`, `is_active`, `metadata`.
+
+Response:
+- `table`: `{ success: true, entity: "table", item: Table, table: Table }`
+- `area`: `{ success: true, entity: "area", item: Area }`
+
+### `PUT /api/admin/tables`
+
+Body JSON:
+- `id` (required) + mismos campos opcionales de `POST` para actualizar.
+- Para posicion por layout diario: incluir `date` + `floor_number` junto a `x_pos`/`y_pos`.
+- `entity: "layout"` permite guardar metadata de mapa por dia/planta (por ejemplo `elements`, `booking_states`) usando `date` + `floor_number` + `metadata`.
+
+Response:
+- `{ success: true, entity: "table"|"area", item: ... }`
+
+### `POST /api/admin/tables/{id}/texture-image`
+
+Multipart form:
+- `image` (jpg/png/webp/gif).  
+- Se normaliza a `image/webp` y se fuerza salida <= `150KB`.
+- Se sube a BunnyCDN y se guarda `texture_image_url` en la mesa.
+
+Response:
+- `{ success: true, id, imageUrl }`
+
+### `GET /api/admin/tables/ws`
+
+WebSocket events:
+- `hello`, `snapshot`, `table_created`, `table_updated`, `area_created`, `area_updated`.
+- Para eventos de mesa, payload incluye `table` normalizada (incluyendo campos de estilo/texture cuando existan).
 
 `GET /api/admin/website/menu-templates` response:
 - `default_theme_id`: plantilla fallback para la web premium.

@@ -50,11 +50,12 @@ type publicMenuDish struct {
 }
 
 type publicMenuSection struct {
-	ID       int64            `json:"id"`
-	Title    string           `json:"title"`
-	Kind     string           `json:"kind"`
-	Position int              `json:"position"`
-	Dishes   []publicMenuDish `json:"dishes"`
+	ID          int64            `json:"id"`
+	Title       string           `json:"title"`
+	Kind        string           `json:"kind"`
+	Position    int              `json:"position"`
+	Annotations []string         `json:"annotations"`
+	Dishes      []publicMenuDish `json:"dishes"`
 }
 
 type publicMenuPrincipales struct {
@@ -72,23 +73,25 @@ type publicMenuSettings struct {
 }
 
 type publicMenuItem struct {
-	ID                  int64                 `json:"id"`
-	Slug                string                `json:"slug"`
-	MenuTitle           string                `json:"menu_title"`
-	MenuType            string                `json:"menu_type"`
-	Price               string                `json:"price"`
-	Active              bool                  `json:"active"`
-	MenuSubtitle        []string              `json:"menu_subtitle"`
-	ShowDishImages      bool                  `json:"show_dish_images"`
-	Entrantes           []string              `json:"entrantes"`
-	Principales         publicMenuPrincipales `json:"principales"`
-	Postre              []string              `json:"postre"`
-	Settings            publicMenuSettings    `json:"settings"`
-	Sections            []publicMenuSection   `json:"sections"`
-	SpecialMenuImageURL string                `json:"special_menu_image_url"`
-	LegacySourceTable   string                `json:"legacy_source_table,omitempty"`
-	CreatedAt           string                `json:"created_at"`
-	ModifiedAt          string                `json:"modified_at"`
+	ID                   int64                 `json:"id"`
+	Slug                 string                `json:"slug"`
+	MenuTitle            string                `json:"menu_title"`
+	MenuType             string                `json:"menu_type"`
+	Price                string                `json:"price"`
+	Active               bool                  `json:"active"`
+	MenuSubtitle         []string              `json:"menu_subtitle"`
+	ShowDishImages       bool                  `json:"show_dish_images"`
+	Entrantes            []string              `json:"entrantes"`
+	Principales          publicMenuPrincipales `json:"principales"`
+	Postre               []string              `json:"postre"`
+	Settings             publicMenuSettings    `json:"settings"`
+	Sections             []publicMenuSection   `json:"sections"`
+	ShowMenuPreviewImage bool                  `json:"show_menu_preview_image"`
+	MenuPreviewImageURL  string                `json:"menu_preview_image_url"`
+	SpecialMenuImageURL  string                `json:"special_menu_image_url"`
+	LegacySourceTable    string                `json:"legacy_source_table,omitempty"`
+	CreatedAt            string                `json:"created_at"`
+	ModifiedAt           string                `json:"modified_at"`
 }
 
 func isPublicMenuType(menuType string) bool {
@@ -150,11 +153,12 @@ func buildFallbackPublicSections(menu publicMenuItem) []publicMenuSection {
 	entrantes := buildFallbackPublicSectionDishes(menu.Entrantes)
 	if len(entrantes) > 0 {
 		out = append(out, publicMenuSection{
-			ID:       0,
-			Title:    "Entrantes",
-			Kind:     "entrantes",
-			Position: len(out),
-			Dishes:   entrantes,
+			ID:          0,
+			Title:       "Entrantes",
+			Kind:        "entrantes",
+			Position:    len(out),
+			Annotations: []string{},
+			Dishes:      entrantes,
 		})
 	}
 
@@ -165,22 +169,24 @@ func buildFallbackPublicSections(menu publicMenuItem) []publicMenuSection {
 			sectionTitle = "Principales"
 		}
 		out = append(out, publicMenuSection{
-			ID:       0,
-			Title:    sectionTitle,
-			Kind:     "principales",
-			Position: len(out),
-			Dishes:   principales,
+			ID:          0,
+			Title:       sectionTitle,
+			Kind:        "principales",
+			Position:    len(out),
+			Annotations: []string{},
+			Dishes:      principales,
 		})
 	}
 
 	postres := buildFallbackPublicSectionDishes(menu.Postre)
 	if len(postres) > 0 {
 		out = append(out, publicMenuSection{
-			ID:       0,
-			Title:    "Postres",
-			Kind:     "postres",
-			Position: len(out),
-			Dishes:   postres,
+			ID:          0,
+			Title:       "Postres",
+			Kind:        "postres",
+			Position:    len(out),
+			Annotations: []string{},
+			Dishes:      postres,
 		})
 	}
 
@@ -199,7 +205,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, price, active, menu_type, menu_subtitle,
-		       show_dish_images, entrantes, principales, postre, beverage, comments,
+		       show_dish_images, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
 		       special_menu_image_url, legacy_source_table, created_at, modified_at
 		FROM menusDeGrupos
@@ -234,26 +240,28 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 
 	for rows.Next() {
 		var (
-			menuID             int64
-			menuTitle          string
-			priceRaw           sql.NullString
-			activeInt          int
-			menuTypeRaw        sql.NullString
-			menuSubtitleRaw    sql.NullString
-			showDishImagesInt  int
-			entrantesRaw       sql.NullString
-			principalesRaw     sql.NullString
-			postreRaw          sql.NullString
-			beverageRaw        sql.NullString
-			commentsRaw        sql.NullString
-			minPartySize       int
-			mainDishesLimitInt int
-			mainDishesLimitNum int
-			includedCoffeeInt  int
-			specialImageURLRaw sql.NullString
-			legacySourceTable  sql.NullString
-			createdAtRaw       sql.NullString
-			modifiedAtRaw      sql.NullString
+			menuID                  int64
+			menuTitle               string
+			priceRaw                sql.NullString
+			activeInt               int
+			menuTypeRaw             sql.NullString
+			menuSubtitleRaw         sql.NullString
+			showDishImagesInt       int
+			showMenuPreviewImageInt int
+			menuPreviewPathRaw      sql.NullString
+			entrantesRaw            sql.NullString
+			principalesRaw          sql.NullString
+			postreRaw               sql.NullString
+			beverageRaw             sql.NullString
+			commentsRaw             sql.NullString
+			minPartySize            int
+			mainDishesLimitInt      int
+			mainDishesLimitNum      int
+			includedCoffeeInt       int
+			specialImageURLRaw      sql.NullString
+			legacySourceTable       sql.NullString
+			createdAtRaw            sql.NullString
+			modifiedAtRaw           sql.NullString
 		)
 
 		if err := rows.Scan(
@@ -264,6 +272,8 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			&menuTypeRaw,
 			&menuSubtitleRaw,
 			&showDishImagesInt,
+			&showMenuPreviewImageInt,
+			&menuPreviewPathRaw,
 			&entrantesRaw,
 			&principalesRaw,
 			&postreRaw,
@@ -346,11 +356,13 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				MainDishesLimit:      mainDishesLimitInt != 0,
 				MainDishesLimitCount: mainDishesLimitNum,
 			},
-			Sections:            []publicMenuSection{},
-			SpecialMenuImageURL: s.publicMenuMediaURL(specialImageURLRaw.String),
-			LegacySourceTable:   strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),
-			CreatedAt:           createdAtRaw.String,
-			ModifiedAt:          modifiedAtRaw.String,
+			Sections:             []publicMenuSection{},
+			ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
+			MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
+			SpecialMenuImageURL:  s.publicMenuMediaURL(specialImageURLRaw.String),
+			LegacySourceTable:    strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),
+			CreatedAt:            createdAtRaw.String,
+			ModifiedAt:           modifiedAtRaw.String,
 		}
 
 		menuIndexByID[menuID] = len(menus)
@@ -369,7 +381,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		sectionsQuery := fmt.Sprintf(`
-			SELECT id, menu_id, title, section_kind, position
+			SELECT id, menu_id, title, section_kind, position, COALESCE(annotations_json, '')
 			FROM group_menu_sections_v2
 			WHERE restaurant_id = ?
 			  AND menu_id IN (%s)
@@ -386,13 +398,14 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 		for sectionRows.Next() {
 			var (
-				sectionID   int64
-				menuID      int64
-				title       string
-				sectionKind string
-				position    int
+				sectionID      int64
+				menuID         int64
+				title          string
+				sectionKind    string
+				position       int
+				annotationsRaw sql.NullString
 			)
-			if err := sectionRows.Scan(&sectionID, &menuID, &title, &sectionKind, &position); err != nil {
+			if err := sectionRows.Scan(&sectionID, &menuID, &title, &sectionKind, &position, &annotationsRaw); err != nil {
 				sectionRows.Close()
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 					"success": false,
@@ -401,11 +414,12 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			section := &publicMenuSection{
-				ID:       sectionID,
-				Title:    title,
-				Kind:     normalizeV2SectionKind(sectionKind),
-				Position: position,
-				Dishes:   []publicMenuDish{},
+				ID:          sectionID,
+				Title:       title,
+				Kind:        normalizeV2SectionKind(sectionKind),
+				Position:    position,
+				Annotations: normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
+				Dishes:      []publicMenuDish{},
 			}
 			sectionsByMenu[menuID] = append(sectionsByMenu[menuID], section)
 			sectionByID[sectionID] = section

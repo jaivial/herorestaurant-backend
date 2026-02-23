@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,44 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
+func (s *Server) loadRiceTypes(ctx context.Context, restaurantID int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DESCRIPCION
+		FROM FINDE
+		WHERE restaurant_id = ? AND TIPO = 'ARROZ' AND (active = 1 OR active IS NULL)
+		ORDER BY DESCRIPCION ASC
+	`, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]string, 0)
+	seen := make(map[string]struct{})
+	for rows.Next() {
+		var desc sql.NullString
+		if err := rows.Scan(&desc); err != nil {
+			return nil, err
+		}
+		if !desc.Valid {
+			continue
+		}
+		item := strings.TrimSpace(desc.String)
+		if item == "" {
+			continue
+		}
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *Server) handleFetchArroz(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
@@ -24,12 +63,7 @@ func (s *Server) handleFetchArroz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT DESCRIPCION
-		FROM FINDE
-		WHERE restaurant_id = ? AND TIPO = 'ARROZ' AND (active = 1 OR active IS NULL)
-		ORDER BY DESCRIPCION ASC
-	`, restaurantID)
+	out, err := s.loadRiceTypes(r.Context(), restaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -37,30 +71,34 @@ func (s *Server) handleFetchArroz(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	defer rows.Close()
-
-	var out []string
-	for rows.Next() {
-		var desc sql.NullString
-		if err := rows.Scan(&desc); err != nil {
-			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
-				"success": false,
-				"message": "Error leyendo FINDE",
-			})
-			return
-		}
-		if !desc.Valid {
-			continue
-		}
-		s := strings.TrimSpace(desc.String)
-		if s == "" {
-			continue
-		}
-		out = append(out, s)
-	}
 
 	// Legacy endpoint returns a bare JSON array.
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleReservationsRiceTypes(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+			"success": false,
+			"message": "Unknown restaurant",
+		})
+		return
+	}
+
+	out, err := s.loadRiceTypes(r.Context(), restaurantID)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error consultando tipos de arroz",
+		})
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"riceTypes": out,
+	})
 }
 
 func (s *Server) handleUpdateDailyLimit(w http.ResponseWriter, r *http.Request) {
@@ -180,10 +218,10 @@ func (s *Server) handleFetchDailyLimit(w http.ResponseWriter, r *http.Request) {
 
 	freeSeats := dailyLimit - totalPeople
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":         true,
-		"date":            date,
-		"dailyLimit":      dailyLimit,
-		"totalPeople":     totalPeople,
+		"success":          true,
+		"date":             date,
+		"dailyLimit":       dailyLimit,
+		"totalPeople":      totalPeople,
 		"freeBookingSeats": freeSeats,
 	})
 }
@@ -361,9 +399,9 @@ func (s *Server) handleFetchMesasDeDos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":             true,
-		"disponibilidadDeDos": bookedCount < limit,
-		"limiteMesasDeDos":    limit,
+		"success":              true,
+		"disponibilidadDeDos":  bookedCount < limit,
+		"limiteMesasDeDos":     limit,
 		"mesasDeDosReservadas": bookedCount,
 	})
 }
@@ -428,10 +466,10 @@ func (s *Server) handleCheckDayStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":              true,
-		"date":                 date,
-		"weekday":              weekday,
-		"is_open":              isOpen,
+		"success":               true,
+		"date":                  date,
+		"weekday":               weekday,
+		"is_open":               isOpen,
 		"is_default_closed_day": isDefaultClosed,
 	})
 }
@@ -506,6 +544,63 @@ func (s *Server) handleSetDayOpenFlag(w http.ResponseWriter, r *http.Request, is
 	})
 }
 
+func (s *Server) loadClosedDayOverrides(ctx context.Context, restaurantID int, fromDate string, toDate string) ([]string, []string, error) {
+	sqlQuery := "SELECT date, is_open FROM restaurant_days WHERE restaurant_id = ?"
+	args := []any{restaurantID}
+	if fromDate != "" && toDate != "" {
+		sqlQuery += " AND date BETWEEN ? AND ?"
+		args = append(args, fromDate, toDate)
+	}
+	sqlQuery += " ORDER BY date ASC"
+
+	rows, err := s.db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	closedDays := make([]string, 0)
+	openedDays := make([]string, 0)
+	for rows.Next() {
+		var date string
+		var isOpenInt int
+		if err := rows.Scan(&date, &isOpenInt); err != nil {
+			return nil, nil, err
+		}
+		if isOpenInt != 0 {
+			openedDays = append(openedDays, date)
+		} else {
+			closedDays = append(closedDays, date)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	return closedDays, openedDays, nil
+}
+
+func parseClosedDaysRange(fromRaw string, toRaw string, maxDays int) (string, string, error) {
+	fromDate := strings.TrimSpace(fromRaw)
+	toDate := strings.TrimSpace(toRaw)
+	if fromDate == "" || toDate == "" {
+		return "", "", errors.New("Los parámetros from y to son obligatorios")
+	}
+	if !isValidISODate(fromDate) || !isValidISODate(toDate) {
+		return "", "", errors.New("Formato de fecha inválido")
+	}
+	start, _ := time.Parse("2006-01-02", fromDate)
+	end, _ := time.Parse("2006-01-02", toDate)
+	if end.Before(start) {
+		return "", "", errors.New("Rango de fechas inválido")
+	}
+	days := int(end.Sub(start).Hours()/24) + 1
+	if days > maxDays {
+		return "", "", errors.New("El rango máximo permitido es de 40 días")
+	}
+	return fromDate, toDate, nil
+}
+
 func (s *Server) handleFetchClosedDays(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
@@ -516,48 +611,13 @@ func (s *Server) handleFetchClosedDays(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	closedRows, err := s.db.QueryContext(r.Context(), "SELECT date FROM restaurant_days WHERE restaurant_id = ? AND is_open = FALSE", restaurantID)
+	closedDays, openedDays, err := s.loadClosedDayOverrides(r.Context(), restaurantID, "", "")
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "Error fetching closed days: " + err.Error(),
 		})
 		return
-	}
-	defer closedRows.Close()
-	var closedDays []string
-	for closedRows.Next() {
-		var d string
-		if err := closedRows.Scan(&d); err != nil {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success": false,
-				"message": "Error fetching closed days: " + err.Error(),
-			})
-			return
-		}
-		closedDays = append(closedDays, d)
-	}
-
-	openedRows, err := s.db.QueryContext(r.Context(), "SELECT date FROM restaurant_days WHERE restaurant_id = ? AND is_open = TRUE", restaurantID)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "Error fetching closed days: " + err.Error(),
-		})
-		return
-	}
-	defer openedRows.Close()
-	var openedDays []string
-	for openedRows.Next() {
-		var d string
-		if err := openedRows.Scan(&d); err != nil {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success": false,
-				"message": "Error fetching closed days: " + err.Error(),
-			})
-			return
-		}
-		openedDays = append(openedDays, d)
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -565,6 +625,123 @@ func (s *Server) handleFetchClosedDays(w http.ResponseWriter, r *http.Request) {
 		"closed_days": closedDays,
 		"opened_days": openedDays,
 	})
+}
+
+func (s *Server) handleReservationsClosedDays(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+			"success": false,
+			"message": "Unknown restaurant",
+		})
+		return
+	}
+
+	fromDate, toDate, err := parseClosedDaysRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"), 40)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	closedDays, openedDays, err := s.loadClosedDayOverrides(r.Context(), restaurantID, fromDate, toDate)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Error fetching closed days: " + err.Error(),
+		})
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":     true,
+		"closed_days": closedDays,
+		"opened_days": openedDays,
+	})
+}
+
+func parseMonthYear(monthRaw string, yearRaw string) (int, int, error) {
+	month, _ := strconv.Atoi(strings.TrimSpace(monthRaw))
+	year, _ := strconv.Atoi(strings.TrimSpace(yearRaw))
+	if month < 1 || month > 12 || year < 2000 || year > 2100 {
+		return 0, 0, errors.New("Invalid month or year")
+	}
+	return month, year, nil
+}
+
+func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, year int, month int) (map[string]map[string]int, error) {
+	firstDay := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	lastDay := firstDay.AddDate(0, 1, -1)
+
+	firstDayStr := firstDay.Format("2006-01-02")
+	lastDayStr := lastDay.Format("2006-01-02")
+
+	dailyLimits := map[string]int{}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT reservationDate, MAX(dailyLimit) as dailyLimit
+		FROM reservation_manager
+		WHERE restaurant_id = ? AND reservationDate BETWEEN ? AND ?
+		GROUP BY reservationDate
+	`, restaurantID, firstDayStr, lastDayStr)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d string
+		var lim int
+		if err := rows.Scan(&d, &lim); err != nil {
+			return nil, err
+		}
+		dailyLimits[d] = lim
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	bookings := map[string]int{}
+	rows2, err := s.db.QueryContext(ctx, `
+		SELECT reservation_date, COALESCE(SUM(party_size), 0) as total_people
+		FROM bookings
+		WHERE restaurant_id = ? AND reservation_date BETWEEN ? AND ?
+		GROUP BY reservation_date
+	`, restaurantID, firstDayStr, lastDayStr)
+	if err != nil {
+		return nil, err
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var d string
+		var total int
+		if err := rows2.Scan(&d, &total); err != nil {
+			return nil, err
+		}
+		bookings[d] = total
+	}
+	if err := rows2.Err(); err != nil {
+		return nil, err
+	}
+
+	availability := map[string]map[string]int{}
+	defaultLimit := 45
+	daysInMonth := lastDay.Day()
+	for day := 1; day <= daysInMonth; day++ {
+		dateISO := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		lim := defaultLimit
+		if v, ok := dailyLimits[dateISO]; ok {
+			lim = v
+		}
+		total := bookings[dateISO]
+		availability[dateISO] = map[string]int{
+			"dailyLimit":       lim,
+			"totalPeople":      total,
+			"freeBookingSeats": lim - total,
+		}
+	}
+
+	return availability, nil
 }
 
 func (s *Server) handleFetchMonthAvailability(w http.ResponseWriter, r *http.Request) {
@@ -585,24 +762,16 @@ func (s *Server) handleFetchMonthAvailability(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	month, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("month")))
-	year, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("year")))
-	if month < 1 || month > 12 || year < 2000 || year > 2100 {
+	month, year, err := parseMonthYear(r.FormValue("month"), r.FormValue("year"))
+	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
-			"message": "Invalid month or year",
+			"message": err.Error(),
 		})
 		return
 	}
 
-	firstDay := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
-	lastDay := firstDay.AddDate(0, 1, -1)
-
-	firstDayStr := firstDay.Format("2006-01-02")
-	lastDayStr := lastDay.Format("2006-01-02")
-
-	dailyLimits := map[string]int{}
-	rows, err := s.db.QueryContext(r.Context(), "SELECT reservationDate, dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate BETWEEN ? AND ?", restaurantID, firstDayStr, lastDayStr)
+	availability, err := s.buildMonthAvailability(r.Context(), restaurantID, year, month)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -610,58 +779,41 @@ func (s *Server) handleFetchMonthAvailability(w http.ResponseWriter, r *http.Req
 		})
 		return
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var d string
-		var lim int
-		if err := rows.Scan(&d, &lim); err != nil {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success": false,
-				"message": "Error al cargar la disponibilidad mensual: " + err.Error(),
-			})
-			return
-		}
-		dailyLimits[d] = lim
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"month":        month,
+		"year":         year,
+		"availability": availability,
+	})
+}
+
+func (s *Server) handleReservationsMonthAvailability(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+			"success": false,
+			"message": "Unknown restaurant",
+		})
+		return
 	}
 
-	bookings := map[string]int{}
-	rows2, err := s.db.QueryContext(r.Context(), "SELECT reservation_date, COALESCE(SUM(party_size), 0) as total_people FROM bookings WHERE restaurant_id = ? AND reservation_date BETWEEN ? AND ? GROUP BY reservation_date", restaurantID, firstDayStr, lastDayStr)
+	month, year, err := parseMonthYear(r.URL.Query().Get("month"), r.URL.Query().Get("year"))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	availability, err := s.buildMonthAvailability(r.Context(), restaurantID, year, month)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "Error al cargar la disponibilidad mensual: " + err.Error(),
 		})
 		return
-	}
-	defer rows2.Close()
-	for rows2.Next() {
-		var d string
-		var total int
-		if err := rows2.Scan(&d, &total); err != nil {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success": false,
-				"message": "Error al cargar la disponibilidad mensual: " + err.Error(),
-			})
-			return
-		}
-		bookings[d] = total
-	}
-
-	availability := map[string]map[string]int{}
-	defaultLimit := 45
-	daysInMonth := lastDay.Day()
-	for day := 1; day <= daysInMonth; day++ {
-		date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
-		lim := defaultLimit
-		if v, ok := dailyLimits[date]; ok {
-			lim = v
-		}
-		total := bookings[date]
-		availability[date] = map[string]int{
-			"dailyLimit":      lim,
-			"totalPeople":     total,
-			"freeBookingSeats": lim - total,
-		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -709,11 +861,11 @@ func (s *Server) handleFetchOccupancy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":    true,
+		"success":     true,
 		"totalPeople": totalPeople,
-		"dailyLimit": dailyLimit,
-		"date":       date,
-		"status":     "OK",
+		"dailyLimit":  dailyLimit,
+		"date":        date,
+		"status":      "OK",
 	})
 }
 

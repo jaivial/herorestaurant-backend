@@ -48,20 +48,25 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 
-	// CORS / preflight: some legacy clients rely on OPTIONS support.
-	r.Options("/*", func(w http.ResponseWriter, r *http.Request) {
-		origin := strings.TrimSpace(r.Header.Get("Origin"))
-		allowed := "*"
-		if s.cfg.CORSAllowOrigins != "" {
-			allowed = s.cfg.CORSAllowOrigins
-		}
-		if origin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", allowed)
-			w.Header().Set("Vary", "Origin")
-		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, X-Api-Token")
-		w.WriteHeader(http.StatusNoContent)
+	// CORS for API and legacy endpoints.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			allowedOrigin := s.resolveAllowedOrigin(origin)
+			if allowedOrigin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+				w.Header().Set("Vary", "Origin")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, X-Api-Token")
+			}
+
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
 	})
 
 	// Backoffice (new React SSR dashboard).
@@ -182,10 +187,20 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/basics", s.handleBOGroupMenusV2PatchBasics)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/menu-type", s.handleBOGroupMenusV2PatchMenuType)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections", s.handleBOGroupMenusV2PutSections)
+		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/annotations", s.handleBOGroupMenusV2PatchSectionAnnotations)
+		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2GetSectionDishes)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2PutSectionDishes)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}", s.handleBOGroupMenusV2PatchSectionDish)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image", s.handleBOGroupMenusV2UploadSectionDishImage)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image/ai", s.handleBOGroupMenusV2GenerateSectionDishAIImage)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/preview-image", s.handleBOGroupMenusV2UploadMenuPreviewImage)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/preview-image/ai", s.handleBOGroupMenusV2GenerateMenuPreviewAIImage)
+		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}/slider", s.handleBOGroupMenusV2GetSlider)
+		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/slider", s.handleBOGroupMenusV2PatchSlider)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/slider/images", s.handleBOGroupMenusV2UploadSliderImage)
+		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/slider/images/{imageId}", s.handleBOGroupMenusV2DeleteSliderImage)
+		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/slider/images", s.handleBOGroupMenusV2ReorderSliderImages)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/slider/images/ai", s.handleBOGroupMenusV2GenerateSliderAIImage)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/publish", s.handleBOGroupMenusV2Publish)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/toggle-active", s.handleBOGroupMenusV2ToggleActive)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/special-image", s.handleBOSpecialMenuImageUpload)
@@ -243,6 +258,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/tables", s.handleBOPremiumTablesList)
 		r.With(s.requireBOSession, reservasGate).Post("/tables", s.handleBOPremiumTablesCreate)
 		r.With(s.requireBOSession, reservasGate).Put("/tables", s.handleBOPremiumTablesUpdate)
+		r.With(s.requireBOSession, reservasGate).Post("/tables/{id}/texture-image", s.handleBOPremiumTablesTextureImageUpload)
 		r.With(s.requireBOSession, reservasGate).Get("/tables/ws", s.handleBOPremiumTablesWS)
 
 		// Members and role administration.
@@ -303,6 +319,9 @@ func (s *Server) Routes() http.Handler {
 
 		// Public endpoints (used by the Preact client).
 		r.Get("/menu-visibility", s.handleMenuVisibility)
+		r.Get("/reservations/closed-days", s.handleReservationsClosedDays)
+		r.Get("/reservations/rice-types", s.handleReservationsRiceTypes)
+		r.Get("/reservations/month-availability", s.handleReservationsMonthAvailability)
 		r.With(s.requireAdmin).Post("/menu-visibility", s.handleMenuVisibilityToggle)
 		r.Get("/menus/public", s.handlePublicMenus)
 		r.Get("/menus/dia", s.handleMenuDia)
@@ -337,7 +356,6 @@ func (s *Server) Routes() http.Handler {
 
 		// Legacy menu visibility backend.
 		r.Route("/menuVisibilityBackend", func(r chi.Router) {
-			r.Get("/getMenuVisibility.php", s.handleGetMenuVisibilityLegacy)
 			r.With(s.requireAdmin).Post("/toggleMenuVisibility.php", s.handleToggleMenuVisibilityLegacy)
 		})
 
@@ -354,14 +372,10 @@ func (s *Server) Routes() http.Handler {
 			r.With(s.requireAdmin).Delete("/deleteMenu.php", s.handleDeleteGroupMenu)
 		})
 
-		// Reservations / booking endpoints (legacy names).
-		r.Get("/fetch_arroz.php", s.handleFetchArroz)
-
 		// Public availability helpers used by reservas.php.
 		r.Post("/fetch_daily_limit.php", s.handleFetchDailyLimit)
-		r.Post("/fetch_month_availability.php", s.handleFetchMonthAvailability)
-		r.Get("/fetch_closed_days.php", s.handleFetchClosedDays)
 		r.Post("/fetch_mesas_de_dos.php", s.handleFetchMesasDeDos)
+		r.Get("/get_reservation_day_context.php", s.handleGetReservationDayContext)
 
 		// Salón Condesa state: public GET, admin POST.
 		r.Get("/salon_condesa_api.php", s.handleSalonCondesaGet)
@@ -447,6 +461,32 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	return r
+}
+
+func (s *Server) resolveAllowedOrigin(origin string) string {
+	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		return ""
+	}
+
+	configured := strings.TrimSpace(s.cfg.CORSAllowOrigins)
+	if configured == "" || configured == "*" {
+		return "*"
+	}
+
+	for _, candidate := range strings.Split(configured, ",") {
+		allowed := strings.TrimSpace(candidate)
+		if allowed == "" {
+			continue
+		}
+		if allowed == "*" {
+			return "*"
+		}
+		if strings.EqualFold(allowed, origin) {
+			return origin
+		}
+	}
+	return ""
 }
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {

@@ -49,7 +49,6 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 		dir = "asc"
 	}
 
-	// New pagination scheme: page/count (1-based). If missing, fall back to legacy limit/offset.
 	page := 0
 	if v := strings.TrimSpace(r.URL.Query().Get("page")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 1_000_000 {
@@ -76,7 +75,6 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 		limit = count
 		offset = (page - 1) * count
 	} else {
-		// Legacy limit/offset for backward compatibility.
 		if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
 				limit = n
@@ -100,63 +98,17 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	where := "WHERE reservation_date = ? AND restaurant_id = ?"
-	args := []any{date, restaurantID}
+	baseWhere := "WHERE reservation_date = ? AND restaurant_id = ?"
+	baseArgs := []any{date, restaurantID}
 	if status != "" {
-		where += " AND status = ?"
-		args = append(args, status)
-	}
-	if q != "" {
-		where += " AND customer_name LIKE ?"
-		pat := "%" + q + "%"
-		args = append(args, pat)
-	}
-
-	var totalCount int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM bookings "+where, args...).Scan(&totalCount); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando bookings")
-		return
+		baseWhere += " AND status = ?"
+		baseArgs = append(baseArgs, status)
 	}
 
 	orderBy := "reservation_time " + dir + ", id " + dir
 	if sortKey == "added_date" {
 		orderBy = "added_date " + dir + ", id " + dir
 	}
-
-	sqlQuery := `
-		SELECT
-			id,
-			customer_name,
-			contact_email,
-			DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
-			TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
-			party_size,
-			contact_phone,
-			contact_phone_country_code,
-			status,
-			arroz_type,
-			arroz_servings,
-			commentary,
-			babyStrollers,
-			highChairs,
-			table_number,
-			DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
-			special_menu,
-			menu_de_grupo_id,
-			principales_json
-		FROM bookings
-	` + where + `
-		ORDER BY ` + orderBy + `
-		LIMIT ? OFFSET ?
-	`
-	argsList := append(append([]any{}, args...), limit, offset)
-
-	rows, err := s.db.QueryContext(r.Context(), sqlQuery, argsList...)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando bookings")
-		return
-	}
-	defer rows.Close()
 
 	type row struct {
 		ID              int
@@ -174,66 +126,135 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 		BabyStrollers   sql.NullInt64
 		HighChairs      sql.NullInt64
 		TableNumber     sql.NullString
+		PreferredFloor  sql.NullInt64
 		AddedDate       sql.NullString
 		SpecialMenu     sql.NullInt64
 		MenuDeGrupoID   sql.NullInt64
 		PrincipalesJSON sql.NullString
 	}
 
-	bookings := make([]map[string]any, 0)
-	for rows.Next() {
-		var b row
-		if err := rows.Scan(
-			&b.ID,
-			&b.CustomerName,
-			&b.ContactEmail,
-			&b.ReservationDate,
-			&b.ReservationTime,
-			&b.PartySize,
-			&b.ContactPhone,
-			&b.ContactPhoneCC,
-			&b.Status,
-			&b.ArrozType,
-			&b.ArrozServings,
-			&b.Commentary,
-			&b.BabyStrollers,
-			&b.HighChairs,
-			&b.TableNumber,
-			&b.AddedDate,
-			&b.SpecialMenu,
-			&b.MenuDeGrupoID,
-			&b.PrincipalesJSON,
-		); err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo bookings")
-			return
+	searchPrefixClause, searchPrefixArgs := buildBookingSearchPrefixClause(q)
+	searchFTClause, searchFTArgs, hasFTQuery := buildBookingSearchFulltextClause(q)
+	runQuery := func(useFulltext bool) ([]map[string]any, int, error) {
+		where := baseWhere
+		args := append([]any{}, baseArgs...)
+		if q != "" {
+			if useFulltext && hasFTQuery {
+				where += " AND ((" + searchFTClause + ") OR (" + searchPrefixClause + "))"
+				args = append(args, searchFTArgs...)
+				args = append(args, searchPrefixArgs...)
+			} else {
+				where += " AND (" + searchPrefixClause + ")"
+				args = append(args, searchPrefixArgs...)
+			}
 		}
 
-		isSpecialMenu := false
-		if b.SpecialMenu.Valid && b.SpecialMenu.Int64 != 0 {
-			isSpecialMenu = true
+		var totalCount int
+		if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM bookings "+where, args...).Scan(&totalCount); err != nil {
+			return nil, 0, err
 		}
 
-		bookings = append(bookings, map[string]any{
-			"id":                         b.ID,
-			"customer_name":              b.CustomerName,
-			"contact_email":              b.ContactEmail,
-			"reservation_date":           b.ReservationDate,
-			"reservation_time":           b.ReservationTime,
-			"party_size":                 b.PartySize,
-			"contact_phone":              nullStringOrNil(b.ContactPhone),
-			"contact_phone_country_code": defaultString(b.ContactPhoneCC, "34"),
-			"status":                     defaultString(b.Status, "pending"),
-			"arroz_type":                 nullStringOrNil(b.ArrozType),
-			"arroz_servings":             nullStringOrNil(b.ArrozServings),
-			"commentary":                 nullStringOrNil(b.Commentary),
-			"babyStrollers":              nullInt64OrNil(b.BabyStrollers),
-			"highChairs":                 nullInt64OrNil(b.HighChairs),
-			"table_number":               nullStringOrNil(b.TableNumber),
-			"added_date":                 nullStringOrNil(b.AddedDate),
-			"special_menu":               isSpecialMenu,
-			"menu_de_grupo_id":           nullInt64OrNil(b.MenuDeGrupoID),
-			"principales_json":           nullStringOrNil(b.PrincipalesJSON),
-		})
+		sqlQuery := `
+			SELECT
+				id,
+				customer_name,
+				contact_email,
+				DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
+				TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
+				party_size,
+				contact_phone,
+				contact_phone_country_code,
+				status,
+				arroz_type,
+				arroz_servings,
+				commentary,
+				babyStrollers,
+				highChairs,
+				table_number,
+				preferred_floor_number,
+				DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
+				special_menu,
+				menu_de_grupo_id,
+				principales_json
+			FROM bookings
+		` + where + `
+			ORDER BY ` + orderBy + `
+			LIMIT ? OFFSET ?
+		`
+		argsList := append(append([]any{}, args...), limit, offset)
+		rows, err := s.db.QueryContext(r.Context(), sqlQuery, argsList...)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer rows.Close()
+
+		bookings := make([]map[string]any, 0)
+		for rows.Next() {
+			var b row
+			if err := rows.Scan(
+				&b.ID,
+				&b.CustomerName,
+				&b.ContactEmail,
+				&b.ReservationDate,
+				&b.ReservationTime,
+				&b.PartySize,
+				&b.ContactPhone,
+				&b.ContactPhoneCC,
+				&b.Status,
+				&b.ArrozType,
+				&b.ArrozServings,
+				&b.Commentary,
+				&b.BabyStrollers,
+				&b.HighChairs,
+				&b.TableNumber,
+				&b.PreferredFloor,
+				&b.AddedDate,
+				&b.SpecialMenu,
+				&b.MenuDeGrupoID,
+				&b.PrincipalesJSON,
+			); err != nil {
+				return nil, 0, err
+			}
+
+			isSpecialMenu := false
+			if b.SpecialMenu.Valid && b.SpecialMenu.Int64 != 0 {
+				isSpecialMenu = true
+			}
+
+			bookings = append(bookings, map[string]any{
+				"id":                         b.ID,
+				"customer_name":              b.CustomerName,
+				"contact_email":              b.ContactEmail,
+				"reservation_date":           b.ReservationDate,
+				"reservation_time":           b.ReservationTime,
+				"party_size":                 b.PartySize,
+				"contact_phone":              nullStringOrNil(b.ContactPhone),
+				"contact_phone_country_code": defaultString(b.ContactPhoneCC, "34"),
+				"status":                     defaultString(b.Status, "pending"),
+				"arroz_type":                 nullStringOrNil(b.ArrozType),
+				"arroz_servings":             nullStringOrNil(b.ArrozServings),
+				"commentary":                 nullStringOrNil(b.Commentary),
+				"babyStrollers":              nullInt64OrNil(b.BabyStrollers),
+				"highChairs":                 nullInt64OrNil(b.HighChairs),
+				"table_number":               nullStringOrNil(b.TableNumber),
+				"preferred_floor_number":     nullInt64OrNil(b.PreferredFloor),
+				"added_date":                 nullStringOrNil(b.AddedDate),
+				"special_menu":               isSpecialMenu,
+				"menu_de_grupo_id":           nullInt64OrNil(b.MenuDeGrupoID),
+				"principales_json":           nullStringOrNil(b.PrincipalesJSON),
+			})
+		}
+
+		return bookings, totalCount, rows.Err()
+	}
+
+	bookings, totalCount, err := runQuery(true)
+	if err != nil && hasFTQuery {
+		bookings, totalCount, err = runQuery(false)
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando bookings")
+		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -245,6 +266,64 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 		"page":        page,
 		"count":       count,
 	})
+}
+
+func buildBookingSearchPrefixClause(raw string) (string, []any) {
+	q := strings.TrimSpace(raw)
+	if q == "" {
+		return "", nil
+	}
+	prefix := q + "%"
+	args := []any{prefix, prefix}
+	clause := "customer_name LIKE ? OR contact_email LIKE ?"
+	if digits := bookingSearchDigitsOnly(q); digits != "" {
+		clause += " OR contact_phone LIKE ?"
+		args = append(args, digits+"%")
+	}
+	return clause, args
+}
+
+func buildBookingSearchFulltextClause(raw string) (string, []any, bool) {
+	q := bookingSearchBooleanQuery(raw)
+	if q == "" {
+		return "", nil, false
+	}
+	return "MATCH(customer_name, contact_email, commentary) AGAINST (? IN BOOLEAN MODE)", []any{q}, true
+}
+
+func bookingSearchDigitsOnly(v string) string {
+	var b strings.Builder
+	for _, r := range v {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func bookingSearchBooleanQuery(v string) string {
+	rawTokens := strings.Fields(strings.ToLower(strings.TrimSpace(v)))
+	if len(rawTokens) == 0 {
+		return ""
+	}
+	tokens := make([]string, 0, len(rawTokens))
+	for _, token := range rawTokens {
+		var cleaned strings.Builder
+		for _, r := range token {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r >= 128 {
+				cleaned.WriteRune(r)
+			}
+		}
+		t := cleaned.String()
+		if len([]rune(t)) < 3 {
+			continue
+		}
+		tokens = append(tokens, "+"+t+"*")
+	}
+	if len(tokens) == 0 {
+		return ""
+	}
+	return strings.Join(tokens, " ")
 }
 
 func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {

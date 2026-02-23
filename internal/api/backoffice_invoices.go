@@ -17,58 +17,58 @@ import (
 
 // Invoice types
 type Invoice struct {
-	ID                      int             `json:"id"`
-	RestaurantID            int             `json:"restaurant_id"`
-	CustomerName            string          `json:"customer_name"`
-	CustomerSurname         *string         `json:"customer_surname"`
-	CustomerEmail           string          `json:"customer_email"`
-	CustomerDniCif          *string         `json:"customer_dni_cif"`
-	CustomerPhone           *string         `json:"customer_phone"`
-	CustomerAddressStreet   *string         `json:"customer_address_street"`
-	CustomerAddressNumber   *string         `json:"customer_address_number"`
-	CustomerAddressPostalCode *string       `json:"customer_address_postal_code"`
-	CustomerAddressCity     *string         `json:"customer_address_city"`
-	CustomerAddressProvince *string         `json:"customer_address_province"`
-	CustomerAddressCountry  *string         `json:"customer_address_country"`
-	Amount                 float64         `json:"amount"`
-	PaymentMethod          *string         `json:"payment_method"`
-	AccountImageURL        *string         `json:"account_image_url"`
-	InvoiceDate            string          `json:"invoice_date"`
-	PaymentDate            *string         `json:"payment_date"`
-	Status                 string          `json:"status"`
-	IsReservation          bool            `json:"is_reservation"`
-	ReservationID          *int            `json:"reservation_id"`
-	ReservationDate        *string         `json:"reservation_date"`
-	ReservationCustomerName *string         `json:"reservation_customer_name"`
-	ReservationPartySize   *int            `json:"reservation_party_size"`
-	PdfURL                 *string         `json:"pdf_url"`
-	CreatedAt              string          `json:"created_at"`
-	UpdatedAt              string          `json:"updated_at"`
+	ID                        int     `json:"id"`
+	RestaurantID              int     `json:"restaurant_id"`
+	CustomerName              string  `json:"customer_name"`
+	CustomerSurname           *string `json:"customer_surname"`
+	CustomerEmail             string  `json:"customer_email"`
+	CustomerDniCif            *string `json:"customer_dni_cif"`
+	CustomerPhone             *string `json:"customer_phone"`
+	CustomerAddressStreet     *string `json:"customer_address_street"`
+	CustomerAddressNumber     *string `json:"customer_address_number"`
+	CustomerAddressPostalCode *string `json:"customer_address_postal_code"`
+	CustomerAddressCity       *string `json:"customer_address_city"`
+	CustomerAddressProvince   *string `json:"customer_address_province"`
+	CustomerAddressCountry    *string `json:"customer_address_country"`
+	Amount                    float64 `json:"amount"`
+	PaymentMethod             *string `json:"payment_method"`
+	AccountImageURL           *string `json:"account_image_url"`
+	InvoiceDate               string  `json:"invoice_date"`
+	PaymentDate               *string `json:"payment_date"`
+	Status                    string  `json:"status"`
+	IsReservation             bool    `json:"is_reservation"`
+	ReservationID             *int    `json:"reservation_id"`
+	ReservationDate           *string `json:"reservation_date"`
+	ReservationCustomerName   *string `json:"reservation_customer_name"`
+	ReservationPartySize      *int    `json:"reservation_party_size"`
+	PdfURL                    *string `json:"pdf_url"`
+	CreatedAt                 string  `json:"created_at"`
+	UpdatedAt                 string  `json:"updated_at"`
 }
 
 type InvoiceInput struct {
-	CustomerName            string  `json:"customer_name"`
-	CustomerSurname         *string `json:"customer_surname"`
-	CustomerEmail           string  `json:"customer_email"`
-	CustomerDniCif          *string `json:"customer_dni_cif"`
-	CustomerPhone           *string `json:"customer_phone"`
-	CustomerAddressStreet   *string `json:"customer_address_street"`
-	CustomerAddressNumber   *string `json:"customer_address_number"`
+	CustomerName              string  `json:"customer_name"`
+	CustomerSurname           *string `json:"customer_surname"`
+	CustomerEmail             string  `json:"customer_email"`
+	CustomerDniCif            *string `json:"customer_dni_cif"`
+	CustomerPhone             *string `json:"customer_phone"`
+	CustomerAddressStreet     *string `json:"customer_address_street"`
+	CustomerAddressNumber     *string `json:"customer_address_number"`
 	CustomerAddressPostalCode *string `json:"customer_address_postal_code"`
-	CustomerAddressCity     *string `json:"customer_address_city"`
-	CustomerAddressProvince *string `json:"customer_address_province"`
-	CustomerAddressCountry  *string `json:"customer_address_country"`
-	Amount                 float64 `json:"amount"`
-	PaymentMethod          *string `json:"payment_method"`
-	AccountImageURL        *string `json:"account_image_url"`
-	InvoiceDate            string  `json:"invoice_date"`
-	PaymentDate            *string `json:"payment_date"`
-	Status                 string  `json:"status"`
-	IsReservation          bool    `json:"is_reservation"`
-	ReservationID          *int    `json:"reservation_id"`
-	ReservationDate        *string `json:"reservation_date"`
-	ReservationCustomerName *string `json:"reservation_customer_name"`
-	ReservationPartySize   *int    `json:"reservation_party_size"`
+	CustomerAddressCity       *string `json:"customer_address_city"`
+	CustomerAddressProvince   *string `json:"customer_address_province"`
+	CustomerAddressCountry    *string `json:"customer_address_country"`
+	Amount                    float64 `json:"amount"`
+	PaymentMethod             *string `json:"payment_method"`
+	AccountImageURL           *string `json:"account_image_url"`
+	InvoiceDate               string  `json:"invoice_date"`
+	PaymentDate               *string `json:"payment_date"`
+	Status                    string  `json:"status"`
+	IsReservation             bool    `json:"is_reservation"`
+	ReservationID             *int    `json:"reservation_id"`
+	ReservationDate           *string `json:"reservation_date"`
+	ReservationCustomerName   *string `json:"reservation_customer_name"`
+	ReservationPartySize      *int    `json:"reservation_party_size"`
 }
 
 type InvoiceListParams struct {
@@ -84,19 +84,19 @@ type InvoiceListParams struct {
 }
 
 type ReservationSearchResult struct {
-	ID                int    `json:"id"`
-	CustomerName      string `json:"customer_name"`
-	ContactEmail      string `json:"contact_email"`
-	ContactPhone      string `json:"contact_phone"`
-	ReservationDate   string `json:"reservation_date"`
-	ReservationTime   string `json:"reservation_time"`
-	PartySize         int    `json:"party_size"`
+	ID              int    `json:"id"`
+	CustomerName    string `json:"customer_name"`
+	ContactEmail    string `json:"contact_email"`
+	ContactPhone    string `json:"contact_phone"`
+	ReservationDate string `json:"reservation_date"`
+	ReservationTime string `json:"reservation_time"`
+	PartySize       int    `json:"party_size"`
 }
 
 type Restaurant struct {
-	ID     int    `json:"id"`
-	Slug   string `json:"slug"`
-	Name   string `json:"name"`
+	ID     int     `json:"id"`
+	Slug   string  `json:"slug"`
+	Name   string  `json:"name"`
 	Avatar *string `json:"avatar"`
 }
 
@@ -141,7 +141,59 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 		params.IsReservation = &b
 	}
 
-	// Build query
+	baseWhere := " FROM invoices WHERE restaurant_id = ?"
+	args := []any{restaurantID}
+
+	if params.Search != "" {
+		prefix := params.Search + "%"
+		baseWhere += " AND (customer_name LIKE ? OR customer_email LIKE ?)"
+		args = append(args, prefix, prefix)
+	}
+
+	if params.Status != "" {
+		baseWhere += " AND status = ?"
+		args = append(args, params.Status)
+	}
+
+	if params.DateType == "reservation_date" {
+		if params.DateFrom != "" {
+			baseWhere += " AND reservation_date >= ?"
+			args = append(args, params.DateFrom)
+		}
+		if params.DateTo != "" {
+			baseWhere += " AND reservation_date <= ?"
+			args = append(args, params.DateTo)
+		}
+	} else {
+		if params.DateFrom != "" {
+			baseWhere += " AND invoice_date >= ?"
+			args = append(args, params.DateFrom)
+		}
+		if params.DateTo != "" {
+			baseWhere += " AND invoice_date <= ?"
+			args = append(args, params.DateTo)
+		}
+	}
+
+	if params.IsReservation != nil {
+		if *params.IsReservation {
+			baseWhere += " AND is_reservation = 1"
+		} else {
+			baseWhere += " AND is_reservation = 0"
+		}
+	}
+
+	orderBy := " ORDER BY invoice_date DESC"
+	switch params.Sort {
+	case "amount_asc":
+		orderBy = " ORDER BY amount ASC"
+	case "amount_desc":
+		orderBy = " ORDER BY amount DESC"
+	case "date_asc":
+		orderBy = " ORDER BY invoice_date ASC"
+	}
+
+	offset := (params.Page - 1) * params.Limit
 	query := `
 		SELECT 
 			id, restaurant_id,
@@ -152,79 +204,11 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 			status, is_reservation, reservation_id, reservation_date,
 			reservation_customer_name, reservation_party_size, pdf_url,
 			created_at, updated_at
-		FROM invoices
-		WHERE restaurant_id = ?
-	`
-	args := []interface{}{restaurantID}
-	argIdx := 1
-
-	// Add search filter (name or email)
-	if params.Search != "" {
-		argIdx++
-		query += fmt.Sprintf(" AND (customer_name LIKE CONCAT('%%%s%%', ?) OR customer_email LIKE CONCAT('%%%s%%', ?))", "%", "%")
-		args = append(args, params.Search, params.Search)
-	}
-
-	// Add status filter
-	if params.Status != "" {
-		argIdx++
-		query += " AND status = ?"
-		args = append(args, params.Status)
-	}
-
-	// Add date filter
-	if params.DateType == "reservation_date" {
-		if params.DateFrom != "" {
-			argIdx++
-			query += " AND reservation_date >= ?"
-			args = append(args, params.DateFrom)
-		}
-		if params.DateTo != "" {
-			argIdx++
-			query += " AND reservation_date <= ?"
-			args = append(args, params.DateTo)
-		}
-	} else {
-		if params.DateFrom != "" {
-			argIdx++
-			query += " AND invoice_date >= ?"
-			args = append(args, params.DateFrom)
-		}
-		if params.DateTo != "" {
-			argIdx++
-			query += " AND invoice_date <= ?"
-			args = append(args, params.DateTo)
-		}
-	}
-
-	// Add is_reservation filter
-	if params.IsReservation != nil {
-		argIdx++
-		if *params.IsReservation {
-			query += " AND is_reservation = 1"
-		} else {
-			query += " AND is_reservation = 0"
-		}
-	}
-
-	// Add sorting
-	switch params.Sort {
-	case "amount_asc":
-		query += " ORDER BY amount ASC"
-	case "amount_desc":
-		query += " ORDER BY amount DESC"
-	case "date_asc":
-		query += " ORDER BY invoice_date ASC"
-	default: // date_desc (default)
-		query += " ORDER BY invoice_date DESC"
-	}
-
-	// Add pagination
-	offset := (params.Page - 1) * params.Limit
-	query += fmt.Sprintf(" LIMIT %d OFFSET %d", params.Limit, offset)
+	` + baseWhere + orderBy + " LIMIT ? OFFSET ?"
+	queryArgs := append(append([]any{}, args...), params.Limit, offset)
 
 	// Execute query
-	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	rows, err := s.db.QueryContext(r.Context(), query, queryArgs...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error querying invoices: "+err.Error())
 		return
@@ -251,21 +235,18 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 		invoices = append(invoices, inv)
 	}
 
-	// Get total count for pagination
-	countQuery := strings.Replace(query, fmt.Sprintf(" LIMIT %d OFFSET %d", params.Limit, offset), "", 1)
-	countQuery = "SELECT COUNT(*) FROM (" + countQuery + ") as t"
-
+	countQuery := "SELECT COUNT(*)" + baseWhere
 	var total int
 	if err := s.db.QueryRowContext(r.Context(), countQuery, args...).Scan(&total); err != nil {
 		total = 0
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
+		"success":  true,
 		"invoices": invoices,
-		"total": total,
-		"page": params.Page,
-		"limit": params.Limit,
+		"total":    total,
+		"page":     params.Page,
+		"limit":    params.Limit,
 	})
 }
 
@@ -380,7 +361,7 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
-		"id": id,
+		"id":      id,
 		"message": "Invoice created successfully",
 	})
 }
@@ -558,7 +539,7 @@ func (s *Server) handleBOInvoicesSearchReservation(w http.ResponseWriter, r *htt
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
+		"success":      true,
 		"reservations": reservations,
 	})
 }
@@ -709,7 +690,7 @@ func (s *Server) handleBOInvoiceUploadImage(w http.ResponseWriter, r *http.Reque
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
-		"url": imageURL,
+		"url":     imageURL,
 	})
 }
 

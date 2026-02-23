@@ -168,17 +168,8 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secure := r.TLS != nil
-	http.SetCookie(w, &http.Cookie{
-		Name:     boSessionCookieName,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
-		Expires:  expiresAt,
-		MaxAge:   int(ttl.Seconds()),
-	})
+	setBOSessionCookie(w, r, token, expiresAt, ttl)
+	w.Header().Set(boSessionMovingExpirationHeader, expiresAt.UTC().Format(time.RFC3339))
 
 	sess := boSession{
 		User: boUser{
@@ -207,7 +198,7 @@ func (s *Server) handleBOLogout(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.db.ExecContext(r.Context(), "DELETE FROM bo_sessions WHERE token_sha256 = ?", sha256Hex(c.Value))
 	}
 
-	secure := r.TLS != nil
+	secure := boSessionCookieSecure(r)
 	http.SetCookie(w, &http.Cookie{
 		Name:     boSessionCookieName,
 		Value:    "",
@@ -552,11 +543,120 @@ func newBOSessionToken() (token string, tokenSHA string, err error) {
 }
 
 func boSessionTTL() time.Duration {
-	days := 30
-	if v := strings.TrimSpace(os.Getenv("BO_SESSION_TTL_DAYS")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 365 {
-			days = n
+	if minutes := positiveEnvInt("BO_SESSION_TTL_MINUTES", 7*24*60); minutes > 0 {
+		return time.Duration(minutes) * time.Minute
+	}
+	if hours := positiveEnvInt("BO_SESSION_TTL_HOURS", 7*24); hours > 0 {
+		return time.Duration(hours) * time.Hour
+	}
+	if days := positiveEnvInt("BO_SESSION_TTL_DAYS", 365); days > 0 {
+		return time.Duration(days) * 24 * time.Hour
+	}
+	return 21 * time.Hour
+}
+
+func boSessionTTLForRequest(r *http.Request) time.Duration {
+	if r == nil {
+		return boSessionTTL()
+	}
+	path := strings.ToLower(strings.TrimSpace(r.URL.Path))
+	if boSessionIsHighSecurityPath(path) {
+		return boSessionHighSecurityTTL()
+	}
+	if override := strings.ToLower(strings.TrimSpace(r.Header.Get("X-BO-Page-Path"))); override != "" {
+		if boSessionIsHighSecurityPath(override) {
+			return boSessionHighSecurityTTL()
 		}
 	}
-	return time.Duration(days) * 24 * time.Hour
+	return boSessionTTL()
+}
+
+func boSessionHighSecurityTTL() time.Duration {
+	if minutes := positiveEnvInt("BO_SESSION_HIGH_SECURITY_TTL_MINUTES", 120); minutes > 0 {
+		return time.Duration(minutes) * time.Minute
+	}
+	return 30 * time.Minute
+}
+
+func boSessionHighSecurityPathPrefixes() []string {
+	raw := strings.TrimSpace(os.Getenv("BO_SESSION_HIGH_SECURITY_PATH_PREFIXES"))
+	if raw == "" {
+		return []string{
+			"/admin/invoices",
+			"/api/admin/invoices",
+			"/app/facturas",
+			"/app/estado-cuenta",
+		}
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		normalized := strings.ToLower(strings.TrimSpace(part))
+		if normalized == "" {
+			continue
+		}
+		if !strings.HasPrefix(normalized, "/") {
+			normalized = "/" + normalized
+		}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return []string{
+			"/admin/invoices",
+			"/api/admin/invoices",
+			"/app/facturas",
+			"/app/estado-cuenta",
+		}
+	}
+	return out
+}
+
+func boSessionIsHighSecurityPath(path string) bool {
+	for _, prefix := range boSessionHighSecurityPathPrefixes() {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func positiveEnvInt(name string, max int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	if max > 0 && n > max {
+		return 0
+	}
+	return n
+}
+
+func boSessionCookieSecure(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+}
+
+func setBOSessionCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = boSessionTTL()
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     boSessionCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   boSessionCookieSecure(r),
+		SameSite: http.SameSiteLaxMode,
+		Expires:  expiresAt.UTC(),
+		MaxAge:   int(ttl.Seconds()),
+	})
 }

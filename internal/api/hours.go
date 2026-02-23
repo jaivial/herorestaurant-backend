@@ -325,10 +325,10 @@ func (s *Server) fetchBookingsByHourHHMM(r *http.Request, date string) (map[stri
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT TIME_FORMAT(reservation_time, '%H:%i') AS hhmm, COALESCE(SUM(party_size), 0) AS total_people
+		SELECT reservation_time, COALESCE(SUM(party_size), 0) AS total_people
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
-		GROUP BY hhmm
+		GROUP BY reservation_time
 	`, restaurantID, date)
 	if err != nil {
 		return nil, 0, err
@@ -338,15 +338,19 @@ func (s *Server) fetchBookingsByHourHHMM(r *http.Request, date string) (map[stri
 	out := map[string]int{}
 	totalPeople := 0
 	for rows.Next() {
-		var hour string
+		var reservationTime string
 		var total int
-		if err := rows.Scan(&hour, &total); err != nil {
+		if err := rows.Scan(&reservationTime, &total); err != nil {
 			return nil, 0, err
+		}
+		hour := reservationTime
+		if len(hour) >= 5 {
+			hour = hour[:5]
 		}
 		out[hour] = total
 		totalPeople += total
 	}
-	return out, totalPeople, nil
+	return out, totalPeople, rows.Err()
 }
 
 // Ensure stable JSON key ordering for ETag hashing, etc.

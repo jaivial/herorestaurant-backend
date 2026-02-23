@@ -88,6 +88,7 @@ type boBookingUpsertReq struct {
 
 	ContactEmail  *string `json:"contact_email,omitempty"`
 	TableNumber   *string `json:"table_number,omitempty"`
+	PreferredFloorNumber *int `json:"preferred_floor_number,omitempty"`
 	Commentary    *string `json:"commentary,omitempty"`
 	BabyStrollers *int    `json:"babyStrollers,omitempty"`
 	HighChairs    *int    `json:"highChairs,omitempty"`
@@ -127,6 +128,7 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		ContactPhoneCountryCode: req.ContactPhoneCC,
 		ContactEmail:            req.ContactEmail,
 		TableNumber:             req.TableNumber,
+		PreferredFloorNumber:    req.PreferredFloorNumber,
 		Commentary:              req.Commentary,
 		BabyStrollers:           req.BabyStrollers,
 		HighChairs:              req.HighChairs,
@@ -177,6 +179,7 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		"contactEmail":    booking.ContactEmail,
 		"specialMenu":     booking.SpecialMenu,
 		"menuDeGrupoId":   booking.MenuDeGrupoID,
+		"preferredFloorNumber": nullableInt64OrNil(booking.PreferredFloorNumber),
 	})
 }
 
@@ -189,6 +192,7 @@ type boBookingPatchReq struct {
 	ContactPhoneCC  *string `json:"contact_phone_country_code,omitempty"`
 	ContactEmail    *string `json:"contact_email,omitempty"`
 	TableNumber     *string `json:"table_number,omitempty"`
+	PreferredFloorNumber *int `json:"preferred_floor_number,omitempty"`
 	Commentary      *string `json:"commentary,omitempty"`
 	BabyStrollers   *int    `json:"babyStrollers,omitempty"`
 	HighChairs      *int    `json:"highChairs,omitempty"`
@@ -256,6 +260,10 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 	if v := strings.TrimSpace(anyToString(current["table_number"])); v != "" {
 		input.TableNumber = &v
 	}
+	if v, ok := current["preferred_floor_number"].(int64); ok {
+		n := int(v)
+		input.PreferredFloorNumber = &n
+	}
 	if v := strings.TrimSpace(anyToString(current["commentary"])); v != "" {
 		input.Commentary = &v
 	}
@@ -302,6 +310,9 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TableNumber != nil {
 		input.TableNumber = req.TableNumber
+	}
+	if req.PreferredFloorNumber != nil {
+		input.PreferredFloorNumber = req.PreferredFloorNumber
 	}
 	if req.Commentary != nil {
 		input.Commentary = req.Commentary
@@ -415,6 +426,7 @@ type boNormalizedBooking struct {
 	ContactPhoneCountryCode string
 	ContactEmail            string
 	TableNumber             sql.NullString
+	PreferredFloorNumber    sql.NullInt64
 	Commentary              sql.NullString
 	BabyStrollers           int
 	HighChairs              int
@@ -437,6 +449,7 @@ type boNormalizeInput struct {
 
 	ContactEmail  *string
 	TableNumber   *string
+	PreferredFloorNumber *int
 	Commentary    *string
 	BabyStrollers *int
 	HighChairs    *int
@@ -500,6 +513,26 @@ func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaur
 		if v != "" {
 			out.TableNumber = sql.NullString{String: v, Valid: true}
 		}
+	}
+	if in.PreferredFloorNumber != nil {
+		floors, err := s.loadDateFloors(ctx, restaurantID, date)
+		if err != nil {
+			return out, errors.New("No se pudo validar el salón seleccionado")
+		}
+		okFloor := false
+		for _, floor := range floors {
+			if !floor.Active {
+				continue
+			}
+			if floor.FloorNumber == *in.PreferredFloorNumber {
+				okFloor = true
+				break
+			}
+		}
+		if !okFloor {
+			return out, errors.New("Salón inválido para la fecha seleccionada")
+		}
+		out.PreferredFloorNumber = sql.NullInt64{Int64: int64(*in.PreferredFloorNumber), Valid: true}
 	}
 
 	if in.Commentary != nil {
@@ -660,8 +693,9 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 			special_menu,
 			menu_de_grupo_id,
 			principales_json,
-			table_number
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			table_number,
+			preferred_floor_number
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		restaurantID,
 		b.ReservationDate,
@@ -680,6 +714,7 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 		b.MenuDeGrupoID,
 		b.PrincipalesJSON,
 		nullableStringOrNil(b.TableNumber),
+		nullableInt64OrNil(b.PreferredFloorNumber),
 	)
 	if err != nil {
 		return 0, err
@@ -705,6 +740,7 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 			contact_phone_country_code = ?,
 			contact_email = ?,
 			table_number = ?,
+			preferred_floor_number = ?,
 			commentary = ?,
 			babyStrollers = ?,
 			highChairs = ?,
@@ -723,6 +759,7 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 		b.ContactPhoneCountryCode,
 		b.ContactEmail,
 		nullableStringOrNil(b.TableNumber),
+		nullableInt64OrNil(b.PreferredFloorNumber),
 		nullableStringOrNil(b.Commentary),
 		b.BabyStrollers,
 		b.HighChairs,
@@ -755,6 +792,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			babyStrollers,
 			highChairs,
 			table_number,
+			preferred_floor_number,
 			DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
 			special_menu,
 			menu_de_grupo_id,
@@ -784,6 +822,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 		BabyStrollers   sql.NullInt64
 		HighChairs      sql.NullInt64
 		TableNumber     sql.NullString
+		PreferredFloor  sql.NullInt64
 		AddedDate       sql.NullString
 		SpecialMenu     sql.NullInt64
 		MenuDeGrupoID   sql.NullInt64
@@ -809,6 +848,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			&b.BabyStrollers,
 			&b.HighChairs,
 			&b.TableNumber,
+			&b.PreferredFloor,
 			&b.AddedDate,
 			&b.SpecialMenu,
 			&b.MenuDeGrupoID,
@@ -835,6 +875,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			"babyStrollers":              nullInt64OrNil(b.BabyStrollers),
 			"highChairs":                 nullInt64OrNil(b.HighChairs),
 			"table_number":               nullStringOrNil(b.TableNumber),
+			"preferred_floor_number":     nullInt64OrNil(b.PreferredFloor),
 			"added_date":                 nullStringOrNil(b.AddedDate),
 			"special_menu":               isSpecialMenu,
 			"menu_de_grupo_id":           nullInt64OrNil(b.MenuDeGrupoID),
@@ -862,6 +903,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 			babyStrollers,
 			highChairs,
 			table_number,
+			preferred_floor_number,
 			DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
 			special_menu,
 			menu_de_grupo_id,
@@ -887,6 +929,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		babyStrollers   sql.NullInt64
 		highChairs      sql.NullInt64
 		tableNumber     sql.NullString
+		preferredFloor  sql.NullInt64
 		addedDate       sql.NullString
 		specialMenu     sql.NullInt64
 		menuDeGrupoID   sql.NullInt64
@@ -908,6 +951,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		&babyStrollers,
 		&highChairs,
 		&tableNumber,
+		&preferredFloor,
 		&addedDate,
 		&specialMenu,
 		&menuDeGrupoID,
@@ -934,6 +978,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		"babyStrollers":              nullInt64OrNil(babyStrollers),
 		"highChairs":                 nullInt64OrNil(highChairs),
 		"table_number":               nullStringOrNil(tableNumber),
+		"preferred_floor_number":     nullInt64OrNil(preferredFloor),
 		"added_date":                 nullStringOrNil(addedDate),
 		"special_menu":               isSpecialMenu,
 		"menu_de_grupo_id":           nullInt64OrNil(menuDeGrupoID),
@@ -950,4 +995,11 @@ func nullableStringOrNil(ns sql.NullString) any {
 		return nil
 	}
 	return v
+}
+
+func nullableInt64OrNil(n sql.NullInt64) any {
+	if !n.Valid {
+		return nil
+	}
+	return n.Int64
 }

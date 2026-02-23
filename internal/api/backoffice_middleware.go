@@ -7,11 +7,13 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"preactvillacarmen/internal/httpx"
 )
 
 const boSessionCookieName = "bo_session"
+const boSessionMovingExpirationHeader = httpx.MovingExpirationHeader
 
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
@@ -92,8 +94,16 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 			return
 		}
 
-		// Best-effort heartbeat.
-		_, _ = s.db.ExecContext(r.Context(), "UPDATE bo_sessions SET last_seen_at = NOW() WHERE id = ?", sessionID)
+		ttl := boSessionTTLForRequest(r)
+		movingExpiresAt := time.Now().Add(ttl).Truncate(time.Second)
+		if _, err := s.db.ExecContext(r.Context(), "UPDATE bo_sessions SET last_seen_at = NOW(), expires_at = ? WHERE id = ?", movingExpiresAt, sessionID); err != nil {
+			log.Printf("[requireBOSession] DB heartbeat error: %v", err)
+			httpx.WriteError(w, http.StatusInternalServerError, "Error validating session")
+			return
+		}
+
+		setBOSessionCookie(w, r, token, movingExpiresAt, ttl)
+		w.Header().Set(boSessionMovingExpirationHeader, movingExpiresAt.UTC().Format(time.RFC3339))
 
 		a := boAuth{
 			SessionID:   sessionID,

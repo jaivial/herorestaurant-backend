@@ -21,6 +21,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/lib/specialmenuimage"
 )
 
 const boGroupMenuV2AIPrompt = "Create a premium restaurant food photoshoot version of this dish. Keep the same dish identity and plating realistic. Place the dish centered in a 1:1 frame with comfortable margins on all sides (avoid tight crop) so there is clear breathing space around the plate. Preserve the original background style and color palette, but refine it into an elegant, clean, matching restaurant scenario and remove distracting non-elegant objects. Maximize perceived image quality and make the food look highly appetizing and visually appealing for a restaurant menu, while staying realistic and natural. Use high-end natural studio lighting, sharp focus, and rich yet realistic food textures and colors."
@@ -61,6 +62,16 @@ type boV2AIImagesDishItem struct {
 	AIGeneratedImg *string `json:"ai_generated_img"`
 }
 
+type boV2MenuPreviewTracker struct {
+	ShowMenuPreviewImage bool    `json:"show_menu_preview_image"`
+	MenuPreviewImageURL  string  `json:"menu_preview_image_url"`
+	AIRequested          bool    `json:"menu_preview_ai_requested"`
+	AIGenerating         bool    `json:"menu_preview_ai_generating"`
+	AIRequestedImg       bool    `json:"ai_requested_img"`
+	AIGeneratingImg      bool    `json:"ai_generating_img"`
+	AIGeneratedImg       *string `json:"ai_generated_img,omitempty"`
+}
+
 type boGroupMenuV2AIHub struct {
 	mu    sync.RWMutex
 	rooms map[string]map[*boGroupMenuV2AIClient]struct{}
@@ -76,6 +87,13 @@ type boGroupMenuV2AIImageJob struct {
 	MenuID       int64
 	SectionID    int64
 	DishID       int64
+	RawImage     []byte
+	ContentType  string
+}
+
+type boGroupMenuV2AIMenuPreviewImageJob struct {
+	RestaurantID int
+	MenuID       int64
 	RawImage     []byte
 	ContentType  string
 }
@@ -256,13 +274,17 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 	})
 
 	if tracker, err := s.loadBOMenuV2AIImageTracker(r.Context(), a.ActiveRestaurantID, menuID); err == nil {
-		_ = client.writeJSON(map[string]any{
+		helloPayload := map[string]any{
 			"type":          "hello",
 			"restaurant_id": a.ActiveRestaurantID,
 			"menu_id":       menuID,
 			"at":            time.Now().UTC().Format(time.RFC3339),
 			"tracker":       tracker,
-		})
+		}
+		if menuPreview, previewErr := s.loadBOMenuV2MenuPreviewTracker(r.Context(), a.ActiveRestaurantID, menuID); previewErr == nil {
+			helloPayload["menu_preview"] = menuPreview
+		}
+		_ = client.writeJSON(helloPayload)
 		s.logBOGroupMenuV2AITrace(
 			"ws hello snapshot sent restaurant=%d menu=%d requested=%d generating=%d",
 			a.ActiveRestaurantID,
@@ -314,13 +336,17 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 				s.logBOGroupMenuV2AITrace("ws snapshot load error restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, err)
 				continue
 			}
-			_ = client.writeJSON(map[string]any{
+			snapshotPayload := map[string]any{
 				"type":          "snapshot",
 				"restaurant_id": a.ActiveRestaurantID,
 				"menu_id":       menuID,
 				"at":            time.Now().UTC().Format(time.RFC3339),
 				"tracker":       tracker,
-			})
+			}
+			if menuPreview, previewErr := s.loadBOMenuV2MenuPreviewTracker(r.Context(), a.ActiveRestaurantID, menuID); previewErr == nil {
+				snapshotPayload["menu_preview"] = menuPreview
+			}
+			_ = client.writeJSON(snapshotPayload)
 			s.logBOGroupMenuV2AITrace(
 				"ws snapshot sent restaurant=%d menu=%d requested=%d generating=%d",
 				a.ActiveRestaurantID,
@@ -399,6 +425,46 @@ func (s *Server) loadBOMenuV2AIImageTracker(ctx context.Context, restaurantID in
 		tracker.TotalGenerating,
 	)
 	return tracker, nil
+}
+
+func (s *Server) loadBOMenuV2MenuPreviewTracker(ctx context.Context, restaurantID int, menuID int64) (boV2MenuPreviewTracker, error) {
+	var (
+		showPreviewInt int
+		pathRaw        sql.NullString
+		requestedInt   int
+		generatingInt  int
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(show_menu_preview_image, 0),
+		       menu_preview_image_path,
+		       COALESCE(menu_preview_ai_requested, 0),
+		       COALESCE(menu_preview_ai_generating, 0)
+		FROM menusDeGrupos
+		WHERE restaurant_id = ? AND id = ?
+		LIMIT 1
+	`, restaurantID, menuID).Scan(
+		&showPreviewInt,
+		&pathRaw,
+		&requestedInt,
+		&generatingInt,
+	)
+	if err != nil {
+		return boV2MenuPreviewTracker{}, err
+	}
+	previewURL := s.publicMenuMediaURL(pathRaw.String)
+	var generatedImg *string
+	if v := strings.TrimSpace(previewURL); v != "" {
+		generatedImg = &v
+	}
+	return boV2MenuPreviewTracker{
+		ShowMenuPreviewImage: showPreviewInt != 0,
+		MenuPreviewImageURL:  previewURL,
+		AIRequested:          requestedInt != 0,
+		AIGenerating:         generatingInt != 0,
+		AIRequestedImg:       requestedInt != 0,
+		AIGeneratingImg:      generatingInt != 0,
+		AIGeneratedImg:       generatedImg,
+	}, nil
 }
 
 func (s *Server) handleBOGroupMenusV2GenerateSectionDishAIImage(w http.ResponseWriter, r *http.Request) {
@@ -550,6 +616,227 @@ func (s *Server) handleBOGroupMenusV2GenerateSectionDishAIImage(w http.ResponseW
 		"success": true,
 		"message": "AI image generation started",
 		"dish_id": dishID,
+	})
+}
+
+func (s *Server) handleBOGroupMenusV2GenerateMenuPreviewAIImage(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		s.logBOGroupMenuV2AITrace("preview generate reject unauthorized remote=%s", r.RemoteAddr)
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	s.logBOGroupMenuV2AITrace("preview generate request received restaurant=%d path=%s remote=%s", a.ActiveRestaurantID, r.URL.Path, r.RemoteAddr)
+	if strings.TrimSpace(s.cfg.OpenAIAPIKey) == "" {
+		s.logBOGroupMenuV2AITrace("preview generate reject ai provider key missing restaurant=%d", a.ActiveRestaurantID)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
+		return
+	}
+	if !s.bunnyConfigured() {
+		s.logBOGroupMenuV2AITrace("preview generate reject bunny missing restaurant=%d", a.ActiveRestaurantID)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("preview generate invalid menu id restaurant=%d err=%v", a.ActiveRestaurantID, err)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("preview generate ownership check error restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, err)
+		httpx.WriteError(w, http.StatusInternalServerError, "Error checking menu")
+		return
+	}
+	if !owns {
+		s.logBOGroupMenuV2AITrace("preview generate reject menu not found restaurant=%d menu=%d", a.ActiveRestaurantID, menuID)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	maxInput := s.openAIInputMaxBytes()
+	if err := r.ParseMultipartForm(int64(maxInput)); err != nil {
+		s.logBOGroupMenuV2AITrace("preview generate parse form error restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, err)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error parsing form"})
+		return
+	}
+
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("preview generate missing image file restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, err)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No image file provided"})
+		return
+	}
+	defer file.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(file, int64(maxInput)+1))
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("preview generate read file error restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, err)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reading file"})
+		return
+	}
+	if len(raw) == 0 {
+		s.logBOGroupMenuV2AITrace("preview generate reject empty file restaurant=%d menu=%d", a.ActiveRestaurantID, menuID)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Empty file"})
+		return
+	}
+	if len(raw) > maxInput {
+		s.logBOGroupMenuV2AITrace("preview generate reject large file restaurant=%d menu=%d bytes=%d max=%d", a.ActiveRestaurantID, menuID, len(raw), maxInput)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image too large"})
+		return
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(http.DetectContentType(raw)))
+	allowedTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+		"image/webp": true,
+	}
+	if !allowedTypes[contentType] {
+		s.logBOGroupMenuV2AITrace("preview generate reject invalid content-type restaurant=%d menu=%d contentType=%s", a.ActiveRestaurantID, menuID, contentType)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "File type not allowed"})
+		return
+	}
+
+	res, err := s.db.ExecContext(r.Context(), `
+		UPDATE menusDeGrupos
+		SET show_menu_preview_image = 1,
+		    menu_preview_ai_requested = 1,
+		    menu_preview_ai_generating = 1
+		WHERE id = ? AND restaurant_id = ?
+	`, menuID, a.ActiveRestaurantID)
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("preview generate db state update error restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, err)
+		httpx.WriteError(w, http.StatusInternalServerError, "Error updating preview AI state")
+		return
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		s.logBOGroupMenuV2AITrace("preview generate db state update no rows restaurant=%d menu=%d", a.ActiveRestaurantID, menuID)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	s.broadcastBOGroupMenuV2AIEvent(a.ActiveRestaurantID, menuID, "preview_image_started", map[string]any{
+		"menu_preview_ai_requested":  true,
+		"menu_preview_ai_generating": true,
+		"ai_requested_img":           true,
+		"ai_generating_img":          true,
+	})
+
+	go s.runBOGroupMenuV2AIMenuPreviewImageJob(boGroupMenuV2AIMenuPreviewImageJob{
+		RestaurantID: a.ActiveRestaurantID,
+		MenuID:       menuID,
+		RawImage:     raw,
+		ContentType:  contentType,
+	})
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "AI preview image generation started",
+		"menu_id": menuID,
+	})
+}
+
+func (s *Server) runBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuPreviewImageJob) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+	defer cancel()
+	s.logBOGroupMenuV2AITrace("preview job start restaurant=%d menu=%d inputBytes=%d inputType=%s", job.RestaurantID, job.MenuID, len(job.RawImage), job.ContentType)
+
+	if err := s.acquireBOGroupMenuV2AIWorker(ctx); err != nil {
+		s.logBOGroupMenuV2AITrace("preview job worker acquire error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		s.failBOGroupMenuV2AIMenuPreviewImageJob(job, "AI generation queue timeout")
+		return
+	}
+	defer s.releaseBOGroupMenuV2AIWorker()
+
+	output, err := s.callOpenAIImageEdit(ctx, job.RawImage, job.ContentType)
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("preview job ai call error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		s.failBOGroupMenuV2AIMenuPreviewImageJob(job, aiFailureMessage("AI image generation failed", err))
+		return
+	}
+	if len(output) == 0 {
+		s.failBOGroupMenuV2AIMenuPreviewImageJob(job, "AI image generation returned empty image")
+		return
+	}
+	if len(output) > s.openAIMaxOutputBytes() {
+		s.failBOGroupMenuV2AIMenuPreviewImageJob(job, "AI image is too large")
+		return
+	}
+
+	outputType := strings.TrimSpace(http.DetectContentType(output))
+	normalizedWebP, err := specialmenuimage.NormalizeToWebP(
+		ctx,
+		output,
+		"menu-preview-ai",
+		outputType,
+	)
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("preview job normalize error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		s.failBOGroupMenuV2AIMenuPreviewImageJob(job, "Failed processing generated image")
+		return
+	}
+
+	imageID := fmt.Sprintf("preview-%d", time.Now().UTC().UnixMilli())
+	objectPath := path.Join(
+		strconv.Itoa(job.RestaurantID),
+		"pictures",
+		"menupreviewpictures",
+		strconv.FormatInt(job.MenuID, 10),
+		imageID+".webp",
+	)
+	if err := s.bunnyPut(ctx, objectPath, normalizedWebP, "image/webp"); err != nil {
+		s.logBOGroupMenuV2AITrace("preview job bunny upload error restaurant=%d menu=%d objectPath=%s err=%v", job.RestaurantID, job.MenuID, objectPath, err)
+		s.failBOGroupMenuV2AIMenuPreviewImageJob(job, "Failed uploading generated image")
+		return
+	}
+
+	fullURL := s.bunnyPullURL(objectPath)
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE menusDeGrupos
+		SET show_menu_preview_image = 1,
+		    menu_preview_image_path = ?,
+		    menu_preview_ai_requested = 1,
+		    menu_preview_ai_generating = 0
+		WHERE id = ? AND restaurant_id = ?
+	`, objectPath, job.MenuID, job.RestaurantID)
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("preview job db save error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		s.failBOGroupMenuV2AIMenuPreviewImageJob(job, "Failed saving generated image")
+		return
+	}
+
+	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "preview_image_completed", map[string]any{
+		"menu_preview_ai_requested":  true,
+		"menu_preview_ai_generating": false,
+		"menu_preview_image_url":     fullURL,
+		"show_menu_preview_image":    true,
+		"ai_requested_img":           true,
+		"ai_generating_img":          false,
+		"ai_generated_img":           fullURL,
+	})
+}
+
+func (s *Server) failBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuPreviewImageJob, message string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, _ = s.db.ExecContext(ctx, `
+		UPDATE menusDeGrupos
+		SET menu_preview_ai_generating = 0
+		WHERE id = ? AND restaurant_id = ?
+	`, job.MenuID, job.RestaurantID)
+
+	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "preview_image_failed", map[string]any{
+		"menu_preview_ai_requested":  true,
+		"menu_preview_ai_generating": false,
+		"ai_requested_img":           true,
+		"ai_generating_img":          false,
+		"message":                    message,
 	})
 }
 
@@ -1651,6 +1938,9 @@ func (s *Server) broadcastBOGroupMenuV2AIEvent(restaurantID int, menuID int64, e
 	defer cancel()
 	if tracker, err := s.loadBOMenuV2AIImageTracker(ctx, restaurantID, menuID); err == nil {
 		out["tracker"] = tracker
+	}
+	if menuPreview, err := s.loadBOMenuV2MenuPreviewTracker(ctx, restaurantID, menuID); err == nil {
+		out["menu_preview"] = menuPreview
 	}
 	s.logBOGroupMenuV2AITrace(
 		"broadcast event=%s restaurant=%d menu=%d clients=%d payloadKeys=%d",

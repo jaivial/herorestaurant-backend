@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,14 +17,16 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/lib/specialmenuimage"
 )
 
 type boV2Section struct {
-	ID       int64      `json:"id"`
-	Title    string     `json:"title"`
-	Kind     string     `json:"kind"`
-	Position int        `json:"position"`
-	Dishes   []boV2Dish `json:"dishes"`
+	ID          int64      `json:"id"`
+	Title       string     `json:"title"`
+	Kind        string     `json:"kind"`
+	Position    int        `json:"position"`
+	Annotations []string   `json:"annotations"`
+	Dishes      []boV2Dish `json:"dishes"`
 }
 
 type boV2Dish struct {
@@ -131,6 +135,30 @@ func anySliceToStringList(v any) []string {
 	default:
 		return []string{}
 	}
+}
+
+func normalizeV2SectionAnnotations(rows []string) []string {
+	if len(rows) == 0 {
+		return []string{}
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		line := strings.TrimSpace(row)
+		if line == "" {
+			continue
+		}
+		if len(line) > 280 {
+			line = line[:280]
+		}
+		out = append(out, line)
+		if len(out) >= 20 {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return []string{}
+	}
+	return out
 }
 
 func (s *Server) ensureBOMenuV2Belongs(restaurantID int, menuID int64) (bool, error) {
@@ -395,7 +423,7 @@ func (s *Server) ensureBOMenuV2SectionsFromSnapshot(ctx *http.Request, restauran
 
 func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID int, menuID int64) ([]boV2Section, error) {
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, title, section_kind, position
+		SELECT id, title, section_kind, position, COALESCE(annotations_json, '')
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
@@ -409,10 +437,12 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 	sectionByID := map[int64]int{}
 	for rows.Next() {
 		var sec boV2Section
-		if err := rows.Scan(&sec.ID, &sec.Title, &sec.Kind, &sec.Position); err != nil {
+		var annotationsRaw sql.NullString
+		if err := rows.Scan(&sec.ID, &sec.Title, &sec.Kind, &sec.Position, &annotationsRaw); err != nil {
 			return nil, err
 		}
 		sec.Kind = normalizeV2SectionKind(sec.Kind)
+		sec.Annotations = normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{})))
 		sec.Dishes = []boV2Dish{}
 		sectionByID[sec.ID] = len(sections)
 		sections = append(sections, sec)
@@ -722,24 +752,30 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 	}
 
 	var (
-		title             string
-		price             string
-		activeInt         int
-		draftInt          int
-		menuType          sql.NullString
-		menuSubtitleRaw   sql.NullString
-		showDishImagesInt int
-		beverageRaw       sql.NullString
-		commentsRaw       sql.NullString
-		minPartySize      int
-		mainLimitInt      int
-		mainLimitNumber   int
-		includedCoffeeInt int
+		title                      string
+		price                      string
+		activeInt                  int
+		draftInt                   int
+		menuType                   sql.NullString
+		menuSubtitleRaw            sql.NullString
+		showDishImagesInt          int
+		showMenuPreviewInt         int
+		beverageRaw                sql.NullString
+		commentsRaw                sql.NullString
+		minPartySize               int
+		mainLimitInt               int
+		mainLimitNumber            int
+		includedCoffeeInt          int
+		specialImageRaw            sql.NullString
+		menuPreviewPathRaw         sql.NullString
+		menuPreviewAIRequestedInt  int
+		menuPreviewAIGeneratingInt int
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, beverage, comments,
-		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_menu_preview_image, beverage, comments,
+		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee, special_menu_image_url,
+		       menu_preview_image_path, menu_preview_ai_requested, menu_preview_ai_generating
 		FROM menusDeGrupos
 		WHERE id = ? AND restaurant_id = ?
 		LIMIT 1
@@ -751,12 +787,17 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		&menuType,
 		&menuSubtitleRaw,
 		&showDishImagesInt,
+		&showMenuPreviewInt,
 		&beverageRaw,
 		&commentsRaw,
 		&minPartySize,
 		&mainLimitInt,
 		&mainLimitNumber,
 		&includedCoffeeInt,
+		&specialImageRaw,
+		&menuPreviewPathRaw,
+		&menuPreviewAIRequestedInt,
+		&menuPreviewAIGeneratingInt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -777,18 +818,27 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando tracker AI")
 		return
 	}
+	menuPreviewURL := s.publicMenuMediaURL(menuPreviewPathRaw.String)
+	menuPreviewAIRequested := menuPreviewAIRequestedInt != 0
+	menuPreviewAIGenerating := menuPreviewAIGeneratingInt != 0
+	showMenuPreviewImage := showMenuPreviewInt != 0
+	var menuPreviewAIGenerated any
+	if strings.TrimSpace(menuPreviewURL) != "" {
+		menuPreviewAIGenerated = menuPreviewURL
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"menu": map[string]any{
-			"id":               menuID,
-			"menu_title":       title,
-			"price":            price,
-			"active":           activeInt != 0,
-			"is_draft":         draftInt != 0,
-			"menu_type":        normalizeV2MenuType(menuType.String),
-			"menu_subtitle":    anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
-			"show_dish_images": showDishImagesInt != 0,
+			"id":                      menuID,
+			"menu_title":              title,
+			"price":                   price,
+			"active":                  activeInt != 0,
+			"is_draft":                draftInt != 0,
+			"menu_type":               normalizeV2MenuType(menuType.String),
+			"menu_subtitle":           anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
+			"show_dish_images":        showDishImagesInt != 0,
+			"show_menu_preview_image": showMenuPreviewImage,
 			"settings": map[string]any{
 				"included_coffee":          includedCoffeeInt != 0,
 				"beverage":                 decodeJSONOrFallback(beverageRaw.String, map[string]any{"type": "no_incluida", "price_per_person": nil, "has_supplement": false, "supplement_price": nil}),
@@ -797,9 +847,69 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 				"main_dishes_limit":        mainLimitInt != 0,
 				"main_dishes_limit_number": mainLimitNumber,
 			},
-			"sections":  sections,
-			"ai_images": aiImages,
+			"sections":                   sections,
+			"ai_images":                  aiImages,
+			"special_menu_image_url":     s.publicMenuMediaURL(specialImageRaw.String),
+			"menu_preview_image_url":     menuPreviewURL,
+			"menu_preview_ai_requested":  menuPreviewAIRequested,
+			"menu_preview_ai_generating": menuPreviewAIGenerating,
+			"ai_requested_img":           menuPreviewAIRequested,
+			"ai_generating_img":          menuPreviewAIGenerating,
+			"ai_generated_img":           menuPreviewAIGenerated,
+			"menu_preview": map[string]any{
+				"show_menu_preview_image":    showMenuPreviewImage,
+				"menu_preview_image_url":     menuPreviewURL,
+				"menu_preview_ai_requested":  menuPreviewAIRequested,
+				"menu_preview_ai_generating": menuPreviewAIGenerating,
+				"ai_requested_img":           menuPreviewAIRequested,
+				"ai_generating_img":          menuPreviewAIGenerating,
+				"ai_generated_img":           menuPreviewAIGenerated,
+			},
 		},
+	})
+}
+
+func (s *Server) handleBOGroupMenusV2GetSectionDishes(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+	sectionID, err := parseChiPositiveInt64(r, "sectionId")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid section id"})
+		return
+	}
+
+	// Verify section belongs to this menu and restaurant
+	var sectionCount int
+	if err := s.db.QueryRowContext(r.Context(), `
+		SELECT COUNT(*) FROM group_menu_sections_v2
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`, sectionID, menuID, a.ActiveRestaurantID).Scan(&sectionCount); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error verifying section")
+		return
+	}
+	if sectionCount == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
+		return
+	}
+
+	dishes, err := s.loadBOMenuV2SectionDishes(r, a.ActiveRestaurantID, menuID, sectionID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading dishes")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"dishes": dishes,
 	})
 }
 
@@ -823,23 +933,24 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	}
 
 	var (
-		currentTitle             string
-		currentPrice             string
-		currentActiveInt         int
-		currentDraftInt          int
-		currentType              sql.NullString
-		currentMenuSubtitle      sql.NullString
-		currentShowDishImagesInt int
-		currentBeverage          sql.NullString
-		currentComments          sql.NullString
-		currentMinParty          int
-		currentMainLimitInt      int
-		currentMainLimitNumber   int
-		currentIncludedCoffeeInt int
+		currentTitle              string
+		currentPrice              string
+		currentActiveInt          int
+		currentDraftInt           int
+		currentType               sql.NullString
+		currentMenuSubtitle       sql.NullString
+		currentShowDishImagesInt  int
+		currentShowMenuPreviewInt int
+		currentBeverage           sql.NullString
+		currentComments           sql.NullString
+		currentMinParty           int
+		currentMainLimitInt       int
+		currentMainLimitNumber    int
+		currentIncludedCoffeeInt  int
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, beverage, comments,
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_menu_preview_image, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee
 		FROM menusDeGrupos
 		WHERE id = ? AND restaurant_id = ?
@@ -852,6 +963,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		&currentType,
 		&currentMenuSubtitle,
 		&currentShowDishImagesInt,
+		&currentShowMenuPreviewInt,
 		&currentBeverage,
 		&currentComments,
 		&currentMinParty,
@@ -914,6 +1026,10 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	if v, ok := input["show_dish_images"]; ok {
 		showDishImages = parseLooseBoolOrDefault(v, showDishImages)
 	}
+	showMenuPreviewImage := currentShowMenuPreviewInt != 0
+	if v, ok := input["show_menu_preview_image"]; ok {
+		showMenuPreviewImage = parseLooseBoolOrDefault(v, showMenuPreviewImage)
+	}
 
 	beverageJSON := currentBeverage.String
 	if v, ok := input["beverage"]; ok {
@@ -964,6 +1080,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 			    menu_type = ?,
 			    menu_subtitle = ?,
 			    show_dish_images = ?,
+			    show_menu_preview_image = ?,
 			    beverage = ?,
 			    comments = ?,
 			    min_party_size = ?,
@@ -980,6 +1097,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		menuType,
 		menuSubtitleJSON,
 		boolToTinyint(showDishImages),
+		boolToTinyint(showMenuPreviewImage),
 		beverageJSON,
 		commentsJSON,
 		minParty,
@@ -1072,10 +1190,11 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 
 	var req struct {
 		Sections []struct {
-			ID       int64  `json:"id"`
-			Title    string `json:"title"`
-			Kind     string `json:"kind"`
-			Position int    `json:"position"`
+			ID          int64  `json:"id"`
+			Title       string `json:"title"`
+			Kind        string `json:"kind"`
+			Position    int    `json:"position"`
+			Annotations any    `json:"annotations"`
 		} `json:"sections"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1133,9 +1252,20 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 		}
 		kind := normalizeV2SectionKind(sec.Kind)
 		position := idx
+		annotationsProvided := sec.Annotations != nil
+		annotationsJSON := mustJSON(normalizeV2SectionAnnotations(anySliceToStringList(sec.Annotations)), []any{})
 
 		if sec.ID > 0 && existing[sec.ID] {
-			if _, err := tx.ExecContext(r.Context(), `
+			if annotationsProvided {
+				if _, err := tx.ExecContext(r.Context(), `
+					UPDATE group_menu_sections_v2
+					SET title = ?, section_kind = ?, position = ?, annotations_json = ?
+					WHERE id = ? AND restaurant_id = ? AND menu_id = ?
+				`, title, kind, position, annotationsJSON, sec.ID, a.ActiveRestaurantID, menuID); err != nil {
+					httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando seccion")
+					return
+				}
+			} else if _, err := tx.ExecContext(r.Context(), `
 				UPDATE group_menu_sections_v2
 				SET title = ?, section_kind = ?, position = ?
 				WHERE id = ? AND restaurant_id = ? AND menu_id = ?
@@ -1148,9 +1278,9 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 		}
 
 		res, err := tx.ExecContext(r.Context(), `
-			INSERT INTO group_menu_sections_v2 (restaurant_id, menu_id, title, section_kind, position)
-			VALUES (?, ?, ?, ?, ?)
-		`, a.ActiveRestaurantID, menuID, title, kind, position)
+			INSERT INTO group_menu_sections_v2 (restaurant_id, menu_id, title, section_kind, position, annotations_json)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, a.ActiveRestaurantID, menuID, title, kind, position, annotationsJSON)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error creando seccion")
 			return
@@ -1192,6 +1322,57 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "sections": sections})
+}
+
+func (s *Server) handleBOGroupMenusV2PatchSectionAnnotations(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+	sectionID, err := parseChiPositiveInt64(r, "sectionId")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid section id"})
+		return
+	}
+
+	var req struct {
+		Annotations []string `json:"annotations"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid JSON body"})
+		return
+	}
+
+	annotations := normalizeV2SectionAnnotations(req.Annotations)
+	res, err := s.db.ExecContext(r.Context(), `
+		UPDATE group_menu_sections_v2
+		SET annotations_json = ?
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`, mustJSON(annotations, []any{}), sectionID, menuID, a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando anotaciones")
+		return
+	}
+
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":     true,
+		"section_id":  sectionID,
+		"annotations": annotations,
+		"menu_id":     menuID,
+	})
 }
 
 func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *http.Request) {
@@ -2017,6 +2198,116 @@ func (s *Server) handleBOGroupMenusV2UploadSectionDishImage(w http.ResponseWrite
 	})
 }
 
+func (s *Server) handleBOGroupMenusV2UploadMenuPreviewImage(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	if !s.bunnyConfigured() {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error checking menu")
+		return
+	}
+	if !owns {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	const maxImageSize = 8 << 20
+	if err := r.ParseMultipartForm(maxImageSize); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error parsing form"})
+		return
+	}
+
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No image file provided"})
+		return
+	}
+	defer file.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(file, maxImageSize+1))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reading file"})
+		return
+	}
+	if len(raw) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Empty file"})
+		return
+	}
+	if len(raw) > maxImageSize {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image too large (max 8MB)"})
+		return
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(http.DetectContentType(raw)))
+	allowedTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+		"image/webp": true,
+		"image/gif":  true,
+	}
+	if !allowedTypes[contentType] {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "File type not allowed"})
+		return
+	}
+
+	normalizedWebP, err := specialmenuimage.NormalizeToWebP(
+		r.Context(),
+		raw,
+		header.Filename,
+		header.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error processing image: " + err.Error()})
+		return
+	}
+
+	imageID := fmt.Sprintf("preview-%d", time.Now().UnixMilli())
+	objectPath := path.Join(
+		strconv.Itoa(a.ActiveRestaurantID),
+		"pictures",
+		"menupreviewpictures",
+		strconv.FormatInt(menuID, 10),
+		imageID+".webp",
+	)
+
+	if err := s.bunnyPut(r.Context(), objectPath, normalizedWebP, "image/webp"); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image: " + err.Error()})
+		return
+	}
+
+	_, err = s.db.ExecContext(r.Context(), `
+		UPDATE menusDeGrupos
+		SET show_menu_preview_image = 1,
+		    menu_preview_image_path = ?,
+		    menu_preview_ai_requested = 0,
+		    menu_preview_ai_generating = 0
+		WHERE id = ? AND restaurant_id = ?
+	`, objectPath, menuID, a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error saving preview image")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"imageUrl": s.publicMenuMediaURL(objectPath),
+	})
+}
+
 func (s *Server) handleBOGroupMenusV2Delete(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -2093,52 +2384,27 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Validate file type
-	contentType := http.DetectContentType(imgData)
-	allowedTypes := map[string]bool{
-		"image/jpeg":         true,
-		"image/png":          true,
-		"image/webp":         true,
-		"image/gif":          true,
-		"application/pdf":    true,
-		"application/msword": true,
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
-		"text/plain": true,
-	}
-	if !allowedTypes[contentType] {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "File type not allowed"})
+	normalizedWebP, err := specialmenuimage.NormalizeToWebP(
+		r.Context(),
+		imgData,
+		header.Filename,
+		header.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error processing file: " + err.Error()})
 		return
 	}
 
-	// Determine file extension
-	ext := ".jpg"
-	switch contentType {
-	case "image/jpeg":
-		ext = ".jpg"
-	case "image/png":
-		ext = ".png"
-	case "image/webp":
-		ext = ".webp"
-	case "image/gif":
-		ext = ".gif"
-	case "application/pdf":
-		ext = ".pdf"
-	case "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-		ext = ".docx"
-	case "text/plain":
-		ext = ".txt"
-	}
-
-	// Generate object path: restaurant_id/menus/special/menu_id/timestamp.ext
+	// Generate object path: {restaurant_id}/pictures/menus_especiales/{menu_id}.webp
 	objectPath := path.Join(
 		strconv.Itoa(a.ActiveRestaurantID),
-		"menus",
-		"special",
-		fmt.Sprintf("menu-%d-%d%s", menuID, time.Now().Unix(), ext),
+		"pictures",
+		"menus_especiales",
+		fmt.Sprintf("%d.webp", menuID),
 	)
 
-	// Upload to BunnyCDN
-	if err := s.bunnyPut(r.Context(), objectPath, imgData, contentType); err != nil {
+	// Upload normalized WEBP to BunnyCDN.
+	if err := s.bunnyPut(r.Context(), objectPath, normalizedWebP, "image/webp"); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading file: " + err.Error()})
 		return
 	}
@@ -2152,4 +2418,557 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "imageUrl": imageURL, "filename": header.Filename})
+}
+
+
+
+type boV2MenuSliderImage struct {
+	ID         int64  `json:"id"`
+	ImageURL   string `json:"image_url"`
+	Position   int    `json:"position"`
+	CreatedAt  string `json:"created_at"`
+}
+
+type boV2MenuSlider struct {
+	ShowSlider bool                  `json:"show_slider"`
+	Images     []boV2MenuSliderImage `json:"images"`
+}
+
+const boGroupMenuV2SliderAIPrompt = "Create an elegant wide-angle restaurant ambiance or table setting photoshoot. Focus on the warm, inviting atmosphere, table arrangement, lighting, and overall dining experience. The dish or food should be visible but as part of the broader scene rather than the main subject. Frame in 16:9 aspect ratio with generous horizontal space to convey the venue's charm and character. Use high-end natural lighting, rich warm tones, sharp focus, and make the setting look sophisticated and welcoming for a restaurant menu."
+
+func (s *Server) handleBOGroupMenusV2GetSlider(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error checking menu")
+		return
+	}
+	if !owns {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	var showSliderInt int
+	err = s.db.QueryRowContext(r.Context(), `
+		SELECT COALESCE(show_menu_slider, 0) FROM menusDeGrupos WHERE id = ? AND restaurant_id = ? LIMIT 1
+	`, menuID, a.ActiveRestaurantID).Scan(&showSliderInt)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading slider state")
+		return
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, image_path, position, created_at
+		FROM menu_slider_images
+		WHERE restaurant_id = ? AND menu_id = ?
+		ORDER BY position ASC, id ASC
+	`, a.ActiveRestaurantID, menuID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading slider images")
+		return
+	}
+	defer rows.Close()
+
+	images := make([]boV2MenuSliderImage, 0, 8)
+	for rows.Next() {
+		var img boV2MenuSliderImage
+		var createdAt sql.NullTime
+		if err := rows.Scan(&img.ID, &img.ImageURL, &img.Position, &createdAt); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error reading slider image")
+			return
+		}
+		img.ImageURL = s.bunnyPullURL(img.ImageURL)
+		if createdAt.Valid {
+			img.CreatedAt = createdAt.Time.Format(time.RFC3339)
+		}
+		images = append(images, img)
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"slider": boV2MenuSlider{
+			ShowSlider: showSliderInt != 0,
+			Images:    images,
+		},
+	})
+}
+
+func (s *Server) handleBOGroupMenusV2PatchSlider(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		http.Error(w, "Error checking menu", http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	var input map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid JSON body"})
+		return
+	}
+
+	showSlider := false
+	if v, ok := input["show_slider"]; ok {
+		showSlider = parseLooseBoolOrDefault(v, showSlider)
+	}
+
+	_, err = s.db.ExecContext(r.Context(), `
+		UPDATE menusDeGrupos SET show_menu_slider = ? WHERE id = ? AND restaurant_id = ?
+	`, boolToTinyint(showSlider), menuID, a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error updating slider state")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"show_slider": showSlider,
+	})
+}
+
+func (s *Server) handleBOGroupMenusV2UploadSliderImage(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	if !s.bunnyConfigured() {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		http.Error(w, "Error checking menu", http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	const maxImageSize = 8 << 20
+	if err := r.ParseMultipartForm(maxImageSize); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error parsing form"})
+		return
+	}
+
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No image file provided"})
+		return
+	}
+	defer file.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(file, maxImageSize+1))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reading file"})
+		return
+	}
+	if len(raw) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Empty file"})
+		return
+	}
+	if len(raw) > maxImageSize {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image too large (max 8MB)"})
+		return
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(http.DetectContentType(raw)))
+	allowedTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+		"image/webp": true,
+		"image/gif":  true,
+	}
+	if !allowedTypes[contentType] {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "File type not allowed"})
+		return
+	}
+
+	normalizedWebP, err := specialmenuimage.NormalizeToWebP(
+		r.Context(),
+		raw,
+		header.Filename,
+		header.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error processing image: " + err.Error()})
+		return
+	}
+
+	var maxPosition int
+	s.db.QueryRowContext(r.Context(), `
+		SELECT COALESCE(MAX(position), -1) FROM menu_slider_images WHERE restaurant_id = ? AND menu_id = ?
+	`, a.ActiveRestaurantID, menuID).Scan(&maxPosition)
+
+	imageID := fmt.Sprintf("slider-%d", time.Now().UnixMilli())
+	objectPath := path.Join(
+		strconv.Itoa(a.ActiveRestaurantID),
+		"pictures",
+		"menusliderpictures",
+		strconv.FormatInt(menuID, 10),
+		imageID+".webp",
+	)
+
+	if err := s.bunnyPut(r.Context(), objectPath, normalizedWebP, "image/webp"); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image: " + err.Error()})
+		return
+	}
+
+	res, err := s.db.ExecContext(r.Context(), `
+		INSERT INTO menu_slider_images (restaurant_id, menu_id, image_path, position)
+		VALUES (?, ?, ?, ?)
+	`, a.ActiveRestaurantID, menuID, objectPath, maxPosition+1)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error saving slider image")
+		return
+	}
+	imageIDDB, _ := res.LastInsertId()
+
+	s.db.ExecContext(r.Context(), `
+		UPDATE menusDeGrupos SET show_menu_slider = 1 WHERE id = ? AND restaurant_id = ?
+	`, menuID, a.ActiveRestaurantID)
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"image": boV2MenuSliderImage{
+			ID:        imageIDDB,
+			ImageURL:  s.bunnyPullURL(objectPath),
+			Position:  maxPosition + 1,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		},
+	})
+}
+
+func (s *Server) handleBOGroupMenusV2DeleteSliderImage(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+	imageID, err := parseChiPositiveInt64(r, "imageId")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid image id"})
+		return
+	}
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		http.Error(w, "Error checking menu", http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	res, err := s.db.ExecContext(r.Context(), `
+		DELETE FROM menu_slider_images WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`, imageID, menuID, a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error deleting slider image")
+		return
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image not found"})
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+func (s *Server) handleBOGroupMenusV2ReorderSliderImages(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		http.Error(w, "Error checking menu", http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	var req struct {
+		ImageIDs []int64 `json:"image_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid JSON body"})
+		return
+	}
+	if len(req.ImageIDs) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image IDs required"})
+		return
+	}
+
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error reordering images")
+		return
+	}
+	defer tx.Rollback()
+
+	for pos, imgID := range req.ImageIDs {
+		_, err := tx.ExecContext(r.Context(), `
+			UPDATE menu_slider_images SET position = ? WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+		`, pos, imgID, menuID, a.ActiveRestaurantID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error reordering images")
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error saving order")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+func (s *Server) handleBOGroupMenusV2GenerateSliderAIImage(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	if strings.TrimSpace(s.cfg.OpenAIAPIKey) == "" {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
+		return
+	}
+	if !s.bunnyConfigured() {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		http.Error(w, "Error checking menu", http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	maxInput := s.openAIInputMaxBytes()
+	if err := r.ParseMultipartForm(int64(maxInput)); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error parsing form"})
+		return
+	}
+
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No image file provided"})
+		return
+	}
+	defer file.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(file, int64(maxInput)+1))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reading file"})
+		return
+	}
+	if len(raw) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Empty file"})
+		return
+	}
+	if len(raw) > maxInput {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image too large"})
+		return
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(http.DetectContentType(raw)))
+	allowedTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+		"image/webp": true,
+	}
+	if !allowedTypes[contentType] {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "File type not allowed"})
+		return
+	}
+
+	go s.runBOGroupMenuV2AISliderImageJob(boGroupMenuV2AIMenuPreviewImageJob{
+		RestaurantID: a.ActiveRestaurantID,
+		MenuID:       menuID,
+		RawImage:     raw,
+		ContentType:  contentType,
+	})
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "AI slider image generation started",
+		"menu_id": menuID,
+	})
+}
+
+func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AIMenuPreviewImageJob) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+	defer cancel()
+
+	if err := s.acquireBOGroupMenuV2AIWorker(ctx); err != nil {
+		s.logBOGroupMenuV2AITrace("slider job worker acquire error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		return
+	}
+	defer s.releaseBOGroupMenuV2AIWorker()
+
+	output, err := s.callOpenAISliderImageEdit(ctx, job.RawImage, job.ContentType)
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("slider job ai call error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		return
+	}
+	if len(output) == 0 || len(output) > s.openAIMaxOutputBytes() {
+		s.logBOGroupMenuV2AITrace("slider job ai output error restaurant=%d menu=%d bytes=%d", job.RestaurantID, job.MenuID, len(output))
+		return
+	}
+
+	outputType := strings.TrimSpace(http.DetectContentType(output))
+	normalizedWebP, err := specialmenuimage.NormalizeToWebP(ctx, output, "slider-ai", outputType)
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("slider job normalize error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		return
+	}
+
+	var maxPosition int
+	s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(position), -1) FROM menu_slider_images WHERE restaurant_id = ? AND menu_id = ?
+	`, job.RestaurantID, job.MenuID).Scan(&maxPosition)
+
+	imageID := fmt.Sprintf("slider-ai-%d", time.Now().UTC().UnixMilli())
+	objectPath := path.Join(
+		strconv.Itoa(job.RestaurantID),
+		"pictures",
+		"menusliderpictures",
+		strconv.FormatInt(job.MenuID, 10),
+		imageID+".webp",
+	)
+
+	if err := s.bunnyPut(ctx, objectPath, normalizedWebP, "image/webp"); err != nil {
+		s.logBOGroupMenuV2AITrace("slider job bunny upload error restaurant=%d menu=%d objectPath=%s err=%v", job.RestaurantID, job.MenuID, objectPath, err)
+		return
+	}
+
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO menu_slider_images (restaurant_id, menu_id, image_path, position)
+		VALUES (?, ?, ?, ?)
+	`, job.RestaurantID, job.MenuID, objectPath, maxPosition+1)
+	if err != nil {
+		s.logBOGroupMenuV2AITrace("slider job db save error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		return
+	}
+	imageIDDB, _ := res.LastInsertId()
+
+	s.db.ExecContext(ctx, `
+		UPDATE menusDeGrupos SET show_menu_slider = 1 WHERE id = ? AND restaurant_id = ?
+	`, job.MenuID, job.RestaurantID)
+
+	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "slider_image_completed", map[string]any{
+		"image_id":   imageIDDB,
+		"image_url":  s.bunnyPullURL(objectPath),
+		"show_slider": true,
+	})
+}
+
+func (s *Server) callOpenAISliderImageEdit(ctx context.Context, input []byte, inputContentType string) ([]byte, error) {
+	if len(input) == 0 {
+		return nil, errors.New("empty input image")
+	}
+	apiKey := strings.TrimSpace(s.cfg.OpenAIAPIKey)
+	if apiKey == "" {
+		return nil, errors.New("ai key missing")
+	}
+	contentType := strings.TrimSpace(inputContentType)
+	if contentType == "" || !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		contentType = strings.TrimSpace(http.DetectContentType(input))
+	}
+	if contentType == "" || !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		contentType = "image/webp"
+	}
+
+	body := map[string]any{
+		"enable_base64_output": false,
+		"enable_sync_mode":     false,
+		"images": []string{
+			"data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(input),
+		},
+		"input_fidelity": "high",
+		"output_format":  "jpeg",
+		"prompt":         boGroupMenuV2SliderAIPrompt,
+		"quality":        "high",
+		"size":           "1792*1024",
+	}
+	rawBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	payload, statusCode, responseContentType, err := s.doAIProviderRequest(ctx, http.MethodPost, s.openAIImageEditURL(), rawBody, "application/json")
+	if err != nil {
+		return nil, err
+	}
+	if statusCode < 200 || statusCode >= 300 {
+		return nil, fmt.Errorf("wavespeed request failed (%d): %s", statusCode, strings.TrimSpace(string(payload)))
+	}
+	lowerResponseType := strings.ToLower(strings.TrimSpace(responseContentType))
+	if strings.HasPrefix(lowerResponseType, "image/") {
+		return payload, nil
+	}
+	return s.extractOpenAIImagePayload(ctx, payload)
 }

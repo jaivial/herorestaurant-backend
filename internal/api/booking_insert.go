@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -108,6 +109,14 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 
 	var arrozTypeJSON any = nil
 	var arrozServingsJSON any = nil
+	preferredFloorNumber, err := s.resolvePreferredFloorNumberForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_floor_number")))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 
 	if specialMenu {
 		menuDeGrupoID = clampInt(r.FormValue("menu_de_grupo_id"), 1, 1_000_000_000, 0)
@@ -171,17 +180,6 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		// Append Salón Condesa info to commentary (regular bookings only).
-		state := 0
-		_ = s.db.QueryRowContext(r.Context(), "SELECT state FROM salon_condesa WHERE restaurant_id = ? AND date = ? LIMIT 1", restaurantID, resDate).Scan(&state)
-		if state == 1 {
-			info := "Primera planta sin ascensor"
-			if commentary != "" {
-				commentary = commentary + " - " + info
-			} else {
-				commentary = info
-			}
-		}
 	}
 
 	bookingID, err := s.insertBooking(r, bookingInsertParams{
@@ -201,6 +199,7 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		SpecialMenu:       boolToTinyint(specialMenu),
 		MenuDeGrupoID:     nullIntOrNil(menuDeGrupoID),
 		PrincipalesJSON:   principalesJSON,
+		PreferredFloorNum: preferredFloorNumber,
 	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -234,6 +233,7 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		"contactEmail":            contactEmail,
 		"specialMenu":             specialMenu,
 		"menuDeGrupoId":           menuDeGrupoID,
+		"preferredFloorNumber":    preferredFloorNumber,
 	})
 }
 
@@ -438,6 +438,7 @@ type bookingInsertParams struct {
 	SpecialMenu       int
 	MenuDeGrupoID     any
 	PrincipalesJSON   any
+	PreferredFloorNum any
 }
 
 func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, error) {
@@ -470,9 +471,10 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 			contact_email,
 			special_menu,
 			menu_de_grupo_id,
-			principales_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, p.PrincipalesJSON)
+			principales_json,
+			preferred_floor_number
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, p.PrincipalesJSON, p.PreferredFloorNum)
 	if err != nil {
 		return 0, err
 	}
@@ -485,6 +487,41 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 		return 0, err
 	}
 	return id, nil
+}
+
+func (s *Server) resolvePreferredFloorNumberForFront(ctx context.Context, restaurantID int, date string, raw string) (any, error) {
+	floors, err := s.loadDateFloors(ctx, restaurantID, date)
+	if err != nil {
+		return nil, errors.New("No se pudo consultar las plantas activas")
+	}
+	active := make([]boConfigFloor, 0, len(floors))
+	for _, floor := range floors {
+		if floor.Active {
+			active = append(active, floor)
+		}
+	}
+	if len(active) == 0 {
+		return nil, errors.New("No hay salones activos para la fecha seleccionada")
+	}
+
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		if len(active) == 1 {
+			return active[0].FloorNumber, nil
+		}
+		return nil, errors.New("Debe seleccionar un salón")
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil, errors.New("Salón inválido")
+	}
+	for _, floor := range active {
+		if floor.FloorNumber == n {
+			return n, nil
+		}
+	}
+	return nil, errors.New("El salón seleccionado no está disponible para la fecha")
 }
 
 func normalizePhoneParts(countryCodeRaw, phoneRaw string) (countryCode string, national string, e164Digits string, ok bool) {
