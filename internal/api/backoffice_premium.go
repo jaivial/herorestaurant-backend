@@ -2289,6 +2289,56 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 	return normalizeBOPremiumTableRow(out), nil
 }
 
+func normalizeBOPremiumDrawElementDisplayMode(raw any) string {
+	value, _ := raw.(string)
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "asset":
+		return "asset"
+	case "text":
+		return "text"
+	default:
+		return "both"
+	}
+}
+
+func normalizeBOPremiumTableLayoutMap(layout map[string]any) map[string]any {
+	if layout == nil {
+		return map[string]any{}
+	}
+	normalized := cloneStringAnyMap(layout)
+	rawElements, ok := normalized["elements"].([]any)
+	if !ok {
+		return normalized
+	}
+
+	nextElements := make([]any, 0, len(rawElements))
+	for _, raw := range rawElements {
+		element, isMap := asStringAnyMap(raw)
+		if !isMap {
+			nextElements = append(nextElements, raw)
+			continue
+		}
+		normalizedElement := cloneStringAnyMap(element)
+		rawMode, hasSnakeCaseMode := normalizedElement["display_mode"]
+		mode := normalizeBOPremiumDrawElementDisplayMode(rawMode)
+		if !hasSnakeCaseMode {
+			mode = normalizeBOPremiumDrawElementDisplayMode(normalizedElement["displayMode"])
+		} else if mode == "both" {
+			rawModeText, _ := rawMode.(string)
+			if strings.ToLower(strings.TrimSpace(rawModeText)) != "both" {
+				// Backward compatibility for payloads using camelCase.
+				// Prefer snake_case when explicitly valid.
+				mode = normalizeBOPremiumDrawElementDisplayMode(normalizedElement["displayMode"])
+			}
+		}
+		normalizedElement["display_mode"] = mode
+		delete(normalizedElement, "displayMode")
+		nextElements = append(nextElements, normalizedElement)
+	}
+	normalized["elements"] = nextElements
+	return normalized
+}
+
 func (s *Server) loadBOPremiumTablesSnapshot(ctx context.Context, restaurantID int, dateISO string, floorNumber *int) ([]map[string]any, []map[string]any, map[string]any, error) {
 	areas, err := s.queryAllAsMaps(ctx, `SELECT * FROM restaurant_areas WHERE restaurant_id = ? ORDER BY id ASC`, restaurantID)
 	if err != nil {
@@ -2377,14 +2427,15 @@ func (s *Server) loadBOPremiumTableLayout(ctx context.Context, restaurantID int,
 	if !ok {
 		return map[string]any{}, nil
 	}
-	return parsed, nil
+	return normalizeBOPremiumTableLayoutMap(parsed), nil
 }
 
 func (s *Server) upsertBOPremiumTableLayout(ctx context.Context, restaurantID int, dateISO string, floorNumber int, data map[string]any) (map[string]any, error) {
 	if dateISO == "" || floorNumber < 0 {
 		return map[string]any{}, nil
 	}
-	raw, _ := json.Marshal(data)
+	normalized := normalizeBOPremiumTableLayoutMap(data)
+	raw, _ := json.Marshal(normalized)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO restaurant_table_layouts (restaurant_id, layout_date, floor_number, data_json, created_at, updated_at)
 		VALUES (?, ?, ?, ?, NOW(), NOW())
@@ -2394,11 +2445,11 @@ func (s *Server) upsertBOPremiumTableLayout(ctx context.Context, restaurantID in
 	`, restaurantID, dateISO, floorNumber, string(raw))
 	if err != nil {
 		if isSQLSchemaError(err) {
-			return data, nil
+			return normalized, nil
 		}
 		return nil, err
 	}
-	return data, nil
+	return normalized, nil
 }
 
 func (s *Server) upsertBOPremiumTableLayoutPosition(ctx context.Context, restaurantID int, dateISO string, floorNumber int, tableID int64, xPos int64, yPos int64) (map[string]any, error) {

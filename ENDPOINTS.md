@@ -1793,6 +1793,7 @@ Body JSON:
 - `id` (required) + mismos campos opcionales de `POST` para actualizar.
 - Para posicion por layout diario: incluir `date` + `floor_number` junto a `x_pos`/`y_pos`.
 - `entity: "layout"` permite guardar metadata de mapa por dia/planta (por ejemplo `elements`, `booking_states`) usando `date` + `floor_number` + `metadata`.
+- En `metadata.elements[]` se soporta `display_mode` por elemento (`"asset" | "text" | "both"`). Si falta o es inválido se normaliza a `"both"`.
 
 Response:
 - `{ success: true, entity: "table"|"area", item: ... }`
