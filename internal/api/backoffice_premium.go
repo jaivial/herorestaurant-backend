@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"math"
 	"net"
 	"net/http"
@@ -1428,6 +1429,7 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "JSON inválido")
 		return
 	}
+	log.Printf("[DEBUG] handleBOPremiumTablesUpdate: restaurantID=%d, req=%+v", a.ActiveRestaurantID, req)
 	req.Date = strings.TrimSpace(req.Date)
 	if req.Date != "" && !isDateISO(req.Date) {
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "date invalida")
@@ -1444,8 +1446,10 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 			writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "date y floor_number requeridos")
 			return
 		}
+		log.Printf("[DEBUG] patchBOPremiumTableLayout: restaurantID=%d, date=%s, floor=%d", a.ActiveRestaurantID, req.Date, *req.FloorNumber)
 		layout, err := s.patchBOPremiumTableLayout(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, req.Metadata)
 		if err != nil {
+			log.Printf("[ERROR] patchBOPremiumTableLayout failed: %v", err)
 			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar layout")
 			return
 		}
@@ -1483,6 +1487,7 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 		}
 		item, err := s.updateBOPremiumTable(r.Context(), a.ActiveRestaurantID, reqForDB)
 		if err != nil {
+			log.Printf("[ERROR] updateBOPremiumTable failed: %v", err)
 			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar mesa")
 			return
 		}
@@ -1501,7 +1506,10 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 				} else if rawY, ok := anyToInt64OK(item["y_pos"]); ok {
 					y = rawY
 				}
+				log.Printf("[DEBUG] upsertBOPremiumTableLayoutPosition: restaurantID=%d, date=%s, floor=%d, tableID=%d, x=%d, y=%d",
+					a.ActiveRestaurantID, req.Date, *req.FloorNumber, tableID, x, y)
 				if _, err := s.upsertBOPremiumTableLayoutPosition(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, tableID, x, y); err != nil {
+					log.Printf("[ERROR] upsertBOPremiumTableLayoutPosition failed: %v", err)
 					writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar posicion del layout")
 					return
 				}
@@ -1944,19 +1952,19 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, restaurant_area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
+				(restaurant_id, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
 			args: []any{restaurantID, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, table_name, seats, is_active, metadata_json, created_at, updated_at)
+				(restaurant_id, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
 			args: []any{restaurantID, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, restaurant_area_id, table_name, seats, is_active, metadata_json, created_at, updated_at)
+				(restaurant_id, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
 			args: []any{restaurantID, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
@@ -2196,7 +2204,7 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 		{
 			query: `UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
-				    restaurant_area_id = COALESCE(?, restaurant_area_id),
+				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
@@ -2206,9 +2214,9 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 		},
 		{
 			query: `UPDATE restaurant_tables
-				SET table_name = COALESCE(?, table_name),
+				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
-				    seats = COALESCE(?, seats),
+				    capacity = COALESCE(?, capacity),
 				    is_active = COALESCE(?, is_active),
 				    updated_at = NOW()
 				WHERE id = ? AND restaurant_id = ?`,
@@ -2216,9 +2224,9 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 		},
 		{
 			query: `UPDATE restaurant_tables
-				SET table_name = COALESCE(?, table_name),
-				    restaurant_area_id = COALESCE(?, restaurant_area_id),
-				    seats = COALESCE(?, seats),
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
 				    is_active = COALESCE(?, is_active),
 				    updated_at = NOW()
 				WHERE id = ? AND restaurant_id = ?`,
