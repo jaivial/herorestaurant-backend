@@ -47,6 +47,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
+	websiteBuilder := newWebsiteBuilder(s)
 
 	// CORS for API and legacy endpoints.
 	r.Use(func(next http.Handler) http.Handler {
@@ -249,6 +250,13 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, ajustesGate).Get("/website/menu-templates", s.handleBOPremiumWebsiteMenuTemplatesGet)
 		r.With(s.requireBOSession, ajustesGate).Put("/website/menu-templates", s.handleBOPremiumWebsiteMenuTemplatesUpsert)
 		r.With(s.requireBOSession, ajustesGate).Post("/website/ai-generate", s.handleBOPremiumWebsiteAIGenerate)
+		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
+			websiteBuilder.RegisterRoutes(r)
+		})
+		// Site builder routes (new visual editor)
+		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
+			RegisterSiteBuilderRoutes(r, s.db)
+		})
 		r.With(s.requireBOSession, ajustesGate).Get("/domains/search", s.handleBOPremiumDomainsSearch)
 		r.With(s.requireBOSession, ajustesGate).Post("/domains/quote", s.handleBOPremiumDomainsQuote)
 		r.With(s.requireBOSession, ajustesGate).Post("/domains/register", s.handleBOPremiumDomainsRegister)
@@ -313,6 +321,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/search-reservation", s.handleBOInvoicesSearchReservation)
 	})
 
+	r.Get("/api/public/website-builder/render/{kind}", s.handleWebsiteBuilderRenderFragment)
+
 	// Everything below is restaurant-scoped.
 	r.Group(func(r chi.Router) {
 		r.Use(s.withRestaurant)
@@ -322,6 +332,9 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/reservations/closed-days", s.handleReservationsClosedDays)
 		r.Get("/reservations/rice-types", s.handleReservationsRiceTypes)
 		r.Get("/reservations/month-availability", s.handleReservationsMonthAvailability)
+		r.Get("/reservations/two-top-availability", s.handleFetchMesasDeDos)
+		r.Get("/reservations/hour-data", s.handleGetHourData)
+		r.Get("/reservations/day-context", s.handleGetReservationDayContext)
 		r.With(s.requireAdmin).Post("/menu-visibility", s.handleMenuVisibilityToggle)
 		r.Get("/menus/public", s.handlePublicMenus)
 		r.Get("/menus/dia", s.handleMenuDia)
@@ -398,6 +411,7 @@ func (s *Server) Routes() http.Handler {
 
 		// Group menus: helper for reservas.php flow.
 		r.Get("/getValidMenusForPartySize.php", s.handleGetValidMenusForPartySize)
+		r.Get("/reservations/group-menus", s.handleGetValidMenusForPartySize)
 
 		// Automation helpers (n8n).
 		r.Get("/get_available_rice_types.php", s.handleGetAvailableRiceTypes)

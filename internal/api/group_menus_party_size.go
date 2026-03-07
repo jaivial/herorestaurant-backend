@@ -15,6 +15,25 @@ func isPartySizeClosedGroupMenuType(raw string) bool {
 	return normalizeV2MenuType(raw) == "closed_group"
 }
 
+// hasPrincipalesItems checks if the principales object has a non-empty items array.
+func hasPrincipalesItems(principales any) bool {
+	if principales == nil {
+		return false
+	}
+	// Try to extract items from map[string]any
+	if m, ok := principales.(map[string]any); ok {
+		items, exists := m["items"]
+		if !exists {
+			return false
+		}
+		if arr, ok := items.([]any); ok {
+			return len(arr) > 0
+		}
+		return false
+	}
+	return false
+}
+
 func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
@@ -162,6 +181,12 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			Titulo: "Principal a elegir",
 			Items:  []any{},
 		})
+
+		// Skip menus without principales items
+		if !hasPrincipalesItems(principalesFallback) {
+			continue
+		}
+
 		beverageFallback := decodeOr(beverageRaw, BeverageFallback{
 			Type:           "no_incluida",
 			PricePerPerson: nil,
