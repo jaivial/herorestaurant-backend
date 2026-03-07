@@ -562,15 +562,16 @@ func (s *Server) loadClosedDayOverrides(ctx context.Context, restaurantID int, f
 	closedDays := make([]string, 0)
 	openedDays := make([]string, 0)
 	for rows.Next() {
-		var date string
+		var date time.Time
 		var isOpenInt int
 		if err := rows.Scan(&date, &isOpenInt); err != nil {
 			return nil, nil, err
 		}
+		dateStr := date.Format("2006-01-02")
 		if isOpenInt != 0 {
-			openedDays = append(openedDays, date)
+			openedDays = append(openedDays, dateStr)
 		} else {
-			closedDays = append(closedDays, date)
+			closedDays = append(closedDays, dateStr)
 		}
 	}
 	if err := rows.Err(); err != nil {

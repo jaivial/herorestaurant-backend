@@ -86,12 +86,12 @@ type boBookingUpsertReq struct {
 	ContactPhone    string `json:"contact_phone"`
 	ContactPhoneCC  string `json:"contact_phone_country_code"`
 
-	ContactEmail  *string `json:"contact_email,omitempty"`
-	TableNumber   *string `json:"table_number,omitempty"`
-	PreferredFloorNumber *int `json:"preferred_floor_number,omitempty"`
-	Commentary    *string `json:"commentary,omitempty"`
-	BabyStrollers *int    `json:"babyStrollers,omitempty"`
-	HighChairs    *int    `json:"highChairs,omitempty"`
+	ContactEmail         *string `json:"contact_email,omitempty"`
+	TableNumber          *string `json:"table_number,omitempty"`
+	PreferredFloorNumber *int    `json:"preferred_floor_number,omitempty"`
+	Commentary           *string `json:"commentary,omitempty"`
+	BabyStrollers        *int    `json:"babyStrollers,omitempty"`
+	HighChairs           *int    `json:"highChairs,omitempty"`
 
 	// Multi-arroz (non group menu).
 	ArrozTypes    []string `json:"arroz_types,omitempty"`
@@ -169,33 +169,33 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 	})
 
 	s.emitN8nWebhookAsync(a.ActiveRestaurantID, "booking.created", map[string]any{
-		"source":          "backoffice",
-		"bookingId":       id,
-		"reservationDate": booking.ReservationDate,
-		"reservationTime": booking.ReservationTime,
-		"partySize":       booking.PartySize,
-		"customerName":    booking.CustomerName,
-		"contactPhone":    booking.ContactPhone,
-		"contactEmail":    booking.ContactEmail,
-		"specialMenu":     booking.SpecialMenu,
-		"menuDeGrupoId":   booking.MenuDeGrupoID,
+		"source":               "backoffice",
+		"bookingId":            id,
+		"reservationDate":      booking.ReservationDate,
+		"reservationTime":      booking.ReservationTime,
+		"partySize":            booking.PartySize,
+		"customerName":         booking.CustomerName,
+		"contactPhone":         booking.ContactPhone,
+		"contactEmail":         booking.ContactEmail,
+		"specialMenu":          booking.SpecialMenu,
+		"menuDeGrupoId":        booking.MenuDeGrupoID,
 		"preferredFloorNumber": nullableInt64OrNil(booking.PreferredFloorNumber),
 	})
 }
 
 type boBookingPatchReq struct {
-	ReservationDate *string `json:"reservation_date,omitempty"`
-	ReservationTime *string `json:"reservation_time,omitempty"`
-	PartySize       *int    `json:"party_size,omitempty"`
-	CustomerName    *string `json:"customer_name,omitempty"`
-	ContactPhone    *string `json:"contact_phone,omitempty"`
-	ContactPhoneCC  *string `json:"contact_phone_country_code,omitempty"`
-	ContactEmail    *string `json:"contact_email,omitempty"`
-	TableNumber     *string `json:"table_number,omitempty"`
-	PreferredFloorNumber *int `json:"preferred_floor_number,omitempty"`
-	Commentary      *string `json:"commentary,omitempty"`
-	BabyStrollers   *int    `json:"babyStrollers,omitempty"`
-	HighChairs      *int    `json:"highChairs,omitempty"`
+	ReservationDate      *string `json:"reservation_date,omitempty"`
+	ReservationTime      *string `json:"reservation_time,omitempty"`
+	PartySize            *int    `json:"party_size,omitempty"`
+	CustomerName         *string `json:"customer_name,omitempty"`
+	ContactPhone         *string `json:"contact_phone,omitempty"`
+	ContactPhoneCC       *string `json:"contact_phone_country_code,omitempty"`
+	ContactEmail         *string `json:"contact_email,omitempty"`
+	TableNumber          *string `json:"table_number,omitempty"`
+	PreferredFloorNumber *int    `json:"preferred_floor_number,omitempty"`
+	Commentary           *string `json:"commentary,omitempty"`
+	BabyStrollers        *int    `json:"babyStrollers,omitempty"`
+	HighChairs           *int    `json:"highChairs,omitempty"`
 
 	ArrozTypes    *[]string `json:"arroz_types,omitempty"`
 	ArrozServings *[]int    `json:"arroz_servings,omitempty"`
@@ -447,12 +447,12 @@ type boNormalizeInput struct {
 	ContactPhone            string
 	ContactPhoneCountryCode string
 
-	ContactEmail  *string
-	TableNumber   *string
+	ContactEmail         *string
+	TableNumber          *string
 	PreferredFloorNumber *int
-	Commentary    *string
-	BabyStrollers *int
-	HighChairs    *int
+	Commentary           *string
+	BabyStrollers        *int
+	HighChairs           *int
 
 	ArrozTypes           []string
 	ArrozServings        []int
@@ -783,6 +783,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
 			TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
 			party_size,
+			children,
 			contact_phone,
 			contact_phone_country_code,
 			status,
@@ -813,6 +814,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 		ReservationDate string
 		ReservationTime string
 		PartySize       int
+		Children        int
 		ContactPhone    sql.NullString
 		ContactPhoneCC  sql.NullString
 		Status          sql.NullString
@@ -839,6 +841,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			&b.ReservationDate,
 			&b.ReservationTime,
 			&b.PartySize,
+			&b.Children,
 			&b.ContactPhone,
 			&b.ContactPhoneCC,
 			&b.Status,
@@ -866,6 +869,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			"reservation_date":           b.ReservationDate,
 			"reservation_time":           b.ReservationTime,
 			"party_size":                 b.PartySize,
+			"children":                   b.Children,
 			"contact_phone":              nullStringOrNil(b.ContactPhone),
 			"contact_phone_country_code": defaultString(b.ContactPhoneCC, "34"),
 			"status":                     defaultString(b.Status, "pending"),
@@ -894,6 +898,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 			DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
 			TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
 			party_size,
+			children,
 			contact_phone,
 			contact_phone_country_code,
 			status,
@@ -920,6 +925,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		resDate         string
 		resTime         string
 		partySize       int
+		children        int
 		contactPhone    sql.NullString
 		contactPhoneCC  sql.NullString
 		status          sql.NullString
@@ -942,6 +948,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		&resDate,
 		&resTime,
 		&partySize,
+		&children,
 		&contactPhone,
 		&contactPhoneCC,
 		&status,
@@ -969,6 +976,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		"reservation_date":           resDate,
 		"reservation_time":           resTime,
 		"party_size":                 int64(partySize),
+		"children":                   int64(children),
 		"contact_phone":              nullStringOrNil(contactPhone),
 		"contact_phone_country_code": defaultString(contactPhoneCC, "34"),
 		"status":                     defaultString(status, "pending"),

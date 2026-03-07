@@ -11,6 +11,10 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
+func isPartySizeClosedGroupMenuType(raw string) bool {
+	return normalizeV2MenuType(raw) == "closed_group"
+}
+
 func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
@@ -47,11 +51,16 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, menu_title, price, included_coffee, menu_subtitle,
+		SELECT id, menu_title, price, included_coffee,
+		       COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') AS menu_type,
+		       menu_subtitle,
 		       entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at
 		FROM menusDeGrupos
-		WHERE restaurant_id = ? AND active = 1 AND min_party_size <= ?
+		WHERE restaurant_id = ?
+		  AND active = 1
+		  AND min_party_size <= ?
+		  AND LOWER(COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')) = 'closed_group'
 		ORDER BY min_party_size ASC, price ASC
 	`, restaurantID, partySize)
 	if err != nil {
@@ -68,25 +77,25 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 		Items  []any  `json:"items"`
 	}
 	type BeverageFallback struct {
-		Type          string  `json:"type"`
+		Type           string   `json:"type"`
 		PricePerPerson *float64 `json:"price_per_person"`
 	}
 
 	type menuOut struct {
-		ID                    int             `json:"id"`
-		MenuTitle             string          `json:"menu_title"`
-		Price                 float64         `json:"price"`
-		MinPartySize          int             `json:"min_party_size"`
-		MainDishesLimit       bool            `json:"main_dishes_limit"`
-		MainDishesLimitNumber int             `json:"main_dishes_limit_number"`
-		IncludedCoffee        bool            `json:"included_coffee"`
-		MenuSubtitle          any             `json:"menu_subtitle"`
-		Entrantes             any             `json:"entrantes"`
-		Principales           any             `json:"principales"`
-		Postre                any             `json:"postre"`
-		Beverage              any             `json:"beverage"`
-		Comments              any             `json:"comments"`
-		CreatedAt             string          `json:"created_at"`
+		ID                    int     `json:"id"`
+		MenuTitle             string  `json:"menu_title"`
+		Price                 float64 `json:"price"`
+		MinPartySize          int     `json:"min_party_size"`
+		MainDishesLimit       bool    `json:"main_dishes_limit"`
+		MainDishesLimitNumber int     `json:"main_dishes_limit_number"`
+		IncludedCoffee        bool    `json:"included_coffee"`
+		MenuSubtitle          any     `json:"menu_subtitle"`
+		Entrantes             any     `json:"entrantes"`
+		Principales           any     `json:"principales"`
+		Postre                any     `json:"postre"`
+		Beverage              any     `json:"beverage"`
+		Comments              any     `json:"comments"`
+		CreatedAt             string  `json:"created_at"`
 	}
 
 	var menus []menuOut
@@ -96,6 +105,7 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			menuTitle             string
 			price                 float64
 			includedCoffeeInt     int
+			menuType              string
 			menuSubtitleRaw       sql.NullString
 			entrantesRaw          sql.NullString
 			principalesRaw        sql.NullString
@@ -112,6 +122,7 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			&menuTitle,
 			&price,
 			&includedCoffeeInt,
+			&menuType,
 			&menuSubtitleRaw,
 			&entrantesRaw,
 			&principalesRaw,
@@ -128,6 +139,9 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 				"message": "Server error: " + err.Error(),
 			})
 			return
+		}
+		if !isPartySizeClosedGroupMenuType(menuType) {
+			continue
 		}
 
 		decodeOr := func(raw sql.NullString, fallback any) any {

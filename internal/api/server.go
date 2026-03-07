@@ -436,7 +436,8 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/book_rice.php", s.handleBookRicePage)
 		r.Post("/book_rice.php", s.handleBookRicePage)
 
-		// Public booking creation (front form).
+		// Public booking creation (canonical route + legacy alias).
+		r.Post("/bookings/front", s.handleInsertBookingFront)
 		r.Post("/insert_booking_front.php", s.handleInsertBookingFront)
 
 		// Admin booking management (confreservas.php).

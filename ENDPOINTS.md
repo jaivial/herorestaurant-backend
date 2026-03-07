@@ -499,7 +499,7 @@ Legacy compatibility:
 Response:
 - `{ success: true, bookings: Booking[], floors: Floor[], total_count: number, total: number, page: number, count: number }`
 - `floors` usa la misma estructura `Floor` de config y representa el estado activo del dia consultado.
-- `Booking` incluye `preferred_floor_number` (`number|null`) para la preferencia de salón/planta.
+- `Booking` incluye `children` (`number`) y `preferred_floor_number` (`number|null`) para la preferencia de salón/planta.
 
 ### `GET /api/admin/bookings/export`
 Exports **all** bookings for a date (no filters; used for PDF export).
@@ -1475,10 +1475,14 @@ Returns monthly/day availability data for legacy admin UIs (cached + `ETag`).
 
 ### `GET /api/getValidMenusForPartySize.php`
 Query:
-- `partySize` (int)
+- `party_size` (int, required)
 
 Response:
-- `{ success: true, menus: [...] }`
+- `{ success: true, hasValidMenus, count, menus: [...] }`
+
+Notes:
+- Returns only active rows from `menusDeGrupos` where `menu_type = closed_group`.
+- Applies `min_party_size <= party_size`.
 
 ---
 
@@ -1632,18 +1636,37 @@ Upserts into `hour_configuration`.
 
 ## Booking Creation
 
-### `POST /api/insert_booking_front.php`
+### `POST /api/bookings/front`
+Ruta pública canónica usada por Preact en `/reservas`.
+
+Alias legacy compatible:
+- `POST /api/insert_booking_front.php`
+
 Form:
-- Standard reservation fields (name/email/date/time/party_size/phone, etc.)
-- Optional: `preferred_floor_number` (number).  
+- `website_url` (honeypot; debe ir vacío)
+- `form_load_time` (unix timestamp en segundos; protección anti-bot)
+- `reservation_date`
+- `party_size`
+- `reservation_time`
+- `customer_name`
+- `contact_email`
+- `country_code`
+- `contact_phone`
+- `adults` o `children`
+- `preferred_floor_number` (opcional)
   - Si hay una sola planta activa para ese día se autoasigna.
   - Si hay varias plantas activas, el frontend debe enviar selección.
-- Optional arroz selection JSON fields (as in legacy JS)
-- Optional group menu fields:
-  - `special_menu=1`
-  - `menu_de_grupo_id`
-  - `principales_enabled`
-  - `principales_json` (JSON array)
+- `toggleArroz`
+- `arroz_type` / `arroz_servings` o `arroz_types_json` / `arroz_servings_json`
+- `baby_strollers`
+- `high_chairs`
+- `menu_de_grupo_selected`
+- `menu_de_grupo_id`
+- `principales_enabled`
+- `principales_json` (JSON array)
+
+Persistencia:
+- Inserta en `bookings` los datos básicos de la reserva, teléfono + prefijo, niños derivados de `adults`, accesorios, arroz, menú de grupo, `principales_json` y `preferred_floor_number`.
 
 Response:
 - `{ success: true, booking_id: number, notifications_sent: false, email_sent: false, whatsapp_sent: false }`

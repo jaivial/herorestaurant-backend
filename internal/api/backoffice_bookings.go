@@ -117,6 +117,7 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 		ReservationDate string
 		ReservationTime string
 		PartySize       int
+		Children        int
 		ContactPhone    sql.NullString
 		ContactPhoneCC  sql.NullString
 		Status          sql.NullString
@@ -162,6 +163,7 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 				DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
 				TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
 				party_size,
+				children,
 				contact_phone,
 				contact_phone_country_code,
 				status,
@@ -198,6 +200,7 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 				&b.ReservationDate,
 				&b.ReservationTime,
 				&b.PartySize,
+				&b.Children,
 				&b.ContactPhone,
 				&b.ContactPhoneCC,
 				&b.Status,
@@ -228,6 +231,7 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 				"reservation_date":           b.ReservationDate,
 				"reservation_time":           b.ReservationTime,
 				"party_size":                 b.PartySize,
+				"children":                   b.Children,
 				"contact_phone":              nullStringOrNil(b.ContactPhone),
 				"contact_phone_country_code": defaultString(b.ContactPhoneCC, "34"),
 				"status":                     defaultString(b.Status, "pending"),
