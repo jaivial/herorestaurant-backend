@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{if .IsHomepage}}{{.Website.Title }} - {{.Website.Settings.Name}}{{else}}{{.Page.Title }}{{end}}</title>
+    <meta name="description" content="{{if .Page.MetaDescription}}{{.Page.MetaDescription}}{{else}}">{{end}}">
+    <meta name="keywords" content="{{if .Page.MetaKeywords}}{{.Page.MetaKeywords}}{{else}}">{{end}}
+    
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-..." crossorigin="anonymous"></script>
+    
+    <style>
+        :root {
+            --primary-color: {{.Website.Settings.PrimaryColor}};
+            --accent-color: {{.Website.Settings.AccentColor}};
+            --font-heading: {{.Website.Settings.FontFamily}};
+            --font-body: {{.Website.Settings.FontBody}};
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: var(--font-body), -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #fafafa;
+        }
+        h1, h2, h3, h4, h5 {
+            font-family: var(--font-heading);
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+        a {
+            color: var(--accent-color);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        a:hover {
+            color: var(--primary-color);
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        .hero {
+            position: relative;
+            height: 50vh;
+            background-size: cover;
+            background-position: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .hero-content {
+            z-index: 1;
+            text-align: center;
+            padding: 0 2rem;
+        }
+        .hero h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .hero p {
+            font-size: 1rem;
+            opacity: 0.9;
+            margin-bottom: 1.5rem;
+        }
+        .cta-button {
+            display: inline-block;
+            padding: 0.8rem 1.5rem;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, background 0.2s ease;
+        }
+        .cta-button:hover {
+            transform: translateY(-2px);
+            background: var(--primary-color);
+        }
+        section {
+            padding: 3rem 0;
+            margin: 2rem auto;
+            max-width: 1000px;
+        }
+        .section-title {
+            font-family: var(--font-heading);
+            font-size: 1.5rem;
+            color: var(--primary-color);
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+        .menu-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr);
+            gap: 1rem;
+        }
+        .menu-item {
+            background: white;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .menu-item:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .menu-item img {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+        .menu-item h3 {
+            font-size: 1rem;
+            color: var(--primary-color);
+            margin: 0.25rem 0;
+        }
+        .menu-item p {
+            color: #666;
+            font-size: 0.8rem;
+            margin: 0;
+        }
+        .menu-item .price {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--accent-color);
+            margin-top: 0.25rem;
+        }
+        footer {
+            background: #333;
+            color: white;
+            text-align: center;
+            padding: 2rem;
+            margin-top: 4rem;
+        }
+        footer p {
+            opacity: 0.8;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero Section -->
+    <section class="hero" style="background-image: url('https://images.unsplash.com/photo-1414235085194-77e68ec?ixlib=rb-4.0&auto=compress&cs=tinysrgb&w=800&q=80');">
+        <div class="hero-content">
+            <h1>Bienvenidos a {{.Website.Title}}</h1>
+            <p>Cocina tradicional con ambiente acogedor</p>
+            <a href="/reservas" class="cta-button">Reservar Mesa</a>
+        </div>
+    </section>
+
+    <!-- Menu Section -->
+    <section class="section">
+        <h2 class="section-title">Nuestra Carta</h2>
+        <div class="menu-grid" 
+            <!-- Dynamic content via HTMX -->
+            <div hx-get="{{.BackendURL}}/api/menus/public" hx-trigger="load" hx-swap="outerHTML">
+>
+                Loading menu...
+            </div>
+        }
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <p>&copy; 2026 {{.Website.Title }}</p>
+    </footer>
+</body>
+</html>

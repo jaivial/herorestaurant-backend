@@ -38,12 +38,13 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 	nightHours := cloneStrings(defaults.NightHours)
 
 	var hoursRaw sql.NullString
+	var modeRaw sql.NullString
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT hoursarray
+		SELECT hoursarray, opening_mode
 		FROM openinghours
 		WHERE restaurant_id = ? AND dateselected = ?
 		LIMIT 1
-	`, restaurantID, date).Scan(&hoursRaw)
+	`, restaurantID, date).Scan(&hoursRaw, &modeRaw)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando openinghours")
 		return
@@ -51,7 +52,12 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 
 	if list, ok := parseHoursJSON(hoursRaw); ok {
 		morningHours, nightHours = splitHoursByShift(list)
-		openingMode = modeFromHours(morningHours, nightHours)
+		// Use stored opening_mode if available, otherwise derive from hours
+		if modeRaw.Valid && modeRaw.String != "" {
+			openingMode = normalizeOpeningMode(modeRaw.String)
+		} else {
+			openingMode = modeFromHours(morningHours, nightHours)
+		}
 	}
 
 	floors, err := s.loadDateFloors(r.Context(), restaurantID, date)

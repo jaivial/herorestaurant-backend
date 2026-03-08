@@ -702,12 +702,13 @@ func (s *Server) handleBOConfigOpeningHoursGet(w http.ResponseWriter, r *http.Re
 	}
 
 	var hoursRaw sql.NullString
+	var modeRaw sql.NullString
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT hoursarray
+		SELECT hoursarray, opening_mode
 		FROM openinghours
 		WHERE restaurant_id = ? AND dateselected = ?
 		LIMIT 1
-	`, a.ActiveRestaurantID, date).Scan(&hoursRaw)
+	`, a.ActiveRestaurantID, date).Scan(&hoursRaw, &modeRaw)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando openinghours")
 		return
@@ -722,7 +723,12 @@ func (s *Server) handleBOConfigOpeningHoursGet(w http.ResponseWriter, r *http.Re
 	if list, ok := parseHoursJSON(hoursRaw); ok {
 		source = "override"
 		morningHours, nightHours = splitHoursByShift(list)
-		openingMode = modeFromHours(morningHours, nightHours)
+		// Use stored opening_mode if available, otherwise derive from hours
+		if modeRaw.Valid && modeRaw.String != "" {
+			openingMode = normalizeOpeningMode(modeRaw.String)
+		} else {
+			openingMode = modeFromHours(morningHours, nightHours)
+		}
 		hours = mergeHoursByMode(openingMode, morningHours, nightHours)
 	}
 
@@ -775,10 +781,10 @@ func (s *Server) handleBOConfigOpeningHoursSet(w http.ResponseWriter, r *http.Re
 	hoursJSON, _ := json.Marshal(normalized)
 
 	_, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO openinghours (restaurant_id, dateselected, hoursarray)
-		VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE hoursarray = VALUES(hoursarray)
-	`, a.ActiveRestaurantID, date, string(hoursJSON))
+		INSERT INTO openinghours (restaurant_id, dateselected, hoursarray, opening_mode)
+		VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE hoursarray = VALUES(hoursarray), opening_mode = VALUES(opening_mode)
+	`, a.ActiveRestaurantID, date, string(hoursJSON), openingMode)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando openinghours")
 		return

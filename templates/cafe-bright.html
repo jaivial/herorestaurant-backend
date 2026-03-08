@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{if .IsHomepage}}{{.Website.Title }} - {{.Website.Settings.Name}}{{else}}{{.Page.Title }}{{end}}</title>
+    <meta name="description" content="{{if .Page.MetaDescription}}{{.Page.MetaDescription}}{{else}}">{{end}}">
+    <meta name="keywords" content="{{if .Page.MetaKeywords}}{{.Page.MetaKeywords}}{{else}}">{{end}}">
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&family=Source+Sans+Pro:wght@400;600&display=swap" rel="stylesheet">
+    
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-..." crossorigin="anonymous"></script>
+    
+    <style>
+        :root {
+            --primary-color: {{.Website.Settings.PrimaryColor}};
+            --accent-color: {{.Website.Settings.AccentColor}};
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Source Sans Pro', sans-serif;
+            line-height: 1.6;
+            color: #2c1818;
+            background: #f5f1eb;
+        }
+        h1, h2, h3, h4 {
+            font-family: 'Merriweather', serif;
+            color: var(--primary-color);
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        .hero {
+            position: relative;
+            height: 70vh;
+            background-size: cover;
+            background-position: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .hero-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(93, 64, 55, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .hero h1 {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .hero p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        .cta-button {
+            display: inline-block;
+            padding: 1rem 2rem;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            margin-top: 1rem;
+        }
+        .cta-button:hover {
+            background: #e65100;
+            transform: scale(1.05);
+        }
+        section {
+            padding: 4rem 0;
+            margin: 2rem auto;
+            max-width: 1200px;
+        }
+        .section-title {
+            font-family: 'Merriweather', serif;
+            font-size: 2rem;
+            color: var(--primary-color);
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+        .menu-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr);
+            gap: 1.5rem;
+            padding: 0 1rem;
+        }
+        .menu-item {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        .menu-item:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+        }
+        .menu-item img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+        }
+        .menu-item-content {
+            padding: 1.5rem;
+        }
+        .menu-item h3 {
+            font-size: 1.2rem;
+            color: var(--primary-color);
+            margin: 0 0 0.5rem 0;
+        }
+        .menu-item p {
+            color: #666;
+            font-size: 0.9rem;
+            margin: 0 0 1rem 0;
+        }
+        .menu-item .price {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--accent-color);
+        }
+        .testimonials {
+            background: #fff8f0;
+            padding: 4rem 0;
+        }
+        .testimonial-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        .testimonial-card {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .testimonial-card p {
+            font-style: italic;
+            color: #666;
+            margin-bottom: 1rem;
+        }
+        .testimonial-card .author {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+        footer {
+            background: var(--primary-color);
+            color: white;
+            padding: 3rem 0;
+            margin-top: 4rem;
+        }
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 2rem;
+            padding: 0 1rem;
+        }
+        .footer-section h4 {
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+        }
+        .footer-section a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            display: block;
+            padding: 0.25rem 0;
+        }
+        .footer-section a:hover {
+            color: white;
+        }
+        .footer-bottom {
+            text-align: center;
+            padding-top: 2rem;
+            margin-top: 2rem;
+            border-top: 1px solid rgba(255,255,255,0.2);
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav style="background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding: 1rem 1rem; position: sticky; top: 0; z-index: 100">
+        <div style="max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center">
+            <a href="/" style="font-family: 'Merriweather', serif; font-size: 1.5rem; color: var(--primary-color); text-decoration: none;">{{.Website.Title}}</a>
+            <div style="display: flex; gap: 2rem">
+                <a href="/menu">Menú</a>
+                <a href="/gallery">Galería</a>
+                <a href="/contact">Contacto</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero" style="background-image: url('https://images.unsplash.com/photo-1559339350-7f6c-4f5d8b?ixlib=rb-4.0&auto=compress&cs=tinysrgb&w=800&q=80');">
+        <div class="hero-overlay">
+            <h1>{{.Website.Title}}</h1>
+            <p>Auténtica cocina tradicional con ingredientes frescos</p>
+            <a href="/reservas" class="cta-button">Reservar Mesa</a>
+        </div>
+    </section>
+
+    <!-- Menu Section -->
+    <section class="section">
+        <h2 class="section-title">Nuestra Carta</h2>
+        <div class="menu-grid" hx-get="{{.BackendURL}}/api/menus/public" hx-trigger="load" hx-swap="outerHTML">
+            <div class="htmx-indicator">Cargando carta...</div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="testimonials">
+        <h2 class="section-title" style="max-width: 1200px; margin: 0 auto 2rem; padding: 0 1rem;">Lo que dicen nuestros clientes</h2>
+        <div class="testimonial-grid">
+            <div class="testimonial-card">
+                <p>"Increíble food and The paella was absolutely perfect and and the service was excellent."</ - María G.</p>
+                <div class="author">- María García</div>
+            </div>
+            <div class="testimonial-card">
+                <p>"Best restaurant in town. We celebrated our anniversary here and it was unforgettable." - John D.</p>
+                <div class="author">- John Doe</div>
+            </div>
+            <div class="testimonial-card">
+                <p>"The atmosphere is cozy and the food is delicious. Highly recommended!" - Ana L.</p>
+                <div class="author">- Ana López</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-content">
+            <div class="footer-section">
+                <h4>Contacto</h4>
+                <p>123 Main Street</p>
+                <p>City, State 12345</p>
+                <p>Tel: (555) 123-4567</p>
+            </div>
+            <div class="footer-section">
+                <h4>Horarios</h4>
+                <p>Lun-Vie: 12:00 - 22:00</p>
+                <p>Sáb-Dom: 11:00 - 23:00</p>
+            </div>
+            <div class="footer-section">
+                <h4>Síguenos</h4>
+                <a href="#">Facebook</a>
+                <a href="#">Instagram</a>
+                <a href="#">Twitter</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 {{.Website.Title}}. Todos los derechos reserved.</p>
+        </div>
+    </footer>
+</body>
+</html>

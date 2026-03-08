@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{if .IsHomepage}}{{.Website.Title }} - {{.Website.Settings.Name}}{{else}}{{.Page.Title }}{{end}}</title>
+    <meta name="description" content="{{if .Page.MetaDescription}}{{.Page.MetaDescription}}{{else}}">{{end}}">
+    <meta name="keywords" content="{{if .Page.MetaKeywords}}{{.Page.MetaKeywords}}{{else}}">{{end}}">
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Pacifico:wght@400;700&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-..." crossorigin="anonymous"></script>
+    
+    <style>
+        :root {
+            --primary-color: {{.Website.Settings.PrimaryColor}};
+            --accent-color: {{.Website.Settings.AccentColor}};
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Quicksand', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f0f8f0;
+        }
+        h1, h2, h3 {
+            font-family: 'Pacifico', cursive;
+            color: var(--primary-color);
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        nav {
+            background: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .nav-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 1rem;
+        }
+        .logo {
+            font-family: 'Pacifico', cursive;
+            font-size: 1.8rem;
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+        }
+        .nav-links a {
+            text-decoration: none;
+            color: #333;
+            font-weight: 500;
+            transition: color 0.3s ease;
+        }
+        .nav-links a:hover {
+            color: var(--accent-color);
+        }
+        .hero {
+            position: relative;
+            height: 80vh;
+            background-size: cover;
+            background-position: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .hero-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.6));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        .hero h1 {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        .hero p {
+            font-size: 1.5rem;
+            opacity: 0.95;
+            margin-bottom: 2rem;
+        }
+        .cta-button {
+            display: inline-block;
+            padding: 1rem 2.5rem;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+        }
+        .cta-button:hover {
+            background: #e68a00;
+            transform: scale(1.05);
+        }
+        section {
+            padding: 5rem 0;
+        }
+        .section-title {
+            font-family: 'Pacifico', cursive;
+            font-size: 2.5rem;
+            color: var(--primary-color);
+            margin-bottom: 3rem;
+            text-align: center;
+        }
+        .menu-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        .menu-item {
+            background: white;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        .menu-item:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+        }
+        .menu-item img {
+            width: 100%;
+            height: 220px;
+            object-fit: cover;
+        }
+        .menu-item-content {
+            padding: 1.5rem;
+        }
+        .menu-item h3 {
+            font-family: 'Pacifico', cursive;
+            font-size: 1.3rem;
+            color: var(--primary-color);
+            margin: 0 0 0.5rem 0;
+        }
+        .menu-item p {
+            color: #666;
+            font-size: 0.95rem;
+            margin: 0 0 1rem 0;
+        }
+        .menu-item .price {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--accent-color);
+        }
+        .hours-section {
+            background: white;
+            padding: 4rem 0;
+        }
+        .hours-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        .hours-card {
+            background: #f0f8f0;
+            padding: 1.5rem;
+            border-radius: 12px;
+            text-align: center;
+        }
+        .hours-card h4 {
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
+        }
+        footer {
+            background: var(--primary-color);
+            color: white;
+            padding: 4rem 0;
+        }
+        .footer-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            padding: 0 1rem;
+        }
+        .footer-section h4 {
+            font-family: 'Pacifico', cursive;
+            margin-bottom: 1rem;
+            font-size: 1.2rem;
+        }
+        .footer-section p, .footer-section a {
+            color: rgba(255,255,255,0.9);
+            line-height: 1.8;
+        }
+        .footer-section a {
+            text-decoration: none;
+            display: block;
+            padding: 0.3rem 0;
+            transition: color 0.3s ease;
+        }
+        .footer-section a:hover {
+            color: white;
+        }
+        .footer-bottom {
+            text-align: center;
+            padding-top: 3rem;
+            margin-top: 3rem;
+            border-top: 1px solid rgba(255,255,255,0.2);
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="nav-content">
+            <a href="/" class="logo">{{.Website.Title}}</a>
+            <div class="nav-links">
+                <a href="/">Inicio</a>
+                <a href="/menu">Menú</a>
+                <a href="/contact">Contacto</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero" style="background-image: url('https://images.unsplash.com/photo-1504674904249-91cd8f1b?ixlib=rb-4.0&auto=compress&cs=tinysrgb&w=800&q=80');">
+        <div class="hero-overlay">
+            <h1>Fresh & Delicious</h1>
+            <p>Artisan coffee, pastries, and light meals</p>
+            <a href="/reservas" class="cta-button">Reservar Mesa</a>
+        </div>
+    </section>
+
+    <!-- Menu Section -->
+    <section class="section">
+        <h2 class="section-title">Nuestra Carta</h2>
+        <div class="menu-grid" hx-get="{{.BackendURL}}/api/menus/public" hx-trigger="load" hx-swap="outerHTML">
+            <div class="htmx-indicator">Cargando...</div>
+        </div>
+    </section>
+
+    <!-- Hours Section -->
+    <section class="hours-section">
+        <h2 class="section-title">Horarios</h2>
+        <div class="hours-grid">
+            <div class="hours-card">
+                <h4>Lunes - Viernes</h4>
+                <p>8:00 - 20:00</p>
+            </div>
+            <div class="hours-card">
+                <h4>Sábado</h4>
+                <p>9:00 - 22:00</p>
+            </div>
+            <div class="hours-card">
+                <h4>Domingo</h4>
+                <p>10:00 - 18:00</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-content">
+            <div class="footer-section">
+                <h4>Encuéntranos</h4>
+                <p>123 Main Street</p>
+                <p>City, State 12345</p>
+            </div>
+            <div class="footer-section">
+                <h4>Contacto</h4>
+                <p>Tel: (555) 123-4567</p>
+                <p>info@restaurant.com</p>
+            </div>
+            <div class="footer-section">
+                <h4>Síguenos</h4>
+                <a href="#">Instagram</a>
+                <a href="#">Facebook</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 {{.Website.Title}}</p>
+        </div>
+    </footer>
+</body>
+</html>

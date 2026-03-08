@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{if .IsHomepage}}{{.Website.Title }} - {{.Website.Settings.Name}}{{else}}{{.Page.Title }}{{end}}</title>
+    <meta name="description" content="{{if .Page.MetaDescription}}{{.Page.MetaDescription}}{{else}}">{{end}}">
+    <meta name="keywords" content="{{if .Page.MetaKeywords}}{{.Page.MetaKeywords}}{{else}}">{{end}}">
+    
+    <!-- HTMX for dynamic content loading -->
+    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-..." crossorigin="anonymous"></script>
+    
+    <style>
+        :root {
+            --primary-color: {{.Website.Settings.PrimaryColor}};
+            --accent-color: {{.Website.Settings.AccentColor}};
+            --font-heading: {{.Website.Settings.FontFamily}};
+            --font-body: {{.Website.Settings.FontBody}};
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: var(--font-body), -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #fafafa;
+        }
+        h1, h2, h3, h4, h5 {
+            font-family: var(--font-heading);
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+        a {
+            color: var(--accent-color);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        a:hover {
+            color: var(--primary-color);
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        .hero {
+            position: relative;
+            height: 60vh;
+            background-size: cover;
+            background-position: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .hero-content {
+            z-index: 1;
+            text-align: center;
+        }
+        .hero h1 {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+        }
+        .hero p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            margin-bottom: 2rem;
+        }
+        .cta-button {
+            display: inline-block;
+            padding: 1rem 2rem;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, background 0.2s ease;
+        }
+        .cta-button:hover {
+            transform: translateY(-2px);
+            background: var(--primary-color);
+        }
+        section {
+            padding: 4rem 0;
+            margin: 2rem auto;
+            max-width: 1200px;
+        }
+        .section-title {
+            font-family: var(--font-heading);
+            font-size: 2rem;
+            color: var(--primary-color);
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+        .menu-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+        .menu-item {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .menu-item:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .menu-item img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+        }
+        .menu-item h3 {
+            font-size: 1.2rem;
+            color: var(--primary-color);
+            margin: 0.5rem 0;
+        }
+        .menu-item p {
+            color: #666;
+            font-size: 0.9rem;
+            margin: 0;
+        }
+        .menu-item .price {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--accent-color);
+            margin-top: 0.5rem;
+        }
+        .contact-form {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .contact-form input,
+        .contact-form textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+            margin-bottom: 1rem;
+        }
+        .contact-form button {
+            width: 100%;
+            padding: 1rem;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+        footer {
+            background: #333;
+            color: white;
+            text-align: center;
+            padding: 2rem;
+            margin-top: 4rem;
+        }
+        footer p {
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero Section -->
+    <section class="hero" style="background-image: url('https://images.unsplash.com/photo-1517248138-8f7f5d8b?ixlib=rb-4.0&auto=compress&cs=tinysrgb&w=800&q=80');">
+        <div class="hero-content">
+            <h1>Bienvenidos a {{.Website.Title}}</h1>
+            <p>Descubre our exquisite cuisine andp>
+            <a href="/reservas" class="cta-button">Reservar Mesa</a>
+        </div>
+    </section>
+
+    <!-- Menu Section -->
+    <section class="section">
+        <h2 class="section-title">Nuestra Menú</h2>
+        <div class="menu-grid" 
+            <!-- This will be dynamically loaded via HTMX -->
+            <div hx-get="{{.BackendURL}}/api/menus/public" hx-trigger="load" hx-swap="outerHTML">
+>
+                Loading menu...
+            </div>
+        }
+    </section>
+
+    <!-- Contact Section -->
+    <section class="section">
+        <h2 class="section-title">Contacto</h2>
+        <form class="contact-form">
+            <input type="text" name="name" placeholder="Nombre" required>
+            <input type="email" name="email" placeholder="Email" required>
+            <input type="tel" name="phone" placeholder="Teléfono" required>
+            <textarea name="message" placeholder="Mensaje" required></textarea>
+            <button type="submit">Enviar</button>
+        </form>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <p>&copy; 2024 {{.Website.Title }}. Todos los derechos reserved.</p>
+        <p>
+            <a href="{{.BackendURL}}">Privacy</a> |
+            <a href="{{.BackendURL}}/terms">Terms of Service</a>
+        </p>
+    </footer>
+    <script>
+        // Contact form submission
+        document.querySelector('.contact-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const form = e.target;
+            const data = new FormData(form);
+            
+            fetch('{{.BackendURL}}/api/contact', {
+                method: 'POST',
+                body: data
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Mensaje enviado correctamente');
+                    form.reset();
+                } else {
+                    alert('Error al enviar mensaje');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error al enviar mensaje');
+            });
+        });
+    </script>
+</body>
+</html>
