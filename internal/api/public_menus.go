@@ -94,6 +94,19 @@ type publicMenuItem struct {
 	ModifiedAt           string                `json:"modified_at"`
 }
 
+// publicMenuItemHome is a lightweight version for the home page
+type publicMenuItemHome struct {
+	ID                   int64    `json:"id"`
+	Slug                 string   `json:"slug"`
+	MenuTitle            string   `json:"menu_title"`
+	MenuType             string   `json:"menu_type"`
+	Active               bool     `json:"active"`
+	MenuSubtitle         []string `json:"menu_subtitle"`
+	ShowDishImages       bool     `json:"show_dish_images"`
+	ShowMenuPreviewImage bool     `json:"show_menu_preview_image"`
+	MenuPreviewImageURL  string   `json:"menu_preview_image_url"`
+}
+
 func isPublicMenuType(menuType string) bool {
 	switch menuType {
 	case "closed_conventional", "closed_group", "a_la_carte", "a_la_carte_group", "special":
@@ -203,11 +216,20 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, menu_title, price, active, menu_type, menu_subtitle,
+	// Check if this is a home page request (lightweight response)
+	isHomePage := r.URL.Query().Get("home_page") == "true"
+
+	// For home page, we only need basic fields plus preview image
+	selectFields := "id, menu_title, menu_type, active, menu_subtitle, show_dish_images, show_menu_preview_image, menu_preview_image_path"
+	if !isHomePage {
+		selectFields = `id, menu_title, price, active, menu_type, menu_subtitle,
 		       show_dish_images, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
-		       special_menu_image_url, legacy_source_table, created_at, modified_at
+		       special_menu_image_url, legacy_source_table, created_at, modified_at`
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT `+selectFields+`
 		FROM menusDeGrupos
 		WHERE restaurant_id = ?
 		  AND active = 1
@@ -234,6 +256,64 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	// Handle home page case (lightweight response)
+	if isHomePage {
+		menus := make([]publicMenuItemHome, 0, 24)
+		for rows.Next() {
+			var (
+				menuID                  int64
+				menuTitle               string
+				menuTypeRaw             sql.NullString
+				activeInt               int
+				menuSubtitleRaw         sql.NullString
+				showDishImagesInt       int
+				showMenuPreviewImageInt int
+				menuPreviewPathRaw      sql.NullString
+			)
+			if err := rows.Scan(
+				&menuID,
+				&menuTitle,
+				&menuTypeRaw,
+				&activeInt,
+				&menuSubtitleRaw,
+				&showDishImagesInt,
+				&showMenuPreviewImageInt,
+				&menuPreviewPathRaw,
+			); err != nil {
+				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+					"success": false,
+					"message": "Error leyendo menusDeGrupos",
+				})
+				return
+			}
+
+			menuType := normalizeV2MenuType(menuTypeRaw.String)
+			if !isPublicMenuType(menuType) {
+				continue
+			}
+
+			menus = append(menus, publicMenuItemHome{
+				ID:                   menuID,
+				Slug:                 buildPublicMenuSlug(menuTitle, menuID),
+				MenuTitle:            menuTitle,
+				MenuType:             menuType,
+				Active:               activeInt != 0,
+				MenuSubtitle:         anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
+				ShowDishImages:       showDishImagesInt != 0,
+				ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
+				MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
+			})
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"count":   len(menus),
+			"menus":   menus,
+		})
+		return
+	}
+
+	// Full response (non-home page)
 	menus := make([]publicMenuItem, 0, 24)
 	menuIndexByID := make(map[int64]int, 24)
 	menuIDs := make([]int64, 0, 24)
