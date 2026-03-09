@@ -439,7 +439,7 @@ func (s *Server) loadBOMenuV2MenuPreviewTracker(ctx context.Context, restaurantI
 		       menu_preview_image_path,
 		       COALESCE(menu_preview_ai_requested, 0),
 		       COALESCE(menu_preview_ai_generating, 0)
-		FROM menusDeGrupos
+		FROM menus
 		WHERE restaurant_id = ? AND id = ?
 		LIMIT 1
 	`, restaurantID, menuID).Scan(
@@ -702,7 +702,7 @@ func (s *Server) handleBOGroupMenusV2GenerateMenuPreviewAIImage(w http.ResponseW
 	}
 
 	res, err := s.db.ExecContext(r.Context(), `
-		UPDATE menusDeGrupos
+		UPDATE menus
 		SET show_menu_preview_image = 1,
 		    menu_preview_ai_requested = 1,
 		    menu_preview_ai_generating = 1
@@ -797,7 +797,7 @@ func (s *Server) runBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuPr
 
 	fullURL := s.bunnyPullURL(objectPath)
 	_, err = s.db.ExecContext(ctx, `
-		UPDATE menusDeGrupos
+		UPDATE menus
 		SET show_menu_preview_image = 1,
 		    menu_preview_image_path = ?,
 		    menu_preview_ai_requested = 1,
@@ -826,7 +826,7 @@ func (s *Server) failBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuP
 	defer cancel()
 
 	_, _ = s.db.ExecContext(ctx, `
-		UPDATE menusDeGrupos
+		UPDATE menus
 		SET menu_preview_ai_generating = 0
 		WHERE id = ? AND restaurant_id = ?
 	`, job.MenuID, job.RestaurantID)

@@ -75,7 +75,7 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 		       menu_subtitle,
 		       entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at
-		FROM menusDeGrupos
+		FROM menus
 		WHERE restaurant_id = ?
 		  AND active = 1
 		  AND min_party_size <= ?

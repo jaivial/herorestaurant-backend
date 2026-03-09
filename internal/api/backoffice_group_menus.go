@@ -32,12 +32,12 @@ func (s *Server) handleBOGroupMenusList(w http.ResponseWriter, r *http.Request) 
 
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, price, included_coffee, active, min_party_size, created_at, modified_at
-		FROM menusDeGrupos
+		FROM menus
 	`+where+`
 		ORDER BY active DESC, created_at DESC, id DESC
 	`, args...)
 	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menusDeGrupos")
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menus")
 		return
 	}
 	defer rows.Close()
@@ -55,7 +55,7 @@ func (s *Server) handleBOGroupMenusList(w http.ResponseWriter, r *http.Request) 
 			modifiedAt   sql.NullString
 		)
 		if err := rows.Scan(&id, &title, &price, &inclCoffee, &activeInt, &minPartySize, &createdAt, &modifiedAt); err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo menusDeGrupos")
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo menus")
 			return
 		}
 		out = append(out, map[string]any{
@@ -99,7 +99,7 @@ func (s *Server) handleBOGroupMenuGet(w http.ResponseWriter, r *http.Request) {
 		       menu_subtitle, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number,
 		       created_at, modified_at
-		FROM menusDeGrupos
+		FROM menus
 		WHERE id = ? AND restaurant_id = ?
 	`
 
@@ -147,7 +147,7 @@ func (s *Server) handleBOGroupMenuGet(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menusDeGrupos")
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menus")
 		return
 	}
 
@@ -232,7 +232,7 @@ func (s *Server) handleBOGroupMenuCreate(w http.ResponseWriter, r *http.Request)
 
 	res, err := s.db.ExecContext(
 		r.Context(),
-		`INSERT INTO menusDeGrupos
+		`INSERT INTO menus
 		 (restaurant_id, menu_title, price, included_coffee, active, menu_subtitle, entrantes, principales, postre, beverage, comments, min_party_size, main_dishes_limit, main_dishes_limit_number)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ActiveRestaurantID,
@@ -251,7 +251,7 @@ func (s *Server) handleBOGroupMenuCreate(w http.ResponseWriter, r *http.Request)
 		mainLimitNum,
 	)
 	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error creando menusDeGrupos")
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando menus")
 		return
 	}
 
@@ -309,7 +309,7 @@ func (s *Server) handleBOGroupMenuUpdate(w http.ResponseWriter, r *http.Request)
 
 	// Ensure menu belongs to restaurant.
 	var tmp int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT id FROM menusDeGrupos WHERE id = ? AND restaurant_id = ? LIMIT 1", id, a.ActiveRestaurantID).Scan(&tmp); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), "SELECT id FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1", id, a.ActiveRestaurantID).Scan(&tmp); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -317,7 +317,7 @@ func (s *Server) handleBOGroupMenuUpdate(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menusDeGrupos")
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menus")
 		return
 	}
 
@@ -343,7 +343,7 @@ func (s *Server) handleBOGroupMenuUpdate(w http.ResponseWriter, r *http.Request)
 
 	_, err = s.db.ExecContext(
 		r.Context(),
-		`UPDATE menusDeGrupos SET
+		`UPDATE menus SET
 			menu_title = ?,
 			price = ?,
 			included_coffee = ?,
@@ -375,7 +375,7 @@ func (s *Server) handleBOGroupMenuUpdate(w http.ResponseWriter, r *http.Request)
 		a.ActiveRestaurantID,
 	)
 	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menusDeGrupos")
+		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menus")
 		return
 	}
 
@@ -405,7 +405,7 @@ func (s *Server) handleBOGroupMenuToggleActive(w http.ResponseWriter, r *http.Re
 	}
 
 	var current int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT active FROM menusDeGrupos WHERE id = ? AND restaurant_id = ? LIMIT 1", id, a.ActiveRestaurantID).Scan(&current); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), "SELECT active FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1", id, a.ActiveRestaurantID).Scan(&current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -413,7 +413,7 @@ func (s *Server) handleBOGroupMenuToggleActive(w http.ResponseWriter, r *http.Re
 			})
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menusDeGrupos")
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menus")
 		return
 	}
 
@@ -422,8 +422,8 @@ func (s *Server) handleBOGroupMenuToggleActive(w http.ResponseWriter, r *http.Re
 		newStatus = 0
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), "UPDATE menusDeGrupos SET active = ? WHERE id = ? AND restaurant_id = ?", newStatus, id, a.ActiveRestaurantID); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menusDeGrupos")
+	if _, err := s.db.ExecContext(r.Context(), "UPDATE menus SET active = ? WHERE id = ? AND restaurant_id = ?", newStatus, id, a.ActiveRestaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menus")
 		return
 	}
 
@@ -451,9 +451,9 @@ func (s *Server) handleBOGroupMenuDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), "DELETE FROM menusDeGrupos WHERE id = ? AND restaurant_id = ?", id, a.ActiveRestaurantID)
+	res, err := s.db.ExecContext(r.Context(), "DELETE FROM menus WHERE id = ? AND restaurant_id = ?", id, a.ActiveRestaurantID)
 	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando menusDeGrupos")
+		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando menus")
 		return
 	}
 	affected, _ := res.RowsAffected()

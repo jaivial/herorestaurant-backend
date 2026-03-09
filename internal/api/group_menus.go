@@ -25,7 +25,7 @@ func (s *Server) handleGetAllGroupMenus(w http.ResponseWriter, r *http.Request) 
 
 	query := `
 		SELECT id, menu_title, price, included_coffee, active, created_at, modified_at
-		FROM menusDeGrupos
+		FROM menus
 		WHERE restaurant_id = ?
 		ORDER BY active DESC, created_at DESC
 	`
@@ -34,14 +34,14 @@ func (s *Server) handleGetAllGroupMenus(w http.ResponseWriter, r *http.Request) 
 	case "active":
 		query = `
 			SELECT id, menu_title, price, included_coffee, active, created_at, modified_at
-			FROM menusDeGrupos
+			FROM menus
 			WHERE restaurant_id = ? AND active = 1
 			ORDER BY created_at DESC
 		`
 	case "inactive":
 		query = `
 			SELECT id, menu_title, price, included_coffee, active, created_at, modified_at
-			FROM menusDeGrupos
+			FROM menus
 			WHERE restaurant_id = ? AND active = 0
 			ORDER BY created_at DESC
 		`
@@ -117,7 +117,7 @@ func (s *Server) handleGetGroupMenu(w http.ResponseWriter, r *http.Request) {
 		       menu_subtitle, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number,
 		       created_at, modified_at
-		FROM menusDeGrupos
+		FROM menus
 		WHERE restaurant_id = ? AND id = ?
 	`
 
@@ -256,7 +256,7 @@ func (s *Server) handleAddGroupMenu(w http.ResponseWriter, r *http.Request) {
 
 	res, err := s.db.ExecContext(
 		r.Context(),
-		`INSERT INTO menusDeGrupos
+		`INSERT INTO menus
 		 (restaurant_id, menu_title, price, included_coffee, active, menu_subtitle, entrantes, principales, postre, beverage, comments, min_party_size, main_dishes_limit, main_dishes_limit_number)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		restaurantID,
@@ -337,7 +337,7 @@ func (s *Server) handleUpdateGroupMenu(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure menu exists.
 	var tmp int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT id FROM menusDeGrupos WHERE restaurant_id = ? AND id = ? LIMIT 1", restaurantID, id).Scan(&tmp); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), "SELECT id FROM menus WHERE restaurant_id = ? AND id = ? LIMIT 1", restaurantID, id).Scan(&tmp); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -374,7 +374,7 @@ func (s *Server) handleUpdateGroupMenu(w http.ResponseWriter, r *http.Request) {
 
 	_, err = s.db.ExecContext(
 		r.Context(),
-		`UPDATE menusDeGrupos SET
+		`UPDATE menus SET
 			menu_title = ?,
 			price = ?,
 			included_coffee = ?,
@@ -450,7 +450,7 @@ func (s *Server) handleToggleGroupMenuActive(w http.ResponseWriter, r *http.Requ
 	}
 
 	var current int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT active FROM menusDeGrupos WHERE restaurant_id = ? AND id = ? LIMIT 1", restaurantID, id).Scan(&current); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), "SELECT active FROM menus WHERE restaurant_id = ? AND id = ? LIMIT 1", restaurantID, id).Scan(&current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -470,7 +470,7 @@ func (s *Server) handleToggleGroupMenuActive(w http.ResponseWriter, r *http.Requ
 		newStatus = 0
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), "UPDATE menusDeGrupos SET active = ? WHERE restaurant_id = ? AND id = ?", newStatus, restaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), "UPDATE menus SET active = ? WHERE restaurant_id = ? AND id = ?", newStatus, restaurantID, id); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Server error: " + err.Error(),
@@ -515,7 +515,7 @@ func (s *Server) handleDeleteGroupMenu(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var title string
-	if err := s.db.QueryRowContext(r.Context(), "SELECT menu_title FROM menusDeGrupos WHERE restaurant_id = ? AND id = ? LIMIT 1", restaurantID, id).Scan(&title); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), "SELECT menu_title FROM menus WHERE restaurant_id = ? AND id = ? LIMIT 1", restaurantID, id).Scan(&title); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -530,7 +530,7 @@ func (s *Server) handleDeleteGroupMenu(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM menusDeGrupos WHERE restaurant_id = ? AND id = ?", restaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM menus WHERE restaurant_id = ? AND id = ?", restaurantID, id); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Server error: " + err.Error(),
@@ -550,7 +550,7 @@ func (s *Server) handleGetActiveGroupMenusForDisplay(w http.ResponseWriter, r *h
 	query := `
 		SELECT id, menu_title, price, included_coffee, menu_subtitle, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at
-		FROM menusDeGrupos
+		FROM menus
 		WHERE restaurant_id = ? AND active = 1
 		ORDER BY created_at ASC
 	`

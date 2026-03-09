@@ -163,7 +163,7 @@ func normalizeV2SectionAnnotations(rows []string) []string {
 
 func (s *Server) ensureBOMenuV2Belongs(restaurantID int, menuID int64) (bool, error) {
 	var tmp int64
-	err := s.db.QueryRow("SELECT id FROM menusDeGrupos WHERE id = ? AND restaurant_id = ? LIMIT 1", menuID, restaurantID).Scan(&tmp)
+	err := s.db.QueryRow("SELECT id FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1", menuID, restaurantID).Scan(&tmp)
 	if err == nil {
 		return true, nil
 	}
@@ -190,12 +190,12 @@ func (s *Server) handleBOGroupMenusV2List(w http.ResponseWriter, r *http.Request
 
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, price, active, is_draft, menu_type, created_at, modified_at
-		FROM menusDeGrupos
+		FROM menus
 	`+where+`
 		ORDER BY active DESC, modified_at DESC, id DESC
 	`, args...)
 	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menusDeGrupos")
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menus")
 		return
 	}
 	defer rows.Close()
@@ -213,7 +213,7 @@ func (s *Server) handleBOGroupMenusV2List(w http.ResponseWriter, r *http.Request
 			modifiedAt sql.NullString
 		)
 		if err := rows.Scan(&id, &title, &price, &activeInt, &draftInt, &menuType, &createdAt, &modifiedAt); err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo menusDeGrupos")
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo menus")
 			return
 		}
 		out = append(out, map[string]any{
@@ -262,12 +262,18 @@ func (s *Server) handleBOGroupMenusV2CreateDraft(w http.ResponseWriter, r *http.
 	beverage := mustJSON(map[string]any{"type": "no_incluida", "price_per_person": nil, "has_supplement": false, "supplement_price": nil}, map[string]any{})
 	comments := mustJSON([]string{}, []any{})
 
+	// Special menus should not be drafts by default
+	isDraft := 1
+	if menuType == "special" {
+		isDraft = 0
+	}
+
 	res, err := tx.ExecContext(r.Context(), `
-		INSERT INTO menusDeGrupos
+		INSERT INTO menus
 			(restaurant_id, menu_title, price, included_coffee, active, menu_type, is_draft, editor_version,
 			 menu_subtitle, entrantes, principales, postre, beverage, comments,
 			 min_party_size, main_dishes_limit, main_dishes_limit_number)
-		VALUES (?, ?, ?, ?, ?, ?, 1, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		a.ActiveRestaurantID,
 		"Nuevo menu",
@@ -275,6 +281,7 @@ func (s *Server) handleBOGroupMenusV2CreateDraft(w http.ResponseWriter, r *http.
 		0,
 		0,
 		menuType,
+		isDraft,
 		menuSubtitle,
 		entrantes,
 		principales,
@@ -339,7 +346,7 @@ func (s *Server) ensureBOMenuV2SectionsFromSnapshot(ctx *http.Request, restauran
 	)
 	if err := s.db.QueryRowContext(ctx.Context(), `
 		SELECT entrantes, principales, postre
-		FROM menusDeGrupos
+		FROM menus
 		WHERE id = ? AND restaurant_id = ?
 		LIMIT 1
 	`, menuID, restaurantID).Scan(&entrantesRaw, &principRaw, &postreRaw); err != nil {
@@ -726,7 +733,7 @@ func (s *Server) syncBOMenuV2LegacySnapshot(r *http.Request, restaurantID int, m
 	}
 
 	_, err = s.db.ExecContext(r.Context(), `
-		UPDATE menusDeGrupos
+		UPDATE menus
 		SET entrantes = ?, principales = ?, postre = ?
 		WHERE id = ? AND restaurant_id = ?
 	`, mustJSON(entrantes, []any{}), mustJSON(principales, map[string]any{}), mustJSON(postres, []any{}), menuID, restaurantID)
@@ -776,7 +783,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_menu_preview_image, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee, special_menu_image_url,
 		       menu_preview_image_path, menu_preview_ai_requested, menu_preview_ai_generating
-		FROM menusDeGrupos
+		FROM menus
 		WHERE id = ? AND restaurant_id = ?
 		LIMIT 1
 	`, menuID, a.ActiveRestaurantID).Scan(
@@ -952,7 +959,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	err = s.db.QueryRowContext(r.Context(), `
 		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_menu_preview_image, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee
-		FROM menusDeGrupos
+		FROM menus
 		WHERE id = ? AND restaurant_id = ?
 		LIMIT 1
 	`, menuID, a.ActiveRestaurantID).Scan(
@@ -1072,7 +1079,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	}
 
 	_, err = s.db.ExecContext(r.Context(), `
-		UPDATE menusDeGrupos
+		UPDATE menus
 			SET menu_title = ?,
 			    price = ?,
 			    active = ?,
@@ -1144,7 +1151,7 @@ func (s *Server) handleBOGroupMenusV2PatchMenuType(w http.ResponseWriter, r *htt
 	var existingID int64
 	if err := s.db.QueryRowContext(r.Context(), `
 		SELECT id
-		FROM menusDeGrupos
+		FROM menus
 		WHERE id = ? AND restaurant_id = ?
 		LIMIT 1
 	`, menuID, a.ActiveRestaurantID).Scan(&existingID); err != nil {
@@ -1159,7 +1166,7 @@ func (s *Server) handleBOGroupMenusV2PatchMenuType(w http.ResponseWriter, r *htt
 	menuType := normalizeV2MenuType(req.MenuType)
 
 	if _, err := s.db.ExecContext(r.Context(), `
-		UPDATE menusDeGrupos
+		UPDATE menus
 		SET menu_type = ?,
 		    editor_version = 2
 		WHERE id = ? AND restaurant_id = ?
@@ -1215,7 +1222,7 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 
 	var owns int
 	if err := tx.QueryRowContext(r.Context(), `
-		SELECT COUNT(*) FROM menusDeGrupos WHERE id = ? AND restaurant_id = ?
+		SELECT COUNT(*) FROM menus WHERE id = ? AND restaurant_id = ?
 	`, menuID, a.ActiveRestaurantID).Scan(&owns); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando secciones")
 		return
@@ -1997,6 +2004,21 @@ func (s *Server) handleBOGroupMenusV2Publish(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Get menu type to check if it's a special menu (which doesn't require sections/dishes)
+	var menuType string
+	if err := s.db.QueryRowContext(r.Context(), `
+		SELECT menu_type FROM menus WHERE id = ? AND restaurant_id = ?
+	`, menuID, a.ActiveRestaurantID).Scan(&menuType); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menu")
+		return
+	}
+
+	isSpecial := menuType == "special"
+
 	var (
 		sections int
 		dishes   int
@@ -2014,17 +2036,20 @@ func (s *Server) handleBOGroupMenusV2Publish(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if sections == 0 {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Debe haber al menos una seccion"})
-		return
-	}
-	if dishes == 0 {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Debes anadir al menos un plato"})
-		return
+	// Special menus don't require sections or dishes (they only have an image)
+	if !isSpecial {
+		if sections == 0 {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Debe haber al menos una seccion"})
+			return
+		}
+		if dishes == 0 {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Debes anadir al menos un plato"})
+			return
+		}
 	}
 
 	if _, err := s.db.ExecContext(r.Context(), `
-		UPDATE menusDeGrupos
+		UPDATE menus
 		SET is_draft = 0, editor_version = 2
 		WHERE id = ? AND restaurant_id = ?
 	`, menuID, a.ActiveRestaurantID); err != nil {
@@ -2055,7 +2080,7 @@ func (s *Server) handleBOGroupMenusV2ToggleActive(w http.ResponseWriter, r *http
 
 	var current int
 	if err := s.db.QueryRowContext(r.Context(), `
-		SELECT active FROM menusDeGrupos WHERE id = ? AND restaurant_id = ?
+		SELECT active FROM menus WHERE id = ? AND restaurant_id = ?
 	`, menuID, a.ActiveRestaurantID).Scan(&current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
@@ -2071,7 +2096,7 @@ func (s *Server) handleBOGroupMenusV2ToggleActive(w http.ResponseWriter, r *http
 	}
 
 	if _, err := s.db.ExecContext(r.Context(), `
-		UPDATE menusDeGrupos SET active = ? WHERE id = ? AND restaurant_id = ?
+		UPDATE menus SET active = ? WHERE id = ? AND restaurant_id = ?
 	`, next, menuID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menu")
 		return
@@ -2290,7 +2315,7 @@ func (s *Server) handleBOGroupMenusV2UploadMenuPreviewImage(w http.ResponseWrite
 	}
 
 	_, err = s.db.ExecContext(r.Context(), `
-		UPDATE menusDeGrupos
+		UPDATE menus
 		SET show_menu_preview_image = 1,
 		    menu_preview_image_path = ?,
 		    menu_preview_ai_requested = 0,
@@ -2322,7 +2347,7 @@ func (s *Server) handleBOGroupMenusV2Delete(w http.ResponseWriter, r *http.Reque
 	}
 
 	res, err := s.db.ExecContext(r.Context(), `
-		DELETE FROM menusDeGrupos WHERE id = ? AND restaurant_id = ?
+		DELETE FROM menus WHERE id = ? AND restaurant_id = ?
 	`, menuID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando menu")
@@ -2352,7 +2377,7 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 
 	// Check menu exists and belongs to restaurant
 	var menuType string
-	err = s.db.QueryRowContext(r.Context(), `SELECT menu_type FROM menusDeGrupos WHERE id = ? AND restaurant_id = ?`, menuID, a.ActiveRestaurantID).Scan(&menuType)
+	err = s.db.QueryRowContext(r.Context(), `SELECT menu_type FROM menus WHERE id = ? AND restaurant_id = ?`, menuID, a.ActiveRestaurantID).Scan(&menuType)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
 		return
@@ -2411,7 +2436,7 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 
 	// Update menu record with image URL
 	imageURL := s.bunnyPullURL(objectPath)
-	_, err = s.db.ExecContext(r.Context(), `UPDATE menusDeGrupos SET special_menu_image_url = ? WHERE id = ?`, imageURL, menuID)
+	_, err = s.db.ExecContext(r.Context(), `UPDATE menus SET special_menu_image_url = ? WHERE id = ?`, imageURL, menuID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error saving image URL"})
 		return
@@ -2461,7 +2486,7 @@ func (s *Server) handleBOGroupMenusV2GetSlider(w http.ResponseWriter, r *http.Re
 
 	var showSliderInt int
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT COALESCE(show_menu_slider, 0) FROM menusDeGrupos WHERE id = ? AND restaurant_id = ? LIMIT 1
+		SELECT COALESCE(show_menu_slider, 0) FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1
 	`, menuID, a.ActiveRestaurantID).Scan(&showSliderInt)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading slider state")
@@ -2539,7 +2564,7 @@ func (s *Server) handleBOGroupMenusV2PatchSlider(w http.ResponseWriter, r *http.
 	}
 
 	_, err = s.db.ExecContext(r.Context(), `
-		UPDATE menusDeGrupos SET show_menu_slider = ? WHERE id = ? AND restaurant_id = ?
+		UPDATE menus SET show_menu_slider = ? WHERE id = ? AND restaurant_id = ?
 	`, boolToTinyint(showSlider), menuID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating slider state")
@@ -2659,7 +2684,7 @@ func (s *Server) handleBOGroupMenusV2UploadSliderImage(w http.ResponseWriter, r 
 	imageIDDB, _ := res.LastInsertId()
 
 	s.db.ExecContext(r.Context(), `
-		UPDATE menusDeGrupos SET show_menu_slider = 1 WHERE id = ? AND restaurant_id = ?
+		UPDATE menus SET show_menu_slider = 1 WHERE id = ? AND restaurant_id = ?
 	`, menuID, a.ActiveRestaurantID)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -2917,7 +2942,7 @@ func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AIMenuPreview
 	imageIDDB, _ := res.LastInsertId()
 
 	s.db.ExecContext(ctx, `
-		UPDATE menusDeGrupos SET show_menu_slider = 1 WHERE id = ? AND restaurant_id = ?
+		UPDATE menus SET show_menu_slider = 1 WHERE id = ? AND restaurant_id = ?
 	`, job.MenuID, job.RestaurantID)
 
 	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "slider_image_completed", map[string]any{

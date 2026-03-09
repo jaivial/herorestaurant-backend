@@ -658,7 +658,7 @@ func (s *Server) boFetchActiveGroupMenuTitleAndPrincipales(ctx context.Context, 
 	var principales sql.NullString
 	err = s.db.QueryRowContext(ctx, `
 		SELECT menu_title, principales
-		FROM menusDeGrupos
+		FROM menus
 		WHERE restaurant_id = ? AND id = ? AND active = 1
 		LIMIT 1
 	`, restaurantID, menuID).Scan(&t, &principales)

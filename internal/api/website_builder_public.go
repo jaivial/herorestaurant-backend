@@ -74,7 +74,7 @@ func (s *Server) websiteBuilderRestaurantID(ctx context.Context, r *http.Request
 func (s *Server) renderWebsiteBuilderMenus(ctx context.Context, restaurantID int) (string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT COALESCE(menu_title, ''), COALESCE(price, ''), COALESCE(menu_type, '')
-		FROM menusDeGrupos
+		FROM menus
 		WHERE restaurant_id = ? AND active = 1 AND is_draft = 0
 		ORDER BY modified_at DESC, id DESC
 		LIMIT 12

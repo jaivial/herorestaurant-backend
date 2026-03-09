@@ -107,6 +107,15 @@ type publicMenuItemHome struct {
 	MenuPreviewImageURL  string   `json:"menu_preview_image_url"`
 }
 
+// publicMenuItemSpecial is a minimal response for special menus
+type publicMenuItemSpecial struct {
+	ID                  int64    `json:"id"`
+	MenuTitle           string   `json:"menu_title"`
+	MenuSubtitle        []string `json:"menu_subtitle"`
+	Comments            []string `json:"comments"`
+	SpecialMenuImageURL string   `json:"special_menu_image_url"`
+}
+
 func isPublicMenuType(menuType string) bool {
 	switch menuType {
 	case "closed_conventional", "closed_group", "a_la_carte", "a_la_carte_group", "special":
@@ -207,12 +216,16 @@ func buildFallbackPublicSections(menu publicMenuItem) []publicMenuSection {
 }
 
 func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
-	restaurantID, ok := restaurantIDFromContext(r.Context())
-	if !ok {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
-			"success": false,
-			"message": "Unknown restaurant",
-		})
+	// Check for specific menu ID
+	menuIDParam := r.URL.Query().Get("id")
+	if menuIDParam != "" {
+		s.handlePublicMenuByID(w, r, int64(restaurantID), menuIDParam)
+		return
+	}
+
+	 // Check if this is a home page request (lightweight response)
+    isHomePage := r.URL.Query().Get("home_page") == "true"
+		s.handlePublicMenuByID(w, r, restaurantID, menuIDParam)
 		return
 	}
 
@@ -230,7 +243,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT `+selectFields+`
-		FROM menusDeGrupos
+		FROM menus
 		WHERE restaurant_id = ?
 		  AND active = 1
 		  AND is_draft = 0
@@ -239,9 +252,9 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		  CASE COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
 		    WHEN 'closed_conventional' THEN 1
 		    WHEN 'a_la_carte' THEN 2
-		    WHEN 'special' THEN 3
-		    WHEN 'closed_group' THEN 4
-		    WHEN 'a_la_carte_group' THEN 5
+		    WHEN 'closed_group' THEN 3
+		    WHEN 'a_la_carte_group' THEN 4
+		    WHEN 'special' THEN 5
 		    ELSE 9
 		  END ASC,
 		  modified_at DESC,
@@ -641,5 +654,372 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"count":   len(menus),
 		"menus":   menus,
+	})
+}
+
+func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, restaurantID int, menuIDParam string) {
+	menuID, err := strconv.ParseInt(menuIDParam, 10, 64)
+	if err != nil || menuID <= 0 {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "Invalid menu id",
+		})
+		return
+	}
+
+	// First, get the menu type to determine response format
+	var menuType string
+	err = s.db.QueryRowContext(r.Context(), `
+		SELECT COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
+		FROM menus
+		WHERE id = ? AND restaurant_id = ? AND active = 1 AND is_draft = 0
+	`, menuID, restaurantID).Scan(&menuType)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+				"success": false,
+				"message": "Menu not found",
+			})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error fetching menu",
+		})
+		return
+	}
+
+	// If menu type is "special", return minimal response
+	if menuType == "special" {
+		var (
+			menuTitle        string
+			menuSubtitleRaw  sql.NullString
+			commentsRaw      sql.NullString
+			specialImageURL  sql.NullString
+		)
+		err = s.db.QueryRowContext(r.Context(), `
+			SELECT menu_title, menu_subtitle, comments, special_menu_image_url
+			FROM menus
+			WHERE id = ? AND restaurant_id = ?
+		`, menuID, restaurantID).Scan(&menuTitle, &menuSubtitleRaw, &commentsRaw, &specialImageURL)
+		if err != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"message": "Error fetching special menu",
+			})
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"menu": publicMenuItemSpecial{
+				ID:                  menuID,
+				MenuTitle:           menuTitle,
+				MenuSubtitle:        anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
+				Comments:            anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
+				SpecialMenuImageURL: s.publicMenuMediaURL(specialImageURL.String),
+			},
+		})
+		return
+	}
+
+	// For non-special menus, return full menu data (reuse existing logic)
+	// This would be the same as the full response in handlePublicMenus
+	s.handleFullPublicMenuByID(w, r, restaurantID, menuID)
+}
+
+func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request, restaurantID int64, menuID int64) {
+	var (
+		menuTitle               string
+		priceRaw                sql.NullString
+		activeInt               int
+		menuTypeRaw             sql.NullString
+		menuSubtitleRaw         sql.NullString
+		showDishImagesInt       int
+		showMenuPreviewImageInt int
+		menuPreviewPathRaw      sql.NullString
+		entrantesRaw            sql.NullString
+		principalesRaw          sql.NullString
+		postreRaw               sql.NullString
+		beverageRaw             sql.NullString
+		commentsRaw             sql.NullString
+		minPartySize            int
+		mainDishesLimitInt      int
+		mainDishesLimitNum      int
+		includedCoffeeInt       int
+		specialImageURLRaw      sql.NullString
+		legacySourceTable       sql.NullString
+		createdAtRaw            sql.NullString
+		modifiedAtRaw           sql.NullString
+	)
+
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT id, menu_title, price, active, menu_type, menu_subtitle,
+		       show_dish_images, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
+		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
+		       special_menu_image_url, legacy_source_table, created_at, modified_at
+		FROM menus
+		WHERE id = ? AND restaurant_id = ?
+	`, menuID, restaurantID).Scan(
+		&menuID,
+		&menuTitle,
+		&priceRaw,
+		&activeInt,
+		&menuTypeRaw,
+		&menuSubtitleRaw,
+		&showDishImagesInt,
+		&showMenuPreviewImageInt,
+		&menuPreviewPathRaw,
+		&entrantesRaw,
+		&principalesRaw,
+		&postreRaw,
+		&beverageRaw,
+		&commentsRaw,
+		&minPartySize,
+		&mainDishesLimitInt,
+		&mainDishesLimitNum,
+		&includedCoffeeInt,
+		&specialImageURLRaw,
+		&legacySourceTable,
+		&createdAtRaw,
+		&modifiedAtRaw,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+				"success": false,
+				"message": "Menu not found",
+			})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error fetching menu",
+		})
+		return
+	}
+
+	menuType := normalizeV2MenuType(menuTypeRaw.String)
+	if !isPublicMenuType(menuType) {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+			"success": false,
+			"message": "Menu not found",
+		})
+		return
+	}
+
+	beverage := map[string]any{
+		"type":             "no_incluida",
+		"price_per_person": nil,
+		"has_supplement":   false,
+		"supplement_price": nil,
+	}
+	if decoded, ok := decodeJSONOrFallback(beverageRaw.String, beverage).(map[string]any); ok {
+		beverage = decoded
+	}
+
+	price := strings.TrimSpace(priceRaw.String)
+	if price == "" {
+		price = "0"
+	}
+
+	principalesTitle := "Principal a elegir"
+	principalesItems := []string{}
+	if decoded, ok := decodeJSONOrFallback(principalesRaw.String, map[string]any{}).(map[string]any); ok {
+		if title := strings.TrimSpace(anyToString(decoded["titulo_principales"])); title != "" {
+			principalesTitle = title
+		}
+		principalesItems = anySliceToStringList(decoded["items"])
+	}
+
+	if minPartySize <= 0 {
+		minPartySize = 1
+	}
+	if mainDishesLimitNum <= 0 {
+		mainDishesLimitNum = 1
+	}
+
+	item := publicMenuItem{
+		ID:        menuID,
+		Slug:      buildPublicMenuSlug(menuTitle, menuID),
+		MenuTitle: menuTitle,
+		MenuType:  menuType,
+		Price:     price,
+		Active:    activeInt != 0,
+		MenuSubtitle: anySliceToStringList(
+			decodeJSONOrFallback(menuSubtitleRaw.String, []any{}),
+		),
+		ShowDishImages: showDishImagesInt != 0,
+		Entrantes:      anySliceToStringList(decodeJSONOrFallback(entrantesRaw.String, []any{})),
+		Principales: publicMenuPrincipales{
+			TituloPrincipales: principalesTitle,
+			Items:             principalesItems,
+		},
+		Postre: anySliceToStringList(decodeJSONOrFallback(postreRaw.String, []any{})),
+		Settings: publicMenuSettings{
+			IncludedCoffee:       includedCoffeeInt != 0,
+			Beverage:             beverage,
+			Comments:             anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
+			MinPartySize:         minPartySize,
+			MainDishesLimit:      mainDishesLimitInt != 0,
+			MainDishesLimitCount: mainDishesLimitNum,
+		},
+		Sections:             []publicMenuSection{},
+		ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
+		MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
+		SpecialMenuImageURL:  s.publicMenuMediaURL(specialImageURLRaw.String),
+		LegacySourceTable:    strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),
+		CreatedAt:            createdAtRaw.String,
+		ModifiedAt:           modifiedAtRaw.String,
+	}
+
+	// Fetch sections and dishes
+	sectionByID := make(map[int64]*publicMenuSection, 64)
+	sectionsByMenu := make(map[int64][]*publicMenuSection, 1)
+
+	sectionRows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, menu_id, title, section_kind, position, COALESCE(annotations_json, '')
+		FROM group_menu_sections_v2
+		WHERE restaurant_id = ? AND menu_id = ?
+		ORDER BY position ASC, id ASC
+	`, restaurantID, menuID)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error fetching menu sections",
+		})
+		return
+	}
+	for sectionRows.Next() {
+		var (
+			sectionID      int64
+			secMenuID      int64
+			title          string
+			sectionKind    string
+			position       int
+			annotationsRaw sql.NullString
+		)
+		if err := sectionRows.Scan(&sectionID, &secMenuID, &title, &sectionKind, &position, &annotationsRaw); err != nil {
+			sectionRows.Close()
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"message": "Error reading menu sections",
+			})
+			return
+		}
+		section := &publicMenuSection{
+			ID:          sectionID,
+			Title:       title,
+			Kind:        normalizeV2SectionKind(sectionKind),
+			Position:    position,
+			Annotations: normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
+			Dishes:      []publicMenuDish{},
+		}
+		sectionsByMenu[secMenuID] = append(sectionsByMenu[secMenuID], section)
+		sectionByID[sectionID] = section
+	}
+	sectionRows.Close()
+
+	dishRows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, menu_id, section_id, title_snapshot, description_snapshot, allergens_json, foto_path,
+		       supplement_enabled, supplement_price, price, position
+		FROM group_menu_section_dishes_v2
+		WHERE restaurant_id = ? AND menu_id = ? AND active = 1
+		ORDER BY section_id ASC, position ASC, id ASC
+	`, restaurantID, menuID)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error fetching menu dishes",
+		})
+		return
+	}
+	for dishRows.Next() {
+		var (
+			dishID          int64
+			dishMenuID      int64
+			sectionID       int64
+			title           string
+			description     string
+			allergensRaw    sql.NullString
+			fotoPath        sql.NullString
+			supplementInt   int
+			supplementPrice sql.NullFloat64
+			priceRaw        sql.NullFloat64
+			position        int
+		)
+		if err := dishRows.Scan(
+			&dishID,
+			&dishMenuID,
+			&sectionID,
+			&title,
+			&description,
+			&allergensRaw,
+			&fotoPath,
+			&supplementInt,
+			&supplementPrice,
+			&priceRaw,
+			&position,
+		); err != nil {
+			dishRows.Close()
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"message": "Error reading menu dishes",
+			})
+			return
+		}
+
+		section := sectionByID[sectionID]
+		if section == nil {
+			continue
+		}
+
+		dish := publicMenuDish{
+			ID:                dishID,
+			Title:             strings.TrimSpace(title),
+			Description:       strings.TrimSpace(description),
+			FotoURL:           s.publicMenuMediaURL(fotoPath.String),
+			Allergens:         anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
+			SupplementEnabled: supplementInt != 0,
+			SupplementPrice:   nil,
+			Price:             nil,
+			Position:          position,
+		}
+		if supplementPrice.Valid {
+			value := supplementPrice.Float64
+			dish.SupplementPrice = &value
+		}
+		if priceRaw.Valid {
+			value := priceRaw.Float64
+			dish.Price = &value
+		}
+
+		section.Dishes = append(section.Dishes, dish)
+	}
+	dishRows.Close()
+
+	sectionPointers := sectionsByMenu[menuID]
+	if len(sectionPointers) == 0 {
+		item.Sections = buildFallbackPublicSections(item)
+	} else {
+		sections := make([]publicMenuSection, 0, len(sectionPointers))
+		hasAnyDish := false
+		for _, section := range sectionPointers {
+			if len(section.Dishes) > 0 {
+				hasAnyDish = true
+			}
+			sections = append(sections, *section)
+		}
+
+		if !hasAnyDish {
+			item.Sections = buildFallbackPublicSections(item)
+		} else {
+			item.Sections = sections
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"menu":    item,
 	})
 }

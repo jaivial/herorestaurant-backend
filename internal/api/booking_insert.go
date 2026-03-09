@@ -586,7 +586,7 @@ func (s *Server) fetchActiveGroupMenuTitleAndPrincipales(r *http.Request, menuID
 
 	var t string
 	var principales sql.NullString
-	err = s.db.QueryRowContext(r.Context(), "SELECT menu_title, principales FROM menusDeGrupos WHERE restaurant_id = ? AND id = ? AND active = 1 LIMIT 1", restaurantID, menuID).Scan(&t, &principales)
+	err = s.db.QueryRowContext(r.Context(), "SELECT menu_title, principales FROM menus WHERE restaurant_id = ? AND id = ? AND active = 1 LIMIT 1", restaurantID, menuID).Scan(&t, &principales)
 	if err != nil {
 		return "", "", err
 	}
