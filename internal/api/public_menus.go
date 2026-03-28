@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
@@ -105,6 +106,7 @@ type publicMenuItemHome struct {
 	ShowDishImages       bool     `json:"show_dish_images"`
 	ShowMenuPreviewImage bool     `json:"show_menu_preview_image"`
 	MenuPreviewImageURL  string   `json:"menu_preview_image_url"`
+	SpecialMenuImageURL  string   `json:"special_menu_image_url"`
 }
 
 // publicMenuItemSpecial is a minimal response for special menus
@@ -216,24 +218,20 @@ func buildFallbackPublicSections(menu publicMenuItem) []publicMenuSection {
 }
 
 func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
-	// Check for specific menu ID
 	menuIDParam := r.URL.Query().Get("id")
-	if menuIDParam != "" {
-		s.handlePublicMenuByID(w, r, int64(restaurantID), menuIDParam)
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusInternalServerError, "Restaurant not found")
 		return
 	}
-
-	 // Check if this is a home page request (lightweight response)
-    isHomePage := r.URL.Query().Get("home_page") == "true"
+	if menuIDParam != "" {
 		s.handlePublicMenuByID(w, r, restaurantID, menuIDParam)
 		return
 	}
 
-	// Check if this is a home page request (lightweight response)
 	isHomePage := r.URL.Query().Get("home_page") == "true"
 
-	// For home page, we only need basic fields plus preview image
-	selectFields := "id, menu_title, menu_type, active, menu_subtitle, show_dish_images, show_menu_preview_image, menu_preview_image_path"
+	selectFields := "id, menu_title, menu_type, active, menu_subtitle, show_dish_images, show_menu_preview_image, menu_preview_image_path, special_menu_image_url"
 	if !isHomePage {
 		selectFields = `id, menu_title, price, active, menu_type, menu_subtitle,
 		       show_dish_images, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
@@ -282,6 +280,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				showDishImagesInt       int
 				showMenuPreviewImageInt int
 				menuPreviewPathRaw      sql.NullString
+				specialImageURLRaw      sql.NullString
 			)
 			if err := rows.Scan(
 				&menuID,
@@ -292,6 +291,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				&showDishImagesInt,
 				&showMenuPreviewImageInt,
 				&menuPreviewPathRaw,
+				&specialImageURLRaw,
 			); err != nil {
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 					"success": false,
@@ -315,6 +315,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				ShowDishImages:       showDishImagesInt != 0,
 				ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
 				MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
+				SpecialMenuImageURL:  s.publicMenuMediaURL(specialImageURLRaw.String),
 			})
 		}
 
@@ -692,10 +693,10 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 	// If menu type is "special", return minimal response
 	if menuType == "special" {
 		var (
-			menuTitle        string
-			menuSubtitleRaw  sql.NullString
-			commentsRaw      sql.NullString
-			specialImageURL  sql.NullString
+			menuTitle       string
+			menuSubtitleRaw sql.NullString
+			commentsRaw     sql.NullString
+			specialImageURL sql.NullString
 		)
 		err = s.db.QueryRowContext(r.Context(), `
 			SELECT menu_title, menu_subtitle, comments, special_menu_image_url
@@ -725,7 +726,7 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 
 	// For non-special menus, return full menu data (reuse existing logic)
 	// This would be the same as the full response in handlePublicMenus
-	s.handleFullPublicMenuByID(w, r, restaurantID, menuID)
+	s.handleFullPublicMenuByID(w, r, int64(restaurantID), menuID)
 }
 
 func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request, restaurantID int64, menuID int64) {

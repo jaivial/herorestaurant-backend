@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -150,4 +152,144 @@ func TestBuildFallbackPublicSections(t *testing.T) {
 			t.Errorf("expected 0 sections for empty menu, got %d", len(sections))
 		}
 	})
+}
+
+func TestPublicMenuItemHomeIncludesSpecialMenuImageURL(t *testing.T) {
+	item := publicMenuItemHome{
+		ID:                   14,
+		Slug:                 "menu-especial-14",
+		MenuTitle:            "Menu San Valentin",
+		MenuType:             "special",
+		Active:               true,
+		MenuSubtitle:         []string{"Un menu romantico"},
+		ShowDishImages:       false,
+		ShowMenuPreviewImage: false,
+		MenuPreviewImageURL:  "",
+		SpecialMenuImageURL:  "https://cdn.example.com/special-menu-14.webp",
+	}
+
+	data, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("json.Marshal(publicMenuItemHome) error = %v", err)
+	}
+
+	raw := string(data)
+
+	if !strings.Contains(raw, `"special_menu_image_url"`) {
+		t.Errorf("publicMenuItemHome JSON does not contain 'special_menu_image_url': %s", raw)
+	}
+	if !strings.Contains(raw, `"https://cdn.example.com/special-menu-14.webp"`) {
+		t.Errorf("publicMenuItemHome JSON does not contain the expected image URL: %s", raw)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal error = %v", err)
+	}
+
+	val, ok := decoded["special_menu_image_url"]
+	if !ok {
+		t.Fatal("publicMenuItemHome JSON missing key 'special_menu_image_url'")
+	}
+	strVal, ok := val.(string)
+	if !ok {
+		t.Fatalf("special_menu_image_url is %T, want string", val)
+	}
+	if strVal != "https://cdn.example.com/special-menu-14.webp" {
+		t.Errorf("special_menu_image_url = %q, want %q", strVal, "https://cdn.example.com/special-menu-14.webp")
+	}
+}
+
+func TestPublicMenuItemSpecialIncludesSpecialMenuImageURL(t *testing.T) {
+	item := publicMenuItemSpecial{
+		ID:                  14,
+		MenuTitle:           "Menu San Valentin",
+		MenuSubtitle:        []string{"Un menu romantico"},
+		Comments:            []string{"Incluye champagne"},
+		SpecialMenuImageURL: "https://cdn.example.com/special-menu-14.webp",
+	}
+
+	data, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("json.Marshal(publicMenuItemSpecial) error = %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal error = %v", err)
+	}
+
+	val, ok := decoded["special_menu_image_url"]
+	if !ok {
+		t.Fatal("publicMenuItemSpecial JSON missing key 'special_menu_image_url'")
+	}
+	strVal, ok := val.(string)
+	if !ok {
+		t.Fatalf("special_menu_image_url is %T, want string", val)
+	}
+	if strVal != "https://cdn.example.com/special-menu-14.webp" {
+		t.Errorf("special_menu_image_url = %q, want %q", strVal, "https://cdn.example.com/special-menu-14.webp")
+	}
+}
+
+func TestPublicMenuItemIncludesSpecialMenuImageURLForSpecialType(t *testing.T) {
+	item := publicMenuItem{
+		ID:                  14,
+		Slug:                "menu-especial-14",
+		MenuTitle:           "Menu San Valentin",
+		MenuType:            "special",
+		Price:               "0",
+		Active:              true,
+		MenuSubtitle:        []string{"Un menu romantico"},
+		SpecialMenuImageURL: "https://cdn.example.com/special-menu-14.webp",
+	}
+
+	data, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("json.Marshal(publicMenuItem) error = %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal error = %v", err)
+	}
+
+	val, ok := decoded["special_menu_image_url"]
+	if !ok {
+		t.Fatal("publicMenuItem JSON missing key 'special_menu_image_url'")
+	}
+	strVal, ok := val.(string)
+	if !ok {
+		t.Fatalf("special_menu_image_url is %T, want string", val)
+	}
+	if strVal != "https://cdn.example.com/special-menu-14.webp" {
+		t.Errorf("special_menu_image_url = %q, want %q", strVal, "https://cdn.example.com/special-menu-14.webp")
+	}
+}
+
+func TestPublicMenuItemHomeEmptySpecialMenuImageURL(t *testing.T) {
+	item := publicMenuItemHome{
+		ID:                  15,
+		MenuType:            "closed_conventional",
+		SpecialMenuImageURL: "",
+	}
+
+	data, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("json.Marshal error = %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal error = %v", err)
+	}
+
+	val, ok := decoded["special_menu_image_url"]
+	if !ok {
+		t.Fatal("publicMenuItemHome JSON missing key 'special_menu_image_url' even when empty")
+	}
+	strVal, _ := val.(string)
+	if strVal != "" {
+		t.Errorf("special_menu_image_url = %q, want empty string", strVal)
+	}
 }
