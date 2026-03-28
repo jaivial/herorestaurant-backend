@@ -113,6 +113,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/calendar", s.handleBOCalendarMonth)
 
 		r.With(s.requireBOSession, reservasGate).Get("/bookings", s.handleBOBookingsList)
+		r.With(s.requireBOSession, reservasGate).Get("/bookings/search", s.handleBOBookingsSearch)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/export", s.handleBOBookingsExport)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/{id}", s.handleBOBookingGet)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings", s.handleBOBookingCreate)
@@ -337,6 +338,9 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/reservations/day-context", s.handleGetReservationDayContext)
 		r.With(s.requireAdmin).Post("/menu-visibility", s.handleMenuVisibilityToggle)
 		r.Get("/menus/public", s.handlePublicMenus)
+		r.Get("/menus/sidebar", s.handlePublicMenusSidebar)
+		r.Get("/menus/home", s.handlePublicMenusHome)
+		r.Get("/menus/{menuID}", s.handlePublicMenuByRouteID)
 		r.Get("/menus/dia", s.handleMenuDia)
 		r.Get("/menus/finde", s.handleMenuFinde)
 		r.Get("/postres", s.handlePostres)

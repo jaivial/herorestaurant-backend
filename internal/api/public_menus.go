@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"preactvillacarmen/internal/httpx"
 )
 
@@ -1022,5 +1024,189 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"menu":    item,
+	})
+}
+
+// publicMenuSidebarItem is a minimal representation for the burger nav sidebar.
+type publicMenuSidebarItem struct {
+	ID                int64  `json:"id"`
+	Slug              string `json:"slug"`
+	MenuTitle         string `json:"menu_title"`
+	MenuType          string `json:"menu_type"`
+	Active            bool   `json:"active"`
+	LegacySourceTable string `json:"legacy_source_table,omitempty"`
+}
+
+// activePublicMenuOrderBy returns the same ORDER BY clause used across menu list endpoints.
+func activePublicMenuOrderBy() string {
+	return `CASE COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
+		    WHEN 'closed_conventional' THEN 1
+		    WHEN 'a_la_carte' THEN 2
+		    WHEN 'closed_group' THEN 3
+		    WHEN 'a_la_carte_group' THEN 4
+		    WHEN 'special' THEN 5
+		    ELSE 9
+		  END ASC,
+		  modified_at DESC,
+		  id DESC`
+}
+
+// activePublicMenuWhere returns the common WHERE clause for public active non-draft menus.
+func activePublicMenuWhere() string {
+	return `restaurant_id = ?
+		  AND active = 1
+		  AND is_draft = 0
+		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') IN ('closed_conventional', 'closed_group', 'a_la_carte', 'a_la_carte_group', 'special')`
+}
+
+// handlePublicMenuByRouteID handles GET /menus/{menuID}.
+// It extracts the menuID from the chi URL param and delegates to handlePublicMenuByID.
+func (s *Server) handlePublicMenuByRouteID(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusInternalServerError, "Restaurant not found")
+		return
+	}
+	menuIDParam := chi.URLParam(r, "menuID")
+	s.handlePublicMenuByID(w, r, restaurantID, menuIDParam)
+}
+
+// handlePublicMenusSidebar handles GET /menus/sidebar.
+// Returns a lightweight list of active menus with only id, slug, menu_title, menu_type, active.
+func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusInternalServerError, "Restaurant not found")
+		return
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, menu_title, COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional'), COALESCE(legacy_source_table, '')
+		FROM menus
+		WHERE `+activePublicMenuWhere()+`
+		ORDER BY `+activePublicMenuOrderBy(),
+		restaurantID,
+	)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error querying menus",
+		})
+		return
+	}
+	defer rows.Close()
+
+	menus := make([]publicMenuSidebarItem, 0, 24)
+	for rows.Next() {
+		var (
+			menuID            int64
+			menuTitle         string
+			menuTypeRaw       string
+			legacySourceTable string
+		)
+		if err := rows.Scan(&menuID, &menuTitle, &menuTypeRaw, &legacySourceTable); err != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"message": "Error reading menus",
+			})
+			return
+		}
+
+		menuType := normalizeV2MenuType(menuTypeRaw)
+		if !isPublicMenuType(menuType) {
+			continue
+		}
+
+		menus = append(menus, publicMenuSidebarItem{
+			ID:                menuID,
+			Slug:              buildPublicMenuSlug(menuTitle, menuID),
+			MenuTitle:         menuTitle,
+			MenuType:          menuType,
+			Active:            true, // All results are active due to WHERE clause
+			LegacySourceTable: strings.ToUpper(strings.TrimSpace(legacySourceTable)),
+		})
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"count":   len(menus),
+		"menus":   menus,
+	})
+}
+
+// handlePublicMenusHome handles GET /menus/home.
+// Returns a lightweight list of active menus for the homepage cards section.
+func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusInternalServerError, "Restaurant not found")
+		return
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, menu_title, menu_type, active, menu_subtitle,
+		       show_menu_preview_image, menu_preview_image_path
+		FROM menus
+		WHERE `+activePublicMenuWhere()+`
+		ORDER BY `+activePublicMenuOrderBy(),
+		restaurantID,
+	)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error querying menus",
+		})
+		return
+	}
+	defer rows.Close()
+
+	menus := make([]publicMenuItemHome, 0, 24)
+	for rows.Next() {
+		var (
+			menuID                  int64
+			menuTitle               string
+			menuTypeRaw             sql.NullString
+			activeInt               int
+			menuSubtitleRaw         sql.NullString
+			showMenuPreviewImageInt int
+			menuPreviewPathRaw      sql.NullString
+		)
+		if err := rows.Scan(
+			&menuID,
+			&menuTitle,
+			&menuTypeRaw,
+			&activeInt,
+			&menuSubtitleRaw,
+			&showMenuPreviewImageInt,
+			&menuPreviewPathRaw,
+		); err != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"message": "Error reading menus",
+			})
+			return
+		}
+
+		menuType := normalizeV2MenuType(menuTypeRaw.String)
+		if !isPublicMenuType(menuType) {
+			continue
+		}
+
+		menus = append(menus, publicMenuItemHome{
+			ID:                   menuID,
+			Slug:                 buildPublicMenuSlug(menuTitle, menuID),
+			MenuTitle:            menuTitle,
+			MenuType:             menuType,
+			Active:               activeInt != 0,
+			MenuSubtitle:         anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
+			ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
+			MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
+		})
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"count":   len(menus),
+		"menus":   menus,
 	})
 }
