@@ -104,21 +104,21 @@ func (s *Server) handleBOGroupMenuGet(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var (
-		menuTitle     string
-		price         string
-		inclCoffee    int
-		activeInt     int
-		menuSubtitle  sql.NullString
-		entrantes     sql.NullString
-		principales   sql.NullString
-		postre        sql.NullString
-		beverage      sql.NullString
-		comments      sql.NullString
-		minPartySize  int
-		mainLimit     int
-		mainLimitNum  int
-		createdAt     sql.NullString
-		modifiedAt    sql.NullString
+		menuTitle    string
+		price        string
+		inclCoffee   int
+		activeInt    int
+		menuSubtitle sql.NullString
+		entrantes    sql.NullString
+		principales  sql.NullString
+		postre       sql.NullString
+		beverage     sql.NullString
+		comments     sql.NullString
+		minPartySize int
+		mainLimit    int
+		mainLimitNum int
+		createdAt    sql.NullString
+		modifiedAt   sql.NullString
 	)
 
 	err = s.db.QueryRowContext(r.Context(), query, id, a.ActiveRestaurantID).Scan(
@@ -469,4 +469,3 @@ func (s *Server) handleBOGroupMenuDelete(w http.ResponseWriter, r *http.Request)
 		"success": true,
 	})
 }
-

@@ -257,4 +257,3 @@ func (s *Server) handleBOPostreDelete(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 	})
 }
-

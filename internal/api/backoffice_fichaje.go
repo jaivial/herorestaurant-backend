@@ -1202,13 +1202,13 @@ func (s *Server) handleBOHorariosMySchedule(w http.ResponseWriter, r *http.Reque
 	defer rows.Close()
 
 	type scheduleRow struct {
-		ID                int
-		MemberID          int
-		Date              string
-		StartTime         string
-		EndTime           string
-		CreatedAt         time.Time
-		UpdatedAt         time.Time
+		ID        int
+		MemberID  int
+		Date      string
+		StartTime string
+		EndTime   string
+		CreatedAt time.Time
+		UpdatedAt time.Time
 	}
 
 	schedules := make([]map[string]any, 0)
@@ -1228,14 +1228,14 @@ func (s *Server) handleBOHorariosMySchedule(w http.ResponseWriter, r *http.Reque
 		_ = nameRow.Scan(&firstName, &lastName)
 
 		schedules = append(schedules, map[string]any{
-			"id":          sch.ID,
-			"memberId":    sch.MemberID,
-			"memberName":  strings.TrimSpace(firstName + " " + lastName),
-			"date":        sch.Date,
-			"startTime":   sch.StartTime,
-			"endTime":     sch.EndTime,
-			"createdAt":   sch.CreatedAt.Format(time.RFC3339),
-			"updatedAt":   sch.UpdatedAt.Format(time.RFC3339),
+			"id":         sch.ID,
+			"memberId":   sch.MemberID,
+			"memberName": strings.TrimSpace(firstName + " " + lastName),
+			"date":       sch.Date,
+			"startTime":  sch.StartTime,
+			"endTime":    sch.EndTime,
+			"createdAt":  sch.CreatedAt.Format(time.RFC3339),
+			"updatedAt":  sch.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 

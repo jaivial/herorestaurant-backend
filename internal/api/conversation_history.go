@@ -132,11 +132,11 @@ func (s *Server) handleGetConversationHistory(w http.ResponseWriter, r *http.Req
 			LIMIT 1
 		`, restaurantID, sessionID.String).Scan(&id, &status, &startedAt, &lastActivityAt, &messageCount, &aiResponseCount); err == nil {
 			sessionInfo = map[string]any{
-				"id":               id,
-				"status":           status,
-				"started_at":       startedAt.Format("2006-01-02 15:04:05"),
-				"last_activity_at": lastActivityAt.Format("2006-01-02 15:04:05"),
-				"message_count":    messageCount,
+				"id":                id,
+				"status":            status,
+				"started_at":        startedAt.Format("2006-01-02 15:04:05"),
+				"last_activity_at":  lastActivityAt.Format("2006-01-02 15:04:05"),
+				"message_count":     messageCount,
 				"ai_response_count": aiResponseCount,
 			}
 		}

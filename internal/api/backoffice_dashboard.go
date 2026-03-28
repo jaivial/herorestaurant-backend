@@ -66,4 +66,3 @@ func (s *Server) handleBODashboardMetrics(w http.ResponseWriter, r *http.Request
 		},
 	})
 }
-

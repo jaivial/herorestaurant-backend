@@ -152,14 +152,14 @@ func (s *Server) handleGetHourPercentages(w http.ResponseWriter, r *http.Request
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":                true,
-		"activeHours":            activeHours,
-		"hourPercentages":        hourPercentages,
-		"bookingsByHour":         bookingsByHour,
-		"totalPeople":            totalPeople,
-		"dailyLimit":             dailyLimit,
-		"hourlyCapacities":       hourlyCapacities,
-		"completionPercentages":  completionPercentages,
+		"success":               true,
+		"activeHours":           activeHours,
+		"hourPercentages":       hourPercentages,
+		"bookingsByHour":        bookingsByHour,
+		"totalPeople":           totalPeople,
+		"dailyLimit":            dailyLimit,
+		"hourlyCapacities":      hourlyCapacities,
+		"completionPercentages": completionPercentages,
 	})
 }
 

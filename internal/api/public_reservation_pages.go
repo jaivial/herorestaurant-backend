@@ -703,8 +703,8 @@ func (s *Server) handleBookRicePage(w http.ResponseWriter, r *http.Request) {
 	idRaw := strings.TrimSpace(r.URL.Query().Get("id"))
 	id, _ := strconv.Atoi(idRaw)
 	data := map[string]any{
-		"BrandName":    brandName,
-		"LogoURL":      logoURL,
+		"BrandName":   brandName,
+		"LogoURL":     logoURL,
 		"Message":     "",
 		"Success":     false,
 		"HasBooking":  false,

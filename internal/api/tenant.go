@@ -206,4 +206,3 @@ func (s *Server) withRestaurant(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(withRestaurantID(r.Context(), restaurantID)))
 	})
 }
-

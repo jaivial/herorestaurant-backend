@@ -23,7 +23,7 @@ SELECT id, name, base_url, admin_token, capacity, used_count, priority, is_activ
 FROM uazapi_servers`
 
 type boUAZAPIServerView struct {
-	ID               int64 `json:"id"`
+	ID               int64  `json:"id"`
 	Name             string `json:"name"`
 	BaseURL          string `json:"baseUrl"`
 	AdminTokenMasked string `json:"adminTokenMasked"`

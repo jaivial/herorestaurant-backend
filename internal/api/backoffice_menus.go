@@ -67,11 +67,11 @@ func (s *Server) handleBOMenuTableGet(w http.ResponseWriter, r *http.Request, ta
 	)
 	for rows.Next() {
 		var (
-			num         int
-			desc        string
-			tipo        string
-			alergRaw    sql.NullString
-			activeInt   int
+			num       int
+			desc      string
+			tipo      string
+			alergRaw  sql.NullString
+			activeInt int
 		)
 		if err := rows.Scan(&num, &desc, &tipo, &alergRaw, &activeInt); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo "+table)
@@ -185,10 +185,10 @@ func (s *Server) handleBOMenuDishCreate(w http.ResponseWriter, r *http.Request, 
 }
 
 type boMenuDishPatchRequest struct {
-	Tipo        *string  `json:"tipo,omitempty"`
-	Descripcion *string  `json:"descripcion,omitempty"`
+	Tipo        *string   `json:"tipo,omitempty"`
+	Descripcion *string   `json:"descripcion,omitempty"`
 	Alergenos   *[]string `json:"alergenos,omitempty"`
-	Active      *bool    `json:"active,omitempty"`
+	Active      *bool     `json:"active,omitempty"`
 }
 
 func (s *Server) handleBOMenuDiaDishPatch(w http.ResponseWriter, r *http.Request) {
@@ -407,4 +407,3 @@ func (s *Server) handleBOMenuSetPrice(w http.ResponseWriter, r *http.Request, ta
 		"price":   price,
 	})
 }
-

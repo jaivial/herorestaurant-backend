@@ -71,11 +71,11 @@ func (s *Server) restaurantFallbackEmail(ctx context.Context, restaurantID int) 
 }
 
 type restaurantIntegrationsCfg struct {
-	N8nWebhookURL              string
-	EnabledEvents              []string
-	UazapiURL                  string
-	UazapiToken                string
-	RestaurantWhatsappNumbers  []string
+	N8nWebhookURL             string
+	EnabledEvents             []string
+	UazapiURL                 string
+	UazapiToken               string
+	RestaurantWhatsappNumbers []string
 }
 
 func (s *Server) loadProvisionedUAZAPICredentials(ctx context.Context, restaurantID int) (uazURL string, uazToken string, err error) {

@@ -77,10 +77,10 @@ func (s *Server) handleBOMenuVisibilityGet(w http.ResponseWriter, r *http.Reques
 	var out []boMenuVisibilityItem
 	for rows.Next() {
 		var (
-			key      string
-			name     string
-			active   int
-			updated  sql.NullString
+			key     string
+			name    string
+			active  int
+			updated sql.NullString
 		)
 		if err := rows.Scan(&key, &name, &active, &updated); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo menu_visibility")
@@ -160,4 +160,3 @@ func (s *Server) handleBOMenuVisibilitySet(w http.ResponseWriter, r *http.Reques
 		"isActive": req.IsActive,
 	})
 }
-

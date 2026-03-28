@@ -510,6 +510,24 @@ Query params:
 Response:
 - `{ success: true, bookings: Booking[] }`
 
+### `GET /api/admin/bookings/search`
+Cross-date general booking search by name/email and phone.
+
+Auth: `bo_session` cookie + `reservas` section.
+
+Query params:
+- `name` (optional string) — partial match on `customer_name` and `contact_email` (`LIKE '%name%'`)
+- `phone` (optional string) — prefix match on `contact_phone` (digits only, `LIKE 'digits%'`)
+- `page` (optional int, default 1)
+- `count` (optional int, default 15, max 100)
+
+At least one of `name` or `phone` must be non-empty; otherwise returns empty results.
+
+Response shape is identical to `GET /api/admin/bookings`:
+- `{ success: true, bookings: Booking[], floors: [], total_count: number, total: number, page: number, count: number }`
+- `floors` is always an empty array (cross-date search has no single-day floor context).
+- Results ordered by `reservation_date DESC, reservation_time DESC, id DESC`.
+
 ### `GET /api/admin/bookings/{id}`
 Response:
 - `{ success: true, booking: Booking }`

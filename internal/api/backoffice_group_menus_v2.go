@@ -916,7 +916,7 @@ func (s *Server) handleBOGroupMenusV2GetSectionDishes(w http.ResponseWriter, r *
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
-		"dishes": dishes,
+		"dishes":  dishes,
 	})
 }
 
@@ -2445,13 +2445,11 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "imageUrl": imageURL, "filename": header.Filename})
 }
 
-
-
 type boV2MenuSliderImage struct {
-	ID         int64  `json:"id"`
-	ImageURL   string `json:"image_url"`
-	Position   int    `json:"position"`
-	CreatedAt  string `json:"created_at"`
+	ID        int64  `json:"id"`
+	ImageURL  string `json:"image_url"`
+	Position  int    `json:"position"`
+	CreatedAt string `json:"created_at"`
 }
 
 type boV2MenuSlider struct {
@@ -2524,7 +2522,7 @@ func (s *Server) handleBOGroupMenusV2GetSlider(w http.ResponseWriter, r *http.Re
 		"success": true,
 		"slider": boV2MenuSlider{
 			ShowSlider: showSliderInt != 0,
-			Images:    images,
+			Images:     images,
 		},
 	})
 }
@@ -2572,7 +2570,7 @@ func (s *Server) handleBOGroupMenusV2PatchSlider(w http.ResponseWriter, r *http.
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":    true,
+		"success":     true,
 		"show_slider": showSlider,
 	})
 }
@@ -2946,8 +2944,8 @@ func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AIMenuPreview
 	`, job.MenuID, job.RestaurantID)
 
 	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "slider_image_completed", map[string]any{
-		"image_id":   imageIDDB,
-		"image_url":  s.bunnyPullURL(objectPath),
+		"image_id":    imageIDDB,
+		"image_url":   s.bunnyPullURL(objectPath),
 		"show_slider": true,
 	})
 }

@@ -216,7 +216,12 @@ func (s *Server) handleFetchBookings(w http.ResponseWriter, r *http.Request) {
 		"bookings":    bookings,
 		"totalPeople": totalPeople,
 		"count":       len(bookings),
-		"page":        func() int { if all { return 1 }; return page }(),
+		"page": func() int {
+			if all {
+				return 1
+			}
+			return page
+		}(),
 		"page_size": func() int {
 			if all {
 				return totalCount
@@ -224,8 +229,13 @@ func (s *Server) handleFetchBookings(w http.ResponseWriter, r *http.Request) {
 			return pageSize
 		}(),
 		"total_count": totalCount,
-		"total_pages": func() int { if all { return 1 }; return totalPages }(),
-		"is_all":      all,
+		"total_pages": func() int {
+			if all {
+				return 1
+			}
+			return totalPages
+		}(),
+		"is_all": all,
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
@@ -276,19 +286,19 @@ func (s *Server) handleGetBooking(w http.ResponseWriter, r *http.Request) {
 	`, restaurantID, id)
 
 	var (
-		bookingID int
-		resDate string
-		name string
-		partySize int
-		baby sql.NullInt64
-		chairs sql.NullInt64
-		resTime string
-		phone sql.NullString
-		email sql.NullString
-		arrozType sql.NullString
-		arrozServ sql.NullString
+		bookingID  int
+		resDate    string
+		name       string
+		partySize  int
+		baby       sql.NullInt64
+		chairs     sql.NullInt64
+		resTime    string
+		phone      sql.NullString
+		email      sql.NullString
+		arrozType  sql.NullString
+		arrozServ  sql.NullString
 		commentary sql.NullString
-		added sql.NullString
+		added      sql.NullString
 	)
 
 	if err := row.Scan(&bookingID, &resDate, &name, &partySize, &baby, &chairs, &resTime, &phone, &email, &arrozType, &arrozServ, &commentary, &added); err != nil {
@@ -681,26 +691,26 @@ func (s *Server) handleGetReservations(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var (
-		fechas []string
-		nombres []string
-		personas []int
-		horas []string
-		emails []string
-		telefonos []string
+		fechas      []string
+		nombres     []string
+		personas    []int
+		horas       []string
+		emails      []string
+		telefonos   []string
 		comentarios []string
-		ids []int
+		ids         []int
 	)
 
 	for rows.Next() {
 		var (
 			customerName string
 			contactEmail sql.NullString
-			resDate string
-			resTime string
-			partySize int
-			phone sql.NullString
-			comment sql.NullString
-			id int
+			resDate      string
+			resTime      string
+			partySize    int
+			phone        sql.NullString
+			comment      sql.NullString
+			id           int
 		)
 		if err := rows.Scan(&customerName, &contactEmail, &resDate, &resTime, &partySize, &phone, &comment, &id); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": err.Error()})
@@ -777,21 +787,21 @@ func (s *Server) handleFetchCancelledBookings(w http.ResponseWriter, r *http.Req
 	var staff []map[string]any
 	for rows.Next() {
 		var (
-			id int
-			bookingID int
-			resDate string
-			partySize int
-			resTime string
+			id           int
+			bookingID    int
+			resDate      string
+			partySize    int
+			resTime      string
 			customerName string
-			phone string
-			email sql.NullString
-			comment sql.NullString
-			arrozType sql.NullString
-			arrozServ sql.NullString
-			baby sql.NullInt64
-			chairs sql.NullInt64
-			cancelDate sql.NullString
-			cancelledBy sql.NullString
+			phone        string
+			email        sql.NullString
+			comment      sql.NullString
+			arrozType    sql.NullString
+			arrozServ    sql.NullString
+			baby         sql.NullInt64
+			chairs       sql.NullInt64
+			cancelDate   sql.NullString
+			cancelledBy  sql.NullString
 		)
 		if err := rows.Scan(&id, &bookingID, &resDate, &partySize, &resTime, &customerName, &phone, &email, &comment, &arrozType, &arrozServ, &baby, &chairs, &cancelDate, &cancelledBy); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error fetching cancelled bookings: " + err.Error()})
@@ -799,21 +809,21 @@ func (s *Server) handleFetchCancelledBookings(w http.ResponseWriter, r *http.Req
 		}
 
 		row := map[string]any{
-			"id":               id,
-			"booking_id":       bookingID,
-			"reservation_date": resDate,
-			"party_size":       partySize,
-			"reservation_time": resTime,
-			"customer_name":    customerName,
-			"contact_phone":    phone,
-			"contact_email":    email.String,
-			"commentary":       comment.String,
-			"arroz_type":       nullStringOrNil(arrozType),
-			"arroz_servings":   nullStringOrNil(arrozServ),
-			"babyStrollers":    nullIntToInt(baby),
-			"highChairs":       nullIntToInt(chairs),
+			"id":                id,
+			"booking_id":        bookingID,
+			"reservation_date":  resDate,
+			"party_size":        partySize,
+			"reservation_time":  resTime,
+			"customer_name":     customerName,
+			"contact_phone":     phone,
+			"contact_email":     email.String,
+			"commentary":        comment.String,
+			"arroz_type":        nullStringOrNil(arrozType),
+			"arroz_servings":    nullStringOrNil(arrozServ),
+			"babyStrollers":     nullIntToInt(baby),
+			"highChairs":        nullIntToInt(chairs),
 			"cancellation_date": cancelDate.String,
-			"cancelled_by":     cancelledBy.String,
+			"cancelled_by":      cancelledBy.String,
 		}
 
 		if cancelledBy.String == "staff" {
@@ -859,20 +869,20 @@ func (s *Server) handleReactivateBooking(w http.ResponseWriter, r *http.Request)
 	defer func() { _ = tx.Rollback() }()
 
 	var (
-		resDate string
-		partySize int
-		resTime string
+		resDate      string
+		partySize    int
+		resTime      string
 		customerName string
-		phone string
-		email sql.NullString
-		comment sql.NullString
-		arrozType sql.NullString
-		arrozServ sql.NullString
-		baby sql.NullInt64
-		chairs sql.NullInt64
-		specialMenu sql.NullInt64
-		menuID sql.NullInt64
-		principales sql.NullString
+		phone        string
+		email        sql.NullString
+		comment      sql.NullString
+		arrozType    sql.NullString
+		arrozServ    sql.NullString
+		baby         sql.NullInt64
+		chairs       sql.NullInt64
+		specialMenu  sql.NullInt64
+		menuID       sql.NullInt64
+		principales  sql.NullString
 	)
 
 	err = tx.QueryRowContext(ctx, `

@@ -128,12 +128,12 @@ func (s *Server) handleGetBookingAvailabilityContext(w http.ResponseWriter, r *h
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":          true,
-		"summary":          summary,
-		"availableDates":   availableDates,
-		"unavailableDates": unavailableDates,
-		"closedDays":       closedDays,
+		"success":           true,
+		"summary":           summary,
+		"availableDates":    availableDates,
+		"unavailableDates":  unavailableDates,
+		"closedDays":        closedDays,
 		"dailyAvailability": dailyAvailability,
-		"message":          "Booking availability context retrieved successfully",
+		"message":           "Booking availability context retrieved successfully",
 	})
 }

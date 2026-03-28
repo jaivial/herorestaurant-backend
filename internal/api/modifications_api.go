@@ -226,10 +226,10 @@ func (s *Server) computeAvailableHoursForPartySize(r *http.Request, date string,
 
 func (s *Server) handleCheckDateAvailability(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		NewDate      string `json:"newDate"`
-		PartySize    *int   `json:"partySize"`
-		CurrentTime  string `json:"currentTime"`
-		BookingID    *int   `json:"bookingId"`
+		NewDate     string `json:"newDate"`
+		PartySize   *int   `json:"partySize"`
+		CurrentTime string `json:"currentTime"`
+		BookingID   *int   `json:"bookingId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -279,11 +279,11 @@ func (s *Server) handleCheckDateAvailability(w http.ResponseWriter, r *http.Requ
 	if t, err := time.ParseInLocation("2006-01-02", newDate, time.Local); err == nil {
 		if special[t.Format("01-02")] {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success":        true,
-				"available":      false,
+				"success":         true,
+				"available":       false,
 				"hasAvailability": false,
-				"message":        "Uy, esos días festivos (24, 25 y 31 de diciembre, 1, 5 y 6 de enero) tienen un menú especial y no se pueden modificar reservas. ¿Prefieres otro día? 😊",
-				"reason":         "special_holiday",
+				"message":         "Uy, esos días festivos (24, 25 y 31 de diciembre, 1, 5 y 6 de enero) tienen un menú especial y no se pueden modificar reservas. ¿Prefieres otro día? 😊",
+				"reason":          "special_holiday",
 			})
 			return
 		}
@@ -297,23 +297,23 @@ func (s *Server) handleCheckDateAvailability(w http.ResponseWriter, r *http.Requ
 			formatted = newDate
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success":        true,
-			"available":      false,
+			"success":         true,
+			"available":       false,
 			"hasAvailability": false,
-			"message":        "Ese día (" + formatted + ") estamos cerrados. ¿Qué tal otro día? Abrimos jueves, viernes, sábado y domingo 😊",
-			"reason":         "closed_day",
+			"message":         "Ese día (" + formatted + ") estamos cerrados. ¿Qué tal otro día? Abrimos jueves, viernes, sábado y domingo 😊",
+			"reason":          "closed_day",
 		})
 		return
 	}
 
 	if tooFar, daysUntil := dateTooFarInFuture(newDate); tooFar {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success":        true,
-			"available":      false,
+			"success":         true,
+			"available":       false,
 			"hasAvailability": false,
-			"message":        "Uy, esa fecha está muy lejos todavía (más de 35 días). Solo aceptamos reservas con un máximo de 35 días de antelación. ¿Qué tal una fecha más cercana? 😊",
-			"reason":         "too_far_future",
-			"daysUntil":      daysUntil,
+			"message":         "Uy, esa fecha está muy lejos todavía (más de 35 días). Solo aceptamos reservas con un máximo de 35 días de antelación. ¿Qué tal una fecha más cercana? 😊",
+			"reason":          "too_far_future",
+			"daysUntil":       daysUntil,
 		})
 		return
 	}
@@ -326,12 +326,12 @@ func (s *Server) handleCheckDateAvailability(w http.ResponseWriter, r *http.Requ
 			formatted = newDate
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success":           true,
-			"available":         true,
-			"hasAvailability":   true,
-			"message":           "El día " + formatted + " está disponible para reservas 😊",
-			"reason":            "date_open",
-			"simpleCheck":       true,
+			"success":            true,
+			"available":          true,
+			"hasAvailability":    true,
+			"message":            "El día " + formatted + " está disponible para reservas 😊",
+			"reason":             "date_open",
+			"simpleCheck":        true,
 			"isExplicitlyOpened": openedDays[newDate],
 		})
 		return
@@ -356,12 +356,12 @@ func (s *Server) handleCheckDateAvailability(w http.ResponseWriter, r *http.Requ
 			formatted = newDate
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success":        true,
-			"available":      false,
+			"success":         true,
+			"available":       false,
 			"hasAvailability": false,
-			"message":        "Ay, lo siento 😔 Ese día (" + formatted + ") no tengo ninguna mesa libre para " + strconv.Itoa(partySize) + " personas. ¿Te vendría bien otro día?",
-			"reason":         "no_hours_available",
-			"availableHours": []availableHour{},
+			"message":         "Ay, lo siento 😔 Ese día (" + formatted + ") no tengo ninguna mesa libre para " + strconv.Itoa(partySize) + " personas. ¿Te vendría bien otro día?",
+			"reason":          "no_hours_available",
+			"availableHours":  []availableHour{},
 		})
 		return
 	}
@@ -406,13 +406,13 @@ func (s *Server) handleCheckDateAvailability(w http.ResponseWriter, r *http.Requ
 				formatted = newDate
 			}
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success":        true,
-				"available":      false,
+				"success":         true,
+				"available":       false,
 				"hasAvailability": false,
-				"message":        "Ay, qué pena 😔 Ese día (" + formatted + ") ya estamos completos para grupos de " + strconv.Itoa(partySize) + " personas. ¿Te viene bien otro día?",
-				"reason":         "capacity_exceeded_new_date",
-				"dailyLimit":     dailyLimit,
-				"currentTotal":   currentTotal,
+				"message":         "Ay, qué pena 😔 Ese día (" + formatted + ") ya estamos completos para grupos de " + strconv.Itoa(partySize) + " personas. ¿Te viene bien otro día?",
+				"reason":          "capacity_exceeded_new_date",
+				"dailyLimit":      dailyLimit,
+				"currentTotal":    currentTotal,
 			})
 			return
 		}
@@ -427,12 +427,12 @@ func (s *Server) handleCheckDateAvailability(w http.ResponseWriter, r *http.Requ
 
 	if currentTime != "" && currentTimeAvailable {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success":            true,
-			"available":          true,
-			"hasAvailability":    true,
+			"success":              true,
+			"available":            true,
+			"hasAvailability":      true,
 			"currentTimeAvailable": true,
-			"message":            "¡Perfecto! 😊 Hay disponibilidad para " + strconv.Itoa(partySize) + " personas el " + formatted + " a las " + currentTime,
-			"availableHours":     availableHours,
+			"message":              "¡Perfecto! 😊 Hay disponibilidad para " + strconv.Itoa(partySize) + " personas el " + formatted + " a las " + currentTime,
+			"availableHours":       availableHours,
 		})
 		return
 	}
@@ -446,13 +446,13 @@ func (s *Server) handleCheckDateAvailability(w http.ResponseWriter, r *http.Requ
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":             true,
-		"available":           true,
-		"hasAvailability":     true,
+		"success":              true,
+		"available":            true,
+		"hasAvailability":      true,
 		"currentTimeAvailable": false,
-		"message":             message,
-		"reason":              "current_time_not_available",
-		"availableHours":      availableHours,
+		"message":              message,
+		"reason":               "current_time_not_available",
+		"availableHours":       availableHours,
 	})
 }
 
@@ -695,21 +695,21 @@ func (s *Server) handleValidateBookingModifiable(w http.ResponseWriter, r *http.
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":               true,
-		"modifiable":            true,
-		"message":               "Reserva puede ser modificada",
+		"success":                true,
+		"modifiable":             true,
+		"message":                "Reserva puede ser modificada",
 		"modificationsRemaining": 3 - modCount,
-		"hoursUntilReservation": hoursUntil,
+		"hoursUntilReservation":  hoursUntil,
 	})
 }
 
 func (s *Server) handleSaveModificationHistory(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		BookingID      int    `json:"bookingId"`
-		CustomerPhone  string `json:"customerPhone"`
-		FieldModified  string `json:"fieldModified"`
-		OldValue       string `json:"oldValue"`
-		NewValue       string `json:"newValue"`
+		BookingID     int    `json:"bookingId"`
+		CustomerPhone string `json:"customerPhone"`
+		FieldModified string `json:"fieldModified"`
+		OldValue      string `json:"oldValue"`
+		NewValue      string `json:"newValue"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -864,11 +864,11 @@ func (s *Server) handleUpdateReservation(w http.ResponseWriter, r *http.Request)
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":  true,
-		"message":  "Reservation updated successfully",
+		"success":   true,
+		"message":   "Reservation updated successfully",
 		"bookingId": input.BookingID,
-		"field":    field,
-		"value":    json.RawMessage(input.Value),
+		"field":     field,
+		"value":     json.RawMessage(input.Value),
 	})
 }
 
@@ -883,12 +883,12 @@ func (s *Server) handleNotifyRestaurantModification(w http.ResponseWriter, r *ht
 	}
 
 	var input struct {
-		BookingID      int    `json:"bookingId"`
-		CustomerName   string `json:"customerName"`
-		CustomerPhone  string `json:"customerPhone"`
-		FieldModified  string `json:"fieldModified"`
-		OldValue       string `json:"oldValue"`
-		NewValue       string `json:"newValue"`
+		BookingID     int    `json:"bookingId"`
+		CustomerName  string `json:"customerName"`
+		CustomerPhone string `json:"customerPhone"`
+		FieldModified string `json:"fieldModified"`
+		OldValue      string `json:"oldValue"`
+		NewValue      string `json:"newValue"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{

@@ -17,32 +17,32 @@ import (
 
 // SiteBuilderSites represents a website builder site
 type SiteBuilderSites struct {
-	ID                 string                  `json:"id"`
-	RestaurantID       int                     `json:"restaurant_id"`
-	Name               string                  `json:"name"`
-	Subdomain          string                  `json:"subdomain"`
-	CustomDomain       *string                 `json:"custom_domain"`
-	ThemeConfig        *json.RawMessage        `json:"theme_config"`
-	Status             string                  `json:"status"`
-	PublishedVersionID *string                 `json:"published_version_id"`
-	Settings           *json.RawMessage        `json:"settings"`
-	CreatedAt          time.Time               `json:"created_at"`
-	UpdatedAt          time.Time               `json:"updated_at"`
+	ID                 string           `json:"id"`
+	RestaurantID       int              `json:"restaurant_id"`
+	Name               string           `json:"name"`
+	Subdomain          string           `json:"subdomain"`
+	CustomDomain       *string          `json:"custom_domain"`
+	ThemeConfig        *json.RawMessage `json:"theme_config"`
+	Status             string           `json:"status"`
+	PublishedVersionID *string          `json:"published_version_id"`
+	Settings           *json.RawMessage `json:"settings"`
+	CreatedAt          time.Time        `json:"created_at"`
+	UpdatedAt          time.Time        `json:"updated_at"`
 }
 
 // SiteBuilderPages represents a page within a site
 type SiteBuilderPages struct {
-	ID                 string           `json:"id"`
-	SiteID             string           `json:"site_id"`
-	Slug               string           `json:"slug"`
-	Name               string           `json:"name"`
-	PageType           string           `json:"page_type"`
-	Tree               *json.RawMessage `json:"tree"`
-	SEOConfig          *json.RawMessage `json:"seo_config"`
-	CollectionBinding  *json.RawMessage `json:"collection_binding"`
-	IsHome             bool             `json:"is_home"`
-	CreatedAt          time.Time        `json:"created_at"`
-	UpdatedAt          time.Time        `json:"updated_at"`
+	ID                string           `json:"id"`
+	SiteID            string           `json:"site_id"`
+	Slug              string           `json:"slug"`
+	Name              string           `json:"name"`
+	PageType          string           `json:"page_type"`
+	Tree              *json.RawMessage `json:"tree"`
+	SEOConfig         *json.RawMessage `json:"seo_config"`
+	CollectionBinding *json.RawMessage `json:"collection_binding"`
+	IsHome            bool             `json:"is_home"`
+	CreatedAt         time.Time        `json:"created_at"`
+	UpdatedAt         time.Time        `json:"updated_at"`
 }
 
 // SiteBuilderAssets represents an uploaded asset
@@ -81,19 +81,19 @@ type SiteBuilderVersions struct {
 
 // SiteBuilderComponentRegistry represents a component definition
 type SiteBuilderComponentRegistry struct {
-	ID            int              `json:"id"`
-	Type          string           `json:"type"`
-	Category      string           `json:"category"`
-	Label         string           `json:"label"`
-	Description   *string          `json:"description"`
-	PropsSchema   *json.RawMessage `json:"props_schema"`
-	StyleSchema   *json.RawMessage `json:"style_schema"`
+	ID             int              `json:"id"`
+	Type           string           `json:"type"`
+	Category       string           `json:"category"`
+	Label          string           `json:"label"`
+	Description    *string          `json:"description"`
+	PropsSchema    *json.RawMessage `json:"props_schema"`
+	StyleSchema    *json.RawMessage `json:"style_schema"`
 	BindingsSchema *json.RawMessage `json:"bindings_schema"`
-	NestingRules  *json.RawMessage `json:"nesting_rules"`
-	Icon          *string          `json:"icon"`
-	ThumbnailURL  *string          `json:"thumbnail_url"`
-	IsActive      bool             `json:"is_active"`
-	SortOrder     int              `json:"sort_order"`
+	NestingRules   *json.RawMessage `json:"nesting_rules"`
+	Icon           *string          `json:"icon"`
+	ThumbnailURL   *string          `json:"thumbnail_url"`
+	IsActive       bool             `json:"is_active"`
+	SortOrder      int              `json:"sort_order"`
 }
 
 // SiteBuilderBindings represents a data binding
@@ -111,33 +111,33 @@ type SiteBuilderBindings struct {
 
 // SiteBuilderPublishQueue represents a publish job
 type SiteBuilderPublishQueue struct {
-	ID           string      `json:"id"`
-	SiteID       string      `json:"site_id"`
-	VersionID    string      `json:"version_id"`
-	Action       string      `json:"action"`
-	Status       string      `json:"status"`
-	Progress     int         `json:"progress"`
-	TotalSteps   int         `json:"total_steps"`
-	ErrorMessage *string     `json:"error_message"`
-	StartedAt    *time.Time  `json:"started_at"`
-	CompletedAt  *time.Time  `json:"completed_at"`
-	CreatedAt    time.Time   `json:"created_at"`
+	ID           string     `json:"id"`
+	SiteID       string     `json:"site_id"`
+	VersionID    string     `json:"version_id"`
+	Action       string     `json:"action"`
+	Status       string     `json:"status"`
+	Progress     int        `json:"progress"`
+	TotalSteps   int        `json:"total_steps"`
+	ErrorMessage *string    `json:"error_message"`
+	StartedAt    *time.Time `json:"started_at"`
+	CompletedAt  *time.Time `json:"completed_at"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 // SiteBuilderDomainMappings represents a custom domain
 type SiteBuilderDomainMappings struct {
-	ID                string      `json:"id"`
-	SiteID            string      `json:"site_id"`
-	Domain            string      `json:"domain"`
-	IsPrimary         bool        `json:"is_primary"`
-	VerificationToken *string     `json:"verification_token"`
+	ID                 string     `json:"id"`
+	SiteID             string     `json:"site_id"`
+	Domain             string     `json:"domain"`
+	IsPrimary          bool       `json:"is_primary"`
+	VerificationToken  *string    `json:"verification_token"`
 	VerificationMethod *string    `json:"verification_method"`
-	Status            string      `json:"status"`
-	SSLStatus         string      `json:"ssl_status"`
-	ErrorMessage      *string     `json:"error_message"`
-	VerifiedAt        *time.Time  `json:"verified_at"`
-	CreatedAt         time.Time   `json:"created_at"`
-	UpdatedAt         time.Time   `json:"updated_at"`
+	Status             string     `json:"status"`
+	SSLStatus          string     `json:"ssl_status"`
+	ErrorMessage       *string    `json:"error_message"`
+	VerifiedAt         *time.Time `json:"verified_at"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 // RegisterSiteBuilderRoutes registers all site builder API routes
@@ -1045,8 +1045,8 @@ func handleCreateVersion(db *sql.DB) http.HandlerFunc {
 		}
 
 		httpx.WriteJSON(w, http.StatusCreated, map[string]interface{}{
-			"success":       true,
-			"id":            id,
+			"success":        true,
+			"id":             id,
 			"version_number": maxVersion + 1,
 		})
 	}
@@ -1297,9 +1297,9 @@ func handleUpdateBinding(db *sql.DB) http.HandlerFunc {
 		}
 
 		var input struct {
-			QueryConfig  *json.RawMessage `json:"query_config"`
-			RefreshMode  *string          `json:"refresh_mode"`
-			CacheTTL     *int             `json:"cache_ttl"`
+			QueryConfig *json.RawMessage `json:"query_config"`
+			RefreshMode *string          `json:"refresh_mode"`
+			CacheTTL    *int             `json:"cache_ttl"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -1462,10 +1462,10 @@ func handlePublishSite(db *sql.DB) http.HandlerFunc {
 		// This would be done via a background job/queue
 
 		httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{
-			"success":       true,
-			"version_id":    versionID,
+			"success":        true,
+			"version_id":     versionID,
 			"version_number": maxVersion + 1,
-			"message":       "Site published successfully",
+			"message":        "Site published successfully",
 		})
 	}
 }
@@ -1606,8 +1606,8 @@ func handleCreateDomain(db *sql.DB) http.HandlerFunc {
 		}
 
 		httpx.WriteJSON(w, http.StatusCreated, map[string]interface{}{
-			"success":           true,
-			"id":                id,
+			"success":            true,
+			"id":                 id,
 			"verification_token": verificationToken,
 			"verification_instructions": map[string]string{
 				"type":  "TXT",

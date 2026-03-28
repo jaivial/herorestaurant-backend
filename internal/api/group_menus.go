@@ -75,13 +75,13 @@ func (s *Server) handleGetAllGroupMenus(w http.ResponseWriter, r *http.Request) 
 		}
 
 		menus = append(menus, map[string]any{
-			"id":             id,
-			"menu_title":     title,
-			"price":          price,
+			"id":              id,
+			"menu_title":      title,
+			"price":           price,
 			"included_coffee": includedCoffee != 0,
-			"active":         active != 0,
-			"created_at":     createdAt.String,
-			"modified_at":    modifiedAt.String,
+			"active":          active != 0,
+			"created_at":      createdAt.String,
+			"modified_at":     modifiedAt.String,
 		})
 	}
 
@@ -122,10 +122,10 @@ func (s *Server) handleGetGroupMenu(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var (
-		menuTitle string
-		price     string
-		inclCoffee int
-		active    int
+		menuTitle    string
+		price        string
+		inclCoffee   int
+		active       int
 		menuSubtitle sql.NullString
 		entrantes    sql.NullString
 		principales  sql.NullString
@@ -173,22 +173,22 @@ func (s *Server) handleGetGroupMenu(w http.ResponseWriter, r *http.Request) {
 	}
 
 	menu := map[string]any{
-		"id":                      id,
-		"menu_title":              menuTitle,
-		"price":                   price,
-		"included_coffee":         inclCoffee != 0,
-		"active":                  active != 0,
-		"menu_subtitle":           decodeJSONOrFallback(menuSubtitle.String, []any{}),
-		"entrantes":               decodeJSONOrFallback(entrantes.String, []any{}),
-		"principales":             decodeJSONOrFallback(principales.String, map[string]any{}),
-		"postre":                  decodeJSONOrFallback(postre.String, []any{}),
-		"beverage":                decodeJSONOrFallback(beverage.String, map[string]any{}),
-		"comments":                decodeJSONOrFallback(comments.String, []any{}),
-		"min_party_size":          minPartySize,
-		"main_dishes_limit":       mainLimit != 0,
+		"id":                       id,
+		"menu_title":               menuTitle,
+		"price":                    price,
+		"included_coffee":          inclCoffee != 0,
+		"active":                   active != 0,
+		"menu_subtitle":            decodeJSONOrFallback(menuSubtitle.String, []any{}),
+		"entrantes":                decodeJSONOrFallback(entrantes.String, []any{}),
+		"principales":              decodeJSONOrFallback(principales.String, map[string]any{}),
+		"postre":                   decodeJSONOrFallback(postre.String, []any{}),
+		"beverage":                 decodeJSONOrFallback(beverage.String, map[string]any{}),
+		"comments":                 decodeJSONOrFallback(comments.String, []any{}),
+		"min_party_size":           minPartySize,
+		"main_dishes_limit":        mainLimit != 0,
 		"main_dishes_limit_number": mainLimitNum,
-		"created_at":              createdAt.String,
-		"modified_at":             modifiedAt.String,
+		"created_at":               createdAt.String,
+		"modified_at":              modifiedAt.String,
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -284,9 +284,9 @@ func (s *Server) handleAddGroupMenu(w http.ResponseWriter, r *http.Request) {
 
 	menuID, _ := res.LastInsertId()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"message":   "Menu created successfully.",
-		"menu_id":   menuID,
+		"success":    true,
+		"message":    "Menu created successfully.",
+		"menu_id":    menuID,
 		"menu_title": menuTitle,
 	})
 }
@@ -414,9 +414,9 @@ func (s *Server) handleUpdateGroupMenu(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"message":   "Menu updated successfully.",
-		"menu_id":   id,
+		"success":    true,
+		"message":    "Menu updated successfully.",
+		"menu_id":    id,
 		"menu_title": menuTitle,
 	})
 }
@@ -481,8 +481,8 @@ func (s *Server) handleToggleGroupMenuActive(w http.ResponseWriter, r *http.Requ
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"message": "Menu status updated successfully.",
-		"menu_id":  id,
-		"active":   newStatus != 0,
+		"menu_id": id,
+		"active":  newStatus != 0,
 	})
 }
 
@@ -539,9 +539,9 @@ func (s *Server) handleDeleteGroupMenu(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"message":   "Menu deleted successfully.",
-		"menu_id":   id,
+		"success":    true,
+		"message":    "Menu deleted successfully.",
+		"menu_id":    id,
 		"menu_title": title,
 	})
 }
@@ -588,10 +588,10 @@ func (s *Server) handleGetActiveGroupMenusForDisplay(w http.ResponseWriter, r *h
 	var menus []map[string]any
 	for rows.Next() {
 		var (
-			id int
-			title string
-			price float64
-			inclCoffee int
+			id           int
+			title        string
+			price        float64
+			inclCoffee   int
 			menuSubtitle sql.NullString
 			entrantes    sql.NullString
 			principales  sql.NullString
@@ -628,20 +628,20 @@ func (s *Server) handleGetActiveGroupMenusForDisplay(w http.ResponseWriter, r *h
 		}
 
 		menu := map[string]any{
-			"id":               id,
-			"menu_title":       title,
-			"price":            price,
-			"included_coffee":  inclCoffee != 0,
-			"menu_subtitle":    decode(menuSubtitle, []any{}),
-			"entrantes":        decode(entrantes, []any{}),
-			"principales":      decode(principales, map[string]any{"titulo_principales": "Principal a elegir", "items": []any{}}),
-			"postre":           decode(postre, []any{}),
-			"beverage":         decode(beverage, map[string]any{"type": "no_incluida", "price_per_person": nil}),
-			"comments":         decode(comments, []any{}),
-			"min_party_size":   minPartySize,
-			"main_dishes_limit": mainLimit != 0,
+			"id":                       id,
+			"menu_title":               title,
+			"price":                    price,
+			"included_coffee":          inclCoffee != 0,
+			"menu_subtitle":            decode(menuSubtitle, []any{}),
+			"entrantes":                decode(entrantes, []any{}),
+			"principales":              decode(principales, map[string]any{"titulo_principales": "Principal a elegir", "items": []any{}}),
+			"postre":                   decode(postre, []any{}),
+			"beverage":                 decode(beverage, map[string]any{"type": "no_incluida", "price_per_person": nil}),
+			"comments":                 decode(comments, []any{}),
+			"min_party_size":           minPartySize,
+			"main_dishes_limit":        mainLimit != 0,
 			"main_dishes_limit_number": mainLimitNum,
-			"created_at":       createdAt.String,
+			"created_at":               createdAt.String,
 		}
 		menus = append(menus, menu)
 	}

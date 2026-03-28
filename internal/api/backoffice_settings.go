@@ -12,10 +12,10 @@ import (
 )
 
 type boIntegrations struct {
-	N8nWebhookURL  string   `json:"n8nWebhookUrl"`
-	EnabledEvents  []string `json:"enabledEvents"`
-	UazapiURL      string   `json:"uazapiUrl"`
-	UazapiToken    string   `json:"uazapiToken"`
+	N8nWebhookURL             string   `json:"n8nWebhookUrl"`
+	EnabledEvents             []string `json:"enabledEvents"`
+	UazapiURL                 string   `json:"uazapiUrl"`
+	UazapiToken               string   `json:"uazapiToken"`
 	RestaurantWhatsappNumbers []string `json:"restaurantWhatsappNumbers"`
 }
 
@@ -65,10 +65,10 @@ func (s *Server) handleBOIntegrationsGet(w http.ResponseWriter, r *http.Request)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"integrations": boIntegrations{
-			N8nWebhookURL: strings.TrimSpace(webhook.String),
-			EnabledEvents: enabled,
-			UazapiURL:     strings.TrimSpace(uazURL.String),
-			UazapiToken:   strings.TrimSpace(uazToken.String),
+			N8nWebhookURL:             strings.TrimSpace(webhook.String),
+			EnabledEvents:             enabled,
+			UazapiURL:                 strings.TrimSpace(uazURL.String),
+			UazapiToken:               strings.TrimSpace(uazToken.String),
 			RestaurantWhatsappNumbers: restaurantNumbers,
 		},
 	})
@@ -134,10 +134,10 @@ func (s *Server) handleBOIntegrationsSet(w http.ResponseWriter, r *http.Request)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"integrations": boIntegrations{
-			N8nWebhookURL: webhook,
-			EnabledEvents: input.EnabledEvents,
-			UazapiURL:     uazURL,
-			UazapiToken:   uazToken,
+			N8nWebhookURL:             webhook,
+			EnabledEvents:             input.EnabledEvents,
+			UazapiURL:                 uazURL,
+			UazapiToken:               uazToken,
 			RestaurantWhatsappNumbers: input.RestaurantWhatsappNumbers,
 		},
 	})

@@ -12,6 +12,85 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
+type bookingRow struct {
+	ID              int
+	CustomerName    string
+	ContactEmail    string
+	ReservationDate string
+	ReservationTime string
+	PartySize       int
+	Children        int
+	ContactPhone    sql.NullString
+	ContactPhoneCC  sql.NullString
+	Status          sql.NullString
+	ArrozType       sql.NullString
+	ArrozServings   sql.NullString
+	Commentary      sql.NullString
+	BabyStrollers   sql.NullInt64
+	HighChairs      sql.NullInt64
+	TableNumber     sql.NullString
+	PreferredFloor  sql.NullInt64
+	AddedDate       sql.NullString
+	SpecialMenu     sql.NullInt64
+	MenuDeGrupoID   sql.NullInt64
+	PrincipalesJSON sql.NullString
+}
+
+func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
+	var b bookingRow
+	if err := rows.Scan(
+		&b.ID,
+		&b.CustomerName,
+		&b.ContactEmail,
+		&b.ReservationDate,
+		&b.ReservationTime,
+		&b.PartySize,
+		&b.Children,
+		&b.ContactPhone,
+		&b.ContactPhoneCC,
+		&b.Status,
+		&b.ArrozType,
+		&b.ArrozServings,
+		&b.Commentary,
+		&b.BabyStrollers,
+		&b.HighChairs,
+		&b.TableNumber,
+		&b.PreferredFloor,
+		&b.AddedDate,
+		&b.SpecialMenu,
+		&b.MenuDeGrupoID,
+		&b.PrincipalesJSON,
+	); err != nil {
+		return nil, false
+	}
+
+	isSpecialMenu := b.SpecialMenu.Valid && b.SpecialMenu.Int64 != 0
+
+	return map[string]any{
+		"id":                         b.ID,
+		"customer_name":              b.CustomerName,
+		"contact_email":              b.ContactEmail,
+		"reservation_date":           b.ReservationDate,
+		"reservation_time":           b.ReservationTime,
+		"party_size":                 b.PartySize,
+		"children":                   b.Children,
+		"contact_phone":              nullStringOrNil(b.ContactPhone),
+		"contact_phone_country_code": defaultString(b.ContactPhoneCC, "34"),
+		"status":                     defaultString(b.Status, "pending"),
+		"arroz_type":                 nullStringOrNil(b.ArrozType),
+		"arroz_servings":             nullStringOrNil(b.ArrozServings),
+		"commentary":                 nullStringOrNil(b.Commentary),
+		"babyStrollers":              nullInt64OrNil(b.BabyStrollers),
+		"highChairs":                 nullInt64OrNil(b.HighChairs),
+		"table_number":               nullStringOrNil(b.TableNumber),
+		"preferred_floor_number":     nullInt64OrNil(b.PreferredFloor),
+		"added_date":                 nullStringOrNil(b.AddedDate),
+		"special_menu":               isSpecialMenu,
+		"menu_de_grupo_id":           nullInt64OrNil(b.MenuDeGrupoID),
+		"principales_json":           nullStringOrNil(b.PrincipalesJSON),
+	}, true
+}
+
 func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -110,30 +189,6 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 		orderBy = "added_date " + dir + ", id " + dir
 	}
 
-	type row struct {
-		ID              int
-		CustomerName    string
-		ContactEmail    string
-		ReservationDate string
-		ReservationTime string
-		PartySize       int
-		Children        int
-		ContactPhone    sql.NullString
-		ContactPhoneCC  sql.NullString
-		Status          sql.NullString
-		ArrozType       sql.NullString
-		ArrozServings   sql.NullString
-		Commentary      sql.NullString
-		BabyStrollers   sql.NullInt64
-		HighChairs      sql.NullInt64
-		TableNumber     sql.NullString
-		PreferredFloor  sql.NullInt64
-		AddedDate       sql.NullString
-		SpecialMenu     sql.NullInt64
-		MenuDeGrupoID   sql.NullInt64
-		PrincipalesJSON sql.NullString
-	}
-
 	searchPrefixClause, searchPrefixArgs := buildBookingSearchPrefixClause(q)
 	searchFTClause, searchFTArgs, hasFTQuery := buildBookingSearchFulltextClause(q)
 	runQuery := func(useFulltext bool) ([]map[string]any, int, error) {
@@ -192,61 +247,11 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 
 		bookings := make([]map[string]any, 0)
 		for rows.Next() {
-			var b row
-			if err := rows.Scan(
-				&b.ID,
-				&b.CustomerName,
-				&b.ContactEmail,
-				&b.ReservationDate,
-				&b.ReservationTime,
-				&b.PartySize,
-				&b.Children,
-				&b.ContactPhone,
-				&b.ContactPhoneCC,
-				&b.Status,
-				&b.ArrozType,
-				&b.ArrozServings,
-				&b.Commentary,
-				&b.BabyStrollers,
-				&b.HighChairs,
-				&b.TableNumber,
-				&b.PreferredFloor,
-				&b.AddedDate,
-				&b.SpecialMenu,
-				&b.MenuDeGrupoID,
-				&b.PrincipalesJSON,
-			); err != nil {
-				return nil, 0, err
+			b, ok := scanBookingRow(rows)
+			if !ok {
+				return nil, 0, rows.Err()
 			}
-
-			isSpecialMenu := false
-			if b.SpecialMenu.Valid && b.SpecialMenu.Int64 != 0 {
-				isSpecialMenu = true
-			}
-
-			bookings = append(bookings, map[string]any{
-				"id":                         b.ID,
-				"customer_name":              b.CustomerName,
-				"contact_email":              b.ContactEmail,
-				"reservation_date":           b.ReservationDate,
-				"reservation_time":           b.ReservationTime,
-				"party_size":                 b.PartySize,
-				"children":                   b.Children,
-				"contact_phone":              nullStringOrNil(b.ContactPhone),
-				"contact_phone_country_code": defaultString(b.ContactPhoneCC, "34"),
-				"status":                     defaultString(b.Status, "pending"),
-				"arroz_type":                 nullStringOrNil(b.ArrozType),
-				"arroz_servings":             nullStringOrNil(b.ArrozServings),
-				"commentary":                 nullStringOrNil(b.Commentary),
-				"babyStrollers":              nullInt64OrNil(b.BabyStrollers),
-				"highChairs":                 nullInt64OrNil(b.HighChairs),
-				"table_number":               nullStringOrNil(b.TableNumber),
-				"preferred_floor_number":     nullInt64OrNil(b.PreferredFloor),
-				"added_date":                 nullStringOrNil(b.AddedDate),
-				"special_menu":               isSpecialMenu,
-				"menu_de_grupo_id":           nullInt64OrNil(b.MenuDeGrupoID),
-				"principales_json":           nullStringOrNil(b.PrincipalesJSON),
-			})
+			bookings = append(bookings, b)
 		}
 
 		return bookings, totalCount, rows.Err()

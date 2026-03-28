@@ -132,8 +132,8 @@ func (s *Server) handleNavidadBooking(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
-			"success": false,
-			"message": "Server error: " + err.Error(),
+			"success":    false,
+			"message":    "Server error: " + err.Error(),
 			"error_code": "PHP_EXCEPTION",
 		})
 		return
@@ -182,8 +182,8 @@ func (s *Server) handleNavidadBooking(w http.ResponseWriter, r *http.Request) {
 	uazURL, uazToken := s.uazapiBaseAndToken(r.Context(), restaurantID)
 	if uazURL == "" || uazToken == "" {
 		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"success": false,
-			"message": "El servicio de notificaciones no está disponible.",
+			"success":    false,
+			"message":    "El servicio de notificaciones no está disponible.",
 			"error_code": "NOTIFICATION_SERVICE_UNAVAILABLE",
 		})
 		return
