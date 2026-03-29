@@ -552,7 +552,8 @@ Body (JSON):
   - `arroz_servings` (number[])
 
 Response:
-- `{ success: true, booking: Booking }` (or `{ success: true, id: number }` best-effort)
+- `{ success: true, booking: Booking, notifications_sent: boolean, whatsapp_sent: boolean, email_sent: boolean }`
+- If WhatsApp/Email fail: includes `notification_warning` field with error details.
 - `{ success: false, message: string }`
 
 ### `PATCH /api/admin/bookings/{id}`
@@ -1686,8 +1687,19 @@ Form:
 Persistencia:
 - Inserta en `bookings` los datos básicos de la reserva, teléfono + prefijo, niños derivados de `adults`, accesorios, arroz, menú de grupo, `principales_json` y `preferred_floor_number`.
 
-Response:
-- `{ success: true, booking_id: number, notifications_sent: false, email_sent: false, whatsapp_sent: false }`
+Response (success):
+- `{ success: true, booking_id: number, message: "¡Reserva realizada con éxito!", notifications_sent: true, email_sent: boolean, whatsapp_sent: true }`
+
+Response (WhatsApp failed):
+- `{ success: false, message: "Error enviando confirmación por WhatsApp: ...", error_code: "WHATSAPP_FAILED", booking_id: number }` (HTTP 503)
+
+Response (Email failed):
+- `{ success: false, message: "Error enviando confirmación por email: ...", error_code: "EMAIL_FAILED", booking_id: number, whatsapp_sent: true }` (HTTP 503)
+
+Notificaciones:
+- Envía WhatsApp al cliente vía UAZAPI (botón con condiciones + cancelar). Requiere `uazapi_url` + `uazapi_token` en `restaurant_integrations` o env vars `UAZAPI_URL`/`UAZAPI_TOKEN`.
+- Envía email de confirmación al cliente y al restaurante vía SMTP. Requiere env vars `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`.
+- Ambas notificaciones son **síncronas y obligatorias**: si fallan, la reserva queda en BD pero se devuelve error al cliente.
 
 ### `GET /api/get_reservation_day_context.php?date=YYYY-MM-DD`
 Contexto operativo del día para el formulario público de reservas.
@@ -1702,8 +1714,10 @@ Response:
 Form:
 - `date`, `time`, `nombre`, `phone`, `special_menu`, etc.
 
-Response:
-- `{ success: true, booking_id: number, whatsapp_sent: false }`
+Response (success):
+- `{ success: true, booking_id: number, notifications_sent: true, email_sent: boolean, whatsapp_sent: true }`
+
+Response (WhatsApp/Email failed): Same error pattern as `POST /api/bookings/front`.
 
 ---
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -163,10 +164,41 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"booking": out,
-	})
+	// Send notifications (WhatsApp + Email). Booking is already committed.
+	// For backoffice, notification failure is reported as a warning in the response.
+	notifData := boBookingToNotificationData(booking, id)
+	var whatsappSent, emailSent bool
+	var notificationWarning string
+
+	if waErr := sendBookingWhatsAppToCustomer(r.Context(), s, a.ActiveRestaurantID, notifData, int64(id)); waErr != nil {
+		log.Printf("WhatsApp notification failed for backoffice booking #%d: %v", id, waErr)
+		notificationWarning = "WhatsApp: " + waErr.Error()
+	} else {
+		whatsappSent = true
+	}
+
+	if custSent, restSent, emErr := sendBookingConfirmationEmails(r.Context(), s, a.ActiveRestaurantID, notifData, int64(id)); emErr != nil {
+		log.Printf("Email notification failed for backoffice booking #%d: %v", id, emErr)
+		if notificationWarning != "" {
+			notificationWarning += "; "
+		}
+		notificationWarning += "Email: " + emErr.Error()
+	} else {
+		emailSent = custSent || restSent
+	}
+
+	resp := map[string]any{
+		"success":            true,
+		"booking":            out,
+		"notifications_sent": whatsappSent && emailSent,
+		"whatsapp_sent":      whatsappSent,
+		"email_sent":         emailSent,
+	}
+	if notificationWarning != "" {
+		resp["notification_warning"] = notificationWarning
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, resp)
 
 	s.emitN8nWebhookAsync(a.ActiveRestaurantID, "booking.created", map[string]any{
 		"source":               "backoffice",
@@ -1010,4 +1042,49 @@ func nullableInt64OrNil(n sql.NullInt64) any {
 		return nil
 	}
 	return n.Int64
+}
+
+// boBookingToNotificationData converts a normalized backoffice booking into a map
+// suitable for the notification dispatch functions.
+func boBookingToNotificationData(b boNormalizedBooking, id int) map[string]any {
+	arrozTypeVal := ""
+	if b.ArrozTypeJSON != nil {
+		arrozTypeVal, _ = b.ArrozTypeJSON.(string)
+	}
+	arrozServVal := ""
+	if b.ArrozServingsJSON != nil {
+		arrozServVal, _ = b.ArrozServingsJSON.(string)
+	}
+	commentaryVal := ""
+	if b.Commentary.Valid {
+		commentaryVal = b.Commentary.String
+	}
+	principalesVal := ""
+	if b.PrincipalesJSON != nil {
+		principalesVal, _ = b.PrincipalesJSON.(string)
+	}
+	toggleArroz := "false"
+	if arrozTypeVal != "" && !b.SpecialMenu {
+		toggleArroz = "true"
+	}
+
+	return map[string]any{
+		"booking_id":                 int64(id),
+		"reservation_date":           b.ReservationDate,
+		"reservation_time":           b.ReservationTime,
+		"party_size":                 b.PartySize,
+		"customer_name":              b.CustomerName,
+		"contact_phone":              b.ContactPhone,
+		"contact_phone_country_code": b.ContactPhoneCountryCode,
+		"contact_email":              b.ContactEmail,
+		"commentary":                 commentaryVal,
+		"arroz_type":                 arrozTypeVal,
+		"arroz_servings":             arrozServVal,
+		"baby_strollers":             b.BabyStrollers,
+		"high_chairs":                b.HighChairs,
+		"toggleArroz":                toggleArroz,
+		"special_menu":               b.SpecialMenu,
+		"menu_de_grupo_id":           b.MenuDeGrupoID,
+		"principales_json":           principalesVal,
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -210,14 +211,71 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	// Build booking data map for notifications.
+	bookingData := map[string]any{
+		"booking_id":                   bookingID,
+		"reservation_date":             resDate,
+		"reservation_time":             resTime,
+		"party_size":                   partySize,
+		"children":                     children,
+		"customer_name":                customerName,
+		"contact_phone":                nationalPhone,
+		"contact_phone_country_code":   cc,
+		"contact_email":                contactEmail,
+		"commentary":                   commentary,
+		"arroz_type":                   arrozTypeJSON,
+		"arroz_servings":               arrozServingsJSON,
+		"baby_strollers":               babyStrollers,
+		"high_chairs":                  highChairs,
+		"toggleArroz":                  toggleArroz,
+		"special_menu":                 specialMenu,
+		"menu_de_grupo_id":             menuDeGrupoID,
+		"principales_json":             principalesJSON,
+		"preferred_floor_number":       preferredFloorNumber,
+	}
+
+	// Send WhatsApp confirmation to customer (best-effort).
+	var whatsappSent bool
+	var whatsappWarning string
+	if err := sendBookingWhatsAppToCustomer(r.Context(), s, restaurantID, bookingData, bookingID); err != nil {
+		log.Printf("WhatsApp failed for booking #%d: %v", bookingID, err)
+		if strings.Contains(err.Error(), "is not on WhatsApp") {
+			whatsappWarning = "El número de teléfono no tiene servicio de WhatsApp."
+		} else {
+			whatsappWarning = "WhatsApp no pudo enviarse: " + err.Error()
+		}
+	} else {
+		whatsappSent = true
+	}
+
+	// Send confirmation emails (synchronous, required).
+	customerSent, restaurantSent, emailErr := sendBookingConfirmationEmails(r.Context(), s, restaurantID, bookingData, bookingID)
+	if emailErr != nil {
+		log.Printf("Email failed for booking #%d: %v", bookingID, emailErr)
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"success":        false,
+			"message":        "Error enviando confirmación por email: " + emailErr.Error(),
+			"error_code":     "EMAIL_FAILED",
+			"booking_id":     bookingID,
+			"whatsapp_sent":  whatsappSent,
+			"whatsapp_warning": whatsappWarning,
+		})
+		return
+	}
+
+	// Update response with actual notification status.
+	resp := map[string]any{
 		"success":            true,
 		"message":            "¡Reserva realizada con éxito!",
 		"booking_id":         bookingID,
-		"notifications_sent": false,
-		"email_sent":         false,
-		"whatsapp_sent":      false,
-	})
+		"notifications_sent": whatsappSent || customerSent || restaurantSent,
+		"email_sent":         customerSent || restaurantSent,
+		"whatsapp_sent":      whatsappSent,
+	}
+	if whatsappWarning != "" {
+		resp["whatsapp_warning"] = whatsappWarning
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 
 	s.emitN8nWebhookAsync(restaurantID, "booking.created", map[string]any{
 		"source":                  "front",
@@ -398,11 +456,68 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":       true,
-		"booking_id":    bookingID,
-		"whatsapp_sent": false,
-	})
+	// Build booking data map for notifications.
+	adminBookingData := map[string]any{
+		"booking_id":                 bookingID,
+		"reservation_date":           resDate,
+		"reservation_time":           resTime,
+		"party_size":                 partySize,
+		"children":                   children,
+		"customer_name":              customerName,
+		"contact_phone":              nationalPhone,
+		"contact_phone_country_code": cc,
+		"contact_email":              contactEmail,
+		"commentary":                 commentary,
+		"arroz_type":                 arrozTypeJSON,
+		"arroz_servings":             arrozServingsJSON,
+		"baby_strollers":             babyStrollers,
+		"high_chairs":                highChairs,
+		"toggleArroz":                toggleArroz,
+		"special_menu":               specialMenu,
+		"menu_de_grupo_id":           menuDeGrupoID,
+		"principales_json":           principalesJSON,
+	}
+
+	// Send WhatsApp confirmation to customer (best-effort).
+	var adminWhatsappSent bool
+	var adminWhatsappWarning string
+	if err := sendBookingWhatsAppToCustomer(r.Context(), s, restaurantID, adminBookingData, bookingID); err != nil {
+		log.Printf("WhatsApp failed for admin booking #%d: %v", bookingID, err)
+		if strings.Contains(err.Error(), "is not on WhatsApp") {
+			adminWhatsappWarning = "El número de teléfono no tiene servicio de WhatsApp."
+		} else {
+			adminWhatsappWarning = "WhatsApp no pudo enviarse: " + err.Error()
+		}
+	} else {
+		adminWhatsappSent = true
+	}
+
+	// Send confirmation emails (synchronous, required).
+	customerSent, restaurantSent, emailErr := sendBookingConfirmationEmails(r.Context(), s, restaurantID, adminBookingData, bookingID)
+	if emailErr != nil {
+		log.Printf("Email failed for admin booking #%d: %v", bookingID, emailErr)
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"success":          false,
+			"message":          "Error enviando confirmación por email: " + emailErr.Error(),
+			"error_code":       "EMAIL_FAILED",
+			"booking_id":       bookingID,
+			"whatsapp_sent":    adminWhatsappSent,
+			"whatsapp_warning": adminWhatsappWarning,
+		})
+		return
+	}
+
+	resp := map[string]any{
+		"success":            true,
+		"booking_id":         bookingID,
+		"whatsapp_sent":      adminWhatsappSent,
+		"email_sent":         customerSent || restaurantSent,
+		"notifications_sent": adminWhatsappSent || customerSent || restaurantSent,
+	}
+	if adminWhatsappWarning != "" {
+		resp["whatsapp_warning"] = adminWhatsappWarning
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 
 	s.emitN8nWebhookAsync(restaurantID, "booking.created", map[string]any{
 		"source":                  "admin",

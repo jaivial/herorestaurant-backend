@@ -196,6 +196,20 @@ func (s *Server) restaurantFromRequest(r *http.Request) (int, bool, string) {
 	return id, true, "db"
 }
 
+// fetchPrimaryDomain returns the primary domain for a restaurant from restaurant_domains.
+// Returns empty string if none found.
+func (s *Server) fetchPrimaryDomain(ctx context.Context, restaurantID int) string {
+	var domain string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT domain FROM restaurant_domains WHERE restaurant_id = ? AND is_primary = 1 LIMIT 1",
+		restaurantID,
+	).Scan(&domain)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(domain)
+}
+
 func (s *Server) withRestaurant(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		restaurantID, ok, _ := s.restaurantFromRequest(r)

@@ -176,62 +176,87 @@ func publicBaseURL(r *http.Request) string {
 	return scheme + "://" + host
 }
 
+// publicBaseURLForRestaurant resolves the base URL using the restaurant's primary domain from DB.
+// Priority: env var > DB primary domain > request host > hardcoded fallback.
+func publicBaseURLForRestaurant(r *http.Request, s *Server, restaurantID int) string {
+	if base := strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")), "/"); base != "" {
+		return base
+	}
+	if domain := s.fetchPrimaryDomain(r.Context(), restaurantID); domain != "" && domain != "localhost" && domain != "127.0.0.1" {
+		return "https://" + domain
+	}
+	// Fallback to request host.
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		host = "alqueriavillacarmen.com"
+	}
+	return scheme + "://" + host
+}
+
 var confirmReservationTmpl = template.Must(template.New("confirm_reservation").Parse(`<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Confirmar Reserva - {{.BrandName}}</title>
-  <style>
-    :root { --primary:#4a6741; --danger:#dc3545; --success:#28a745; --warning:#ffc107; --bg1:#e8f5e9; --bg2:#c8e6c9; --bg3:#a5d6a7; --text:#2d3748; --muted:#718096; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; background:linear-gradient(135deg,var(--bg1),var(--bg2),var(--bg3)); background-attachment:fixed; color:var(--text); }
-    .card { width:100%; max-width:520px; background:rgba(255,255,255,0.75); border:1px solid rgba(255,255,255,0.35); border-radius:18px; padding:24px; box-shadow:0 8px 32px rgba(0,0,0,0.08); backdrop-filter: blur(18px); }
-    .logo { display:block; margin:0 auto 10px; width:120px; height:auto; }
-    h1 { margin:0 0 6px; font-size:22px; text-align:center; }
-    .sub { margin:0 0 16px; color:var(--muted); font-size:14px; text-align:center; }
-    .msg { padding:12px 14px; border-radius:12px; margin:14px 0; border:1px solid rgba(0,0,0,0.08); background:rgba(255,255,255,0.55); }
-    .msg.success { border-color: rgba(40,167,69,0.35); background: rgba(40,167,69,0.12); }
-    .msg.error { border-color: rgba(220,53,69,0.35); background: rgba(220,53,69,0.10); }
-    .details { background:rgba(255,255,255,0.55); border:1px solid rgba(74,103,65,0.22); border-radius:14px; padding:14px; margin:14px 0; }
-    .details h3 { margin:0 0 10px; font-size:16px; }
-    .details p { margin:6px 0; }
-    .btn { display:inline-block; width:100%; text-align:center; border:none; border-radius:12px; padding:12px 14px; cursor:pointer; font-size:16px; background:var(--primary); color:white; text-decoration:none; }
-    .btn.secondary { background:rgba(74,103,65,0.12); color:var(--primary); border:1px solid rgba(74,103,65,0.35); }
-    .row { display:flex; gap:10px; flex-wrap:wrap; }
-    .row .btn { flex:1; min-width:200px; }
+  <style>` + publicPageCSS + `
+  .booking-icon {
+    background: var(--success-bg);
+    border: 1px solid var(--success-border);
+    color: var(--success);
+  }
   </style>
 </head>
 <body>
-  <main class="card">
-    <img class="logo" src="{{.LogoURL}}" alt="{{.BrandName}}" />
-    <h1>Confirmar Reserva</h1>
-    <p class="sub">Revise los datos y confirme su asistencia.</p>
+  <main class="page-card" data-ui="confirm-reservation">
+    <div class="logo-wrap">
+      <img src="{{.LogoURL}}" alt="{{.BrandName}}" />
+    </div>
+
+    <h1 class="page-title" data-slot="title">Confirmar Reserva</h1>
+    <p class="page-sub">Revise los datos y confirme su asistencia</p>
 
     {{if .Message}}
-      <div class="msg {{if .Success}}success{{else}}error{{end}}">{{.Message}}</div>
+    <div class="alert {{if .Success}}alert-success{{else}}alert-danger{{end}}" role="status">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{{if .Success}}<path d="M20 6 9 17l-5-5"/>{{else}}<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>{{end}}</svg>
+      <span>{{.Message}}</span>
+    </div>
     {{end}}
 
     {{if .HasBooking}}
-      <section class="details">
-        <h3>Detalles de la reserva</h3>
-        <p><strong>ID:</strong> #{{.BookingID}}</p>
-        <p><strong>Cliente:</strong> {{.CustomerName}}</p>
-        <p><strong>Fecha:</strong> {{.DateDisplay}}</p>
-        <p><strong>Hora:</strong> {{.TimeDisplay}}</p>
-        <p><strong>Personas:</strong> {{.PartySize}}</p>
-        {{if .ArrozDisplay}}<p><strong>Arroz:</strong> {{.ArrozDisplay}}</p>{{end}}
-      </section>
+    <div class="booking-card" data-slot="details">
+      <div class="booking-header">
+        <div class="booking-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="6" height="4" x="9" y="3" rx="1"/></svg>
+        </div>
+        <div>
+          <div class="booking-name" data-role="customer-name">{{.CustomerName}}</div>
+          <div class="booking-id">Reserva #{{.BookingID}}</div>
+        </div>
+      </div>
+      <div class="detail-grid">
+        <div class="detail-item"><span class="detail-label">Fecha</span><span class="detail-value">{{.DateDisplay}}</span></div>
+        <div class="detail-item"><span class="detail-label">Hora</span><span class="detail-value">{{.TimeDisplay}}</span></div>
+        <div class="detail-item"><span class="detail-label">Personas</span><span class="detail-value">{{.PartySize}}</span></div>
+        {{if .ArrozDisplay}}<div class="detail-item full"><span class="detail-label">Arroz</span><span class="detail-value">{{.ArrozDisplay}}</span></div>{{end}}
+      </div>
+    </div>
     {{end}}
 
     {{if .ShowConfirmation}}
-      <form method="post" action="{{.Action}}">
-        <button class="btn" type="submit" name="confirm_booking" value="1">Confirmar Reserva</button>
-      </form>
-      <div style="height:10px"></div>
-      <a class="btn secondary" href="index.php">Volver a la página principal</a>
+    <form method="post" action="{{.Action}}">
+      <button class="btn btn-success" type="submit" name="confirm_booking" value="1">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        Confirmar Reserva
+      </button>
+    </form>
+    <a href="/" class="btn btn-accent">Volver al inicio</a>
     {{else}}
-      <a class="btn" href="index.php">Volver a la página principal</a>
+    <a href="/" class="btn btn-accent">Volver al inicio</a>
     {{end}}
   </main>
 </body>
@@ -343,65 +368,305 @@ func (s *Server) handleConfirmReservationPage(w http.ResponseWriter, r *http.Req
 	writeHTMLTemplate(w, confirmReservationTmpl, data)
 }
 
+var publicPageCSS = `
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f1015;
+    --surface: #1a1b22;
+    --surface-2: #22232b;
+    --border: rgba(255,255,255,0.06);
+    --border-2: rgba(255,255,255,0.09);
+    --text: #eef0f6;
+    --text-muted: rgba(238,240,246,0.62);
+    --text-faint: rgba(238,240,246,0.46);
+    --accent: #b9a8ff;
+    --accent-2: #93efe7;
+    --success: #16a34a;
+    --success-bg: rgba(22,163,74,0.12);
+    --success-border: rgba(22,163,74,0.3);
+    --danger: #dc2626;
+    --danger-bg: rgba(220,38,38,0.12);
+    --danger-border: rgba(220,38,38,0.3);
+    --warning: #d97706;
+    --warning-bg: rgba(217,119,6,0.12);
+    --warning-border: rgba(217,119,6,0.3);
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    --shadow: 0 8px 32px rgba(0,0,0,0.25);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f0f2f7;
+      --surface: #ffffff;
+      --surface-2: #f8f9fc;
+      --border: rgba(0,0,0,0.08);
+      --border-2: rgba(0,0,0,0.12);
+      --text: rgba(20,21,26,0.95);
+      --text-muted: rgba(20,21,26,0.58);
+      --text-faint: rgba(20,21,26,0.42);
+      --accent: #7c5ce7;
+      --accent-2: #0d9488;
+      --success: #16a34a;
+      --success-bg: rgba(22,163,74,0.08);
+      --success-border: rgba(22,163,74,0.2);
+      --danger: #dc2626;
+      --danger-bg: rgba(220,38,38,0.08);
+      --danger-border: rgba(220,38,38,0.2);
+      --warning: #d97706;
+      --warning-bg: rgba(217,119,6,0.08);
+      --warning-border: rgba(217,119,6,0.2);
+      --shadow: 0 8px 32px rgba(0,0,0,0.08);
+    }
+  }
+  html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font);
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+  .page-card {
+    width: 100%;
+    max-width: 480px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    padding: 28px 24px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+  @media (min-width: 520px) { .page-card { padding: 36px 32px; } }
+  .logo-wrap { text-align: center; margin-bottom: 24px; }
+  .logo-wrap img { max-width: 140px; height: auto; }
+  .page-title {
+    font-size: clamp(1.25rem, 4vw, 1.5rem);
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  .page-sub {
+    font-size: 14px;
+    color: var(--text-muted);
+    text-align: center;
+    margin-bottom: 24px;
+  }
+  .alert {
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    border: 1px solid transparent;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .alert svg { flex-shrink: 0; width: 20px; height: 20px; stroke-width: 1.8; }
+  .alert-success { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+  .alert-danger  { background: var(--danger-bg);  border-color: var(--danger-border);  color: var(--danger); }
+  .alert-warning { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning); }
+  .booking-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .booking-header {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 12px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .booking-icon {
+    width: 40px; height: 40px;
+    border-radius: var(--radius-md);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .booking-icon svg { width: 20px; height: 20px; stroke-width: 1.8; }
+  .booking-name { font-weight: 600; font-size: 15px; }
+  .booking-id   { font-size: 12px; color: var(--text-muted); }
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .detail-item { display: flex; flex-direction: column; gap: 2px; }
+  .detail-item.full { grid-column: 1 / -1; }
+  .detail-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-faint); }
+  .detail-value { font-size: 14px; font-weight: 500; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; padding: 14px 20px;
+    font-size: 15px; font-weight: 500;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    text-decoration: none;
+    border: 2px solid transparent;
+    background: transparent;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-danger { border-color: var(--danger); color: var(--danger); }
+  .btn-danger:hover { background: var(--danger); color: #fff; }
+  .btn-success { border-color: var(--success); color: var(--success); }
+  .btn-success:hover { background: var(--success); color: #fff; }
+  .btn-accent { border-color: var(--accent); color: var(--accent); }
+  .btn-accent:hover { background: var(--accent); color: #fff; }
+  .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-primary:hover { opacity: 0.9; }
+  .btn + .btn { margin-top: 12px; }
+  .note {
+    font-size: 13px; color: var(--text-faint); text-align: center;
+    margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);
+  }
+  .form-group { margin-bottom: 16px; text-align: left; }
+  .form-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text-muted); }
+  .form-control {
+    width: 100%; height: 44px; padding: 0 12px;
+    font-size: 15px; font-family: var(--font);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm);
+    appearance: none;
+    transition: border-color 120ms ease;
+  }
+  .form-control:focus { outline: none; border-color: var(--accent); }
+  @media (max-width: 400px) {
+    .page-card { padding: 20px 16px; border-radius: var(--radius-lg); }
+    .detail-grid { grid-template-columns: 1fr; }
+  }
+`
+
 var cancelReservationTmpl = template.Must(template.New("cancel_reservation").Parse(`<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cancelar Reserva - {{.BrandName}}</title>
-  <style>
-    :root { --primary:#4a6741; --danger:#dc3545; --success:#28a745; --warning:#ffc107; --bg1:#e8f5e9; --bg2:#c8e6c9; --bg3:#a5d6a7; --text:#2d3748; --muted:#718096; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; background:linear-gradient(135deg,var(--bg1),var(--bg2),var(--bg3)); background-attachment:fixed; color:var(--text); }
-    .card { width:100%; max-width:560px; background:rgba(255,255,255,0.75); border:1px solid rgba(255,255,255,0.35); border-radius:18px; padding:24px; box-shadow:0 8px 32px rgba(0,0,0,0.08); backdrop-filter: blur(18px); }
-    .logo { display:block; margin:0 auto 10px; width:120px; height:auto; }
-    h1 { margin:0 0 6px; font-size:22px; text-align:center; }
-    .sub { margin:0 0 16px; color:var(--muted); font-size:14px; text-align:center; }
-    .msg { padding:12px 14px; border-radius:12px; margin:14px 0; border:1px solid rgba(0,0,0,0.08); background:rgba(255,255,255,0.55); }
-    .msg.success { border-color: rgba(40,167,69,0.35); background: rgba(40,167,69,0.12); }
-    .msg.error { border-color: rgba(220,53,69,0.35); background: rgba(220,53,69,0.10); }
-    .msg.warn { border-color: rgba(255,193,7,0.50); background: rgba(255,193,7,0.16); }
-    .details { background:rgba(255,255,255,0.55); border:1px solid rgba(74,103,65,0.22); border-radius:14px; padding:14px; margin:14px 0; }
-    .details h3 { margin:0 0 10px; font-size:16px; }
-    .details p { margin:6px 0; }
-    .btn { display:inline-block; width:100%; text-align:center; border:none; border-radius:12px; padding:12px 14px; cursor:pointer; font-size:16px; background:var(--danger); color:white; text-decoration:none; }
-    .btn.secondary { background:rgba(74,103,65,0.12); color:var(--primary); border:1px solid rgba(74,103,65,0.35); }
-    .btn.call { background:var(--success); }
+  <style>` + publicPageCSS + `
+  .booking-icon {
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-border);
+    color: var(--danger);
+  }
   </style>
 </head>
 <body>
-  <main class="card">
-    <img class="logo" src="{{.LogoURL}}" alt="{{.BrandName}}" />
-    <h1>Cancelar Reserva</h1>
-    <p class="sub">Si cancela su reserva, se liberará la mesa para otros clientes.</p>
+  <main class="page-card" data-ui="cancel-reservation">
+    <div class="logo-wrap">
+      <img src="{{.LogoURL}}" alt="{{.BrandName}}" />
+    </div>
 
-    {{if .Message}}
-      <div class="msg {{if .Success}}success{{else if .IsSameDay}}warn{{else}}error{{end}}">{{.Message}}</div>
-    {{end}}
-
+    {{if .Success}}
+    <h1 class="page-title" data-slot="title">Reserva Cancelada</h1>
+    <p class="page-sub">Su reserva ha sido cancelada correctamente</p>
+    <div class="alert alert-success" role="status">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      <span>{{.Message}}</span>
+    </div>
     {{if .HasBooking}}
-      <section class="details">
-        <h3>Detalles de la reserva</h3>
-        <p><strong>ID:</strong> #{{.BookingID}}</p>
-        <p><strong>Cliente:</strong> {{.CustomerName}}</p>
-        <p><strong>Fecha:</strong> {{.DateDisplay}}</p>
-        <p><strong>Hora:</strong> {{.TimeDisplay}}</p>
-        <p><strong>Personas:</strong> {{.PartySize}}</p>
-      </section>
+    <div class="booking-card" data-slot="summary">
+      <div class="booking-header">
+        <div class="booking-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="6" height="4" x="9" y="3" rx="1"/></svg>
+        </div>
+        <div>
+          <div class="booking-name" data-role="customer-name">{{.CustomerName}}</div>
+          <div class="booking-id">Reserva #{{.BookingID}}</div>
+        </div>
+      </div>
+      <div class="detail-grid">
+        <div class="detail-item"><span class="detail-label">Fecha</span><span class="detail-value">{{.DateDisplay}}</span></div>
+        <div class="detail-item"><span class="detail-label">Hora</span><span class="detail-value">{{.TimeDisplay}}</span></div>
+        <div class="detail-item"><span class="detail-label">Personas</span><span class="detail-value">{{.PartySize}}</span></div>
+      </div>
+    </div>
     {{end}}
+    <a href="/" class="btn btn-accent">Volver al inicio</a>
 
-    {{if .IsSameDay}}
-      <a class="btn call" href="tel:638857294">Llamar ahora</a>
-      <div style="height:10px"></div>
-      <a class="btn secondary" href="index.php">Volver a la página principal</a>
+    {{else if .IsSameDay}}
+    <h1 class="page-title" data-slot="title">Cancelación No Disponible</h1>
+    <p class="page-sub">Reserva para hoy</p>
+    <div class="alert alert-warning" role="alert">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span>Las reservas para el mismo día no se pueden cancelar online. Por favor, llame al restaurante.</span>
+    </div>
+    {{if .HasBooking}}
+    <div class="booking-card" data-slot="summary">
+      <div class="booking-header">
+        <div class="booking-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="6" height="4" x="9" y="3" rx="1"/></svg>
+        </div>
+        <div>
+          <div class="booking-name">{{.CustomerName}}</div>
+          <div class="booking-id">Reserva #{{.BookingID}}</div>
+        </div>
+      </div>
+      <div class="detail-grid">
+        <div class="detail-item"><span class="detail-label">Fecha</span><span class="detail-value">{{.DateDisplay}}</span></div>
+        <div class="detail-item"><span class="detail-label">Hora</span><span class="detail-value">{{.TimeDisplay}}</span></div>
+        <div class="detail-item"><span class="detail-label">Personas</span><span class="detail-value">{{.PartySize}}</span></div>
+      </div>
+    </div>
+    {{end}}
+    <a href="tel:+34638857294" class="btn btn-success">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      Llamar ahora
+    </a>
+    <a href="/" class="btn btn-accent">Volver al inicio</a>
+
     {{else if .ShowConfirmation}}
-      <form method="post" action="{{.Action}}">
-        <button class="btn" type="submit" name="confirm_cancel" value="1">Confirmar Cancelación</button>
-      </form>
-      <div style="height:10px"></div>
-      <a class="btn secondary" href="index.php">Volver a la página principal</a>
+    <h1 class="page-title" data-slot="title">Cancelar Reserva</h1>
+    <p class="page-sub">Revise los detalles antes de confirmar</p>
+    {{if .HasBooking}}
+    <div class="booking-card" data-slot="details">
+      <div class="booking-header">
+        <div class="booking-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="6" height="4" x="9" y="3" rx="1"/></svg>
+        </div>
+        <div>
+          <div class="booking-name" data-role="customer-name">{{.CustomerName}}</div>
+          <div class="booking-id">Reserva #{{.BookingID}}</div>
+        </div>
+      </div>
+      <div class="detail-grid">
+        <div class="detail-item"><span class="detail-label">Fecha</span><span class="detail-value">{{.DateDisplay}}</span></div>
+        <div class="detail-item"><span class="detail-label">Hora</span><span class="detail-value">{{.TimeDisplay}}</span></div>
+        <div class="detail-item"><span class="detail-label">Personas</span><span class="detail-value">{{.PartySize}}</span></div>
+      </div>
+    </div>
+    {{end}}
+    <form method="post" action="{{.Action}}">
+      <input type="hidden" name="confirm_cancel" value="1" />
+      <button type="submit" class="btn btn-danger">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        Cancelar Reserva
+      </button>
+    </form>
+    <a href="/" class="btn btn-accent">Volver sin cancelar</a>
+    <p class="note">Esta acción no se puede deshacer. Se notificará al restaurante de la cancelación.</p>
+
     {{else}}
-      <a class="btn secondary" href="index.php">Volver a la página principal</a>
+    <h1 class="page-title" data-slot="title">Error</h1>
+    <p class="page-sub">No se pudo procesar la solicitud</p>
+    <div class="alert alert-danger" role="alert">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      <span>{{.Message}}</span>
+    </div>
+    <a href="/" class="btn btn-accent">Volver al inicio</a>
     {{end}}
   </main>
 </body>
@@ -590,96 +855,129 @@ var bookRiceTmpl = template.Must(template.New("book_rice").Parse(`<!DOCTYPE html
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Reservar Arroz - {{.BrandName}}</title>
-  <style>
-    :root { --primary:#4a6741; --danger:#dc3545; --success:#28a745; --warning:#ffc107; --bg:#ffffff; --text:#2d3748; --muted:#718096; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family: Arial, sans-serif; line-height:1.6; padding:18px; text-align:center; color:var(--text); background:#f7faf7; }
-    .logo { max-width:200px; height:auto; margin:0 auto 10px; display:block; }
-    h1 { color:var(--primary); margin:0 0 12px; }
-    .message { padding:14px; border-radius:10px; margin:14px auto; max-width:760px; border:1px solid rgba(0,0,0,0.08); background:rgba(255,255,255,0.85); }
-    .message.success { background:rgba(40,167,69,0.12); border-color: rgba(40,167,69,0.35); }
-    .message.error { background:rgba(220,53,69,0.10); border-color: rgba(220,53,69,0.35); }
-    .message.warn { background:rgba(255,193,7,0.16); border-color: rgba(255,193,7,0.50); }
-    .details { text-align:left; margin:14px auto; max-width:420px; background:#fff; padding:14px; border-radius:10px; border:1px solid #ddd; }
-    .details p { margin:8px 0; }
-    form { max-width:420px; margin:0 auto; text-align:left; }
-    label { display:block; font-weight:bold; margin:12px 0 6px; }
-    select, input[type=number] { width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; }
-    .btn { display:inline-block; background:var(--primary); color:white; text-decoration:none; padding:10px 20px; border-radius:6px; margin-top:16px; border:none; cursor:pointer; font-size:16px; }
-    .btn:hover { background:#3a5331; }
-    .btn.call { background:var(--success); }
-    .countdown { font-size:16px; margin-top:14px; font-weight:bold; }
+  <style>` + publicPageCSS + `
+  .booking-icon {
+    background: rgba(183,168,255,0.12);
+    border: 1px solid rgba(183,168,255,0.3);
+    color: var(--accent);
+  }
   </style>
 </head>
 <body>
-  <img class="logo" src="{{.LogoURL}}" alt="{{.BrandName}}" />
-  <h1>Reservar Arroz</h1>
-
-  {{if .Message}}
-    <div class="message {{if .Success}}success{{else if .IsSameDay}}warn{{else}}error{{end}}">{{.Message}}</div>
-  {{end}}
-
-  {{if .HasBooking}}
-    <div class="details">
-      <h3>Detalles de la reserva:</h3>
-      <p><strong>Cliente:</strong> {{.CustomerName}}</p>
-      <p><strong>Fecha:</strong> {{.DateDisplay}}</p>
-      <p><strong>Hora:</strong> {{.TimeDisplay}}</p>
-      <p><strong>Personas:</strong> {{.PartySize}}</p>
-      <p><strong>Arroz:</strong> {{.ArrozRawDisplay}}</p>
+  <main class="page-card" data-ui="book-rice">
+    <div class="logo-wrap">
+      <img src="{{.LogoURL}}" alt="{{.BrandName}}" />
     </div>
-  {{end}}
 
-  {{if .ShowForm}}
-    <form method="post" action="{{.Action}}">
-      <label for="rice_type">Seleccione tipo de arroz:</label>
-      <select id="rice_type" name="rice_type" required>
-        <option value="">Seleccione una opción</option>
-        {{range .RiceOptions}}
-          <option value="{{.}}">{{.}}</option>
-        {{end}}
-      </select>
-
-      <label for="rice_servings">Número de raciones (máximo {{.PartySize}}):</label>
-      <input id="rice_servings" name="rice_servings" type="number" min="1" max="{{.PartySize}}" required />
-
-      <button class="btn" type="submit" name="submit" value="1">Reservar Arroz</button>
-    </form>
-  {{else if .Success}}
-    <p>Gracias por reservar su arroz. Le esperamos en {{.BrandName}}.</p>
-    <div class="countdown" id="countdown">Redirección a la página principal en 15 segundos</div>
-    <a href="index.php" class="btn">Volver a la página principal</a>
-  {{end}}
-
-  {{if .IsSameDay}}
-    <div style="margin-top: 18px;">
-      <p>Puede llamar directamente haciendo click en el siguiente botón:</p>
-      <a href="tel:638857294" class="btn call">Llamar ahora</a>
+    {{if .Success}}
+    <h1 class="page-title" data-slot="title">Arroz Reservado</h1>
+    <p class="page-sub">{{.Message}}</p>
+    {{if .HasBooking}}
+    <div class="booking-card" data-slot="summary">
+      <div class="booking-header">
+        <div class="booking-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="6" height="4" x="9" y="3" rx="1"/></svg>
+        </div>
+        <div>
+          <div class="booking-name" data-role="customer-name">{{.CustomerName}}</div>
+          <div class="booking-id">{{.DateDisplay}} · {{.TimeDisplay}} · {{.PartySize}} personas</div>
+        </div>
+      </div>
     </div>
-  {{end}}
-
-  {{if not .Success}}
-    <div style="margin-top: 16px;">
-      <a href="index.php" class="btn">Volver a la página principal</a>
-    </div>
-  {{end}}
-
-  {{if .Countdown}}
+    {{end}}
+    <a href="/" class="btn btn-accent">Volver al inicio</a>
+    {{if .Countdown}}
     <script>
       let seconds = 15;
       const el = document.getElementById('countdown');
-	      function tick() {
-	        seconds--;
-	        if (seconds > 0) {
-	          el.textContent = 'Redirección a la página principal en ' + seconds + ' segundos';
-	          setTimeout(tick, 1000);
-	        } else {
-	          window.location.href = 'index.php';
-	        }
-	      }
+      function tick() {
+        seconds--;
+        if (seconds > 0 && el) { el.textContent = 'Redirección en ' + seconds + ' segundos'; setTimeout(tick, 1000); }
+        else { window.location.href = '/'; }
+      }
       setTimeout(tick, 1000);
     </script>
-  {{end}}
+    <p class="note" id="countdown">Redirección en 15 segundos</p>
+    {{end}}
+
+    {{else if .IsSameDay}}
+    <h1 class="page-title" data-slot="title">No Disponible</h1>
+    <p class="page-sub">Reserva para hoy</p>
+    <div class="alert alert-warning" role="alert">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span>Las reservas de arroz para el mismo día deben hacerse por teléfono.</span>
+    </div>
+    <a href="tel:+34638857294" class="btn btn-success">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      Llamar ahora
+    </a>
+    <a href="/" class="btn btn-accent">Volver al inicio</a>
+
+    {{else if .ShowForm}}
+    <h1 class="page-title" data-slot="title">Reservar Arroz</h1>
+    <p class="page-sub">Seleccione el tipo de arroz para su reserva</p>
+    {{if .HasBooking}}
+    <div class="booking-card" data-slot="details">
+      <div class="booking-header">
+        <div class="booking-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="6" height="4" x="9" y="3" rx="1"/></svg>
+        </div>
+        <div>
+          <div class="booking-name" data-role="customer-name">{{.CustomerName}}</div>
+          <div class="booking-id">{{.DateDisplay}} · {{.TimeDisplay}} · {{.PartySize}} personas</div>
+        </div>
+      </div>
+    </div>
+    {{end}}
+    <form method="post" action="{{.Action}}">
+      <div class="form-group">
+        <label class="form-label" for="rice_type">Tipo de arroz</label>
+        <select class="form-control" id="rice_type" name="rice_type" required>
+          <option value="">Seleccione una opción</option>
+          {{range .RiceOptions}}
+          <option value="{{.}}">{{.}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="rice_servings">Raciones (máximo {{.PartySize}})</label>
+        <input class="form-control" id="rice_servings" name="rice_servings" type="number" min="1" max="{{.PartySize}}" required />
+      </div>
+      <button class="btn btn-primary" type="submit" name="submit" value="1">Reservar Arroz</button>
+    </form>
+    <a href="/" class="btn btn-accent">Volver sin reservar</a>
+
+    {{else if .HasBooking}}
+    <h1 class="page-title" data-slot="title">Tu Arroz</h1>
+    <p class="page-sub">Arroz actual de tu reserva</p>
+    <div class="booking-card" data-slot="current-rice">
+      <div class="booking-header">
+        <div class="booking-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect width="6" height="4" x="9" y="3" rx="1"/></svg>
+        </div>
+        <div>
+          <div class="booking-name" data-role="customer-name">{{.CustomerName}}</div>
+          <div class="booking-id">{{.DateDisplay}} · {{.TimeDisplay}}</div>
+        </div>
+      </div>
+      <div class="detail-grid">
+        <div class="detail-item full"><span class="detail-label">Arroz</span><span class="detail-value">{{.ArrozRawDisplay}}</span></div>
+      </div>
+    </div>
+    <a href="/" class="btn btn-accent">Volver al inicio</a>
+
+    {{else}}
+    <h1 class="page-title" data-slot="title">Reservar Arroz</h1>
+    <p class="page-sub">No se pudo procesar la solicitud</p>
+    {{if .Message}}
+    <div class="alert alert-danger" role="alert">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      <span>{{.Message}}</span>
+    </div>
+    {{end}}
+    <a href="/" class="btn btn-accent">Volver al inicio</a>
+    {{end}}
+  </main>
 </body>
 </html>`))
 

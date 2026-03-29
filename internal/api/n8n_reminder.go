@@ -302,7 +302,7 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 			"rice_sent":         false,
 		}
 
-		confirmationURL := baseURL + "/confirm_reservation.php?id=" + strconv.Itoa(bookingID)
+		confirmationURL := baseURL + "/confirm?id=" + strconv.Itoa(bookingID)
 		confirmationMessage := "Hola " + customerName + ",\n\n" +
 			"Le recordamos su reserva en " + brandName + ":\n\n" +
 			"📅 Fecha: " + bookingDateDisplay + "\n" +
@@ -327,7 +327,7 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 		needsRice := needsRiceReminder(booking.ArrozType)
 		riceOK := false
 		if needsRice {
-			riceURL := baseURL + "/book_rice.php?id=" + strconv.Itoa(bookingID)
+			riceURL := baseURL + "/update-rice?id=" + strconv.Itoa(bookingID)
 			riceMessage := "¿Le gustaría reservar arroz para su comida?\n\n" +
 				"Tenemos una gran variedad de arroces disponibles.\n\n" +
 				"Haga clic en el botón de abajo para ver el menú y hacer su reserva:"

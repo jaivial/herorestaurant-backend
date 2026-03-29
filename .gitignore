@@ -1,6 +1,7 @@
 .env
 .env.*
 server
+tmp/
 .DS_Store
 .vscode/
 .idea/

@@ -322,7 +322,14 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/search-reservation", s.handleBOInvoicesSearchReservation)
 	})
 
-	r.Get("/api/public/website-builder/render/{kind}", s.handleWebsiteBuilderRenderFragment)
+	r.Get("/public/website-builder/render/{kind}", s.handleWebsiteBuilderRenderFragment)
+
+	// Public booking JSON API — uses own tenant resolution via DEFAULT_RESTAURANT_ID fallback.
+	r.Get("/public/booking", s.handlePublicBookingGet)
+	r.Post("/public/booking/confirm", s.handlePublicBookingConfirm)
+	r.Post("/public/booking/cancel", s.handlePublicBookingCancel)
+	r.Post("/public/booking/rice", s.handlePublicBookingRice)
+	r.Get("/public/booking-policies", s.handlePublicBookingPolicies)
 
 	// Everything below is restaurant-scoped.
 	r.Group(func(r chi.Router) {

@@ -37,6 +37,10 @@ type Config struct {
 	OpenAIMaxInputBytes    int
 	OpenAIMaxOutputBytes   int
 	OpenAIConcurrency      int
+	SMTPHost               string
+	SMTPPort               int
+	SMTPUsername           string
+	SMTPPassword           string
 	MySQL                  MySQLConfig
 }
 
@@ -68,6 +72,10 @@ func Load() Config {
 		OpenAIMaxInputBytes:    getenvIntFirst([]string{"WAVESPEED_IMAGE_MAX_INPUT_BYTES", "OPENAI_IMAGE_MAX_INPUT_BYTES"}, 8<<20, 1<<20, 32<<20),
 		OpenAIMaxOutputBytes:   getenvIntFirst([]string{"WAVESPEED_IMAGE_MAX_OUTPUT_BYTES", "OPENAI_IMAGE_MAX_OUTPUT_BYTES"}, 8<<20, 64*1024, 64<<20),
 		OpenAIConcurrency:      getenvIntFirst([]string{"WAVESPEED_IMAGE_CONCURRENCY", "OPENAI_IMAGE_CONCURRENCY", "OPENAI_IMAGE_EDIT_CONCURRENCY"}, 2, 1, 32),
+		SMTPHost:               strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:               getenvInt("SMTP_PORT", 587, 1, 65535),
+		SMTPUsername:           strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:           os.Getenv("SMTP_PASSWORD"),
 		MySQL: MySQLConfig{
 			Host:     getenv("DB_HOST", "127.0.0.1"),
 			Port:     getenv("DB_PORT", "3306"),
