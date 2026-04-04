@@ -1,6 +1,8 @@
 package api
 
 import (
+	"database/sql"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +24,10 @@ type boVino struct {
 	Anyo               string  `json:"anyo"`
 	Active             bool    `json:"active"`
 	HasFoto            bool    `json:"has_foto"`
+	FotoURL            *string `json:"foto_url,omitempty"`
+	AIRequestedImg     bool    `json:"ai_requested_img"`
+	AIGeneratingImg    bool    `json:"ai_generating_img"`
+	AIGeneratedImg     *string `json:"ai_generated_img,omitempty"`
 }
 
 func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +76,11 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 				COALESCE(graduacion, 0),
 				COALESCE(anyo, ''),
 				active,
-				(foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto
+				(foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto,
+				foto_path,
+				COALESCE(ai_requested_img, 0),
+				COALESCE(ai_generating_img, 0),
+				ai_generated_img
 			FROM VINOS
 		`+where+`
 			ORDER BY tipo ASC, nombre ASC, num ASC
@@ -84,9 +94,13 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 	var out []boVino
 	for rows.Next() {
 		var (
-			v          boVino
-			activeInt  int
-			hasFotoInt int
+			v              boVino
+			activeInt      int
+			hasFotoInt     int
+			fotoPath       sql.NullString
+			requestedInt   int
+			generatingInt  int
+			generatedRaw   sql.NullString
 		)
 		if err := rows.Scan(
 			&v.Num,
@@ -100,12 +114,27 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 			&v.Anyo,
 			&activeInt,
 			&hasFotoInt,
+			&fotoPath,
+			&requestedInt,
+			&generatingInt,
+			&generatedRaw,
 		); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo VINOS")
 			return
 		}
 		v.Active = activeInt != 0
 		v.HasFoto = hasFotoInt != 0
+		if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" {
+			u := s.bunnyPullURL(fotoPath.String)
+			v.FotoURL = &u
+		}
+		v.AIRequestedImg = requestedInt != 0
+		v.AIGeneratingImg = generatingInt != 0
+		if generatedRaw.Valid {
+			if g := strings.TrimSpace(generatedRaw.String); g != "" {
+				v.AIGeneratedImg = &g
+			}
+		}
 		out = append(out, v)
 	}
 
@@ -455,4 +484,138 @@ func derefFloat(p *float64) float64 {
 		return 0
 	}
 	return *p
+}
+
+func (s *Server) handleBOVinoImageUpload(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	wineNumStr := strings.TrimSpace(chi.URLParam(r, "id"))
+	wineNum, err := strconv.Atoi(wineNumStr)
+	if err != nil || wineNum <= 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid wine id"})
+		return
+	}
+
+	maxInput := s.openAIInputMaxBytes()
+	if err := r.ParseMultipartForm(int64(maxInput)); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error parsing form"})
+		return
+	}
+
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No image file provided"})
+		return
+	}
+	defer file.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(file, int64(maxInput)+1))
+	if err != nil || len(raw) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reading file"})
+		return
+	}
+	if len(raw) > maxInput {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image too large"})
+		return
+	}
+
+	var wineTipo string
+	if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM VINOS WHERE num = ? AND restaurant_id = ? LIMIT 1", wineNum, a.ActiveRestaurantID).Scan(&wineTipo); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Wine not found"})
+		return
+	}
+
+	objectPath, err := s.UploadWineImage(r.Context(), wineTipo, wineNum, raw)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image"})
+		return
+	}
+
+	if _, err := s.db.ExecContext(r.Context(), "UPDATE VINOS SET foto_path = ?, foto = NULL WHERE num = ? AND restaurant_id = ?", objectPath, wineNum, a.ActiveRestaurantID); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error saving image path"})
+		return
+	}
+
+	fullURL := s.bunnyPullURL(objectPath)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"foto_url": fullURL,
+	})
+}
+
+func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	wineNumStr := strings.TrimSpace(chi.URLParam(r, "id"))
+	wineNum, err := strconv.Atoi(wineNumStr)
+	if err != nil || wineNum <= 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid wine id"})
+		return
+	}
+
+	var (
+		v              boVino
+		activeInt      int
+		hasFotoInt     int
+		fotoPath       sql.NullString
+		requestedInt   int
+		generatingInt  int
+		generatedRaw   sql.NullString
+	)
+	err = s.db.QueryRowContext(r.Context(), `
+		SELECT
+			num,
+			COALESCE(tipo, ''),
+			COALESCE(nombre, ''),
+			COALESCE(precio, 0),
+			COALESCE(descripcion, ''),
+			COALESCE(bodega, ''),
+			COALESCE(denominacion_origen, ''),
+			COALESCE(graduacion, 0),
+			COALESCE(anyo, ''),
+			active,
+			(foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto,
+			foto_path,
+			COALESCE(ai_requested_img, 0),
+			COALESCE(ai_generating_img, 0),
+			ai_generated_img
+		FROM VINOS
+		WHERE num = ? AND restaurant_id = ?
+		LIMIT 1
+	`, wineNum, a.ActiveRestaurantID).Scan(
+		&v.Num, &v.Tipo, &v.Nombre, &v.Precio, &v.Descripcion,
+		&v.Bodega, &v.DenominacionOrigen, &v.Graduacion, &v.Anyo,
+		&activeInt, &hasFotoInt, &fotoPath,
+		&requestedInt, &generatingInt, &generatedRaw,
+	)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Wine not found"})
+		return
+	}
+	v.Active = activeInt != 0
+	v.HasFoto = hasFotoInt != 0
+	if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" {
+		u := s.bunnyPullURL(fotoPath.String)
+		v.FotoURL = &u
+	}
+	v.AIRequestedImg = requestedInt != 0
+	v.AIGeneratingImg = generatingInt != 0
+	if generatedRaw.Valid {
+		if g := strings.TrimSpace(generatedRaw.String); g != "" {
+			v.AIGeneratedImg = &g
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"vino":    v,
+	})
 }

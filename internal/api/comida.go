@@ -42,6 +42,19 @@ var basePlatoCategories = []struct {
 	{Name: "Postre", Slug: "postre"},
 }
 
+var baseBebidaCategories = []struct {
+	Name string
+	Slug string
+}{
+	{Name: "Refrescos", Slug: "refrescos"},
+	{Name: "Aguas", Slug: "aguas"},
+	{Name: "Zumos", Slug: "zumos"},
+	{Name: "Cervezas", Slug: "cervezas"},
+	{Name: "Copas", Slug: "copas"},
+	{Name: "Licores", Slug: "licores"},
+	{Name: "Cocktails", Slug: "cocktails"},
+}
+
 type comidaListQuery struct {
 	Page       int
 	PageSize   int
@@ -280,6 +293,23 @@ func (s *Server) ensureBasePlatoCategories(r *http.Request, restaurantID int) er
 	for _, cat := range basePlatoCategories {
 		_, err := s.db.ExecContext(r.Context(), `
 			INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
+			VALUES (?, ?, ?, 'base', 1)
+			ON DUPLICATE KEY UPDATE
+				name = VALUES(name),
+				source = IF(source = 'custom', source, VALUES(source)),
+				active = 1
+		`, restaurantID, cat.Name, cat.Slug)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) ensureBaseBebidaCategories(r *http.Request, restaurantID int) error {
+	for _, cat := range baseBebidaCategories {
+		_, err := s.db.ExecContext(r.Context(), `
+			INSERT INTO comida_bebida_categories (restaurant_id, name, slug, source, active)
 			VALUES (?, ?, ?, 'base', 1)
 			ON DUPLICATE KEY UPDATE
 				name = VALUES(name),
@@ -1895,4 +1925,181 @@ func (s *Server) handleBOCatalogToggle(w http.ResponseWriter, r *http.Request, t
 		"success": true,
 		"active":  next != 0,
 	})
+}
+
+func (s *Server) handleBOComidaBebidaCategoriesList(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := comidaRestaurantIDFromRequest(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	if err := s.ensureBaseBebidaCategories(r, restaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando categorias")
+		return
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
+		FROM comida_bebida_categories
+		WHERE restaurant_id = ? AND active = 1
+		ORDER BY
+			CASE WHEN source = 'base' THEN 0 ELSE 1 END,
+			name ASC
+	`, restaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando categorias")
+		return
+	}
+	defer rows.Close()
+
+	out := make([]comidaCategoryResponse, 0, 8)
+	for rows.Next() {
+		var c comidaCategoryResponse
+		var activeInt int
+		if err := rows.Scan(&c.ID, &c.Name, &c.Slug, &c.Source, &activeInt); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo categorias")
+			return
+		}
+		c.Active = activeInt != 0
+		out = append(out, c)
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"categories": out,
+	})
+}
+
+func (s *Server) handleBOComidaBebidaCategoriesCreate(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := comidaRestaurantIDFromRequest(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	var req comidaCategoryCreateRequest
+	if err := readJSONBody(r, &req); err != nil {
+		writeComidaValidationError(w, "Invalid JSON")
+		return
+	}
+
+	name := strings.TrimSpace(firstNonEmpty(req.Name, req.Label))
+	if name == "" {
+		writeComidaValidationError(w, "Nombre de categoria requerido")
+		return
+	}
+	slug := strings.TrimSpace(req.Slug)
+	if slug == "" {
+		slug = slugifyCategoryName(name)
+	}
+
+	if err := s.ensureBaseBebidaCategories(r, restaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+
+	res, err := s.db.ExecContext(r.Context(), `
+		INSERT INTO comida_bebida_categories (restaurant_id, name, slug, source, active)
+		VALUES (?, ?, ?, 'custom', 1)
+		ON DUPLICATE KEY UPDATE
+			name = VALUES(name),
+			active = 1
+	`, restaurantID, name, slug)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+
+	id64, _ := res.LastInsertId()
+	category := comidaCategoryResponse{
+		Name:   name,
+		Slug:   slug,
+		Source: "custom",
+		Active: true,
+	}
+	if id64 > 0 {
+		category.ID = int(id64)
+	} else {
+		c, found, err2 := s.getBebidaCategoryBySlugOrName(r, restaurantID, slug)
+		if err2 != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+			return
+		}
+		if found {
+			category = c
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"category": category,
+	})
+}
+
+func (s *Server) handleBOComidaBebidaCategoriesCheck(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := comidaRestaurantIDFromRequest(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "exists": false})
+		return
+	}
+
+	slug := slugifyCategoryName(name)
+
+	var count int
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT COUNT(*)
+		FROM comida_bebida_categories
+		WHERE restaurant_id = ? AND active = 1 AND (slug = ? OR LOWER(name) = LOWER(?))
+	`, restaurantID, slug, name).Scan(&count)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error verificando categoria")
+		return
+	}
+
+	exists := count > 0
+
+	if !exists {
+		for _, base := range baseBebidaCategories {
+			if strings.EqualFold(strings.TrimSpace(base.Name), name) || strings.EqualFold(strings.TrimSpace(base.Slug), slug) {
+				exists = true
+				break
+			}
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"exists":  exists,
+	})
+}
+
+func (s *Server) getBebidaCategoryBySlugOrName(r *http.Request, restaurantID int, raw string) (comidaCategoryResponse, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return comidaCategoryResponse{}, false, nil
+	}
+	slug := slugifyCategoryName(raw)
+	var c comidaCategoryResponse
+	var activeInt int
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
+		FROM comida_bebida_categories
+		WHERE restaurant_id = ? AND (slug = ? OR LOWER(name) = LOWER(?))
+		LIMIT 1
+	`, restaurantID, slug, raw).Scan(&c.ID, &c.Name, &c.Slug, &c.Source, &activeInt)
+	if err == sql.ErrNoRows {
+		return comidaCategoryResponse{}, false, nil
+	}
+	if err != nil {
+		return comidaCategoryResponse{}, false, err
+	}
+	c.Active = activeInt != 0
+	return c, true, nil
 }

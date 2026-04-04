@@ -105,6 +105,18 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 		setBOSessionCookie(w, r, token, movingExpiresAt, ttl)
 		w.Header().Set(boSessionMovingExpirationHeader, movingExpiresAt.UTC().Format(time.RFC3339))
 
+		// Look up the restaurant_member for this user in the active restaurant
+		var memberID *int64
+		var mid int64
+		err = s.db.QueryRowContext(r.Context(), `
+			SELECT id FROM restaurant_members
+			WHERE bo_user_id = ? AND restaurant_id = ? AND is_active = 1
+			LIMIT 1
+		`, userID, activeRestaurantID).Scan(&mid)
+		if err == nil {
+			memberID = &mid
+		}
+
 		a := boAuth{
 			SessionID:   sessionID,
 			TokenSHA256: tokenSHA,
@@ -121,6 +133,7 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 			},
 			Role:               roleSlug,
 			ActiveRestaurantID: activeRestaurantID,
+			MemberID:           memberID,
 		}
 		next.ServeHTTP(w, r.WithContext(withBOAuth(r.Context(), a)))
 	})

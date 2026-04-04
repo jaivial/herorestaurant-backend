@@ -26,6 +26,8 @@ type Server struct {
 	tablesHub           *boTablesHub
 	groupMenusV2AIHub   *boGroupMenuV2AIHub
 	groupMenusV2AIQueue chan struct{}
+	vinoAIHub           *boVinoAIHub
+	comidaAIHub         *boComidaAIHub
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -40,6 +42,8 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		tablesHub:           newBOTablesHub(),
 		groupMenusV2AIHub:   newBOGroupMenuV2AIHub(),
 		groupMenusV2AIQueue: make(chan struct{}, aiConcurrency),
+		vinoAIHub:           newBOVinoAIHub(),
+		comidaAIHub:         newBOComidaAIHub(),
 	}
 	go s.runBOFichajeAutoCutLoop()
 	return s
@@ -147,10 +151,21 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Post("/vinos", s.handleBOVinoCreate)
 		r.With(s.requireBOSession, menusGate).Patch("/vinos/{id}", s.handleBOVinoPatch)
 		r.With(s.requireBOSession, menusGate).Delete("/vinos/{id}", s.handleBOVinoDelete)
+		r.With(s.requireBOSession, menusGate).Get("/vinos/{id}", s.handleBOVinoGet)
+		r.With(s.requireBOSession, menusGate).Post("/vinos/{id}/image", s.handleBOVinoImageUpload)
+		r.With(s.requireBOSession, menusGate).Post("/vinos/{id}/image/ai", s.handleBOVinoAIImageGenerate)
+		r.With(s.requireBOSession, menusGate).Get("/vinos/ws", s.handleBOVinosAIWS)
+
+		// Comida AI image enhancement.
+		r.With(s.requireBOSession, menusGate).Post("/comida/{tipo}/{id}/image/ai", s.handleBOComidaImageAI)
+		r.With(s.requireBOSession, menusGate).Get("/comida/ws", s.handleBOComidaAIWS)
 
 		// New comida module endpoints (typed routes).
 		r.With(s.requireBOSession, menusGate).Get("/comida/platos/categorias", s.handleBOComidaPlatoCategoriesList)
 		r.With(s.requireBOSession, menusGate).Post("/comida/platos/categorias", s.handleBOComidaPlatoCategoriesCreate)
+		r.With(s.requireBOSession, menusGate).Get("/comida/bebidas/categorias", s.handleBOComidaBebidaCategoriesList)
+		r.With(s.requireBOSession, menusGate).Post("/comida/bebidas/categorias", s.handleBOComidaBebidaCategoriesCreate)
+		r.With(s.requireBOSession, menusGate).Get("/comida/bebidas/categorias/check", s.handleBOComidaBebidaCategoriesCheck)
 		r.With(s.requireBOSession, menusGate).Get("/comida/{tipo}", s.handleBOComidaList)
 		r.With(s.requireBOSession, menusGate).Get("/comida/{tipo}/{id}", s.handleBOComidaGet)
 		r.With(s.requireBOSession, menusGate).Post("/comida/{tipo}", s.handleBOComidaCreate)
@@ -236,6 +251,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/config/daily-limit", s.handleBOConfigDailyLimitGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/daily-limit", s.handleBOConfigDailyLimitSet)
 
+		r.With(s.requireBOSession, reservasGate).Get("/config/restaurant-info", s.handleBORestaurantInfoGet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/restaurant-info", s.handleBORestaurantInfoSet)
+
 		// Restaurant-level settings (integrations/branding).
 		r.With(s.requireBOSession, ajustesGate).Get("/integrations", s.handleBOIntegrationsGet)
 		r.With(s.requireBOSession, ajustesGate).Post("/integrations", s.handleBOIntegrationsSet)
@@ -250,6 +268,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, ajustesGate).Get("/website/templates", s.handleBOPremiumWebsiteTemplates)
 		r.With(s.requireBOSession, ajustesGate).Get("/website/menu-templates", s.handleBOPremiumWebsiteMenuTemplatesGet)
 		r.With(s.requireBOSession, ajustesGate).Put("/website/menu-templates", s.handleBOPremiumWebsiteMenuTemplatesUpsert)
+		r.With(s.requireBOSession, ajustesGate).Get("/restaurant/pages/visibility", s.handleGetPageVisibility)
+		r.With(s.requireBOSession, ajustesGate).Patch("/restaurant/pages/visibility", s.handlePageVisibilityPatch)
 		r.With(s.requireBOSession, ajustesGate).Post("/website/ai-generate", s.handleBOPremiumWebsiteAIGenerate)
 		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
 			websiteBuilder.RegisterRoutes(r)
@@ -309,6 +329,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, horariosGate).Put("/horarios/{id}", s.handleBOHorariosUpdate)
 		r.With(s.requireBOSession, horariosGate).Delete("/horarios/{id}", s.handleBOHorariosDelete)
 		r.With(s.requireBOSession, horariosGate).Get("/horarios/month", s.handleBOHorariosMonth)
+		r.With(s.requireBOSession, horariosGate).Get("/horarios/member-range", s.handleBOHorariosMemberRange)
 		r.With(s.requireBOSession, fichajeGate).Get("/horarios/my-schedule", s.handleBOHorariosMySchedule)
 
 		// Invoices management

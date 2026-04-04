@@ -151,6 +151,23 @@ func fileExtForContentType(contentType string) string {
 	return ".jpg"
 }
 
+func (s *Server) UploadWineImageV2(ctx context.Context, tipo string, num int, img []byte, contentType string) (string, error) {
+	if num <= 0 {
+		return "", errors.New("invalid wine num")
+	}
+	if len(img) == 0 {
+		return "", errors.New("empty image")
+	}
+	slug := wineTypeSlug(tipo)
+	generationVersion := strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)
+	fileName := strconv.Itoa(num) + "-" + generationVersion + ".webp"
+	objectPath := path.Join("images", "vinos", slug, fileName)
+	if err := s.bunnyPut(ctx, objectPath, img, contentType); err != nil {
+		return "", err
+	}
+	return objectPath, nil
+}
+
 func (s *Server) UploadWineImage(ctx context.Context, tipo string, num int, img []byte) (string, error) {
 	if num <= 0 {
 		return "", errors.New("invalid wine num")

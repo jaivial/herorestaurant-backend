@@ -66,34 +66,44 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionReservas: true,
 		boSectionMenus:    true,
 		boSectionFichaje:  true,
+		boSectionHorarios: true,
 		boSectionComida:   true,
 	},
 	"arrocero": {
-		boSectionFichaje: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
 	},
 	"pinche_cocina": {
-		boSectionFichaje: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
 	},
 	"fregaplatos": {
-		boSectionFichaje: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
 	},
 	"ayudante_cocina": {
-		boSectionFichaje: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
 	},
 	"camarero": {
-		boSectionFichaje: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
 	},
 	"responsable_sala": {
-		boSectionFichaje: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
 	},
 	"ayudante_camarero": {
-		boSectionFichaje: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
 	},
 	"runner": {
-		boSectionFichaje: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
 	},
 	"barista": {
-		boSectionFichaje: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
 	},
 }
 

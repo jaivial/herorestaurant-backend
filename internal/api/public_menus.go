@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -118,6 +120,89 @@ type publicMenuItemSpecial struct {
 	MenuSubtitle        []string `json:"menu_subtitle"`
 	Comments            []string `json:"comments"`
 	SpecialMenuImageURL string   `json:"special_menu_image_url"`
+}
+
+func (s *Server) getPageVisibility(ctx context.Context, restaurantID int) (cafeActive bool, bebidasActive bool) {
+	cafeActive = true
+	bebidasActive = true
+	var cafe, bebidas int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT cafe_page_active, bebidas_page_active FROM restaurant_page_visibility WHERE restaurant_id = ?",
+		restaurantID,
+	).Scan(&cafe, &bebidas)
+	if err == nil {
+		cafeActive = cafe != 0
+		bebidasActive = bebidas != 0
+	}
+	return
+}
+
+func (s *Server) updatePageVisibility(ctx context.Context, restaurantID int, cafeActive *bool, bebidasActive *bool) error {
+	if cafeActive == nil && bebidasActive == nil {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO restaurant_page_visibility (restaurant_id, cafe_page_active, bebidas_page_active)
+		VALUES (?, COALESCE(?, 1), COALESCE(?, 1))
+		ON DUPLICATE KEY UPDATE
+		  cafe_page_active = COALESCE(?, cafe_page_active),
+		  bebidas_page_active = COALESCE(?, bebidas_page_active)
+	`, restaurantID,
+		cafeActive, bebidasActive,
+		cafeActive, bebidasActive,
+	)
+	return err
+}
+
+func (s *Server) handleGetPageVisibility(w http.ResponseWriter, r *http.Request) {
+	var restaurantID int
+	if a, ok := boAuthFromContext(r.Context()); ok && a.ActiveRestaurantID > 0 {
+		restaurantID = a.ActiveRestaurantID
+	} else {
+		httpx.WriteError(w, http.StatusInternalServerError, "Restaurant not found")
+		return
+	}
+
+	cafeActive, bebidasActive := s.getPageVisibility(r.Context(), restaurantID)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":             true,
+		"cafe_page_active":    cafeActive,
+		"bebidas_page_active": bebidasActive,
+	})
+}
+
+func (s *Server) handlePageVisibilityPatch(w http.ResponseWriter, r *http.Request) {
+	var restaurantID int
+	if a, ok := boAuthFromContext(r.Context()); ok && a.ActiveRestaurantID > 0 {
+		restaurantID = a.ActiveRestaurantID
+	} else {
+		httpx.WriteError(w, http.StatusInternalServerError, "Restaurant not found")
+		return
+	}
+
+	var input struct {
+		CafeActive    *bool `json:"cafe_page_active,omitempty"`
+		BebidasActive *bool `json:"bebidas_page_active,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if err := s.updatePageVisibility(r.Context(), restaurantID, input.CafeActive, input.BebidasActive); err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error updating page visibility",
+		})
+		return
+	}
+
+	cafeActive, bebidasActive := s.getPageVisibility(r.Context(), restaurantID)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":              true,
+		"cafe_page_active":     cafeActive,
+		"bebidas_page_active":  bebidasActive,
+	})
 }
 
 func isPublicMenuType(menuType string) bool {
@@ -1072,7 +1157,8 @@ func (s *Server) handlePublicMenuByRouteID(w http.ResponseWriter, r *http.Reques
 }
 
 // handlePublicMenusSidebar handles GET /menus/sidebar.
-// Returns a lightweight list of active menus with only id, slug, menu_title, menu_type, active.
+// Returns a lightweight list of active menus with only id, slug, menu_title, menu_type, active,
+// plus page visibility flags for cafe/bebidas public pages.
 func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
@@ -1127,10 +1213,14 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 		})
 	}
 
+	cafeActive, bebidasActive := s.getPageVisibility(r.Context(), restaurantID)
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"count":   len(menus),
-		"menus":   menus,
+		"success":               true,
+		"count":                 len(menus),
+		"menus":                 menus,
+		"cafe_page_active":      cafeActive,
+		"bebidas_page_active":   bebidasActive,
 	})
 }
 

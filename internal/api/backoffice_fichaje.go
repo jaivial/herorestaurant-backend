@@ -865,6 +865,120 @@ func (s *Server) handleBOHorariosList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleBOHorariosMemberRange(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	memberID, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("memberId")))
+	if err != nil || memberID <= 0 {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "memberId es obligatorio y debe ser un número positivo",
+		})
+		return
+	}
+
+	// Non-admin users (importance < 70) can only query their own schedules.
+	importance, impErr := s.roleImportance(r.Context(), a.Role)
+	if impErr != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error validando permisos")
+		return
+	}
+	if importance < 70 {
+		if a.MemberID == nil || int64(memberID) != *a.MemberID {
+			httpx.WriteJSON(w, http.StatusForbidden, map[string]any{
+				"success": false,
+				"message": "Solo puedes consultar tus propios horarios",
+			})
+			return
+		}
+	}
+
+	fromStr := strings.TrimSpace(r.URL.Query().Get("from"))
+	toStr := strings.TrimSpace(r.URL.Query().Get("to"))
+	if fromStr == "" || toStr == "" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "from y to son obligatorios (YYYY-MM-DD)",
+		})
+		return
+	}
+
+	_, err = parseBODate(fromStr)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "formato de fecha 'from' inválido",
+		})
+		return
+	}
+	_, err = parseBODate(toStr)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "formato de fecha 'to' inválido",
+		})
+		return
+	}
+
+	// Validate member exists and belongs to this restaurant
+	if _, err := s.getBOClockMemberByID(r.Context(), a.ActiveRestaurantID, memberID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Miembro no encontrado",
+			})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error validando miembro")
+		return
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT
+			s.id,
+			s.restaurant_member_id,
+			TRIM(CONCAT(COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, ''))) AS member_name,
+			DATE_FORMAT(s.work_date, '%Y-%m-%d') AS work_date,
+			TIME_FORMAT(s.start_time, '%H:%i') AS start_time,
+			TIME_FORMAT(s.end_time, '%H:%i') AS end_time,
+			DATE_FORMAT(s.updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at
+		FROM member_work_schedules s
+		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.restaurant_member_id = ? AND s.work_date BETWEEN ? AND ?
+		ORDER BY s.work_date ASC
+	`, a.ActiveRestaurantID, memberID, fromStr, toStr)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando horarios")
+		return
+	}
+	defer rows.Close()
+
+	schedules := make([]boFichajeSchedule, 0)
+	for rows.Next() {
+		var sch boFichajeSchedule
+		if err := rows.Scan(&sch.ID, &sch.MemberID, &sch.MemberName, &sch.Date, &sch.StartTime, &sch.EndTime, &sch.UpdatedAt); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo horarios")
+			return
+		}
+		if strings.TrimSpace(sch.MemberName) == "" {
+			sch.MemberName = fmt.Sprintf("Miembro #%d", sch.MemberID)
+		}
+		schedules = append(schedules, sch)
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"memberId":  memberID,
+		"from":      fromStr,
+		"to":        toStr,
+		"schedules": schedules,
+	})
+}
+
 func (s *Server) handleBOHorariosMonth(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -1190,10 +1304,18 @@ func (s *Server) handleBOHorariosMySchedule(w http.ResponseWriter, r *http.Reque
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, restaurant_member_id, date, start_time, end_time, created_at, updated_at
-		FROM member_schedules
-		WHERE restaurant_id = ? AND restaurant_member_id = ? AND date BETWEEN ? AND ?
-		ORDER BY date ASC
+		SELECT
+			s.id,
+			s.restaurant_member_id,
+			TRIM(CONCAT(COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, ''))) AS member_name,
+			DATE_FORMAT(s.work_date, '%Y-%m-%d') AS work_date,
+			TIME_FORMAT(s.start_time, '%H:%i') AS start_time,
+			TIME_FORMAT(s.end_time, '%H:%i') AS end_time,
+			DATE_FORMAT(s.updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at
+		FROM member_work_schedules s
+		JOIN restaurant_members m ON m.id = s.restaurant_member_id AND m.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.restaurant_member_id = ? AND s.work_date BETWEEN ? AND ?
+		ORDER BY s.work_date ASC
 	`, a.ActiveRestaurantID, memberID, from.Format("2006-01-02"), to.Format("2006-01-02"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando horarios")
@@ -1201,42 +1323,16 @@ func (s *Server) handleBOHorariosMySchedule(w http.ResponseWriter, r *http.Reque
 	}
 	defer rows.Close()
 
-	type scheduleRow struct {
-		ID        int
-		MemberID  int
-		Date      string
-		StartTime string
-		EndTime   string
-		CreatedAt time.Time
-		UpdatedAt time.Time
-	}
-
-	schedules := make([]map[string]any, 0)
+	schedules := make([]boFichajeSchedule, 0)
 	for rows.Next() {
-		var sch scheduleRow
-		err := rows.Scan(&sch.ID, &sch.MemberID, &sch.Date, &sch.StartTime, &sch.EndTime, &sch.CreatedAt, &sch.UpdatedAt)
+		var sch boFichajeSchedule
+		err := rows.Scan(&sch.ID, &sch.MemberID, &sch.MemberName, &sch.Date, &sch.StartTime, &sch.EndTime, &sch.UpdatedAt)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo horarios")
 			return
 		}
 
-		// Get member name
-		var firstName, lastName string
-		nameRow := s.db.QueryRowContext(r.Context(), `
-			SELECT first_name, last_name FROM restaurant_members WHERE id = ? AND restaurant_id = ?
-		`, sch.MemberID, a.ActiveRestaurantID)
-		_ = nameRow.Scan(&firstName, &lastName)
-
-		schedules = append(schedules, map[string]any{
-			"id":         sch.ID,
-			"memberId":   sch.MemberID,
-			"memberName": strings.TrimSpace(firstName + " " + lastName),
-			"date":       sch.Date,
-			"startTime":  sch.StartTime,
-			"endTime":    sch.EndTime,
-			"createdAt":  sch.CreatedAt.Format(time.RFC3339),
-			"updatedAt":  sch.UpdatedAt.Format(time.RFC3339),
-		})
+		schedules = append(schedules, sch)
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

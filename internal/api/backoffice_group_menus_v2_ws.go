@@ -1069,9 +1069,16 @@ func (s *Server) waveSpeedResultFetchURL(requestID string) string {
 }
 
 func (s *Server) callOpenAIImageEdit(ctx context.Context, input []byte, inputContentType string) ([]byte, error) {
+	return s.callOpenAIImageEditWithPrompt(ctx, input, inputContentType, boGroupMenuV2AIPrompt)
+}
+
+func (s *Server) callOpenAIImageEditWithPrompt(ctx context.Context, input []byte, inputContentType string, prompt string) ([]byte, error) {
 	if len(input) == 0 {
 		s.logBOGroupMenuV2AITrace("ai call rejected empty input")
 		return nil, errors.New("empty input image")
+	}
+	if strings.TrimSpace(prompt) == "" {
+		prompt = boGroupMenuV2AIPrompt
 	}
 	apiKey := strings.TrimSpace(s.cfg.OpenAIAPIKey)
 	if apiKey == "" {
@@ -1102,7 +1109,7 @@ func (s *Server) callOpenAIImageEdit(ctx context.Context, input []byte, inputCon
 		},
 		"input_fidelity": "high",
 		"output_format":  "jpeg",
-		"prompt":         boGroupMenuV2AIPrompt,
+		"prompt":         prompt,
 		"quality":        "high",
 		"size":           "1024*1024",
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -1625,4 +1626,145 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+type boRestaurantInfo struct {
+	Direccion           string `json:"direccion"`
+	Telefono            string `json:"telefono"`
+	Email               string `json:"email"`
+	CIF                 string `json:"cif"`
+	DireccionFacturacion string `json:"direccionFacturacion"`
+	Clasificacion       string `json:"clasificacion"`
+}
+
+type boRestaurantInfoSetRequest struct {
+	Direccion           *string `json:"direccion,omitempty"`
+	Telefono            *string `json:"telefono,omitempty"`
+	Email               *string `json:"email,omitempty"`
+	CIF                 *string `json:"cif,omitempty"`
+	DireccionFacturacion *string `json:"direccionFacturacion,omitempty"`
+	Clasificacion       *string `json:"clasificacion,omitempty"`
+}
+
+func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRestaurantInfo, error) {
+	out := boRestaurantInfo{Clasificacion: "sociedad"}
+	var (
+		direccion           sql.NullString
+		telefono            sql.NullString
+		email               sql.NullString
+		cif                 sql.NullString
+		direccionFacturacion sql.NullString
+		clasificacion       sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT direccion, telefono, email, cif, direccion_facturacion, clasificacion
+		FROM restaurant_info
+		WHERE restaurant_id = ?
+		LIMIT 1
+	`, restaurantID).Scan(&direccion, &telefono, &email, &cif, &direccionFacturacion, &clasificacion)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return out, nil
+		}
+		return out, err
+	}
+	out.Direccion = strings.TrimSpace(direccion.String)
+	out.Telefono = strings.TrimSpace(telefono.String)
+	out.Email = strings.TrimSpace(email.String)
+	out.CIF = strings.TrimSpace(cif.String)
+	out.DireccionFacturacion = strings.TrimSpace(direccionFacturacion.String)
+	if clasificacion.Valid {
+		v := strings.TrimSpace(clasificacion.String)
+		if v == "persona_fisica" || v == "sociedad" {
+			out.Clasificacion = v
+		}
+	}
+	return out, nil
+}
+
+func (s *Server) handleBORestaurantInfoGet(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	info, err := s.loadRestaurantInfo(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando informacion del restaurante")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":        true,
+		"restaurantInfo": info,
+	})
+}
+
+func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	var req boRestaurantInfoSetRequest
+	if err := readJSONBody(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "Invalid JSON",
+		})
+		return
+	}
+
+	current, err := s.loadRestaurantInfo(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando informacion del restaurante")
+		return
+	}
+
+	if req.Direccion != nil {
+		current.Direccion = strings.TrimSpace(*req.Direccion)
+	}
+	if req.Telefono != nil {
+		current.Telefono = strings.TrimSpace(*req.Telefono)
+	}
+	if req.Email != nil {
+		current.Email = strings.TrimSpace(*req.Email)
+	}
+	if req.CIF != nil {
+		current.CIF = strings.TrimSpace(*req.CIF)
+	}
+	if req.DireccionFacturacion != nil {
+		current.DireccionFacturacion = strings.TrimSpace(*req.DireccionFacturacion)
+	}
+	if req.Clasificacion != nil {
+		v := strings.TrimSpace(*req.Clasificacion)
+		if v == "persona_fisica" || v == "sociedad" {
+			current.Clasificacion = v
+		}
+	}
+
+	_, err = s.db.ExecContext(r.Context(), `
+		INSERT INTO restaurant_info (
+			restaurant_id, direccion, telefono, email, cif, direccion_facturacion, clasificacion
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			direccion = VALUES(direccion),
+			telefono = VALUES(telefono),
+			email = VALUES(email),
+			cif = VALUES(cif),
+			direccion_facturacion = VALUES(direccion_facturacion),
+			clasificacion = VALUES(clasificacion)
+	`, a.ActiveRestaurantID, current.Direccion, current.Telefono, current.Email, current.CIF, current.DireccionFacturacion, current.Clasificacion)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando informacion del restaurante")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":        true,
+		"restaurantInfo": current,
+	})
 }
