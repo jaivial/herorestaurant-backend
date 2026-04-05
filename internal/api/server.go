@@ -222,6 +222,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/toggle-active", s.handleBOGroupMenusV2ToggleActive)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/special-image", s.handleBOSpecialMenuImageUpload)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}", s.handleBOGroupMenusV2Delete)
+		r.With(s.requireBOSession, menusGate).Get("/menus/selector", s.handleBOMenuSelectorGet)
 		r.With(s.requireBOSession, menusGate).Get("/dishes-catalog/search", s.handleBODishesCatalogSearch)
 		r.With(s.requireBOSession, menusGate).Post("/dishes-catalog/upsert", s.handleBODishesCatalogUpsert)
 
@@ -253,6 +254,9 @@ func (s *Server) Routes() http.Handler {
 
 		r.With(s.requireBOSession, reservasGate).Get("/config/restaurant-info", s.handleBORestaurantInfoGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/restaurant-info", s.handleBORestaurantInfoSet)
+
+		r.With(s.requireBOSession, reservasGate).Get("/config/mandatory-menus", s.handleBOMandatoryMenusGet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/mandatory-menus", s.handleBOMandatoryMenusSave)
 
 		// Restaurant-level settings (integrations/branding).
 		r.With(s.requireBOSession, ajustesGate).Get("/integrations", s.handleBOIntegrationsGet)
@@ -352,6 +356,9 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/public/booking/rice", s.handlePublicBookingRice)
 	r.Get("/public/booking-policies", s.handlePublicBookingPolicies)
 
+	// Embeddable booking widget API — accepts ?restaurant_id= query param.
+	s.RegisterWidgetRoutes(r)
+
 	// Everything below is restaurant-scoped.
 	r.Group(func(r chi.Router) {
 		r.Use(s.withRestaurant)
@@ -364,6 +371,7 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/reservations/two-top-availability", s.handleFetchMesasDeDos)
 		r.Get("/reservations/hour-data", s.handleGetHourData)
 		r.Get("/reservations/day-context", s.handleGetReservationDayContext)
+		r.Get("/reservations/mandatory-menus", s.handlePublicMandatoryMenus)
 		r.With(s.requireAdmin).Post("/menu-visibility", s.handleMenuVisibilityToggle)
 		r.Get("/menus/public", s.handlePublicMenus)
 		r.Get("/menus/sidebar", s.handlePublicMenusSidebar)

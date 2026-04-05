@@ -1768,3 +1768,187 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 		"restaurantInfo": current,
 	})
 }
+
+// --- Mandatory Menus Config ---
+
+type boMandatoryMenuSaveRequest struct {
+	Date          string `json:"date"`
+	Status        bool   `json:"status"`
+	Mandatory     bool   `json:"mandatory"`
+	MenuIDs       []int  `json:"menuIds"`
+	MenuChooseMain []int `json:"menuChooseMain"`
+}
+
+func (s *Server) handleBOMandatoryMenusGet(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	date := strings.TrimSpace(r.URL.Query().Get("date"))
+	if date == "" || !isValidISODate(date) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Invalid date",
+		})
+		return
+	}
+
+	var id int
+	var statusInt, mandatoryInt int
+	var menuIDRaw, menuChooseMainRaw sql.NullString
+
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT id, status, mandatory, menu_id, menu_choose_main
+		FROM mandatory_menus
+		WHERE restaurant_id = ? AND date = ?
+		LIMIT 1
+	`, a.ActiveRestaurantID, date).Scan(&id, &statusInt, &mandatoryInt, &menuIDRaw, &menuChooseMainRaw)
+
+	if err == sql.ErrNoRows {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success":           true,
+			"date":             date,
+			"status":           false,
+			"mandatory":        false,
+			"menuIds":          []int{},
+			"menuChooseMain":   []int{},
+		})
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando mandatory_menus")
+		return
+	}
+
+	var menuIDs []int
+	if menuIDRaw.Valid && menuIDRaw.String != "" {
+		_ = json.Unmarshal([]byte(menuIDRaw.String), &menuIDs)
+	}
+	if menuIDs == nil {
+		menuIDs = []int{}
+	}
+
+	var menuChooseMain []int
+	if menuChooseMainRaw.Valid && menuChooseMainRaw.String != "" {
+		_ = json.Unmarshal([]byte(menuChooseMainRaw.String), &menuChooseMain)
+	}
+	if menuChooseMain == nil {
+		menuChooseMain = []int{}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":         true,
+		"date":           date,
+		"status":         statusInt != 0,
+		"mandatory":      mandatoryInt != 0,
+		"menuIds":         menuIDs,
+		"menuChooseMain": menuChooseMain,
+	})
+}
+
+func (s *Server) handleBOMandatoryMenusSave(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	var req boMandatoryMenuSaveRequest
+	if err := readJSONBody(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "Invalid JSON",
+		})
+		return
+	}
+
+	date := strings.TrimSpace(req.Date)
+	if date == "" || !isValidISODate(date) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Invalid date",
+		})
+		return
+	}
+
+	menuIDsJSON, _ := json.Marshal(req.MenuIDs)
+	menuChooseMainJSON, _ := json.Marshal(req.MenuChooseMain)
+
+	statusInt := 0
+	if req.Status {
+		statusInt = 1
+	}
+	mandatoryInt := 0
+	if req.Mandatory {
+		mandatoryInt = 1
+	}
+
+	// Upsert by (restaurant_id, date)
+	_, err := s.db.ExecContext(r.Context(), `
+		INSERT INTO mandatory_menus (restaurant_id, date, status, mandatory, menu_id, menu_choose_main)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			status = VALUES(status),
+			mandatory = VALUES(mandatory),
+			menu_id = VALUES(menu_id),
+			menu_choose_main = VALUES(menu_choose_main)
+	`, a.ActiveRestaurantID, date, statusInt, mandatoryInt, string(menuIDsJSON), string(menuChooseMainJSON))
+
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando mandatory_menus")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":         true,
+		"date":           date,
+		"status":         req.Status,
+		"mandatory":      req.Mandatory,
+		"menuIds":        req.MenuIDs,
+		"menuChooseMain": req.MenuChooseMain,
+	})
+}
+
+// handleBOMenuSelectorGet returns menus for the dropdown selector in backoffice.
+// Filters out draft menus (is_draft = 0).
+func (s *Server) handleBOMenuSelectorGet(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, menu_title, COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') AS menu_type
+		FROM menus
+		WHERE restaurant_id = ? AND is_draft = 0 AND active = 1
+		ORDER BY menu_type ASC, menu_title ASC
+	`, a.ActiveRestaurantID)
+
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menus")
+		return
+	}
+	defer rows.Close()
+
+	var menus []map[string]any
+	for rows.Next() {
+		var id int
+		var title, menuType string
+		if err := rows.Scan(&id, &title, &menuType); err != nil {
+			continue
+		}
+		menus = append(menus, map[string]any{
+			"id":         id,
+			"menu_title": title,
+			"menu_type":  menuType,
+		})
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"menus":   menus,
+	})
+}

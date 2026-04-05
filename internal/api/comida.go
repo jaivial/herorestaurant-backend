@@ -82,6 +82,7 @@ type comidaItemResponse struct {
 	Categoria          string   `json:"categoria,omitempty"`
 	CategoryID         *int     `json:"category_id,omitempty"`
 	CategorySlug       string   `json:"category_slug,omitempty"`
+	AiGenerating       bool     `json:"ai_generating,omitempty"`
 	Bodega             string   `json:"bodega,omitempty"`
 	DenominacionOrigen string   `json:"denominacion_origen,omitempty"`
 	Graduacion         float64  `json:"graduacion,omitempty"`
@@ -136,6 +137,7 @@ type comidaUpsertRequest struct {
 	DenominacionOrigen *string   `json:"denominacion_origen,omitempty"`
 	Graduacion         *float64  `json:"graduacion,omitempty"`
 	Anyo               *string   `json:"anyo,omitempty"`
+	AiGenerating       *bool     `json:"ai_generating,omitempty"`
 }
 
 type comidaCategoryCreateRequest struct {
@@ -774,7 +776,8 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			ci.foto,
 			COALESCE(ci.categoria, ''),
 			ci.category_id,
-			COALESCE(c.slug, '')
+			COALESCE(c.slug, ''),
+			ci.ai_generating
 		FROM comida_items ci
 		LEFT JOIN comida_plato_categories c ON c.id = ci.category_id
 		WHERE `+whereSQL+`
@@ -796,6 +799,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			fotoPath      string
 			fotoBlob      []byte
 			categoryIDRaw sql.NullInt64
+			aiGenInt      int
 		)
 		if err := rows.Scan(
 			&item.Num,
@@ -813,6 +817,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			&item.Categoria,
 			&categoryIDRaw,
 			&item.CategorySlug,
+			&aiGenInt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -820,6 +825,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 		item.Alergenos = parseAlergenos(alergRaw)
 		item.Active = activeInt != 0
 		item.HasFoto = hasFotoInt != 0
+		item.AiGenerating = aiGenInt != 0
 		if categoryIDRaw.Valid {
 			v := int(categoryIDRaw.Int64)
 			item.CategoryID = &v
@@ -1066,6 +1072,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 		fotoPath      sql.NullString
 		fotoBlob      []byte
 		categoryIDRaw sql.NullInt64
+		aiGenInt      int
 	)
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT
@@ -1083,7 +1090,8 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 			ci.foto,
 			COALESCE(ci.categoria, ''),
 			ci.category_id,
-			COALESCE(c.slug, '')
+			COALESCE(c.slug, ''),
+			ci.ai_generating
 		FROM comida_items ci
 		LEFT JOIN comida_plato_categories c ON c.id = ci.category_id
 		WHERE ci.restaurant_id = ? AND ci.source_type = ? AND ci.id = ?
@@ -1104,6 +1112,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 		&item.Categoria,
 		&categoryIDRaw,
 		&item.CategorySlug,
+		&aiGenInt,
 	)
 	if err == sql.ErrNoRows {
 		return comidaItemResponse{}, false, nil
@@ -1116,6 +1125,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 	item.Alergenos = parseAlergenos(alergRaw)
 	item.Active = activeInt != 0
 	item.HasFoto = hasFotoInt != 0
+	item.AiGenerating = aiGenInt != 0
 	if categoryIDRaw.Valid {
 		v := int(categoryIDRaw.Int64)
 		item.CategoryID = &v
@@ -1322,10 +1332,15 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 		foto = b
 	}
 
+	aiGenVal := 0
+	if req.AiGenerating != nil && *req.AiGenerating {
+		aiGenVal = 1
+	}
+
 	res, err := s.db.ExecContext(r.Context(), `
 		INSERT INTO comida_items
-			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, alergenos_json, active, foto_path, foto)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, alergenos_json, active, foto_path, foto, ai_generating)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
 	`, restaurantID,
 		string(t),
 		nombre,
@@ -1339,6 +1354,7 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 		string(alergJSON),
 		activeInt,
 		foto,
+		aiGenVal,
 	)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando comida")
@@ -1546,6 +1562,14 @@ func (s *Server) patchCatalogItem(w http.ResponseWriter, r *http.Request, restau
 		}
 		sets = append(sets, "active = ?")
 		args = append(args, activeInt)
+	}
+	if req.AiGenerating != nil {
+		aiGenVal := 0
+		if *req.AiGenerating {
+			aiGenVal = 1
+		}
+		sets = append(sets, "ai_generating = ?")
+		args = append(args, aiGenVal)
 	}
 	if req.ImageBase64 != nil {
 		raw := strings.TrimSpace(*req.ImageBase64)

@@ -317,6 +317,10 @@ func (s *Server) handleBOComidaImageAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.db.ExecContext(r.Context(),
+		"UPDATE comida_items SET ai_generating = 1 WHERE id = ? AND restaurant_id = ? AND source_type = ?",
+		itemNum, a.ActiveRestaurantID, string(ct))
+
 	s.broadcastBOComidaAIEvent(a.ActiveRestaurantID, "comida_ai_started", map[string]any{
 		"tipo":    string(ct),
 		"item_id": itemNum,
@@ -398,7 +402,8 @@ func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE comida_items
 		SET foto_path = ?,
-		    foto = NULL
+		    foto = NULL,
+		    ai_generating = 0
 		WHERE id = ? AND restaurant_id = ? AND source_type = ?
 	`, objectPath, job.ItemNum, job.RestaurantID, job.Tipo)
 	if err != nil {
@@ -417,6 +422,9 @@ func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
 
 func (s *Server) failBOComidaAIImageJob(job boComidaAIImageJob, message string) {
 	s.logBOComidaAITrace("job failed restaurant=%d tipo=%s item=%d message=%s", job.RestaurantID, job.Tipo, job.ItemNum, message)
+	s.db.ExecContext(context.Background(),
+		"UPDATE comida_items SET ai_generating = 0 WHERE id = ? AND restaurant_id = ? AND source_type = ?",
+		job.ItemNum, job.RestaurantID, job.Tipo)
 	s.broadcastBOComidaAIEvent(job.RestaurantID, "comida_ai_failed", map[string]any{
 		"tipo":    job.Tipo,
 		"item_id": job.ItemNum,
