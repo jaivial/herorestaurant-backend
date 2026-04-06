@@ -14,12 +14,64 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
+// rateLimitState holds sliding-window counters per (IP + restaurantID).
+type rateLimitState struct {
+	tokens    int
+	windowEnd int64 // Unix seconds at the end of the 60-second window
+}
+
+const (
+	rateLimitWindowSecs = 60
+	rateLimitMaxBurst   = 5
+)
+
+// rateLimit returns true if the request is allowed, false if rate-limited.
+// It uses a simple token-bucket per (IP, restaurantID) pair.
+func (s *Server) checkRateLimit(ip string, restaurantID int) bool {
+	key := ip + ":" + strconv.Itoa(restaurantID)
+	now := time.Now().Unix()
+
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+
+	entry, ok := s.rateLimit[key]
+	if !ok {
+		entry = &rateLimitState{windowEnd: now + rateLimitWindowSecs, tokens: rateLimitMaxBurst - 1}
+		s.rateLimit[key] = entry
+		return true
+	}
+
+	// Advance the window if it has expired.
+	if now >= entry.windowEnd {
+		entry.windowEnd = now + rateLimitWindowSecs
+		entry.tokens = rateLimitMaxBurst - 1
+		return true
+	}
+
+	if entry.tokens <= 0 {
+		return false
+	}
+
+	entry.tokens--
+	return true
+}
+
 func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
 			"success": false,
 			"message": "Unknown restaurant",
+		})
+		return
+	}
+
+	// IP-based rate limiting: 5 submissions per minute per (IP, restaurant).
+	clientIP := httpx.ClientIP(r)
+	if !s.checkRateLimit(clientIP, restaurantID) {
+		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{
+			"success": false,
+			"message": "Demasiadas solicitudes. Inténtalo de nuevo en un momento.",
 		})
 		return
 	}

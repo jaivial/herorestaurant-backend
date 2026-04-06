@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"sync"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +29,8 @@ type Server struct {
 	groupMenusV2AIQueue chan struct{}
 	vinoAIHub           *boVinoAIHub
 	comidaAIHub         *boComidaAIHub
+	rateMu              sync.Mutex
+	rateLimit          map[string]*rateLimitState
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -44,6 +47,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		groupMenusV2AIQueue: make(chan struct{}, aiConcurrency),
 		vinoAIHub:           newBOVinoAIHub(),
 		comidaAIHub:         newBOComidaAIHub(),
+		rateLimit:          make(map[string]*rateLimitState),
 	}
 	go s.runBOFichajeAutoCutLoop()
 	return s
@@ -257,6 +261,13 @@ func (s *Server) Routes() http.Handler {
 
 		r.With(s.requireBOSession, reservasGate).Get("/config/mandatory-menus", s.handleBOMandatoryMenusGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/mandatory-menus", s.handleBOMandatoryMenusSave)
+
+		// Widget settings (booking manager embed).
+		r.With(s.requireBOSession, reservasGate).Get("/widget/settings", s.handleBOWidgetSettingsGet)
+		r.With(s.requireBOSession, reservasGate).Put("/widget/settings", s.handleBOWidgetSettingsPut)
+
+		r.With(s.requireBOSession, reservasGate).Get("/config/email-provider", s.handleBOEmailProviderGet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/email-provider", s.handleBOEmailProviderSet)
 
 		// Restaurant-level settings (integrations/branding).
 		r.With(s.requireBOSession, ajustesGate).Get("/integrations", s.handleBOIntegrationsGet)

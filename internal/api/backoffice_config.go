@@ -1952,3 +1952,239 @@ func (s *Server) handleBOMenuSelectorGet(w http.ResponseWriter, r *http.Request)
 		"menus":   menus,
 	})
 }
+
+// --- Email Provider Config ---
+
+type boEmailProviderConfig struct {
+	ID              int    `json:"id"`
+	Provider        string `json:"provider"`
+	SMTPHost        string `json:"smtpHost"`
+	SMTPPort        int    `json:"smtpPort"`
+	SMTPUsername    string `json:"smtpUsername"`
+	SMTPPassword    string `json:"smtpPassword"`
+	SMTPFromEmail   string `json:"smtpFromEmail"`
+	SMTEncryption   string `json:"smtpEncryption"`
+	GmailAppPassword string `json:"gmailAppPassword"`
+	GmailFromEmail  string `json:"gmailFromEmail"`
+	IsActive        bool   `json:"isActive"`
+}
+
+type boEmailProviderSetRequest struct {
+	ID               *int    `json:"id,omitempty"`
+	Provider         *string `json:"provider,omitempty"`
+	SMTPHost         *string `json:"smtpHost,omitempty"`
+	SMTPPort         *int    `json:"smtpPort,omitempty"`
+	SMTPUsername     *string `json:"smtpUsername,omitempty"`
+	SMTPPassword     *string `json:"smtpPassword,omitempty"`
+	SMTPFromEmail    *string `json:"smtpFromEmail,omitempty"`
+	SMTEncryption    *string `json:"smtpEncryption,omitempty"`
+	GmailAppPassword *string `json:"gmailAppPassword,omitempty"`
+	GmailFromEmail   *string `json:"gmailFromEmail,omitempty"`
+	IsActive         *bool   `json:"isActive,omitempty"`
+}
+
+func defaultEmailProviderConfig() boEmailProviderConfig {
+	return boEmailProviderConfig{
+		Provider:      "smtp",
+		SMTPHost:      "",
+		SMTPPort:      587,
+		SMTPUsername:  "",
+		SMTPPassword:  "",
+		SMTPFromEmail: "",
+		SMTEncryption: "tls",
+		GmailAppPassword: "",
+		GmailFromEmail:   "",
+		IsActive:      false,
+	}
+}
+
+func boolFromInt(v int) bool { return v != 0 }
+
+func (s *Server) loadEmailProviderConfig(ctx context.Context, restaurantID int) (boEmailProviderConfig, error) {
+	out := defaultEmailProviderConfig()
+	var id, smtpPort, isActiveInt int
+	var provider, smtpHost, smtpUsername, smtpPassword, smtpFromEmail, smtpEncryption, gmailAppPassword, gmailFromEmail sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, provider, smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_encryption,
+			gmail_app_password, gmail_from_email, is_active
+		FROM email_provider_config
+		WHERE restaurant_id = ?
+		LIMIT 1
+	`, restaurantID).Scan(&id, &provider, &smtpHost, &smtpPort, &smtpUsername, &smtpPassword, &smtpFromEmail, &smtpEncryption, &gmailAppPassword, &gmailFromEmail, &isActiveInt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return out, nil
+		}
+		return out, err
+	}
+	out.ID = id
+	if provider.Valid {
+		out.Provider = strings.TrimSpace(provider.String)
+	}
+	if smtpHost.Valid {
+		out.SMTPHost = strings.TrimSpace(smtpHost.String)
+	}
+	out.SMTPPort = smtpPort
+	if smtpUsername.Valid {
+		out.SMTPUsername = strings.TrimSpace(smtpUsername.String)
+	}
+	if smtpPassword.Valid {
+		out.SMTPPassword = smtpPassword.String
+	}
+	if smtpFromEmail.Valid {
+		out.SMTPFromEmail = strings.TrimSpace(smtpFromEmail.String)
+	}
+	if smtpEncryption.Valid {
+		out.SMTEncryption = strings.TrimSpace(smtpEncryption.String)
+	}
+	if gmailAppPassword.Valid {
+		out.GmailAppPassword = gmailAppPassword.String
+	}
+	if gmailFromEmail.Valid {
+		out.GmailFromEmail = strings.TrimSpace(gmailFromEmail.String)
+	}
+	out.IsActive = boolFromInt(isActiveInt)
+	return out, nil
+}
+
+func (s *Server) handleBOEmailProviderGet(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	cfg, err := s.loadEmailProviderConfig(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando configuracion de email")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"config":  cfg,
+	})
+}
+
+func normalizeEncryption(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "none", "tls", "ssl":
+		return v
+	default:
+		return "tls"
+	}
+}
+
+func normalizeProvider(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "smtp", "gmail":
+		return v
+	default:
+		return "smtp"
+	}
+}
+
+func (s *Server) handleBOEmailProviderSet(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	var req boEmailProviderSetRequest
+	if err := readJSONBody(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "Invalid JSON",
+		})
+		return
+	}
+
+	current, err := s.loadEmailProviderConfig(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando configuracion de email")
+		return
+	}
+
+	if req.Provider != nil {
+		current.Provider = normalizeProvider(*req.Provider)
+	}
+	if req.SMTPHost != nil {
+		current.SMTPHost = strings.TrimSpace(*req.SMTPHost)
+	}
+	if req.SMTPPort != nil {
+		port := *req.SMTPPort
+		if port <= 0 || port > 65535 {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "smtp_port invalido",
+			})
+			return
+		}
+		current.SMTPPort = port
+	}
+	if req.SMTPUsername != nil {
+		current.SMTPUsername = strings.TrimSpace(*req.SMTPUsername)
+	}
+	if req.SMTPPassword != nil {
+		current.SMTPPassword = *req.SMTPPassword
+	}
+	if req.SMTPFromEmail != nil {
+		current.SMTPFromEmail = strings.TrimSpace(*req.SMTPFromEmail)
+	}
+	if req.SMTEncryption != nil {
+		current.SMTEncryption = normalizeEncryption(*req.SMTEncryption)
+	}
+	if req.GmailAppPassword != nil {
+		current.GmailAppPassword = *req.GmailAppPassword
+	}
+	if req.GmailFromEmail != nil {
+		current.GmailFromEmail = strings.TrimSpace(*req.GmailFromEmail)
+	}
+	if req.IsActive != nil {
+		current.IsActive = *req.IsActive
+	}
+
+	activeInt := 0
+	if current.IsActive {
+		activeInt = 1
+	}
+
+	if current.ID > 0 {
+		_, err = s.db.ExecContext(r.Context(), `
+			UPDATE email_provider_config SET
+				provider = ?, smtp_host = ?, smtp_port = ?, smtp_username = ?, smtp_password = ?,
+				smtp_from_email = ?, smtp_encryption = ?, gmail_app_password = ?, gmail_from_email = ?,
+				is_active = ?
+			WHERE id = ? AND restaurant_id = ?
+		`, current.Provider, current.SMTPHost, current.SMTPPort, current.SMTPUsername, current.SMTPPassword,
+			current.SMTPFromEmail, current.SMTEncryption, current.GmailAppPassword, current.GmailFromEmail,
+			activeInt, current.ID, a.ActiveRestaurantID)
+	} else {
+		_, err = s.db.ExecContext(r.Context(), `
+			INSERT INTO email_provider_config (
+				restaurant_id, provider, smtp_host, smtp_port, smtp_username, smtp_password,
+				smtp_from_email, smtp_encryption, gmail_app_password, gmail_from_email, is_active
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, a.ActiveRestaurantID, current.Provider, current.SMTPHost, current.SMTPPort, current.SMTPUsername,
+			current.SMTPPassword, current.SMTPFromEmail, current.SMTEncryption, current.GmailAppPassword,
+			current.GmailFromEmail, activeInt)
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando configuracion de email")
+		return
+	}
+
+	// Reload to get the stored values.
+	stored, err := s.loadEmailProviderConfig(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo configuracion guardada")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"config":  stored,
+	})
+}
