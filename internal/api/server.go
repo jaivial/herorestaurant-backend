@@ -103,6 +103,12 @@ func (s *Server) Routes() http.Handler {
 
 		r.Post("/login", s.handleBOLogin)
 		r.Post("/logout", s.handleBOLogout)
+
+		// Error reporting from the backoffice ErrorBoundary.
+		// Does not require authentication — errors should be logged even if the
+		// session is broken. The request is fire-and-forget from the client.
+		r.Post("/errors", s.handleAdminErrorReport)
+
 		r.Post("/invitations/validate", s.handleBOInvitationValidate)
 		r.Post("/invitations/onboarding/start", s.handleBOInvitationOnboardingStart)
 		r.Get("/invitations/onboarding/{guid}", s.handleBOInvitationOnboardingGet)

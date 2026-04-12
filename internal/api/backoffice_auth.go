@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -643,6 +644,55 @@ func boSessionCookieSecure(r *http.Request) bool {
 		return true
 	}
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+}
+
+// handleAdminErrorReport logs JS errors reported by the backoffice ErrorBoundary.
+// This endpoint intentionally does NOT require a valid session — errors can occur
+// before or during authentication failures. It is fire-and-forget from the client.
+func (s *Server) handleAdminErrorReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var payload struct {
+		Message      string `json:"message"`
+		Name         string `json:"name"`
+		Stack        string `json:"stack"`
+		ComponentStack string `json:"componentStack"`
+		Page         string `json:"page"`
+		URL          string `json:"url"`
+		UserAgent    string `json:"userAgent"`
+		Timestamp    string `json:"timestamp"`
+	}
+
+	if err := readJSONBody(r, &payload); err != nil {
+		// Still return 200 so the client doesn't retry; log raw body.
+		log.Printf("[handleAdminErrorReport] failed to decode body: %v", err)
+		httpx.WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
+		return
+	}
+
+	// Log the error with structured fields for server-side log aggregation.
+	log.Printf("[JS_ERROR] page=%s name=%s message=%s url=%s timestamp=%s",
+		payload.Page,
+		payload.Name,
+		payload.Message,
+		payload.URL,
+		payload.Timestamp,
+	)
+
+	// In production, forward to a log aggregator (e.g., Sentry, Datadog) here.
+	// Example (requires SENTRY_DSN env var):
+	//   sentry.WithScope(func(scope *sentry.Scope) {
+	//       scope.SetTag("page", payload.Page)
+	//       scope.SetTag("user_agent", payload.UserAgent)
+	//       scope.SetExtra("component_stack", payload.ComponentStack)
+	//       scope.SetExtra("js_stack", payload.Stack)
+	//       sentry.CaptureMessage(payload.Message)
+	//   })
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 func setBOSessionCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time, ttl time.Duration) {

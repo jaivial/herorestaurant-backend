@@ -30,7 +30,7 @@ func ClientIP(r *http.Request) string {
 	// Fall back to RemoteAddr (may include port).
 	if ra := r.RemoteAddr; ra != "" {
 		// Remove port if present.
-		if host, _, err := strings.Cut(ra, ":"); err == nil {
+		if host, _, ok := strings.Cut(ra, ":"); ok {
 			return host
 		}
 		return ra
