@@ -1629,39 +1629,45 @@ func boolToInt(v bool) int {
 }
 
 type boRestaurantInfo struct {
-	Direccion           string `json:"direccion"`
-	Telefono            string `json:"telefono"`
-	Email               string `json:"email"`
-	CIF                 string `json:"cif"`
+	Direccion            string `json:"direccion"`
+	Telefono             string `json:"telefono"`
+	Email                string `json:"email"`
+	CIF                  string `json:"cif"`
 	DireccionFacturacion string `json:"direccionFacturacion"`
-	Clasificacion       string `json:"clasificacion"`
+	Clasificacion        string `json:"clasificacion"`
+	Website              string `json:"website"`
+	MenuURL              string `json:"menuUrl"`
 }
 
 type boRestaurantInfoSetRequest struct {
-	Direccion           *string `json:"direccion,omitempty"`
-	Telefono            *string `json:"telefono,omitempty"`
-	Email               *string `json:"email,omitempty"`
-	CIF                 *string `json:"cif,omitempty"`
+	Direccion            *string `json:"direccion,omitempty"`
+	Telefono             *string `json:"telefono,omitempty"`
+	Email                *string `json:"email,omitempty"`
+	CIF                  *string `json:"cif,omitempty"`
 	DireccionFacturacion *string `json:"direccionFacturacion,omitempty"`
-	Clasificacion       *string `json:"clasificacion,omitempty"`
+	Clasificacion        *string `json:"clasificacion,omitempty"`
+	Website              *string `json:"website,omitempty"`
+	MenuURL              *string `json:"menuUrl,omitempty"`
 }
 
 func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRestaurantInfo, error) {
 	out := boRestaurantInfo{Clasificacion: "sociedad"}
 	var (
-		direccion           sql.NullString
-		telefono            sql.NullString
-		email               sql.NullString
-		cif                 sql.NullString
+		direccion            sql.NullString
+		telefono             sql.NullString
+		email                sql.NullString
+		cif                  sql.NullString
 		direccionFacturacion sql.NullString
-		clasificacion       sql.NullString
+		clasificacion        sql.NullString
+		website              sql.NullString
+		menuURL              sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT direccion, telefono, email, cif, direccion_facturacion, clasificacion
+		SELECT direccion, telefono, email, cif, direccion_facturacion, clasificacion, website, menu_url
 		FROM restaurant_info
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&direccion, &telefono, &email, &cif, &direccionFacturacion, &clasificacion)
+	`, restaurantID).Scan(&direccion, &telefono, &email, &cif, &direccionFacturacion, &clasificacion, &website, &menuURL)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, nil
@@ -1678,6 +1684,12 @@ func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRe
 		if v == "persona_fisica" || v == "sociedad" {
 			out.Clasificacion = v
 		}
+	}
+	if website.Valid {
+		out.Website = strings.TrimSpace(website.String)
+	}
+	if menuURL.Valid {
+		out.MenuURL = strings.TrimSpace(menuURL.String)
 	}
 	return out, nil
 }
@@ -1744,20 +1756,28 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 			current.Clasificacion = v
 		}
 	}
+	if req.Website != nil {
+		current.Website = strings.TrimSpace(*req.Website)
+	}
+	if req.MenuURL != nil {
+		current.MenuURL = strings.TrimSpace(*req.MenuURL)
+	}
 
 	_, err = s.db.ExecContext(r.Context(), `
 		INSERT INTO restaurant_info (
-			restaurant_id, direccion, telefono, email, cif, direccion_facturacion, clasificacion
+			restaurant_id, direccion, telefono, email, cif, direccion_facturacion, clasificacion, website, menu_url
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			direccion = VALUES(direccion),
 			telefono = VALUES(telefono),
 			email = VALUES(email),
 			cif = VALUES(cif),
 			direccion_facturacion = VALUES(direccion_facturacion),
-			clasificacion = VALUES(clasificacion)
-	`, a.ActiveRestaurantID, current.Direccion, current.Telefono, current.Email, current.CIF, current.DireccionFacturacion, current.Clasificacion)
+			clasificacion = VALUES(clasificacion),
+			website = VALUES(website),
+			menu_url = VALUES(menu_url)
+	`, a.ActiveRestaurantID, current.Direccion, current.Telefono, current.Email, current.CIF, current.DireccionFacturacion, current.Clasificacion, current.Website, current.MenuURL)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando informacion del restaurante")
 		return
