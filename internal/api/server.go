@@ -233,6 +233,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Get("/menus/selector", s.handleBOMenuSelectorGet)
 		r.With(s.requireBOSession, menusGate).Get("/dishes-catalog/search", s.handleBODishesCatalogSearch)
 		r.With(s.requireBOSession, menusGate).Post("/dishes-catalog/upsert", s.handleBODishesCatalogUpsert)
+		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}/same-day-booking", s.handleBODishSameDayBookingList)
+		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/same-day-booking/{dishId}", s.handleBODishSameDayBookingCreate)
+		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/same-day-booking/{dishId}", s.handleBODishSameDayBookingDelete)
 
 		// Backoffice configuration for reservations.
 		r.With(s.requireBOSession, reservasGate).Get("/config/defaults", s.handleBOConfigDefaultsGet)
