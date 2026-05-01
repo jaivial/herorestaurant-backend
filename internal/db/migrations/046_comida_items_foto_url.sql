@@ -1,0 +1,3 @@
+ALTER TABLE comida_items
+  ADD COLUMN foto_url VARCHAR(1024) DEFAULT NULL
+  AFTER foto;
