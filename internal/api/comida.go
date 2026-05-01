@@ -771,9 +771,10 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			COALESCE(ci.suplemento, 0),
 			ci.alergenos_json,
 			ci.active,
-			((ci.foto_path IS NOT NULL AND LENGTH(ci.foto_path) > 0) OR ci.foto IS NOT NULL) AS has_foto,
+			((ci.foto_path IS NOT NULL AND LENGTH(ci.foto_path) > 0) OR ci.foto IS NOT NULL OR ci.foto_url IS NOT NULL) AS has_foto,
 			COALESCE(ci.foto_path, ''),
 			ci.foto,
+			COALESCE(ci.foto_url, ''),
 			COALESCE(ci.categoria, ''),
 			ci.category_id,
 			COALESCE(c.slug, ''),
@@ -798,6 +799,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			hasFotoInt    int
 			fotoPath      string
 			fotoBlob      []byte
+			fotoURL       string
 			categoryIDRaw sql.NullInt64
 			aiGenInt      int
 		)
@@ -814,6 +816,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			&hasFotoInt,
 			&fotoPath,
 			&fotoBlob,
+			&fotoURL,
 			&item.Categoria,
 			&categoryIDRaw,
 			&item.CategorySlug,
@@ -830,7 +833,9 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			v := int(categoryIDRaw.Int64)
 			item.CategoryID = &v
 		}
-		if fotoPath != "" && s.bunnyConfigured() {
+		if fotoURL != "" {
+			item.FotoURL = fotoURL
+		} else if fotoPath != "" && s.bunnyConfigured() {
 			item.FotoURL = s.bunnyPullURL(fotoPath)
 		} else if len(fotoBlob) > 0 {
 			item.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
@@ -1071,6 +1076,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 		hasFotoInt    int
 		fotoPath      sql.NullString
 		fotoBlob      []byte
+		fotoURL       string
 		categoryIDRaw sql.NullInt64
 		aiGenInt      int
 	)
@@ -1085,9 +1091,10 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 			COALESCE(ci.suplemento, 0),
 			ci.alergenos_json,
 			ci.active,
-			((ci.foto_path IS NOT NULL AND LENGTH(ci.foto_path) > 0) OR ci.foto IS NOT NULL) AS has_foto,
+			((ci.foto_path IS NOT NULL AND LENGTH(ci.foto_path) > 0) OR ci.foto IS NOT NULL OR ci.foto_url IS NOT NULL) AS has_foto,
 			ci.foto_path,
 			ci.foto,
+			COALESCE(ci.foto_url, ''),
 			COALESCE(ci.categoria, ''),
 			ci.category_id,
 			COALESCE(c.slug, ''),
@@ -1109,6 +1116,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 		&hasFotoInt,
 		&fotoPath,
 		&fotoBlob,
+		&fotoURL,
 		&item.Categoria,
 		&categoryIDRaw,
 		&item.CategorySlug,
@@ -1131,7 +1139,9 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 		item.CategoryID = &v
 	}
 
-	if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfigured() {
+	if fotoURL != "" {
+		item.FotoURL = fotoURL
+	} else if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfigured() {
 		item.FotoURL = s.bunnyPullURL(fotoPath.String)
 	} else if len(fotoBlob) > 0 {
 		item.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
