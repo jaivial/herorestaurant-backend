@@ -1,6 +1,6 @@
 .env
 .env.*
-server
+/server
 tmp/
 .DS_Store
 .vscode/
