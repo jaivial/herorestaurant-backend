@@ -24,6 +24,8 @@ const boComidaBebidasAIPrompt = "Create a premium restaurant beverage photoshoot
 
 const boComidaCafesAIPrompt = "Create a premium restaurant coffee photoshoot image. Always display the main focus of the image over a white marble surface, with a neutral creme/white color background and a natural light weight sun coming from up left side which causes shadow of the element to fall to the right. Place the coffee item centered on the white marble table surface. Use a clean, neutral background with a very slight shadow for depth. Apply high-end natural studio lighting with sharp focus to highlight coffee texture, cup warmth, steam (if applicable), and rich colors. Make the coffee look premium, inviting, and visually appealing for a restaurant menu, while staying realistic and natural."
 
+const boComidaPlatosAIPrompt = "Create a premium restaurant food dish photoshoot image. Always display the dish over a white marble surface, with a neutral creme/white color background and a natural light weight sun coming from up left side which causes shadow of the dish to fall to the right. Place the dish centered on the white marble table surface using an elegant ceramic or porcelain plate with subtle rim details. Use a clean, neutral background with a very slight shadow for depth. Apply high-end natural studio lighting with sharp focus to highlight textures, colors, garnishes, and plating details. Add subtle steam or warmth cues if the dish is served hot. Make the food look premium, appetizing, fresh, and visually appealing for a restaurant menu, while staying realistic and natural. Preserve the original plating composition and portion size."
+
 var boComidaAIWSUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
@@ -350,6 +352,8 @@ func (s *Server) comidaAIPromptForTipo(tipo string) string {
 		return boComidaBebidasAIPrompt
 	case "cafes":
 		return boComidaCafesAIPrompt
+	case "platos":
+		return boComidaPlatosAIPrompt
 	default:
 		return boGroupMenuV2AIPrompt
 	}
