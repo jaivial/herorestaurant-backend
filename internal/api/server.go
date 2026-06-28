@@ -20,17 +20,11 @@ import (
 )
 
 type Server struct {
-	db                  *sql.DB
-	cfg                 config.Config
-	tenantCache         tenantDomainCache
-	fichajeHub          *boFichajeHub
-	tablesHub           *boTablesHub
-	groupMenusV2AIHub   *boGroupMenuV2AIHub
-	groupMenusV2AIQueue chan struct{}
-	vinoAIHub           *boVinoAIHub
-	comidaAIHub         *boComidaAIHub
-	rateMu              sync.Mutex
-	rateLimit          map[string]*rateLimitState
+	db          *sql.DB
+	cfg         config.Config
+	tenantCache tenantDomainCache
+	fichajeHub  *boFichajeHub
+	tablesHub   *boTablesHub
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -39,15 +33,10 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		aiConcurrency = 1
 	}
 	s := &Server{
-		db:                  db,
-		cfg:                 cfg,
-		fichajeHub:          newBOFichajeHub(),
-		tablesHub:           newBOTablesHub(),
-		groupMenusV2AIHub:   newBOGroupMenuV2AIHub(),
-		groupMenusV2AIQueue: make(chan struct{}, aiConcurrency),
-		vinoAIHub:           newBOVinoAIHub(),
-		comidaAIHub:         newBOComidaAIHub(),
-		rateLimit:          make(map[string]*rateLimitState),
+		db:         db,
+		cfg:        cfg,
+		fichajeHub: newBOFichajeHub(),
+		tablesHub:  newBOTablesHub(),
 	}
 	go s.runBOFichajeAutoCutLoop()
 	return s
@@ -313,6 +302,19 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Post("/tables/{id}/texture-image", s.handleBOPremiumTablesTextureImageUpload)
 		r.With(s.requireBOSession, reservasGate).Get("/tables/ws", s.handleBOPremiumTablesWS)
 
+		r.With(s.requireBOSession, ajustesGate).Get("/website", s.handleGetWebsiteConfig)
+		r.With(s.requireBOSession, ajustesGate).Put("/website", s.handleUpdateWebsiteConfig)
+		r.With(s.requireBOSession, ajustesGate).Post("/website/ai-generate", s.handleAIWebsiteGenerate)
+
+		r.With(s.requireBOSession, ajustesGate).Get("/domains/search", s.handleDomainSearch)
+		r.With(s.requireBOSession, ajustesGate).Post("/domains/register", s.handleDomainRegister)
+
+		r.With(s.requireBOSession, reservasGate).Get("/tables", s.handleGetTables)
+		r.With(s.requireBOSession, reservasGate).Post("/areas", s.handleCreateArea)
+		r.With(s.requireBOSession, reservasGate).Post("/tables", s.handleCreateTable)
+		r.With(s.requireBOSession, reservasGate).Put("/tables", s.handleUpdateTable)
+		r.With(s.requireBOSession, reservasGate).Get("/tables/ws", s.handleBOTablesWS)
+
 		// Members and role administration.
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members", s.handleBOMembersList)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members", s.handleBOMemberCreate)
@@ -330,11 +332,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/roles", s.handleBORolesGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/roles", s.handleBORoleCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/users/{id}/role", s.handleBOUserRolePatch)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/send", s.handleBOMembersWhatsAppSend)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/subscribe", s.handleBOMembersWhatsAppSubscribe)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/send", s.handleUazapiSend)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/subscribe", s.handleUazapiSubscribe)
 
 		// Fichaje and schedules.
 		r.With(s.requireBOSession, fichajeGate).Get("/fichaje/ping", s.handleBOFichajePing)

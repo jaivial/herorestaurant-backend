@@ -816,6 +816,36 @@ func (s *Server) handleReservationsMonthAvailability(w http.ResponseWriter, r *h
 		})
 		return
 	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var d string
+		var total int
+		if err := rows2.Scan(&d, &total); err != nil {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Error al cargar la disponibilidad mensual: " + err.Error(),
+			})
+			return
+		}
+		bookings[d] = total
+	}
+
+	availability := map[string]map[string]int{}
+	defaultLimit := 45
+	daysInMonth := lastDay.Day()
+	for day := 1; day <= daysInMonth; day++ {
+		date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		lim := defaultLimit
+		if v, ok := dailyLimits[date]; ok {
+			lim = v
+		}
+		total := bookings[date]
+		availability[date] = map[string]int{
+			"dailyLimit":       lim,
+			"totalPeople":      total,
+			"freeBookingSeats": lim - total,
+		}
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,

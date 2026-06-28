@@ -26,21 +26,8 @@ type Config struct {
 	BunnyMemberPullBaseURL string
 	BunnyMemberStorageZone string
 	BunnyMemberStorageKey  string
-	CloudflareAPIToken     string
-	CloudflareAccountID    string
-	CloudflareZoneID       string
-	OpenAIAPIKey           string
-	OpenAIImageEditModel   string
-	OpenAIImageEditURL     string
-	OpenAITimeout          time.Duration
-	OpenAIFetchTimeout     time.Duration
-	OpenAIMaxInputBytes    int
-	OpenAIMaxOutputBytes   int
-	OpenAIConcurrency      int
-	SMTPHost               string
-	SMTPPort               int
-	SMTPUsername           string
-	SMTPPassword           string
+	UazapiUrl              string
+	UazapiToken            string
 	MySQL                  MySQLConfig
 }
 
@@ -61,21 +48,8 @@ func Load() Config {
 		BunnyMemberPullBaseURL: defaultMembersPull,
 		BunnyMemberStorageZone: getenv("BUNNY_MEMBERS_STORAGE_ZONE", "herorestaurant"),
 		BunnyMemberStorageKey:  getenv("BUNNY_MEMBERS_STORAGE_ACCESS_KEY", defaultKey),
-		CloudflareAPIToken:     os.Getenv("CLOUDFLARE_API_TOKEN"),
-		CloudflareAccountID:    os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
-		CloudflareZoneID:       os.Getenv("CLOUDFLARE_ZONE_ID"),
-		OpenAIAPIKey:           strings.TrimSpace(getenvFirst([]string{"WAVESPEED_API_KEY"}, "")),
-		OpenAIImageEditModel:   getenvFirst([]string{"WAVESPEED_IMAGE_EDIT_MODEL", "OPENAI_IMAGE_EDIT_MODEL", "OPENAI_IMAGE_MODEL"}, "openai/gpt-image-1.5/edit"),
-		OpenAIImageEditURL:     getenvFirst([]string{"WAVESPEED_IMAGE_EDIT_URL", "OPENAI_IMAGE_EDIT_URL", "OPENAI_IMAGE_URL"}, "https://api.wavespeed.ai/api/v3/openai/gpt-image-1.5/edit"),
-		OpenAITimeout:          time.Duration(getenvIntFirst([]string{"WAVESPEED_IMAGE_TIMEOUT_SECONDS", "OPENAI_IMAGE_TIMEOUT_SECONDS", "OPENAI_IMAGE_EDIT_TIMEOUT_SECONDS"}, 180, 5, 600)) * time.Second,
-		OpenAIFetchTimeout:     time.Duration(getenvIntFirst([]string{"WAVESPEED_IMAGE_FETCH_TIMEOUT_SECONDS", "OPENAI_IMAGE_FETCH_TIMEOUT_SECONDS", "OPENAI_IMAGE_EDIT_FETCH_TIMEOUT_SECONDS"}, 30, 5, 180)) * time.Second,
-		OpenAIMaxInputBytes:    getenvIntFirst([]string{"WAVESPEED_IMAGE_MAX_INPUT_BYTES", "OPENAI_IMAGE_MAX_INPUT_BYTES"}, 8<<20, 1<<20, 32<<20),
-		OpenAIMaxOutputBytes:   getenvIntFirst([]string{"WAVESPEED_IMAGE_MAX_OUTPUT_BYTES", "OPENAI_IMAGE_MAX_OUTPUT_BYTES"}, 8<<20, 64*1024, 64<<20),
-		OpenAIConcurrency:      getenvIntFirst([]string{"WAVESPEED_IMAGE_CONCURRENCY", "OPENAI_IMAGE_CONCURRENCY", "OPENAI_IMAGE_EDIT_CONCURRENCY"}, 2, 1, 32),
-		SMTPHost:               strings.TrimSpace(os.Getenv("SMTP_HOST")),
-		SMTPPort:               getenvInt("SMTP_PORT", 587, 1, 65535),
-		SMTPUsername:           strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
-		SMTPPassword:           os.Getenv("SMTP_PASSWORD"),
+		UazapiUrl:              getenv("UAZAPI_URL", ""),
+		UazapiToken:            getenv("UAZAPI_TOKEN", ""),
 		MySQL: MySQLConfig{
 			Host:     getenv("DB_HOST", "127.0.0.1"),
 			Port:     getenv("DB_PORT", "3306"),

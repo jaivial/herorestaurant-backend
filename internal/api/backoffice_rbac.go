@@ -11,48 +11,42 @@ import (
 )
 
 const (
-	boSectionReservas     = "reservas"
-	boSectionMenus        = "menus"
-	boSectionAjustes      = "ajustes"
-	boSectionMiembros     = "miembros"
-	boSectionFichaje      = "fichaje"
-	boSectionHorarios     = "horarios"
+	boSectionReservas = "reservas"
+	boSectionMenus    = "menus"
+	boSectionAjustes  = "ajustes"
+	boSectionMiembros = "miembros"
+	boSectionFichaje  = "fichaje"
+	boSectionHorarios = "horarios"
 	boSectionFacturas     = "facturas"
-	boSectionWebsite      = "website"
 	boSectionReportes     = "reportes"
 	boSectionEstadoCuenta = "estado_cuenta"
-	boSectionComida       = "comida"
-	boSectionSiteBuilder  = "site-builder"
+	boSectionWebsite      = "website"
 )
 
 var defaultRolePermissions = map[string]map[string]bool{
 	"root": {
-		boSectionReservas:     true,
-		boSectionMenus:        true,
-		boSectionAjustes:      true,
-		boSectionMiembros:     true,
-		boSectionFichaje:      true,
-		boSectionHorarios:     true,
-		boSectionFacturas:     true,
-		boSectionWebsite:      true,
+		boSectionReservas: true,
+		boSectionMenus:    true,
+		boSectionAjustes:  true,
+		boSectionMiembros: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
+		boSectionFacturas: true,
 		boSectionReportes:     true,
 		boSectionEstadoCuenta: true,
-		boSectionComida:       true,
-		boSectionSiteBuilder:  true,
+		boSectionWebsite:      true,
 	},
 	"admin": {
-		boSectionReservas:     true,
-		boSectionMenus:        true,
-		boSectionAjustes:      true,
-		boSectionMiembros:     true,
-		boSectionFichaje:      true,
-		boSectionHorarios:     true,
-		boSectionFacturas:     true,
-		boSectionWebsite:      true,
+		boSectionReservas: true,
+		boSectionMenus:    true,
+		boSectionAjustes:  true,
+		boSectionMiembros: true,
+		boSectionFichaje:  true,
+		boSectionHorarios: true,
+		boSectionFacturas: true,
 		boSectionReportes:     true,
 		boSectionEstadoCuenta: true,
-		boSectionComida:       true,
-		boSectionSiteBuilder:  true,
+		boSectionWebsite:      true,
 	},
 	"metre": {
 		boSectionReservas:     true,
@@ -164,18 +158,12 @@ func normalizeBOSection(section string) string {
 		return boSectionFichaje
 	case boSectionHorarios:
 		return boSectionHorarios
-	case boSectionFacturas:
-		return boSectionFacturas
-	case boSectionWebsite:
-		return boSectionWebsite
 	case boSectionReportes:
 		return boSectionReportes
 	case boSectionEstadoCuenta:
 		return boSectionEstadoCuenta
-	case boSectionComida:
-		return boSectionComida
-	case boSectionSiteBuilder:
-		return boSectionSiteBuilder
+	case boSectionWebsite:
+		return boSectionWebsite
 	default:
 		return ""
 	}

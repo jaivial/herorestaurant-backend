@@ -21,25 +21,3 @@ func WriteError(w http.ResponseWriter, status int, message string) {
 		"message": message,
 	})
 }
-
-func withMovingExpiration(body any, movingExpiration string) any {
-	movingExpiration = strings.TrimSpace(movingExpiration)
-	if movingExpiration == "" {
-		return body
-	}
-
-	payload, ok := body.(map[string]any)
-	if !ok || payload == nil {
-		return body
-	}
-	if _, exists := payload["moving_expiration_date"]; exists {
-		return body
-	}
-
-	clone := make(map[string]any, len(payload)+1)
-	for key, value := range payload {
-		clone[key] = value
-	}
-	clone["moving_expiration_date"] = movingExpiration
-	return clone
-}

@@ -1621,12 +1621,20 @@ INSERT INTO bo_role_permissions (role_slug, section_key, is_allowed) VALUES
   ('root', 'miembros', 1),
   ('root', 'fichaje', 1),
   ('root', 'horarios', 1),
+  ('root', 'facturas', 1),
+  ('root', 'reportes', 1),
+  ('root', 'estado_cuenta', 1),
+  ('root', 'website', 1),
   ('admin', 'reservas', 1),
   ('admin', 'menus', 1),
   ('admin', 'ajustes', 1),
   ('admin', 'miembros', 1),
   ('admin', 'fichaje', 1),
-  ('admin', 'horarios', 1)
+  ('admin', 'horarios', 1),
+  ('admin', 'facturas', 1),
+  ('admin', 'reportes', 1),
+  ('admin', 'estado_cuenta', 1),
+  ('admin', 'website', 1)
 ON DUPLICATE KEY UPDATE
   is_allowed = VALUES(is_allowed);
 
