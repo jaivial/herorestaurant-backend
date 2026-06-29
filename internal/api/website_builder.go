@@ -3,149 +3,163 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
-	"net/http"
+	"time"
 
-	"preactvillacarmen/internal/httpx"
+	"github.com/go-chi/chi/v5"
 )
 
-type WebsiteConfig struct {
-	ID           int     `json:"id"`
-	RestaurantID int     `json:"restaurant_id"`
-	TemplateID   *string `json:"template_id"`
-	CustomHTML   *string `json:"custom_html"`
-	Domain       *string `json:"domain"`
-	IsPublished  bool    `json:"is_published"`
+type WebsiteBuilder struct {
+	db     *sql.DB
+	server *Server
 }
 
-func (s *Server) handleGetWebsiteConfig(w http.ResponseWriter, r *http.Request) {
-	a, ok := boAuthFromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "No autorizado")
-		return
-	}
-
-	var config WebsiteConfig
-	var templateID, customHTML, domain sql.NullString
-	var isPublished bool
-
-	err := s.db.QueryRowContext(r.Context(), `
-		SELECT id, restaurant_id, template_id, custom_html, domain, is_published
-		FROM restaurant_websites
-		WHERE restaurant_id = ?
-		LIMIT 1
-	`, a.ActiveRestaurantID).Scan(&config.ID, &config.RestaurantID, &templateID, &customHTML, &domain, &isPublished)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "data": nil})
-			return
-		}
-		httpx.WriteError(w, http.StatusInternalServerError, "Error al obtener configuración")
-		return
-	}
-
-	if templateID.Valid {
-		config.TemplateID = &templateID.String
-	}
-	if customHTML.Valid {
-		config.CustomHTML = &customHTML.String
-	}
-	if domain.Valid {
-		config.Domain = &domain.String
-	}
-	config.IsPublished = isPublished
-
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "data": config})
+func newWebsiteBuilder(s *Server) *WebsiteBuilder {
+	return &WebsiteBuilder{db: s.db, server: s}
 }
 
-func (s *Server) handleUpdateWebsiteConfig(w http.ResponseWriter, r *http.Request) {
-	a, ok := boAuthFromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "No autorizado")
-		return
-	}
-
-	var req struct {
-		TemplateID  *string `json:"template_id"`
-		CustomHTML  *string `json:"custom_html"`
-		IsPublished *bool   `json:"is_published"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "Datos inválidos")
-		return
-	}
-
-	var id int
-	err := s.db.QueryRowContext(r.Context(), "SELECT id FROM restaurant_websites WHERE restaurant_id = ?", a.ActiveRestaurantID).Scan(&id)
-
-	if err == sql.ErrNoRows {
-		published := false
-		if req.IsPublished != nil {
-			published = *req.IsPublished
-		}
-		_, err := s.db.ExecContext(r.Context(), `
-			INSERT INTO restaurant_websites (restaurant_id, template_id, custom_html, is_published)
-			VALUES (?, ?, ?, ?)
-		`, a.ActiveRestaurantID, req.TemplateID, req.CustomHTML, published)
-		if err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error al guardar configuración")
-			return
-		}
-	} else if err == nil {
-		query := "UPDATE restaurant_websites SET "
-		args := []any{}
-
-		if req.TemplateID != nil {
-			query += "template_id = ?, "
-			args = append(args, *req.TemplateID)
-		}
-		if req.CustomHTML != nil {
-			query += "custom_html = ?, "
-			args = append(args, *req.CustomHTML)
-		}
-		if req.IsPublished != nil {
-			query += "is_published = ?, "
-			args = append(args, *req.IsPublished)
-		}
-
-		query = query[:len(query)-2]
-		query += " WHERE restaurant_id = ?"
-		args = append(args, a.ActiveRestaurantID)
-
-		_, err := s.db.ExecContext(r.Context(), query, args...)
-		if err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error al actualizar configuración")
-			return
-		}
-	} else {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error de base de datos")
-		return
-	}
-
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+type WebsiteTemplate struct {
+	ID           int             `json:"id"`
+	Slug         string          `json:"slug"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	ThumbnailURL string          `json:"thumbnail_url"`
+	TemplateData json.RawMessage `json:"template_data"`
+	Category     string          `json:"category"`
+	IsActive     bool            `json:"is_active"`
+	CreatedAt    *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time      `json:"updated_at,omitempty"`
 }
 
-func (s *Server) handleAIWebsiteGenerate(w http.ResponseWriter, r *http.Request) {
-	_, ok := boAuthFromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "No autorizado")
-		return
-	}
+type Website struct {
+	ID           int             `json:"id"`
+	RestaurantID int             `json:"restaurant_id"`
+	TemplateID   *int            `json:"template_id"`
+	CustomHTML   string          `json:"custom_html,omitempty"`
+	Domain       string          `json:"domain"`
+	Subdomain    string          `json:"subdomain,omitempty"`
+	Status       string          `json:"status,omitempty"`
+	Settings     json.RawMessage `json:"settings,omitempty"`
+	PublishedAt  *time.Time      `json:"published_at,omitempty"`
+	CreatedAt    *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time      `json:"updated_at,omitempty"`
+}
 
-	var req struct {
-		Prompt string `json:"prompt"`
-	}
+type WebsitePage struct {
+	ID              int        `json:"id"`
+	WebsiteID       int        `json:"website_id"`
+	Slug            string     `json:"slug"`
+	Title           string     `json:"title"`
+	MetaDescription string     `json:"meta_description"`
+	MetaKeywords    string     `json:"meta_keywords"`
+	IsHomepage      bool       `json:"is_homepage"`
+	Status          string     `json:"status"`
+	CreatedAt       *time.Time `json:"created_at,omitempty"`
+	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
+}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "Datos inválidos")
-		return
-	}
+type WebsitePageSection struct {
+	ID          int             `json:"id"`
+	PageID      int             `json:"page_id"`
+	SectionType string          `json:"section_type"`
+	Position    int             `json:"position"`
+	Settings    json.RawMessage `json:"settings"`
+	IsVisible   bool            `json:"is_visible"`
+	CreatedAt   *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt   *time.Time      `json:"updated_at,omitempty"`
+}
 
-	mockHTML := "<html><body><header><h1>Mi Restaurante</h1></header><main><p>Sitio web generado por IA. Prompt: " + req.Prompt + "</p></main></body></html>"
+type WebsiteComponent struct {
+	ID              int             `json:"id"`
+	ComponentType   string          `json:"component_type"`
+	Name            string          `json:"name"`
+	Description     string          `json:"description"`
+	Icon            string          `json:"icon"`
+	DefaultSettings json.RawMessage `json:"default_settings"`
+	SchemaJSON      json.RawMessage `json:"schema_json"`
+	IsActive        bool            `json:"is_active"`
+	CreatedAt       *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt       *time.Time      `json:"updated_at,omitempty"`
+}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":     true,
-		"custom_html": mockHTML,
-	})
+type WebsiteSectionComponent struct {
+	ID              int               `json:"id"`
+	SectionID       int               `json:"section_id"`
+	ComponentID     int               `json:"component_id"`
+	Position        int               `json:"position"`
+	Settings        json.RawMessage   `json:"settings"`
+	DynamicSource   string            `json:"dynamic_source"`
+	DynamicParams   json.RawMessage   `json:"dynamic_params"`
+	ComponentType   string            `json:"component_type,omitempty"`
+	ComponentName   string            `json:"component_name,omitempty"`
+	DefaultSettings json.RawMessage   `json:"default_settings,omitempty"`
+	Component       *WebsiteComponent `json:"component,omitempty"`
+	CreatedAt       *time.Time        `json:"created_at,omitempty"`
+	UpdatedAt       *time.Time        `json:"updated_at,omitempty"`
+}
+
+type WebsiteAsset struct {
+	ID               int        `json:"id"`
+	WebsiteID        int        `json:"website_id"`
+	AssetType        string     `json:"asset_type"`
+	OriginalFilename string     `json:"original_filename"`
+	StoragePath      string     `json:"storage_path"`
+	PublicURL        string     `json:"public_url"`
+	MimeType         string     `json:"mime_type"`
+	FileSize         int        `json:"file_size"`
+	Width            int        `json:"width"`
+	Height           int        `json:"height"`
+	AltText          string     `json:"alt_text"`
+	CreatedAt        *time.Time `json:"created_at,omitempty"`
+}
+
+type WebsitePublishHistoryEntry struct {
+	ID          int             `json:"id"`
+	WebsiteID   int             `json:"website_id"`
+	Version     int             `json:"version"`
+	Snapshot    json.RawMessage `json:"snapshot_json,omitempty"`
+	PublishedBy *int64          `json:"published_by,omitempty"`
+	PublishedAt *time.Time      `json:"published_at,omitempty"`
+	StoragePath string          `json:"storage_path"`
+}
+
+func (wb *WebsiteBuilder) RegisterRoutes(r chi.Router) {
+	// Legacy routes (section-based model)
+	r.Get("/website-builder/templates", wb.ListTemplates)
+	r.Get("/website-builder/templates/{id}", wb.GetTemplate)
+
+	r.Get("/website-builder/website", wb.GetWebsite)
+	r.Post("/website-builder/website", wb.CreateWebsite)
+	r.Put("/website-builder/website", wb.UpdateWebsite)
+	r.Delete("/website-builder/website", wb.DeleteWebsite)
+
+	r.Get("/website-builder/pages", wb.ListPages)
+	r.Post("/website-builder/pages", wb.CreatePage)
+	r.Put("/website-builder/pages/{id}", wb.UpdatePage)
+	r.Delete("/website-builder/pages/{id}", wb.DeletePage)
+
+	r.Get("/website-builder/pages/{pageId}/sections", wb.ListSections)
+	r.Post("/website-builder/pages/{pageId}/sections", wb.CreateSection)
+	r.Put("/website-builder/sections/{id}", wb.UpdateSection)
+	r.Delete("/website-builder/sections/{id}", wb.DeleteSection)
+	r.Put("/website-builder/sections/reorder", wb.ReorderSections)
+
+	r.Get("/website-builder/components", wb.ListComponents)
+	r.Get("/website-builder/components/{id}", wb.GetComponent)
+
+	r.Get("/website-builder/sections/{sectionId}/components", wb.ListSectionComponents)
+	r.Post("/website-builder/sections/{sectionId}/components", wb.CreateSectionComponent)
+	r.Put("/website-builder/section-components/{id}", wb.UpdateSectionComponent)
+	r.Delete("/website-builder/section-components/{id}", wb.DeleteSectionComponent)
+	r.Put("/website-builder/section-components/reorder", wb.ReorderSectionComponents)
+
+	r.Get("/website-builder/assets", wb.ListAssets)
+	r.Post("/website-builder/assets", wb.UploadAsset)
+	r.Delete("/website-builder/assets/{id}", wb.DeleteAsset)
+
+	r.Post("/website-builder/publish", wb.PublishWebsite)
+	r.Get("/website-builder/preview", wb.PreviewWebsite)
+	r.Get("/website-builder/history", wb.PublishHistory)
+
+	// New site builder routes (JSON tree model)
+	RegisterSiteBuilderRoutes(r, wb.db)
 }

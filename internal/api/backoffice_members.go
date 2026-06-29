@@ -33,7 +33,7 @@ type boMember struct {
 	DNI                 *string `json:"dni"`
 	BankAccount         *string `json:"bankAccount"`
 	Phone               *string `json:"phone"`
-WhatsappNumber      *string  `json:"whatsappNumber"`
+	WhatsAppNumber      *string `json:"whatsappNumber"`
 	PhotoURL            *string `json:"photoUrl"`
 	WeeklyContractHours float64 `json:"weeklyContractHours"`
 }
@@ -45,7 +45,7 @@ type boMemberCreateRequest struct {
 	DNI                 *string  `json:"dni"`
 	BankAccount         *string  `json:"bankAccount"`
 	Phone               *string  `json:"phone"`
-WhatsappNumber      *string  `json:"whatsappNumber"`
+	WhatsAppNumber      *string  `json:"whatsappNumber"`
 	PhotoURL            *string  `json:"photoUrl"`
 	RoleSlug            *string  `json:"roleSlug"`
 	Username            *string  `json:"username"`
@@ -60,7 +60,7 @@ type boMemberPatchRequest struct {
 	DNI                 *string  `json:"dni"`
 	BankAccount         *string  `json:"bankAccount"`
 	Phone               *string  `json:"phone"`
-WhatsappNumber      *string  `json:"whatsappNumber"`
+	WhatsAppNumber      *string  `json:"whatsappNumber"`
 	PhotoURL            *string  `json:"photoUrl"`
 	WeeklyContractHours *float64 `json:"weeklyContractHours"`
 }
@@ -144,69 +144,6 @@ func (s *Server) handleBOMemberCreate(w http.ResponseWriter, r *http.Request) {
 			"success": false,
 			"message": out.Message,
 		})
-		return
-	}
-
-	weeklyHours := 40.0
-	if req.WeeklyContractHours != nil {
-		weeklyHours = *req.WeeklyContractHours
-	}
-	if weeklyHours < 0 {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "weeklyContractHours debe ser >= 0",
-		})
-		return
-	}
-
-	email := normalizeOptionalEmail(req.Email)
-	dni := normalizeOptionalString(req.DNI)
-	bank := normalizeOptionalString(req.BankAccount)
-	phone := normalizeOptionalString(req.Phone)
-	whatsapp := normalizeOptionalString(req.WhatsappNumber)
-	photo := normalizeOptionalString(req.PhotoURL)
-
-	tx, err := s.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error iniciando transaccion")
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	res, err := tx.ExecContext(r.Context(), `
-		INSERT INTO restaurant_members
-			(restaurant_id, first_name, last_name, email, dni, bank_account, phone, whatsapp_number, photo_url, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-	`, a.ActiveRestaurantID, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(whatsapp), nullableString(photo))
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "No se pudo crear el miembro (email/usuario duplicado)",
-		})
-		return
-	}
-
-	memberID64, _ := res.LastInsertId()
-	memberID := int(memberID64)
-
-	if _, err := tx.ExecContext(r.Context(), `
-		INSERT INTO member_contracts (restaurant_member_id, restaurant_id, weekly_hours)
-		VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			weekly_hours = VALUES(weekly_hours)
-	`, memberID, a.ActiveRestaurantID, weeklyHours); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando contrato")
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error finalizando transaccion")
-		return
-	}
-
-	member, err := s.getBOMemberByID(r.Context(), a.ActiveRestaurantID, memberID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo miembro")
 		return
 	}
 
@@ -299,7 +236,7 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 	dni := ptrToValue(current.DNI)
 	bank := ptrToValue(current.BankAccount)
 	phone := ptrToValue(current.Phone)
-	whatsapp := ptrToValue(current.WhatsappNumber)
+	whatsappNumber := ptrToValue(current.WhatsAppNumber)
 	photo := ptrToValue(current.PhotoURL)
 	weekly := current.WeeklyContractHours
 
@@ -321,8 +258,8 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 	if req.Phone != nil {
 		phone = strings.TrimSpace(*req.Phone)
 	}
-	if req.WhatsappNumber != nil {
-		whatsapp = strings.TrimSpace(*req.WhatsappNumber)
+	if req.WhatsAppNumber != nil {
+		whatsappNumber = strings.TrimSpace(*req.WhatsAppNumber)
 	}
 	if req.PhotoURL != nil {
 		photo = strings.TrimSpace(*req.PhotoURL)
@@ -365,7 +302,7 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 			whatsapp_number = ?,
 			photo_url = ?
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(whatsapp), nullableString(photo), memberID, a.ActiveRestaurantID)
+	`, firstName, lastName, nullableString(email), nullableString(dni), nullableString(bank), nullableString(phone), nullableString(whatsappNumber), nullableString(photo), memberID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -997,7 +934,7 @@ func scanBOMember(scanner boMemberScanner) (boMember, error) {
 	m.DNI = nullStringPtr(dni)
 	m.BankAccount = nullStringPtr(bank)
 	m.Phone = nullStringPtr(phone)
-	m.WhatsappNumber = nullStringPtr(whatsapp)
+	m.WhatsAppNumber = nullStringPtr(whatsapp)
 	m.PhotoURL = nullStringPtr(photo)
 	m.WeeklyContractHours = weeklyHour
 	return m, nil

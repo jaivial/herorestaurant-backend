@@ -7,30 +7,9 @@ SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_S
 SET @ddl := IF(@bo_roles_exists = 1 AND @col_exists = 0, 'ALTER TABLE bo_roles ADD COLUMN importance INT NOT NULL DEFAULT 0 AFTER sort_order', 'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- Root and admin get full access to all backoffice sections.
-INSERT INTO bo_role_permissions (role_slug, section_key, is_allowed) VALUES
-  ('root', 'reservas', 1),
-  ('root', 'menus', 1),
-  ('root', 'ajustes', 1),
-  ('root', 'miembros', 1),
-  ('root', 'fichaje', 1),
-  ('root', 'horarios', 1),
-  ('root', 'facturas', 1),
-  ('root', 'reportes', 1),
-  ('root', 'estado_cuenta', 1),
-  ('root', 'website', 1),
-  ('admin', 'reservas', 1),
-  ('admin', 'menus', 1),
-  ('admin', 'ajustes', 1),
-  ('admin', 'miembros', 1),
-  ('admin', 'fichaje', 1),
-  ('admin', 'horarios', 1),
-  ('admin', 'facturas', 1),
-  ('admin', 'reportes', 1),
-  ('admin', 'estado_cuenta', 1),
-  ('admin', 'website', 1)
-ON DUPLICATE KEY UPDATE
-  is_allowed = VALUES(is_allowed);
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bo_roles' AND COLUMN_NAME = 'icon_key');
+SET @ddl := IF(@bo_roles_exists = 1 AND @col_exists = 0, 'ALTER TABLE bo_roles ADD COLUMN icon_key VARCHAR(32) NULL AFTER importance', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bo_roles' AND COLUMN_NAME = 'is_system');
 SET @ddl := IF(@bo_roles_exists = 1 AND @col_exists = 0, 'ALTER TABLE bo_roles ADD COLUMN is_system TINYINT(1) NOT NULL DEFAULT 0 AFTER is_active', 'SELECT 1');

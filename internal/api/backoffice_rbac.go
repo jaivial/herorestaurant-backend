@@ -21,6 +21,7 @@ const (
 	boSectionReportes     = "reportes"
 	boSectionEstadoCuenta = "estado_cuenta"
 	boSectionWebsite      = "website"
+	boSectionComida       = "comida"
 )
 
 var defaultRolePermissions = map[string]map[string]bool{
@@ -158,6 +159,8 @@ func normalizeBOSection(section string) string {
 		return boSectionFichaje
 	case boSectionHorarios:
 		return boSectionHorarios
+	case boSectionFacturas:
+		return boSectionFacturas
 	case boSectionReportes:
 		return boSectionReportes
 	case boSectionEstadoCuenta:
