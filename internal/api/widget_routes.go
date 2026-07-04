@@ -274,13 +274,14 @@ func decodeWidgetJSON(r *http.Request, dst any) error {
 // handleBOWidgetSettingsGet returns widget settings for the backoffice admin.
 // GET /api/admin/widget/settings
 func (s *Server) handleBOWidgetSettingsGet(w http.ResponseWriter, r *http.Request) {
-	restaurantID, ok := restaurantIDFromContext(r.Context())
+	a, ok := boAuthFromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, http.StatusBadRequest, "Restaurant not found in session")
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
-	settings, err := s.getWidgetSettings(r, restaurantID)
+
+	settings, err := s.getWidgetSettings(r, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Failed to load widget settings")
 		return
@@ -292,14 +293,13 @@ func (s *Server) handleBOWidgetSettingsGet(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// handleBOWidgetSettingsPut updates widget settings from the backoffice.
-// PUT /api/admin/widget/settings
 func (s *Server) handleBOWidgetSettingsPut(w http.ResponseWriter, r *http.Request) {
-	restaurantID, ok := restaurantIDFromContext(r.Context())
+	a, ok := boAuthFromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, http.StatusBadRequest, "Restaurant not found in session")
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+
 
 	var body widgetSettingsUpdate
 	if err := decodeWidgetJSON(r, &body); err != nil {
@@ -321,13 +321,13 @@ func (s *Server) handleBOWidgetSettingsPut(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	if err := s.upsertWidgetSettings(r, restaurantID, &body); err != nil {
+	if err := s.upsertWidgetSettings(r, a.ActiveRestaurantID, &body); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Failed to save widget settings")
 		return
 	}
 
 	// Return updated settings.
-	settings, err := s.getWidgetSettings(r, restaurantID)
+	settings, err := s.getWidgetSettings(r, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Widget settings updated"})
 		return

@@ -364,6 +364,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/send", s.handleBOInvoiceSend)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/upload-image", s.handleBOInvoiceUploadImage)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/search-reservation", s.handleBOInvoicesSearchReservation)
+		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/comments", s.handleBOInvoiceCommentsList)
+		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/comments", s.handleBOInvoiceCommentCreate)
+		r.With(s.requireBOSession, facturasGate).Put("/invoices/{id}/comments/{commentId}", s.handleBOInvoiceCommentUpdate)
+		r.With(s.requireBOSession, facturasGate).Delete("/invoices/{id}/comments/{commentId}", s.handleBOInvoiceCommentDelete)
 	})
 
 	r.Get("/public/website-builder/render/{kind}", s.handleWebsiteBuilderRenderFragment)
