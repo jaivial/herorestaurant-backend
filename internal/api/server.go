@@ -82,9 +82,11 @@ func (s *Server) Routes() http.Handler {
 	// Strip /api prefix for /api/admin/* routes to make them work with /admin handlers
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, "/api/admin") {
-				r.URL.Path = strings.Replace(r.URL.Path, "/api/admin", "/admin", 1)
-			}
+		if strings.HasPrefix(r.URL.Path, "/api/admin") {
+			r.URL.Path = strings.Replace(r.URL.Path, "/api/admin", "/admin", 1)
+		} else if strings.HasPrefix(r.URL.Path, "/api/") {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/api")
+		}
 			next.ServeHTTP(w, r)
 		})
 	})
@@ -131,6 +133,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Post("/bookings", s.handleBOBookingCreate)
 		r.With(s.requireBOSession, reservasGate).Patch("/bookings/{id}", s.handleBOBookingPatch)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings/{id}/cancel", s.handleBOBookingCancel)
+		r.With(s.requireBOSession, reservasGate).Get("/bookings/cancelled", s.handleBOBookingsCancelledByDate)
+		r.With(s.requireBOSession, reservasGate).Get("/bookings/modified", s.handleBOBookingsModifiedByDate)
+		r.With(s.requireBOSession, reservasGate).Post("/bookings/cancelled/{id}/reactivate", s.handleBOBookingReactivate)
 
 		r.With(s.requireBOSession, reservasGate).Get("/arroz-types", s.handleBOArrozTypes)
 

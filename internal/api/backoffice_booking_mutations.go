@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -395,6 +396,9 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando booking")
 		return
 	}
+
+	// Record tracked field modifications for Modificadas tab.
+	s.recordBookingModificationsAfterPatch(r.Context(), a.ActiveRestaurantID, id, current, next, a)
 
 	out, err := s.boFetchBookingByID(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
@@ -1086,5 +1090,47 @@ func boBookingToNotificationData(b boNormalizedBooking, id int) map[string]any {
 		"special_menu":               b.SpecialMenu,
 		"menu_de_grupo_id":           b.MenuDeGrupoID,
 		"principales_json":           principalesVal,
+	}
+}
+
+// recordBookingModificationsAfterPatch compares old vs new tracked fields and
+// inserts a row into booking_modifications for each change.
+func (s *Server) recordBookingModificationsAfterPatch(ctx context.Context, restaurantID, bookingID int, old map[string]any, next boNormalizedBooking, a boAuth) {
+	customerName, _ := old["customer_name"].(string)
+	contactPhone, _ := old["contact_phone"].(string)
+	origDate, _ := old["reservation_date"].(string)
+
+	maybe := func(field, oldStr, newStr string) {
+		if oldStr != newStr {
+			s.db.ExecContext(ctx, `
+				INSERT INTO booking_modifications
+					(restaurant_id, booking_id, original_reservation_date, field_modified,
+					 old_value, new_value, modified_by, modified_by_user_id, modified_by_name,
+					 customer_name, contact_phone, modification_date)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+				restaurantID, bookingID, origDate, field, oldStr, newStr,
+				"staff", int64(a.User.ID), a.User.Name, customerName, contactPhone)
+		}
+	}
+
+	maybe("date", origDate, next.ReservationDate)
+	maybe("time", old["reservation_time"].(string), next.ReservationTime)
+
+	oldPax := fmt.Sprintf("%d", old["party_size"].(int64))
+	newPax := fmt.Sprintf("%d", next.PartySize)
+	maybe("party_size", oldPax, newPax)
+
+	oldStroll := fmt.Sprintf("%d", old["babyStrollers"].(int64))
+	newStroll := fmt.Sprintf("%d", next.BabyStrollers)
+	maybe("strollers", oldStroll, newStroll)
+
+	oldHC := fmt.Sprintf("%d", old["highChairs"].(int64))
+	newHC := fmt.Sprintf("%d", next.HighChairs)
+	maybe("high_chairs", oldHC, newHC)
+
+	oldRice := fmt.Sprintf("%v|%v", old["arroz_type"], old["arroz_servings"])
+	newRice := fmt.Sprintf("%v|%v", next.ArrozTypeJSON, next.ArrozServingsJSON)
+	if oldRice != newRice {
+		maybe("rice", oldRice, newRice)
 	}
 }

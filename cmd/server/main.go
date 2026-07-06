@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 
 	"preactvillacarmen/internal/api"
 	"preactvillacarmen/internal/config"
+	"preactvillacarmen/internal/db/migrations"
 )
 
 func main() {
@@ -26,6 +28,11 @@ func main() {
 
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := migrations.Apply(ctx, db); err != nil {
+		log.Fatalf("Failed to apply migrations: %v", err)
 	}
 
 	server := api.NewServer(db, cfg)

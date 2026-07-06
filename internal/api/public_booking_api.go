@@ -242,7 +242,7 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 	if cancelledBy == "" {
 		cancelledBy = "customer"
 	}
-	if cancelledBy != "customer" && cancelledBy != "staff" {
+	if cancelledBy != "customer" && cancelledBy != "staff" && cancelledBy != "whatsapp" {
 		cancelledBy = "customer"
 	}
 
@@ -278,8 +278,9 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 				(restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name,
 				 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
 				 babyStrollers, highChairs, cancellation_date, cancelled_by,
+				 cancelled_by_user_id, cancelled_by_name,
 				 special_menu, menu_de_grupo_id, principales_json)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?)
 		`,
 			restaurantID,
 			b.ID,
@@ -295,6 +296,8 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 			int64OrZero(b.BabyStrollers),
 			int64OrZero(b.HighChairs),
 			cancelledBy,
+			nil, /* cancelled_by_user_id */
+			nil, /* cancelled_by_name */
 			int64OrZero(b.SpecialMenu),
 			nullInt64OrNil(b.MenuDeGrupoID),
 			nullStringOrNil(b.PrincipalesJSON),
