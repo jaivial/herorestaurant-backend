@@ -1,9 +1,15 @@
 package api
 
 import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"preactvillacarmen/internal/httpx"
@@ -67,13 +73,23 @@ func (s *Server) handleBOBrandingLogoUpload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	objectPath := "branding/" + strconv.Itoa(restaurantID) + "/logo.webp"
+	// Use a unique object key per upload. BunnyCDN caches by object path and
+	// ignores the query string as a cache key, so a fixed key (logo.webp) would
+	// serve the first uploaded bytes forever. A unique path is always a cache
+	// miss, so the freshly uploaded object is served immediately.
+	objectPath := "branding/" + strconv.Itoa(restaurantID) + "/logo-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ".webp"
+
+	// Best-effort: remove the previously stored object to avoid orphaned files.
+	if prev, perr := s.currentLogoObjectPath(ctx, restaurantID); perr == nil && prev != "" {
+		_ = s.bunnyDelete(ctx, prev)
+	}
+
 	if err := s.bunnyPut(ctx, objectPath, normalizedWebP, "image/webp"); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Failed to upload logo to storage")
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath) + "?v=" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	fullURL := s.bunnyPullURL(objectPath)
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO restaurant_branding (restaurant_id, logo_url) VALUES (?, ?)
@@ -88,4 +104,73 @@ func (s *Server) handleBOBrandingLogoUpload(w http.ResponseWriter, r *http.Reque
 		"success": true,
 		"logoUrl": fullURL,
 	})
+}
+
+// currentLogoObjectPath returns the BunnyCDN object path stored for a restaurant,
+// or "" if none/unknown.
+func (s *Server) currentLogoObjectPath(ctx context.Context, restaurantID int) (string, error) {
+	var raw sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT logo_url FROM restaurant_branding WHERE restaurant_id = ? LIMIT 1`, restaurantID).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	u := strings.TrimSpace(raw.String)
+	if u == "" {
+		return "", nil
+	}
+	// Stored URL is the pull URL: https://<pull-base>/<objectPath>. Extract the
+	// object path after the pull base.
+	base := strings.TrimRight(strings.TrimSpace(s.cfg.BunnyPullBaseURL), "/")
+	path := strings.TrimPrefix(u, base+"/")
+	if path == u || path == "" {
+		return "", nil
+	}
+	return path, nil
+}
+
+// bunnyDelete removes an object from BunnyCDN storage.
+func (s *Server) bunnyDelete(ctx context.Context, objectPath string) error {
+	if !s.bunnyConfigured() {
+		return errors.New("BunnyCDN storage not configured")
+	}
+	return bunnyDeleteWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyStorageZone), strings.TrimSpace(s.cfg.BunnyStorageKey), objectPath)
+}
+// bunnyDeleteWithCredentials removes an object from BunnyCDN storage.
+func bunnyDeleteWithCredentials(ctx context.Context, zone, accessKey, objectPath string) error {
+	if strings.TrimSpace(zone) == "" || strings.TrimSpace(accessKey) == "" {
+		return errors.New("invalid bunny credentials")
+	}
+	objectPath = strings.TrimLeft(objectPath, "/")
+	escaped := bunnyEscapePath(objectPath)
+
+	u := "https://storage.bunnycdn.com/" + url.PathEscape(zone) + "/" + escaped
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("AccessKey", accessKey)
+
+	cli := &http.Client{Timeout: 30 * time.Second}
+	res, err := cli.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	// 404 means the object was already gone; treat as success.
+	if res.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		return nil
+	}
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 8<<10))
+	msg := strings.TrimSpace(string(b))
+	if msg == "" {
+		msg = res.Status
+	}
+	return fmt.Errorf("bunny delete failed (%d): %s", res.StatusCode, msg)
 }
