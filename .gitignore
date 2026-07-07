@@ -6,3 +6,6 @@ tmp/
 .vscode/
 .idea/
 *.log
+/server.v2
+**/__pycache__/
+*.pyc

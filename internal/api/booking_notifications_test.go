@@ -194,7 +194,7 @@ func TestBuildBookingEmailHTML(t *testing.T) {
 		"baby_strollers":   0,
 	}
 
-	html := buildBookingEmailHTML("Alquería Villa Carmen", "https://example.com/logo.png", booking, 789, "https://example.com")
+	html := buildBookingEmailHTML("Alquería Villa Carmen", "https://example.com/logo.png", "600111222", "info@x.com", "Calle Falsa 123", booking, 789, "https://example.com")
 
 	if !strings.Contains(html, "Juan García") {
 		t.Error("HTML should contain customer name")
@@ -217,6 +217,46 @@ func TestBuildBookingEmailHTML(t *testing.T) {
 	if !strings.Contains(html, "logo.png") {
 		t.Error("HTML should contain logo URL")
 	}
+	if !strings.Contains(html, "600111222") {
+		t.Error("HTML should contain contact phone")
+	}
+	if !strings.Contains(html, "mailto:info@x.com") {
+		t.Error("HTML should contain contact email mailto link")
+	}
+	if !strings.Contains(html, "Calle Falsa 123") {
+		t.Error("HTML should contain contact address")
+	}
+	if strings.Contains(html, "638 85 72 94") {
+		t.Error("HTML must not contain old hardcoded phone")
+	}
+	if strings.Contains(html, "reservas@alqueriavillacarmen.com") {
+		t.Error("HTML must not contain old hardcoded contact email")
+	}
+}
+
+func TestBuildBookingEmailHTMLAllEmptyContact(t *testing.T) {
+	booking := map[string]any{
+		"customer_name":    "Empty Contact",
+		"reservation_date": "2026-04-15",
+		"reservation_time": "14:00",
+		"party_size":       2,
+		"special_menu":     0,
+	}
+
+	html := buildBookingEmailHTML("Empty", "https://example.com/logo.png", "", "", "", booking, 555, "https://example.com")
+
+	if strings.Contains(html, "Teléfono:") {
+		t.Error("HTML should not contain Teléfono line when phone empty")
+	}
+	if strings.Contains(html, "mailto:") {
+		t.Error("HTML should not contain mailto when email empty")
+	}
+	if strings.Contains(html, "Dirección:") {
+		t.Error("HTML should not contain Dirección line when address empty")
+	}
+	if strings.Contains(html, "Si necesita modificar o cancelar su reserva") {
+		t.Error("HTML should omit contact paragraph when all contact fields empty")
+	}
 }
 
 func TestBuildBookingEmailHTMLSpecialMenu(t *testing.T) {
@@ -232,7 +272,7 @@ func TestBuildBookingEmailHTMLSpecialMenu(t *testing.T) {
 		"baby_strollers":   0,
 	}
 
-	html := buildBookingEmailHTML("Restaurante", "https://example.com/logo.png", booking, 101, "https://example.com")
+	html := buildBookingEmailHTML("Restaurante", "https://example.com/logo.png", "600111222", "info@x.com", "Calle Falsa 123", booking, 101, "https://example.com")
 
 	if !strings.Contains(html, "Menú Degustación") {
 		t.Error("HTML should contain menu title for special menu booking")
@@ -256,7 +296,7 @@ func TestBuildBookingEmailHTMLMultipleArroz(t *testing.T) {
 		"baby_strollers":   1,
 	}
 
-	html := buildBookingEmailHTML("Test Restaurant", "https://example.com/logo.png", booking, 202, "https://example.com")
+	html := buildBookingEmailHTML("Test Restaurant", "https://example.com/logo.png", "600111222", "info@x.com", "Calle Falsa 123", booking, 202, "https://example.com")
 
 	if !strings.Contains(html, "Arroz a la valenciana") {
 		t.Error("HTML should contain first arroz type")

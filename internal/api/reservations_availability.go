@@ -53,29 +53,6 @@ func (s *Server) loadRiceTypes(ctx context.Context, restaurantID int) ([]string,
 	return out, nil
 }
 
-func (s *Server) handleFetchArroz(w http.ResponseWriter, r *http.Request) {
-	restaurantID, ok := restaurantIDFromContext(r.Context())
-	if !ok {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
-			"success": false,
-			"message": "Unknown restaurant",
-		})
-		return
-	}
-
-	out, err := s.loadRiceTypes(r.Context(), restaurantID)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
-			"success": false,
-			"message": "Error consultando FINDE",
-		})
-		return
-	}
-
-	// Legacy endpoint returns a bare JSON array.
-	httpx.WriteJSON(w, http.StatusOK, out)
-}
-
 func (s *Server) handleReservationsRiceTypes(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
@@ -602,32 +579,6 @@ func parseClosedDaysRange(fromRaw string, toRaw string, maxDays int) (string, st
 	return fromDate, toDate, nil
 }
 
-func (s *Server) handleFetchClosedDays(w http.ResponseWriter, r *http.Request) {
-	restaurantID, ok := restaurantIDFromContext(r.Context())
-	if !ok {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
-			"success": false,
-			"message": "Unknown restaurant",
-		})
-		return
-	}
-
-	closedDays, openedDays, err := s.loadClosedDayOverrides(r.Context(), restaurantID, "", "")
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "Error fetching closed days: " + err.Error(),
-		})
-		return
-	}
-
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":     true,
-		"closed_days": closedDays,
-		"opened_days": openedDays,
-	})
-}
-
 func (s *Server) handleReservationsClosedDays(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
@@ -743,50 +694,6 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	}
 
 	return availability, nil
-}
-
-func (s *Server) handleFetchMonthAvailability(w http.ResponseWriter, r *http.Request) {
-	restaurantID, ok := restaurantIDFromContext(r.Context())
-	if !ok {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
-			"success": false,
-			"message": "Unknown restaurant",
-		})
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "Month and year parameters are required",
-		})
-		return
-	}
-
-	month, year, err := parseMonthYear(r.FormValue("month"), r.FormValue("year"))
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
-
-	availability, err := s.buildMonthAvailability(r.Context(), restaurantID, year, month)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "Error al cargar la disponibilidad mensual: " + err.Error(),
-		})
-		return
-	}
-
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":      true,
-		"month":        month,
-		"year":         year,
-		"availability": availability,
-	})
 }
 
 func (s *Server) handleReservationsMonthAvailability(w http.ResponseWriter, r *http.Request) {

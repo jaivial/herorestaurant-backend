@@ -1698,7 +1698,7 @@ Response (Email failed):
 
 Notificaciones:
 - Envía WhatsApp al cliente vía UAZAPI (botón con condiciones + cancelar). Requiere `uazapi_url` + `uazapi_token` en `restaurant_integrations` o env vars `UAZAPI_URL`/`UAZAPI_TOKEN`.
-- Envía email de confirmación al cliente y al restaurante vía SMTP. Requiere env vars `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`.
+- Envía email de confirmación al cliente y al restaurante vía SMTP usando `email_provider_config` por restaurante (migration `043_email_provider_config.sql`). Para `provider='smtp'` requiere `smtp_host`, `smtp_port`, `smtp_username`, `smtp_password`, `smtp_encryption` (`none|tls|ssl`) e `is_active=1`. Para `provider='gmail'` usa `smtp.gmail.com:587` con `gmail_from_email` + `gmail_app_password`. Las env vars `SMTP_HOST/PORT/USERNAME/PASSWORD` ya no se consultan.
 - Ambas notificaciones son **síncronas y obligatorias**: si fallan, la reserva queda en BD pero se devuelve error al cliente.
 
 ### `GET /api/get_reservation_day_context.php?date=YYYY-MM-DD`
@@ -1719,7 +1719,25 @@ Response (success):
 
 Response (WhatsApp/Email failed): Same error pattern as `POST /api/bookings/front`.
 
+El email de confirmación usa la misma resolución que `POST /api/bookings/front`: SMTP desde `email_provider_config` por restaurante (`provider='smtp'` o `'gmail'`, `is_active=1`), sin env vars `SMTP_HOST/PORT/USERNAME/PASSWORD`.
+
+- The confirmation email's contact block (phone/email/address) is sourced from `restaurant_info` (`telefono`/`email`/`direccion`) and the header name + logo from `restaurant_branding` (`brand_name`/`logo_url`). All five fields are editable from the backoffice at `/app/config?content=contacto`; the logo is an image upload that gets normalized to WebP ≤50 KB and stored on BunnyCDN (see `POST /api/admin/branding/logo`).
+
+### `POST /api/admin/branding/logo`
+Upload (or replace) the restaurant's email-header logo.
+
+- Auth: `bo_session` cookie + `ajustes` section (`requireBOSession` + `ajustesGate`).
+- Body: `multipart/form-data` with one field `image` (jpg/png/webp, max 8 MB raw upload).
+- Processing: ImageMagick normalizes to WebP, sweeping dimensions down to 460 px / quality 28 to enforce a hard 50 KB cap.
+- Storage: uploaded to BunnyCDN at `branding/{restaurantId}/logo.webp`; the resulting pull URL is upserted into `restaurant_branding.logo_url` (other columns preserved).
+- Response (success): `{ success: true, logoUrl: "https://<pull-base>/branding/{id}/logo.webp" }`.
+- Errors:
+  - `400` if the image type is not jpg/png/webp, if the file is empty / > 8 MB, or if ImageMagick can't reduce the result below 50 KB.
+  - `401` if no `bo_session`.
+  - `500` if the Bunny upload or DB upsert fails.
+  - `503` if Bunny storage is not configured (`BunnyStorageKey` / `BunnyStorageZone` / `BunnyPullBaseURL` missing).
 ---
+
 
 ## Booking Admin (confreservas.php)
 

@@ -290,6 +290,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Patch("/integrations/uazapi/servers/{id}", s.handleBOUAZAPIServersPatch)
 		r.With(s.requireBOSession, ajustesGate).Get("/branding", s.handleBOBrandingGet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding", s.handleBOBrandingSet)
+		r.With(s.requireBOSession, ajustesGate).Post("/branding/logo", s.handleBOBrandingLogoUpload)
 		r.With(s.requireBOSession, ajustesGate).Get("/website", s.handleBOPremiumWebsiteGet)
 		r.With(s.requireBOSession, ajustesGate).Put("/website", s.handleBOPremiumWebsiteUpsert)
 		r.With(s.requireBOSession, ajustesGate).Post("/website", s.handleBOPremiumWebsiteUpsert)
