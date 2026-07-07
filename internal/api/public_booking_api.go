@@ -487,15 +487,29 @@ func (s *Server) handlePublicBookingPolicies(w http.ResponseWriter, r *http.Requ
 		brandName = "Restaurante"
 	}
 
+	// Source the policies HTML from the per-tenant legal_pages row
+	// (slug=booking-policies). Fall back to the seeded var only if the row is
+	// missing, so the endpoint never returns empty content.
+	policies := BookingPoliciesHTML
+	updatedDate := "10/12/2024"
+	if page, err := s.fetchLegalPage(r, restaurantID, "booking-policies"); err == nil {
+		if strings.TrimSpace(page.ContentHTML) != "" {
+			policies = page.ContentHTML
+		}
+		if !page.UpdatedAt.IsZero() {
+			updatedDate = page.UpdatedAt.Format("02/01/2006")
+		}
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":    true,
-		"brandName":  brandName,
-		"policies":   bookingPoliciesHTML,
-		"updatedDate": "10/12/2024",
+		"success":     true,
+		"brandName":   brandName,
+		"policies":    policies,
+		"updatedDate": updatedDate,
 	})
 }
 
-var bookingPoliciesHTML = `<h2>I. Información General</h2>
+var BookingPoliciesHTML = `<h2>I. Información General</h2>
 <p>El presente documento establece las condiciones de reserva y políticas aplicables a todos los clientes que realicen una reserva en el restaurante. Al realizar una reserva, el cliente acepta íntegramente estas condiciones.</p>
 
 <h2>II. Precios y Menús</h2>

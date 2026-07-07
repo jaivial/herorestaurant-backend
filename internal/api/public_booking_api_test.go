@@ -114,13 +114,13 @@ func TestPublicBookingPoliciesNoRestaurant(t *testing.T) {
 
 func TestPublicBookingPoliciesContent(t *testing.T) {
 	// Test the static policies content directly (no DB needed).
-	if bookingPoliciesHTML == "" {
-		t.Error("expected non-empty bookingPoliciesHTML")
+	if BookingPoliciesHTML == "" {
+		t.Error("expected non-empty BookingPoliciesHTML")
 	}
-	if !bytes.Contains([]byte(bookingPoliciesHTML), []byte("No Asistencia")) {
+	if !bytes.Contains([]byte(BookingPoliciesHTML), []byte("No Asistencia")) {
 		t.Error("policies should mention No-Show policy")
 	}
-	if !bytes.Contains([]byte(bookingPoliciesHTML), []byte("Arroces")) {
+	if !bytes.Contains([]byte(BookingPoliciesHTML), []byte("Arroces")) {
 		t.Error("policies should mention Arroces section")
 	}
 }

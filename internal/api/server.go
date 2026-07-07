@@ -282,6 +282,11 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/config/email-provider", s.handleBOEmailProviderGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/email-provider", s.handleBOEmailProviderSet)
 
+		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
+		r.With(s.requireBOSession, ajustesGate).Get("/legal-pages", s.handleAdminLegalPageList)
+		r.With(s.requireBOSession, ajustesGate).Get("/legal-pages/{slug}", s.handleAdminLegalPageGet)
+		r.With(s.requireBOSession, ajustesGate).Post("/legal-pages/{slug}", s.handleAdminLegalPageUpsert)
+
 		// Restaurant-level settings (integrations/branding).
 		r.With(s.requireBOSession, ajustesGate).Get("/integrations", s.handleBOIntegrationsGet)
 		r.With(s.requireBOSession, ajustesGate).Post("/integrations", s.handleBOIntegrationsSet)
@@ -384,6 +389,7 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/public/booking/cancel", s.handlePublicBookingCancel)
 	r.Post("/public/booking/rice", s.handlePublicBookingRice)
 	r.Get("/public/booking-policies", s.handlePublicBookingPolicies)
+	r.Get("/public/legal-page", s.handlePublicLegalPageGet)
 
 	// Embeddable booking widget API — accepts ?restaurant_id= query param.
 	s.RegisterWidgetRoutes(r)
