@@ -83,4 +83,3 @@ func markApplied(ctx context.Context, db *sql.DB, id string) error {
 	_, err := db.ExecContext(ctx, "INSERT INTO schema_migrations (id) VALUES (?)", id)
 	return err
 }
-

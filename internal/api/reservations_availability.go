@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+
 	"net/http"
 	"regexp"
 	"sort"
@@ -632,22 +633,30 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 
 	dailyLimits := map[string]int{}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT reservationDate, MAX(dailyLimit) as dailyLimit
-		FROM reservation_manager
-		WHERE restaurant_id = ? AND reservationDate BETWEEN ? AND ?
-		GROUP BY reservationDate
-	`, restaurantID, firstDayStr, lastDayStr)
+		SELECT rm.reservationDate, rm.dailyLimit
+		FROM reservation_manager rm
+		INNER JOIN (
+			SELECT reservationDate, MAX(id) AS max_id
+			FROM reservation_manager
+			WHERE restaurant_id = ? AND reservationDate BETWEEN ? AND ?
+			GROUP BY reservationDate
+		) latest
+			ON latest.reservationDate = rm.reservationDate AND latest.max_id = rm.id
+		WHERE rm.restaurant_id = ?
+	`, restaurantID, firstDayStr, lastDayStr, restaurantID)
+
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var d string
+		var d time.Time
 		var lim int
 		if err := rows.Scan(&d, &lim); err != nil {
 			return nil, err
 		}
-		dailyLimits[d] = lim
+
+		dailyLimits[d.Format("2006-01-02")] = lim
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -665,12 +674,12 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	}
 	defer rows2.Close()
 	for rows2.Next() {
-		var d string
+		var d time.Time
 		var total int
 		if err := rows2.Scan(&d, &total); err != nil {
 			return nil, err
 		}
-		bookings[d] = total
+		bookings[d.Format("2006-01-02")] = total
 	}
 	if err := rows2.Err(); err != nil {
 		return nil, err
@@ -682,14 +691,22 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	for day := 1; day <= daysInMonth; day++ {
 		dateISO := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
 		lim := defaultLimit
+
 		if v, ok := dailyLimits[dateISO]; ok {
 			lim = v
 		}
+		if lim < 0 {
+			lim = 0
+		}
 		total := bookings[dateISO]
+		free := lim - total
+		if free < 0 {
+			free = 0
+		}
 		availability[dateISO] = map[string]int{
 			"dailyLimit":       lim,
 			"totalPeople":      total,
-			"freeBookingSeats": lim - total,
+			"freeBookingSeats": free,
 		}
 	}
 

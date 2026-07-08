@@ -575,8 +575,10 @@ func (s *Server) loadDateFloors(ctx context.Context, restaurantID int, date stri
 }
 
 type boConfigDayRequest struct {
-	Date   string `json:"date"`
-	IsOpen bool   `json:"isOpen"`
+	Date       string   `json:"date"`
+	Dates      []string `json:"dates"`
+	RangeDates bool     `json:"rangeDates"`
+	IsOpen     bool     `json:"isOpen"`
 }
 
 func (s *Server) handleBOConfigDayGet(w http.ResponseWriter, r *http.Request) {
@@ -640,6 +642,63 @@ func (s *Server) handleBOConfigDaySet(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	isOpenInt := 0
+	if req.IsOpen {
+		isOpenInt = 1
+	}
+
+	// Range mode: apply the same is_open value to every date in one batch upsert.
+	if req.RangeDates || len(req.Dates) > 0 {
+		// Validate + dedupe while preserving order.
+		seen := make(map[string]struct{}, len(req.Dates))
+		dates := make([]string, 0, len(req.Dates))
+		for _, d := range req.Dates {
+			d = strings.TrimSpace(d)
+			if d == "" || !isValidISODate(d) {
+				httpx.WriteJSON(w, http.StatusOK, map[string]any{
+					"success": false,
+					"message": "Invalid date",
+				})
+				return
+			}
+			if _, ok := seen[d]; ok {
+				continue
+			}
+			seen[d] = struct{}{}
+			dates = append(dates, d)
+		}
+		if len(dates) == 0 {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Invalid date",
+			})
+			return
+		}
+
+		// Build a single multi-row upsert: VALUES (?,?,?),(?,?,?),...
+		placeholders := make([]string, 0, len(dates))
+		args := make([]any, 0, len(dates)*3)
+		for _, d := range dates {
+			placeholders = append(placeholders, "(?, ?, ?)")
+			args = append(args, a.ActiveRestaurantID, d, isOpenInt)
+		}
+		query := "INSERT INTO restaurant_days (restaurant_id, date, is_open) VALUES " +
+			strings.Join(placeholders, ", ") +
+			" ON DUPLICATE KEY UPDATE is_open = VALUES(is_open)"
+		if _, err := s.db.ExecContext(r.Context(), query, args...); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando restaurant_days")
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"dates":   dates,
+			"isOpen":  req.IsOpen,
+		})
+		return
+	}
+
 	date := strings.TrimSpace(req.Date)
 	if date == "" || !isValidISODate(date) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -647,11 +706,6 @@ func (s *Server) handleBOConfigDaySet(w http.ResponseWriter, r *http.Request) {
 			"message": "Invalid date",
 		})
 		return
-	}
-
-	isOpenInt := 0
-	if req.IsOpen {
-		isOpenInt = 1
 	}
 
 	// Upsert by (restaurant_id, date).

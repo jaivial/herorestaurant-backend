@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/mail"
@@ -116,14 +117,8 @@ func isASCII(s string) bool {
 	}
 	return true
 }
-
 func base64Encode(s string) string {
-	var buf bytes.Buffer
-	b := []byte(s)
-	for i := 0; i < len(b); i++ {
-		buf.WriteByte(b[i])
-	}
-	return buf.String()
+	return base64.StdEncoding.EncodeToString([]byte(s))
 }
 
 // ---------------------------------------------------------------------------

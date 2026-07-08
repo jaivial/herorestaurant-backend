@@ -727,7 +727,10 @@ func mimeSafeSubject(subject string) string {
 	if subject == "" {
 		return "Mensaje"
 	}
-	return subject
+	if isASCII(subject) {
+		return subject
+	}
+	return "=?UTF-8?B?" + base64Encode(subject) + "?="
 }
 
 func (s *Server) sendWhatsAppMessage(ctx context.Context, restaurantID int, phone string, text string) error {

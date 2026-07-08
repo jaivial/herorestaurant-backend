@@ -43,9 +43,15 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dailyLimit := 45
-	_ = s.db.QueryRowContext(r.Context(), "SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", restaurantID, date).Scan(&dailyLimit)
+	_ = s.db.QueryRowContext(r.Context(), "SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id DESC LIMIT 1", restaurantID, date).Scan(&dailyLimit)
 	if dailyLimit <= 0 {
 		dailyLimit = 45
+	}
+
+	salonState := 0
+	var salonStateRaw sql.NullInt64
+	if err := s.db.QueryRowContext(r.Context(), "SELECT state FROM salon_condesa WHERE restaurant_id = ? AND date = ? LIMIT 1", restaurantID, date).Scan(&salonStateRaw); err == nil && salonStateRaw.Valid {
+		salonState = int(salonStateRaw.Int64)
 	}
 
 	bookingsByHour, totalPeople, err := s.fetchBookingsByHourHHMM(r, date)
@@ -108,16 +114,18 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		sort.Strings(activeHours)
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success":       true,
-			"hourData":      hourData,
-			"activeHours":   activeHours,
-			"isDefaultData": true,
-			"dailyLimit":    dailyLimit,
-			"totalPeople":   totalPeople,
-			"date":          date,
-		})
+	sort.Strings(activeHours)
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":       true,
+		"hourData":      hourData,
+		"activeHours":   activeHours,
+		"isDefaultData": true,
+		"dailyLimit":    dailyLimit,
+		"totalPeople":   totalPeople,
+		"date":          date,
+		"salonState":    salonState,
+	})
 		return
 	}
 
@@ -172,6 +180,7 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 		"dailyLimit":    dailyLimit,
 		"totalPeople":   totalPeople,
 		"date":          date,
+		"salonState":    salonState,
 	})
 }
 

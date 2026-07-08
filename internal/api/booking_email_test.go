@@ -199,3 +199,40 @@ func TestSMTPSendEncryption(t *testing.T) {
 		t.Fatalf("expected 'SMTP no configurado' for empty host, got %v", err)
 	}
 }
+
+func TestMimeEncodeSubject(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  string
+		expect string
+	}{
+		{"ascii passthrough", "Reservation confirmed", "Reservation confirmed"},
+		{"spanish accents", "Confirmación de reserva · Alquería Villa Carmen", "=?UTF-8?B?Q29uZmlybWFjacOzbiBkZSByZXNlcnZhIMK3IEFscXVlcsOtYSBWaWxsYSBDYXJtZW4=?="},
+		{"emoji", "Reserva 🦐", "=?UTF-8?B?UmVzZXJ2YSDwn6aQ?="},
+		{"empty falls through as ascii", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mimeEncodeSubject(tc.input)
+			if got != tc.expect {
+				t.Fatalf("input %q: expected %q, got %q", tc.input, tc.expect, got)
+			}
+		})
+	}
+}
+
+func TestMimeSafeSubject(t *testing.T) {
+	if got := mimeSafeSubject(""); got != "Mensaje" {
+		t.Fatalf("empty: expected 'Mensaje', got %q", got)
+	}
+	if got := mimeSafeSubject("  "); got != "Mensaje" {
+		t.Fatalf("whitespace: expected 'Mensaje', got %q", got)
+	}
+	if got := mimeSafeSubject("Plain ASCII"); got != "Plain ASCII" {
+		t.Fatalf("ascii passthrough: got %q", got)
+	}
+	got := mimeSafeSubject("Alquería · Invitacion")
+	if !strings.HasPrefix(got, "=?UTF-8?B?") || !strings.HasSuffix(got, "?=") {
+		t.Fatalf("expected RFC 2047 base64 envelope, got %q", got)
+	}
+}
