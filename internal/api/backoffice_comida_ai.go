@@ -578,13 +578,17 @@ func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
 	}
 
 	fullURL := s.bunnyPullURL(objectPath)
+	// Store in foto_url (the column the list/detail endpoints read first) and clear
+	// foto_path/foto so the freshly generated image is what reloads show — mirrors
+	// the manual-upload path and keeps a single source of truth for the image.
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE comida_items
-		SET foto_path = ?,
+		SET foto_url = ?,
+		    foto_path = NULL,
 		    foto = NULL,
 		    ai_generating = 0
 		WHERE id = ? AND restaurant_id = ? AND source_type = ?
-	`, objectPath, job.ItemNum, job.RestaurantID, job.Tipo)
+	`, fullURL, job.ItemNum, job.RestaurantID, job.Tipo)
 	if err != nil {
 		s.logBOComidaAITrace("job db save error restaurant=%d tipo=%s item=%d err=%v", job.RestaurantID, job.Tipo, job.ItemNum, err)
 		s.failBOComidaAIImageJob(job, "Failed saving generated image")
