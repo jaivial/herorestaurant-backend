@@ -2121,6 +2121,36 @@ func (s *Server) loadEmailProviderConfig(ctx context.Context, restaurantID int) 
 	return out, nil
 }
 
+func checkEmailProviderCompleteness(cfg boEmailProviderConfig) (bool, []string) {
+	var missing []string
+	switch cfg.Provider {
+	case "gmail":
+		if strings.TrimSpace(cfg.GmailFromEmail) == "" {
+			missing = append(missing, "gmailFromEmail")
+		}
+		if strings.TrimSpace(cfg.GmailAppPassword) == "" {
+			missing = append(missing, "gmailAppPassword")
+		}
+	default: // smtp
+		if strings.TrimSpace(cfg.SMTPHost) == "" {
+			missing = append(missing, "smtpHost")
+		}
+		if strings.TrimSpace(cfg.SMTPUsername) == "" {
+			missing = append(missing, "smtpUsername")
+		}
+		if strings.TrimSpace(cfg.SMTPPassword) == "" {
+			missing = append(missing, "smtpPassword")
+		}
+		if strings.TrimSpace(cfg.SMTPFromEmail) == "" {
+			missing = append(missing, "smtpFromEmail")
+		}
+	}
+	if !cfg.IsActive {
+		missing = append(missing, "isActive")
+	}
+	return len(missing) == 0, missing
+}
+
 func (s *Server) handleBOEmailProviderGet(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -2134,9 +2164,13 @@ func (s *Server) handleBOEmailProviderGet(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	isComplete, missingFields := checkEmailProviderCompleteness(cfg)
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"config":  cfg,
+		"success":       true,
+		"config":        cfg,
+		"isComplete":    isComplete,
+		"missingFields": missingFields,
 	})
 }
 

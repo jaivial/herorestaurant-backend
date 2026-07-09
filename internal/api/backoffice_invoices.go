@@ -558,6 +558,28 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse optional body with subject/message
+	var req struct {
+		Subject *string `json:"subject,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	// Ignore body parse errors — body is optional
+	json.NewDecoder(r.Body).Decode(&req)
+
+	// Load email provider config
+	cfg, _ := s.loadEmailProviderConfig(r.Context(), a.ActiveRestaurantID)
+
+	isComplete, missingFields := checkEmailProviderCompleteness(cfg)
+	if !isComplete {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success":       false,
+			"message":       "Email settings incomplete. Configure them in Settings → Email.",
+			"isComplete":    false,
+			"missingFields": missingFields,
+		})
+		return
+	}
+
 	// Get invoice
 	var inv Invoice
 	var restaurant Restaurant
@@ -596,10 +618,61 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate PDF (placeholder - would need PDF generation library)
-	// For now, just update status to 'enviada'
+	// Build invoice URL
+	baseURL := fmt.Sprintf("https://backoffice-dev.menustudioai.com") // ponytail: hardcoded, make configurable if multi-tenant
+	invoiceURL := fmt.Sprintf("%s/app/facturas?tab=añadir&id=%d", baseURL, inv.ID)
+
+	// Build email content
+	branding, _ := s.loadRestaurantBranding(r.Context(), a.ActiveRestaurantID)
+	fromName := "Restaurante"
+	if branding.BrandName != "" {
+		fromName = branding.BrandName
+	}
+
+	customerName := inv.CustomerName
+	if inv.CustomerSurname != nil && *inv.CustomerSurname != "" {
+		customerName += " " + *inv.CustomerSurname
+	}
+
+	invoiceLabel := fmt.Sprintf("#%d", inv.ID)
+
+	subject := fmt.Sprintf("Factura %s - %s", invoiceLabel, fromName)
+	if req.Subject != nil && *req.Subject != "" {
+		subject = *req.Subject
+	}
+
+	htmlBody := fmt.Sprintf("<!DOCTYPE html><html><body style='font-family:sans-serif;padding:20px;max-width:600px;margin:0 auto'><h2>Factura %s</h2><p>Estimado/a <strong>%s</strong>:</p><p>Adjuntamos la factura <strong>%s</strong> por importe de <strong>%.2f €</strong>.</p><p style='text-align:center;margin:24px 0'><a href='%s' style='display:inline-block;padding:12px 28px;background:#6C5CE7;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold'>Ver factura</a></p><p>Si tiene alguna consulta, no dude en contactarnos.</p><hr style='border:none;border-top:1px solid #eee;margin:24px 0'><p style='color:#888;font-size:12px'>%s</p></body></html>", invoiceLabel, customerName, invoiceLabel, inv.Amount, invoiceURL, fromName)
+
+	// If custom message provided, wrap it as HTML (replace newlines with <br>)
+	if req.Message != nil && *req.Message != "" {
+		custom := strings.ReplaceAll(*req.Message, "\n", "<br>")
+		htmlBody = fmt.Sprintf("<!DOCTYPE html><html><body style='font-family:sans-serif;padding:20px;max-width:600px;margin:0 auto'><h2>Factura %s</h2><p>%s</p><hr style='border:none;border-top:1px solid #eee;margin:24px 0'><p style='color:#888;font-size:12px'>%s</p></body></html>", invoiceLabel, custom, fromName)
+	}
+
+	// Determine from address
+	fromAddr := ""
+	if cfg.Provider == "gmail" {
+		fromAddr = cfg.GmailFromEmail
+	} else {
+		fromAddr = cfg.SMTPFromEmail
+	}
+	if fromAddr == "" {
+		fromAddr = inv.CustomerEmail
+	}
+
+	// Send email via SMTP config
+	if err := sendViaConfig(r.Context(), cfg, fromName, fromAddr, inv.CustomerEmail, subject, htmlBody); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Error sending email: " + err.Error(),
+		})
+		return
+	}
+
+	// Generate PDF placeholder URL
 	pdfURL := fmt.Sprintf("https://villacarmenmedia.b-cdn.net/%d/facturas/pdf/pdf_%d.pdf", restaurant.ID, inv.ID)
 
+	// Update invoice status
 	_, err = s.db.ExecContext(r.Context(), `
 		UPDATE invoices SET status = 'enviada', pdf_url = ? WHERE id = ?
 	`, pdfURL, invoiceID)
