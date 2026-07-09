@@ -1,9 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -50,6 +53,8 @@ type boComidaAIImageJob struct {
 	ItemNum      int
 	RawImage     []byte
 	ContentType  string
+	APIKey       string // resolved (DB or env); used as Bearer for this job
+	EditURL      string // resolved edit endpoint for the DB-selected i2i model (empty = env default)
 }
 
 func (s *Server) logBOComidaAITrace(format string, args ...any) {
@@ -247,7 +252,8 @@ func (s *Server) handleBOComidaImageAI(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logBOComidaAITrace("generate request received restaurant=%d path=%s remote=%s", a.ActiveRestaurantID, r.URL.Path, r.RemoteAddr)
 
-	if strings.TrimSpace(s.cfg.OpenAIAPIKey) == "" {
+	resolvedAI := s.resolveAIImageProvider(r.Context(), a.ActiveRestaurantID)
+	if strings.TrimSpace(resolvedAI.APIKey) == "" {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "AI provider not configured"})
 		return
 	}
@@ -334,6 +340,8 @@ func (s *Server) handleBOComidaImageAI(w http.ResponseWriter, r *http.Request) {
 		ItemNum:      itemNum,
 		RawImage:     raw,
 		ContentType:  contentType,
+		APIKey:       resolvedAI.APIKey,
+		EditURL:      aiImageEditURLForModel(resolvedAI.BaseURL, resolvedAI.I2IModelSlug),
 	})
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -359,8 +367,169 @@ func (s *Server) comidaAIPromptForTipo(tipo string) string {
 	}
 }
 
+// waveSpeedEnvelope models the WaveSpeed REST response wrapper.
+// Submit and result endpoints both return { code, message, data: {...} }.
+type waveSpeedEnvelope struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		ID      string   `json:"id"`
+		Model   string   `json:"model"`
+		Status  string   `json:"status"` // created | processing | completed | failed
+		Outputs []string `json:"outputs"`
+		Error   string   `json:"error"`
+		URLs    struct {
+			Get string `json:"get"`
+		} `json:"urls"`
+	} `json:"data"`
+}
+
+// callComidaImageEdit submits the image-to-image (edit) job to WaveSpeed and
+// waits for it to finish by polling the prediction result URL (WaveSpeed's
+// synchronous mode 504s at its 60s gateway for slow models like gpt-image-2).
+// This is a backend<->provider poll only; the browser is notified via WebSocket.
+// Returns the raw generated image bytes.
+func (s *Server) callComidaImageEdit(ctx context.Context, editURL, apiKey, prompt string, input []byte, contentType string) ([]byte, error) {
+	if len(input) == 0 {
+		return nil, errors.New("empty input image")
+	}
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, errors.New("ai key missing")
+	}
+	if strings.TrimSpace(editURL) == "" {
+		return nil, errors.New("edit endpoint not configured")
+	}
+	if strings.TrimSpace(prompt) == "" {
+		prompt = boGroupMenuV2AIPrompt
+	}
+
+	ct := strings.TrimSpace(contentType)
+	if ct == "" || !strings.HasPrefix(strings.ToLower(ct), "image/") {
+		ct = strings.TrimSpace(http.DetectContentType(input))
+	}
+	if ct == "" || !strings.HasPrefix(strings.ToLower(ct), "image/") {
+		ct = "image/webp"
+	}
+	dataURI := "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(input)
+
+	// --- Submit (async) ---
+	body := map[string]any{
+		"prompt":               prompt,
+		"images":               []string{dataURI},
+		"enable_sync_mode":     false,
+		"enable_base64_output": false,
+		"output_format":        "png",
+		"quality":              "high",
+		"resolution":           "1k",
+	}
+	rawBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	s.logBOComidaAITrace("submit start url=%s inputBytes=%d inputType=%s", editURL, len(input), ct)
+	submit, err := s.waveSpeedDo(ctx, http.MethodPost, editURL, apiKey, rawBody)
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(strings.TrimSpace(submit.Data.Status), "failed") {
+		return nil, fmt.Errorf("wavespeed submit failed: %s", submit.Data.Error)
+	}
+	resultURL := strings.TrimSpace(submit.Data.URLs.Get)
+	if resultURL == "" {
+		if id := strings.TrimSpace(submit.Data.ID); id != "" {
+			resultURL = s.waveSpeedResultFetchURL(id)
+		}
+	}
+	if resultURL == "" {
+		return nil, errors.New("wavespeed submit returned no result URL")
+	}
+	s.logBOComidaAITrace("submit ok id=%s resultURL=%s", submit.Data.ID, resultURL)
+
+	// --- Poll the result URL until completed/failed ---
+	const pollInterval = 3 * time.Second
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(pollInterval):
+		}
+		env, err := s.waveSpeedDo(ctx, http.MethodGet, resultURL, apiKey, nil)
+		if err != nil {
+			s.logBOComidaAITrace("poll error id=%s attempt=%d err=%v", submit.Data.ID, attempt, err)
+			continue // transient; keep polling until ctx times out
+		}
+		status := strings.ToLower(strings.TrimSpace(env.Data.Status))
+		switch status {
+		case "completed":
+			if len(env.Data.Outputs) == 0 {
+				return nil, errors.New("wavespeed completed with no outputs")
+			}
+			out := strings.TrimSpace(env.Data.Outputs[0])
+			s.logBOComidaAITrace("poll completed id=%s attempt=%d output=%.80s", submit.Data.ID, attempt, out)
+			if strings.HasPrefix(out, "http://") || strings.HasPrefix(out, "https://") {
+				return s.downloadOpenAIImageURL(ctx, out)
+			}
+			if strings.HasPrefix(out, "data:") {
+				if idx := strings.Index(out, ","); idx >= 0 {
+					out = out[idx+1:]
+				}
+			}
+			return base64.StdEncoding.DecodeString(out)
+		case "failed":
+			return nil, fmt.Errorf("wavespeed generation failed: %s", env.Data.Error)
+		default:
+			s.logBOComidaAITrace("poll waiting id=%s attempt=%d status=%s", submit.Data.ID, attempt, status)
+		}
+	}
+}
+
+// waveSpeedDo performs a single WaveSpeed REST call and parses the envelope.
+func (s *Server) waveSpeedDo(ctx context.Context, method, url, apiKey string, body []byte) (waveSpeedEnvelope, error) {
+	var out waveSpeedEnvelope
+	var reader io.Reader
+	if len(body) > 0 {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	if len(body) > 0 {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Accept", "application/json")
+
+	cli := &http.Client{Timeout: s.openAIFetchTimeout()}
+	res, err := cli.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer res.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(res.Body, int64(s.openAIMaxOutputBytes())*2+1024))
+	if err != nil {
+		return out, err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return out, fmt.Errorf("wavespeed request failed (%d): %s", res.StatusCode, strings.TrimSpace(string(payload)))
+	}
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return out, fmt.Errorf("wavespeed response parse error: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+	base := context.Background()
+	if strings.TrimSpace(job.APIKey) != "" || strings.TrimSpace(job.EditURL) != "" {
+		base = withAIProviderOverride(base, aiProviderOverride{APIKey: job.APIKey, EditURL: job.EditURL})
+	}
+	// Generous ceiling: slow edit models (e.g. gpt-image-2) can run several minutes.
+	jobTimeout := s.openAIRequestTimeout()
+	if jobTimeout < 8*time.Minute {
+		jobTimeout = 8 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(base, jobTimeout)
 	defer cancel()
 	s.logBOComidaAITrace("job start restaurant=%d tipo=%s item=%d inputBytes=%d inputType=%s", job.RestaurantID, job.Tipo, job.ItemNum, len(job.RawImage), job.ContentType)
 
@@ -372,7 +541,13 @@ func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
 	defer s.releaseBOGroupMenuV2AIWorker()
 
 	prompt := s.comidaAIPromptForTipo(job.Tipo)
-	output, err := s.callOpenAIImageEditWithPrompt(ctx, job.RawImage, job.ContentType, prompt)
+	editURL := strings.TrimSpace(job.EditURL)
+	if editURL == "" {
+		editURL = s.openAIImageEditURL()
+	}
+	// Submit + wait for the generated image, then we compress -> webp -> Bunny ->
+	// DB -> WS below. (Backend<->provider polling only; browser gets a WS event.)
+	output, err := s.callComidaImageEdit(ctx, editURL, job.APIKey, prompt, job.RawImage, job.ContentType)
 	if err != nil {
 		s.logBOComidaAITrace("job ai call error restaurant=%d tipo=%s item=%d err=%v", job.RestaurantID, job.Tipo, job.ItemNum, err)
 		s.failBOComidaAIImageJob(job, aiFailureMessage("AI image generation failed", err))

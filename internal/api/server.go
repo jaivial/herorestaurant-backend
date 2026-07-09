@@ -100,6 +100,7 @@ func (s *Server) Routes() http.Handler {
 		horariosGate := s.requireBOSection(boSectionHorarios)
 		facturasGate := s.requireBOSection(boSectionFacturas)
 		rolesAdminGate := s.requireBORoleImportanceAtLeast(90)
+		rootOnlyGate := s.requireBORoleImportanceAtLeast(100)
 
 		r.Post("/login", s.handleBOLogin)
 		r.Post("/logout", s.handleBOLogout)
@@ -281,6 +282,14 @@ func (s *Server) Routes() http.Handler {
 
 		r.With(s.requireBOSession, reservasGate).Get("/config/email-provider", s.handleBOEmailProviderGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/email-provider", s.handleBOEmailProviderSet)
+
+		// AI image config validity — any comida editor (used to gate the AI advisor).
+		r.With(s.requireBOSession, menusGate).Get("/comida/ai-image/status", s.handleBOAIImageStatus)
+
+		// AI image provider configuration — root only.
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/ai-image/providers", s.handleBOAIImageProvidersGet)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/ai-image", s.handleBOAIImageConfigGet)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/ai-image", s.handleBOAIImageConfigSet)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
 		r.With(s.requireBOSession, ajustesGate).Get("/legal-pages", s.handleAdminLegalPageList)

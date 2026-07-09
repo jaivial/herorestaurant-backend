@@ -3,8 +3,10 @@ package api
 import (
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
@@ -115,7 +117,10 @@ func (s *Server) handleBOComidaImageUpload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	objectPath := "comida/" + string(ct) + "/" + strconv.Itoa(id) + "/image.webp"
+	// Timestamped filename so each upload produces a unique URL (cache-busting;
+	// mirrors the AI path which uses {id}-ai-{ms}.webp).
+	version := strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)
+	objectPath := path.Join("images", "comida", string(ct), strconv.Itoa(id)+"-"+version+".webp")
 	if err := s.bunnyPut(ctx, objectPath, normalizedWebP, "image/webp"); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,

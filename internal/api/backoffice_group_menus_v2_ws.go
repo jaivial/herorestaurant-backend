@@ -1080,7 +1080,7 @@ func (s *Server) callOpenAIImageEditWithPrompt(ctx context.Context, input []byte
 	if strings.TrimSpace(prompt) == "" {
 		prompt = boGroupMenuV2AIPrompt
 	}
-	apiKey := strings.TrimSpace(s.cfg.OpenAIAPIKey)
+	apiKey := s.aiRequestAPIKey(ctx)
 	if apiKey == "" {
 		s.logBOGroupMenuV2AITrace("ai call rejected key missing")
 		return nil, errors.New("ai key missing")
@@ -1092,10 +1092,10 @@ func (s *Server) callOpenAIImageEditWithPrompt(ctx context.Context, input []byte
 	if contentType == "" || !strings.HasPrefix(strings.ToLower(contentType), "image/") {
 		contentType = "image/webp"
 	}
+	editURL := s.aiRequestEditURL(ctx)
 	s.logBOGroupMenuV2AITrace(
-		"wavespeed call start model=%s url=%s inputType=%s inputBytes=%d timeout=%s",
-		s.openAIImageEditModel(),
-		s.openAIImageEditURL(),
+		"wavespeed call start url=%s inputType=%s inputBytes=%d timeout=%s",
+		editURL,
 		contentType,
 		len(input),
 		s.openAIRequestTimeout(),
@@ -1117,7 +1117,7 @@ func (s *Server) callOpenAIImageEditWithPrompt(ctx context.Context, input []byte
 	if err != nil {
 		return nil, err
 	}
-	payload, statusCode, responseContentType, err := s.doAIProviderRequest(ctx, http.MethodPost, s.openAIImageEditURL(), rawBody, "application/json")
+	payload, statusCode, responseContentType, err := s.doAIProviderRequest(ctx, http.MethodPost, editURL, rawBody, "application/json")
 	if err != nil {
 		s.logBOGroupMenuV2AITrace("wavespeed call http error err=%v", err)
 		return nil, err
@@ -1537,7 +1537,7 @@ func (s *Server) doAIProviderRequest(ctx context.Context, method string, request
 	if err != nil {
 		return nil, 0, "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(s.cfg.OpenAIAPIKey))
+	req.Header.Set("Authorization", "Bearer "+s.aiRequestAPIKey(ctx))
 	if strings.TrimSpace(contentType) != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -1575,7 +1575,7 @@ func (s *Server) downloadOpenAIImageURL(parent context.Context, imageURL string)
 		return nil, err
 	}
 	if s.shouldAttachAIProviderAuth(imageURL) {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(s.cfg.OpenAIAPIKey))
+		req.Header.Set("Authorization", "Bearer "+s.aiRequestAPIKey(ctx))
 		s.logBOGroupMenuV2AITrace("ai download auth attached url=%s", imageURL)
 	}
 	req.Header.Set("Accept", "application/json, image/webp, image/png, image/jpeg, image/*")
