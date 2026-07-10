@@ -1865,12 +1865,17 @@ func (s *Server) handleBODishesCatalogSearch(w http.ResponseWriter, r *http.Requ
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, title, description, allergens_json, default_supplement_enabled, default_supplement_price, updated_at
-		FROM menu_dishes_catalog
-		WHERE restaurant_id = ? AND title LIKE ?
-		ORDER BY updated_at DESC, id DESC
+		SELECT ci.id, ci.nombre, ci.descripcion, ci.alergenos_json,
+		       COALESCE(ci.suplemento, 0), COALESCE(ci.foto_url, ''),
+		       COALESCE(ci.foto_path, ''), ci.updated_at
+		FROM comida_items ci
+		WHERE ci.restaurant_id = ?
+		  AND ci.source_type = 'platos'
+		  AND ci.active = 1
+		  AND (ci.nombre LIKE ? OR COALESCE(ci.titulo, '') LIKE ?)
+		ORDER BY ci.updated_at DESC, ci.id DESC
 		LIMIT ?
-	`, a.ActiveRestaurantID, "%"+q+"%", limit)
+	`, a.ActiveRestaurantID, "%"+q+"%", "%"+q+"%", limit)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error buscando platos")
 		return
@@ -1884,11 +1889,12 @@ func (s *Server) handleBODishesCatalogSearch(w http.ResponseWriter, r *http.Requ
 			title        string
 			description  sql.NullString
 			allergensRaw sql.NullString
-			suppInt      int
-			suppPrice    sql.NullFloat64
+			supplement   float64
+			fotoURL      string
+			fotoPath     string
 			updatedAt    sql.NullString
 		)
-		if err := rows.Scan(&id, &title, &description, &allergensRaw, &suppInt, &suppPrice, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &title, &description, &allergensRaw, &supplement, &fotoURL, &fotoPath, &updatedAt); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo platos")
 			return
 		}
@@ -1897,13 +1903,17 @@ func (s *Server) handleBODishesCatalogSearch(w http.ResponseWriter, r *http.Requ
 			"title":                      title,
 			"description":                description.String,
 			"allergens":                  anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
-			"default_supplement_enabled": suppInt != 0,
+			"default_supplement_enabled": supplement > 0,
+			"default_supplement_price":   nil,
 			"updated_at":                 updatedAt.String,
 		}
-		if suppPrice.Valid {
-			row["default_supplement_price"] = suppPrice.Float64
-		} else {
-			row["default_supplement_price"] = nil
+		if supplement > 0 {
+			row["default_supplement_price"] = supplement
+		}
+		if fotoURL != "" {
+			row["foto_url"] = fotoURL
+		} else if fotoPath != "" && s.bunnyConfigured() {
+			row["foto_url"] = s.bunnyPullURL(fotoPath)
 		}
 		items = append(items, row)
 	}

@@ -136,24 +136,37 @@ func (s *Server) loadAIImageConfig(ctx context.Context, restaurantID int) (boAII
 	return out, rawKey, nil
 }
 
-// aiImageConfigValid reports whether the AI image config for a restaurant is
-// fully usable for image enhancement: activation ON + API key present + an
-// image-to-image (edit) model selected. (Comida enhancement is image-to-image.)
-func (s *Server) aiImageConfigValid(ctx context.Context, restaurantID int) bool {
+// aiImageConfigChecks is shared by upload UIs and generation handlers. MVP
+// supports WaveSpeed only; an enhancement is enabled only when every required
+// stored setting is present.
+func (s *Server) aiImageConfigChecks(ctx context.Context, restaurantID int) (map[string]bool, bool) {
+	checks := map[string]bool{
+		"wavespeed_provider":            false,
+		"api_key_stored":                false,
+		"text_to_image_model_selected":  false,
+		"image_to_image_model_selected": false,
+		"generation_enabled":            false,
+	}
 	cfg, rawKey, err := s.loadAIImageConfig(ctx, restaurantID)
 	if err != nil {
-		return false
+		return checks, false
 	}
-	if !cfg.IsActive {
-		return false
+	checks["wavespeed_provider"] = strings.EqualFold(strings.TrimSpace(cfg.ProviderSlug), "wavespeed")
+	checks["api_key_stored"] = strings.TrimSpace(rawKey) != ""
+	checks["text_to_image_model_selected"] = strings.TrimSpace(cfg.T2IModelSlug) != ""
+	checks["image_to_image_model_selected"] = strings.TrimSpace(cfg.I2IModelSlug) != ""
+	checks["generation_enabled"] = cfg.IsActive
+	for _, ok := range checks {
+		if !ok {
+			return checks, false
+		}
 	}
-	if strings.TrimSpace(rawKey) == "" {
-		return false
-	}
-	if strings.TrimSpace(cfg.I2IModelSlug) == "" {
-		return false
-	}
-	return true
+	return checks, true
+}
+
+func (s *Server) aiImageConfigValid(ctx context.Context, restaurantID int) bool {
+	_, valid := s.aiImageConfigChecks(ctx, restaurantID)
+	return valid
 }
 
 // handleBOAIImageStatus is a lightweight, non-root endpoint used by the comida
@@ -165,9 +178,19 @@ func (s *Server) handleBOAIImageStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
 		return
 	}
+	checks, valid := s.aiImageConfigChecks(r.Context(), a.ActiveRestaurantID)
+	missing := make([]string, 0, len(checks))
+	for key, ok := range checks {
+		if !ok {
+			missing = append(missing, key)
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"valid":   s.aiImageConfigValid(r.Context(), a.ActiveRestaurantID),
+		"success":  true,
+		"valid":    valid,
+		"provider": "wavespeed",
+		"checks":   checks,
+		"missing":  missing,
 	})
 }
 

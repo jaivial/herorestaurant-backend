@@ -252,9 +252,13 @@ func (s *Server) handleBOComidaImageAI(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logBOComidaAITrace("generate request received restaurant=%d path=%s remote=%s", a.ActiveRestaurantID, r.URL.Path, r.RemoteAddr)
 
+	if !s.aiImageConfigValid(r.Context(), a.ActiveRestaurantID) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI configuration incomplete"})
+		return
+	}
 	resolvedAI := s.resolveAIImageProvider(r.Context(), a.ActiveRestaurantID)
 	if strings.TrimSpace(resolvedAI.APIKey) == "" {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "AI provider not configured"})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
 		return
 	}
 	if !s.bunnyConfigured() {

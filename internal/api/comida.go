@@ -138,6 +138,7 @@ type comidaUpsertRequest struct {
 	Graduacion         *float64  `json:"graduacion,omitempty"`
 	Anyo               *string   `json:"anyo,omitempty"`
 	AiGenerating       *bool     `json:"ai_generating,omitempty"`
+	UIDataID           *string   `json:"ui_data_id,omitempty"`
 }
 
 type comidaCategoryCreateRequest struct {
@@ -1346,11 +1347,16 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 	if req.AiGenerating != nil && *req.AiGenerating {
 		aiGenVal = 1
 	}
+	uiDataID := strings.TrimSpace(comidaPtrString(req.UIDataID))
+	if len(uiDataID) > 64 {
+		writeComidaValidationError(w, "ui_data_id invalido")
+		return
+	}
 
 	res, err := s.db.ExecContext(r.Context(), `
 		INSERT INTO comida_items
-			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, alergenos_json, active, foto_path, foto, ai_generating)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, alergenos_json, active, foto_path, foto, ai_generating, ui_data_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULLIF(?, ''))
 	`, restaurantID,
 		string(t),
 		nombre,
@@ -1365,6 +1371,7 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 		activeInt,
 		foto,
 		aiGenVal,
+		uiDataID,
 	)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando comida")
@@ -1377,9 +1384,10 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"num":     int(newID),
-		"item":    item,
+		"success":    true,
+		"num":        int(newID),
+		"item":       item,
+		"ui_data_id": uiDataID,
 	})
 }
 
