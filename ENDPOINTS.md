@@ -35,6 +35,41 @@ The new React SSR backoffice uses a cookie-based session (`bo_session`) and live
 - Legacy form endpoints usually accept `multipart/form-data` (FormData) and also `application/x-www-form-urlencoded`.
 - Some endpoints accept `application/json` bodies where the legacy JS sends JSON.
 
+## Public booking details
+
+### `GET /api/public/booking?id=<booking_id>`
+
+Returns booking details used by confirmation/cancellation pages:
+
+```json
+{
+  "success": true,
+  "booking": {
+    "id": 123,
+    "reservationDate": "15/07/2026",
+    "reservationTime": "14:00",
+    "partySize": 4,
+    "adults": 3,
+    "children": 1,
+    "customerName": "...",
+    "arrozDisplay": "Arroz del senyoret x 2",
+    "menuDisplay": "Menú de grupo",
+    "principales": [{ "name": "Solomillo", "servings": 2 }],
+    "commentary": "...",
+    "babyStrollers": 0,
+    "highChairs": 1,
+    "floorDisplay": "Planta 2",
+    "tableNumber": "12",
+    "status": "confirmed",
+    "isSameDay": false,
+    "isConfirmed": true
+  },
+  "riceOptions": []
+}
+```
+
+Optional/empty fields use `omitempty`; counts remain numeric.
+
 ## Auth (Internal / n8n)
 
 Some internal automation endpoints (ported from the legacy PHP automation scripts) require `INTERNAL_API_TOKEN`:
@@ -1057,6 +1092,30 @@ Response:
 
 ### Reservation Config (`/api/admin/config/*`)
 
+### `GET /api/admin/config/restaurant-info`
+Returns contact and fiscal data for active restaurant.
+
+Response:
+- `{ success: true, restaurantInfo: { direccion, telefono, email, website, cif, direccionFacturacion, clasificacion } }`
+- `website` is stored per `restaurant_info.restaurant_id`, normalized to `https://...`.
+
+### `POST /api/admin/config/check-website`
+Checks website URL without saving it. Backoffice calls this endpoint 500 ms after website input changes.
+
+Body:
+- `{ website: string }`
+
+Response:
+- `{ success: true, website: "https://..." }` only when final URL responds HTTP 200.
+- `{ success: false, message }` otherwise.
+
+### `POST /api/admin/config/restaurant-info`
+Partial update. `website` accepts a domain or URL, is normalized to HTTPS, checked server-side, and only saved when final URL responds HTTP 200. Empty value clears it.
+
+Body:
+- `website` (`string`, optional; no credentials, query, or fragment)
+- Other contact/fiscal fields are unchanged.
+
 ### `GET /api/admin/config/defaults`
 Returns restaurant-level default config used as fallback in daily config.
 
@@ -1209,6 +1268,22 @@ Returns the current visibility flags used by navigation.
 
 Response:
 - `{ success: true, menuVisibility: { menudeldia: boolean, menufindesemana: boolean, ... } }`
+
+### `GET /api/menus/home`
+Returns lightweight active menu data for homepage cards.
+
+Response:
+- `{ success: true, count, menus: HomeMenu[] }`
+
+`HomeMenu`:
+- `id`, `slug`, `menu_title`, `menu_type`, `active`
+- `menu_subtitle` (`string[]`)
+- `menu_title_english` (optional string)
+- `menu_subtitle_english` (optional `string[]`; aligned with `menu_subtitle`)
+- `show_dish_images`, `show_menu_preview_image` (boolean)
+- `menu_preview_image_url`, `special_menu_image_url` (string)
+
+English fields are returned when stored translations exist. Consumers should fall back to Spanish per missing field or array item.
 
 ### `GET /api/menus/public`
 Returns the active public menu catalog sourced from `menusDeGrupos` + V2 sections/dishes.
@@ -1436,7 +1511,14 @@ Body:
 Returns active rice options for the reservation UI.
 
 Response:
-- `{ success: true, riceTypes: string[] }`
+- `{ success: true, riceTypes: string[], riceTypesEnglish?: string[] }`
+- `riceTypesEnglish` aligns by index with `riceTypes`; missing translations are empty strings.
+
+### `GET /api/reservations/group-menus?party_size=<number>`
+Returns active group menus valid for party size. Menu payload includes optional `menu_title_english`, `entrantes_english`, and `principales_english` (`{ titulo_principales, items }`). English arrays align with Spanish source arrays.
+
+### `GET /api/reservations/mandatory-menus?date=YYYY-MM-DD`
+Returns mandatory/recommended menus for date. Menu payload includes optional `menuTitleEnglish`, `entrantesEnglish`, and `principalesEnglish` (`{ titulo_principales, items }`).
 
 ### `POST /api/fetch_daily_limit.php`
 Form:
@@ -1893,6 +1975,22 @@ WebSocket events:
 - `themes`: catalogo de plantillas disponibles.
 - `assigned`: `true` cuando el restaurante tiene al menos una plantilla asignada en configuracion (default o override), `false` en caso contrario.
 
+## Member phone
+
+### `PUT /api/admin/members/{id}/phone`
+
+Requires backoffice session + `miembros` section + high-admin role. Updates `phone` and `whatsapp_number` for active member in active restaurant.
+
+Request body:
+
+```json
+{
+  "phone": "+34612345678"
+}
+```
+
+Response: `{ "success": true, "member": Member }`. Invalid phone returns `400`; unknown member returns `404`.
+
 ## WhatsApp Premium Multi-Tenant Onboarding (`/api/admin/members/whatsapp/*`)
 
 Requires backoffice session + `miembros` section + high-admin role (same as existing WhatsApp premium endpoints).
@@ -2169,3 +2267,57 @@ Common errors:
 - `NOT_FOUND`
 - `DUPLICATE_BASE_URL`
 - `UAZAPI_POOL_UNAVAILABLE`
+
+---
+
+## WhatsApp Bot (multi-tenant)
+
+### POST /bot/webhook
+
+Public webhook for UAZAPI inbound messages. Tenant is resolved by the
+`token` field in the payload (matched against
+`restaurant_uazapi_instances.instance_token`, fallback: `owner` phone against
+`connected_phone`). Requires an active `whatsapp_pack` recurring feature;
+otherwise responds `{"processed": false, "code": "NEEDS_SUBSCRIPTION"}`.
+
+The message is processed asynchronously by the MiniMax-M3 agent loop
+(same credentials as the translation system: `MINIMAX_API_KEY`,
+`MINIMAX_BASE_URL`). The agent replies through the tenant's UAZAPI instance
+(`/send/text`, `/send/menu`, `/send/media`, `/send/location`, `/send/contact`).
+
+Responses:
+
+- `200 {"processed": true}` — message accepted
+- `200 {"processed": true, "duplicate": true}` — deduplicated by messageid
+- `200 {"processed": false, "code": "NEEDS_SUBSCRIPTION"}` — no WhatsApp Pack
+- `200 {"processed": false, "code": "DAILY_CAP"}` — daily turn cap reached
+- `401 {"processed": false, "message": "unknown instance"}` — bad token
+
+### GET /api/admin/bot/config
+
+Session + `ajustes` section + role importance >= 90. Returns the bot
+personalization config for the active restaurant.
+
+```json
+{
+  "success": true,
+  "config": {
+    "language_default": "es",
+    "tone": "cercano y profesional",
+    "greeting_style": "",
+    "disable_attachments": false,
+    "custom_instructions": "",
+    "contact_phone": ""
+  }
+}
+```
+
+### PUT /api/admin/bot/config
+
+Same auth. Body is the `config` object above (`language_default` must be
+`es` or `en`; anything else falls back to `es`). Stored in
+`whatsapp_bot_config.config_json`.
+
+Env knobs (defaults): `BOT_MINIMAX_MODEL` (MiniMax-M3),
+`BOT_MINIMAX_TIMEOUT_SECONDS` (45), `BOT_MINIMAX_MAX_TOKENS` (1024),
+`BOT_MAX_ITERATIONS` (8), `BOT_HISTORY_LIMIT` (20), `BOT_DAILY_TURNS_CAP` (2000).

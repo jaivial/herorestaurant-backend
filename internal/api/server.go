@@ -8,10 +8,10 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
-	"sync"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 
@@ -30,7 +30,12 @@ type Server struct {
 	vinoAIHub           *boVinoAIHub
 	comidaAIHub         *boComidaAIHub
 	rateMu              sync.Mutex
-	rateLimit          map[string]*rateLimitState
+	rateLimit           map[string]*rateLimitState
+	botSeenMu           sync.Mutex
+	botSeen             map[string]int64
+	botCapMu            sync.Mutex
+	botCapDay           string
+	botCapCount         map[int]int
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -47,7 +52,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		groupMenusV2AIQueue: make(chan struct{}, aiConcurrency),
 		vinoAIHub:           newBOVinoAIHub(),
 		comidaAIHub:         newBOComidaAIHub(),
-		rateLimit:          make(map[string]*rateLimitState),
+		rateLimit:           make(map[string]*rateLimitState),
 	}
 	go s.runBOFichajeAutoCutLoop()
 	return s
@@ -82,11 +87,11 @@ func (s *Server) Routes() http.Handler {
 	// Strip /api prefix for /api/admin/* routes to make them work with /admin handlers
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/admin") {
-			r.URL.Path = strings.Replace(r.URL.Path, "/api/admin", "/admin", 1)
-		} else if strings.HasPrefix(r.URL.Path, "/api/") {
-			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/api")
-		}
+			if strings.HasPrefix(r.URL.Path, "/api/admin") {
+				r.URL.Path = strings.Replace(r.URL.Path, "/api/admin", "/admin", 1)
+			} else if strings.HasPrefix(r.URL.Path, "/api/") {
+				r.URL.Path = strings.TrimPrefix(r.URL.Path, "/api")
+			}
 			next.ServeHTTP(w, r)
 		})
 	})
@@ -272,6 +277,7 @@ func (s *Server) Routes() http.Handler {
 
 		r.With(s.requireBOSession, reservasGate).Get("/config/restaurant-info", s.handleBORestaurantInfoGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/restaurant-info", s.handleBORestaurantInfoSet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/check-website", s.handleBOWebsiteCheck)
 
 		r.With(s.requireBOSession, reservasGate).Get("/config/mandatory-menus", s.handleBOMandatoryMenusGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/mandatory-menus", s.handleBOMandatoryMenusSave)
@@ -302,6 +308,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/integrations/uazapi/servers", s.handleBOUAZAPIServersList)
 		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Post("/integrations/uazapi/servers", s.handleBOUAZAPIServersCreate)
 		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Patch("/integrations/uazapi/servers/{id}", s.handleBOUAZAPIServersPatch)
+
+		// WhatsApp bot personalization (per restaurant).
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/bot/config", s.handleBOBotConfigGet)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Put("/bot/config", s.handleBOBotConfigPut)
 		r.With(s.requireBOSession, ajustesGate).Get("/branding", s.handleBOBrandingGet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding", s.handleBOBrandingSet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding/logo", s.handleBOBrandingLogoUpload)
@@ -338,6 +348,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members", s.handleBOMemberCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}", s.handleBOMemberGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/members/{id}", s.handleBOMemberPatch)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Put("/members/{id}/phone", s.handleBOMemberPhonePut)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/avatar", s.handleBOMemberAvatarUpload)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/stats", s.handleBOMemberStats)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/stats-year", s.handleBOMemberStatsYear)
@@ -403,6 +414,10 @@ func (s *Server) Routes() http.Handler {
 	// Embeddable booking widget API — accepts ?restaurant_id= query param.
 	s.RegisterWidgetRoutes(r)
 
+	// Multi-tenant WhatsApp bot webhook (UAZAPI). Tenant resolved by the
+	// instance token in the payload, not by Host header.
+	r.Post("/bot/webhook", s.handleBotWebhook)
+
 	// Everything below is restaurant-scoped.
 	r.Group(func(r chi.Router) {
 		r.Use(s.withRestaurant)
@@ -460,6 +475,7 @@ func (s *Server) Routes() http.Handler {
 		r.Route("/menuDeGruposBackend", func(r chi.Router) {
 			r.Get("/getAllMenus.php", s.handleGetAllGroupMenus)
 			r.Get("/getMenu.php", s.handleGetGroupMenu)
+			r.Get("/getActiveMenusForDisplay", s.handleGetActiveGroupMenusForDisplayRich)
 			r.Get("/getActiveMenusForDisplay.php", s.handleGetActiveGroupMenusForDisplay)
 			r.With(s.requireAdmin).Post("/addMenu.php", s.handleAddGroupMenu)
 			r.With(s.requireAdmin).Post("/updateMenu.php", s.handleUpdateGroupMenu)
@@ -649,8 +665,9 @@ func (s *Server) handleMenuVisibility(w http.ResponseWriter, r *http.Request) {
 }
 
 type Dish struct {
-	Descripcion string   `json:"descripcion"`
-	Alergenos   []string `json:"alergenos"`
+	Descripcion        string   `json:"descripcion"`
+	Alergenos          []string `json:"alergenos"`
+	DescripcionEnglish string   `json:"descripcion_english,omitempty"`
 }
 
 type MenuResponse struct {
@@ -713,7 +730,7 @@ func (s *Server) fetchDishes(r *http.Request, table string, dishType string) ([]
 		return nil, errors.New("Unknown restaurant")
 	}
 
-	q := "SELECT DESCRIPCION, alergenos FROM " + table + " WHERE restaurant_id = ? AND TIPO = ? AND active = 1 ORDER BY NUM ASC"
+	q := "SELECT NUM, DESCRIPCION, alergenos FROM " + table + " WHERE restaurant_id = ? AND TIPO = ? AND active = 1 ORDER BY NUM ASC"
 	rows, err := s.db.QueryContext(r.Context(), q, restaurantID, dishType)
 	if err != nil {
 		return nil, errors.New("Error consultando " + table)
@@ -721,16 +738,26 @@ func (s *Server) fetchDishes(r *http.Request, table string, dishType string) ([]
 	defer rows.Close()
 
 	var dishes []Dish
+	var ids []int64
 	for rows.Next() {
+		var num int64
 		var descripcion string
 		var alergenosRaw sql.NullString
-		if err := rows.Scan(&descripcion, &alergenosRaw); err != nil {
+		if err := rows.Scan(&num, &descripcion, &alergenosRaw); err != nil {
 			return nil, errors.New("Error leyendo " + table)
 		}
 		dishes = append(dishes, Dish{
 			Descripcion: descripcion,
 			Alergenos:   parseAlergenos(alergenosRaw),
 		})
+		ids = append(ids, num)
+	}
+	if all, err := s.loadTranslations(r.Context(), restaurantID, table, ids, translationLang); err == nil {
+		for i := range dishes {
+			if en := translationOr(all[ids[i]], "descripcion"); en != "" {
+				dishes[i].DescripcionEnglish = en
+			}
+		}
 	}
 	return dishes, nil
 }
@@ -762,7 +789,7 @@ func (s *Server) handlePostres(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), "SELECT DESCRIPCION, alergenos FROM POSTRES WHERE restaurant_id = ? AND active = 1 ORDER BY NUM ASC", restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), "SELECT NUM, DESCRIPCION, alergenos FROM POSTRES WHERE restaurant_id = ? AND active = 1 ORDER BY NUM ASC", restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando POSTRES")
 		return
@@ -770,10 +797,12 @@ func (s *Server) handlePostres(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var postres []Dish
+	var ids []int64
 	for rows.Next() {
+		var num int64
 		var descripcion string
 		var alergenosRaw sql.NullString
-		if err := rows.Scan(&descripcion, &alergenosRaw); err != nil {
+		if err := rows.Scan(&num, &descripcion, &alergenosRaw); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo POSTRES")
 			return
 		}
@@ -781,6 +810,15 @@ func (s *Server) handlePostres(w http.ResponseWriter, r *http.Request) {
 			Descripcion: descripcion,
 			Alergenos:   parseAlergenos(alergenosRaw),
 		})
+		ids = append(ids, num)
+	}
+
+	if all, err := s.loadTranslations(r.Context(), restaurantID, entityPostres, ids, translationLang); err == nil {
+		for i := range postres {
+			if en := translationOr(all[ids[i]], "descripcion"); en != "" {
+				postres[i].DescripcionEnglish = en
+			}
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -856,18 +894,23 @@ func (s *Server) handleVinos(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type Vino struct {
-		Num                int     `json:"num"`
-		Nombre             string  `json:"nombre"`
-		Precio             float64 `json:"precio"`
-		Descripcion        string  `json:"descripcion"`
-		Bodega             string  `json:"bodega"`
-		DenominacionOrigen string  `json:"denominacion_origen"`
-		Tipo               string  `json:"tipo"`
-		Graduacion         float64 `json:"graduacion"`
-		Anyo               string  `json:"anyo"`
-		Active             int     `json:"active"`
-		HasFoto            bool    `json:"has_foto"`
-		FotoURL            *string `json:"foto_url,omitempty"`
+		Num                       int     `json:"num"`
+		Nombre                    string  `json:"nombre"`
+		Precio                    float64 `json:"precio"`
+		Descripcion               string  `json:"descripcion"`
+		Bodega                    string  `json:"bodega"`
+		DenominacionOrigen        string  `json:"denominacion_origen"`
+		Tipo                      string  `json:"tipo"`
+		Graduacion                float64 `json:"graduacion"`
+		Anyo                      string  `json:"anyo"`
+		Active                    int     `json:"active"`
+		HasFoto                   bool    `json:"has_foto"`
+		FotoURL                   *string `json:"foto_url,omitempty"`
+		NombreEnglish             string  `json:"nombre_english,omitempty"`
+		DescripcionEnglish        string  `json:"descripcion_english,omitempty"`
+		BodegaEnglish             string  `json:"bodega_english,omitempty"`
+		DenominacionOrigenEnglish string  `json:"denominacion_origen_english,omitempty"`
+		TipoEnglish               string  `json:"tipo_english,omitempty"`
 	}
 
 	var vinos []Vino
@@ -929,6 +972,26 @@ func (s *Server) handleVinos(w http.ResponseWriter, r *http.Request) {
 
 		v.HasFoto = hasFotoInt != 0
 		vinos = append(vinos, v)
+	}
+
+	if len(vinos) > 0 {
+		ids := make([]int64, 0, len(vinos))
+		for _, v := range vinos {
+			ids = append(ids, int64(v.Num))
+		}
+		if all, err := s.loadTranslations(r.Context(), restaurantID, entityVinos, ids, translationLang); err == nil {
+			for i := range vinos {
+				m := all[int64(vinos[i].Num)]
+				if m == nil {
+					continue
+				}
+				vinos[i].NombreEnglish = translationOr(m, "nombre")
+				vinos[i].DescripcionEnglish = translationOr(m, "descripcion")
+				vinos[i].BodegaEnglish = translationOr(m, "bodega")
+				vinos[i].DenominacionOrigenEnglish = translationOr(m, "denominacion_origen")
+				vinos[i].TipoEnglish = translationOr(m, "tipo")
+			}
+		}
 	}
 
 	response := map[string]any{
