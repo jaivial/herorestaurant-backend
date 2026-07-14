@@ -65,6 +65,10 @@ type boMemberPatchRequest struct {
 	WeeklyContractHours *float64 `json:"weeklyContractHours"`
 }
 
+type boMemberPhonePutRequest struct {
+	Phone string `json:"phone"`
+}
+
 type boMemberStatsPoint struct {
 	Date  string  `json:"date"`
 	Label string  `json:"label"`
@@ -344,6 +348,55 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"member":  member,
 	})
+}
+
+func (s *Server) handleBOMemberPhonePut(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	memberID, err := parseBOIDParam(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "id invalido"})
+		return
+	}
+
+	var req boMemberPhonePutRequest
+	if err := readJSONBody(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid JSON"})
+		return
+	}
+
+	normalized := normalizeWhatsAppNumber(req.Phone)
+	if normalized == "" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Telefono invalido"})
+		return
+	}
+	phone := "+" + normalized
+
+	_, err = s.db.ExecContext(r.Context(), `
+		UPDATE restaurant_members
+		SET phone = ?, whatsapp_number = ?
+		WHERE id = ? AND restaurant_id = ? AND is_active = 1
+	`, phone, phone, memberID, a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo guardar el telefono")
+		return
+	}
+
+	member, err := s.getBOMemberByID(r.Context(), a.ActiveRestaurantID, memberID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Miembro no encontrado"})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo miembro")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "member": member})
 }
 
 func (s *Server) handleBOMemberStats(w http.ResponseWriter, r *http.Request) {
