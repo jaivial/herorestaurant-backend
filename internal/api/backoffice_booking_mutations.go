@@ -1090,6 +1090,8 @@ func boBookingToNotificationData(b boNormalizedBooking, id int) map[string]any {
 		"special_menu":               b.SpecialMenu,
 		"menu_de_grupo_id":           b.MenuDeGrupoID,
 		"principales_json":           principalesVal,
+		"preferred_floor_number":     nullInt64OrNil(b.PreferredFloorNumber),
+		"table_number":               nullStringOrNil(b.TableNumber),
 	}
 }
 

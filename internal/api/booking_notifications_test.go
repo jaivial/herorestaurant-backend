@@ -182,16 +182,22 @@ func TestBuildWhatsAppButtonPayloadPhoneWithCountryCode(t *testing.T) {
 
 func TestBuildBookingEmailHTML(t *testing.T) {
 	booking := map[string]any{
-		"customer_name":    "Juan García",
-		"reservation_date": "2026-04-15",
-		"reservation_time": "14:00",
-		"party_size":       4,
-		"special_menu":     0,
-		"toggleArroz":      "true",
-		"arroz_type":       `["Arroz a la valenciana"]`,
-		"arroz_servings":   `[3]`,
-		"high_chairs":      1,
-		"baby_strollers":   0,
+		"customer_name":              "Juan García",
+		"reservation_date":           "2026-04-15",
+		"reservation_time":           "14:00",
+		"party_size":                 4,
+		"children":                   1,
+		"contact_phone":              "600123123",
+		"contact_phone_country_code": "+34",
+		"contact_email":              "juan@example.com",
+		"commentary":                 "Mesa tranquila",
+		"preferred_floor_number":     2,
+		"special_menu":               0,
+		"toggleArroz":                "true",
+		"arroz_type":                 `["Arroz a la valenciana"]`,
+		"arroz_servings":             `[3]`,
+		"high_chairs":                1,
+		"baby_strollers":             0,
 	}
 
 	html := buildBookingEmailHTML("Alquería Villa Carmen", "https://example.com/logo.png", "600111222", "info@x.com", "Calle Falsa 123", booking, 789, "https://example.com")
@@ -205,8 +211,10 @@ func TestBuildBookingEmailHTML(t *testing.T) {
 	if !strings.Contains(html, "14:00") {
 		t.Error("HTML should contain reservation time")
 	}
-	if !strings.Contains(html, "Arroz a la valenciana") {
-		t.Error("HTML should contain arroz info")
+	for _, want := range []string{"Arroz a la valenciana", "Adultos", "Niños", "600123123", "juan@example.com", "Planta 2", "Mesa tranquila", "Referencia", "#789"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("HTML should contain %q", want)
+		}
 	}
 	if !strings.Contains(html, "cancel?id=789") {
 		t.Error("HTML should contain cancel link with booking ID")
@@ -231,6 +239,27 @@ func TestBuildBookingEmailHTML(t *testing.T) {
 	}
 	if strings.Contains(html, "reservas@alqueriavillacarmen.com") {
 		t.Error("HTML must not contain old hardcoded contact email")
+	}
+}
+
+func TestBuildBookingEmailHTMLUsesRestaurantWebsite(t *testing.T) {
+	booking := map[string]any{
+		"customer_name":    "Website Test",
+		"reservation_date": "2026-04-15",
+		"reservation_time": "14:00",
+		"party_size":       2,
+		"special_menu":     0,
+	}
+
+	html := buildBookingEmailHTML("Restaurant", "https://example.com/logo.png", "", "", "", booking, 556, "https://backend.example", "restaurant.example/")
+	if !strings.Contains(html, `href="https://restaurant.example/booking-policies"`) {
+		t.Error("policies link should use restaurant website")
+	}
+	if !strings.Contains(html, `href="https://restaurant.example/cancel?id=556"`) {
+		t.Error("cancel link should use restaurant website")
+	}
+	if strings.Contains(html, "https://backend.example/booking-policies") {
+		t.Error("policies link should not use backend base URL")
 	}
 }
 

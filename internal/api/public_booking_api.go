@@ -19,19 +19,28 @@ import (
 // ---------------------------------------------------------------------------
 
 type publicBookingResponse struct {
-	ID              int    `json:"id"`
-	ReservationDate string `json:"reservationDate"`
-	ReservationTime string `json:"reservationTime"`
-	PartySize       int    `json:"partySize"`
-	CustomerName    string `json:"customerName"`
-	ContactPhone    string `json:"contactPhone,omitempty"`
-	ContactEmail    string `json:"contactEmail,omitempty"`
-	ArrozType       string `json:"arrozType,omitempty"`
-	ArrozServings   string `json:"arrozServings,omitempty"`
-	ArrozDisplay    string `json:"arrozDisplay,omitempty"`
-	Status          string `json:"status,omitempty"`
-	IsSameDay       bool   `json:"isSameDay"`
-	IsConfirmed     bool   `json:"isConfirmed"`
+	ID              int                  `json:"id"`
+	ReservationDate string               `json:"reservationDate"`
+	ReservationTime string               `json:"reservationTime"`
+	PartySize       int                  `json:"partySize"`
+	Adults          int                  `json:"adults"`
+	Children        int                  `json:"children"`
+	CustomerName    string               `json:"customerName"`
+	ContactPhone    string               `json:"contactPhone,omitempty"`
+	ContactEmail    string               `json:"contactEmail,omitempty"`
+	ArrozType       string               `json:"arrozType,omitempty"`
+	ArrozServings   string               `json:"arrozServings,omitempty"`
+	ArrozDisplay    string               `json:"arrozDisplay,omitempty"`
+	MenuDisplay     string               `json:"menuDisplay,omitempty"`
+	Principales     []principalesJSONRow `json:"principales,omitempty"`
+	Commentary      string               `json:"commentary,omitempty"`
+	BabyStrollers   int                  `json:"babyStrollers"`
+	HighChairs      int                  `json:"highChairs"`
+	FloorDisplay    string               `json:"floorDisplay,omitempty"`
+	TableNumber     string               `json:"tableNumber,omitempty"`
+	Status          string               `json:"status,omitempty"`
+	IsSameDay       bool                 `json:"isSameDay"`
+	IsConfirmed     bool                 `json:"isConfirmed"`
 }
 
 func publicBookingToResponse(b *publicBooking) publicBookingResponse {
@@ -43,8 +52,27 @@ func publicBookingToResponse(b *publicBooking) publicBookingResponse {
 	today := time.Now().Format("2006-01-02")
 
 	arrozDisplay := ""
-	if s := formatArrozList(b.ArrozType, b.ArrozServings); s != "No Arroz" {
+	menuDisplay := ""
+	commentary := nullStringValue(b.Commentary)
+	if b.SpecialMenu.Valid && b.SpecialMenu.Int64 == 1 {
+		commentary = ""
+		if titles := parseJSONStringArray(nullStringValue(b.ArrozType)); len(titles) > 0 {
+			menuDisplay = strings.TrimSpace(titles[0])
+		}
+		if menuDisplay == "" {
+			menuDisplay = "Menú de grupo"
+		}
+	} else if s := formatArrozList(b.ArrozType, b.ArrozServings); s != "No Arroz" {
 		arrozDisplay = s
+	}
+
+	children := b.Children
+	if children < 0 || children > b.PartySize {
+		children = 0
+	}
+	floorDisplay := ""
+	if b.PreferredFloor.Valid && b.PreferredFloor.Int64 > 0 {
+		floorDisplay = fmt.Sprintf("Planta %d", b.PreferredFloor.Int64)
 	}
 
 	status := ""
@@ -57,12 +85,21 @@ func publicBookingToResponse(b *publicBooking) publicBookingResponse {
 		ReservationDate: dateDisplay,
 		ReservationTime: timeDisplay,
 		PartySize:       b.PartySize,
+		Adults:          b.PartySize - children,
+		Children:        children,
 		CustomerName:    b.CustomerName,
 		ContactPhone:    defaultString(b.ContactPhone, ""),
 		ContactEmail:    defaultString(b.ContactEmail, ""),
 		ArrozType:       nullStringValue(b.ArrozType),
 		ArrozServings:   nullStringValue(b.ArrozServings),
 		ArrozDisplay:    arrozDisplay,
+		MenuDisplay:     menuDisplay,
+		Principales:     parsePrincipalesJSON(nullStringValue(b.PrincipalesJSON)),
+		Commentary:      commentary,
+		BabyStrollers:   int(b.BabyStrollers.Int64),
+		HighChairs:      int(b.HighChairs.Int64),
+		FloorDisplay:    floorDisplay,
+		TableNumber:     nullStringValue(b.TableNumber),
 		Status:          status,
 		IsSameDay:       today == b.ReservationDate,
 		IsConfirmed:     status == "confirmed",
@@ -102,6 +139,7 @@ func (s *Server) resolveRestaurantID(r *http.Request) (int, bool) {
 }
 
 func (s *Server) handlePublicBookingGet(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	restaurantID, ok := s.resolveRestaurantID(r)
 	if !ok {
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Unknown restaurant"})
@@ -146,8 +184,8 @@ func (s *Server) handlePublicBookingGet(w http.ResponseWriter, r *http.Request) 
 
 	resp := publicBookingToResponse(&b)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":    true,
-		"booking":    resp,
+		"success":     true,
+		"booking":     resp,
 		"riceOptions": riceOptions,
 	})
 }
@@ -260,8 +298,8 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 	today := time.Now().Format("2006-01-02")
 	if today == b.ReservationDate {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{
-			"success":  false,
-			"message":  "Las reservas para el mismo día no se pueden cancelar online. Por favor, llame al restaurante.",
+			"success":   false,
+			"message":   "Las reservas para el mismo día no se pueden cancelar online. Por favor, llame al restaurante.",
 			"isSameDay": true,
 		})
 		return
@@ -406,8 +444,8 @@ func (s *Server) handlePublicBookingRice(w http.ResponseWriter, r *http.Request)
 	today := time.Now().Format("2006-01-02")
 	if today == b.ReservationDate {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{
-			"success":  false,
-			"message":  "Las reservas de arroz para el mismo día deben hacerse por teléfono.",
+			"success":   false,
+			"message":   "Las reservas de arroz para el mismo día deben hacerse por teléfono.",
 			"isSameDay": true,
 		})
 		return

@@ -13,21 +13,37 @@ import (
 )
 
 type boVino struct {
-	Num                int     `json:"num"`
-	Tipo               string  `json:"tipo"`
-	Nombre             string  `json:"nombre"`
-	Precio             float64 `json:"precio"`
-	Descripcion        string  `json:"descripcion"`
-	Bodega             string  `json:"bodega"`
-	DenominacionOrigen string  `json:"denominacion_origen"`
-	Graduacion         float64 `json:"graduacion"`
-	Anyo               string  `json:"anyo"`
-	Active             bool    `json:"active"`
-	HasFoto            bool    `json:"has_foto"`
-	FotoURL            *string `json:"foto_url,omitempty"`
-	AIRequestedImg     bool    `json:"ai_requested_img"`
-	AIGeneratingImg    bool    `json:"ai_generating_img"`
-	AIGeneratedImg     *string `json:"ai_generated_img,omitempty"`
+	Num                       int     `json:"num"`
+	Tipo                      string  `json:"tipo"`
+	Nombre                    string  `json:"nombre"`
+	Precio                    float64 `json:"precio"`
+	Descripcion               string  `json:"descripcion"`
+	Bodega                    string  `json:"bodega"`
+	DenominacionOrigen        string  `json:"denominacion_origen"`
+	Graduacion                float64 `json:"graduacion"`
+	Anyo                      string  `json:"anyo"`
+	Active                    bool    `json:"active"`
+	HasFoto                   bool    `json:"has_foto"`
+	FotoURL                   *string `json:"foto_url,omitempty"`
+	AIRequestedImg            bool    `json:"ai_requested_img"`
+	AIGeneratingImg           bool    `json:"ai_generating_img"`
+	AIGeneratedImg            *string `json:"ai_generated_img,omitempty"`
+	NombreEnglish             string  `json:"nombre_english,omitempty"`
+	DescripcionEnglish        string  `json:"descripcion_english,omitempty"`
+	BodegaEnglish             string  `json:"bodega_english,omitempty"`
+	DenominacionOrigenEnglish string  `json:"denominacion_origen_english,omitempty"`
+	TipoEnglish               string  `json:"tipo_english,omitempty"`
+}
+
+func applyVinoTranslationsBO(m map[string]string, v *boVino) {
+	if v == nil || len(m) == 0 {
+		return
+	}
+	v.NombreEnglish = translationOr(m, "nombre")
+	v.DescripcionEnglish = translationOr(m, "descripcion")
+	v.BodegaEnglish = translationOr(m, "bodega")
+	v.DenominacionOrigenEnglish = translationOr(m, "denominacion_origen")
+	v.TipoEnglish = translationOr(m, "tipo")
 }
 
 func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
@@ -94,13 +110,13 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 	var out []boVino
 	for rows.Next() {
 		var (
-			v              boVino
-			activeInt      int
-			hasFotoInt     int
-			fotoPath       sql.NullString
-			requestedInt   int
-			generatingInt  int
-			generatedRaw   sql.NullString
+			v             boVino
+			activeInt     int
+			hasFotoInt    int
+			fotoPath      sql.NullString
+			requestedInt  int
+			generatingInt int
+			generatedRaw  sql.NullString
 		)
 		if err := rows.Scan(
 			&v.Num,
@@ -136,6 +152,18 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out = append(out, v)
+	}
+
+	if len(out) > 0 {
+		ids := make([]int64, 0, len(out))
+		for _, v := range out {
+			ids = append(ids, int64(v.Num))
+		}
+		if all, err := s.loadTranslations(r.Context(), restaurantID, entityVinos, ids, translationLang); err == nil {
+			for i := range out {
+				applyVinoTranslationsBO(all[int64(out[i].Num)], &out[i])
+			}
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -253,6 +281,10 @@ func (s *Server) handleBOVinoCreate(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+	}
+
+	if item, _, err := s.getVinoByID(r, restaurantID, int(newID)); err == nil {
+		s.translateVino(r.Context(), restaurantID, &item)
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -426,6 +458,10 @@ func (s *Server) handleBOVinoPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if item, _, err := s.getVinoByID(r, restaurantID, id); err == nil {
+		s.translateVino(r.Context(), restaurantID, &item)
+	}
+
 	out := map[string]any{
 		"success": true,
 	}
@@ -466,6 +502,8 @@ func (s *Server) handleBOVinoDelete(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	s.deleteEntityTranslations(r.Context(), entityVinos, restaurantID, int64(id))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -562,13 +600,13 @@ func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		v              boVino
-		activeInt      int
-		hasFotoInt     int
-		fotoPath       sql.NullString
-		requestedInt   int
-		generatingInt  int
-		generatedRaw   sql.NullString
+		v             boVino
+		activeInt     int
+		hasFotoInt    int
+		fotoPath      sql.NullString
+		requestedInt  int
+		generatingInt int
+		generatedRaw  sql.NullString
 	)
 	err = s.db.QueryRowContext(r.Context(), `
 		SELECT
@@ -613,6 +651,8 @@ func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
 			v.AIGeneratedImg = &g
 		}
 	}
+
+	applyVinoTranslationsBO(s.loadEntityTranslations(r.Context(), a.ActiveRestaurantID, entityVinos, int64(v.Num), translationLang), &v)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

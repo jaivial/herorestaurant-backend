@@ -16,24 +16,26 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
-func (s *Server) loadRiceTypes(ctx context.Context, restaurantID int) ([]string, error) {
+func (s *Server) loadRiceTypes(ctx context.Context, restaurantID int) ([]string, []string, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT DESCRIPCION
+		SELECT NUM, DESCRIPCION
 		FROM FINDE
 		WHERE restaurant_id = ? AND TIPO = 'ARROZ' AND (active = 1 OR active IS NULL)
 		ORDER BY DESCRIPCION ASC
 	`, restaurantID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
 	out := make([]string, 0)
+	ids := make([]int64, 0)
 	seen := make(map[string]struct{})
 	for rows.Next() {
+		var id int64
 		var desc sql.NullString
-		if err := rows.Scan(&desc); err != nil {
-			return nil, err
+		if err := rows.Scan(&id, &desc); err != nil {
+			return nil, nil, err
 		}
 		if !desc.Valid {
 			continue
@@ -46,12 +48,20 @@ func (s *Server) loadRiceTypes(ctx context.Context, restaurantID int) ([]string,
 			continue
 		}
 		seen[item] = struct{}{}
+		ids = append(ids, id)
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return out, nil
+
+	english := make([]string, len(out))
+	if all, err := s.loadTranslations(ctx, restaurantID, "FINDE", ids, translationLang); err == nil {
+		for i, id := range ids {
+			english[i] = translationOr(all[id], "descripcion")
+		}
+	}
+	return out, english, nil
 }
 
 func (s *Server) handleReservationsRiceTypes(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +74,7 @@ func (s *Server) handleReservationsRiceTypes(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	out, err := s.loadRiceTypes(r.Context(), restaurantID)
+	out, english, err := s.loadRiceTypes(r.Context(), restaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -74,8 +84,9 @@ func (s *Server) handleReservationsRiceTypes(w http.ResponseWriter, r *http.Requ
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"riceTypes": out,
+		"success":          true,
+		"riceTypes":        out,
+		"riceTypesEnglish": english,
 	})
 }
 

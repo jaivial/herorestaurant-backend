@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -1682,6 +1685,80 @@ func boolToInt(v bool) int {
 	return 0
 }
 
+func normalizeRestaurantWebsiteURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	if !strings.Contains(value, "://") {
+		value = "https://" + value
+	}
+
+	u, err := url.Parse(value)
+	if err != nil || u.Hostname() == "" {
+		return "", errors.New("URL web inválida")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", errors.New("URL web debe usar http o https")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("URL web no puede incluir credenciales, query o fragmento")
+	}
+
+	u.Scheme = "https"
+	u.Host = strings.ToLower(u.Host)
+	return strings.TrimRight(u.String(), "/"), nil
+}
+
+func websiteHostIsPublic(hostname string) bool {
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if hostname == "" || hostname == "localhost" || strings.HasSuffix(hostname, ".localhost") {
+		return false
+	}
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		return false
+	}
+	for _, ip := range ips {
+		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast() {
+			return false
+		}
+	}
+	return true
+}
+
+func websiteURLRespondsOK(ctx context.Context, websiteURL string) error {
+	u, err := url.Parse(websiteURL)
+	if err != nil || !websiteHostIsPublic(u.Hostname()) {
+		return errors.New("URL web no permitida")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, websiteURL, nil)
+	if err != nil {
+		return fmt.Errorf("URL web inválida: %w", err)
+	}
+	req.Header.Set("User-Agent", "MenuStudioAI-WebsiteCheck/1.0")
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if req.URL.Scheme != "https" || !websiteHostIsPublic(req.URL.Hostname()) || len(via) >= 5 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("no se pudo comprobar URL web: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("URL web debe responder HTTP 200 (respondió %d)", resp.StatusCode)
+	}
+	return nil
+}
+
 type boRestaurantInfo struct {
 	Direccion            string `json:"direccion"`
 	Telefono             string `json:"telefono"`
@@ -1740,12 +1817,47 @@ func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRe
 		}
 	}
 	if website.Valid {
-		out.Website = strings.TrimSpace(website.String)
+		rawWebsite := strings.TrimSpace(website.String)
+		if normalized, normalizeErr := normalizeRestaurantWebsiteURL(rawWebsite); normalizeErr == nil {
+			out.Website = normalized
+		} else {
+			out.Website = rawWebsite
+		}
 	}
 	if menuURL.Valid {
 		out.MenuURL = strings.TrimSpace(menuURL.String)
 	}
 	return out, nil
+}
+
+type boWebsiteCheckRequest struct {
+	Website string `json:"website"`
+}
+
+func (s *Server) handleBOWebsiteCheck(w http.ResponseWriter, r *http.Request) {
+	var req boWebsiteCheckRequest
+	if err := readJSONBody(r, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+
+	normalized, err := normalizeRestaurantWebsiteURL(req.Website)
+	if err != nil || normalized == "" {
+		if err == nil {
+			err = errors.New("URL web requerida")
+		}
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := websiteURLRespondsOK(r.Context(), normalized); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"website": normalized,
+	})
 }
 
 func (s *Server) handleBORestaurantInfoGet(w http.ResponseWriter, r *http.Request) {
@@ -1811,7 +1923,18 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if req.Website != nil {
-		current.Website = strings.TrimSpace(*req.Website)
+		normalizedWebsite, normalizeErr := normalizeRestaurantWebsiteURL(*req.Website)
+		if normalizeErr != nil {
+			httpx.WriteError(w, http.StatusBadRequest, normalizeErr.Error())
+			return
+		}
+		if normalizedWebsite != "" {
+			if checkErr := websiteURLRespondsOK(r.Context(), normalizedWebsite); checkErr != nil {
+				httpx.WriteError(w, http.StatusBadRequest, checkErr.Error())
+				return
+			}
+		}
+		current.Website = normalizedWebsite
 	}
 	if req.MenuURL != nil {
 		current.MenuURL = strings.TrimSpace(*req.MenuURL)

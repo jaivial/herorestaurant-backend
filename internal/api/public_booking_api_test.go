@@ -131,7 +131,13 @@ func TestPublicBookingToResponse(t *testing.T) {
 		ReservationDate: "2026-05-15",
 		ReservationTime: "14:00:00",
 		PartySize:       4,
+		Children:        1,
 		CustomerName:    "Juan García",
+		Commentary:      nullStr("Mesa tranquila"),
+		BabyStrollers:   sql.NullInt64{Int64: 1, Valid: true},
+		HighChairs:      sql.NullInt64{Int64: 2, Valid: true},
+		PreferredFloor:  sql.NullInt64{Int64: 2, Valid: true},
+		TableNumber:     nullStr("12"),
 		Status:          nullStr("confirmed"),
 	})
 	if resp.ID != 123 {
@@ -148,6 +154,12 @@ func TestPublicBookingToResponse(t *testing.T) {
 	}
 	if resp.CustomerName != "Juan García" {
 		t.Errorf("expected customer name, got %s", resp.CustomerName)
+	}
+	if resp.Adults != 3 || resp.Children != 1 || resp.BabyStrollers != 1 || resp.HighChairs != 2 {
+		t.Errorf("unexpected party details: %+v", resp)
+	}
+	if resp.FloorDisplay != "Planta 2" || resp.TableNumber != "12" || resp.Commentary != "Mesa tranquila" {
+		t.Errorf("unexpected booking details: %+v", resp)
 	}
 	if !resp.IsConfirmed {
 		t.Error("expected IsConfirmed=true for status=confirmed")

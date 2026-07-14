@@ -101,20 +101,23 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 	}
 
 	type menuOut struct {
-		ID                    int     `json:"id"`
-		MenuTitle             string  `json:"menu_title"`
-		Price                 float64 `json:"price"`
-		MinPartySize          int     `json:"min_party_size"`
-		MainDishesLimit       bool    `json:"main_dishes_limit"`
-		MainDishesLimitNumber int     `json:"main_dishes_limit_number"`
-		IncludedCoffee        bool    `json:"included_coffee"`
-		MenuSubtitle          any     `json:"menu_subtitle"`
-		Entrantes             any     `json:"entrantes"`
-		Principales           any     `json:"principales"`
-		Postre                any     `json:"postre"`
-		Beverage              any     `json:"beverage"`
-		Comments              any     `json:"comments"`
-		CreatedAt             string  `json:"created_at"`
+		ID                    int      `json:"id"`
+		MenuTitle             string   `json:"menu_title"`
+		MenuTitleEnglish      string   `json:"menu_title_english,omitempty"`
+		Price                 float64  `json:"price"`
+		MinPartySize          int      `json:"min_party_size"`
+		MainDishesLimit       bool     `json:"main_dishes_limit"`
+		MainDishesLimitNumber int      `json:"main_dishes_limit_number"`
+		IncludedCoffee        bool     `json:"included_coffee"`
+		MenuSubtitle          any      `json:"menu_subtitle"`
+		Entrantes             any      `json:"entrantes"`
+		EntrantesEnglish      []string `json:"entrantes_english,omitempty"`
+		Principales           any      `json:"principales"`
+		PrincipalesEnglish    any      `json:"principales_english,omitempty"`
+		Postre                any      `json:"postre"`
+		Beverage              any      `json:"beverage"`
+		Comments              any      `json:"comments"`
+		CreatedAt             string   `json:"created_at"`
 	}
 
 	var menus []menuOut
@@ -209,6 +212,25 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			CreatedAt:             createdAt.Format("2006-01-02 15:04:05"),
 		}
 		menus = append(menus, menu)
+	}
+
+	ids := make([]int64, len(menus))
+	for i := range menus {
+		ids[i] = int64(menus[i].ID)
+	}
+	if all, err := s.loadTranslations(r.Context(), restaurantID, entityMenus, ids, translationLang); err == nil {
+		for i := range menus {
+			tr := all[int64(menus[i].ID)]
+			menus[i].MenuTitleEnglish = translationOr(tr, "menu_title")
+			menus[i].EntrantesEnglish = buildEnglishArray(tr, "entrantes", len(anySliceToStringList(menus[i].Entrantes)))
+			if principales, ok := menus[i].Principales.(map[string]any); ok {
+				items := anySliceToStringList(principales["items"])
+				menus[i].PrincipalesEnglish = map[string]any{
+					"titulo_principales": translationOr(tr, "principales_title"),
+					"items":              buildEnglishArray(tr, "principales", len(items)),
+				}
+			}
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

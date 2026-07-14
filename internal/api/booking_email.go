@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/mail"
@@ -125,13 +126,23 @@ func base64Encode(s string) string {
 // Email HTML template builder
 // ---------------------------------------------------------------------------
 
-func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string, contactEmail string, contactAddress string, booking map[string]any, bookingID int64, baseURL string) string {
+func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string, contactEmail string, contactAddress string, booking map[string]any, bookingID int64, baseURL string, websiteURL ...string) string {
 	customerName := anyToString(booking["customer_name"])
 	resDate := anyToString(booking["reservation_date"])
 	resTime := anyToString(booking["reservation_time"])
 	partySize, _ := anyToInt(booking["party_size"])
+	children, _ := anyToInt(booking["children"])
 	highChairs, _ := anyToInt(booking["high_chairs"])
 	babyStrollers, _ := anyToInt(booking["baby_strollers"])
+	floorNumber, _ := anyToInt(booking["preferred_floor_number"])
+	tableNumber := anyToString(booking["table_number"])
+	customerCountryCode := strings.TrimSpace(anyToString(booking["contact_phone_country_code"]))
+	if customerCountryCode != "" && !strings.HasPrefix(customerCountryCode, "+") {
+		customerCountryCode = "+" + customerCountryCode
+	}
+	customerPhone := strings.TrimSpace(customerCountryCode + " " + anyToString(booking["contact_phone"]))
+	customerEmail := strings.TrimSpace(anyToString(booking["contact_email"]))
+	commentary := strings.TrimSpace(anyToString(booking["commentary"]))
 	specialMenu := toBool(booking["special_menu"])
 
 	dateDisplay := resDate
@@ -160,28 +171,61 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 	}
 
 	base := strings.TrimRight(baseURL, "/")
+	if len(websiteURL) > 0 {
+		if normalizedWebsite, normalizeErr := normalizeRestaurantWebsiteURL(websiteURL[0]); normalizeErr == nil && normalizedWebsite != "" {
+			base = normalizedWebsite
+		}
+	}
 
 	// Build the menu/arroz row.
 	menuArrozHTML := ""
 	if specialMenu {
-		menuTitle := extractFirstJSONArrayItem(anyToString(booking["arroz_type"]))
-		if menuTitle == "" {
-			menuTitle = "Menú de Grupo"
+		menuTitle := "Menú de Grupo"
+		if titles := parseJSONStringArray(anyToString(booking["arroz_type"])); len(titles) > 0 && strings.TrimSpace(titles[0]) != "" {
+			menuTitle = strings.TrimSpace(titles[0])
 		}
-		menuArrozHTML += tableRow("Menú", menuTitle)
-		principales := strings.TrimSpace(anyToString(booking["commentary"]))
-		if principales != "" {
-			items := splitAndClean(principales)
+		menuArrozHTML += tableRow("Menú", htmlEscape(menuTitle))
+		rows := parsePrincipalesJSON(strings.TrimSpace(anyToString(booking["principales_json"])))
+		if len(rows) > 0 {
 			listHTML := "<ul style=\"margin:5px 0 0 0;padding-left:20px;\">"
-			for _, item := range items {
-				listHTML += "<li>" + htmlEscape(item) + "</li>"
+			for _, row := range rows {
+				listHTML += "<li>" + htmlEscape(fmt.Sprintf("%s · %d raciones", row.Name, row.Servings)) + "</li>"
 			}
-			listHTML += "</ul>"
-			menuArrozHTML += tableRow("Principales", listHTML)
+			menuArrozHTML += tableRow("Principales", listHTML+"</ul>")
+		} else if commentary != "" {
+			menuArrozHTML += tableRow("Principales", htmlEscape(commentary))
 		}
+		commentary = ""
 	} else {
 		arrozText := formatArrozEmail(booking)
 		menuArrozHTML = tableRow("Arroz", htmlEscape(arrozText))
+	}
+
+	if children < 0 || children > partySize {
+		children = 0
+	}
+	detailsHTML := tableRow("Referencia", "#"+strconv.FormatInt(bookingID, 10)) +
+		tableRow("Fecha", htmlEscape(dateDisplay)) +
+		tableRow("Hora", htmlEscape(timeDisplay)) +
+		tableRow("Comensales", strconv.Itoa(partySize)) +
+		tableRow("Adultos", strconv.Itoa(partySize-children)) +
+		tableRow("Niños", strconv.Itoa(children)) +
+		tableRow("Nombre", htmlEscape(customerName))
+	if customerPhone != "" {
+		detailsHTML += tableRow("Teléfono", htmlEscape(customerPhone))
+	}
+	if customerEmail != "" {
+		detailsHTML += tableRow("Email", htmlEscape(customerEmail))
+	}
+	if floorNumber > 0 {
+		detailsHTML += tableRow("Salón", fmt.Sprintf("Planta %d", floorNumber))
+	}
+	if tableNumber != "" {
+		detailsHTML += tableRow("Mesa", htmlEscape(tableNumber))
+	}
+	detailsHTML += menuArrozHTML + tableRow("Tronas", strconv.Itoa(highChairs)) + tableRow("Carritos", strconv.Itoa(babyStrollers))
+	if commentary != "" {
+		detailsHTML += tableRow("Observaciones", htmlEscape(commentary))
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
@@ -205,12 +249,8 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 <p style="margin-bottom:20px;">Gracias por elegir %s. Le confirmamos que su reserva ha sido registrada con éxito con los siguientes detalles:</p>
 <table role="presentation" style="width:100%%;margin-bottom:30px;border-collapse:collapse;">
 %s
-%s
-%s
-%s
-%s
 </table>
-` + contactBlockHTML + `
+`+contactBlockHTML+`
 <div style="background-color:#f8f9fa;border-radius:8px;padding:20px;margin-bottom:30px;border:1px solid #e9ecef;text-align:center;">
 <p style="margin:0 0 15px 0;font-size:14px;color:#666;line-height:1.6;">Al hacer esta reserva, usted ha confirmado y aceptado las condiciones de reserva y políticas del restaurante.</p>
 <a href="%s/booking-policies" style="display:inline-block;padding:10px 25px;background-color:#097969;color:white;text-decoration:none;border-radius:5px;font-weight:bold;font-size:14px;">CONDICIONES</a>
@@ -232,11 +272,7 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 		htmlEscape(brandName),
 		htmlEscape(customerName),
 		htmlEscape(brandName),
-		tableRow("Fecha", htmlEscape(dateDisplay)),
-		tableRow("Hora", htmlEscape(timeDisplay)),
-		tableRow("Número de personas", strconv.Itoa(partySize)),
-		menuArrozHTML,
-		tableRow("Tronas", strconv.Itoa(highChairs))+tableRow("Carritos", strconv.Itoa(babyStrollers)),
+		detailsHTML,
 		base,
 		base,
 		bookingID,
@@ -254,6 +290,25 @@ func htmlEscape(s string) string {
 	s = strings.ReplaceAll(s, ">", "&gt;")
 	s = strings.ReplaceAll(s, "\"", "&quot;")
 	return s
+}
+
+type principalesJSONRow struct {
+	Name     string `json:"name"`
+	Servings int    `json:"servings"`
+}
+
+func parsePrincipalesJSON(raw string) []principalesJSONRow {
+	var rows []principalesJSONRow
+	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+		return nil
+	}
+	filtered := make([]principalesJSONRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Name != "" && row.Servings > 0 {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
 }
 
 func formatArrozEmail(booking map[string]any) string {
@@ -354,7 +409,7 @@ func sendBookingConfirmationEmails(ctx context.Context, s *Server, restaurantID 
 	info, _ := s.loadRestaurantInfo(ctx, restaurantID)
 
 	subject := "Confirmación de Reserva - " + brandName
-	html := buildBookingEmailHTML(brandName, logoURL, info.Telefono, info.Email, info.Direccion, booking, bookingID, baseURL)
+	html := buildBookingEmailHTML(brandName, logoURL, info.Telefono, info.Email, info.Direccion, booking, bookingID, baseURL, info.Website)
 
 	// Send to customer.
 	customerEmail := strings.TrimSpace(anyToString(booking["contact_email"]))

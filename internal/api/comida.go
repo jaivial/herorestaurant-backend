@@ -87,29 +87,40 @@ type comidaItemResponse struct {
 	DenominacionOrigen string   `json:"denominacion_origen,omitempty"`
 	Graduacion         float64  `json:"graduacion,omitempty"`
 	Anyo               string   `json:"anyo,omitempty"`
+	NombreEnglish      string   `json:"nombre_english,omitempty"`
+	DescripcionEnglish string   `json:"descripcion_english,omitempty"`
+	TituloEnglish      string   `json:"titulo_english,omitempty"`
+	TipoEnglish        string   `json:"tipo_english,omitempty"`
+	CategoriaEnglish   string   `json:"categoria_english,omitempty"`
 }
 
 type comidaPostreResponse struct {
-	Num         int      `json:"num"`
-	Descripcion string   `json:"descripcion"`
-	Alergenos   []string `json:"alergenos"`
-	Active      bool     `json:"active"`
-	Precio      float64  `json:"precio,omitempty"`
+	Num                int      `json:"num"`
+	Descripcion        string   `json:"descripcion"`
+	Alergenos          []string `json:"alergenos"`
+	Active             bool     `json:"active"`
+	Precio             float64  `json:"precio,omitempty"`
+	DescripcionEnglish string   `json:"descripcion_english,omitempty"`
 }
 
 type comidaVinoResponse struct {
-	Num                int     `json:"num"`
-	Tipo               string  `json:"tipo"`
-	Nombre             string  `json:"nombre"`
-	Precio             float64 `json:"precio"`
-	Descripcion        string  `json:"descripcion"`
-	Bodega             string  `json:"bodega"`
-	DenominacionOrigen string  `json:"denominacion_origen"`
-	Graduacion         float64 `json:"graduacion"`
-	Anyo               string  `json:"anyo"`
-	Active             bool    `json:"active"`
-	HasFoto            bool    `json:"has_foto"`
-	FotoURL            string  `json:"foto_url,omitempty"`
+	Num                       int     `json:"num"`
+	Tipo                      string  `json:"tipo"`
+	Nombre                    string  `json:"nombre"`
+	Precio                    float64 `json:"precio"`
+	Descripcion               string  `json:"descripcion"`
+	Bodega                    string  `json:"bodega"`
+	DenominacionOrigen        string  `json:"denominacion_origen"`
+	Graduacion                float64 `json:"graduacion"`
+	Anyo                      string  `json:"anyo"`
+	Active                    bool    `json:"active"`
+	HasFoto                   bool    `json:"has_foto"`
+	FotoURL                   string  `json:"foto_url,omitempty"`
+	NombreEnglish             string  `json:"nombre_english,omitempty"`
+	DescripcionEnglish        string  `json:"descripcion_english,omitempty"`
+	BodegaEnglish             string  `json:"bodega_english,omitempty"`
+	DenominacionOrigenEnglish string  `json:"denominacion_origen_english,omitempty"`
+	TipoEnglish               string  `json:"tipo_english,omitempty"`
 }
 
 type comidaCategoryResponse struct {
@@ -670,6 +681,7 @@ func (s *Server) handleComidaListByType(w http.ResponseWriter, r *http.Request, 
 			httpx.WriteError(w, http.StatusInternalServerError, "Error consultando vinos")
 			return
 		}
+		s.enrichVinos(r.Context(), restaurantID, items)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success":  true,
 			"items":    items,
@@ -685,6 +697,7 @@ func (s *Server) handleComidaListByType(w http.ResponseWriter, r *http.Request, 
 			httpx.WriteError(w, http.StatusInternalServerError, "Error consultando postres")
 			return
 		}
+		s.enrichPostresList(r.Context(), restaurantID, items, postres)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success":  true,
 			"items":    items,
@@ -700,6 +713,7 @@ func (s *Server) handleComidaListByType(w http.ResponseWriter, r *http.Request, 
 			httpx.WriteError(w, http.StatusInternalServerError, "Error consultando comida")
 			return
 		}
+		s.enrichComidaItems(r.Context(), restaurantID, items)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success":  true,
 			"items":    items,
@@ -1032,6 +1046,7 @@ func (s *Server) handleComidaGetByType(w http.ResponseWriter, r *http.Request, t
 			writeComidaValidationError(w, "Elemento no encontrado")
 			return
 		}
+		s.enrichVino(r.Context(), restaurantID, &item)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"item":    item,
@@ -1047,6 +1062,7 @@ func (s *Server) handleComidaGetByType(w http.ResponseWriter, r *http.Request, t
 			writeComidaValidationError(w, "Elemento no encontrado")
 			return
 		}
+		s.enrichPostre(r.Context(), restaurantID, &item, &postre)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"item":    item,
@@ -1062,9 +1078,11 @@ func (s *Server) handleComidaGetByType(w http.ResponseWriter, r *http.Request, t
 			writeComidaValidationError(w, "Elemento no encontrado")
 			return
 		}
+		s.enrichComidaItem(r.Context(), restaurantID, &item)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"item":    item,
+			"items":   []comidaItemResponse{item},
 		})
 	}
 }
@@ -1383,6 +1401,7 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando comida")
 		return
 	}
+	s.translateComidaItem(r.Context(), restaurantID, &item)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
 		"num":        int(newID),
@@ -1419,6 +1438,7 @@ func (s *Server) createPostre(w http.ResponseWriter, r *http.Request, restaurant
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando postre")
 		return
 	}
+	s.translatePostre(r.Context(), restaurantID, &item, &postre)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"num":     int(newID),
@@ -1488,6 +1508,7 @@ func (s *Server) createVino(w http.ResponseWriter, r *http.Request, restaurantID
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando vino")
 		return
 	}
+	s.translateVino(r.Context(), restaurantID, &item)
 	resp := map[string]any{
 		"success": true,
 		"num":     int(newID),
@@ -1653,6 +1674,7 @@ func (s *Server) patchCatalogItem(w http.ResponseWriter, r *http.Request, restau
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando comida")
 		return
 	}
+	s.translateComidaItem(r.Context(), restaurantID, &item)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"item":    item,
@@ -1707,6 +1729,7 @@ func (s *Server) patchPostre(w http.ResponseWriter, r *http.Request, restaurantI
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando postre")
 		return
 	}
+	s.translatePostre(r.Context(), restaurantID, &item, &postre)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"item":    item,
@@ -1826,6 +1849,7 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando vino")
 		return
 	}
+	s.translateVino(r.Context(), restaurantID, &item)
 	out := map[string]any{
 		"success": true,
 		"item":    item,
@@ -1867,6 +1891,15 @@ func (s *Server) handleComidaDeleteByType(w http.ResponseWriter, r *http.Request
 		writeComidaValidationError(w, "Elemento no encontrado")
 		return
 	}
+
+	entityType := entityComidaItems
+	switch t {
+	case comidaTipoVinos:
+		entityType = entityVinos
+	case comidaTipoPostres:
+		entityType = entityPostres
+	}
+	s.deleteEntityTranslations(r.Context(), entityType, restaurantID, int64(id))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

@@ -19,7 +19,7 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT DESCRIPCION as rice_name
+		SELECT NUM, DESCRIPCION as rice_name
 		FROM FINDE
 		WHERE restaurant_id = ?
 		  AND TIPO = 'ARROZ'
@@ -37,9 +37,11 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 	defer rows.Close()
 
 	var riceTypes []string
+	var ids []int64
 	for rows.Next() {
+		var id int64
 		var name sql.NullString
-		if err := rows.Scan(&name); err != nil {
+		if err := rows.Scan(&id, &name); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success":   false,
 				"riceTypes": []string{},
@@ -48,6 +50,7 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if name.Valid {
+			ids = append(ids, id)
 			riceTypes = append(riceTypes, name.String)
 		}
 	}
@@ -62,10 +65,18 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	riceTypesEnglish := make([]string, len(riceTypes))
+	if all, err := s.loadTranslations(r.Context(), restaurantID, "FINDE", ids, translationLang); err == nil {
+		for i, id := range ids {
+			riceTypesEnglish[i] = translationOr(all[id], "descripcion")
+		}
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"riceTypes": riceTypes,
-		"count":     len(riceTypes),
-		"message":   "Tipos de arroz disponibles obtenidos correctamente",
+		"success":          true,
+		"riceTypes":        riceTypes,
+		"riceTypesEnglish": riceTypesEnglish,
+		"count":            len(riceTypes),
+		"message":          "Tipos de arroz disponibles obtenidos correctamente",
 	})
 }

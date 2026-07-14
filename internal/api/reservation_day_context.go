@@ -211,7 +211,7 @@ func (s *Server) fetchMandatoryMenusDetails(ctx context.Context, restaurantID in
 	defer rows.Close()
 
 	type menuOut struct {
-		ID                  int     `json:"id"`
+		ID                 int     `json:"id"`
 		MenuTitle          string  `json:"menu_title"`
 		MenuType           string  `json:"menu_type"`
 		MenuSubtitle       string  `json:"menu_subtitle"`
@@ -257,18 +257,42 @@ func (s *Server) fetchMandatoryMenusDetails(ctx context.Context, restaurantID in
 		}
 
 		results = append(results, map[string]any{
-			"menuId":           m.ID,
-			"menuTitle":        m.MenuTitle,
-			"menuSubtitle":     m.MenuSubtitle,
-			"menuType":         m.MenuType,
-			"entrantes":        entrantes,
-			"principales":      principales,
-			"minPartySize":     m.MinPartySize,
-			"mainDishesLimit":  m.MainDishesLimit,
+			"menuId":                m.ID,
+			"menuTitle":             m.MenuTitle,
+			"menuSubtitle":          m.MenuSubtitle,
+			"menuType":              m.MenuType,
+			"entrantes":             entrantes,
+			"principales":           principales,
+			"minPartySize":          m.MinPartySize,
+			"mainDishesLimit":       m.MainDishesLimit,
 			"mainDishesLimitNumber": m.MainDishesLimitNum,
-			"price":            m.Price,
-			"menuChooseMain":   menuChooseMainSet[m.ID],
+			"price":                 m.Price,
+			"menuChooseMain":        menuChooseMainSet[m.ID],
 		})
+	}
+
+	ids := make([]int64, 0, len(results))
+	for _, menu := range results {
+		if id, ok := groupMenuAnyToInt64(menu["menuId"]); ok {
+			ids = append(ids, id)
+		}
+	}
+	if all, err := s.loadTranslations(ctx, restaurantID, entityMenus, ids, translationLang); err == nil {
+		for _, menu := range results {
+			id, ok := groupMenuAnyToInt64(menu["menuId"])
+			if !ok {
+				continue
+			}
+			tr := all[id]
+			menu["menuTitleEnglish"] = translationOr(tr, "menu_title")
+			menu["entrantesEnglish"] = buildEnglishArray(tr, "entrantes", len(anySliceToStringList(menu["entrantes"])))
+			if principales, ok := menu["principales"].(map[string]any); ok {
+				menu["principalesEnglish"] = map[string]any{
+					"titulo_principales": translationOr(tr, "principales_title"),
+					"items":              buildEnglishArray(tr, "principales", len(anySliceToStringList(principales["items"]))),
+				}
+			}
+		}
 	}
 
 	return results, nil

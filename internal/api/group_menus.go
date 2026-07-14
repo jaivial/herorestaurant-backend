@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -283,6 +285,11 @@ func (s *Server) handleAddGroupMenu(w http.ResponseWriter, r *http.Request) {
 	}
 
 	menuID, _ := res.LastInsertId()
+	entrantesList := anySliceToStringList(decodeJSONOrFallback(entrantesJSON, []any{}))
+	principalesTitle := decodePrincipalesTitleJSON(principalesJSON)
+	principalesItemsList := decodePrincipalesItemsJSON(principalesJSON)
+	postreList := anySliceToStringList(decodeJSONOrFallback(postreJSON, []any{}))
+	s.translateMenuConventionalArrays(r.Context(), restaurantID, menuID, entrantesList, principalesTitle, principalesItemsList, postreList)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
 		"message":    "Menu created successfully.",
@@ -412,6 +419,12 @@ func (s *Server) handleUpdateGroupMenu(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	entrantesList := anySliceToStringList(decodeJSONOrFallback(entrantesJSON, []any{}))
+	principalesTitle := decodePrincipalesTitleJSON(principalesJSON)
+	principalesItemsList := decodePrincipalesItemsJSON(principalesJSON)
+	postreList := anySliceToStringList(decodeJSONOrFallback(postreJSON, []any{}))
+	s.translateMenuConventionalArrays(r.Context(), restaurantID, int64(id), entrantesList, principalesTitle, principalesItemsList, postreList)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
@@ -547,6 +560,14 @@ func (s *Server) handleDeleteGroupMenu(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetActiveGroupMenusForDisplay(w http.ResponseWriter, r *http.Request) {
+	s.handleActiveGroupMenusForDisplay(w, r, false)
+}
+
+func (s *Server) handleGetActiveGroupMenusForDisplayRich(w http.ResponseWriter, r *http.Request) {
+	s.handleActiveGroupMenusForDisplay(w, r, true)
+}
+
+func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http.Request, richDishes bool) {
 	query := `
 		SELECT id, menu_title, price, included_coffee, menu_subtitle, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at
@@ -646,11 +667,389 @@ func (s *Server) handleGetActiveGroupMenusForDisplay(w http.ResponseWriter, r *h
 		menus = append(menus, menu)
 	}
 
+	if richDishes {
+		if err := s.addActiveGroupMenuDishDetails(r, menus); err != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"message": "Error leyendo platos de menus",
+			})
+			return
+		}
+	}
+
+	s.enrichGroupMenuDisplayMenus(r.Context(), restaurantID, menus)
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"count":   len(menus),
 		"menus":   menus,
 	})
+}
+
+// enrichGroupMenuDisplayMenus adds menu-level English fields (title/subtitle/comments)
+// to the legacy group-menu display payload.
+func (s *Server) enrichGroupMenuDisplayMenus(ctx context.Context, restaurantID int, menus []map[string]any) {
+	if len(menus) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(menus))
+	for _, menu := range menus {
+		if id, ok := groupMenuAnyToInt64(menu["id"]); ok && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	all, err := s.loadTranslations(ctx, restaurantID, entityMenus, ids, translationLang)
+	if err != nil {
+		return
+	}
+	arrLen := func(v any) int {
+		if arr, ok := v.([]any); ok {
+			return len(arr)
+		}
+		if arr, ok := v.([]string); ok {
+			return len(arr)
+		}
+		return 0
+	}
+	for i := range menus {
+		id, ok := groupMenuAnyToInt64(menus[i]["id"])
+		if !ok {
+			continue
+		}
+		mt := all[id]
+		if mt == nil {
+			continue
+		}
+		if en := translationOr(mt, "menu_title"); en != "" {
+			menus[i]["menu_title_english"] = en
+		}
+		if en := buildEnglishArray(mt, "menu_subtitle", arrLen(menus[i]["menu_subtitle"])); en != nil {
+			menus[i]["menu_subtitle_english"] = en
+		}
+		if en := buildEnglishArray(mt, "comments", arrLen(menus[i]["comments"])); en != nil {
+			menus[i]["comments_english"] = en
+		}
+	}
+}
+
+func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[string]any) error {
+	if len(menus) == 0 {
+		return nil
+	}
+
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		return errors.New("restaurant not found")
+	}
+	foodByKey, err := s.loadGroupMenuFoodItemsByName(r, restaurantID)
+	if err != nil {
+		return err
+	}
+	for i := range menus {
+		menus[i]["entrantes"] = s.enrichGroupMenuLegacyDishArray(menus[i]["entrantes"], foodByKey)
+		if p, ok := menus[i]["principales"].(map[string]any); ok {
+			p["items"] = s.enrichGroupMenuLegacyDishArray(p["items"], foodByKey)
+			menus[i]["principales"] = p
+		}
+		menus[i]["postre"] = s.enrichGroupMenuLegacyDishArray(menus[i]["postre"], foodByKey)
+	}
+
+	menuIDs := make([]int64, 0, len(menus))
+	args := make([]any, 0, len(menus)+1)
+	args = append(args, restaurantID)
+	for _, menu := range menus {
+		id, ok := groupMenuAnyToInt64(menu["id"])
+		if !ok || id <= 0 {
+			continue
+		}
+		menuIDs = append(menuIDs, id)
+		args = append(args, id)
+	}
+	if len(menuIDs) == 0 {
+		return nil
+	}
+
+	sectionArgs := append([]any(nil), args...)
+	sectionRows, err := s.db.QueryContext(r.Context(), fmt.Sprintf(`
+		SELECT id, menu_id, section_kind, title
+		FROM group_menu_sections_v2
+		WHERE restaurant_id = ? AND menu_id IN (%s)
+		ORDER BY menu_id ASC, position ASC, id ASC
+	`, placeholderList(len(menuIDs))), sectionArgs...)
+	if err != nil {
+		return err
+	}
+	sectionKinds := make(map[int64]string)
+	for sectionRows.Next() {
+		var id, menuID int64
+		var kind, title string
+		if err := sectionRows.Scan(&id, &menuID, &kind, &title); err != nil {
+			sectionRows.Close()
+			return err
+		}
+		kind = normalizeV2SectionKind(kind)
+		if kind == "custom" {
+			kind = normalizeV2SectionKind(title)
+		}
+		sectionKinds[id] = kind
+	}
+	if err := sectionRows.Err(); err != nil {
+		sectionRows.Close()
+		return err
+	}
+	sectionRows.Close()
+
+	dishRows, err := s.db.QueryContext(r.Context(), fmt.Sprintf(`
+		SELECT d.id, d.menu_id, d.section_id, d.title_snapshot, d.description_snapshot,
+		       d.allergens_json,
+		       c.description, c.allergens_json, COALESCE(c.default_supplement_enabled, 0), c.default_supplement_price,
+		       ci.descripcion, ci.alergenos_json, ci.suplemento,
+		       d.supplement_enabled, d.supplement_price, d.active
+		FROM group_menu_section_dishes_v2 d
+		LEFT JOIN menu_dishes_catalog c
+		  ON c.id = d.catalog_dish_id AND c.restaurant_id = d.restaurant_id
+		LEFT JOIN comida_items ci
+		  ON ci.restaurant_id = d.restaurant_id
+		 AND ci.source_type = 'platos'
+		 AND (
+		   ci.nombre = d.title_snapshot
+		   OR LOWER(d.title_snapshot) = LOWER(ci.nombre)
+		   OR d.title_snapshot LIKE CONCAT(ci.nombre, ' (+%%')
+		 )
+		WHERE d.restaurant_id = ? AND d.menu_id IN (%s)
+		ORDER BY d.menu_id ASC, d.section_id ASC, d.position ASC, d.id ASC
+	`, placeholderList(len(menuIDs))), args...)
+	if err != nil {
+		return err
+	}
+	type dishGroups map[string][]map[string]any
+	groups := make(map[int64]dishGroups)
+	for dishRows.Next() {
+		var id, menuID, sectionID int64
+		var name, description string
+		var allergensRaw, catalogDescription, catalogAllergens, foodDescription, foodAllergens sql.NullString
+		var catalogSupplementEnabled, supplementEnabled, active int
+		var catalogSupplementPrice, foodSupplement, supplementPrice sql.NullFloat64
+		if err := dishRows.Scan(
+			&id, &menuID, &sectionID, &name, &description, &allergensRaw,
+			&catalogDescription, &catalogAllergens, &catalogSupplementEnabled, &catalogSupplementPrice,
+			&foodDescription, &foodAllergens, &foodSupplement,
+			&supplementEnabled, &supplementPrice, &active,
+		); err != nil {
+			dishRows.Close()
+			return err
+		}
+		kind := sectionKinds[sectionID]
+		if kind != "entrantes" && kind != "principales" && kind != "postres" {
+			continue
+		}
+		if strings.TrimSpace(description) == "" {
+			description = catalogDescription.String
+		}
+		if strings.TrimSpace(description) == "" {
+			description = foodDescription.String
+		}
+		allergens := anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{}))
+		if len(allergens) == 0 {
+			allergens = anySliceToStringList(decodeJSONOrFallback(catalogAllergens.String, []any{}))
+		}
+		if len(allergens) == 0 {
+			allergens = anySliceToStringList(decodeJSONOrFallback(foodAllergens.String, []any{}))
+		}
+		supplementActive := supplementEnabled != 0
+		if !supplementActive {
+			supplementActive = catalogSupplementEnabled != 0
+		}
+		if !supplementActive && foodSupplement.Valid && foodSupplement.Float64 > 0 {
+			supplementActive = true
+		}
+		dish := map[string]any{
+			"id":                id,
+			"nombre":            strings.TrimSpace(name),
+			"descripcion":       strings.TrimSpace(description),
+			"alergenos":         allergens,
+			"suplemento":        nil,
+			"suplemento_activo": supplementActive,
+			"active":            active != 0,
+		}
+		if supplementPrice.Valid && supplementPrice.Float64 > 0 {
+			dish["suplemento"] = supplementPrice.Float64
+		} else if catalogSupplementPrice.Valid && catalogSupplementPrice.Float64 > 0 {
+			dish["suplemento"] = catalogSupplementPrice.Float64
+		} else if foodSupplement.Valid && foodSupplement.Float64 > 0 {
+			dish["suplemento"] = foodSupplement.Float64
+		}
+		if groups[menuID] == nil {
+			groups[menuID] = make(dishGroups)
+		}
+		groups[menuID][kind] = append(groups[menuID][kind], dish)
+	}
+	if err := dishRows.Err(); err != nil {
+		dishRows.Close()
+		return err
+	}
+	dishRows.Close()
+
+	for _, menu := range menus {
+		menuID, ok := groupMenuAnyToInt64(menu["id"])
+		if !ok {
+			continue
+		}
+		group := groups[menuID]
+		if len(group["entrantes"]) > 0 {
+			menu["entrantes"] = group["entrantes"]
+		} else if current, ok := menu["entrantes"].([]map[string]any); !ok || len(current) == 0 {
+			menu["entrantes"] = richLegacyDishArray(menu["entrantes"])
+		}
+		if len(group["principales"]) > 0 {
+			principales, _ := menu["principales"].(map[string]any)
+			if principales == nil {
+				principales = map[string]any{}
+			}
+			principales["items"] = group["principales"]
+			menu["principales"] = principales
+		} else if principales, ok := menu["principales"].(map[string]any); ok {
+			if items, ok := principales["items"].([]map[string]any); !ok || len(items) == 0 {
+				principales["items"] = richLegacyDishArray(principales["items"])
+			}
+		}
+		if len(group["postres"]) > 0 {
+			menu["postre"] = group["postres"]
+		} else if current, ok := menu["postre"].([]map[string]any); !ok || len(current) == 0 {
+			menu["postre"] = richLegacyDishArray(menu["postre"])
+		}
+	}
+	return nil
+}
+
+func (s *Server) loadGroupMenuFoodItemsByName(r *http.Request, restaurantID int) (map[string]map[string]any, error) {
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, nombre, descripcion, alergenos_json, COALESCE(suplemento, 0)
+		FROM comida_items
+		WHERE restaurant_id = ? AND source_type = 'platos' AND active = 1
+	`, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]map[string]any)
+	for rows.Next() {
+		var (
+			id           int64
+			name         sql.NullString
+			desc         sql.NullString
+			allergensRaw sql.NullString
+			supplement   float64
+		)
+		if err := rows.Scan(&id, &name, &desc, &allergensRaw, &supplement); err != nil {
+			return nil, err
+		}
+		key := normalizeGroupMenuDishKey(name.String)
+		if key == "" {
+			continue
+		}
+		entry := map[string]any{
+			"id":          id,
+			"nombre":      name.String,
+			"descripcion": desc.String,
+			"alergenos":   anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
+			"suplemento":  supplement,
+		}
+		if existing, ok := out[key]; ok {
+			if len(existing["alergenos"].([]string)) == 0 && len(entry["alergenos"].([]string)) > 0 {
+				out[key] = entry
+			}
+			continue
+		}
+		out[key] = entry
+	}
+	return out, rows.Err()
+}
+
+func normalizeGroupMenuDishKey(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimRight(s, ".")
+	return strings.ToLower(s)
+}
+
+func (s *Server) enrichGroupMenuLegacyDishArray(raw any, foodByKey map[string]map[string]any) []map[string]any {
+	values, ok := raw.([]any)
+	if !ok {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(values))
+	for _, value := range values {
+		name := strings.TrimSpace(anyToString(value))
+		if name == "" {
+			continue
+		}
+		out = append(out, enrichGroupMenuLegacyDish(name, foodByKey))
+	}
+	return out
+}
+
+func enrichGroupMenuLegacyDish(name string, foodByKey map[string]map[string]any) map[string]any {
+	dish := map[string]any{
+		"nombre":      name,
+		"descripcion": "",
+		"alergenos":   []string{},
+		"suplemento":  nil,
+		"active":      true,
+	}
+	key := normalizeGroupMenuDishKey(name)
+	if key == "" {
+		return dish
+	}
+	food, ok := foodByKey[key]
+	if !ok {
+		return dish
+	}
+	if description := strings.TrimSpace(anyToString(food["descripcion"])); description != "" {
+		dish["descripcion"] = description
+	}
+	if allergens, ok := food["alergenos"].([]string); ok && len(allergens) > 0 {
+		dish["alergenos"] = allergens
+	}
+	if supplement, ok := food["suplemento"].(float64); ok && supplement > 0 {
+		dish["suplemento"] = supplement
+	}
+	return dish
+}
+
+func richLegacyDishArray(raw any) []map[string]any {
+	values, ok := raw.([]any)
+	if !ok {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(values))
+	for _, value := range values {
+		name := strings.TrimSpace(anyToString(value))
+		if name == "" {
+			continue
+		}
+		out = append(out, map[string]any{
+			"nombre":      name,
+			"descripcion": "",
+			"alergenos":   []string{},
+			"suplemento":  nil,
+			"active":      true,
+		})
+	}
+	return out
+}
+
+func groupMenuAnyToInt64(v any) (int64, bool) {
+	switch value := v.(type) {
+	case int:
+		return int64(value), true
+	case int64:
+		return value, true
+	case float64:
+		return int64(value), value == float64(int64(value))
+	default:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(anyToString(v)), 10, 64)
+		return parsed, err == nil
+	}
 }
 
 func decodeJSONOrFallback(raw string, fallback any) any {

@@ -256,6 +256,11 @@ func (s *Server) handleBOGroupMenuCreate(w http.ResponseWriter, r *http.Request)
 	}
 
 	menuID, _ := res.LastInsertId()
+	entrantesList := anySliceToStringList(decodeJSONOrFallback(entrantesJSON, []any{}))
+	principalesTitle := decodePrincipalesTitleJSON(principalesJSON)
+	principalesItemsList := decodePrincipalesItemsJSON(principalesJSON)
+	postreList := anySliceToStringList(decodeJSONOrFallback(postreJSON, []any{}))
+	s.translateMenuConventionalArrays(r.Context(), a.ActiveRestaurantID, menuID, entrantesList, principalesTitle, principalesItemsList, postreList)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
 		"message":    "Menu created successfully",
@@ -378,6 +383,12 @@ func (s *Server) handleBOGroupMenuUpdate(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menus")
 		return
 	}
+
+	entrantesList := anySliceToStringList(decodeJSONOrFallback(entrantesJSON, []any{}))
+	principalesTitle := decodePrincipalesTitleJSON(principalesJSON)
+	principalesItemsList := decodePrincipalesItemsJSON(principalesJSON)
+	postreList := anySliceToStringList(decodeJSONOrFallback(postreJSON, []any{}))
+	s.translateMenuConventionalArrays(r.Context(), a.ActiveRestaurantID, int64(id), entrantesList, principalesTitle, principalesItemsList, postreList)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":    true,

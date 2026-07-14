@@ -43,24 +43,28 @@ var publicMenuSlugReplacer = strings.NewReplacer(
 )
 
 type publicMenuDish struct {
-	ID                int64    `json:"id"`
-	Title             string   `json:"title"`
-	Description       string   `json:"description"`
-	FotoURL           string   `json:"foto_url"`
-	Allergens         []string `json:"allergens"`
-	SupplementEnabled bool     `json:"supplement_enabled"`
-	SupplementPrice   *float64 `json:"supplement_price"`
-	Price             *float64 `json:"price"`
-	Position          int      `json:"position"`
+	ID                 int64    `json:"id"`
+	Title              string   `json:"title"`
+	Description        string   `json:"description"`
+	FotoURL            string   `json:"foto_url"`
+	Allergens          []string `json:"allergens"`
+	SupplementEnabled  bool     `json:"supplement_enabled"`
+	SupplementPrice    *float64 `json:"supplement_price"`
+	Price              *float64 `json:"price"`
+	Position           int      `json:"position"`
+	TitleEnglish       string   `json:"title_english,omitempty"`
+	DescriptionEnglish string   `json:"description_english,omitempty"`
 }
 
 type publicMenuSection struct {
-	ID          int64            `json:"id"`
-	Title       string           `json:"title"`
-	Kind        string           `json:"kind"`
-	Position    int              `json:"position"`
-	Annotations []string         `json:"annotations"`
-	Dishes      []publicMenuDish `json:"dishes"`
+	ID                 int64            `json:"id"`
+	Title              string           `json:"title"`
+	Kind               string           `json:"kind"`
+	Position           int              `json:"position"`
+	Annotations        []string         `json:"annotations"`
+	Dishes             []publicMenuDish `json:"dishes"`
+	TitleEnglish       string           `json:"title_english,omitempty"`
+	AnnotationsEnglish []string         `json:"annotations_english,omitempty"`
 }
 
 type publicMenuPrincipales struct {
@@ -75,6 +79,7 @@ type publicMenuSettings struct {
 	MinPartySize         int            `json:"min_party_size"`
 	MainDishesLimit      bool           `json:"main_dishes_limit"`
 	MainDishesLimitCount int            `json:"main_dishes_limit_number"`
+	CommentsEnglish      []string       `json:"comments_english,omitempty"`
 }
 
 type publicMenuItem struct {
@@ -97,6 +102,8 @@ type publicMenuItem struct {
 	LegacySourceTable    string                `json:"legacy_source_table,omitempty"`
 	CreatedAt            string                `json:"created_at"`
 	ModifiedAt           string                `json:"modified_at"`
+	MenuTitleEnglish     string                `json:"menu_title_english,omitempty"`
+	MenuSubtitleEnglish  []string              `json:"menu_subtitle_english,omitempty"`
 }
 
 // publicMenuItemHome is a lightweight version for the home page
@@ -104,9 +111,11 @@ type publicMenuItemHome struct {
 	ID                   int64    `json:"id"`
 	Slug                 string   `json:"slug"`
 	MenuTitle            string   `json:"menu_title"`
+	MenuTitleEnglish     string   `json:"menu_title_english,omitempty"`
 	MenuType             string   `json:"menu_type"`
 	Active               bool     `json:"active"`
 	MenuSubtitle         []string `json:"menu_subtitle"`
+	MenuSubtitleEnglish  []string `json:"menu_subtitle_english,omitempty"`
 	ShowDishImages       bool     `json:"show_dish_images"`
 	ShowMenuPreviewImage bool     `json:"show_menu_preview_image"`
 	MenuPreviewImageURL  string   `json:"menu_preview_image_url"`
@@ -199,9 +208,9 @@ func (s *Server) handlePageVisibilityPatch(w http.ResponseWriter, r *http.Reques
 
 	cafeActive, bebidasActive := s.getPageVisibility(r.Context(), restaurantID)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":              true,
-		"cafe_page_active":     cafeActive,
-		"bebidas_page_active":  bebidasActive,
+		"success":             true,
+		"cafe_page_active":    cafeActive,
+		"bebidas_page_active": bebidasActive,
 	})
 }
 
@@ -405,6 +414,8 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				SpecialMenuImageURL:  s.publicMenuMediaURL(specialImageURLRaw.String),
 			})
 		}
+
+		s.enrichPublicHomeMenus(r.Context(), restaurantID, menus)
 
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true,
@@ -737,6 +748,8 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			menus[idx].Sections = sections
 		}
 	}
+
+	s.enrichPublicMenus(r.Context(), restaurantID, menus)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -1106,6 +1119,8 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	s.enrichPublicMenu(r.Context(), int(restaurantID), &item)
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"menu":    item,
@@ -1216,11 +1231,11 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 	cafeActive, bebidasActive := s.getPageVisibility(r.Context(), restaurantID)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":               true,
-		"count":                 len(menus),
-		"menus":                 menus,
-		"cafe_page_active":      cafeActive,
-		"bebidas_page_active":   bebidasActive,
+		"success":             true,
+		"count":               len(menus),
+		"menus":               menus,
+		"cafe_page_active":    cafeActive,
+		"bebidas_page_active": bebidasActive,
 	})
 }
 
@@ -1293,6 +1308,8 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 			MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
 		})
 	}
+
+	s.enrichPublicHomeMenus(r.Context(), restaurantID, menus)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

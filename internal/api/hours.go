@@ -114,18 +114,18 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-	sort.Strings(activeHours)
+		sortServiceHours(activeHours)
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":       true,
-		"hourData":      hourData,
-		"activeHours":   activeHours,
-		"isDefaultData": true,
-		"dailyLimit":    dailyLimit,
-		"totalPeople":   totalPeople,
-		"date":          date,
-		"salonState":    salonState,
-	})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success":       true,
+			"hourData":      hourData,
+			"activeHours":   activeHours,
+			"isDefaultData": true,
+			"dailyLimit":    dailyLimit,
+			"totalPeople":   totalPeople,
+			"date":          date,
+			"salonState":    salonState,
+		})
 		return
 	}
 
@@ -170,7 +170,7 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 	for h := range hourData {
 		activeHours = append(activeHours, h)
 	}
-	sort.Strings(activeHours)
+	sortServiceHours(activeHours)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":       true,
@@ -324,7 +324,11 @@ func (s *Server) getOpeningHoursForDate(r *http.Request, date string) ([]string,
 		// Invalid hoursarray JSON: fall back to defaults.
 	}
 
-	return []string{"13:30", "14:00", "14:30", "15:00"}, nil
+	defaults, err := s.loadReservationDefaults(r.Context(), restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	return mergeHoursByMode(defaults.OpeningMode, defaults.MorningHours, defaults.NightHours), nil
 }
 
 func (s *Server) fetchBookingsByHourHHMM(r *http.Request, date string) (map[string]int, int, error) {

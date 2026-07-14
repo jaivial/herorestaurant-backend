@@ -737,6 +737,9 @@ func (s *Server) syncBOMenuV2LegacySnapshot(r *http.Request, restaurantID int, m
 		SET entrantes = ?, principales = ?, postre = ?
 		WHERE id = ? AND restaurant_id = ?
 	`, mustJSON(entrantes, []any{}), mustJSON(principales, map[string]any{}), mustJSON(postres, []any{}), menuID, restaurantID)
+	if err == nil {
+		s.translateMenuConventionalArrays(r.Context(), restaurantID, menuID, entrantes, principalesTitle, principalesItems, postres)
+	}
 	return err
 }
 
@@ -1119,6 +1122,10 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		return
 	}
 
+	subtitleArr := anySliceToStringList(decodeJSONOrFallback(menuSubtitleJSON, []any{}))
+	commentsArr := anySliceToStringList(decodeJSONOrFallback(commentsJSON, []any{}))
+	s.translateMenuBasics(r.Context(), a.ActiveRestaurantID, menuID, title, subtitleArr, commentsArr)
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -1251,6 +1258,13 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 	}
 	rows.Close()
 
+	type secTransl struct {
+		ID          int64
+		Title       string
+		Annotations []string
+	}
+	translSecs := make([]secTransl, 0, len(req.Sections))
+
 	keep := make([]int64, 0, len(req.Sections))
 	for idx, sec := range req.Sections {
 		title := strings.TrimSpace(sec.Title)
@@ -1259,8 +1273,9 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 		}
 		kind := normalizeV2SectionKind(sec.Kind)
 		position := idx
+		annotations := normalizeV2SectionAnnotations(anySliceToStringList(sec.Annotations))
 		annotationsProvided := sec.Annotations != nil
-		annotationsJSON := mustJSON(normalizeV2SectionAnnotations(anySliceToStringList(sec.Annotations)), []any{})
+		annotationsJSON := mustJSON(annotations, []any{})
 
 		if sec.ID > 0 && existing[sec.ID] {
 			if annotationsProvided {
@@ -1281,6 +1296,7 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 				return
 			}
 			keep = append(keep, sec.ID)
+			translSecs = append(translSecs, secTransl{ID: sec.ID, Title: title, Annotations: annotations})
 			continue
 		}
 
@@ -1294,6 +1310,7 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 		}
 		newID, _ := res.LastInsertId()
 		keep = append(keep, newID)
+		translSecs = append(translSecs, secTransl{ID: newID, Title: title, Annotations: annotations})
 	}
 
 	if len(keep) > 0 {
@@ -1320,6 +1337,10 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 	if err := s.syncBOMenuV2LegacySnapshot(r, a.ActiveRestaurantID, menuID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando snapshot")
 		return
+	}
+
+	for _, sec := range translSecs {
+		s.translateSection(r.Context(), a.ActiveRestaurantID, sec.ID, sec.Title, sec.Annotations)
 	}
 
 	sections, err := s.loadBOMenuV2SectionsWithDishes(r, a.ActiveRestaurantID, menuID)
@@ -1373,6 +1394,8 @@ func (s *Server) handleBOGroupMenusV2PatchSectionAnnotations(w http.ResponseWrit
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
 		return
 	}
+
+	s.translateEntityFields(r.Context(), a.ActiveRestaurantID, entitySections, sectionID, flattenArrayFields("annotations", annotations))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
@@ -1474,6 +1497,13 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 	}
 	rows.Close()
 
+	type dishTransl struct {
+		ID          int64
+		Title       string
+		Description string
+	}
+	translDishes := make([]dishTransl, 0, len(req.Dishes))
+
 	keep := make([]int64, 0, len(req.Dishes))
 	keepSet := make(map[int64]struct{}, len(req.Dishes))
 	needsLegacySync := false
@@ -1541,6 +1571,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			}
 			keep = append(keep, dish.ID)
 			keepSet[dish.ID] = struct{}{}
+			translDishes = append(translDishes, dishTransl{ID: dish.ID, Title: title, Description: description})
 			continue
 		}
 
@@ -1573,6 +1604,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 		newID, _ := res.LastInsertId()
 		keep = append(keep, newID)
 		keepSet[newID] = struct{}{}
+		translDishes = append(translDishes, dishTransl{ID: newID, Title: title, Description: description})
 	}
 
 	if len(keep) == 0 {
@@ -1626,6 +1658,10 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando snapshot")
 			return
 		}
+	}
+
+	for _, d := range translDishes {
+		s.translateSectionDish(r.Context(), a.ActiveRestaurantID, d.ID, d.Title, d.Description)
 	}
 
 	dishes, err := s.loadBOMenuV2SectionDishes(r, a.ActiveRestaurantID, menuID, sectionID)
@@ -1831,6 +1867,8 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 			return
 		}
 	}
+
+	s.translateSectionDish(r.Context(), a.ActiveRestaurantID, dishID, title, description)
 
 	d, err := s.loadBOMenuV2DishByID(r, a.ActiveRestaurantID, menuID, sectionID, dishID)
 	if err != nil {

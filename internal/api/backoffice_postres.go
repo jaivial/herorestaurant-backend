@@ -13,10 +13,11 @@ import (
 )
 
 type boPostre struct {
-	Num         int      `json:"num"`
-	Descripcion string   `json:"descripcion"`
-	Alergenos   []string `json:"alergenos"`
-	Active      bool     `json:"active"`
+	Num                int      `json:"num"`
+	Descripcion        string   `json:"descripcion"`
+	Alergenos          []string `json:"alergenos"`
+	Active             bool     `json:"active"`
+	DescripcionEnglish string   `json:"descripcion_english,omitempty"`
 }
 
 func (s *Server) handleBOPostresList(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +58,20 @@ func (s *Server) handleBOPostresList(w http.ResponseWriter, r *http.Request) {
 			Alergenos:   parseAlergenos(alergRaw),
 			Active:      activeInt != 0,
 		})
+	}
+
+	if len(out) > 0 {
+		ids := make([]int64, 0, len(out))
+		for _, p := range out {
+			ids = append(ids, int64(p.Num))
+		}
+		if all, err := s.loadTranslations(r.Context(), restaurantID, entityPostres, ids, translationLang); err == nil {
+			for i := range out {
+				if en := translationOr(all[int64(out[i].Num)], "descripcion"); en != "" {
+					out[i].DescripcionEnglish = en
+				}
+			}
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -118,13 +133,18 @@ func (s *Server) handleBOPostreCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	newID, _ := res.LastInsertId()
 
+	tr := s.translateEntityFields(r.Context(), restaurantID, entityPostres, newID, []translationField{
+		{Name: "descripcion", Text: desc},
+	})
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"postre": boPostre{
-			Num:         int(newID),
-			Descripcion: desc,
-			Alergenos:   req.Alergenos,
-			Active:      active,
+			Num:                int(newID),
+			Descripcion:        desc,
+			Alergenos:          req.Alergenos,
+			Active:             active,
+			DescripcionEnglish: translationOr(tr, "descripcion"),
 		},
 	})
 }
@@ -216,6 +236,14 @@ func (s *Server) handleBOPostrePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Descripcion != nil {
+		if d := strings.TrimSpace(*req.Descripcion); d != "" {
+			s.translateEntityFields(r.Context(), restaurantID, entityPostres, int64(id), []translationField{
+				{Name: "descripcion", Text: d},
+			})
+		}
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 	})
@@ -252,6 +280,8 @@ func (s *Server) handleBOPostreDelete(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	s.deleteEntityTranslations(r.Context(), entityPostres, restaurantID, int64(id))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

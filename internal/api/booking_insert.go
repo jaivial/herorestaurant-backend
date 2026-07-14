@@ -396,6 +396,14 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
+	preferredFloorNumber, err := s.resolvePreferredFloorNumberForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_floor_number")))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 
 	commentary := strings.TrimSpace(r.FormValue("commentary"))
 	babyStrollers := clampInt(r.FormValue("baby_strollers"), 0, 100, 0)
@@ -499,6 +507,7 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		SpecialMenu:       boolToTinyint(specialMenu),
 		MenuDeGrupoID:     nullIntOrNil(menuDeGrupoID),
 		PrincipalesJSON:   principalesJSON,
+		PreferredFloorNum: preferredFloorNumber,
 	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -528,6 +537,7 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		"special_menu":               specialMenu,
 		"menu_de_grupo_id":           menuDeGrupoID,
 		"principales_json":           principalesJSON,
+		"preferred_floor_number":     preferredFloorNumber,
 	}
 
 	// Send WhatsApp confirmation to customer (best-effort).

@@ -20,6 +20,7 @@ type publicBooking struct {
 	ReservationDate string
 	ReservationTime string
 	PartySize       int
+	Children        int
 	CustomerName    string
 	ContactPhone    sql.NullString
 	ContactEmail    sql.NullString
@@ -28,6 +29,8 @@ type publicBooking struct {
 	ArrozServings   sql.NullString
 	BabyStrollers   sql.NullInt64
 	HighChairs      sql.NullInt64
+	PreferredFloor  sql.NullInt64
+	TableNumber     sql.NullString
 	Status          sql.NullString
 	SpecialMenu     sql.NullInt64
 	MenuDeGrupoID   sql.NullInt64
@@ -47,6 +50,7 @@ func (s *Server) fetchPublicBooking(ctx context.Context, id int) (publicBooking,
 			DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
 			TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
 			party_size,
+			children,
 			customer_name,
 			contact_phone,
 			contact_email,
@@ -55,6 +59,8 @@ func (s *Server) fetchPublicBooking(ctx context.Context, id int) (publicBooking,
 			arroz_servings,
 			babyStrollers,
 			highChairs,
+			preferred_floor_number,
+			table_number,
 			status,
 			special_menu,
 			menu_de_grupo_id,
@@ -68,6 +74,7 @@ func (s *Server) fetchPublicBooking(ctx context.Context, id int) (publicBooking,
 		&b.ReservationDate,
 		&b.ReservationTime,
 		&b.PartySize,
+		&b.Children,
 		&b.CustomerName,
 		&b.ContactPhone,
 		&b.ContactEmail,
@@ -76,6 +83,8 @@ func (s *Server) fetchPublicBooking(ctx context.Context, id int) (publicBooking,
 		&b.ArrozServings,
 		&b.BabyStrollers,
 		&b.HighChairs,
+		&b.PreferredFloor,
+		&b.TableNumber,
 		&b.Status,
 		&b.SpecialMenu,
 		&b.MenuDeGrupoID,

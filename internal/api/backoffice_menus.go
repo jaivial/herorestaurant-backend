@@ -172,6 +172,12 @@ func (s *Server) handleBOMenuDishCreate(w http.ResponseWriter, r *http.Request, 
 	}
 	newID, _ := res.LastInsertId()
 
+	if tipo != "PRECIO" {
+		s.translateEntityFields(r.Context(), restaurantID, table, newID, []translationField{
+			{Name: "descripcion", Text: desc},
+		})
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"dish": boMenuDish{
@@ -292,6 +298,14 @@ func (s *Server) handleBOMenuDishPatch(w http.ResponseWriter, r *http.Request, t
 		return
 	}
 
+	if req.Descripcion != nil {
+		if d := strings.TrimSpace(*req.Descripcion); d != "" {
+			s.translateEntityFields(r.Context(), restaurantID, table, int64(id), []translationField{
+				{Name: "descripcion", Text: d},
+			})
+		}
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 	})
@@ -336,6 +350,8 @@ func (s *Server) handleBOMenuDishDelete(w http.ResponseWriter, r *http.Request, 
 		})
 		return
 	}
+
+	s.deleteEntityTranslations(r.Context(), table, restaurantID, int64(id))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
