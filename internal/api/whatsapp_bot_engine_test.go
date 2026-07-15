@@ -64,7 +64,7 @@ func TestBotRunAgentLoop_SendMessageAndEndTurn(t *testing.T) {
 		return `{"error":"unknown tool"}`, nil
 	}
 
-	result, err := s.botRunAgentLoop(context.Background(), "SYS", []botMessage{botUserText("hola")}, botToolDefs(botTenantConfig{}), exec)
+	result, err := s.botRunAgentLoop(context.Background(), "", "SYS", []botMessage{botUserText("hola")}, botToolDefs(botTenantConfig{}), exec)
 	if err != nil {
 		t.Fatalf("loop error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestBotRunAgentLoop_MaxIterations(t *testing.T) {
 		execCount++
 		return `{"rices":[]}`, nil
 	}
-	result, err := s.botRunAgentLoop(context.Background(), "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	result, err := s.botRunAgentLoop(context.Background(), "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
 	if err != nil {
 		t.Fatalf("loop error: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestBotRunAgentLoop_ToolError_FeedsErrorBack(t *testing.T) {
 	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
 		return `{"error":"db down"}`, nil
 	}
-	if _, err := s.botRunAgentLoop(context.Background(), "SYS", []botMessage{botUserText("x")}, nil, exec); err != nil {
+	if _, err := s.botRunAgentLoop(context.Background(), "", "SYS", []botMessage{botUserText("x")}, nil, exec); err != nil {
 		t.Fatalf("loop should survive tool errors: %v", err)
 	}
 	if len(*calls) != 2 {

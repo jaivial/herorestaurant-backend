@@ -90,6 +90,119 @@ func TestBotToolCreateAndCancelBooking_DB(t *testing.T) {
 	}
 }
 
+func TestBotToolSchedule_DB(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+	s := newTestServer(t, db)
+	rid, cleanup := seedBotRestaurant(t, s)
+	defer cleanup()
+	defer func() {
+		_, _ = db.Exec(`DELETE FROM restaurant_reservation_defaults WHERE restaurant_id = ?`, rid)
+		_, _ = db.Exec(`DELETE FROM openinghours WHERE restaurant_id = ?`, rid)
+	}()
+
+	ctx := context.Background()
+
+	// Seed defaults: open Fri/Sat/Sun, morning + night hours, both mode.
+	if err := s.upsertReservationDefaults(ctx, rid, reservationDefaults{
+		OpeningMode:  "both",
+		MorningHours: []string{"13:30", "14:00"},
+		NightHours:   []string{"21:00", "21:30"},
+		WeekdayOpen: map[string]bool{
+			"monday": false, "tuesday": false, "wednesday": false, "thursday": false,
+			"friday": true, "saturday": true, "sunday": true,
+		},
+		DailyLimit:       60,
+		MesasDeDosLimit:  "10",
+		MesasDeTresLimit: "10",
+	}); err != nil {
+		t.Fatalf("seed defaults: %v", err)
+	}
+
+	// get_default_schedule: open days + hours.
+	out, err := s.botToolDefaultSchedule(ctx, rid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var def struct {
+		OpeningMode  string          `json:"opening_mode"`
+		MorningHours []string        `json:"morning_hours"`
+		NightHours   []string        `json:"night_hours"`
+		DailyLimit   int             `json:"daily_limit"`
+		WeekdayOpen  map[string]bool `json:"weekday_open"`
+		OpenDays     []string        `json:"open_days"`
+	}
+	if err := json.Unmarshal([]byte(out), &def); err != nil {
+		t.Fatal(err)
+	}
+	if def.OpeningMode != "both" || def.DailyLimit != 60 || len(def.MorningHours) != 2 || len(def.NightHours) != 2 {
+		t.Errorf("default schedule = %s", out)
+	}
+	if !def.WeekdayOpen["friday"] || def.WeekdayOpen["monday"] {
+		t.Errorf("weekday_open = %v", def.WeekdayOpen)
+	}
+	if len(def.OpenDays) != 3 {
+		t.Errorf("open_days = %v", def.OpenDays)
+	}
+
+	// Find next Monday (closed weekday) and next Saturday (open weekday).
+	nextWeekday := func(target time.Weekday) string {
+		d := time.Now().AddDate(0, 0, 1)
+		for i := 0; i < 8; i++ {
+			if d.Weekday() == target {
+				return d.Format("2006-01-02")
+			}
+			d = d.AddDate(0, 0, 1)
+		}
+		return d.Format("2006-01-02")
+	}
+	monday := nextWeekday(time.Monday)
+	saturday := nextWeekday(time.Saturday)
+
+	// get_day_schedule on a closed weekday (Monday) with no override → closed.
+	out, _ = s.botToolDaySchedule(ctx, rid, json.RawMessage(`{"date":"`+monday+`"}`))
+	var mon struct {
+		WeekdayOpen bool `json:"weekday_open"`
+		HasOverride bool `json:"has_override"`
+		Open        bool `json:"open"`
+	}
+	_ = json.Unmarshal([]byte(out), &mon)
+	if mon.WeekdayOpen || mon.HasOverride || mon.Open {
+		t.Errorf("monday schedule = %s", out)
+	}
+
+	// get_day_schedule on an open weekday (Saturday) → open, no override.
+	out, _ = s.botToolDaySchedule(ctx, rid, json.RawMessage(`{"date":"`+saturday+`"}`))
+	var sat struct {
+		WeekdayOpen bool `json:"weekday_open"`
+		HasOverride bool `json:"has_override"`
+		Open        bool `json:"open"`
+	}
+	_ = json.Unmarshal([]byte(out), &sat)
+	if !sat.WeekdayOpen || sat.HasOverride || !sat.Open {
+		t.Errorf("saturday schedule = %s", out)
+	}
+
+	// Individual override: open the closed Monday with special hours.
+	if _, err := db.Exec(`
+		INSERT INTO openinghours (restaurant_id, dateselected, hoursarray, opening_mode)
+		VALUES (?, ?, ?, 'morning')
+	`, rid, monday, `["12:00","12:30","13:00"]`); err != nil {
+		t.Fatalf("seed override: %v", err)
+	}
+	out, _ = s.botToolDaySchedule(ctx, rid, json.RawMessage(`{"date":"`+monday+`"}`))
+	var ovr struct {
+		HasOverride  bool     `json:"has_override"`
+		Open         bool     `json:"open"`
+		OpeningMode  string   `json:"opening_mode"`
+		MorningHours []string `json:"morning_hours"`
+	}
+	_ = json.Unmarshal([]byte(out), &ovr)
+	if !ovr.HasOverride || !ovr.Open || ovr.OpeningMode != "morning" || len(ovr.MorningHours) != 3 {
+		t.Errorf("monday override schedule = %s", out)
+	}
+}
+
 func TestBotToolModifyBooking_DB(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()

@@ -312,6 +312,11 @@ func (s *Server) Routes() http.Handler {
 		// WhatsApp bot personalization (per restaurant).
 		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/bot/config", s.handleBOBotConfigGet)
 		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Put("/bot/config", s.handleBOBotConfigPut)
+
+		// WhatsApp bot settings per explicit restaurant id + prompt preview (root IA tab).
+		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/settings/{restaurantId}", s.handleBOBotSettingsGet)
+		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/settings/{restaurantId}", s.handleBOBotSettingsPut)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/bot/settings/{restaurantId}/preview", s.handleBOBotSettingsPreview)
 		r.With(s.requireBOSession, ajustesGate).Get("/branding", s.handleBOBrandingGet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding", s.handleBOBrandingSet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding/logo", s.handleBOBrandingLogoUpload)

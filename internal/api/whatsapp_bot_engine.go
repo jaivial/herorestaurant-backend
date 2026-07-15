@@ -19,7 +19,7 @@ type botLoopResult struct {
 // botRunAgentLoop drives the LLM tool-use loop: call the model, execute any
 // tool_use blocks, feed tool_result back, repeat until end_turn or the
 // iteration cap.
-func (s *Server) botRunAgentLoop(ctx context.Context, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
+func (s *Server) botRunAgentLoop(ctx context.Context, model string, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
 	maxIter := s.cfg.BotMaxIterations
 	if maxIter <= 0 {
 		maxIter = 8
@@ -31,7 +31,7 @@ func (s *Server) botRunAgentLoop(ctx context.Context, system string, messages []
 	for i := 0; i < maxIter; i++ {
 		result.Iterations = i + 1
 
-		resp, err := s.botLLMCall(ctx, system, msgs, tools)
+		resp, err := s.botLLMCall(ctx, model, system, msgs, tools)
 		if err != nil {
 			result.Messages = msgs
 			return result, err

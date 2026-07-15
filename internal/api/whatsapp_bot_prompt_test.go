@@ -30,14 +30,24 @@ func TestRenderBotSystemPrompt_IncludesTenantData(t *testing.T) {
 		"Calle Mayor 1, Valencia",
 		"Jaime",
 		"34612345678",
-		"Paella Valenciana",
-		"Arroz Negro",
 		"sábado, 14 de febrero de 2026",
 		"REGLA-PERSONALIZADA-XYZ",
 		"send_message",
+		// Rices and hours are no longer inlined; the bot must fetch them
+		// via tools, so the prompt references those tools instead.
+		"get_rice_menu",
+		"get_default_schedule",
+		"get_day_schedule",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt missing %q", want)
+		}
+	}
+
+	// The concrete rice names and hours must NOT be written into the prompt.
+	for _, forbidden := range []string{"Paella Valenciana", "Arroz Negro", "13:30", "TIPOS DE ARROZ", "HORARIOS DE HOY"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("prompt must not inline %q", forbidden)
 		}
 	}
 }

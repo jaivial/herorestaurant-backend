@@ -2321,3 +2321,52 @@ Same auth. Body is the `config` object above (`language_default` must be
 Env knobs (defaults): `BOT_MINIMAX_MODEL` (MiniMax-M3),
 `BOT_MINIMAX_TIMEOUT_SECONDS` (45), `BOT_MINIMAX_MAX_TOKENS` (1024),
 `BOT_MAX_ITERATIONS` (8), `BOT_HISTORY_LIMIT` (20), `BOT_DAILY_TURNS_CAP` (2000).
+
+### GET /api/admin/bot/settings/{restaurantId}
+
+Root-only (role importance 100). Returns the bot config for the given
+restaurant plus `promptPreview` (the fully rendered system prompt with live
+restaurant data) and `defaultModel` (global fallback when `config.model` is
+empty).
+
+### PUT /api/admin/bot/settings/{restaurantId}
+
+Root-only. Body is the `config` object (adds `model` to override the global
+`BOT_MINIMAX_MODEL` per restaurant). Responds with the saved config and a
+refreshed `promptPreview`.
+
+### POST /api/admin/bot/settings/{restaurantId}/preview
+
+Root-only. Renders the system prompt for a **draft** config without saving
+it. Body: the `config` object. Response: same shape as GET (config,
+promptPreview, defaultRules, restaurant). Used by the IA tab for the live
+prompt preview while editing.
+
+
+#### Bot tools note
+
+The bot no longer inlines rice types or schedules in the system prompt. It
+resolves them dynamically each turn via tools bound to Go internals:
+
+- `get_rice_menu` — active rice types for the restaurant.
+- `get_default_schedule` — default weekly schedule: `opening_mode`,
+  `morning_hours`, `night_hours`, `daily_limit`, `weekday_open` (per-weekday
+  open flags) and `open_days` (Spanish names of open weekdays).
+- `get_day_schedule` — effective schedule for a concrete date: `weekday`,
+  `weekday_open`, `has_override` (true when `openinghours` overrides the general
+  config for that day), `opening_mode`, `morning_hours`, `night_hours` and
+  `open`.
+
+
+- `list_menus` — active bookable menus with their category (`closed_conventional`,
+  `closed_group`, `a_la_carte`, `a_la_carte_group`, `special`), Spanish
+  `category_label`, price and subtitle.
+- `get_menu_details` — full info for one menu (`menu_id`): sections with their
+  dishes (title, description, price, supplement) plus settings: beverage type +
+  label, `unlimited_drinks`, `drink_price_per_person`, `min_party_size`,
+  `has_max_main_dishes_per_table` / `max_main_dishes_per_table`,
+  `coffee_included`, `comments`.
+- `get_coffee_menu` / `get_drinks_menu` — items from `CAFES` / `BEBIDAS`
+  (name, price, description, group, supplement).
+- `get_wines_menu` — wines from `VINOS` grouped by type (name, price, type,
+  winery, denomination, year, abv).

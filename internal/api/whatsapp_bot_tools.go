@@ -10,12 +10,17 @@ import (
 // botTenantConfig carries per-restaurant personalization knobs stored in
 // whatsapp_bot_config.config_json.
 type botTenantConfig struct {
+	// Model overrides the global BotModel for this restaurant (e.g. MiniMax-M2).
+	Model              string `json:"model"`
 	LanguageDefault    string `json:"language_default"`
 	Tone               string `json:"tone"`
 	GreetingStyle      string `json:"greeting_style"`
 	DisableAttachments bool   `json:"disable_attachments"`
 	CustomInstructions string `json:"custom_instructions"`
 	ContactPhone       string `json:"contact_phone"`
+	// Rules overrides the default critical rules block of the system prompt.
+	// Empty means use botDefaultRules.
+	Rules string `json:"rules"`
 }
 
 func parseBotTenantConfig(raw string) botTenantConfig {
@@ -52,12 +57,42 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 		},
 		{
 			Name:        "get_rice_menu",
-			Description: "Obtiene los tipos de arroz activos en la carta del restaurante.",
+			Description: "Obtiene los tipos de arroz activos en la carta del restaurante. ÚSALO SIEMPRE antes de hablar de arroces: nunca inventes tipos de arroz.",
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),
 		},
 		{
-			Name:        "get_opening_hours_with_capacity",
-			Description: "Obtiene los horarios de apertura para una fecha (turno mediodía y noche) y si el día está abierto.",
+			Name:        "list_menus",
+			Description: "Lista los menús reservables activos con su categoría (menú cerrado convencional, menú cerrado de grupo, a la carta convencional, a la carta de grupo, menú especial), su precio y subtítulo. ÚSALO cuando el cliente pregunte por los menús disponibles.",
+			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+		},
+		{
+			Name:        "get_menu_details",
+			Description: "Obtiene toda la información de UN menú por su menu_id: los platos de cada sección (título, descripción, precio, suplemento), el precio del menú y sus condiciones (bebida y precio por persona si la bebida es ilimitada, tamaño mínimo de grupo, máximo de platos principales por mesa, si incluye café y comentarios). Usa list_menus primero para conocer el menu_id.",
+			InputSchema: botSchema(`{"type":"object","properties":{"menu_id":{"type":"integer","description":"ID del menú (de list_menus)"}},"required":["menu_id"]}`),
+		},
+		{
+			Name:        "get_coffee_menu",
+			Description: "Obtiene la carta de cafés del restaurante (nombre, precio, descripción).",
+			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+		},
+		{
+			Name:        "get_drinks_menu",
+			Description: "Obtiene la carta de bebidas y refrescos del restaurante (nombre, precio, descripción).",
+			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+		},
+		{
+			Name:        "get_wines_menu",
+			Description: "Obtiene la carta de vinos del restaurante agrupados por tipo (tinto, blanco, cava...), con bodega, denominación de origen, año y precio.",
+			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+		},
+		{
+			Name:        "get_default_schedule",
+			Description: "Obtiene el horario POR DEFECTO del restaurante: qué días de la semana abre, los turnos de mediodía y noche por defecto y el límite diario. ÚSALO para responder sobre el horario general o qué días abre.",
+			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+		},
+		{
+			Name:        "get_day_schedule",
+			Description: "Obtiene el horario REAL de una fecha concreta: si ese día de la semana abre por defecto y si existe una configuración especial que SOBREESCRIBE el horario general para ese día. Devuelve las horas efectivas y si el restaurante abre ese día. ÚSALO SIEMPRE antes de aceptar una fecha de reserva.",
 			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"}},"required":["date"]}`),
 		},
 		{

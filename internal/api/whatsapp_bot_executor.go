@@ -41,8 +41,20 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolRestaurantInfo(ctx, restaurantID)
 	case "get_rice_menu":
 		return s.botToolRiceMenu(ctx, restaurantID)
-	case "get_opening_hours_with_capacity":
-		return s.botToolOpeningHours(ctx, restaurantID, input)
+	case "list_menus":
+		return s.botToolListMenus(ctx, restaurantID)
+	case "get_menu_details":
+		return s.botToolMenuDetails(ctx, restaurantID, input)
+	case "get_coffee_menu":
+		return s.botToolCoffeeMenu(ctx, restaurantID)
+	case "get_drinks_menu":
+		return s.botToolDrinksMenu(ctx, restaurantID)
+	case "get_wines_menu":
+		return s.botToolWinesMenu(ctx, restaurantID)
+	case "get_default_schedule":
+		return s.botToolDefaultSchedule(ctx, restaurantID)
+	case "get_day_schedule":
+		return s.botToolDaySchedule(ctx, restaurantID, input)
 	case "check_day_capacity":
 		return s.botToolDayCapacity(ctx, restaurantID, input)
 	case "check_availability_for_party":
@@ -265,29 +277,95 @@ func (s *Server) botDayCapacity(ctx context.Context, restaurantID int, dateISO s
 	return limit, total, nil
 }
 
-func (s *Server) botOpeningHoursFor(ctx context.Context, restaurantID int, dateISO string) (morning []string, night []string, err error) {
-	defaults, err := s.loadReservationDefaults(ctx, restaurantID)
-	if err != nil {
-		return nil, nil, err
-	}
-	morning = cloneStrings(defaults.MorningHours)
-	night = cloneStrings(defaults.NightHours)
+// botWeekdayKeys maps time.Weekday() (Sunday=0) to the weekday_open JSON keys.
+var botWeekdayKeys = []string{"sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"}
 
-	var hoursRaw sql.NullString
-	err = s.db.QueryRowContext(ctx, `
-		SELECT hoursarray FROM openinghours
-		WHERE restaurant_id = ? AND dateselected = ? LIMIT 1
-	`, restaurantID, dateISO).Scan(&hoursRaw)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, err
-	}
-	if list, ok := parseHoursJSON(hoursRaw); ok {
-		morning, night = splitHoursByShift(list)
-	}
-	return morning, night, nil
+type botDaySchedule struct {
+	Date         string
+	Weekday      string
+	WeekdayKey   string
+	WeekdayOpen  bool
+	HasOverride  bool
+	OpeningMode  string
+	MorningHours []string
+	NightHours   []string
+	Open         bool
 }
 
-func (s *Server) botToolOpeningHours(ctx context.Context, restaurantID int, input json.RawMessage) (string, error) {
+// botResolveDaySchedule computes the effective schedule for a date: the default
+// weekday configuration plus any per-day override stored in openinghours.
+func (s *Server) botResolveDaySchedule(ctx context.Context, restaurantID int, dateISO string) (botDaySchedule, error) {
+	defaults, err := s.loadReservationDefaults(ctx, restaurantID)
+	if err != nil {
+		return botDaySchedule{}, err
+	}
+	t, err := time.Parse("2006-01-02", dateISO)
+	if err != nil {
+		return botDaySchedule{}, err
+	}
+	wdKey := botWeekdayKeys[int(t.Weekday())]
+	out := botDaySchedule{
+		Date:         dateISO,
+		Weekday:      botSpanishDays[int(t.Weekday())],
+		WeekdayKey:   wdKey,
+		WeekdayOpen:  defaults.WeekdayOpen[wdKey],
+		OpeningMode:  defaults.OpeningMode,
+		MorningHours: cloneStrings(defaults.MorningHours),
+		NightHours:   cloneStrings(defaults.NightHours),
+	}
+
+	var hoursRaw, modeRaw sql.NullString
+	err = s.db.QueryRowContext(ctx, `
+		SELECT hoursarray, opening_mode FROM openinghours
+		WHERE restaurant_id = ? AND dateselected = ? LIMIT 1
+	`, restaurantID, dateISO).Scan(&hoursRaw, &modeRaw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return botDaySchedule{}, err
+	}
+	if err == nil {
+		if list, ok := parseHoursJSON(hoursRaw); ok {
+			out.HasOverride = true
+			out.MorningHours, out.NightHours = splitHoursByShift(list)
+			if modeRaw.Valid && modeRaw.String != "" {
+				out.OpeningMode = normalizeOpeningMode(modeRaw.String)
+			} else {
+				out.OpeningMode = modeFromHours(out.MorningHours, out.NightHours)
+			}
+		}
+	}
+
+	hasHours := len(out.MorningHours) > 0 || len(out.NightHours) > 0
+	if out.HasOverride {
+		// An explicit per-day override defines the day regardless of weekday flag.
+		out.Open = hasHours
+	} else {
+		out.Open = out.WeekdayOpen && hasHours
+	}
+	return out, nil
+}
+
+func (s *Server) botToolDefaultSchedule(ctx context.Context, restaurantID int) (string, error) {
+	defaults, err := s.loadReservationDefaults(ctx, restaurantID)
+	if err != nil {
+		return botJSON(map[string]any{"error": "error consultando el horario por defecto"}), nil
+	}
+	openDays := []string{}
+	for i, key := range botWeekdayKeys {
+		if defaults.WeekdayOpen[key] {
+			openDays = append(openDays, botSpanishDays[i])
+		}
+	}
+	return botJSON(map[string]any{
+		"opening_mode":  defaults.OpeningMode,
+		"morning_hours": defaults.MorningHours,
+		"night_hours":   defaults.NightHours,
+		"daily_limit":   defaults.DailyLimit,
+		"weekday_open":  defaults.WeekdayOpen,
+		"open_days":     openDays,
+	}), nil
+}
+
+func (s *Server) botToolDaySchedule(ctx context.Context, restaurantID int, input json.RawMessage) (string, error) {
 	var in struct {
 		Date string `json:"date"`
 	}
@@ -296,25 +374,19 @@ func (s *Server) botToolOpeningHours(ctx context.Context, restaurantID int, inpu
 	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-
-	morning, night, err := s.botOpeningHoursFor(ctx, restaurantID, dateISO)
+	sched, err := s.botResolveDaySchedule(ctx, restaurantID, dateISO)
 	if err != nil {
-		return botJSON(map[string]any{"error": "error consultando horarios"}), nil
-	}
-	limit, total, err := s.botDayCapacity(ctx, restaurantID, dateISO)
-	if err != nil {
-		return botJSON(map[string]any{"error": "error consultando capacidad"}), nil
-	}
-	free := limit - total
-	if free < 0 {
-		free = 0
+		return botJSON(map[string]any{"error": "error consultando el horario del día"}), nil
 	}
 	return botJSON(map[string]any{
-		"date":          dateISO,
-		"morning_hours": morning,
-		"night_hours":   night,
-		"open":          limit > 0 && (len(morning) > 0 || len(night) > 0),
-		"free_seats":    free,
+		"date":          sched.Date,
+		"weekday":       sched.Weekday,
+		"weekday_open":  sched.WeekdayOpen,
+		"has_override":  sched.HasOverride,
+		"opening_mode":  sched.OpeningMode,
+		"morning_hours": sched.MorningHours,
+		"night_hours":   sched.NightHours,
+		"open":          sched.Open,
 	}), nil
 }
 
