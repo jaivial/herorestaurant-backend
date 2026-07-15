@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/mail"
-	"net/smtp"
 	"net/url"
 	"os"
 	"strconv"
@@ -645,13 +644,13 @@ func buildBackofficeAbsoluteURL(r *http.Request, path string) string {
 
 func (s *Server) sendMemberInvitation(ctx context.Context, restaurantID int, email, phone, invitationURL string) []boDeliveryAttempt {
 	brand := s.restaurantNameFallback(ctx, restaurantID)
-	subject := brand + " · Invitacion de acceso"
-	body := "Hola,\n\nTe han invitado al backoffice de " + brand + ".\nCompleta tu alta en este enlace:\n" + invitationURL + "\n\nSi no esperabas esta invitacion, ignora este mensaje."
+	subject := backofficeEmailBrand + " · Invitacion de acceso"
+	html := buildBackofficeInvitationEmailHTML(brand, invitationURL)
 	waText := "Te han invitado al backoffice de " + brand + ". Completa tu alta aqui: " + invitationURL
 
 	results := make([]boDeliveryAttempt, 0, 2)
 	if strings.TrimSpace(email) != "" {
-		err := sendSMTPMailBestEffort(email, subject, body)
+		err := s.sendBackofficeAppEmail(ctx, restaurantID, email, subject, html)
 		results = append(results, boDeliveryAttempt{Channel: "email", Target: email, Sent: err == nil, Error: errorString(err)})
 	}
 	if strings.TrimSpace(phone) != "" {
@@ -663,13 +662,13 @@ func (s *Server) sendMemberInvitation(ctx context.Context, restaurantID int, ema
 
 func (s *Server) sendMemberPasswordReset(ctx context.Context, restaurantID int, email, phone, resetURL string) []boDeliveryAttempt {
 	brand := s.restaurantNameFallback(ctx, restaurantID)
-	subject := brand + " · Restablecer password"
-	body := "Hola,\n\nHas solicitado restablecer tu password en " + brand + ".\nUsa este enlace:\n" + resetURL + "\n\nSi no fuiste tu, ignora este mensaje."
+	subject := backofficeEmailBrand + " · Restablecer contrasena"
+	html := buildBackofficePasswordResetEmailHTML(brand, resetURL)
 	waText := "Restablece tu password de " + brand + ": " + resetURL
 
 	results := make([]boDeliveryAttempt, 0, 2)
 	if strings.TrimSpace(email) != "" {
-		err := sendSMTPMailBestEffort(email, subject, body)
+		err := s.sendBackofficeAppEmail(ctx, restaurantID, email, subject, html)
 		results = append(results, boDeliveryAttempt{Channel: "email", Target: email, Sent: err == nil, Error: errorString(err)})
 	}
 	if strings.TrimSpace(phone) != "" {
@@ -686,7 +685,10 @@ func errorString(err error) string {
 	return err.Error()
 }
 
-func sendSMTPMailBestEffort(to string, subject string, body string) error {
+// sendBackofficeAppEmail sends an app-branded HTML email using the restaurant's
+// per-restaurant email provider settings (SMTP or Gmail) configured in
+// email_provider_config. It never falls back to global SMTP env vars.
+func (s *Server) sendBackofficeAppEmail(ctx context.Context, restaurantID int, to, subject, htmlBody string) error {
 	to = strings.TrimSpace(to)
 	if to == "" {
 		return errors.New("destinatario vacio")
@@ -695,42 +697,33 @@ func sendSMTPMailBestEffort(to string, subject string, body string) error {
 		return errors.New("email invalido")
 	}
 
-	host := strings.TrimSpace(os.Getenv("SMTP_HOST"))
-	port := strings.TrimSpace(os.Getenv("SMTP_PORT"))
-	from := strings.TrimSpace(os.Getenv("SMTP_FROM"))
-	user := strings.TrimSpace(os.Getenv("SMTP_USER"))
-	pass := strings.TrimSpace(os.Getenv("SMTP_PASS"))
-	if host == "" || port == "" || from == "" {
-		return errors.New("smtp no configurado")
+	cfg, err := s.loadEmailProviderConfig(ctx, restaurantID)
+	if err != nil {
+		return fmt.Errorf("cargando config de email: %w", err)
+	}
+	if complete, _ := checkEmailProviderCompleteness(cfg); !complete {
+		return errors.New("email provider not configured")
 	}
 
-	addr := host + ":" + port
-	auth := smtp.Auth(nil)
-	if user != "" && pass != "" {
-		auth = smtp.PlainAuth("", user, pass, host)
+	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
+	fromAddr := resolveEmailFromAddr(branding, cfg)
+	if fromAddr == "" {
+		return errors.New("email provider not configured (falta email de origen)")
 	}
 
-	msg := strings.Builder{}
-	msg.WriteString("From: " + from + "\r\n")
-	msg.WriteString("To: " + to + "\r\n")
-	msg.WriteString("Subject: " + mimeSafeSubject(subject) + "\r\n")
-	msg.WriteString("MIME-Version: 1.0\r\n")
-	msg.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
-	msg.WriteString("\r\n")
-	msg.WriteString(body)
-
-	return smtp.SendMail(addr, auth, from, []string{to}, []byte(msg.String()))
+	return sendViaConfig(ctx, cfg, backofficeEmailFromName, fromAddr, to, subject, htmlBody)
 }
 
-func mimeSafeSubject(subject string) string {
-	subject = strings.TrimSpace(subject)
-	if subject == "" {
-		return "Mensaje"
+// resolveEmailFromAddr picks the From address: prefer the restaurant branding
+// override, else the provider's configured from address.
+func resolveEmailFromAddr(branding restaurantBrandingCfg, cfg boEmailProviderConfig) string {
+	if v := strings.TrimSpace(branding.EmailFromAddress); v != "" {
+		return v
 	}
-	if isASCII(subject) {
-		return subject
+	if strings.EqualFold(strings.TrimSpace(cfg.Provider), "gmail") {
+		return strings.TrimSpace(cfg.GmailFromEmail)
 	}
-	return "=?UTF-8?B?" + base64Encode(subject) + "?="
+	return strings.TrimSpace(cfg.SMTPFromEmail)
 }
 
 func (s *Server) sendWhatsAppMessage(ctx context.Context, restaurantID int, phone string, text string) error {

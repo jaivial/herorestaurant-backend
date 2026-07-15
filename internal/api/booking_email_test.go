@@ -220,19 +220,3 @@ func TestMimeEncodeSubject(t *testing.T) {
 		})
 	}
 }
-
-func TestMimeSafeSubject(t *testing.T) {
-	if got := mimeSafeSubject(""); got != "Mensaje" {
-		t.Fatalf("empty: expected 'Mensaje', got %q", got)
-	}
-	if got := mimeSafeSubject("  "); got != "Mensaje" {
-		t.Fatalf("whitespace: expected 'Mensaje', got %q", got)
-	}
-	if got := mimeSafeSubject("Plain ASCII"); got != "Plain ASCII" {
-		t.Fatalf("ascii passthrough: got %q", got)
-	}
-	got := mimeSafeSubject("Alquería · Invitacion")
-	if !strings.HasPrefix(got, "=?UTF-8?B?") || !strings.HasSuffix(got, "?=") {
-		t.Fatalf("expected RFC 2047 base64 envelope, got %q", got)
-	}
-}
