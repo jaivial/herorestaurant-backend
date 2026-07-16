@@ -23,7 +23,21 @@ import (
 // making a real network call. smtpSendReal is the production implementation.
 var smtpSend = smtpSendReal
 
+// emailAttachment is a file attached to an outgoing email.
+type emailAttachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
 func smtpSendReal(ctx context.Context, host string, port int, username, password, fromName, fromAddr, to, subject, htmlBody, encryption string) error {
+	return smtpSendRealAttach(ctx, host, port, username, password, fromName, fromAddr, to, subject, htmlBody, encryption, nil)
+}
+
+// smtpSendAttach is a package var so tests can swap it for a recorder.
+var smtpSendAttach = smtpSendRealAttach
+
+func smtpSendRealAttach(ctx context.Context, host string, port int, username, password, fromName, fromAddr, to, subject, htmlBody, encryption string, attachments []emailAttachment) error {
 	if host == "" || username == "" || password == "" {
 		return fmt.Errorf("SMTP no configurado")
 	}
@@ -31,23 +45,77 @@ func smtpSendReal(ctx context.Context, host string, port int, username, password
 		return fmt.Errorf("email destino inválido: %s", to)
 	}
 
-	addr := host + ":" + strconv.Itoa(port)
 	from := fromAddr
 	if fromName != "" {
 		from = fromName + " <" + fromAddr + ">"
 	}
 
-	// Build SMTP message.
+	msg := buildEmailMessage(from, to, subject, htmlBody, attachments)
+	return smtpDeliver(ctx, host, port, username, password, fromAddr, to, encryption, msg)
+}
+
+// buildEmailMessage builds the raw RFC822 message. When attachments are present
+// it produces a multipart/mixed message; otherwise a single text/html part.
+func buildEmailMessage(from, to, subject, htmlBody string, attachments []emailAttachment) []byte {
 	var buf bytes.Buffer
 	buf.WriteString("From: " + from + "\r\n")
 	buf.WriteString("To: " + to + "\r\n")
 	buf.WriteString("Subject: " + mimeEncodeSubject(subject) + "\r\n")
 	buf.WriteString("MIME-Version: 1.0\r\n")
-	buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
 	buf.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
+
+	if len(attachments) == 0 {
+		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
+		buf.WriteString("Content-Transfer-Encoding: 8bit\r\n")
+		buf.WriteString("\r\n")
+		buf.WriteString(htmlBody)
+		return buf.Bytes()
+	}
+
+	boundary := "----=_bo_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	buf.WriteString("Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n")
+	buf.WriteString("\r\n")
+
+	// HTML part
+	buf.WriteString("--" + boundary + "\r\n")
+	buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
+	buf.WriteString("Content-Transfer-Encoding: 8bit\r\n")
 	buf.WriteString("\r\n")
 	buf.WriteString(htmlBody)
+	buf.WriteString("\r\n")
 
+	// Attachment parts
+	for _, att := range attachments {
+		ct := att.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		filename := att.Filename
+		if filename == "" {
+			filename = "archivo"
+		}
+		buf.WriteString("--" + boundary + "\r\n")
+		buf.WriteString("Content-Type: " + ct + "; name=\"" + filename + "\"\r\n")
+		buf.WriteString("Content-Transfer-Encoding: base64\r\n")
+		buf.WriteString("Content-Disposition: attachment; filename=\"" + filename + "\"\r\n")
+		buf.WriteString("\r\n")
+		b64 := base64.StdEncoding.EncodeToString(att.Data)
+		for i := 0; i < len(b64); i += 76 {
+			end := i + 76
+			if end > len(b64) {
+				end = len(b64)
+			}
+			buf.WriteString(b64[i:end] + "\r\n")
+		}
+	}
+	buf.WriteString("--" + boundary + "--\r\n")
+	return buf.Bytes()
+}
+
+// smtpDeliver opens the SMTP connection (honoring encryption) and writes the
+// pre-built raw message.
+func smtpDeliver(ctx context.Context, host string, port int, username, password, fromAddr, to, encryption string, msg []byte) error {
+	addr := host + ":" + strconv.Itoa(port)
 	auth := smtp.PlainAuth("", username, password, host)
 	tlsConfig := &tls.Config{ServerName: host}
 
@@ -55,7 +123,6 @@ func smtpSendReal(ctx context.Context, host string, port int, username, password
 	var err error
 	switch strings.ToLower(strings.TrimSpace(encryption)) {
 	case "ssl":
-		// Implicit TLS (typically port 465): dial over TLS, no StartTLS.
 		tconn, derr := tls.Dial("tcp", addr, tlsConfig)
 		if derr != nil {
 			return fmt.Errorf("SMTP TLS Dial: %v", derr)
@@ -66,7 +133,6 @@ func smtpSendReal(ctx context.Context, host string, port int, username, password
 			return fmt.Errorf("SMTP NewClient: %v", err)
 		}
 	default:
-		// "none" and "tls" both dial plaintext first.
 		conn, err = smtp.Dial(addr)
 		if err != nil {
 			return fmt.Errorf("SMTP Dial: %v", err)
@@ -93,7 +159,7 @@ func smtpSendReal(ctx context.Context, host string, port int, username, password
 	if err != nil {
 		return fmt.Errorf("SMTP Data: %v", err)
 	}
-	if _, err := wc.Write(buf.Bytes()); err != nil {
+	if _, err := wc.Write(msg); err != nil {
 		return fmt.Errorf("SMTP Write: %v", err)
 	}
 	if err := wc.Close(); err != nil {
@@ -349,9 +415,15 @@ func resolveSMTPConfigForRestaurant(ctx context.Context, s *Server, restaurantID
 
 // sendViaConfig sends one HTML email using the provider settings from the DB.
 func sendViaConfig(ctx context.Context, cfg boEmailProviderConfig, fromName, fromAddr, to, subject, htmlBody string) error {
+	return sendViaConfigWithAttachments(ctx, cfg, fromName, fromAddr, to, subject, htmlBody, nil)
+}
+
+// sendViaConfigWithAttachments sends via the restaurant's provider (SMTP or
+// Gmail) with optional file attachments.
+func sendViaConfigWithAttachments(ctx context.Context, cfg boEmailProviderConfig, fromName, fromAddr, to, subject, htmlBody string, attachments []emailAttachment) error {
 	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
 	case "gmail":
-		return smtpSend(ctx, "smtp.gmail.com", 587, cfg.GmailFromEmail, cfg.GmailAppPassword, fromName, fromAddr, to, subject, htmlBody, "tls")
+		return smtpSendAttach(ctx, "smtp.gmail.com", 587, cfg.GmailFromEmail, cfg.GmailAppPassword, fromName, fromAddr, to, subject, htmlBody, "tls", attachments)
 	default: // "smtp"
 		port := cfg.SMTPPort
 		if port <= 0 {
@@ -361,7 +433,7 @@ func sendViaConfig(ctx context.Context, cfg boEmailProviderConfig, fromName, fro
 		if enc == "" {
 			enc = "tls"
 		}
-		return smtpSend(ctx, cfg.SMTPHost, port, cfg.SMTPUsername, cfg.SMTPPassword, fromName, fromAddr, to, subject, htmlBody, enc)
+		return smtpSendAttach(ctx, cfg.SMTPHost, port, cfg.SMTPUsername, cfg.SMTPPassword, fromName, fromAddr, to, subject, htmlBody, enc, attachments)
 	}
 }
 

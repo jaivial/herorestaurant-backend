@@ -92,6 +92,7 @@ type boBookingUpsertReq struct {
 	TableNumber          *string `json:"table_number,omitempty"`
 	PreferredFloorNumber *int    `json:"preferred_floor_number,omitempty"`
 	Commentary           *string `json:"commentary,omitempty"`
+	Children             *int    `json:"children,omitempty"`
 	BabyStrollers        *int    `json:"babyStrollers,omitempty"`
 	HighChairs           *int    `json:"highChairs,omitempty"`
 
@@ -132,6 +133,7 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		TableNumber:             req.TableNumber,
 		PreferredFloorNumber:    req.PreferredFloorNumber,
 		Commentary:              req.Commentary,
+		Children:                req.Children,
 		BabyStrollers:           req.BabyStrollers,
 		HighChairs:              req.HighChairs,
 		ArrozTypes:              req.ArrozTypes,
@@ -227,6 +229,7 @@ type boBookingPatchReq struct {
 	TableNumber          *string `json:"table_number,omitempty"`
 	PreferredFloorNumber *int    `json:"preferred_floor_number,omitempty"`
 	Commentary           *string `json:"commentary,omitempty"`
+	Children             *int    `json:"children,omitempty"`
 	BabyStrollers        *int    `json:"babyStrollers,omitempty"`
 	HighChairs           *int    `json:"highChairs,omitempty"`
 
@@ -308,6 +311,10 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 		n := int(v)
 		input.HighChairs = &n
 	}
+	if v, ok := current["children"].(int64); ok {
+		n := int(v)
+		input.Children = &n
+	}
 	if v, ok := current["special_menu"].(bool); ok {
 		input.SpecialMenu = v
 	}
@@ -355,6 +362,9 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.HighChairs != nil {
 		input.HighChairs = req.HighChairs
+	}
+	if req.Children != nil {
+		input.Children = req.Children
 	}
 	if req.SpecialMenu != nil {
 		input.SpecialMenu = *req.SpecialMenu
@@ -457,6 +467,7 @@ type boNormalizedBooking struct {
 	ReservationDate         string
 	ReservationTime         string
 	PartySize               int
+	Children                int
 	CustomerName            string
 	ContactPhone            string
 	ContactPhoneCountryCode string
@@ -487,6 +498,7 @@ type boNormalizeInput struct {
 	TableNumber          *string
 	PreferredFloorNumber *int
 	Commentary           *string
+	Children             *int
 	BabyStrollers        *int
 	HighChairs           *int
 
@@ -543,6 +555,13 @@ func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaur
 	out.ContactPhone = nationalPhone
 	out.ContactPhoneCountryCode = cc
 	out.ContactEmail = email
+	out.Children = 0
+	if in.Children != nil && *in.Children >= 0 {
+		out.Children = *in.Children
+		if out.Children > partySize {
+			out.Children = partySize
+		}
+	}
 
 	if in.TableNumber != nil {
 		v := strings.TrimSpace(*in.TableNumber)
@@ -716,6 +735,7 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 			restaurant_id,
 			reservation_date,
 			party_size,
+			children,
 			reservation_time,
 			customer_name,
 			contact_phone,
@@ -731,11 +751,12 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 			principales_json,
 			table_number,
 			preferred_floor_number
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		restaurantID,
 		b.ReservationDate,
 		b.PartySize,
+		b.Children,
 		b.ReservationTime,
 		b.CustomerName,
 		b.ContactPhone,
@@ -771,6 +792,7 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 			reservation_date = ?,
 			reservation_time = ?,
 			party_size = ?,
+			children = ?,
 			customer_name = ?,
 			contact_phone = ?,
 			contact_phone_country_code = ?,
@@ -790,6 +812,7 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 		b.ReservationDate,
 		b.ReservationTime,
 		b.PartySize,
+		b.Children,
 		b.CustomerName,
 		b.ContactPhone,
 		b.ContactPhoneCountryCode,
@@ -1077,6 +1100,7 @@ func boBookingToNotificationData(b boNormalizedBooking, id int) map[string]any {
 		"reservation_date":           b.ReservationDate,
 		"reservation_time":           b.ReservationTime,
 		"party_size":                 b.PartySize,
+		"children":                   b.Children,
 		"customer_name":              b.CustomerName,
 		"contact_phone":              b.ContactPhone,
 		"contact_phone_country_code": b.ContactPhoneCountryCode,
