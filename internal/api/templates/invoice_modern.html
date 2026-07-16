@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Factura {{.Number}}</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:#0f172a; font-size:13px; line-height:1.5; }
+  .sheet { max-width:820px; margin:0 auto; }
+  .band { background:{{.Accent}}; color:#fff; padding:34px 44px; display:flex; justify-content:space-between; align-items:center; }
+  .band .issuer-name { font-size:20px; font-weight:800; }
+  .band .muted { color:rgba(255,255,255,.85); }
+  .band .doc { text-align:right; }
+  .band .doc .title { font-size:26px; font-weight:800; letter-spacing:.06em; }
+  .logo-chip { display:inline-block; background:#fff; border-radius:10px; padding:7px 10px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,.12); }
+  .logo { max-height:44px; display:block; }
+  .body { padding:32px 44px; }
+  .cards { display:flex; gap:20px; }
+  .card { flex:1; background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:16px; }
+  .label { text-transform:uppercase; letter-spacing:.08em; font-size:11px; font-weight:700; color:{{.Accent}}; margin-bottom:8px; }
+  .muted { color:#64748b; }
+  table.items { width:100%; border-collapse:collapse; margin-top:24px; }
+  table.items th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#fff; background:{{.Accent}}; padding:10px 10px; }
+  table.items th.num, table.items td.num { text-align:right; white-space:nowrap; }
+  table.items td { padding:10px; border-bottom:1px solid #eef2f7; }
+  table.items tbody tr:nth-child(even) { background:#f8fafc; }
+  .totals { margin-top:18px; margin-left:auto; width:300px; }
+  .totals td { padding:5px 8px; }
+  .totals .grand td { border-top:2px solid {{.Accent}}; color:{{.Accent}}; font-weight:800; font-size:16px; padding-top:10px; }
+  .notes { margin-top:22px; padding:14px 16px; background:#f1f5f9; border-left:4px solid {{.Accent}}; border-radius:8px; }
+  .footer { margin-top:30px; padding:18px 44px; text-align:center; color:#94a3b8; font-size:11px; border-top:1px solid #eef2f7; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="band">
+    <div>
+      {{if .Issuer.LogoURL}}<span class="logo-chip"><img class="logo" src="{{.Issuer.LogoURL}}" alt="{{.Issuer.Name}}"></span>{{end}}
+      <div class="issuer-name">{{.Issuer.Name}}</div>
+      {{if .Issuer.CIF}}<div class="muted">CIF/NIF: {{.Issuer.CIF}}</div>{{end}}
+      {{if .Issuer.Address}}<div class="muted">{{.Issuer.Address}}</div>{{end}}
+    </div>
+    <div class="doc">
+      <div class="title">FACTURA</div>
+      {{if .Number}}<div class="muted">Nº {{.Number}}</div>{{end}}
+      {{if .InvoiceDate}}<div class="muted">{{.InvoiceDate}}</div>{{end}}
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="cards">
+      <div class="card">
+        <div class="label">Emisor</div>
+        <div><strong>{{.Issuer.Name}}</strong></div>
+        {{if .Issuer.Phone}}<div class="muted">Tel: {{.Issuer.Phone}}</div>{{end}}
+        {{if .Issuer.Email}}<div class="muted">{{.Issuer.Email}}</div>{{end}}
+      </div>
+      <div class="card">
+        <div class="label">Cliente</div>
+        <div><strong>{{.Customer.Name}}</strong></div>
+        {{if .Customer.DniCif}}<div class="muted">DNI/CIF: {{.Customer.DniCif}}</div>{{end}}
+        {{if .Customer.Address}}<div class="muted">{{.Customer.Address}}</div>{{end}}
+        {{if .Customer.Email}}<div class="muted">{{.Customer.Email}}</div>{{end}}
+        {{if .Customer.Phone}}<div class="muted">Tel: {{.Customer.Phone}}</div>{{end}}
+      </div>
+    </div>
+
+    {{if .HasLines}}
+    <table class="items">
+      <thead>
+        <tr>
+          <th>Descripción</th>
+          <th class="num">Cant.</th>
+          <th class="num">Precio</th>
+          <th class="num">IVA</th>
+          <th class="num">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Lines}}
+        <tr>
+          <td>{{.Description}}</td>
+          <td class="num">{{.Quantity}}</td>
+          <td class="num">{{.UnitPrice}}</td>
+          <td class="num">{{.IVARate}}</td>
+          <td class="num">{{.Total}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{end}}
+
+    <table class="totals">
+      <tr><td class="muted">Base imponible</td><td class="num">{{.Subtotal}}</td></tr>
+      {{if .HasIVA}}<tr><td class="muted">{{.IVALabel}}</td><td class="num">{{.IVAAmount}}</td></tr>{{end}}
+      {{if .HasDiscount}}<tr><td class="muted">{{.DiscountLabel}}</td><td class="num">{{.DiscountAmount}}</td></tr>{{end}}
+      {{if .HasDeposit}}<tr><td class="muted">{{.DepositLabel}}</td><td class="num">{{.DepositAmount}}</td></tr>{{end}}
+      <tr class="grand"><td>Total</td><td class="num">{{.Total}}</td></tr>
+    </table>
+
+    {{if .PaymentMethod}}<div style="margin-top:20px;"><span class="label" style="display:inline;">Forma de pago:</span> {{.PaymentMethod}}</div>{{end}}
+    {{if .Notes}}<div class="notes">{{.Notes}}</div>{{end}}
+  </div>
+
+  <div class="footer">{{.Issuer.Name}} · Gracias por su confianza</div>
+</div>
+</body>
+</html>

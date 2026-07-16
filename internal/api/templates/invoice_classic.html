@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Factura {{.Number}}</title>
+<style>
+  @page { size: A4; margin: 18mm; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Georgia, "Times New Roman", serif; color:#1f2937; font-size:13px; line-height:1.55; }
+  .wrap { max-width:760px; margin:0 auto; padding:8px; }
+  .head { text-align:center; border-bottom:3px double {{.Accent}}; padding-bottom:16px; }
+  .logo { max-height:60px; margin-bottom:8px; }
+  .issuer-name { font-size:22px; font-weight:700; color:{{.Accent}}; letter-spacing:.02em; }
+  .muted { color:#6b7280; }
+  .doc-title { margin-top:18px; text-align:center; font-size:18px; letter-spacing:.28em; text-transform:uppercase; color:{{.Accent}}; }
+  .parties { display:flex; justify-content:space-between; gap:32px; margin-top:22px; }
+  .parties .box { flex:1; }
+  .label { font-variant:small-caps; letter-spacing:.06em; font-size:12px; font-weight:700; color:{{.Accent}}; border-bottom:1px solid #e5e7eb; padding-bottom:4px; margin-bottom:6px; }
+  table { width:100%; border-collapse:collapse; margin-top:24px; }
+  th { text-align:left; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:{{.Accent}}; border-top:2px solid {{.Accent}}; border-bottom:2px solid {{.Accent}}; padding:8px 6px; }
+  th.num, td.num { text-align:right; white-space:nowrap; }
+  td { padding:8px 6px; border-bottom:1px solid #ececec; }
+  .totals { margin-top:16px; margin-left:auto; width:290px; }
+  .totals td { padding:4px 6px; }
+  .totals .grand td { border-top:2px solid {{.Accent}}; border-bottom:3px double {{.Accent}}; font-weight:700; font-size:15px; color:{{.Accent}}; padding:8px 6px; }
+  .notes { margin-top:22px; font-style:italic; color:#4b5563; }
+  .footer { margin-top:34px; text-align:center; color:#9ca3af; font-size:11px; border-top:1px solid #e5e7eb; padding-top:12px; font-style:italic; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    {{if .Issuer.LogoURL}}<img class="logo" src="{{.Issuer.LogoURL}}" alt="{{.Issuer.Name}}"><br>{{end}}
+    <span class="issuer-name">{{.Issuer.Name}}</span>
+    <div class="muted">
+      {{if .Issuer.CIF}}CIF/NIF: {{.Issuer.CIF}}{{end}}
+      {{if .Issuer.Address}} · {{.Issuer.Address}}{{end}}
+      {{if .Issuer.Phone}} · Tel: {{.Issuer.Phone}}{{end}}
+      {{if .Issuer.Email}} · {{.Issuer.Email}}{{end}}
+    </div>
+  </div>
+
+  <div class="doc-title">Factura{{if .Number}} {{.Number}}{{end}}</div>
+
+  <div class="parties">
+    <div class="box">
+      <div class="label">Datos de la factura</div>
+      {{if .InvoiceDate}}<div><span class="muted">Fecha:</span> {{.InvoiceDate}}</div>{{end}}
+      {{if .DueDate}}<div><span class="muted">Vencimiento:</span> {{.DueDate}}</div>{{end}}
+      <div><span class="muted">Estado:</span> {{.StatusLabel}}</div>
+      {{if .PaymentMethod}}<div><span class="muted">Forma de pago:</span> {{.PaymentMethod}}</div>{{end}}
+    </div>
+    <div class="box">
+      <div class="label">Cliente</div>
+      <div><strong>{{.Customer.Name}}</strong></div>
+      {{if .Customer.DniCif}}<div class="muted">DNI/CIF: {{.Customer.DniCif}}</div>{{end}}
+      {{if .Customer.Address}}<div class="muted">{{.Customer.Address}}</div>{{end}}
+      {{if .Customer.Email}}<div class="muted">{{.Customer.Email}}</div>{{end}}
+      {{if .Customer.Phone}}<div class="muted">Tel: {{.Customer.Phone}}</div>{{end}}
+    </div>
+  </div>
+
+  {{if .HasLines}}
+  <table>
+    <thead>
+      <tr>
+        <th>Descripción</th>
+        <th class="num">Cant.</th>
+        <th class="num">Precio</th>
+        <th class="num">IVA</th>
+        <th class="num">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Lines}}
+      <tr>
+        <td>{{.Description}}</td>
+        <td class="num">{{.Quantity}}</td>
+        <td class="num">{{.UnitPrice}}</td>
+        <td class="num">{{.IVARate}}</td>
+        <td class="num">{{.Total}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+
+  <table class="totals">
+    <tr><td class="muted">Base imponible</td><td class="num">{{.Subtotal}}</td></tr>
+    {{if .HasIVA}}<tr><td class="muted">{{.IVALabel}}</td><td class="num">{{.IVAAmount}}</td></tr>{{end}}
+    {{if .HasDiscount}}<tr><td class="muted">{{.DiscountLabel}}</td><td class="num">{{.DiscountAmount}}</td></tr>{{end}}
+    {{if .HasDeposit}}<tr><td class="muted">{{.DepositLabel}}</td><td class="num">{{.DepositAmount}}</td></tr>{{end}}
+    <tr class="grand"><td>Total</td><td class="num">{{.Total}}</td></tr>
+  </table>
+
+  {{if .Notes}}<div class="notes">{{.Notes}}</div>{{end}}
+
+  <div class="footer">{{.Issuer.Name}} · Gracias por su confianza</div>
+</div>
+</body>
+</html>

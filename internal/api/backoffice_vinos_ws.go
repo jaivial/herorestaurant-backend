@@ -248,9 +248,9 @@ func (s *Server) handleBOVinosAIWS(w http.ResponseWriter, r *http.Request) {
 }
 
 type boVinoAIImagesTracker struct {
-	TotalRequested  int                   `json:"total_requested"`
-	TotalGenerating int                   `json:"total_generating"`
-	Items           []boVinoAIImagesItem  `json:"items"`
+	TotalRequested  int                  `json:"total_requested"`
+	TotalGenerating int                  `json:"total_generating"`
+	Items           []boVinoAIImagesItem `json:"items"`
 }
 
 type boVinoAIImagesItem struct {
@@ -464,11 +464,11 @@ func (s *Server) runBOVinoAIImageJob(job boVinoAIImageJob) {
 	}
 
 	s.broadcastBOVinoAIEvent(job.RestaurantID, "wine_ai_completed", map[string]any{
-		"wine_num":        job.WineNum,
-		"ai_requested":    true,
-		"ai_generating":   false,
+		"wine_num":         job.WineNum,
+		"ai_requested":     true,
+		"ai_generating":    false,
 		"ai_generated_img": fullURL,
-		"foto_url":        fullURL,
+		"foto_url":         fullURL,
 	})
 	s.logBOVinoAITrace("job completed restaurant=%d wine=%d url=%s", job.RestaurantID, job.WineNum, fullURL)
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"log"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +88,23 @@ type boFichajeTimeEntry struct {
 type boHorariosMonthPoint struct {
 	Date          string `json:"date"`
 	AssignedCount int    `json:"assignedCount"`
+}
+
+type boCalendarDayWorker struct {
+	MemberID   int                  `json:"memberId"`
+	MemberName string               `json:"memberName"`
+	PhotoURL   string               `json:"photoUrl"`
+	Schedules  []boCalendarSchedule `json:"schedules"`
+}
+
+type boCalendarSchedule struct {
+	StartTime string `json:"startTime"`
+	EndTime   string `json:"endTime"`
+}
+
+type boCalendarDay struct {
+	Date    string                `json:"date"`
+	Workers []boCalendarDayWorker `json:"workers"`
 }
 
 type boClockMember struct {
@@ -1038,6 +1056,149 @@ func (s *Server) handleBOHorariosMonth(w http.ResponseWriter, r *http.Request) {
 		"year":    year,
 		"month":   month,
 		"days":    points,
+	})
+}
+
+func (s *Server) handleBOHorariosCalendar(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	now := time.Now().In(boMadridTZ)
+	year := now.Year()
+	month := int(now.Month())
+
+	if raw := strings.TrimSpace(r.URL.Query().Get("year")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 2000 || v > 2100 {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "year inválido"})
+			return
+		}
+		year = v
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("month")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 1 || v > 12 {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "month inválido"})
+			return
+		}
+		month = v
+	}
+
+	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, boMadridTZ)
+	end := start.AddDate(0, 1, -1)
+
+	// Get total active members for the restaurant
+	var totalMembers int
+	err := s.db.QueryRowContext(r.Context(),
+		`SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id = ? AND is_active = 1`,
+		a.ActiveRestaurantID,
+	).Scan(&totalMembers)
+	if err != nil {
+		totalMembers = 0
+	}
+
+	// Query schedules with member details for the entire month
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT DATE_FORMAT(mws.work_date, '%Y-%m-%d') AS work_date, rm.id, rm.first_name, rm.last_name, rm.photo_url,
+		       TIME_FORMAT(mws.start_time, '%H:%i') AS start_time,
+	       TIME_FORMAT(mws.end_time, '%H:%i') AS end_time
+		FROM member_work_schedules mws
+		JOIN restaurant_members rm ON rm.id = mws.restaurant_member_id AND rm.restaurant_id = mws.restaurant_id
+		WHERE mws.restaurant_id = ? AND mws.work_date BETWEEN ? AND ?
+		ORDER BY mws.work_date ASC, rm.first_name ASC, rm.last_name ASC, mws.start_time ASC
+	`, a.ActiveRestaurantID, start.Format("2006-01-02"), end.Format("2006-01-02"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo calendario de horarios")
+		return
+	}
+	defer rows.Close()
+
+	// Group by date and member
+	type tmpWorker struct {
+		memberID  int
+		firstName string
+		lastName  string
+		photoURL  string
+	}
+	dayMap := make(map[string]map[int]*struct {
+		worker    tmpWorker
+		schedules []boCalendarSchedule
+	})
+
+		var rowCount int
+	for rows.Next() {
+		var workDate string
+		var memberID int
+		var firstName, lastName string
+		var photoURL *string
+		var startTime, endTime string
+
+		if err := rows.Scan(&workDate, &memberID, &firstName, &lastName, &photoURL, &startTime, &endTime); err != nil {
+			log.Printf("[calendar] scan error: %v", err)
+			continue
+		}
+
+		if dayMap[workDate] == nil {
+			dayMap[workDate] = make(map[int]*struct {
+				worker    tmpWorker
+				schedules []boCalendarSchedule
+			})
+		}
+
+		photo := ""
+		if photoURL != nil {
+			photo = *photoURL
+		}
+
+		entry, ok := dayMap[workDate][memberID]
+		if !ok {
+			dayMap[workDate][memberID] = &struct {
+				worker    tmpWorker
+				schedules []boCalendarSchedule
+			}{
+				worker: tmpWorker{memberID, firstName, lastName, photo},
+				schedules: []boCalendarSchedule{
+					{StartTime: startTime, EndTime: endTime},
+				},
+			}
+		} else {
+			entry.schedules = append(entry.schedules, boCalendarSchedule{StartTime: startTime, EndTime: endTime})
+		}
+	}
+
+	log.Printf("[calendar] restaurant_id=%d rows=%d start=%s end=%s", a.ActiveRestaurantID, rowCount, start.Format("2006-01-02"), end.Format("2006-01-02"))
+	// Build the days in chronological order
+	days := make([]boCalendarDay, 0)
+	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
+		dateKey := d.Format("2006-01-02")
+		workersMap, hasWorkers := dayMap[dateKey]
+
+		if !hasWorkers {
+			days = append(days, boCalendarDay{Date: dateKey, Workers: []boCalendarDayWorker{}})
+			continue
+		}
+
+		workers := make([]boCalendarDayWorker, 0, len(workersMap))
+		for _, w := range workersMap {
+			workers = append(workers, boCalendarDayWorker{
+				MemberID:   w.worker.memberID,
+				MemberName: w.worker.firstName + " " + w.worker.lastName,
+				PhotoURL:   w.worker.photoURL,
+				Schedules:  w.schedules,
+			})
+		}
+		days = append(days, boCalendarDay{Date: dateKey, Workers: workers})
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"year":         year,
+		"month":        month,
+		"totalMembers": totalMembers,
+		"days":         days,
 	})
 }
 

@@ -1,0 +1,52 @@
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#ffffff;border-radius:12px;overflow:hidden;text-align:left;color:#1f2937;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <tr>
+    <td style="padding:20px 22px;border-bottom:3px solid {{.Accent}};">
+      <div style="font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:{{.Accent}};">Factura</div>
+      {{if .Number}}<div style="font-size:19px;font-weight:800;color:#111827;margin-top:2px;">{{.Number}}</div>{{end}}
+      {{if .InvoiceDate}}<div style="font-size:12px;color:#6b7280;margin-top:{{if .Number}}4px{{else}}2px{{end}};">Fecha: {{.InvoiceDate}}</div>{{end}}
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:16px 22px 4px 22px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:{{.Accent}};margin-bottom:4px;">Cliente</div>
+      <div style="font-size:14px;color:#111827;font-weight:600;">{{.Customer.Name}}</div>
+      {{if .Customer.DniCif}}<div style="font-size:12px;color:#6b7280;">DNI/CIF: {{.Customer.DniCif}}</div>{{end}}
+      {{if .Customer.Address}}<div style="font-size:12px;color:#6b7280;">{{.Customer.Address}}</div>{{end}}
+    </td>
+  </tr>
+
+  {{if .HasLines}}
+  <tr>
+    <td style="padding:14px 22px 0 22px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <th align="left" style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;border-bottom:2px solid #e5e7eb;padding:6px 4px;">Concepto</th>
+          <th align="right" style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;border-bottom:2px solid #e5e7eb;padding:6px 4px;">Cant.</th>
+          <th align="right" style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;border-bottom:2px solid #e5e7eb;padding:6px 4px;">Total</th>
+        </tr>
+        {{range .Lines}}
+        <tr>
+          <td style="font-size:12px;color:#374151;padding:6px 4px;border-bottom:1px solid #f1f1f1;">{{.Description}}</td>
+          <td align="right" style="font-size:12px;color:#374151;padding:6px 4px;border-bottom:1px solid #f1f1f1;white-space:nowrap;">{{.Quantity}}</td>
+          <td align="right" style="font-size:12px;color:#374151;padding:6px 4px;border-bottom:1px solid #f1f1f1;white-space:nowrap;">{{.Total}}</td>
+        </tr>
+        {{end}}
+      </table>
+    </td>
+  </tr>
+  {{end}}
+
+  <tr>
+    <td style="padding:14px 22px 20px 22px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;">
+        <tr><td style="font-size:12px;color:#6b7280;padding:3px 4px;">Base imponible</td><td align="right" style="font-size:12px;color:#374151;padding:3px 4px;white-space:nowrap;">{{.Subtotal}}</td></tr>
+        {{if .HasIVA}}<tr><td style="font-size:12px;color:#6b7280;padding:3px 4px;">{{.IVALabel}}</td><td align="right" style="font-size:12px;color:#374151;padding:3px 4px;white-space:nowrap;">{{.IVAAmount}}</td></tr>{{end}}
+        {{if .HasDiscount}}<tr><td style="font-size:12px;color:#6b7280;padding:3px 4px;">{{.DiscountLabel}}</td><td align="right" style="font-size:12px;color:#374151;padding:3px 4px;white-space:nowrap;">{{.DiscountAmount}}</td></tr>{{end}}
+        {{if .HasDeposit}}<tr><td style="font-size:12px;color:#6b7280;padding:3px 4px;">{{.DepositLabel}}</td><td align="right" style="font-size:12px;color:#374151;padding:3px 4px;white-space:nowrap;">{{.DepositAmount}}</td></tr>{{end}}
+        <tr><td style="font-size:15px;font-weight:800;color:{{.Accent}};padding:8px 4px 0 4px;border-top:2px solid {{.Accent}};">Total</td><td align="right" style="font-size:15px;font-weight:800;color:{{.Accent}};padding:8px 4px 0 4px;border-top:2px solid {{.Accent}};white-space:nowrap;">{{.Total}}</td></tr>
+      </table>
+      {{if .PaymentMethod}}<div style="font-size:12px;color:#6b7280;margin-top:10px;">Forma de pago: {{.PaymentMethod}}</div>{{end}}
+    </td>
+  </tr>
+</table>
+<div style="font-size:13px;color:#9aa2b1;text-align:center;margin-top:16px;">Adjuntamos la factura completa en formato PDF.</div>

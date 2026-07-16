@@ -656,14 +656,14 @@ func (s *Server) handleAdminErrorReport(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var payload struct {
-		Message      string `json:"message"`
-		Name         string `json:"name"`
-		Stack        string `json:"stack"`
+		Message        string `json:"message"`
+		Name           string `json:"name"`
+		Stack          string `json:"stack"`
 		ComponentStack string `json:"componentStack"`
-		Page         string `json:"page"`
-		URL          string `json:"url"`
-		UserAgent    string `json:"userAgent"`
-		Timestamp    string `json:"timestamp"`
+		Page           string `json:"page"`
+		URL            string `json:"url"`
+		UserAgent      string `json:"userAgent"`
+		Timestamp      string `json:"timestamp"`
 	}
 
 	if err := readJSONBody(r, &payload); err != nil {

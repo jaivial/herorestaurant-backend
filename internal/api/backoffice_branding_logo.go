@@ -138,6 +138,7 @@ func (s *Server) bunnyDelete(ctx context.Context, objectPath string) error {
 	}
 	return bunnyDeleteWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyStorageZone), strings.TrimSpace(s.cfg.BunnyStorageKey), objectPath)
 }
+
 // bunnyDeleteWithCredentials removes an object from BunnyCDN storage.
 func bunnyDeleteWithCredentials(ctx context.Context, zone, accessKey, objectPath string) error {
 	if strings.TrimSpace(zone) == "" || strings.TrimSpace(accessKey) == "" {

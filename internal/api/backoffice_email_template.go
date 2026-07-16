@@ -167,6 +167,58 @@ func buildBackofficeInvitationEmailHTML(restaurantName, invitationURL string) st
 	)
 }
 
+// buildBackofficeInvoiceEmailHTML renders the invoice email using the same
+// shared, app-branded shell as the member invitation / password-reset emails,
+// with an inline-styled invoice summary (rendered per the selected template)
+// embedded as the body. The full-fidelity invoice is attached as a PDF.
+// customMessage is optional free text (plain, will be escaped); when provided it
+// is shown above the invoice summary.
+func buildBackofficeInvoiceEmailHTML(data invoiceRenderData, invoiceURL, customMessage string) string {
+	brand := strings.TrimSpace(data.Issuer.Name)
+	customer := htmlEscape(strings.TrimSpace(data.Customer.Name))
+	number := strings.TrimSpace(data.Number)
+	title := "Factura"
+	preheader := "Tu factura de " + brand
+	if number != "" {
+		title = "Factura " + number
+		preheader = "Tu factura " + number + " de " + brand
+	}
+
+	strong := func(v string) string {
+		return "<strong class=\"bo-text\" style=\"color:" + boEmailText + ";\">" + v + "</strong>"
+	}
+
+	var intro strings.Builder
+	if strings.TrimSpace(customMessage) != "" {
+		intro.WriteString("<div style=\"margin-bottom:18px;\">")
+		intro.WriteString(strings.ReplaceAll(htmlEscape(strings.TrimSpace(customMessage)), "\n", "<br>"))
+		intro.WriteString("</div>")
+	} else {
+		var factura string
+		if number != "" {
+			factura = "tu factura " + strong(htmlEscape(number))
+		} else {
+			factura = "tu factura"
+		}
+		intro.WriteString("<div style=\"margin-bottom:18px;\">Hola " + strong(customer) +
+			", aqu\u00ed tienes " + factura + " emitida por " + strong(htmlEscape(brand)) + ".</div>")
+	}
+
+	// Render the per-template invoice summary fragment.
+	if summary, err := renderInvoiceEmailFragment(data); err == nil {
+		intro.WriteString(summary)
+	}
+
+	return renderBackofficeEmailShell(
+		title,
+		preheader,
+		intro.String(),
+		"Ver factura",
+		invoiceURL,
+		"Si tienes cualquier consulta sobre esta factura, contacta con "+brand+".",
+	)
+}
+
 // buildBackofficePasswordResetEmailHTML renders the password-reset email.
 func buildBackofficePasswordResetEmailHTML(restaurantName, resetURL string) string {
 	brand := htmlEscape(strings.TrimSpace(restaurantName))

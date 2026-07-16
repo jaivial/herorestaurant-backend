@@ -112,9 +112,9 @@ func (s *Server) handleBODishSameDayBookingCreate(w http.ResponseWriter, r *http
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"record": map[string]any{
-			"id":           insertedID,
-			"dish_id":      dishID,
-			"menu_id":      menuID,
+			"id":            insertedID,
+			"dish_id":       dishID,
+			"menu_id":       menuID,
 			"restaurant_id": a.ActiveRestaurantID,
 		},
 	})
@@ -149,9 +149,9 @@ func (s *Server) handleBODishSameDayBookingDelete(w http.ResponseWriter, r *http
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":  true,
-		"dish_id":  dishID,
-		"menu_id":  menuID,
+		"success": true,
+		"dish_id": dishID,
+		"menu_id": menuID,
 	})
 }
 

@@ -1969,11 +1969,11 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 // --- Mandatory Menus Config ---
 
 type boMandatoryMenuSaveRequest struct {
-	Date          string `json:"date"`
-	Status        bool   `json:"status"`
-	Mandatory     bool   `json:"mandatory"`
-	MenuIDs       []int  `json:"menuIds"`
-	MenuChooseMain []int `json:"menuChooseMain"`
+	Date           string `json:"date"`
+	Status         bool   `json:"status"`
+	Mandatory      bool   `json:"mandatory"`
+	MenuIDs        []int  `json:"menuIds"`
+	MenuChooseMain []int  `json:"menuChooseMain"`
 }
 
 func (s *Server) handleBOMandatoryMenusGet(w http.ResponseWriter, r *http.Request) {
@@ -2005,12 +2005,12 @@ func (s *Server) handleBOMandatoryMenusGet(w http.ResponseWriter, r *http.Reques
 
 	if err == sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success":           true,
-			"date":             date,
-			"status":           false,
-			"mandatory":        false,
-			"menuIds":          []int{},
-			"menuChooseMain":   []int{},
+			"success":        true,
+			"date":           date,
+			"status":         false,
+			"mandatory":      false,
+			"menuIds":        []int{},
+			"menuChooseMain": []int{},
 		})
 		return
 	}
@@ -2036,11 +2036,11 @@ func (s *Server) handleBOMandatoryMenusGet(w http.ResponseWriter, r *http.Reques
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":         true,
+		"success":        true,
 		"date":           date,
 		"status":         statusInt != 0,
 		"mandatory":      mandatoryInt != 0,
-		"menuIds":         menuIDs,
+		"menuIds":        menuIDs,
 		"menuChooseMain": menuChooseMain,
 	})
 }
@@ -2099,7 +2099,7 @@ func (s *Server) handleBOMandatoryMenusSave(w http.ResponseWriter, r *http.Reque
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":         true,
+		"success":        true,
 		"date":           date,
 		"status":         req.Status,
 		"mandatory":      req.Mandatory,
@@ -2153,17 +2153,17 @@ func (s *Server) handleBOMenuSelectorGet(w http.ResponseWriter, r *http.Request)
 // --- Email Provider Config ---
 
 type boEmailProviderConfig struct {
-	ID              int    `json:"id"`
-	Provider        string `json:"provider"`
-	SMTPHost        string `json:"smtpHost"`
-	SMTPPort        int    `json:"smtpPort"`
-	SMTPUsername    string `json:"smtpUsername"`
-	SMTPPassword    string `json:"smtpPassword"`
-	SMTPFromEmail   string `json:"smtpFromEmail"`
-	SMTEncryption   string `json:"smtpEncryption"`
+	ID               int    `json:"id"`
+	Provider         string `json:"provider"`
+	SMTPHost         string `json:"smtpHost"`
+	SMTPPort         int    `json:"smtpPort"`
+	SMTPUsername     string `json:"smtpUsername"`
+	SMTPPassword     string `json:"smtpPassword"`
+	SMTPFromEmail    string `json:"smtpFromEmail"`
+	SMTEncryption    string `json:"smtpEncryption"`
 	GmailAppPassword string `json:"gmailAppPassword"`
-	GmailFromEmail  string `json:"gmailFromEmail"`
-	IsActive        bool   `json:"isActive"`
+	GmailFromEmail   string `json:"gmailFromEmail"`
+	IsActive         bool   `json:"isActive"`
 }
 
 type boEmailProviderSetRequest struct {
@@ -2182,16 +2182,16 @@ type boEmailProviderSetRequest struct {
 
 func defaultEmailProviderConfig() boEmailProviderConfig {
 	return boEmailProviderConfig{
-		Provider:      "smtp",
-		SMTPHost:      "",
-		SMTPPort:      587,
-		SMTPUsername:  "",
-		SMTPPassword:  "",
-		SMTPFromEmail: "",
-		SMTEncryption: "tls",
+		Provider:         "smtp",
+		SMTPHost:         "",
+		SMTPPort:         587,
+		SMTPUsername:     "",
+		SMTPPassword:     "",
+		SMTPFromEmail:    "",
+		SMTEncryption:    "tls",
 		GmailAppPassword: "",
 		GmailFromEmail:   "",
-		IsActive:      false,
+		IsActive:         false,
 	}
 }
 

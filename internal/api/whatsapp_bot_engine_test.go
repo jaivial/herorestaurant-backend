@@ -81,7 +81,7 @@ func TestBotRunAgentLoop_SendMessageAndEndTurn(t *testing.T) {
 	// Second request must include assistant tool_use + user tool_result.
 	var second struct {
 		Messages []struct {
-			Role    string `json:"role"`
+			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
 		} `json:"messages"`
 	}

@@ -45,12 +45,12 @@ func botBeverageLabel(bevType string) string {
 // botMenuBeverageSettings interprets the beverage JSON blob stored per menu.
 func botMenuBeverageSettings(raw string) map[string]any {
 	out := map[string]any{
-		"beverage_type":         "no_incluida",
-		"beverage_label":        botBeverageLabel(""),
-		"unlimited_drinks":      false,
+		"beverage_type":          "no_incluida",
+		"beverage_label":         botBeverageLabel(""),
+		"unlimited_drinks":       false,
 		"drink_price_per_person": nil,
-		"has_supplement":        false,
-		"supplement_price":      nil,
+		"has_supplement":         false,
+		"supplement_price":       nil,
 	}
 	decoded, ok := decodeJSONOrFallback(raw, map[string]any{}).(map[string]any)
 	if !ok {
@@ -138,11 +138,11 @@ func (s *Server) botToolMenuDetails(ctx context.Context, restaurantID int, input
 	}
 
 	var (
-		title, menuType, price, subtitleRaw   string
+		title, menuType, price, subtitleRaw     string
 		entrantesRaw, principalesRaw, postreRaw string
-		beverageRaw, commentsRaw              string
-		minPartySize, mainLimitNum            int
-		mainLimit, includedCoffee             int
+		beverageRaw, commentsRaw                string
+		minPartySize, mainLimitNum              int
+		mainLimit, includedCoffee               int
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT menu_title, COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional'),

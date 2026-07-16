@@ -12,18 +12,18 @@ import (
 
 func TestConfirmReservationTemplateRenders(t *testing.T) {
 	data := map[string]any{
-		"BrandName":    "Test Restaurant",
-		"LogoURL":     "/logo.png",
-		"Message":     "",
-		"Success":     false,
-		"HasBooking":  true,
-		"BookingID":   456,
+		"BrandName":        "Test Restaurant",
+		"LogoURL":          "/logo.png",
+		"Message":          "",
+		"Success":          false,
+		"HasBooking":       true,
+		"BookingID":        456,
 		"ShowConfirmation": true,
-		"CustomerName": "Ana Martínez",
-		"DateDisplay":  "20/05/2026",
-		"TimeDisplay":  "21:00",
-		"PartySize":    3,
-		"Action":       "/confirm_reservation.php?id=456",
+		"CustomerName":     "Ana Martínez",
+		"DateDisplay":      "20/05/2026",
+		"TimeDisplay":      "21:00",
+		"PartySize":        3,
+		"Action":           "/confirm_reservation.php?id=456",
 	}
 	var buf bytes.Buffer
 	if err := confirmReservationTmpl.Execute(&buf, data); err != nil {
@@ -47,8 +47,8 @@ func TestConfirmReservationTemplateRenders(t *testing.T) {
 func TestConfirmReservationTemplateHasDarkMode(t *testing.T) {
 	data := map[string]any{
 		"BrandName": "Test",
-		"LogoURL":  "/logo.png",
-		"Message":  "",
+		"LogoURL":   "/logo.png",
+		"Message":   "",
 	}
 	var buf bytes.Buffer
 	if err := confirmReservationTmpl.Execute(&buf, data); err != nil {
@@ -63,16 +63,16 @@ func TestConfirmReservationTemplateHasDarkMode(t *testing.T) {
 func TestConfirmReservationTemplateHasConfirmForm(t *testing.T) {
 	data := map[string]any{
 		"BrandName":        "Test",
-		"LogoURL":         "/logo.png",
-		"Message":         "",
-		"HasBooking":      true,
-		"BookingID":       1,
+		"LogoURL":          "/logo.png",
+		"Message":          "",
+		"HasBooking":       true,
+		"BookingID":        1,
 		"ShowConfirmation": true,
-		"CustomerName":    "Test",
-		"DateDisplay":     "01/01/2026",
-		"TimeDisplay":     "14:00",
-		"PartySize":       2,
-		"Action":          "/confirm_reservation.php?id=1",
+		"CustomerName":     "Test",
+		"DateDisplay":      "01/01/2026",
+		"TimeDisplay":      "14:00",
+		"PartySize":        2,
+		"Action":           "/confirm_reservation.php?id=1",
 	}
 	var buf bytes.Buffer
 	if err := confirmReservationTmpl.Execute(&buf, data); err != nil {
@@ -93,19 +93,19 @@ func TestConfirmReservationTemplateHasConfirmForm(t *testing.T) {
 
 func TestCancelReservationTemplateRenders(t *testing.T) {
 	data := map[string]any{
-		"BrandName":    "Test Restaurant",
-		"LogoURL":     "/logo.png",
-		"Message":     "",
-		"Success":     false,
-		"IsSameDay":   false,
-		"HasBooking":  true,
-		"BookingID":   123,
+		"BrandName":        "Test Restaurant",
+		"LogoURL":          "/logo.png",
+		"Message":          "",
+		"Success":          false,
+		"IsSameDay":        false,
+		"HasBooking":       true,
+		"BookingID":        123,
 		"ShowConfirmation": true,
-		"CustomerName": "Juan García",
-		"DateDisplay":  "15/04/2026",
-		"TimeDisplay":  "14:00",
-		"PartySize":    4,
-		"Action":       "/cancel_reservation.php?id=123",
+		"CustomerName":     "Juan García",
+		"DateDisplay":      "15/04/2026",
+		"TimeDisplay":      "14:00",
+		"PartySize":        4,
+		"Action":           "/cancel_reservation.php?id=123",
 	}
 	var buf bytes.Buffer
 	if err := cancelReservationTmpl.Execute(&buf, data); err != nil {
@@ -126,8 +126,8 @@ func TestCancelReservationTemplateRenders(t *testing.T) {
 func TestCancelReservationTemplateHasDarkMode(t *testing.T) {
 	data := map[string]any{
 		"BrandName": "Test",
-		"LogoURL":  "/logo.png",
-		"Message":  "",
+		"LogoURL":   "/logo.png",
+		"Message":   "",
 	}
 	var buf bytes.Buffer
 	if err := cancelReservationTmpl.Execute(&buf, data); err != nil {
@@ -142,14 +142,14 @@ func TestCancelReservationTemplateHasDarkMode(t *testing.T) {
 func TestCancelReservationTemplateHasCancelForm(t *testing.T) {
 	data := map[string]any{
 		"BrandName":        "Test",
-		"LogoURL":         "/logo.png",
-		"Message":         "",
+		"LogoURL":          "/logo.png",
+		"Message":          "",
 		"ShowConfirmation": true,
-		"CustomerName":    "Test",
-		"DateDisplay":     "01/01/2026",
-		"TimeDisplay":     "14:00",
-		"PartySize":       2,
-		"Action":          "/cancel_reservation.php?id=1",
+		"CustomerName":     "Test",
+		"DateDisplay":      "01/01/2026",
+		"TimeDisplay":      "14:00",
+		"PartySize":        2,
+		"Action":           "/cancel_reservation.php?id=1",
 	}
 	var buf bytes.Buffer
 	if err := cancelReservationTmpl.Execute(&buf, data); err != nil {
@@ -171,18 +171,18 @@ func TestCancelReservationTemplateHasCancelForm(t *testing.T) {
 func TestBookRiceTemplateRenders(t *testing.T) {
 	data := map[string]any{
 		"BrandName":    "Test Restaurant",
-		"LogoURL":     "/logo.png",
-		"Message":     "",
-		"Success":     false,
-		"HasBooking":  true,
-		"ShowForm":    true,
-		"Countdown":   false,
-		"IsSameDay":   false,
+		"LogoURL":      "/logo.png",
+		"Message":      "",
+		"Success":      false,
+		"HasBooking":   true,
+		"ShowForm":     true,
+		"Countdown":    false,
+		"IsSameDay":    false,
 		"CustomerName": "María López",
 		"DateDisplay":  "01/05/2026",
 		"TimeDisplay":  "21:30",
 		"PartySize":    6,
-		"RiceOptions": []string{"Arroz a la valenciana", "Arroz negro"},
+		"RiceOptions":  []string{"Arroz a la valenciana", "Arroz negro"},
 		"Action":       "/book_rice.php?id=456",
 	}
 	var buf bytes.Buffer
@@ -201,8 +201,8 @@ func TestBookRiceTemplateRenders(t *testing.T) {
 func TestBookRiceTemplateHasDarkMode(t *testing.T) {
 	data := map[string]any{
 		"BrandName": "Test",
-		"LogoURL":  "/logo.png",
-		"Message":  "",
+		"LogoURL":   "/logo.png",
+		"Message":   "",
 	}
 	var buf bytes.Buffer
 	if err := bookRiceTmpl.Execute(&buf, data); err != nil {
@@ -217,16 +217,16 @@ func TestBookRiceTemplateHasDarkMode(t *testing.T) {
 func TestBookRiceTemplateHasForm(t *testing.T) {
 	data := map[string]any{
 		"BrandName":    "Test",
-		"LogoURL":     "/logo.png",
-		"Message":     "",
-		"HasBooking":  true,
-		"ShowForm":    true,
+		"LogoURL":      "/logo.png",
+		"Message":      "",
+		"HasBooking":   true,
+		"ShowForm":     true,
 		"CustomerName": "Test",
-		"DateDisplay": "01/01/2026",
-		"TimeDisplay": "14:00",
-		"PartySize":   4,
-		"RiceOptions": []string{"Arroz negro"},
-		"Action":      "/book_rice.php?id=1",
+		"DateDisplay":  "01/01/2026",
+		"TimeDisplay":  "14:00",
+		"PartySize":    4,
+		"RiceOptions":  []string{"Arroz negro"},
+		"Action":       "/book_rice.php?id=1",
 	}
 	var buf bytes.Buffer
 	if err := bookRiceTmpl.Execute(&buf, data); err != nil {

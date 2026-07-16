@@ -11,12 +11,12 @@ import (
 )
 
 const (
-	boSectionReservas = "reservas"
-	boSectionMenus    = "menus"
-	boSectionAjustes  = "ajustes"
-	boSectionMiembros = "miembros"
-	boSectionFichaje  = "fichaje"
-	boSectionHorarios = "horarios"
+	boSectionReservas     = "reservas"
+	boSectionMenus        = "menus"
+	boSectionAjustes      = "ajustes"
+	boSectionMiembros     = "miembros"
+	boSectionFichaje      = "fichaje"
+	boSectionHorarios     = "horarios"
 	boSectionFacturas     = "facturas"
 	boSectionReportes     = "reportes"
 	boSectionEstadoCuenta = "estado_cuenta"
@@ -26,25 +26,25 @@ const (
 
 var defaultRolePermissions = map[string]map[string]bool{
 	"root": {
-		boSectionReservas: true,
-		boSectionMenus:    true,
-		boSectionAjustes:  true,
-		boSectionMiembros: true,
-		boSectionFichaje:  true,
-		boSectionHorarios: true,
-		boSectionFacturas: true,
+		boSectionReservas:     true,
+		boSectionMenus:        true,
+		boSectionAjustes:      true,
+		boSectionMiembros:     true,
+		boSectionFichaje:      true,
+		boSectionHorarios:     true,
+		boSectionFacturas:     true,
 		boSectionReportes:     true,
 		boSectionEstadoCuenta: true,
 		boSectionWebsite:      true,
 	},
 	"admin": {
-		boSectionReservas: true,
-		boSectionMenus:    true,
-		boSectionAjustes:  true,
-		boSectionMiembros: true,
-		boSectionFichaje:  true,
-		boSectionHorarios: true,
-		boSectionFacturas: true,
+		boSectionReservas:     true,
+		boSectionMenus:        true,
+		boSectionAjustes:      true,
+		boSectionMiembros:     true,
+		boSectionFichaje:      true,
+		boSectionHorarios:     true,
+		boSectionFacturas:     true,
 		boSectionReportes:     true,
 		boSectionEstadoCuenta: true,
 		boSectionWebsite:      true,

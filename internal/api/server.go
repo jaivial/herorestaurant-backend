@@ -388,6 +388,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, horariosGate).Put("/horarios/{id}", s.handleBOHorariosUpdate)
 		r.With(s.requireBOSession, horariosGate).Delete("/horarios/{id}", s.handleBOHorariosDelete)
 		r.With(s.requireBOSession, horariosGate).Get("/horarios/month", s.handleBOHorariosMonth)
+		r.With(s.requireBOSession, horariosGate).Get("/horarios/calendar", s.handleBOHorariosCalendar)
 		r.With(s.requireBOSession, horariosGate).Get("/horarios/member-range", s.handleBOHorariosMemberRange)
 		r.With(s.requireBOSession, fichajeGate).Get("/horarios/my-schedule", s.handleBOHorariosMySchedule)
 
@@ -398,6 +399,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, facturasGate).Put("/invoices/{id}", s.handleBOInvoiceUpdate)
 		r.With(s.requireBOSession, facturasGate).Delete("/invoices/{id}", s.handleBOInvoiceDelete)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/send", s.handleBOInvoiceSend)
+		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/pdf", s.handleBOInvoicePdf)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/upload-image", s.handleBOInvoiceUploadImage)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/search-reservation", s.handleBOInvoicesSearchReservation)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/comments", s.handleBOInvoiceCommentsList)

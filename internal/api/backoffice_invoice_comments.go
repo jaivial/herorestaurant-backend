@@ -17,7 +17,7 @@ type boInvoiceComment struct {
 	ID        int64      `json:"id"`
 	InvoiceID int64      `json:"invoice_id"`
 	Content   string     `json:"content"`
-	UserID    int      `json:"user_id"`
+	UserID    int        `json:"user_id"`
 	UserName  string     `json:"user_name"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt *time.Time `json:"updated_at"`

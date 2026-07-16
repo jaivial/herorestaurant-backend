@@ -7,20 +7,20 @@ import (
 
 func TestRenderBotSystemPrompt_IncludesTenantData(t *testing.T) {
 	data := botPromptData{
-		BrandName:   "Tasca María",
-		Phone:       "961234567",
-		Address:     "Calle Mayor 1, Valencia",
-		Email:       "hola@tascamaria.es",
-		Website:     "https://tascamaria.es",
-		TodayES:     "sábado, 14 de febrero de 2026",
-		TodayISO:    "2026-02-14",
-		PushName:    "Jaime",
-		UserPhone:   "34612345678",
-		RiceTypes:   []string{"Paella Valenciana", "Arroz Negro"},
-		Hours:       "13:30, 14:00, 14:30",
-		DailyLimit:  45,
-		Tenant:      botTenantConfig{LanguageDefault: "es", Tone: "cercano", CustomInstructions: "REGLA-PERSONALIZADA-XYZ"},
-		MenuURL:     "https://tascamaria.es/carta.pdf",
+		BrandName:  "Tasca María",
+		Phone:      "961234567",
+		Address:    "Calle Mayor 1, Valencia",
+		Email:      "hola@tascamaria.es",
+		Website:    "https://tascamaria.es",
+		TodayES:    "sábado, 14 de febrero de 2026",
+		TodayISO:   "2026-02-14",
+		PushName:   "Jaime",
+		UserPhone:  "34612345678",
+		RiceTypes:  []string{"Paella Valenciana", "Arroz Negro"},
+		Hours:      "13:30, 14:00, 14:30",
+		DailyLimit: 45,
+		Tenant:     botTenantConfig{LanguageDefault: "es", Tone: "cercano", CustomInstructions: "REGLA-PERSONALIZADA-XYZ"},
+		MenuURL:    "https://tascamaria.es/carta.pdf",
 	}
 	out := renderBotSystemPrompt(data)
 

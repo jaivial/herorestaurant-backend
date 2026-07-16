@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,10 +16,22 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
+// InvoiceLineItem is a single billable line on an invoice.
+type InvoiceLineItem struct {
+	ID          int     `json:"id,omitempty"`
+	Description string  `json:"description"`
+	Quantity    float64 `json:"quantity"`
+	UnitPrice   float64 `json:"unit_price"`
+	IVARate     float64 `json:"iva_rate"`
+	IVAAmount   float64 `json:"iva_amount"`
+	Total       float64 `json:"total"`
+}
+
 // Invoice types
 type Invoice struct {
 	ID                        int     `json:"id"`
 	RestaurantID              int     `json:"restaurant_id"`
+	InvoiceNumber             *string `json:"invoice_number"`
 	CustomerName              string  `json:"customer_name"`
 	CustomerSurname           *string `json:"customer_surname"`
 	CustomerEmail             string  `json:"customer_email"`
@@ -42,8 +55,26 @@ type Invoice struct {
 	ReservationCustomerName   *string `json:"reservation_customer_name"`
 	ReservationPartySize      *int    `json:"reservation_party_size"`
 	PdfURL                    *string `json:"pdf_url"`
-	CreatedAt                 string  `json:"created_at"`
-	UpdatedAt                 string  `json:"updated_at"`
+	// Billing detail
+	PdfTemplate    string            `json:"pdf_template"`
+	Currency       string            `json:"currency"`
+	Subtotal       *float64          `json:"subtotal"`
+	IVARate        *float64          `json:"iva_rate"`
+	IVAAmount      *float64          `json:"iva_amount"`
+	Total          *float64          `json:"total"`
+	DiscountType   *string           `json:"discount_type"`
+	DiscountValue  *float64          `json:"discount_value"`
+	DiscountAmount *float64          `json:"discount_amount"`
+	DiscountReason *string           `json:"discount_reason"`
+	DueDate        *string           `json:"due_date"`
+	InternalNotes  *string           `json:"internal_notes"`
+	Category       *string           `json:"category"`
+	Tags           []string          `json:"tags"`
+	DepositType    *string           `json:"deposit_type"`
+	DepositAmount  *float64          `json:"deposit_amount"`
+	LineItems      []InvoiceLineItem `json:"line_items"`
+	CreatedAt      string            `json:"created_at"`
+	UpdatedAt      string            `json:"updated_at"`
 }
 
 type InvoiceInput struct {
@@ -69,6 +100,33 @@ type InvoiceInput struct {
 	ReservationDate           *string `json:"reservation_date"`
 	ReservationCustomerName   *string `json:"reservation_customer_name"`
 	ReservationPartySize      *int    `json:"reservation_party_size"`
+	// Billing detail
+	InvoiceNumber  *string                `json:"invoice_number"`
+	PdfTemplate    *string                `json:"pdf_template"`
+	Currency       *string                `json:"currency"`
+	Subtotal       *float64               `json:"subtotal"`
+	IVARate        *float64               `json:"iva_rate"`
+	IVAAmount      *float64               `json:"iva_amount"`
+	Total          *float64               `json:"total"`
+	DiscountType   *string                `json:"discount_type"`
+	DiscountValue  *float64               `json:"discount_value"`
+	DiscountAmount *float64               `json:"discount_amount"`
+	DiscountReason *string                `json:"discount_reason"`
+	DueDate        *string                `json:"due_date"`
+	InternalNotes  *string                `json:"internal_notes"`
+	Category       *string                `json:"category"`
+	Tags           []string               `json:"tags"`
+	DepositType    *string                `json:"deposit_type"`
+	DepositAmount  *float64               `json:"deposit_amount"`
+	LineItems      []InvoiceLineItemInput `json:"line_items"`
+}
+
+// InvoiceLineItemInput is the create/update payload for a line item.
+type InvoiceLineItemInput struct {
+	Description string  `json:"description"`
+	Quantity    float64 `json:"quantity"`
+	UnitPrice   float64 `json:"unit_price"`
+	IVARate     float64 `json:"iva_rate"`
 }
 
 type InvoiceListParams struct {
@@ -335,29 +393,58 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 		input.Status = "borrador"
 	}
 
-	result, err := s.db.ExecContext(r.Context(), `
+	template := normalizePdfTemplate(input.PdfTemplate)
+	currency := normalizeCurrency(input.Currency)
+	lines := computeLineItems(input.LineItems)
+	bv := deriveBillingValues(&input, lines)
+	if len(lines) > 0 && bv.Total != nil {
+		input.Amount = *bv.Total
+	}
+	tags := marshalTags(input.Tags)
+
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creating invoice: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(r.Context(), `
 		INSERT INTO invoices (
-			restaurant_id, customer_name, customer_surname, customer_email, customer_dni_cif, customer_phone,
+			restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_phone,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
 			amount, payment_method, account_image_url, invoice_date, payment_date,
 			status, is_reservation, reservation_id, reservation_date,
-			reservation_customer_name, reservation_party_size
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, a.ActiveRestaurantID,
+			reservation_customer_name, reservation_party_size,
+			pdf_template, currency, subtotal, iva_rate, iva_amount, total,
+			discount_type, discount_value, discount_amount, discount_reason,
+			due_date, internal_notes, category, tags, deposit_type, deposit_amount
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, a.ActiveRestaurantID, input.InvoiceNumber,
 		input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerPhone,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
 		input.Amount, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
 		input.Status, input.IsReservation, input.ReservationID, input.ReservationDate,
-		input.ReservationCustomerName, input.ReservationPartySize)
-
+		input.ReservationCustomerName, input.ReservationPartySize,
+		template, currency, bv.Subtotal, bv.IVARate, bv.IVAAmount, bv.Total,
+		input.DiscountType, input.DiscountValue, input.DiscountAmount, input.DiscountReason,
+		input.DueDate, input.InternalNotes, input.Category, tags, input.DepositType, input.DepositAmount)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creating invoice: "+err.Error())
 		return
 	}
 
 	id, _ := result.LastInsertId()
+	if err := replaceInvoiceLineItems(r.Context(), tx, id, lines); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error saving line items: "+err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creating invoice: "+err.Error())
+		return
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -399,24 +486,62 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 		input.Status = "borrador"
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	template := normalizePdfTemplate(input.PdfTemplate)
+	currency := normalizeCurrency(input.Currency)
+	lines := computeLineItems(input.LineItems)
+	bv := deriveBillingValues(&input, lines)
+	if len(lines) > 0 && bv.Total != nil {
+		input.Amount = *bv.Total
+	}
+	tags := marshalTags(input.Tags)
+
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(r.Context(), `
 		UPDATE invoices SET
-			customer_name = ?, customer_surname = ?, customer_email = ?, customer_dni_cif = ?, customer_phone = ?,
+			invoice_number = ?, customer_name = ?, customer_surname = ?, customer_email = ?, customer_dni_cif = ?, customer_phone = ?,
 			customer_address_street = ?, customer_address_number = ?, customer_address_postal_code = ?,
 			customer_address_city = ?, customer_address_province = ?, customer_address_country = ?,
 			amount = ?, payment_method = ?, account_image_url = ?, invoice_date = ?, payment_date = ?,
 			status = ?, is_reservation = ?, reservation_id = ?, reservation_date = ?,
-			reservation_customer_name = ?, reservation_party_size = ?
+			reservation_customer_name = ?, reservation_party_size = ?,
+			pdf_template = ?, currency = ?, subtotal = ?, iva_rate = ?, iva_amount = ?, total = ?,
+			discount_type = ?, discount_value = ?, discount_amount = ?, discount_reason = ?,
+			due_date = ?, internal_notes = ?, category = ?, tags = ?, deposit_type = ?, deposit_amount = ?
 		WHERE id = ? AND restaurant_id = ?
-	`, input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerPhone,
+	`, input.InvoiceNumber, input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerPhone,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
 		input.Amount, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
 		input.Status, input.IsReservation, input.ReservationID, input.ReservationDate,
 		input.ReservationCustomerName, input.ReservationPartySize,
+		template, currency, bv.Subtotal, bv.IVARate, bv.IVAAmount, bv.Total,
+		input.DiscountType, input.DiscountValue, input.DiscountAmount, input.DiscountReason,
+		input.DueDate, input.InternalNotes, input.Category, tags, input.DepositType, input.DepositAmount,
 		invoiceID, a.ActiveRestaurantID)
-
 	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice: "+err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Ensure the invoice belongs to this restaurant before touching line items.
+		var exists int
+		_ = tx.QueryRowContext(r.Context(), `SELECT 1 FROM invoices WHERE id = ? AND restaurant_id = ?`, invoiceID, a.ActiveRestaurantID).Scan(&exists)
+		if exists == 0 {
+			httpx.WriteError(w, http.StatusNotFound, "Invoice not found")
+			return
+		}
+	}
+	if err := replaceInvoiceLineItems(r.Context(), tx, int64(invoiceID), lines); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error saving line items: "+err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice: "+err.Error())
 		return
 	}
@@ -580,88 +705,73 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get invoice
-	var inv Invoice
-	var restaurant Restaurant
-	err = s.db.QueryRowContext(r.Context(), `
-		SELECT 
-			i.id, i.restaurant_id,
-			i.customer_name, i.customer_surname, i.customer_email, i.customer_dni_cif, i.customer_phone,
-			i.customer_address_street, i.customer_address_number, i.customer_address_postal_code,
-			i.customer_address_city, i.customer_address_province, i.customer_address_country,
-			i.amount, i.payment_method, i.account_image_url, i.invoice_date, i.payment_date,
-			i.status, i.is_reservation, i.reservation_id, i.reservation_date,
-			i.reservation_customer_name, i.reservation_party_size, i.pdf_url,
-			i.created_at, i.updated_at,
-			r.id, r.slug, r.name, r.avatar
-		FROM invoices i
-		JOIN restaurants r ON i.restaurant_id = r.id
-		WHERE i.id = ? AND i.restaurant_id = ?
-	`, invoiceID, a.ActiveRestaurantID).Scan(
-		&inv.ID, &inv.RestaurantID,
-		&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &inv.CustomerPhone,
-		&inv.CustomerAddressStreet, &inv.CustomerAddressNumber, &inv.CustomerAddressPostalCode,
-		&inv.CustomerAddressCity, &inv.CustomerAddressProvince, &inv.CustomerAddressCountry,
-		&inv.Amount, &inv.PaymentMethod, &inv.AccountImageURL, &inv.InvoiceDate, &inv.PaymentDate,
-		&inv.Status, &inv.IsReservation, &inv.ReservationID, &inv.ReservationDate,
-		&inv.ReservationCustomerName, &inv.ReservationPartySize, &inv.PdfURL,
-		&inv.CreatedAt, &inv.UpdatedAt,
-		&restaurant.ID, &restaurant.Slug, &restaurant.Name, &restaurant.Avatar,
-	)
-
-	if err == sql.ErrNoRows {
-		httpx.WriteError(w, http.StatusNotFound, "Invoice not found")
-		return
-	}
+	// Load the full invoice (billing detail + line items).
+	inv, err := s.loadFullInvoice(r.Context(), a.ActiveRestaurantID, invoiceID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error fetching invoice: "+err.Error())
 		return
 	}
+	if inv == nil {
+		httpx.WriteError(w, http.StatusNotFound, "Invoice not found")
+		return
+	}
 
-	// Build invoice URL
-	baseURL := fmt.Sprintf("https://backoffice-dev.menustudioai.com") // ponytail: hardcoded, make configurable if multi-tenant
-	invoiceURL := fmt.Sprintf("%s/app/facturas?tab=añadir&id=%d", baseURL, inv.ID)
-
-	// Build email content
+	info, _ := s.loadRestaurantInfo(r.Context(), a.ActiveRestaurantID)
 	branding, _ := s.loadRestaurantBranding(r.Context(), a.ActiveRestaurantID)
+	branding.LogoURL = s.resolveInvoiceLogoURL(r.Context(), a.ActiveRestaurantID, branding)
 	fromName := "Restaurante"
 	if branding.BrandName != "" {
 		fromName = branding.BrandName
 	}
 
-	customerName := inv.CustomerName
-	if inv.CustomerSurname != nil && *inv.CustomerSurname != "" {
-		customerName += " " + *inv.CustomerSurname
+	baseURL := "https://backoffice-dev.menustudioai.com"
+	invoiceURL := fmt.Sprintf("%s/app/facturas?tab=añadir&id=%d", baseURL, inv.ID)
+
+	// View model shared by the email summary (and the PDF).
+	data := buildInvoiceRenderData(inv, info, branding)
+	invoiceLabel := data.Number
+
+	subject := fmt.Sprintf("Factura - %s", fromName)
+	if invoiceLabel != "" {
+		subject = fmt.Sprintf("Factura %s - %s", invoiceLabel, fromName)
 	}
-
-	invoiceLabel := fmt.Sprintf("#%d", inv.ID)
-
-	subject := fmt.Sprintf("Factura %s - %s", invoiceLabel, fromName)
 	if req.Subject != nil && *req.Subject != "" {
 		subject = *req.Subject
 	}
 
-	htmlBody := fmt.Sprintf("<!DOCTYPE html><html><body style='font-family:sans-serif;padding:20px;max-width:600px;margin:0 auto'><h2>Factura %s</h2><p>Estimado/a <strong>%s</strong>:</p><p>Adjuntamos la factura <strong>%s</strong> por importe de <strong>%.2f €</strong>.</p><p style='text-align:center;margin:24px 0'><a href='%s' style='display:inline-block;padding:12px 28px;background:#6C5CE7;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold'>Ver factura</a></p><p>Si tiene alguna consulta, no dude en contactarnos.</p><hr style='border:none;border-top:1px solid #eee;margin:24px 0'><p style='color:#888;font-size:12px'>%s</p></body></html>", invoiceLabel, customerName, invoiceLabel, inv.Amount, invoiceURL, fromName)
+	customMessage := ""
+	if req.Message != nil {
+		customMessage = *req.Message
+	}
+	// Email body: app shell + per-template invoice summary (HTML inside email).
+	htmlBody := buildBackofficeInvoiceEmailHTML(data, invoiceURL, customMessage)
 
-	// If custom message provided, wrap it as HTML (replace newlines with <br>)
-	if req.Message != nil && *req.Message != "" {
-		custom := strings.ReplaceAll(*req.Message, "\n", "<br>")
-		htmlBody = fmt.Sprintf("<!DOCTYPE html><html><body style='font-family:sans-serif;padding:20px;max-width:600px;margin:0 auto'><h2>Factura %s</h2><p>%s</p><hr style='border:none;border-top:1px solid #eee;margin:24px 0'><p style='color:#888;font-size:12px'>%s</p></body></html>", invoiceLabel, custom, fromName)
+	// Attachment: full-fidelity PDF of the selected template.
+	var attachments []emailAttachment
+	pdfBytes, pdfErr := s.generateInvoicePDF(r.Context(), inv, info, branding)
+	if pdfErr != nil {
+		log.Printf("[invoice-send] PDF generation failed for #%d: %v", inv.ID, pdfErr)
+	} else if len(pdfBytes) > 0 {
+		attachments = append(attachments, emailAttachment{
+			Filename:    invoicePDFFilename(invoiceLabel),
+			ContentType: "application/pdf",
+			Data:        pdfBytes,
+		})
 	}
 
-	// Determine from address
-	fromAddr := ""
+	// Determine from address (branding override > provider default > customer).
+	fromAddr := cfg.SMTPFromEmail
 	if cfg.Provider == "gmail" {
 		fromAddr = cfg.GmailFromEmail
-	} else {
-		fromAddr = cfg.SMTPFromEmail
+	}
+	if strings.TrimSpace(branding.EmailFromAddress) != "" {
+		fromAddr = strings.TrimSpace(branding.EmailFromAddress)
 	}
 	if fromAddr == "" {
 		fromAddr = inv.CustomerEmail
 	}
 
-	// Send email via SMTP config
-	if err := sendViaConfig(r.Context(), cfg, fromName, fromAddr, inv.CustomerEmail, subject, htmlBody); err != nil {
+	if err := sendViaConfigWithAttachments(r.Context(), cfg, fromName, fromAddr, inv.CustomerEmail, subject, htmlBody, attachments); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "Error sending email: " + err.Error(),
@@ -669,24 +779,75 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate PDF placeholder URL
-	pdfURL := fmt.Sprintf("https://villacarmenmedia.b-cdn.net/%d/facturas/pdf/pdf_%d.pdf", restaurant.ID, inv.ID)
+	// Best-effort: upload the PDF to the CDN and record its URL.
+	pdfURL := ""
+	if len(pdfBytes) > 0 && s.bunnyConfigured() {
+		objectPath := fmt.Sprintf("%d/facturas/pdf/factura_%d.pdf", inv.RestaurantID, inv.ID)
+		if uerr := s.bunnyPut(r.Context(), objectPath, pdfBytes, "application/pdf"); uerr == nil {
+			pdfURL = s.bunnyPullURL(objectPath)
+		} else {
+			log.Printf("[invoice-send] PDF upload failed for #%d: %v", inv.ID, uerr)
+		}
+	}
 
-	// Update invoice status
-	_, err = s.db.ExecContext(r.Context(), `
-		UPDATE invoices SET status = 'enviada', pdf_url = ? WHERE id = ?
-	`, pdfURL, invoiceID)
-
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice status: "+err.Error())
-		return
+	if pdfURL != "" {
+		if _, err := s.db.ExecContext(r.Context(), `UPDATE invoices SET status = 'enviada', pdf_url = ? WHERE id = ? AND restaurant_id = ?`, pdfURL, invoiceID, a.ActiveRestaurantID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice status: "+err.Error())
+			return
+		}
+	} else {
+		if _, err := s.db.ExecContext(r.Context(), `UPDATE invoices SET status = 'enviada' WHERE id = ? AND restaurant_id = ?`, invoiceID, a.ActiveRestaurantID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice status: "+err.Error())
+			return
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"message": "Invoice sent successfully",
-		"pdf_url": pdfURL,
+		"success":      true,
+		"message":      "Invoice sent successfully",
+		"pdf_url":      pdfURL,
+		"pdf_attached": len(attachments) > 0,
 	})
+}
+
+// handleBOInvoicePdf renders and streams the invoice PDF for preview/download.
+func (s *Server) handleBOInvoicePdf(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	invoiceID, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid invoice ID")
+		return
+	}
+	inv, err := s.loadFullInvoice(r.Context(), a.ActiveRestaurantID, invoiceID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error fetching invoice: "+err.Error())
+		return
+	}
+	if inv == nil {
+		httpx.WriteError(w, http.StatusNotFound, "Invoice not found")
+		return
+	}
+	info, _ := s.loadRestaurantInfo(r.Context(), a.ActiveRestaurantID)
+	branding, _ := s.loadRestaurantBranding(r.Context(), a.ActiveRestaurantID)
+	branding.LogoURL = s.resolveInvoiceLogoURL(r.Context(), a.ActiveRestaurantID, branding)
+	pdfBytes, err := s.generateInvoicePDF(r.Context(), inv, info, branding)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error generating PDF: "+err.Error())
+		return
+	}
+	label := ""
+	if inv.InvoiceNumber != nil && strings.TrimSpace(*inv.InvoiceNumber) != "" {
+		label = *inv.InvoiceNumber
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `inline; filename="`+invoicePDFFilename(label)+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(pdfBytes)
 }
 
 // Get restaurant by ID

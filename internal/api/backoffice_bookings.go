@@ -474,17 +474,17 @@ func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.emitN8nWebhookAsync(restaurantID, "booking.cancelled", map[string]any{
-		"source":          "backoffice_cancel",
-		"cancelledBy":     "staff",
+		"source":            "backoffice_cancel",
+		"cancelledBy":       "staff",
 		"cancelledByUserID": a.User.ID,
-		"cancelledByName": a.User.Name,
-		"bookingId":       cancelled.ID,
-		"reservationDate": cancelled.ReservationDate,
-		"reservationTime": cancelled.ReservationTime,
-		"partySize":       cancelled.PartySize,
-		"customerName":    cancelled.CustomerName,
-		"contactPhone":    cancelled.ContactPhone.String,
-		"contactEmail":    cancelled.ContactEmail.String,
+		"cancelledByName":   a.User.Name,
+		"bookingId":         cancelled.ID,
+		"reservationDate":   cancelled.ReservationDate,
+		"reservationTime":   cancelled.ReservationTime,
+		"partySize":         cancelled.PartySize,
+		"customerName":      cancelled.CustomerName,
+		"contactPhone":      cancelled.ContactPhone.String,
+		"contactEmail":      cancelled.ContactEmail.String,
 	})
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -620,17 +620,17 @@ func (s *Server) handleBOBookingsModifiedByDate(w http.ResponseWriter, r *http.R
 	defer rows.Close()
 
 	type modItem struct {
-		ID              int    `json:"id"`
-		BookingID       int    `json:"booking_id"`
-		OriginalDate    string `json:"original_reservation_date"`
-		FieldModified   string `json:"field_modified"`
-		OldValue        string `json:"old_value"`
-		NewValue        string `json:"new_value"`
-		ModifiedBy      string `json:"modified_by"`
-		ModifiedByUser  *int   `json:"modified_by_user_id"`
-		ModifiedByName  string `json:"modified_by_name"`
-		CustomerName    string `json:"customer_name"`
-		ContactPhone    string `json:"contact_phone"`
+		ID               int    `json:"id"`
+		BookingID        int    `json:"booking_id"`
+		OriginalDate     string `json:"original_reservation_date"`
+		FieldModified    string `json:"field_modified"`
+		OldValue         string `json:"old_value"`
+		NewValue         string `json:"new_value"`
+		ModifiedBy       string `json:"modified_by"`
+		ModifiedByUser   *int   `json:"modified_by_user_id"`
+		ModifiedByName   string `json:"modified_by_name"`
+		CustomerName     string `json:"customer_name"`
+		ContactPhone     string `json:"contact_phone"`
 		ModificationDate string `json:"modification_date"`
 	}
 

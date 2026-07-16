@@ -127,11 +127,11 @@ func TestBotToolMenus_DB(t *testing.T) {
 	}
 	var details struct {
 		Settings struct {
-			CoffeeIncluded       bool `json:"coffee_included"`
-			MinPartySize         int  `json:"min_party_size"`
-			MaxMainDishesPerTable int `json:"max_main_dishes_per_table"`
-			UnlimitedDrinks      bool `json:"unlimited_drinks"`
-			DrinkPricePerPerson  any  `json:"drink_price_per_person"`
+			CoffeeIncluded        bool `json:"coffee_included"`
+			MinPartySize          int  `json:"min_party_size"`
+			MaxMainDishesPerTable int  `json:"max_main_dishes_per_table"`
+			UnlimitedDrinks       bool `json:"unlimited_drinks"`
+			DrinkPricePerPerson   any  `json:"drink_price_per_person"`
 		} `json:"settings"`
 	}
 	_ = json.Unmarshal([]byte(out), &details)

@@ -265,25 +265,25 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 
 	// Build booking data map for notifications.
 	bookingData := map[string]any{
-		"booking_id":                   bookingID,
-		"reservation_date":             resDate,
-		"reservation_time":             resTime,
-		"party_size":                   partySize,
-		"children":                     children,
-		"customer_name":                customerName,
-		"contact_phone":                nationalPhone,
-		"contact_phone_country_code":   cc,
-		"contact_email":                contactEmail,
-		"commentary":                   commentary,
-		"arroz_type":                   arrozTypeJSON,
-		"arroz_servings":               arrozServingsJSON,
-		"baby_strollers":               babyStrollers,
-		"high_chairs":                  highChairs,
-		"toggleArroz":                  toggleArroz,
-		"special_menu":                 specialMenu,
-		"menu_de_grupo_id":             menuDeGrupoID,
-		"principales_json":             principalesJSON,
-		"preferred_floor_number":       preferredFloorNumber,
+		"booking_id":                 bookingID,
+		"reservation_date":           resDate,
+		"reservation_time":           resTime,
+		"party_size":                 partySize,
+		"children":                   children,
+		"customer_name":              customerName,
+		"contact_phone":              nationalPhone,
+		"contact_phone_country_code": cc,
+		"contact_email":              contactEmail,
+		"commentary":                 commentary,
+		"arroz_type":                 arrozTypeJSON,
+		"arroz_servings":             arrozServingsJSON,
+		"baby_strollers":             babyStrollers,
+		"high_chairs":                highChairs,
+		"toggleArroz":                toggleArroz,
+		"special_menu":               specialMenu,
+		"menu_de_grupo_id":           menuDeGrupoID,
+		"principales_json":           principalesJSON,
+		"preferred_floor_number":     preferredFloorNumber,
 	}
 
 	// Send WhatsApp confirmation to customer (best-effort).
@@ -305,11 +305,11 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 	if emailErr != nil {
 		log.Printf("Email failed for booking #%d: %v", bookingID, emailErr)
 		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"success":        false,
-			"message":        "Error enviando confirmación por email: " + emailErr.Error(),
-			"error_code":     "EMAIL_FAILED",
-			"booking_id":     bookingID,
-			"whatsapp_sent":  whatsappSent,
+			"success":          false,
+			"message":          "Error enviando confirmación por email: " + emailErr.Error(),
+			"error_code":       "EMAIL_FAILED",
+			"booking_id":       bookingID,
+			"whatsapp_sent":    whatsappSent,
 			"whatsapp_warning": whatsappWarning,
 		})
 		return

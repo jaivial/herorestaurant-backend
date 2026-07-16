@@ -79,7 +79,7 @@ func (s *Server) handleGetWidgetSettings(w http.ResponseWriter, r *http.Request)
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
+		"success":  true,
 		"settings": settings,
 	})
 }
@@ -126,11 +126,11 @@ func (s *Server) handlePutWidgetSettings(w http.ResponseWriter, r *http.Request)
 	err := s.upsertWidgetSettings(r, restaurantID, &widgetSettingsUpdate{
 		PrimaryColor: body.PrimaryColor,
 		SuccessColor: body.SuccessColor,
-		BorderColor: body.BorderColor,
+		BorderColor:  body.BorderColor,
 		SurfaceColor: body.SurfaceColor,
-		TextColor: body.TextColor,
-		MutedColor: body.MutedColor,
-		FontStack: body.FontStack,
+		TextColor:    body.TextColor,
+		MutedColor:   body.MutedColor,
+		FontStack:    body.FontStack,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Failed to save widget settings")
@@ -280,7 +280,6 @@ func (s *Server) handleBOWidgetSettingsGet(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-
 	settings, err := s.getWidgetSettings(r, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Failed to load widget settings")
@@ -299,7 +298,6 @@ func (s *Server) handleBOWidgetSettingsPut(w http.ResponseWriter, r *http.Reques
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-
 
 	var body widgetSettingsUpdate
 	if err := decodeWidgetJSON(r, &body); err != nil {
