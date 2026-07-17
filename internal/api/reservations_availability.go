@@ -696,6 +696,27 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 		return nil, err
 	}
 
+	closedOverrides := map[string]bool{}
+	overrideRows, err := s.db.QueryContext(ctx, `
+		SELECT date
+		FROM restaurant_days
+		WHERE restaurant_id = ? AND date BETWEEN ? AND ? AND is_open = FALSE
+	`, restaurantID, firstDayStr, lastDayStr)
+	if err != nil {
+		return nil, err
+	}
+	defer overrideRows.Close()
+	for overrideRows.Next() {
+		var d time.Time
+		if err := overrideRows.Scan(&d); err != nil {
+			return nil, err
+		}
+		closedOverrides[d.Format("2006-01-02")] = true
+	}
+	if err := overrideRows.Err(); err != nil {
+		return nil, err
+	}
+
 	availability := map[string]map[string]int{}
 	defaultLimit := 45
 	daysInMonth := lastDay.Day()
@@ -705,6 +726,9 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 
 		if v, ok := dailyLimits[dateISO]; ok {
 			lim = v
+		}
+		if closedOverrides[dateISO] {
+			lim = 0
 		}
 		if lim < 0 {
 			lim = 0

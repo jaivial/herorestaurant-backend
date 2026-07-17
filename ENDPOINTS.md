@@ -1146,14 +1146,15 @@ Response:
 - `{ success: true, date, isOpen }`
 
 ### `POST /api/admin/config/day`
-Upserts open/closed day state.
+Upserts open/closed day state. A range sends every calendar day explicitly; each becomes one `restaurant_days` row keyed by `(restaurant_id, date)`.
 
-Body (JSON):
-- `date` (`YYYY-MM-DD`)
-- `isOpen` (boolean)
+Body (JSON), one of:
+- Single day: `date` (`YYYY-MM-DD`), `isOpen` (boolean)
+- Range: `dates` (`YYYY-MM-DD[]`), `rangeDates: true`, `isOpen` (boolean)
 
 Response:
-- `{ success: true, date, isOpen }`
+- Single day: `{ success: true, date, isOpen }`
+- Range: `{ success: true, dates, isOpen }`
 
 ### `GET /api/admin/config/opening-hours?date=YYYY-MM-DD`
 Returns daily opening config. If no per-date row exists, falls back to restaurant defaults.
@@ -1534,6 +1535,7 @@ Query params:
 
 Response:
 - `{ success: true, month: number, year: number, availability: { [YYYY-MM-DD]: { dailyLimit: number, totalPeople: number, freeBookingSeats: number } } }`
+- An explicit `restaurant_days.is_open = false` override reports `dailyLimit: 0` and `freeBookingSeats: 0` for that date.
 
 ### `GET /api/reservations/closed-days`
 Query params:
