@@ -2497,12 +2497,31 @@ type boV2MenuSliderImage struct {
 	ID        int64  `json:"id"`
 	ImageURL  string `json:"image_url"`
 	Position  int    `json:"position"`
+	IsDefault bool   `json:"is_default"`
 	CreatedAt string `json:"created_at"`
 }
 
 type boV2MenuSlider struct {
 	ShowSlider bool                  `json:"show_slider"`
+	Mode       string                `json:"mode"`
+	AIEnabled  bool                  `json:"ai_enabled"`
 	Images     []boV2MenuSliderImage `json:"images"`
+}
+
+// boAIImageFeatureKey gates the AI image advisor behind a recurring subscription
+// feature (mirrors boPremiumWhatsAppFeatureKey). Checked via hasActiveRecurringFeature.
+const boAIImageFeatureKey = "ai_image_pack"
+
+var boValidSliderModes = map[string]bool{
+	"default": true, "custom": true, "both": true, "hidden": true,
+}
+
+// sliderImageURL prefixes bunny paths but leaves already-absolute (default) URLs.
+func (s *Server) sliderImageURL(path string) string {
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return path
+	}
+	return s.bunnyPullURL(path)
 }
 
 const boGroupMenuV2SliderAIPrompt = "Create an elegant wide-angle restaurant ambiance or table setting photoshoot. Focus on the warm, inviting atmosphere, table arrangement, lighting, and overall dining experience. The dish or food should be visible but as part of the broader scene rather than the main subject. Frame in 16:9 aspect ratio with generous horizontal space to convey the venue's charm and character. Use high-end natural lighting, rich warm tones, sharp focus, and make the setting look sophisticated and welcoming for a restaurant menu."
@@ -2531,16 +2550,17 @@ func (s *Server) handleBOGroupMenusV2GetSlider(w http.ResponseWriter, r *http.Re
 	}
 
 	var showSliderInt int
+	var sliderMode string
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT COALESCE(show_menu_slider, 0) FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1
-	`, menuID, a.ActiveRestaurantID).Scan(&showSliderInt)
+		SELECT COALESCE(show_menu_slider, 0), COALESCE(slider_mode, 'default') FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1
+	`, menuID, a.ActiveRestaurantID).Scan(&showSliderInt, &sliderMode)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading slider state")
 		return
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, image_path, position, created_at
+		SELECT id, image_path, position, COALESCE(is_default, 0), created_at
 		FROM menu_slider_images
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
@@ -2554,22 +2574,29 @@ func (s *Server) handleBOGroupMenusV2GetSlider(w http.ResponseWriter, r *http.Re
 	images := make([]boV2MenuSliderImage, 0, 8)
 	for rows.Next() {
 		var img boV2MenuSliderImage
+		var isDefaultInt int
 		var createdAt sql.NullTime
-		if err := rows.Scan(&img.ID, &img.ImageURL, &img.Position, &createdAt); err != nil {
+		if err := rows.Scan(&img.ID, &img.ImageURL, &img.Position, &isDefaultInt, &createdAt); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error reading slider image")
 			return
 		}
-		img.ImageURL = s.bunnyPullURL(img.ImageURL)
+		img.ImageURL = s.sliderImageURL(img.ImageURL)
+		img.IsDefault = isDefaultInt != 0
 		if createdAt.Valid {
 			img.CreatedAt = createdAt.Time.Format(time.RFC3339)
 		}
 		images = append(images, img)
 	}
 
+	featureEnabled, _ := s.hasActiveRecurringFeature(r.Context(), a.ActiveRestaurantID, boAIImageFeatureKey)
+	aiEnabled := featureEnabled && s.aiImageConfigValid(r.Context(), a.ActiveRestaurantID)
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"slider": boV2MenuSlider{
 			ShowSlider: showSliderInt != 0,
+			Mode:       sliderMode,
+			AIEnabled:  aiEnabled,
 			Images:     images,
 		},
 	})
@@ -2604,14 +2631,21 @@ func (s *Server) handleBOGroupMenusV2PatchSlider(w http.ResponseWriter, r *http.
 		return
 	}
 
-	showSlider := false
-	if v, ok := input["show_slider"]; ok {
-		showSlider = parseLooseBoolOrDefault(v, showSlider)
+	// mode is the source of truth (default/custom/both/hidden). show_menu_slider
+	// mirrors it (0 when hidden) so legacy reads stay consistent.
+	mode := ""
+	if v, ok := input["mode"].(string); ok {
+		mode = strings.TrimSpace(v)
 	}
+	if !boValidSliderModes[mode] {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid slider mode"})
+		return
+	}
+	showSlider := mode != "hidden"
 
 	_, err = s.db.ExecContext(r.Context(), `
-		UPDATE menus SET show_menu_slider = ? WHERE id = ? AND restaurant_id = ?
-	`, boolToTinyint(showSlider), menuID, a.ActiveRestaurantID)
+		UPDATE menus SET slider_mode = ?, show_menu_slider = ? WHERE id = ? AND restaurant_id = ?
+	`, mode, boolToTinyint(showSlider), menuID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating slider state")
 		return
@@ -2619,6 +2653,7 @@ func (s *Server) handleBOGroupMenusV2PatchSlider(w http.ResponseWriter, r *http.
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
+		"mode":        mode,
 		"show_slider": showSlider,
 	})
 }
@@ -2730,7 +2765,9 @@ func (s *Server) handleBOGroupMenusV2UploadSliderImage(w http.ResponseWriter, r 
 	imageIDDB, _ := res.LastInsertId()
 
 	s.db.ExecContext(r.Context(), `
-		UPDATE menus SET show_menu_slider = 1 WHERE id = ? AND restaurant_id = ?
+		UPDATE menus SET show_menu_slider = 1,
+			slider_mode = IF(slider_mode IN ('default','hidden'), 'both', slider_mode)
+		WHERE id = ? AND restaurant_id = ?
 	`, menuID, a.ActiveRestaurantID)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -2854,7 +2891,17 @@ func (s *Server) handleBOGroupMenusV2GenerateSliderAIImage(w http.ResponseWriter
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	if strings.TrimSpace(s.cfg.OpenAIAPIKey) == "" {
+	// AI image advisor requires an active ai_image_pack subscription.
+	if enabled, _ := s.hasActiveRecurringFeature(r.Context(), a.ActiveRestaurantID, boAIImageFeatureKey); !enabled {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "code": "NEEDS_SUBSCRIPTION", "message": "AI image improvement requires a subscription"})
+		return
+	}
+	if !s.aiImageConfigValid(r.Context(), a.ActiveRestaurantID) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI configuration incomplete"})
+		return
+	}
+	resolvedAI := s.resolveAIImageProvider(r.Context(), a.ActiveRestaurantID)
+	if strings.TrimSpace(resolvedAI.APIKey) == "" {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
 		return
 	}
@@ -2917,44 +2964,60 @@ func (s *Server) handleBOGroupMenusV2GenerateSliderAIImage(w http.ResponseWriter
 		return
 	}
 
-	go s.runBOGroupMenuV2AISliderImageJob(boGroupMenuV2AIMenuPreviewImageJob{
+	generationID := strings.TrimSpace(r.FormValue("generation_id"))
+	if generationID == "" {
+		generationID = fmt.Sprintf("slider-ai-%d", time.Now().UTC().UnixMilli())
+	}
+	s.broadcastBOGroupMenuV2AIEvent(a.ActiveRestaurantID, menuID, "slider_image_started", map[string]any{
+		"generation_id": generationID,
+	})
+	go s.runBOGroupMenuV2AISliderImageJob(boGroupMenuV2AISliderImageJob{
 		RestaurantID: a.ActiveRestaurantID,
 		MenuID:       menuID,
+		GenerationID: generationID,
 		RawImage:     raw,
 		ContentType:  contentType,
+		APIKey:       resolvedAI.APIKey,
+		EditURL:      aiImageEditURLForModel(resolvedAI.BaseURL, resolvedAI.I2IModelSlug),
 	})
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"message": "AI slider image generation started",
-		"menu_id": menuID,
+		"success":       true,
+		"message":       "AI slider image generation started",
+		"menu_id":       menuID,
+		"generation_id": generationID,
 	})
 }
 
-func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AIMenuPreviewImageJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AISliderImageJob) {
+	base := context.Background()
+	if strings.TrimSpace(job.APIKey) != "" || strings.TrimSpace(job.EditURL) != "" {
+		base = withAIProviderOverride(base, aiProviderOverride{APIKey: job.APIKey, EditURL: job.EditURL})
+	}
+	ctx, cancel := context.WithTimeout(base, s.openAIRequestTimeout())
 	defer cancel()
 
 	if err := s.acquireBOGroupMenuV2AIWorker(ctx); err != nil {
-		s.logBOGroupMenuV2AITrace("slider job worker acquire error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		s.failBOGroupMenuV2AISliderImageJob(job, "AI generation queue timeout")
 		return
 	}
 	defer s.releaseBOGroupMenuV2AIWorker()
 
-	output, err := s.callOpenAISliderImageEdit(ctx, job.RawImage, job.ContentType)
+	output, err := s.callComidaImageEdit(ctx, s.aiRequestEditURL(ctx), s.aiRequestAPIKey(ctx), boGroupMenuV2SliderAIPrompt, job.RawImage, job.ContentType)
 	if err != nil {
-		s.logBOGroupMenuV2AITrace("slider job ai call error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		s.logBOGroupMenuV2AITrace("slider job ai call error restaurant=%d menu=%d generation=%s err=%v", job.RestaurantID, job.MenuID, job.GenerationID, err)
+		s.failBOGroupMenuV2AISliderImageJob(job, aiFailureMessage("AI image generation failed", err))
 		return
 	}
 	if len(output) == 0 || len(output) > s.openAIMaxOutputBytes() {
-		s.logBOGroupMenuV2AITrace("slider job ai output error restaurant=%d menu=%d bytes=%d", job.RestaurantID, job.MenuID, len(output))
+		s.failBOGroupMenuV2AISliderImageJob(job, "AI image generation returned invalid image")
 		return
 	}
 
 	outputType := strings.TrimSpace(http.DetectContentType(output))
 	normalizedWebP, err := specialmenuimage.NormalizeToWebP(ctx, output, "slider-ai", outputType)
 	if err != nil {
-		s.logBOGroupMenuV2AITrace("slider job normalize error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		s.failBOGroupMenuV2AISliderImageJob(job, "AI image processing failed")
 		return
 	}
 
@@ -2973,7 +3036,7 @@ func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AIMenuPreview
 	)
 
 	if err := s.bunnyPut(ctx, objectPath, normalizedWebP, "image/webp"); err != nil {
-		s.logBOGroupMenuV2AITrace("slider job bunny upload error restaurant=%d menu=%d objectPath=%s err=%v", job.RestaurantID, job.MenuID, objectPath, err)
+		s.failBOGroupMenuV2AISliderImageJob(job, "Failed saving generated image")
 		return
 	}
 
@@ -2982,19 +3045,34 @@ func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AIMenuPreview
 		VALUES (?, ?, ?, ?)
 	`, job.RestaurantID, job.MenuID, objectPath, maxPosition+1)
 	if err != nil {
-		s.logBOGroupMenuV2AITrace("slider job db save error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
+		s.failBOGroupMenuV2AISliderImageJob(job, "Failed saving generated image")
 		return
 	}
 	imageIDDB, _ := res.LastInsertId()
 
 	s.db.ExecContext(ctx, `
-		UPDATE menus SET show_menu_slider = 1 WHERE id = ? AND restaurant_id = ?
+		UPDATE menus SET show_menu_slider = 1,
+			slider_mode = IF(slider_mode IN ('default','hidden'), 'both', slider_mode)
+		WHERE id = ? AND restaurant_id = ?
 	`, job.MenuID, job.RestaurantID)
 
 	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "slider_image_completed", map[string]any{
-		"image_id":    imageIDDB,
-		"image_url":   s.bunnyPullURL(objectPath),
-		"show_slider": true,
+		"generation_id": job.GenerationID,
+		"image": boV2MenuSliderImage{
+			ID:        imageIDDB,
+			ImageURL:  s.bunnyPullURL(objectPath),
+			Position:  maxPosition + 1,
+			IsDefault: false,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		},
+		"mode": "both",
+	})
+}
+
+func (s *Server) failBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AISliderImageJob, message string) {
+	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "slider_image_failed", map[string]any{
+		"generation_id": job.GenerationID,
+		"message":       message,
 	})
 }
 
@@ -3002,7 +3080,7 @@ func (s *Server) callOpenAISliderImageEdit(ctx context.Context, input []byte, in
 	if len(input) == 0 {
 		return nil, errors.New("empty input image")
 	}
-	apiKey := strings.TrimSpace(s.cfg.OpenAIAPIKey)
+	apiKey := strings.TrimSpace(s.aiRequestAPIKey(ctx))
 	if apiKey == "" {
 		return nil, errors.New("ai key missing")
 	}
@@ -3030,7 +3108,7 @@ func (s *Server) callOpenAISliderImageEdit(ctx context.Context, input []byte, in
 	if err != nil {
 		return nil, err
 	}
-	payload, statusCode, responseContentType, err := s.doAIProviderRequest(ctx, http.MethodPost, s.openAIImageEditURL(), rawBody, "application/json")
+	payload, statusCode, responseContentType, err := s.doAIProviderRequest(ctx, http.MethodPost, s.aiRequestEditURL(ctx), rawBody, "application/json")
 	if err != nil {
 		return nil, err
 	}

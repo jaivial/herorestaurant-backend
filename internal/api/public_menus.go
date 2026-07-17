@@ -104,6 +104,8 @@ type publicMenuItem struct {
 	ModifiedAt           string                `json:"modified_at"`
 	MenuTitleEnglish     string                `json:"menu_title_english,omitempty"`
 	MenuSubtitleEnglish  []string              `json:"menu_subtitle_english,omitempty"`
+	SliderMode           string                `json:"slider_mode"`
+	SliderImages         []string              `json:"slider_images"`
 }
 
 // publicMenuItemHome is a lightweight version for the home page
@@ -244,6 +246,48 @@ func (s *Server) publicMenuMediaURL(raw string) string {
 		return value
 	}
 	return s.bunnyPullURL(value)
+}
+
+// loadPublicSliderImages returns the slider mode and the image URLs a public
+// menu should show, filtered by mode: default→is_default=1, custom→is_default=0,
+// both→all, hidden→none. Falls back gracefully if the schema is missing.
+func (s *Server) loadPublicSliderImages(ctx context.Context, restaurantID int, menuID int64) (string, []string) {
+	mode := "default"
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(slider_mode, 'default') FROM menus WHERE id = ? AND restaurant_id = ?`,
+		menuID, restaurantID).Scan(&mode); err != nil {
+		mode = "default"
+	}
+	if mode == "hidden" {
+		return mode, []string{}
+	}
+
+	query := `SELECT image_path FROM menu_slider_images WHERE restaurant_id = ? AND menu_id = ?`
+	switch mode {
+	case "default":
+		query += ` AND is_default = 1`
+	case "custom":
+		query += ` AND is_default = 0`
+	}
+	query += ` ORDER BY position ASC, id ASC`
+
+	rows, err := s.db.QueryContext(ctx, query, restaurantID, menuID)
+	if err != nil {
+		return mode, []string{}
+	}
+	defer rows.Close()
+
+	images := make([]string, 0, 8)
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			continue
+		}
+		if url := s.publicMenuMediaURL(path); url != "" {
+			images = append(images, url)
+		}
+	}
+	return mode, images
 }
 
 func buildFallbackPublicSectionDishes(items []string) []publicMenuDish {
@@ -973,6 +1017,9 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		CreatedAt:            createdAtRaw.String,
 		ModifiedAt:           modifiedAtRaw.String,
 	}
+
+	// Slider mode + images (filtered by mode). Absent column → default.
+	item.SliderMode, item.SliderImages = s.loadPublicSliderImages(r.Context(), int(restaurantID), menuID)
 
 	// Fetch sections and dishes
 	sectionByID := make(map[int64]*publicMenuSection, 64)
