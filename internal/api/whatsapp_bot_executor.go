@@ -142,8 +142,8 @@ func (s *Server) botToolSendMedia(ctx context.Context, restaurantID int, msg bot
 	if err := json.Unmarshal(input, &in); err != nil || strings.TrimSpace(in.URL) == "" {
 		return botJSON(map[string]any{"error": "url requerida"}), nil
 	}
-	if !strings.HasPrefix(in.URL, "https://") && !strings.HasPrefix(in.URL, "http://") {
-		return botJSON(map[string]any{"error": "url inválida"}), nil
+	if !strings.HasPrefix(in.URL, "https://") {
+		return botJSON(map[string]any{"error": "la url debe ser https"}), nil
 	}
 
 	mediaType := "image"
@@ -264,10 +264,21 @@ func (s *Server) botToolRiceMenu(ctx context.Context, restaurantID int) (string,
 // --- availability tools ----------------------------------------------------
 
 func (s *Server) botDayCapacity(ctx context.Context, restaurantID int, dateISO string) (limit int, total int, err error) {
+	var limitRaw sql.NullInt64
 	if err = s.db.QueryRowContext(ctx,
-		"SELECT COALESCE((SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id DESC LIMIT 1), 45)",
-		restaurantID, dateISO).Scan(&limit); err != nil {
+		"SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id DESC LIMIT 1",
+		restaurantID, dateISO).Scan(&limitRaw); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, 0, err
+	}
+	if limitRaw.Valid {
+		limit = int(limitRaw.Int64)
+	} else {
+		// No per-day override: use the tenant's configured default, not a literal.
+		defaults, derr := s.loadReservationDefaults(ctx, restaurantID)
+		if derr != nil {
+			return 0, 0, derr
+		}
+		limit = defaults.DailyLimit
 	}
 	if err = s.db.QueryRowContext(ctx,
 		"SELECT COALESCE(SUM(party_size),0) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?",
@@ -547,13 +558,18 @@ func (s *Server) botToolCreateBooking(ctx context.Context, restaurantID int, msg
 		return botJSON(map[string]any{"error": "mínimo 2 raciones de arroz"}), nil
 	}
 
+	// Day must be open (server-side, not just via LLM instruction).
+	if sched, serr := s.botResolveDaySchedule(ctx, restaurantID, dateISO); serr == nil && !sched.Open {
+		return botJSON(map[string]any{"error": "el restaurante no abre ese día; propón otra fecha"}), nil
+	}
+
 	// Capacity check.
 	limit, total, err := s.botDayCapacity(ctx, restaurantID, dateISO)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando capacidad"}), nil
 	}
-	if limit <= 0 || total+in.People > limit {
-		return botJSON(map[string]any{"error": "no hay disponibilidad suficiente para esa fecha", "free_seats": maxInt(0, limit-total)}), nil
+	if over, free := botOverCapacity(limit, total, 0, in.People); over {
+		return botJSON(map[string]any{"error": "no hay disponibilidad suficiente para esa fecha", "free_seats": free}), nil
 	}
 
 	name := strings.TrimSpace(in.Name)
@@ -693,6 +709,8 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 
 	sets := []string{}
 	args := []any{}
+	newDateISO := "" // set when the date is being changed
+	newPeople := 0   // set (>0) when party size is being changed
 	if in.Date != "" {
 		dateISO, err := parseBotDate(in.Date)
 		if err != nil {
@@ -701,6 +719,7 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 		if dateISO <= time.Now().Format("2006-01-02") {
 			return botJSON(map[string]any{"error": "la nueva fecha debe ser futura"}), nil
 		}
+		newDateISO = dateISO
 		sets = append(sets, "reservation_date = ?")
 		args = append(args, dateISO)
 	}
@@ -713,6 +732,10 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 		args = append(args, resTime)
 	}
 	if in.People > 0 {
+		if in.People > 100 {
+			return botJSON(map[string]any{"error": "número de personas inválido"}), nil
+		}
+		newPeople = in.People
 		sets = append(sets, "party_size = ?")
 		args = append(args, in.People)
 	}
@@ -738,6 +761,43 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 	}
 	if len(sets) == 0 {
 		return botJSON(map[string]any{"error": "no se ha indicado ningún cambio"}), nil
+	}
+
+	// Moving the date or growing the party must re-validate day-open + capacity,
+	// exactly like create_booking, so a modification can't overbook or land on a
+	// closed day.
+	if newDateISO != "" || newPeople > 0 {
+		var curDate string
+		var curParty int
+		if err := s.db.QueryRowContext(ctx,
+			"SELECT reservation_date, party_size FROM bookings WHERE id = ? AND restaurant_id = ?",
+			in.BookingID, restaurantID).Scan(&curDate, &curParty); err != nil {
+			return botJSON(map[string]any{"error": "error verificando la reserva"}), nil
+		}
+		effDate := curDate
+		if newDateISO != "" {
+			effDate = newDateISO
+		}
+		effPeople := curParty
+		if newPeople > 0 {
+			effPeople = newPeople
+		}
+		if sched, serr := s.botResolveDaySchedule(ctx, restaurantID, effDate); serr == nil && !sched.Open {
+			return botJSON(map[string]any{"error": "el restaurante no abre ese día; propón otra fecha"}), nil
+		}
+		limit, total, err := s.botDayCapacity(ctx, restaurantID, effDate)
+		if err != nil {
+			return botJSON(map[string]any{"error": "error consultando capacidad"}), nil
+		}
+		// This booking's own seats are already counted in `total` when it stays on
+		// the same date; exclude them so we measure the *net* change.
+		existing := 0
+		if curDate == effDate {
+			existing = curParty
+		}
+		if over, free := botOverCapacity(limit, total, existing, effPeople); over {
+			return botJSON(map[string]any{"error": "no hay disponibilidad suficiente para esa fecha", "free_seats": free}), nil
+		}
 	}
 
 	args = append(args, in.BookingID, restaurantID)
@@ -785,4 +845,14 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// botOverCapacity decides whether adding `want` seats exceeds the day limit,
+// given the day's current booked `total` and the seats (`existing`) already
+// counted in `total` for the booking being modified (0 for a new booking).
+// Returns the exceeded flag and the number of still-free seats.
+func botOverCapacity(limit, total, existing, want int) (over bool, free int) {
+	free = maxInt(0, limit-(total-existing))
+	over = limit <= 0 || (total-existing+want) > limit
+	return over, free
 }

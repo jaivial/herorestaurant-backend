@@ -36,6 +36,8 @@ type Server struct {
 	botCapMu            sync.Mutex
 	botCapDay           string
 	botCapCount         map[int]int
+	botSem              chan struct{} // bounds concurrent inbound agent turns
+	provisionMu         sync.Mutex    // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -53,6 +55,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		vinoAIHub:           newBOVinoAIHub(),
 		comidaAIHub:         newBOComidaAIHub(),
 		rateLimit:           make(map[string]*rateLimitState),
+		botSem:              make(chan struct{}, botMaxConcurrentTurns),
 	}
 	go s.runBOFichajeAutoCutLoop()
 	return s
@@ -371,6 +374,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/cancel", s.handleBOMembersWhatsAppCancel)
 
 		// Fichaje and schedules.
 		r.With(s.requireBOSession, fichajeGate).Get("/fichaje/ping", s.handleBOFichajePing)

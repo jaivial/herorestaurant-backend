@@ -2657,8 +2657,13 @@ func (s *Server) handleBOMembersWhatsAppSubscribe(w http.ResponseWriter, r *http
 
 	connection, connErr := s.provisionAndConnectRestaurantWhatsApp(r.Context(), a.ActiveRestaurantID, "")
 	if connErr != nil {
-		resp["message"] = "Suscripcion activada. Debes completar la conexion de WhatsApp para enviar mensajes."
-		resp["code"] = "WHATSAPP_CONNECT_PENDING"
+		if errors.Is(connErr, errUAZAPINoCapacity) {
+			resp["message"] = "Suscripcion activada, pero no hay servidores de WhatsApp disponibles ahora mismo. Inténtalo de nuevo más tarde."
+			resp["code"] = "WHATSAPP_POOL_FULL"
+		} else {
+			resp["message"] = "Suscripcion activada. Debes completar la conexion de WhatsApp para enviar mensajes."
+			resp["code"] = "WHATSAPP_CONNECT_PENDING"
+		}
 		resp["connected"] = false
 	} else {
 		resp["connection"] = connection
@@ -2691,6 +2696,64 @@ func (s *Server) hasActiveRecurringFeature(ctx context.Context, restaurantID int
 		return false, err
 	}
 	return false, nil
+}
+
+// deactivateRecurringFeature marks a restaurant's recurring feature inactive.
+// Tolerant of the several schema variants used across environments.
+func (s *Server) deactivateRecurringFeature(ctx context.Context, restaurantID int, featureKey string) error {
+	variants := []string{
+		`UPDATE recurring_invoices SET is_active = 0, updated_at = NOW() WHERE restaurant_id = ? AND feature_key = ?`,
+		`UPDATE recurring_invoices SET status = 'canceled', updated_at = NOW() WHERE restaurant_id = ? AND feature_key = ?`,
+	}
+	var lastErr error
+	for _, q := range variants {
+		_, err := s.db.ExecContext(ctx, q, restaurantID, featureKey)
+		if err == nil {
+			return nil
+		}
+		if isSQLSchemaError(err) {
+			lastErr = err
+			continue
+		}
+		return err
+	}
+	if lastErr != nil {
+		// All variants were schema-mismatch; treat as no-op (feature tables absent).
+		return nil
+	}
+	return nil
+}
+
+// handleBOMembersWhatsAppCancel cancels the WhatsApp Pack subscription and
+// suspends the provisioned UAZAPI instance (disconnect + mark inactive) while
+// keeping the row for a future reconnect.
+// POST /admin/members/whatsapp/cancel
+func (s *Server) handleBOMembersWhatsAppCancel(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	if err := s.deactivateRecurringFeature(r.Context(), a.ActiveRestaurantID, boPremiumWhatsAppFeatureKey); err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "WHATSAPP_CANCEL_FAILED", "No se pudo cancelar la suscripcion")
+		return
+	}
+	if err := s.suspendRestaurantUAZAPIInstance(r.Context(), a.ActiveRestaurantID); err != nil {
+		// Subscription is already canceled; report suspend failure but keep 200.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success":   true,
+			"connected": false,
+			"warning":   "Suscripcion cancelada pero no se pudo desconectar la instancia",
+		})
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"connected": false,
+		"message":   "Suscripcion de WhatsApp cancelada y desconectada",
+	})
 }
 
 func (s *Server) activateRecurringFeatureMonthly(ctx context.Context, restaurantID int, featureKey string, amount float64, currency string, meta map[string]any) error {

@@ -123,7 +123,7 @@ func (s *Server) botLLMCall(ctx context.Context, modelOverride string, system st
 		return botLLMResponse{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return botLLMResponse{}, fmt.Errorf("minimax bot http %d", resp.StatusCode)
+		return botLLMResponse{}, fmt.Errorf("minimax bot http %d: %s", resp.StatusCode, truncate(string(body), 300))
 	}
 
 	var parsed botLLMResponse

@@ -48,6 +48,7 @@ type Config struct {
 	BotMaxIterations            int
 	BotHistoryLimit             int
 	BotDailyTurnsCap            int
+	BotPublicWebhookURL         string
 	SMTPHost                    string
 	SMTPPort                    int
 	SMTPUsername                string
@@ -94,6 +95,7 @@ func Load() Config {
 		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 8, 1, 20),
 		BotHistoryLimit:             getenvInt("BOT_HISTORY_LIMIT", 20, 2, 100),
 		BotDailyTurnsCap:            getenvInt("BOT_DAILY_TURNS_CAP", 2000, 1, 1000000),
+		BotPublicWebhookURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("BOT_PUBLIC_WEBHOOK_URL")), "/"),
 		SMTPHost:                    strings.TrimSpace(os.Getenv("SMTP_HOST")),
 		SMTPPort:                    getenvInt("SMTP_PORT", 587, 1, 65535),
 		SMTPUsername:                strings.TrimSpace(os.Getenv("SMTP_USERNAME")),

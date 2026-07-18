@@ -2372,3 +2372,70 @@ resolves them dynamically each turn via tools bound to Go internals:
   (name, price, description, group, supplement).
 - `get_wines_menu` — wines from `VINOS` grouped by type (name, price, type,
   winery, denomination, year, abv).
+
+## Multi-Tenant WhatsApp Bot (UAZAPI on-demand instances)
+
+Each restaurant whose subscription includes the WhatsApp Pack
+(`feature_key = whatsapp_pack`) can provision a dedicated UAZAPI instance,
+connect its own phone by scanning a QR (or entering a pairing code), and have
+inbound WhatsApp messages routed to the correct tenant and answered by the AI
+bot. Isolation is per instance token; entitlement is enforced on every message.
+
+### Inbound webhook (provider → backend)
+`POST /bot/webhook` — public UAZAPI webhook. No auth header; the tenant is
+resolved from the payload `token` (instance token) or `owner` (connected phone)
+against `restaurant_uazapi_instances` (must be `is_active = 1`). Handles two
+kinds of payloads:
+- **Message events** → gated by `hasActiveRecurringFeature(rid, whatsapp_pack)`,
+  deduped, daily-capped, then processed by the AI agent in the background.
+  Non-entitled restaurants return `{ processed: false, code: "NEEDS_SUBSCRIPTION" }`.
+- **Connection lifecycle events** (`qrcode` / `connection` / pairing) → update the
+  provisioning row (status, connected phone, clear QR) so the onboarding UI stays
+  live without polling. Response: `{ processed, connection: true }`.
+
+The instance webhook is auto-registered at provisioning time via
+`POST {server}/instance/updatewebhook` pointing at
+`BOT_PUBLIC_WEBHOOK_URL + /bot/webhook` with events `["messages","connection"]`.
+Set `BOT_PUBLIC_WEBHOOK_URL` to the public HTTPS origin of this backend.
+
+### Backoffice onboarding (session-cookie auth, `miembros` + roles-admin gate)
+- `POST /api/admin/members/whatsapp/subscribe` — activate the monthly WhatsApp
+  Pack and auto-provision + connect. Body `{ amount?, currency? }`.
+- `POST /api/admin/members/whatsapp/connect` — provision (if needed) and start
+  pairing. Optional body `{ phone }` requests a pairing code instead of a QR.
+- `GET  /api/admin/members/whatsapp/connection` — current connection state.
+- `POST /api/admin/members/whatsapp/disconnect` — disconnect; `{ delete_instance:true }`
+  also deletes the remote instance and local row.
+- `POST /api/admin/members/whatsapp/cancel` — cancel the WhatsApp Pack and
+  **suspend** the instance (disconnect + `is_active = 0`, row kept). Re-subscribing
+  reconnects the same instance/token.
+
+Connection response shape (`connection`):
+`{ status, connected, instance_name, provider_instance_id, server_base_url,
+   phone, qr, pair_code, updated_at }`. `qr` is a base64 image (data URL or raw).
+
+### Superadmin server pool (`ajustes` + roles-admin gate)
+- `GET/POST /api/admin/integrations/uazapi/servers`, `PATCH /.../servers/{id}` —
+  manage the `uazapi_servers` pool (base_url, admin_token, capacity, priority).
+  Provisioning picks the least-loaded active server **with remaining capacity**;
+  a full pool fails provisioning with a clear error.
+
+### Data model
+- `uazapi_servers` — provider host pool (migration 019).
+- `restaurant_uazapi_instances` — one row per restaurant (unique), holds instance
+  token, status, connected phone, QR/pair code, webhook metadata (migration 019).
+- `whatsapp_bot_config` / `whatsapp_bot_sessions` / `whatsapp_bot_messages` —
+  per-tenant personalization + conversation history (migration 056).
+
+### Bot behavior parity
+The Go bot tool set is a superset of the legacy .NET bot: booking CRUD
+(`create_booking`, `cancel_booking`, `modify_booking`, `get_bookings`),
+availability (`check_day_capacity`, `check_availability_for_party`), schedule
+(`get_default_schedule`, `get_day_schedule`), menus (`list_menus`,
+`get_menu_details`, `get_rice_menu`, `get_coffee_menu`, `get_drinks_menu`,
+`get_wines_menu`), messaging/media (`send_message`, `send_menu_buttons`,
+`send_contact`, `send_location`, `send_image`, `send_document`) and
+`get_restaurant_info`. The legacy `fetch_whatsapp_history` tool is unnecessary
+because history is persisted per tenant in `whatsapp_bot_messages`. All tools are
+scoped by `restaurant_id`; the system prompt is personalized from
+`whatsapp_bot_config` (language, tone, greeting, rules, custom instructions).
