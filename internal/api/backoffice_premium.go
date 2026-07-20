@@ -2640,6 +2640,7 @@ func (s *Server) handleBOMembersWhatsAppSubscribe(w http.ResponseWriter, r *http
 	}
 
 	if err := s.activateRecurringFeatureMonthly(r.Context(), a.ActiveRestaurantID, boPremiumWhatsAppFeatureKey, amount, currency, meta); err != nil {
+		log.Printf("[whatsapp] restaurant=%d subscribe activateRecurringFeature failed: %v", a.ActiveRestaurantID, err)
 		writeBOPremiumError(w, http.StatusInternalServerError, "WHATSAPP_SUBSCRIBE_FAILED", "No se pudo activar suscripción")
 		return
 	}
@@ -2766,6 +2767,19 @@ func (s *Server) activateRecurringFeatureMonthly(ctx context.Context, restaurant
 				SET is_active = 1,
 				    amount = ?,
 				    currency = ?,
+				    frequency = 'monthly',
+				    interval_count = 1,
+				    metadata_json = ?,
+				    next_run_at = DATE_ADD(NOW(), INTERVAL 1 MONTH),
+				    updated_at = NOW()
+				WHERE restaurant_id = ? AND feature_key = ?`,
+			args: []any{amount, currency, metaArg, restaurantID, featureKey},
+		},
+		{
+			query: `UPDATE recurring_invoices
+				SET is_active = 1,
+				    amount = ?,
+				    currency = ?,
 				    interval_unit = 'month',
 				    interval_count = 1,
 				    meta_json = ?,
@@ -2828,7 +2842,17 @@ func insertRecurringInvoiceRecord(ctx context.Context, execer boSQLExecutor, res
 	metaRaw, _ := json.Marshal(meta)
 	metaArg := nullableString(string(metaRaw))
 
+	// customer_name/customer_email are legacy NOT-NULL columns on the real
+	// schema; feature-pack subscriptions have no customer, so use a label.
+	customerName := "Suscripción " + featureKey
+
 	variants := []boSQLVariant{
+		{
+			query: `INSERT INTO recurring_invoices
+				(restaurant_id, feature_key, customer_name, customer_email, amount, currency, frequency, start_date, is_active, interval_count, metadata_json, next_run_at, created_at, updated_at)
+				VALUES (?, ?, ?, '', ?, ?, 'monthly', CURDATE(), 1, 1, ?, DATE_ADD(NOW(), INTERVAL 1 MONTH), NOW(), NOW())`,
+			args: []any{restaurantID, featureKey, customerName, amount, currency, metaArg},
+		},
 		{
 			query: `INSERT INTO recurring_invoices
 				(restaurant_id, feature_key, amount, currency, interval_unit, interval_count, is_active, meta_json, next_billing_at, created_at, updated_at)
