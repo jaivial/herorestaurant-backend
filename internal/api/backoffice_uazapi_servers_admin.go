@@ -19,12 +19,13 @@ import (
 const boUAZAPIServerMaxCapacity = 10000
 
 const boUAZAPIServerSelectBase = `
-SELECT id, name, base_url, admin_token, capacity, used_count, priority, is_active, metadata_json
+SELECT id, name, provider, base_url, admin_token, capacity, used_count, priority, is_active, metadata_json
 FROM uazapi_servers`
 
 type boUAZAPIServerView struct {
 	ID               int64  `json:"id"`
 	Name             string `json:"name"`
+	Provider         string `json:"provider"`
 	BaseURL          string `json:"baseUrl"`
 	AdminTokenMasked string `json:"adminTokenMasked"`
 	Capacity         int    `json:"capacity"`
@@ -37,6 +38,7 @@ type boUAZAPIServerView struct {
 type boUAZAPIServerRecord struct {
 	ID         int64
 	Name       string
+	Provider   string
 	BaseURL    string
 	AdminToken string
 	Capacity   int
@@ -87,6 +89,7 @@ func (s *Server) handleBOUAZAPIServersCreate(w http.ResponseWriter, r *http.Requ
 		"isActive":    {},
 		"is_active":   {},
 		"metadata":    {},
+		"provider":    {},
 	}); unknown != "" {
 		writeBOUAZAPIServerError(w, http.StatusBadRequest, "BAD_REQUEST", "Campo no soportado: "+unknown)
 		return
@@ -193,12 +196,22 @@ func (s *Server) handleBOUAZAPIServersCreate(w http.ResponseWriter, r *http.Requ
 		metadataValue = metadataJSON
 	}
 
+	provider := "uazapi"
+	if pv, ok := firstBOUAZAPIServerField(body, "provider"); ok {
+		var p string
+		if json.Unmarshal(pv, &p) == nil {
+			if p = strings.ToLower(strings.TrimSpace(p)); p == "evolution" || p == "uazapi" {
+				provider = p
+			}
+		}
+	}
+
 	result, err := s.db.ExecContext(r.Context(), `
 		INSERT INTO uazapi_servers
-			(name, base_url, admin_token, capacity, priority, is_active, metadata_json, created_at, updated_at)
+			(name, provider, base_url, admin_token, capacity, priority, is_active, metadata_json, created_at, updated_at)
 		VALUES
-			(?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-	`, name, baseURL, adminToken, capacity, priority, boolToTinyInt(isActive), metadataValue)
+			(?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+	`, name, provider, baseURL, adminToken, capacity, priority, boolToTinyInt(isActive), metadataValue)
 	if err != nil {
 		if isSQLDuplicateError(err) {
 			writeBOUAZAPIServerError(w, http.StatusConflict, "DUPLICATE_BASE_URL", "baseUrl ya existe")
@@ -273,6 +286,7 @@ func (s *Server) handleBOUAZAPIServersPatch(w http.ResponseWriter, r *http.Reque
 		"isActive":    {},
 		"is_active":   {},
 		"metadata":    {},
+		"provider":    {},
 	}); unknown != "" {
 		writeBOUAZAPIServerError(w, http.StatusBadRequest, "BAD_REQUEST", "Campo no soportado: "+unknown)
 		return
@@ -480,6 +494,7 @@ func scanBOUAZAPIServerRecord(scanFn func(dest ...any) error) (boUAZAPIServerRec
 	if err := scanFn(
 		&rec.ID,
 		&rec.Name,
+		&rec.Provider,
 		&rec.BaseURL,
 		&rec.AdminToken,
 		&rec.Capacity,
@@ -509,6 +524,7 @@ func mapBOUAZAPIServerRecordToView(rec boUAZAPIServerRecord) boUAZAPIServerView 
 	return boUAZAPIServerView{
 		ID:               rec.ID,
 		Name:             rec.Name,
+		Provider:         rec.Provider,
 		BaseURL:          rec.BaseURL,
 		AdminTokenMasked: maskBOUAZAPIServerToken(rec.AdminToken),
 		Capacity:         rec.Capacity,

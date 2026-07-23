@@ -2373,13 +2373,26 @@ resolves them dynamically each turn via tools bound to Go internals:
 - `get_wines_menu` — wines from `VINOS` grouped by type (name, price, type,
   winery, denomination, year, abv).
 
-## Multi-Tenant WhatsApp Bot (UAZAPI on-demand instances)
+## Multi-Tenant WhatsApp Bot (Evolution API onboarding)
 
 Each restaurant whose subscription includes the WhatsApp Pack
-(`feature_key = whatsapp_pack`) can provision a dedicated UAZAPI instance,
-connect its own phone by scanning a QR (or entering a pairing code), and have
-inbound WhatsApp messages routed to the correct tenant and answered by the AI
-bot. Isolation is per instance token; entitlement is enforced on every message.
+(`feature_key = whatsapp_pack`) can provision a dedicated Evolution API instance
+and connect its phone by scanning a QR. New instances only use active
+`uazapi_servers.provider = evolution` hosts. If no Evolution host has capacity,
+provisioning falls back to the configured UAZAPI pool instead of failing the
+restaurant onboarding. Existing UAZAPI instances remain supported.
+
+Production deployment uses self-hosted Evolution API `2.3.7` with
+`WHATSAPP-BAILEYS`, bound to `127.0.0.1:8098`. Compose config lives at
+`/opt/newvillacarmen-evolution`; PostgreSQL and Redis stay container-internal.
+UAZAPI pool allocation is disabled. Bot option menus use Evolution
+`POST /message/sendButtons/{instance}` with reply buttons. Evolution `2.3.7`
+Baileys `sendList` is avoided because its live route returns HTTP 400.
+
+If a restaurant already has `restaurant_integrations.uazapi_url/uazapi_token`,
+onboarding checks that instance first and adopts it into
+`restaurant_uazapi_instances`. This supports legacy connected instances without
+requiring an admin token or creating a duplicate remote instance.
 
 ### Inbound webhook (provider → backend)
 `POST /bot/webhook` — public UAZAPI webhook. No auth header; the tenant is
@@ -2398,30 +2411,67 @@ The instance webhook is auto-registered at provisioning time via
 `BOT_PUBLIC_WEBHOOK_URL + /bot/webhook` with events `["messages","connection"]`.
 Set `BOT_PUBLIC_WEBHOOK_URL` to the public HTTPS origin of this backend.
 
-### Backoffice onboarding (session-cookie auth, `miembros` + roles-admin gate)
-- `POST /api/admin/members/whatsapp/subscribe` — activate the monthly WhatsApp
-  Pack and auto-provision + connect. Body `{ amount?, currency? }`.
+Evolution uses `POST /bot/webhook/evolution/{secret}` with
+`EVOLUTION_WEBHOOK_SECRET`. Tenant routing uses Evolution `instance` matched to
+`restaurant_uazapi_instances.provider_instance_id`. `CONNECTION_UPDATE` and
+`QRCODE_UPDATED` persist current state and broadcast it to the restaurant's
+backoffice WebSocket room.
+
+### Backoffice onboarding (session-cookie auth, `ajustes` + roles-admin gate)
 - `POST /api/admin/members/whatsapp/connect` — provision (if needed) and start
   pairing. Optional body `{ phone }` requests a pairing code instead of a QR.
 - `GET  /api/admin/members/whatsapp/connection` — current connection state.
+- `GET  /api/admin/members/whatsapp/ws` — authenticated WebSocket. Sends an
+  immediate snapshot, then `whatsapp.connection` events for QR/status changes.
 - `POST /api/admin/members/whatsapp/disconnect` — disconnect; `{ delete_instance:true }`
   also deletes the remote instance and local row.
-- `POST /api/admin/members/whatsapp/cancel` — cancel the WhatsApp Pack and
-  **suspend** the instance (disconnect + `is_active = 0`, row kept). Re-subscribing
-  reconnects the same instance/token.
+
+Disconnect marks the local instance inactive and responds immediately. Provider
+logout runs in a bounded background request, so a slow provider cannot leave the
+settings UI loading. Inactive instances cannot route inbound bot messages;
+reconnect reactivates the same instance.
+
+Some providers generate QR asynchronously after `/connect`. Backend watches
+pairing status for up to 60 seconds, persists the first QR/pair code, and pushes
+it through the restaurant WebSocket. Watcher stops immediately if instance is
+inactive or suspended.
+
+Subscription activation/cancellation endpoints remain root-only. Restaurant
+admins cannot grant or cancel their own entitlement from settings.
+
+Status response:
+
+```json
+{
+  "success": true,
+  "entitled": true,
+  "connected": false,
+  "connection": {
+    "status": "pending",
+    "connected": false,
+    "phone": null,
+    "qr": "data:image/png;base64,...",
+    "pair_code": null,
+    "updated_at": "2026-07-23T13:00:00Z"
+  }
+}
+```
 
 Connection response shape (`connection`):
-`{ status, connected, instance_name, provider_instance_id, server_base_url,
-   phone, qr, pair_code, updated_at }`. `qr` is a base64 image (data URL or raw).
+`{ status, connected, phone, qr, pair_code, updated_at }`. Provider URL, instance
+name, provider ID, API key and instance token are never returned to browser.
 
 ### Superadmin server pool (`ajustes` + roles-admin gate)
 - `GET/POST /api/admin/integrations/uazapi/servers`, `PATCH /.../servers/{id}` —
-  manage the `uazapi_servers` pool (base_url, admin_token, capacity, priority).
-  Provisioning picks the least-loaded active server **with remaining capacity**;
-  a full pool fails provisioning with a clear error.
+  manage provider pool (`provider`, `base_url`, `admin_token`, capacity,
+  priority). New onboarding prefers the least-loaded active Evolution server,
+  then UAZAPI. No capacity in either provider returns `WHATSAPP_POOL_FULL`.
+
+Evolution server create body includes `"provider":"evolution"`. `adminToken`
+is Evolution global API key used in `apikey` header.
 
 ### Data model
-- `uazapi_servers` — provider host pool (migration 019).
+- `uazapi_servers` — provider host pool (migrations 019 + 059).
 - `restaurant_uazapi_instances` — one row per restaurant (unique), holds instance
   token, status, connected phone, QR/pair code, webhook metadata (migration 019).
 - `whatsapp_bot_config` / `whatsapp_bot_sessions` / `whatsapp_bot_messages` —

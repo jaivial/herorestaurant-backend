@@ -2671,6 +2671,7 @@ func (s *Server) handleBOMembersWhatsAppSubscribe(w http.ResponseWriter, r *http
 		resp["connected"] = anyToBool(connection["connected"])
 		resp["message"] = whatsappConnectionMessage(connection)
 	}
+	s.broadcastWhatsAppConnection(r.Context(), a.ActiveRestaurantID)
 
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
@@ -2749,6 +2750,7 @@ func (s *Server) handleBOMembersWhatsAppCancel(w http.ResponseWriter, r *http.Re
 		})
 		return
 	}
+	s.broadcastWhatsAppConnection(r.Context(), a.ActiveRestaurantID)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":   true,

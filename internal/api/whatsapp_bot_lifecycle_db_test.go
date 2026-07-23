@@ -83,3 +83,52 @@ func TestSuspendAndReactivateUAZAPIInstance_DB(t *testing.T) {
 		t.Fatal("reactivated instance must resolve for inbound routing again")
 	}
 }
+
+func TestAdoptRestaurantUAZAPIInstance_DB(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+	s := newTestServer(t, db)
+	rid, cleanup := seedBotRestaurant(t, s)
+	defer cleanup()
+
+	const token = "existing-instance-token"
+	uaz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/instance/status" || r.Header.Get("token") != token {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"instance":{"status":"connected","phone":"34692747052"}}`))
+	}))
+	defer uaz.Close()
+
+	res, err := db.Exec(`
+		INSERT INTO uazapi_servers (name, provider, base_url, admin_token, capacity, used_count, priority, is_active)
+		VALUES (?, 'uazapi', ?, 'not-an-admin-token', 10, 0, 100, 1)
+	`, "adopt-"+time.Now().Format("150405.000"), uaz.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverID, _ := res.LastInsertId()
+	defer func() { _, _ = db.Exec(`DELETE FROM uazapi_servers WHERE id = ?`, serverID) }()
+
+	_, err = db.Exec(`
+		INSERT INTO restaurant_integrations (restaurant_id, uazapi_url, uazapi_token)
+		VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE uazapi_url=VALUES(uazapi_url), uazapi_token=VALUES(uazapi_token)
+	`, rid, uaz.URL, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = db.Exec(`DELETE FROM restaurant_integrations WHERE restaurant_id = ?`, rid) }()
+	defer func() { _, _ = db.Exec(`DELETE FROM restaurant_uazapi_instances WHERE restaurant_id = ?`, rid) }()
+
+	rec, adopted, err := s.adoptRestaurantUAZAPIInstance(context.Background(), rid, uazapiServerRecord{
+		ID: serverID, Provider: "uazapi", BaseURL: uaz.URL,
+	})
+	if err != nil || !adopted {
+		t.Fatalf("adopted=%v err=%v", adopted, err)
+	}
+	if rec.InstanceToken != token || rec.Status != "connected" || rec.ConnectedPhone != "34692747052" {
+		t.Fatalf("record=%+v", rec)
+	}
+}

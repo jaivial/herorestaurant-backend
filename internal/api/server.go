@@ -20,24 +20,25 @@ import (
 )
 
 type Server struct {
-	db                  *sql.DB
-	cfg                 config.Config
-	tenantCache         tenantDomainCache
-	fichajeHub          *boFichajeHub
-	tablesHub           *boTablesHub
-	groupMenusV2AIHub   *boGroupMenuV2AIHub
-	groupMenusV2AIQueue chan struct{}
-	vinoAIHub           *boVinoAIHub
-	comidaAIHub         *boComidaAIHub
-	rateMu              sync.Mutex
-	rateLimit           map[string]*rateLimitState
-	botSeenMu           sync.Mutex
-	botSeen             map[string]int64
-	botCapMu            sync.Mutex
-	botCapDay           string
-	botCapCount         map[int]int
-	botSem              chan struct{} // bounds concurrent inbound agent turns
-	provisionMu         sync.Mutex    // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
+	db                    *sql.DB
+	cfg                   config.Config
+	tenantCache           tenantDomainCache
+	fichajeHub            *boFichajeHub
+	tablesHub             *boTablesHub
+	groupMenusV2AIHub     *boGroupMenuV2AIHub
+	groupMenusV2AIQueue   chan struct{}
+	vinoAIHub             *boVinoAIHub
+	comidaAIHub           *boComidaAIHub
+	whatsappConnectionHub *boWhatsAppConnectionHub
+	rateMu                sync.Mutex
+	rateLimit             map[string]*rateLimitState
+	botSeenMu             sync.Mutex
+	botSeen               map[string]int64
+	botCapMu              sync.Mutex
+	botCapDay             string
+	botCapCount           map[int]int
+	botSem                chan struct{} // bounds concurrent inbound agent turns
+	provisionMu           sync.Mutex    // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -46,16 +47,17 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		aiConcurrency = 1
 	}
 	s := &Server{
-		db:                  db,
-		cfg:                 cfg,
-		fichajeHub:          newBOFichajeHub(),
-		tablesHub:           newBOTablesHub(),
-		groupMenusV2AIHub:   newBOGroupMenuV2AIHub(),
-		groupMenusV2AIQueue: make(chan struct{}, aiConcurrency),
-		vinoAIHub:           newBOVinoAIHub(),
-		comidaAIHub:         newBOComidaAIHub(),
-		rateLimit:           make(map[string]*rateLimitState),
-		botSem:              make(chan struct{}, botMaxConcurrentTurns),
+		db:                    db,
+		cfg:                   cfg,
+		fichajeHub:            newBOFichajeHub(),
+		tablesHub:             newBOTablesHub(),
+		groupMenusV2AIHub:     newBOGroupMenuV2AIHub(),
+		groupMenusV2AIQueue:   make(chan struct{}, aiConcurrency),
+		vinoAIHub:             newBOVinoAIHub(),
+		comidaAIHub:           newBOComidaAIHub(),
+		whatsappConnectionHub: newBOWAConnectionHub(),
+		rateLimit:             make(map[string]*rateLimitState),
+		botSem:                make(chan struct{}, botMaxConcurrentTurns),
 	}
 	go s.runBOFichajeAutoCutLoop()
 	return s
@@ -370,11 +372,12 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/roles", s.handleBORoleCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/users/{id}/role", s.handleBOUserRolePatch)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/send", s.handleBOMembersWhatsAppSend)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/subscribe", s.handleBOMembersWhatsAppSubscribe)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/cancel", s.handleBOMembersWhatsAppCancel)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/members/whatsapp/subscribe", s.handleBOMembersWhatsAppSubscribe)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/members/whatsapp/ws", s.handleBOMembersWhatsAppWS)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/members/whatsapp/cancel", s.handleBOMembersWhatsAppCancel)
 
 		// Fichaje and schedules.
 		r.With(s.requireBOSession, fichajeGate).Get("/fichaje/ping", s.handleBOFichajePing)
@@ -428,6 +431,7 @@ func (s *Server) Routes() http.Handler {
 	// Multi-tenant WhatsApp bot webhook (UAZAPI). Tenant resolved by the
 	// instance token in the payload, not by Host header.
 	r.Post("/bot/webhook", s.handleBotWebhook)
+	r.Post("/bot/webhook/evolution/{secret}", s.handleBotWebhookEvolution)
 
 	// Everything below is restaurant-scoped.
 	r.Group(func(r chi.Router) {

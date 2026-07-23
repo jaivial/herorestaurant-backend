@@ -201,6 +201,7 @@ func (s *Server) handleBotConnectionEvent(ctx context.Context, ev botConnectionE
 			_ = s.syncRestaurantUAZAPIIntegration(ctx, restaurantID, rec.ServerBaseURL, rec.InstanceToken)
 		}
 	}
+	s.broadcastWhatsAppConnection(ctx, restaurantID)
 	return true
 }
 
@@ -312,6 +313,13 @@ func (s *Server) handleBotWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.processInboundBotMessage(w, r, restaurantID, msg)
+}
+
+// processInboundBotMessage runs the shared inbound pipeline (entitlement gate,
+// dedup, daily cap, media fallback, bounded background agent turn) for a
+// resolved tenant. Used by both the UAZAPI and Evolution webhook handlers.
+func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request, restaurantID int, msg botWebhookMessage) {
 	// Subscription gate: WhatsApp Pack must be active.
 	entitled, err := s.hasActiveRecurringFeature(r.Context(), restaurantID, boPremiumWhatsAppFeatureKey)
 	if err != nil {
@@ -342,18 +350,14 @@ func (s *Server) handleBotWebhook(w http.ResponseWriter, r *http.Request) {
 
 	if msg.Text == "" {
 		// Unsupported media: polite fallback.
-		uazURL, uazToken := s.uazapiBaseAndToken(r.Context(), restaurantID)
-		if uazURL != "" {
-			_ = botUazapiSend(r.Context(), uazURL, uazToken, "text", map[string]any{
-				"number": msg.Sender,
-				"text":   "Ahora mismo solo puedo gestionar mensajes de texto. ¿Me lo puedes escribir por aquí?",
-			})
+		if gw, ok := s.botGatewayFor(r.Context(), restaurantID); ok {
+			_ = gw.SendText(r.Context(), msg.Sender, "Ahora mismo solo puedo gestionar mensajes de texto. ¿Me lo puedes escribir por aquí?")
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "unsupportedContent": true})
 		return
 	}
 
-	// Process in background (bounded): UAZAPI webhooks time out quickly. A
+	// Process in background (bounded): provider webhooks time out quickly. A
 	// recover() keeps one bad turn from crashing the whole multi-tenant process.
 	select {
 	case s.botSem <- struct{}{}:
@@ -453,10 +457,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// customer is never left in silence.
 	if !botDeliveredReply(result.ToolCalls) {
 		if text := botFinalAssistantText(result.Messages); text != "" {
-			uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-			if uazURL != "" && botUazapiSend(ctx, uazURL, uazToken, "text", map[string]any{
-				"number": msg.Sender, "text": text,
-			}) == nil {
+			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && gw.SendText(ctx, msg.Sender, text) == nil {
 				s.botSaveMessage(ctx, restaurantID, msg.Sender, "assistant", text, "")
 			}
 		} else {
@@ -503,11 +504,11 @@ func botFinalAssistantText(msgs []botMessage) string {
 // botSendFallback delivers a generic apology when the agent produced no reply.
 func (s *Server) botSendFallback(ctx context.Context, restaurantID int, sender string) {
 	const fallback = "Perdona, ahora mismo no puedo responderte. ¿Puedes intentarlo de nuevo en un momento?"
-	uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-	if uazURL == "" {
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
 		return
 	}
-	if botUazapiSend(ctx, uazURL, uazToken, "text", map[string]any{"number": sender, "text": fallback}) == nil {
+	if gw.SendText(ctx, sender, fallback) == nil {
 		s.botSaveMessage(ctx, restaurantID, sender, "assistant", fallback, "")
 	}
 }

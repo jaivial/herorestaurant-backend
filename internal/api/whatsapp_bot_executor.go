@@ -98,11 +98,11 @@ func (s *Server) botToolSendMessage(ctx context.Context, restaurantID int, msg b
 	if err := json.Unmarshal(input, &in); err != nil || strings.TrimSpace(in.Message) == "" {
 		return botJSON(map[string]any{"error": "message requerido"}), nil
 	}
-	uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-	if err := botUazapiSend(ctx, uazURL, uazToken, "text", map[string]any{
-		"number": msg.Sender,
-		"text":   in.Message,
-	}); err != nil {
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
+	}
+	if err := gw.SendText(ctx, msg.Sender, in.Message); err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
 	s.botSaveMessage(ctx, restaurantID, msg.Sender, "assistant", in.Message, "")
@@ -120,13 +120,11 @@ func (s *Server) botToolSendButtons(ctx context.Context, restaurantID int, msg b
 	if len(in.Choices) > 3 {
 		in.Choices = in.Choices[:3]
 	}
-	uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-	if err := botUazapiSend(ctx, uazURL, uazToken, "menu", map[string]any{
-		"number":  msg.Sender,
-		"type":    "button",
-		"text":    in.Text,
-		"choices": in.Choices,
-	}); err != nil {
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
+	}
+	if err := gw.SendMenu(ctx, msg.Sender, in.Text, in.Choices); err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
 	s.botSaveMessage(ctx, restaurantID, msg.Sender, "assistant", in.Text, "")
@@ -150,19 +148,13 @@ func (s *Server) botToolSendMedia(ctx context.Context, restaurantID int, msg bot
 	if kind == "send_document" {
 		mediaType = "document"
 	}
-	payload := map[string]any{
-		"number": msg.Sender,
-		"type":   mediaType,
-		"file":   in.URL,
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
 	}
-	if in.Caption != "" {
-		payload["text"] = in.Caption
-	}
-	if in.Filename != "" {
-		payload["docName"] = in.Filename
-	}
-	uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-	if err := botUazapiSend(ctx, uazURL, uazToken, "media", payload); err != nil {
+	if err := gw.SendMedia(ctx, msg.Sender, waMedia{
+		Kind: mediaType, URL: in.URL, Caption: in.Caption, Filename: in.Filename,
+	}); err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
 	return botJSON(map[string]any{"sent": true}), nil
@@ -176,17 +168,13 @@ func (s *Server) botToolSendLocation(ctx context.Context, restaurantID int, msg 
 		return botJSON(map[string]any{"error": "el restaurante no tiene dirección configurada"}), nil
 	}
 
-	uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-	if err := botUazapiSend(ctx, uazURL, uazToken, "location", map[string]any{
-		"number":  msg.Sender,
-		"address": address,
-		"name":    s.botBrandName(ctx, restaurantID),
-	}); err != nil {
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
+	}
+	if err := gw.SendLocation(ctx, msg.Sender, waLocation{Address: address, Name: s.botBrandName(ctx, restaurantID)}); err != nil {
 		// Fallback: send as text.
-		if terr := botUazapiSend(ctx, uazURL, uazToken, "text", map[string]any{
-			"number": msg.Sender,
-			"text":   "📍 " + address,
-		}); terr != nil {
+		if terr := gw.SendText(ctx, msg.Sender, "📍 "+address); terr != nil {
 			return botJSON(map[string]any{"error": terr.Error()}), nil
 		}
 	}
@@ -205,13 +193,11 @@ func (s *Server) botToolSendContact(ctx context.Context, restaurantID int, msg b
 	}
 	brand := s.botBrandName(ctx, restaurantID)
 
-	uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-	if err := botUazapiSend(ctx, uazURL, uazToken, "contact", map[string]any{
-		"number":       msg.Sender,
-		"fullName":     brand,
-		"phoneNumber":  phone,
-		"organization": brand,
-	}); err != nil {
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
+	}
+	if err := gw.SendContact(ctx, msg.Sender, waContact{FullName: brand, Phone: phone, Organization: brand}); err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
 	return botJSON(map[string]any{"sent": true, "phone": phone}), nil

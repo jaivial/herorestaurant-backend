@@ -29,10 +29,9 @@ func botUazapiSend(ctx context.Context, baseURL string, token string, kind strin
 	return nil
 }
 
-
 // botUazapiConfigureWebhook registers the tenant instance webhook so inbound
 // WhatsApp events are delivered to our multi-tenant /bot/webhook endpoint.
-// UAZAPI exposes POST /instance/updatewebhook (instance token in header/query).
+// UAZAPI exposes POST /webhook (instance token in query).
 // We send the union of field spellings seen across UAZAPI versions so the call
 // is resilient; the provider ignores unknown keys.
 func botUazapiConfigureWebhook(ctx context.Context, baseURL string, instanceToken string, callbackURL string, events []string) error {
@@ -44,17 +43,17 @@ func botUazapiConfigureWebhook(ctx context.Context, baseURL string, instanceToke
 	if len(events) == 0 {
 		events = []string{"messages", "connection"}
 	}
-	endpoint := base + "/instance/updatewebhook"
+	endpoint := base + "/webhook"
 	if instanceToken != "" {
 		endpoint += "?token=" + url.QueryEscape(instanceToken)
 	}
 	payload := map[string]any{
-		"enabled":         true,
-		"url":             callbackURL,
-		"webhook":         callbackURL,
-		"events":          events,
-		"excludeMessages": []string{"wasSentByApi", "fromMe"},
-		"addUrlEvents":    false,
+		"enabled":             true,
+		"url":                 callbackURL,
+		"webhook":             callbackURL,
+		"events":              events,
+		"excludeMessages":     []string{"wasSentByApi", "fromMe"},
+		"addUrlEvents":        false,
 		"addUrlTypesMessages": false,
 	}
 	body, code, err := sendUazAPI(ctx, endpoint, payload)
@@ -62,7 +61,7 @@ func botUazapiConfigureWebhook(ctx context.Context, baseURL string, instanceToke
 		return err
 	}
 	if code != http.StatusOK && code != http.StatusCreated {
-		return fmt.Errorf("uazapi updatewebhook http %d: %s", code, truncate(body, 200))
+		return fmt.Errorf("uazapi webhook http %d: %s", code, truncate(body, 200))
 	}
 	return nil
 }
