@@ -3,10 +3,10 @@ package api
 import (
 	"context"
 	"database/sql"
-	"log"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -1128,7 +1128,7 @@ func (s *Server) handleBOHorariosCalendar(w http.ResponseWriter, r *http.Request
 		schedules []boCalendarSchedule
 	})
 
-		var rowCount int
+	var rowCount int
 	for rows.Next() {
 		var workDate string
 		var memberID int

@@ -811,15 +811,23 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		price = *in.UnitPriceOverrideCents
 	}
 	lineTotal := int64(math.Round(in.Quantity * float64(price)))
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, price, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, a.User.ID)
+	lineRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, price, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, a.User.ID)
 	if err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
 			return
 		}
-	} else if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, existingDiscount); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
-		return
+	} else {
+		lineID, _ := lineRes.LastInsertId()
+		if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, existingDiscount); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
+			return
+		}
+		// Real-time stock deduction when stock_mode is LIVE
+		settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
+		if settingsErr == nil && settings.StockMode == "LIVE" {
+			_, _ = s.deductStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, lineID, in.ProductID, in.Quantity, "pos-line-add:"+in.IdempotencyKey)
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error adding line")
@@ -855,6 +863,11 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 	if err = tx.QueryRowContext(r.Context(), `SELECT status,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&ticketStatus, &ticketDiscount); err != nil || ticketStatus != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
+	}
+	// Real-time stock restoration when stock_mode is LIVE (before voiding the line)
+	settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
+	if settingsErr == nil && settings.StockMode == "LIVE" {
+		_ = s.restoreStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, lineID, "pos-line-void:"+strconv.FormatInt(ticketID, 10))
 	}
 	res, err := tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=NOW() WHERE restaurant_id=? AND ticket_id=? AND id=? AND status='ACTIVE'`, strings.TrimSpace(in.Reason), a.User.ID, a.ActiveRestaurantID, ticketID, lineID)
 	if err != nil {

@@ -91,10 +91,21 @@ RBAC:
   - `admin`: `reservas`, `menus`, `ajustes`, `miembros`, `fichaje`, `horarios`
   - `metre`, `jefe_cocina`: `reservas`, `menus`, `fichaje`
   - Resto: `fichaje`
+- `estadisticas` section is enabled by default only for `root` and `admin`.
 - Jerarquía de importancia (0-100):
   - `root = 100`, `admin = 90`, resto por debajo.
 - Sección de miembros/roles:
   - Los endpoints de miembros y roles requieren importancia `>= 90` (admin/root).
+
+### `GET /api/admin/analytics/overview`
+
+Requires backoffice session with `estadisticas` access, default `root`/`admin` only. Query parameters: required `from` and `to` (`YYYY-MM-DD`), optional `granularity` (`day`, `week`, `month`, `quarter`, `year`, default `day`), optional `compare=previous`.
+
+Returns EUR-only summary with invoiced and POS revenue separated, previous-period comparison, zero-filled series, recipe/production waste breakdown, and cost coverage. Unknown costs use `null` plus `N/D` labels and coverage counters. Non-EUR invoice documents are excluded from revenue and counted in `dataQuality`.
+
+### `POST /api/admin/analytics/refresh`
+
+Requires same statistics access. JSON body: `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`. Rebuilds selected tenant/date range idempotently from invoices, POS, stock, and production source tables. Response includes `runId`, row count, and `outbox: false`. Refresh is explicit because V1 has no source-table outbox.
 
 ### `POST /api/admin/login`
 Body (JSON):
@@ -117,6 +128,30 @@ Response:
 - `{ success: true, session: { user, restaurants, activeRestaurantId } }`
 - `session.user` incluye `role`, `roleImportance`, `sectionAccess`, `username?` y `mustChangePassword`.
 - Also returns `moving_expiration_date` and refreshes `bo_session` cookie expiry.
+
+Session validation loads role importance and active member in the main session query. The moving
+expiration heartbeat is persisted at most once per minute; responses between heartbeats return the
+current `X-Moving-Expiration-Date` without rewriting the session row or cookie.
+
+### `GET /healthz`
+Unauthenticated readiness check. Uses a one-second DB ping timeout.
+
+Responses:
+- `200`: `{ success: true }`
+- `503`: `{ success: false, message: "Database unavailable" }`
+
+### `GET /api/admin/dashboard/metrics`
+Requires backoffice session and `reservas` access.
+
+Query:
+- `date` (required, `YYYY-MM-DD`) for booking metrics.
+
+Response:
+- `{ success: true, metrics, invoiceMetrics }`
+- `metrics`: booking totals for `date`.
+- `invoiceMetrics`: `{ pendingCount, pendingAmount, monthIncome, weekSentCount }` when current role
+  has `facturas` access; otherwise `null`.
+- Invoice metrics are DB aggregates; invoice rows are not transferred.
 
 ### `POST /api/admin/me/password`
 Set password for current authenticated backoffice user.
@@ -204,6 +239,17 @@ Update member fields and/or contract weekly hours.
 
 Response:
 - `{ success: true, member: Member }`
+
+### `GET|POST /api/admin/members/{id}/compensations`
+Admin-only, tenant-scoped effective-dated compensation history.
+
+- `GET`: `{ success, items: [{ id, payType, grossAmount, monthlyHours, employerCostPct, effectiveHourlyCost, effectiveFrom, effectiveTo, notes }] }`
+- `POST` body: `{ payType: "MONTHLY"|"HOURLY", grossAmount, monthlyHours?, employerCostPct, effectiveFrom, effectiveTo?, notes? }`
+- Effective periods cannot overlap for one member.
+- `effectiveHourlyCost = gross/monthlyHours * (1 + employerCostPct/100)` for monthly pay, or hourly gross with same employer burden.
+
+### `PATCH|DELETE /api/admin/members/{id}/compensations/{compensationId}`
+Admin-only update/soft-delete. Every create/update/delete writes immutable audit snapshot.
 
 ### `GET /api/admin/members/{id}/stats`
 Member worked-hours stats for weekly/monthly/quarterly views.
@@ -446,6 +492,10 @@ Response:
 - `{ success: true, entry }`
 - `{ success: false, message }` on validation errors
 
+### `GET /api/admin/fichaje/labour-cost`
+Admin-only actual labour cost report. Query `from=YYYY-MM-DD&to=YYYY-MM-DD`, max 366 days.
+Uses each time-entry date against effective compensation history. Returns totals, per-member minutes/cost and members missing compensation.
+
 ### `GET /api/admin/fichaje/ws`
 WebSocket endpoint for realtime fichaje events scoped by active restaurant.
 
@@ -620,6 +670,25 @@ Nuevo contrato unificado para carta/comida por tipo:
   - Backoffice: cookie `bo_session` en `/api/admin/comida/*`.
   - Público multi-tenant: `/api/comida/*`.
   - Escritura en `/api/comida/*` requiere `ADMIN_TOKEN` (`X-Admin-Token` o `Authorization: Bearer`).
+
+#### `GET /api/admin/comida/counts`
+Requires backoffice session and `menus` access.
+
+Response:
+```json
+{
+  "success": true,
+  "countsByType": {
+    "vinos": 0,
+    "cafes": 0,
+    "postres": 0,
+    "platos": 0,
+    "bebidas": 0
+  }
+}
+```
+
+Returns all five card counters in one DB round-trip and replaces five list requests in backoffice SSR.
 
 #### `GET /api/admin/comida/{tipo}` (alias público: `GET /api/comida/{tipo}`)
 Listado paginado + filtros.
@@ -2489,3 +2558,218 @@ availability (`check_day_capacity`, `check_availability_for_party`), schedule
 because history is persisted per tenant in `whatsapp_bot_messages`. All tools are
 scoped by `restaurant_id`; the system prompt is personalized from
 `whatsapp_bot_config` (language, tone, greeting, rules, custom instructions).
+# Stock control (backoffice)
+
+All routes require `bo_session`, active restaurant context, `stock` section access,
+and endpoint-specific stock permission. Responses use `{ success: true, ... }` or
+`{ success: false, message }`. Every query is scoped by active `restaurant_id`.
+
+| Method | Route | Permission | Contract |
+|---|---|---|---|
+| GET | `/api/admin/stock/warehouses` | `stock.view` | `{ warehouses: StockWarehouse[] }`; creates default warehouse lazily when none exists |
+| POST | `/api/admin/stock/warehouses` | `stock.warehouses.manage` | Body `{ name, code?, type, isDefault?, isActive?, sortOrder?, notes? }`; returns `{ id }` |
+| PATCH | `/api/admin/stock/warehouses/{id}` | `stock.warehouses.manage` | Same body as create; full warehouse update |
+| DELETE | `/api/admin/stock/warehouses/{id}` | `stock.warehouses.manage` | Soft delete; rejects default or non-empty warehouse with `409` |
+| GET/POST | `/api/admin/stock/categories` | `stock.view` / `stock.items.manage` | List or create tenant categories |
+| PATCH/DELETE | `/api/admin/stock/categories/{id}` | `stock.items.manage` | Update or delete unused category |
+| GET | `/api/admin/stock/items` | `stock.view` | Query `q`, `warehouseId`, `page`, `pageSize<=100`; returns paginated card payload |
+| GET | `/api/admin/stock/item-options` | `stock.view` | Active item/default-unit options for recipes and OCR mapping |
+| POST | `/api/admin/stock/items` | `stock.items.manage` | Creates item plus default display/purchase unit |
+| POST | `/api/admin/stock/items/import` | `stock.items.manage` | Multipart CSV/XLSX preview; `confirm=1` atomically creates valid rows |
+| PATCH | `/api/admin/stock/items/{id}` | `stock.items.manage` | Updates item metadata, tracking flag and deduction source |
+| DELETE | `/api/admin/stock/items/{id}` | `stock.items.manage` | Soft delete; rejects item with non-zero stock |
+| PATCH | `/api/admin/stock/items/{id}/targets` | `stock.items.manage` | Saves warehouse par/reorder targets in selected item unit |
+| GET/POST | `/api/admin/stock/items/{id}/units` | `stock.view` / `stock.items.manage` | List or create item-specific conversion units |
+| DELETE | `/api/admin/stock/items/{id}/units/{unitId}` | `stock.items.manage` | Delete unused, non-default unit |
+| GET | `/api/admin/stock/items/{id}/movements` | `stock.view` | Query `page`, `pageSize<=100`; audited movement history |
+| POST | `/api/admin/stock/items/{id}/movements` | `stock.adjust` or `stock.waste.record` | Atomic ledger + level update; adjustment accepts `direction=ADD|SUBTRACT` |
+| GET | `/api/admin/stock/summary` | `stock.view` | `{ itemsTracked, belowPar, belowReorder, outOfStock, negative, coveragePct }` |
+| POST | `/api/admin/stock/transfers` | `stock.transfer` | Atomic two-ledger-entry warehouse transfer |
+| POST | `/api/admin/stock/counts` | `stock.count.perform` | Opens count sheet and snapshots expected stock |
+| GET | `/api/admin/stock/counts/{id}` | `stock.view` | Count sheet plus item lines |
+| POST | `/api/admin/stock/counts/{id}/close` | `stock.count.close` | Applies observed quantities as idempotent inventory-count deltas |
+| GET | `/api/admin/stock/reconciliation` | `stock.view` | Compares materialized levels with ledger sums |
+| POST | `/api/admin/stock/reconciliation/rebuild` | `stock.settings.manage` | Rebuilds materialized quantities from ledger |
+| GET | `/api/admin/stock/settings` | `stock.view` | Tenant stock settings with defaults |
+| PATCH | `/api/admin/stock/settings` | `stock.settings.manage` | Saves display/cadence, negative policy, business/seasonality profile and onboarding |
+| POST | `/api/admin/stock/settings/classify-seasonality` | `stock.settings.manage` + AI plan | MiniMax structured business-profile classification |
+
+Movement `type`: `PURCHASE`, `ADJUSTMENT`, `PRODUCTION_IN`, `PRODUCTION_OUT`,
+`SALE`, `WASTE`, `TRANSFER_IN`, `TRANSFER_OUT`, `RETURN`. Input quantity is always
+positive; direction derives from type. `WASTE` requires `wasteReason`.
+
+## Stock recipes, analytics, costing and extraction
+
+| Method | Route | Contract |
+|---|---|---|
+| GET/POST | `/api/admin/stock/recipes` | List or create technical recipes |
+| GET/PATCH/DELETE | `/api/admin/stock/recipes/{id}` | Recipe detail/update/soft-delete with nested BOM cycle checks and `{ labour:[{memberId,minutesPerBatch,notes?}] }` |
+| PATCH | `/api/admin/stock/recipes/{id}/pricing` | Gross price, VAT, overhead and strategic/signature protection |
+| POST | `/api/admin/stock/recipes/{id}/production/preview` | Recursive raw-material requirement/shortage preview |
+| POST | `/api/admin/stock/recipes/{id}/production` | Atomic manufactured stock-in + exploded raw-component stock-out |
+| GET | `/api/admin/stock/production-orders` | Latest confirmed production orders with standard/actual labour summary |
+| GET | `/api/admin/stock/production-labour/entries` | Closed fichaje entries with remaining allocatable minutes; no salary values |
+| GET/POST | `/api/admin/stock/production-orders/{id}/labour` | List or allocate actual fichaje minutes to production; missing compensation stays incomplete |
+| DELETE | `/api/admin/stock/production-orders/{id}/labour/{allocationId}` | Remove allocation and deterministically rebuild actual labour snapshot |
+| PUT | `/api/admin/stock/affluence` | Manual covers input until POS module exists |
+| GET | `/api/admin/stock/forecast` | Scenario/horizon forecast with eight-week confidence state |
+| GET/POST/PATCH/DELETE | `/api/admin/stock/vat-rates[/{id}]` | Tenant VAT CRUD |
+| POST | `/api/admin/stock/items/{id}/prices` | Record raw-item base-unit purchase price |
+| GET | `/api/admin/stock/costing` | Recursive ingredient + member labour cost, overhead, net price, food-cost %, margin and missing-rate diagnostics |
+| GET | `/api/admin/stock/labour-members` | Active members with cost availability only; salary and hourly amount are not exposed |
+| GET/POST/PATCH/DELETE | `/api/admin/stock/margin-bands[/{id}]` | Tenant margin-band CRUD |
+| POST | `/api/admin/stock/ai/recommendations` | Persisted MiniMax advisory report; protected dishes cannot receive removal advice |
+| POST | `/api/admin/stock/documents/extract-text` | AI-gated pasted-text extraction; always review-required |
+| POST | `/api/admin/stock/documents/upload` | MiniMax M3 native PDF/JPG/PNG/WebP extraction, 10 MB max |
+| GET | `/api/admin/stock/documents[/{id}]` | Tenant scan queue/detail, mapped lines and `originalAvailable` |
+| GET | `/api/admin/stock/documents/{id}/original` | Authenticated private original download; `Cache-Control: private, no-store` |
+| DELETE | `/api/admin/stock/documents/{id}/original` | Delete private original and retain reviewed extraction/audit |
+| PATCH | `/api/admin/stock/documents/{id}/review` | Edit metadata/lines and map tenant item units |
+| POST | `/api/admin/stock/documents/{id}/confirm-invoice` | Atomic purchases, weighted cost and supplier-alias learning |
+| POST | `/api/admin/stock/documents/{id}/confirm-recipe` | Create reviewed OCR recipe |
+| POST | `/api/admin/stock/documents/{id}/reject` | Reject review draft |
+
+Original supplier files are never persisted in public Bunny storage. When
+`BUNNY_PRIVATE_STORAGE_ZONE` and `BUNNY_PRIVATE_STORAGE_ACCESS_KEY` are configured,
+private originals are retained under opaque tenant paths with access audit and
+`STOCK_DOCUMENT_RETENTION_DAYS`; otherwise extraction continues without retention.
+
+## POS / TPV (`/api/admin/pos/*`)
+
+All routes require `bo_session`, active `pos_pack`, tenant scope and exact POS permission. Money fields are integer cents. Paid tickets are immutable; corrections use refunds and append-only stock returns.
+
+### Settings, periods and bootstrap
+
+| Method | Route | Permission | Purpose |
+|---|---|---|---|
+| GET | `/api/admin/pos/bootstrap` | `pos.view` | Settings, active products, open visits and table occupancy |
+| GET/PATCH | `/api/admin/pos/settings` | `pos.view` / `pos.settings.manage` | Enable POS; stock/covers modes; timezone and cutoff |
+| GET/POST/PATCH/DELETE | `/api/admin/pos/service-periods[/{id}]` | `pos.view` / `pos.settings.manage` | `LUNCH`, `DINNER`, `OTHER` periods including cross-midnight ranges |
+
+### Catalogue and stock mappings
+
+| Method | Route | Permission |
+|---|---|---|
+| GET/POST | `/api/admin/pos/products` | `pos.view` / `pos.catalog.manage` |
+| GET/PATCH/DELETE | `/api/admin/pos/products/{id}` | `pos.view` / `pos.catalog.manage` |
+| POST | `/api/admin/pos/products/import-preview` | `pos.catalog.manage` |
+| POST | `/api/admin/pos/products/import-confirm` | `pos.catalog.manage` |
+| GET/PUT | `/api/admin/pos/products/{id}/stock-rules` | `pos.view` / `pos.stock_mapping.manage` |
+| GET/POST/PATCH/DELETE | `/api/admin/pos/categories[/{id}]` | `pos.view` / `pos.catalog.manage` |
+| GET | `/api/admin/pos/stock-readiness` | `pos.stock_mapping.manage` |
+| GET | `/api/admin/pos/stock-exceptions` | `pos.stock_mapping.manage` |
+| POST | `/api/admin/pos/stock-exceptions/replay` | `pos.stock_mapping.manage` |
+
+Stock rules map one sellable product to one or more `(stockItemId, warehouseId, quantityBasePerSale)` records. `PRODUCTION`-only items are rejected. Recipes may be referenced only when their output item equals mapped stock item. Checkout never recursively explodes BOM components.
+
+### Visits, tickets and payment
+
+| Method | Route | Permission |
+|---|---|---|
+| GET/POST | `/api/admin/pos/visits` | `pos.view` / `pos.sell` |
+| GET | `/api/admin/pos/reservations/eligible` | `pos.view`; query `date`, optional `q`; reservation/open-visit selector |
+| GET | `/api/admin/pos/reservations/{bookingId}/visit` | `pos.view`; recover existing open visit linked to reservation |
+| GET/PATCH | `/api/admin/pos/visits/{id}` | `pos.view` / `pos.visit.manage` |
+| POST | `/api/admin/pos/visits/{id}/cancel` | `pos.visit.manage` |
+| POST | `/api/admin/pos/visits/{id}/tickets` | `pos.sell` |
+| POST | `/api/admin/pos/visits/{id}/close` | `pos.checkout` |
+| GET | `/api/admin/pos/tickets[/{id}]` | `pos.view` |
+| POST | `/api/admin/pos/tickets/{id}/lines` | `pos.sell` |
+| PATCH | `/api/admin/pos/tickets/{id}/lines/{lineId}` | `pos.sell` |
+| POST | `/api/admin/pos/tickets/{id}/lines/{lineId}/void` | `pos.line.void` |
+| POST | `/api/admin/pos/tickets/{id}/lines/{lineId}/move` | `pos.sell`; move full/partial line between open tickets in same visit |
+| POST | `/api/admin/pos/tickets/{id}/void` | `pos.sell`; empty open tickets only |
+| POST | `/api/admin/pos/tickets/{id}/discount` | `pos.discount` |
+| POST | `/api/admin/pos/tickets/{id}/checkout` | `pos.checkout` |
+| POST | `/api/admin/pos/tickets/{id}/refunds` | `pos.refund`; `pos.restock` when any line requests restock |
+
+### Control-rail features
+
+| Method | Route | Permission |
+|---|---|---|
+| POST | `/api/admin/pos/visits/{id}/park` | `pos.visit.manage`; body `{ parked, note? }`; Aparcar (hold an open comanda) |
+| POST | `/api/admin/pos/visits/{id}/merge` | `pos.visit.manage`; body `{ sourceVisitIds[], idempotencyKey }`; Juntar mesas |
+| PATCH | `/api/admin/pos/visits/{id}/customer` | `pos.sell`; body `{ customerName?, customerTaxId?, customerAddress? }`; Cliente |
+| POST | `/api/admin/pos/tickets/{id}/adjustments` | `pos.discount`; body `{ type: DISCOUNT\|SURCHARGE, mode: AMOUNT\|PERCENT, amountCents\|percent, reason, idempotencyKey }`; Descuento/Recargo |
+| POST | `/api/admin/pos/tickets/{id}/lines/{lineId}/comp` | `pos.discount`; body `{ comped, reason }`; Invita |
+| PATCH | `/api/admin/pos/tickets/{id}/operator` | `pos.sell`; body `{ operatorMemberId }`; Empleado |
+| POST | `/api/admin/pos/drawer/open` | `pos.checkout`; body `{ reason?, note?, idempotencyKey }`; Cajón, requires an open shift |
+| GET/POST | `/api/admin/pos/tags` | `pos.view` / `pos.catalog.manage`; tenant tag catalogue |
+| POST | `/api/admin/pos/tickets/{id}/tags` | `pos.sell`; body `{ tagId, attach? }` |
+| POST | `/api/admin/pos/tickets/{id}/lines/{lineId}/tags` | `pos.sell`; body `{ tagId, attach? }` |
+
+Adjustments are append-only and signed: `DISCOUNT` stores a negative `amountCents`,
+`SURCHARGE` a positive one, so discounts and surcharges coexist on one ticket and
+`SUM(amount_cents)` is the net movement. `PERCENT` always resolves against the line
+base, never against an already adjusted total. Ticket money keeps
+`discount_cents` and `surcharge_cents` authoritative, and VAT is recomputed on the
+surcharged gross.
+
+Comping a line (`Invita`) discounts the line to zero but keeps it `ACTIVE`, so the
+kitchen still fires it and stock is still deducted while revenue drops to zero.
+
+Merging marks each source visit `MERGED` with `merged_into_visit_id`, moves its
+active lines onto the target ticket, sums covers and frees the source table.
+Sources holding any non-`OPEN`/`VOIDED` ticket are rejected with `409`.
+
+Tips are collected on top of the sale: `payments[].tipCents` is stored on
+`pos_payments.tip_cents` and totalled into `pos_tickets.tip_cents`. Tips are
+excluded from the payment-vs-total match, subtotal, discount, VAT and
+`total_gross_cents`, so net sales and tax are unaffected.
+
+`BAR` joins `DINE_IN`/`TAKEAWAY`/`DELIVERY` as a tableless, coverless fast-sale
+channel; covers reporting continues to count `DINE_IN` only.
+
+Checkout body:
+
+```json
+{
+  "idempotencyKey": "uuid",
+  "expectedVersion": 4,
+  "payments": [
+    { "method": "CASH", "amountCents": 2000, "idempotencyKey": "uuid" },
+    { "method": "CARD", "amountCents": 1250, "tipCents": 200, "provider": "STANDALONE", "providerReference": "terminal-receipt-ref", "idempotencyKey": "uuid" }
+  ],
+  "closeVisit": true
+}
+```
+
+Manual `CARD` rows require an external terminal reference; PAN/CVV are never accepted. Checkout recalculates totals server-side. `LIVE` stock creates idempotent negative `SALE` movements referenced to immutable `pos_ticket_line_stock` snapshots. Missing mapping yields ticket `stockStatus=PARTIAL` and an exception without repeating or rolling back a successfully recorded payment. Refund does not restore stock unless an authorized refund line sets `restockRequested=true`; restock writes positive `RETURN` movements against original item/warehouse snapshots.
+
+### Shifts, covers and reports
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/api/admin/pos/shifts/current` | `pos.view` |
+| POST | `/api/admin/pos/shifts/open` | `pos.shift.manage` |
+| POST | `/api/admin/pos/shifts/{id}/close` | `pos.shift.manage` |
+| GET | `/api/admin/pos/covers` | `pos.reports.view` |
+| POST | `/api/admin/pos/covers/adjustments` | `pos.covers.adjust` |
+| GET | `/api/admin/pos/covers/reconciliation` | `pos.reports.view` |
+| POST | `/api/admin/pos/covers/reconciliation/rebuild` | `pos.settings.manage` |
+| GET | `/api/admin/pos/reports/sales` | `pos.reports.view` |
+| GET | `/api/admin/pos/reports/stock` | `pos.reports.view` |
+| GET | `/api/admin/pos/reports/card-reconciliation` | `pos.reports.view`; daily standalone-terminal amount/reference completeness |
+| GET | `/api/admin/pos/reports/sales.csv` | `pos.reports.view` |
+| GET | `/api/admin/pos/accounting/export.csv` | `pos.reports.view`; `type=SALES_VAT|PAYMENTS|REFUNDS|STOCK`, optional `from/to`; immutable SHA-256 audited export |
+| GET | `/api/admin/pos/health` | `pos.settings.manage` |
+| POST | `/api/admin/pos/stock-anomalies/{id}/resolve` | `pos.stock_mapping.manage` |
+| GET/PUT | `/api/admin/pos/roles/{slug}/permissions` | `pos.settings.manage` | Fine-grained tenant role permissions |
+
+### Kitchen display and LIVE activation
+
+| Method | Route | Permission |
+|---|---|---|
+| GET/POST | `/api/admin/pos/kitchen/stations` | `pos.view` / `pos.kitchen.manage` |
+| PATCH | `/api/admin/pos/kitchen/stations/{id}` | `pos.kitchen.manage` |
+| GET/POST | `/api/admin/pos/kitchen/routes` | `pos.view` / `pos.kitchen.manage` |
+| DELETE | `/api/admin/pos/kitchen/routes/{id}` | `pos.kitchen.manage` |
+| POST | `/api/admin/pos/tickets/{id}/kitchen-dispatches` | `pos.sell`; body `idempotencyKey` |
+| GET | `/api/admin/pos/kitchen/queue` | `pos.view`; optional `stationId` |
+| POST | `/api/admin/pos/kitchen/dispatches/{id}/status` | `pos.kitchen.manage`; controlled state transition |
+| GET | `/api/admin/pos/activation-readiness` | `pos.settings.manage` |
+| POST | `/api/admin/pos/activation-acceptances` | `pos.settings.manage`; body `type=STOCK_LIVE|COVERS_LIVE`, `evidenceNote` |
+
+Kitchen dispatch stores immutable per-station `ADD`/`VOID` deltas. Payment never dispatches kitchen work. Switching stock or covers to `LIVE` consumes one fresh tenant-scoped acceptance in same transaction.
+
+Covers are counted from closed `DINE_IN` visits, not tickets. Split bills therefore count visit covers once. `TAKEAWAY`, `DELIVERY`, open and cancelled visits contribute zero. `LIVE` mode writes `stock_affluence_daily.source='POS'`; manual stock-affluence writes to a POS-owned key return `409 POS_COVERS_AUTHORITATIVE`.

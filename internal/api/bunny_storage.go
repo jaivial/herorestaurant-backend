@@ -18,6 +18,10 @@ func (s *Server) bunnyConfigured() bool {
 	return strings.TrimSpace(s.cfg.BunnyStorageKey) != "" && strings.TrimSpace(s.cfg.BunnyStorageZone) != "" && strings.TrimSpace(s.cfg.BunnyPullBaseURL) != ""
 }
 
+func (s *Server) bunnyPrivateConfigured() bool {
+	return strings.TrimSpace(s.cfg.BunnyPrivateStorageKey) != "" && strings.TrimSpace(s.cfg.BunnyPrivateStorageZone) != ""
+}
+
 func (s *Server) bunnyMembersConfigured() bool {
 	return strings.TrimSpace(s.cfg.BunnyMemberStorageKey) != "" && strings.TrimSpace(s.cfg.BunnyMemberStorageZone) != "" && strings.TrimSpace(s.cfg.BunnyMemberPullBaseURL) != ""
 }
@@ -39,6 +43,45 @@ func (s *Server) bunnyPut(ctx context.Context, objectPath string, payload []byte
 		return errors.New("BunnyCDN storage not configured")
 	}
 	return bunnyPutWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyStorageZone), strings.TrimSpace(s.cfg.BunnyStorageKey), objectPath, payload, contentType)
+}
+
+func (s *Server) bunnyPrivatePut(ctx context.Context, objectPath string, payload []byte, contentType string) error {
+	if !s.bunnyPrivateConfigured() {
+		return errors.New("BunnyCDN private storage not configured")
+	}
+	return bunnyPutWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyPrivateStorageZone), strings.TrimSpace(s.cfg.BunnyPrivateStorageKey), objectPath, payload, contentType)
+}
+
+func (s *Server) bunnyPrivateGet(ctx context.Context, objectPath string) ([]byte, string, error) {
+	if !s.bunnyPrivateConfigured() {
+		return nil, "", errors.New("BunnyCDN private storage not configured")
+	}
+	u := "https://storage.bunnycdn.com/" + url.PathEscape(strings.TrimSpace(s.cfg.BunnyPrivateStorageZone)) + "/" + bunnyEscapePath(objectPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("AccessKey", strings.TrimSpace(s.cfg.BunnyPrivateStorageKey))
+	res, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("bunny private download failed (%d)", res.StatusCode)
+	}
+	payload, err := io.ReadAll(io.LimitReader(res.Body, stockDocumentMaxBytes+1))
+	if err != nil || len(payload) > stockDocumentMaxBytes {
+		return nil, "", errors.New("invalid private document payload")
+	}
+	return payload, res.Header.Get("Content-Type"), nil
+}
+
+func (s *Server) bunnyPrivateDelete(ctx context.Context, objectPath string) error {
+	if !s.bunnyPrivateConfigured() {
+		return errors.New("BunnyCDN private storage not configured")
+	}
+	return bunnyDeleteWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyPrivateStorageZone), strings.TrimSpace(s.cfg.BunnyPrivateStorageKey), objectPath)
 }
 
 func (s *Server) bunnyMembersPut(ctx context.Context, objectPath string, payload []byte, contentType string) error {

@@ -100,7 +100,6 @@ func TestBotDedup(t *testing.T) {
 	}
 }
 
-
 func TestParseBotConnectionEvent_QREvent(t *testing.T) {
 	body := []byte(`{"event":"qrcode","token":"inst-1","qrcode":"data:image/png;base64,AAAA","status":"connecting"}`)
 	ev, ok := parseBotConnectionEvent(body)

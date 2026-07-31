@@ -1,0 +1,16 @@
+[Unit]
+Description=VillaCarmen CDN orphan sweep (report only)
+After=network-online.target mysql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/newvillacarmen/backend
+EnvironmentFile=-/etc/villacarmen/backend.env
+# Deliberately WITHOUT --apply. This job can delete customer images, so it runs
+# in report-only mode until at least 7 nights of output have been reviewed.
+# Enabling deletion is a conscious edit of this line, never a default.
+ExecStart=/var/www/newvillacarmen/backend/bin/cdn-sweep
+User=www-data
+Group=www-data
+NoNewPrivileges=true
+PrivateTmp=true

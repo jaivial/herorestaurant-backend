@@ -22,6 +22,9 @@ const (
 	boSectionEstadoCuenta = "estado_cuenta"
 	boSectionWebsite      = "website"
 	boSectionComida       = "comida"
+	boSectionStock        = "stock"
+	boSectionPOS          = "pos"
+	boSectionEstadisticas = "estadisticas"
 )
 
 var defaultRolePermissions = map[string]map[string]bool{
@@ -36,6 +39,9 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionReportes:     true,
 		boSectionEstadoCuenta: true,
 		boSectionWebsite:      true,
+		boSectionStock:        true,
+		boSectionPOS:          true,
+		boSectionEstadisticas: true,
 	},
 	"admin": {
 		boSectionReservas:     true,
@@ -48,6 +54,9 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionReportes:     true,
 		boSectionEstadoCuenta: true,
 		boSectionWebsite:      true,
+		boSectionStock:        true,
+		boSectionPOS:          true,
+		boSectionEstadisticas: true,
 	},
 	"metre": {
 		boSectionReservas:     true,
@@ -167,6 +176,12 @@ func normalizeBOSection(section string) string {
 		return boSectionEstadoCuenta
 	case boSectionWebsite:
 		return boSectionWebsite
+	case boSectionStock:
+		return boSectionStock
+	case boSectionPOS:
+		return boSectionPOS
+	case boSectionEstadisticas:
+		return boSectionEstadisticas
 	default:
 		return ""
 	}
@@ -177,6 +192,12 @@ func (s *Server) roleCanAccessSection(ctx context.Context, role, section string)
 	section = normalizeBOSection(section)
 	if role == "" || section == "" {
 		return false, nil
+	}
+	if section == boSectionEstadisticas {
+		return role == "root" || role == "admin", nil
+	}
+	if (section == boSectionStock || section == boSectionPOS) && (role == "root" || role == "admin") {
+		return true, nil
 	}
 
 	var allowed int
@@ -257,6 +278,7 @@ func (s *Server) roleSections(ctx context.Context, role string) ([]string, error
 	if role == "" {
 		return []string{}, nil
 	}
+	isAdminOperational := role == "root" || role == "admin"
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT section_key
@@ -293,6 +315,20 @@ func (s *Server) roleSections(ctx context.Context, role string) ([]string, error
 		for section, allowed := range perms {
 			if allowed && !seen[section] {
 				out = append(out, section)
+			}
+		}
+	}
+	if isAdminOperational {
+		for _, required := range []string{boSectionStock, boSectionPOS} {
+			seen := false
+			for _, section := range out {
+				if section == required {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				out = append(out, required)
 			}
 		}
 	}

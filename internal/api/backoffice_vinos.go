@@ -33,6 +33,11 @@ type boVino struct {
 	BodegaEnglish             string  `json:"bodega_english,omitempty"`
 	DenominacionOrigenEnglish string  `json:"denominacion_origen_english,omitempty"`
 	TipoEnglish               string  `json:"tipo_english,omitempty"`
+	// The wine detail page hydrates from this struct, so the stock link has to
+	// travel with it or a saved "Preparado" wine reappears as "Materia prima".
+	ProductionType string `json:"production_type"`
+	StockRecipeID  *int64 `json:"stock_recipe_id"`
+	StockItemID    *int64 `json:"stock_item_id"`
 }
 
 func applyVinoTranslationsBO(m map[string]string, v *boVino) {
@@ -96,7 +101,10 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 				foto_path,
 				COALESCE(ai_requested_img, 0),
 				COALESCE(ai_generating_img, 0),
-				ai_generated_img
+				ai_generated_img,
+				COALESCE(production_type, 'RAW'),
+				stock_recipe_id,
+				stock_item_id
 			FROM VINOS
 		`+where+`
 			ORDER BY tipo ASC, nombre ASC, num ASC
@@ -117,6 +125,8 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 			requestedInt  int
 			generatingInt int
 			generatedRaw  sql.NullString
+			recipeIDRaw   sql.NullInt64
+			stockItemRaw  sql.NullInt64
 		)
 		if err := rows.Scan(
 			&v.Num,
@@ -134,9 +144,18 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 			&requestedInt,
 			&generatingInt,
 			&generatedRaw,
+			&v.ProductionType,
+			&recipeIDRaw,
+			&stockItemRaw,
 		); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo VINOS")
 			return
+		}
+		if recipeIDRaw.Valid {
+			v.StockRecipeID = &recipeIDRaw.Int64
+		}
+		if stockItemRaw.Valid {
+			v.StockItemID = &stockItemRaw.Int64
 		}
 		v.Active = activeInt != 0
 		v.HasFoto = hasFotoInt != 0
@@ -607,6 +626,8 @@ func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
 		requestedInt  int
 		generatingInt int
 		generatedRaw  sql.NullString
+		recipeIDRaw   sql.NullInt64
+		stockItemRaw  sql.NullInt64
 	)
 	err = s.db.QueryRowContext(r.Context(), `
 		SELECT
@@ -624,7 +645,10 @@ func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
 			foto_path,
 			COALESCE(ai_requested_img, 0),
 			COALESCE(ai_generating_img, 0),
-			ai_generated_img
+			ai_generated_img,
+			COALESCE(production_type, 'RAW'),
+			stock_recipe_id,
+			stock_item_id
 		FROM VINOS
 		WHERE num = ? AND restaurant_id = ?
 		LIMIT 1
@@ -633,10 +657,17 @@ func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
 		&v.Bodega, &v.DenominacionOrigen, &v.Graduacion, &v.Anyo,
 		&activeInt, &hasFotoInt, &fotoPath,
 		&requestedInt, &generatingInt, &generatedRaw,
+		&v.ProductionType, &recipeIDRaw, &stockItemRaw,
 	)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Wine not found"})
 		return
+	}
+	if recipeIDRaw.Valid {
+		v.StockRecipeID = &recipeIDRaw.Int64
+	}
+	if stockItemRaw.Valid {
+		v.StockItemID = &stockItemRaw.Int64
 	}
 	v.Active = activeInt != 0
 	v.HasFoto = hasFotoInt != 0

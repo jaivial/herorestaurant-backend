@@ -26,6 +26,9 @@ type Config struct {
 	BunnyMemberPullBaseURL      string
 	BunnyMemberStorageZone      string
 	BunnyMemberStorageKey       string
+	BunnyPrivateStorageZone     string
+	BunnyPrivateStorageKey      string
+	StockDocumentRetentionDays  int
 	CloudflareAPIToken          string
 	CloudflareAccountID         string
 	CloudflareZoneID            string
@@ -42,6 +45,10 @@ type Config struct {
 	MiniMaxModel                string
 	MiniMaxTranslateTimeout     time.Duration
 	MiniMaxTranslateConcurrency int
+	StockOCRProvider            string
+	PaddleOCRGatewayURL         string
+	PaddleOCRModel              string
+	PaddleOCRTimeout            time.Duration
 	BotModel                    string
 	BotTimeout                  time.Duration
 	BotMaxTokens                int
@@ -74,6 +81,9 @@ func Load() Config {
 		BunnyMemberPullBaseURL:      defaultMembersPull,
 		BunnyMemberStorageZone:      getenv("BUNNY_MEMBERS_STORAGE_ZONE", "herorestaurant"),
 		BunnyMemberStorageKey:       getenv("BUNNY_MEMBERS_STORAGE_ACCESS_KEY", defaultKey),
+		BunnyPrivateStorageZone:     strings.TrimSpace(os.Getenv("BUNNY_PRIVATE_STORAGE_ZONE")),
+		BunnyPrivateStorageKey:      strings.TrimSpace(os.Getenv("BUNNY_PRIVATE_STORAGE_ACCESS_KEY")),
+		StockDocumentRetentionDays:  getenvInt("STOCK_DOCUMENT_RETENTION_DAYS", 365, 1, 3650),
 		CloudflareAPIToken:          os.Getenv("CLOUDFLARE_API_TOKEN"),
 		CloudflareAccountID:         os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
 		CloudflareZoneID:            os.Getenv("CLOUDFLARE_ZONE_ID"),
@@ -90,6 +100,10 @@ func Load() Config {
 		MiniMaxModel:                getenv("MINIMAX_MODEL", "MiniMax-M3"),
 		MiniMaxTranslateTimeout:     time.Duration(getenvInt("MINIMAX_TRANSLATE_TIMEOUT_SECONDS", 20, 5, 120)) * time.Second,
 		MiniMaxTranslateConcurrency: getenvInt("MINIMAX_TRANSLATE_CONCURRENCY", 4, 1, 32),
+		StockOCRProvider:            strings.ToLower(strings.TrimSpace(getenv("STOCK_OCR_PROVIDER", "minimax"))),
+		PaddleOCRGatewayURL:         strings.TrimRight(strings.TrimSpace(getenv("PADDLEOCR_GATEWAY_URL", "http://127.0.0.1:8090")), "/"),
+		PaddleOCRModel:              getenv("PADDLEOCR_MODEL", "PaddleOCR-VL-1.6"),
+		PaddleOCRTimeout:            time.Duration(getenvInt("PADDLEOCR_TIMEOUT_SECONDS", 180, 5, 900)) * time.Second,
 		BotModel:                    getenv("BOT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3")),
 		BotTimeout:                  time.Duration(getenvInt("BOT_MINIMAX_TIMEOUT_SECONDS", 45, 5, 300)) * time.Second,
 		BotMaxTokens:                getenvInt("BOT_MINIMAX_MAX_TOKENS", 1024, 128, 8192),

@@ -31,9 +31,7 @@ func OpenMySQL(cfg config.MySQLConfig) (*sql.DB, error) {
 		return nil, err
 	}
 
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(25)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	configureMySQLPool(db)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -43,6 +41,13 @@ func OpenMySQL(cfg config.MySQLConfig) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+func configureMySQLPool(db *sql.DB) {
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(time.Minute)
 }
 
 func ensureDatabaseExists(cfg config.MySQLConfig) error {

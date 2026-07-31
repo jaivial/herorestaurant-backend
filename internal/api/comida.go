@@ -67,31 +67,36 @@ type comidaListQuery struct {
 }
 
 type comidaItemResponse struct {
-	Num                int      `json:"num"`
-	SourceType         string   `json:"source_type,omitempty"`
-	Tipo               string   `json:"tipo,omitempty"`
-	Nombre             string   `json:"nombre"`
-	Precio             float64  `json:"precio"`
-	Descripcion        string   `json:"descripcion,omitempty"`
-	Titulo             string   `json:"titulo,omitempty"`
-	Suplemento         float64  `json:"suplemento,omitempty"`
-	Alergenos          []string `json:"alergenos,omitempty"`
-	Active             bool     `json:"active"`
-	HasFoto            bool     `json:"has_foto"`
-	FotoURL            string   `json:"foto_url,omitempty"`
-	Categoria          string   `json:"categoria,omitempty"`
-	CategoryID         *int     `json:"category_id,omitempty"`
-	CategorySlug       string   `json:"category_slug,omitempty"`
-	AiGenerating       bool     `json:"ai_generating,omitempty"`
-	Bodega             string   `json:"bodega,omitempty"`
-	DenominacionOrigen string   `json:"denominacion_origen,omitempty"`
-	Graduacion         float64  `json:"graduacion,omitempty"`
-	Anyo               string   `json:"anyo,omitempty"`
-	NombreEnglish      string   `json:"nombre_english,omitempty"`
-	DescripcionEnglish string   `json:"descripcion_english,omitempty"`
-	TituloEnglish      string   `json:"titulo_english,omitempty"`
-	TipoEnglish        string   `json:"tipo_english,omitempty"`
-	CategoriaEnglish   string   `json:"categoria_english,omitempty"`
+	Num          int      `json:"num"`
+	SourceType   string   `json:"source_type,omitempty"`
+	Tipo         string   `json:"tipo,omitempty"`
+	Nombre       string   `json:"nombre"`
+	Precio       float64  `json:"precio"`
+	Descripcion  string   `json:"descripcion,omitempty"`
+	Titulo       string   `json:"titulo,omitempty"`
+	Suplemento   float64  `json:"suplemento,omitempty"`
+	Alergenos    []string `json:"alergenos,omitempty"`
+	Active       bool     `json:"active"`
+	HasFoto      bool     `json:"has_foto"`
+	FotoURL      string   `json:"foto_url,omitempty"`
+	Categoria    string   `json:"categoria,omitempty"`
+	CategoryID   *int     `json:"category_id,omitempty"`
+	CategorySlug string   `json:"category_slug,omitempty"`
+	AiGenerating bool     `json:"ai_generating,omitempty"`
+	// ProductionType is always sent (never omitempty): the UI needs a definite
+	// RAW/MANUFACTURED value to render, and an absent field would be guessed at.
+	ProductionType     string  `json:"production_type"`
+	StockRecipeID      *int64  `json:"stock_recipe_id"`
+	StockItemID        *int64  `json:"stock_item_id"`
+	Bodega             string  `json:"bodega,omitempty"`
+	DenominacionOrigen string  `json:"denominacion_origen,omitempty"`
+	Graduacion         float64 `json:"graduacion,omitempty"`
+	Anyo               string  `json:"anyo,omitempty"`
+	NombreEnglish      string  `json:"nombre_english,omitempty"`
+	DescripcionEnglish string  `json:"descripcion_english,omitempty"`
+	TituloEnglish      string  `json:"titulo_english,omitempty"`
+	TipoEnglish        string  `json:"tipo_english,omitempty"`
+	CategoriaEnglish   string  `json:"categoria_english,omitempty"`
 }
 
 type comidaPostreResponse struct {
@@ -121,6 +126,11 @@ type comidaVinoResponse struct {
 	BodegaEnglish             string  `json:"bodega_english,omitempty"`
 	DenominacionOrigenEnglish string  `json:"denominacion_origen_english,omitempty"`
 	TipoEnglish               string  `json:"tipo_english,omitempty"`
+	// Mirrors comidaItemResponse: wine lives in its own table but must expose
+	// the same stock link, otherwise the wine editor loses the feature.
+	ProductionType string `json:"production_type"`
+	StockRecipeID  *int64 `json:"stock_recipe_id"`
+	StockItemID    *int64 `json:"stock_item_id"`
 }
 
 type comidaCategoryResponse struct {
@@ -793,7 +803,10 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			COALESCE(ci.categoria, ''),
 			ci.category_id,
 			COALESCE(c.slug, ''),
-			ci.ai_generating
+			ci.ai_generating,
+			COALESCE(ci.production_type, 'RAW'),
+			ci.stock_recipe_id,
+			ci.stock_item_id
 		FROM comida_items ci
 		LEFT JOIN comida_plato_categories c ON c.id = ci.category_id
 		WHERE `+whereSQL+`
@@ -817,6 +830,8 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			fotoURL       string
 			categoryIDRaw sql.NullInt64
 			aiGenInt      int
+			recipeIDRaw   sql.NullInt64
+			stockItemRaw  sql.NullInt64
 		)
 		if err := rows.Scan(
 			&item.Num,
@@ -836,8 +851,17 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			&categoryIDRaw,
 			&item.CategorySlug,
 			&aiGenInt,
+			&item.ProductionType,
+			&recipeIDRaw,
+			&stockItemRaw,
 		); err != nil {
 			return nil, 0, err
+		}
+		if recipeIDRaw.Valid {
+			item.StockRecipeID = &recipeIDRaw.Int64
+		}
+		if stockItemRaw.Valid {
+			item.StockItemID = &stockItemRaw.Int64
 		}
 		item.SourceType = string(t)
 		item.Alergenos = parseAlergenos(alergRaw)
@@ -885,7 +909,8 @@ func (s *Server) listPostres(r *http.Request, restaurantID int, query comidaList
 
 	offset := offsetForPage(query.Page, query.PageSize)
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT NUM, COALESCE(DESCRIPCION, ''), alergenos, active
+		SELECT NUM, COALESCE(DESCRIPCION, ''), alergenos, active,
+		       COALESCE(production_type, 'RAW'), stock_recipe_id, stock_item_id
 		FROM POSTRES
 		WHERE `+whereSQL+`
 		ORDER BY active DESC, NUM DESC
@@ -900,28 +925,40 @@ func (s *Server) listPostres(r *http.Request, restaurantID int, query comidaList
 	postres := make([]comidaPostreResponse, 0, query.PageSize)
 	for rows.Next() {
 		var (
-			num       int
-			desc      string
-			alergRaw  sql.NullString
-			activeInt int
+			num            int
+			desc           string
+			alergRaw       sql.NullString
+			activeInt      int
+			productionType string
+			recipeIDRaw    sql.NullInt64
+			stockItemRaw   sql.NullInt64
 		)
-		if err := rows.Scan(&num, &desc, &alergRaw, &activeInt); err != nil {
+		if err := rows.Scan(&num, &desc, &alergRaw, &activeInt,
+			&productionType, &recipeIDRaw, &stockItemRaw); err != nil {
 			return nil, nil, 0, err
 		}
 		alerg := parseAlergenos(alergRaw)
 		active := activeInt != 0
 
-		items = append(items, comidaItemResponse{
-			Num:         num,
-			SourceType:  string(comidaTipoPostres),
-			Tipo:        "POSTRE",
-			Nombre:      desc,
-			Precio:      0,
-			Descripcion: desc,
-			Alergenos:   alerg,
-			Active:      active,
-			HasFoto:     false,
-		})
+		postreItem := comidaItemResponse{
+			Num:            num,
+			SourceType:     string(comidaTipoPostres),
+			Tipo:           "POSTRE",
+			Nombre:         desc,
+			Precio:         0,
+			Descripcion:    desc,
+			Alergenos:      alerg,
+			Active:         active,
+			HasFoto:        false,
+			ProductionType: productionType,
+		}
+		if recipeIDRaw.Valid {
+			postreItem.StockRecipeID = &recipeIDRaw.Int64
+		}
+		if stockItemRaw.Valid {
+			postreItem.StockItemID = &stockItemRaw.Int64
+		}
+		items = append(items, postreItem)
 		postres = append(postres, comidaPostreResponse{
 			Num:         num,
 			Descripcion: desc,
@@ -970,7 +1007,10 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 			active,
 			((foto_path IS NOT NULL AND LENGTH(foto_path) > 0) OR foto IS NOT NULL) AS has_foto,
 			COALESCE(foto_path, ''),
-			foto
+			foto,
+			COALESCE(production_type, 'RAW'),
+			stock_recipe_id,
+			stock_item_id
 		FROM VINOS
 		WHERE `+whereSQL+`
 		ORDER BY active DESC, tipo ASC, nombre ASC, num ASC
@@ -984,11 +1024,13 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 	out := make([]comidaVinoResponse, 0, query.PageSize)
 	for rows.Next() {
 		var (
-			v          comidaVinoResponse
-			activeInt  int
-			hasFotoInt int
-			fotoPath   string
-			fotoBlob   []byte
+			v            comidaVinoResponse
+			activeInt    int
+			hasFotoInt   int
+			fotoPath     string
+			fotoBlob     []byte
+			recipeIDRaw  sql.NullInt64
+			stockItemRaw sql.NullInt64
 		)
 		if err := rows.Scan(
 			&v.Num,
@@ -1004,8 +1046,17 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 			&hasFotoInt,
 			&fotoPath,
 			&fotoBlob,
+			&v.ProductionType,
+			&recipeIDRaw,
+			&stockItemRaw,
 		); err != nil {
 			return nil, 0, err
+		}
+		if recipeIDRaw.Valid {
+			v.StockRecipeID = &recipeIDRaw.Int64
+		}
+		if stockItemRaw.Valid {
+			v.StockItemID = &stockItemRaw.Int64
 		}
 		v.Active = activeInt != 0
 		v.HasFoto = hasFotoInt != 0
@@ -1211,11 +1262,13 @@ func (s *Server) getPostreByID(r *http.Request, restaurantID int, id int) (comid
 
 func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaVinoResponse, bool, error) {
 	var (
-		v          comidaVinoResponse
-		activeInt  int
-		hasFotoInt int
-		fotoPath   sql.NullString
-		fotoBlob   []byte
+		v                  comidaVinoResponse
+		activeInt          int
+		hasFotoInt         int
+		fotoPath           sql.NullString
+		fotoBlob           []byte
+		detailRecipeIDRaw  sql.NullInt64
+		detailStockItemRaw sql.NullInt64
 	)
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT
@@ -1231,7 +1284,10 @@ func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaV
 			active,
 			((foto_path IS NOT NULL AND LENGTH(foto_path) > 0) OR foto IS NOT NULL) AS has_foto,
 			foto_path,
-			foto
+			foto,
+			COALESCE(production_type, 'RAW'),
+			stock_recipe_id,
+			stock_item_id
 		FROM VINOS
 		WHERE restaurant_id = ? AND num = ?
 		LIMIT 1
@@ -1249,12 +1305,21 @@ func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaV
 		&hasFotoInt,
 		&fotoPath,
 		&fotoBlob,
+		&v.ProductionType,
+		&detailRecipeIDRaw,
+		&detailStockItemRaw,
 	)
 	if err == sql.ErrNoRows {
 		return comidaVinoResponse{}, false, nil
 	}
 	if err != nil {
 		return comidaVinoResponse{}, false, err
+	}
+	if detailRecipeIDRaw.Valid {
+		v.StockRecipeID = &detailRecipeIDRaw.Int64
+	}
+	if detailStockItemRaw.Valid {
+		v.StockItemID = &detailStockItemRaw.Int64
 	}
 	v.Active = activeInt != 0
 	v.HasFoto = hasFotoInt != 0

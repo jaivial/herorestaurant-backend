@@ -2,40 +2,42 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
-
-	_ "github.com/go-sql-driver/mysql"
+	"time"
 
 	"preactvillacarmen/internal/api"
 	"preactvillacarmen/internal/config"
+	appdb "preactvillacarmen/internal/db"
 	"preactvillacarmen/internal/db/migrations"
 )
 
 func main() {
 	cfg := config.Load()
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&charset=utf8mb4&multiStatements=true",
-		cfg.MySQL.User, cfg.MySQL.Password, cfg.MySQL.Host, cfg.MySQL.Port, cfg.MySQL.DBName)
-
-	db, err := sql.Open("mysql", dsn)
+	db, err := appdb.OpenMySQL(cfg.MySQL)
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 	defer db.Close()
 
-	if err := db.Ping(); err != nil {
-		log.Fatalf("Failed to ping database: %v", err)
-	}
-
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	if err := migrations.Apply(ctx, db); err != nil {
 		log.Fatalf("Failed to apply migrations: %v", err)
 	}
 
 	server := api.NewServer(db, cfg)
 	log.Printf("Hero Restaurant API starting on %s", cfg.Addr)
-	log.Fatal(http.ListenAndServe(cfg.Addr, server.Routes()))
+	log.Fatal(newHTTPServer(cfg.Addr, server.Routes()).ListenAndServe())
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 }

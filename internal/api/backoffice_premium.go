@@ -2377,10 +2377,30 @@ func (s *Server) loadBOPremiumTablesSnapshot(ctx context.Context, restaurantID i
 		layoutPositions = raw
 	}
 
+	openPOSVisits := map[int64]map[string]any{}
+	posRows, posErr := s.db.QueryContext(ctx, `SELECT table_id,id,covers,opened_at FROM pos_visits WHERE restaurant_id=? AND channel='DINE_IN' AND status='OPEN' AND table_id IS NOT NULL`, restaurantID)
+	if posErr == nil {
+		for posRows.Next() {
+			var tableID, visitID int64
+			var covers int
+			var openedAt time.Time
+			if scanErr := posRows.Scan(&tableID, &visitID, &covers, &openedAt); scanErr == nil {
+				openPOSVisits[tableID] = map[string]any{"visit_id": visitID, "covers": covers, "opened_at": openedAt}
+			}
+		}
+		posRows.Close()
+	} else if !isSQLSchemaError(posErr) {
+		return nil, nil, nil, posErr
+	}
+
 	tables := make([]map[string]any, 0, len(rawTables))
 	for _, row := range rawTables {
 		table := normalizeBOPremiumTableRow(row)
 		if tableID, ok := anyToInt64OK(table["id"]); ok && tableID > 0 {
+			if visit, occupied := openPOSVisits[tableID]; occupied {
+				table["status"] = "occupied"
+				table["pos_visit"] = visit
+			}
 			if pos, exists := asStringAnyMap(layoutPositions[strconv.FormatInt(tableID, 10)]); exists {
 				if x, ok := anyToInt64OK(pos["x_pos"]); ok {
 					table["x_pos"] = x
