@@ -1732,6 +1732,23 @@ Notes:
 - Email sending is stubbed (no SMTP configured in Go).
 - WhatsApp is sent via UAZAPI if `UAZAPI_URL` + `UAZAPI_TOKEN` are configured.
 
+## Public reservation helpers (modern aliases)
+
+The Preact frontend uses these modern `/api/reservations/*` aliases (same handlers as the
+legacy `*.php` endpoints; the `.php` paths remain for legacy PHP compatibility).
+
+### `GET /api/reservations/two-top-availability?date=<YYYY-MM-DD>`
+Alias of `POST /api/fetch_mesas_de_dos.php` (GET, `date` query param).
+Response: `{ success: true, disponibilidadDeDos: boolean, limiteMesasDeDos: number, mesasDeDosReservadas: number }`
+
+### `GET /api/reservations/hour-data?date=<YYYY-MM-DD>`
+Alias of `GET /api/gethourdata.php` (`date` query param). Response shape identical to legacy handler
+(hourly booking data + daily limit + salon state).
+
+### `GET /api/reservations/day-context?date=<YYYY-MM-DD>`
+Alias of `GET /api/get_reservation_day_context.php` (`date` query param). Response shape identical to
+legacy handler (defaults, opening mode, morning/night hours, closed-day info).
+
 ### `POST /api/fetch_mesas_de_dos.php`
 Form:
 - `date` (`YYYY-MM-DD`)

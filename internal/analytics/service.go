@@ -511,25 +511,31 @@ func (s *Service) refreshInvoices(ctx context.Context, tx *sql.Tx, tenantID int,
 		if err != nil {
 			return written, err
 		}
+		type invoiceLineSource struct {
+			lineID              int64
+			description         string
+			quantity, lineTotal float64
+		}
+		lines := make([]invoiceLineSource, 0)
 		for lineRows.Next() {
-			var lineID int64
-			var description string
-			var quantity, lineTotal float64
-			if err = lineRows.Scan(&lineID, &description, &quantity, &lineTotal); err != nil {
+			var line invoiceLineSource
+			if err = lineRows.Scan(&line.lineID, &line.description, &line.quantity, &line.lineTotal); err != nil {
 				lineRows.Close()
 				return written, err
 			}
-			if err = s.upsertSalesLine(ctx, tx, tenantID, documentID, lineID, description, quantity, cents(lineTotal), 0); err != nil {
-				lineRows.Close()
-				return written, err
-			}
-			written++
+			lines = append(lines, line)
 		}
 		if err = lineRows.Err(); err != nil {
 			lineRows.Close()
 			return written, err
 		}
 		lineRows.Close()
+		for _, line := range lines {
+			if err = s.upsertSalesLine(ctx, tx, tenantID, documentID, line.lineID, line.description, line.quantity, cents(line.lineTotal), 0); err != nil {
+				return written, err
+			}
+			written++
+		}
 		written++
 	}
 	return written, nil
@@ -599,26 +605,32 @@ func (s *Service) refreshPOS(ctx context.Context, tx *sql.Tx, tenantID int, date
 		if err != nil {
 			return written, err
 		}
+		type posLineSource struct {
+			lineID                int64
+			description           string
+			quantity              float64
+			lineTotal, lineRefund int64
+		}
+		lines := make([]posLineSource, 0)
 		for lineRows.Next() {
-			var lineID int64
-			var description string
-			var quantity float64
-			var lineTotal, lineRefund int64
-			if err = lineRows.Scan(&lineID, &description, &quantity, &lineTotal, &lineRefund); err != nil {
+			var line posLineSource
+			if err = lineRows.Scan(&line.lineID, &line.description, &line.quantity, &line.lineTotal, &line.lineRefund); err != nil {
 				lineRows.Close()
 				return written, err
 			}
-			if err = s.upsertSalesLine(ctx, tx, tenantID, documentID, lineID, description, quantity, lineTotal, lineRefund); err != nil {
-				lineRows.Close()
-				return written, err
-			}
-			written++
+			lines = append(lines, line)
 		}
 		if err = lineRows.Err(); err != nil {
 			lineRows.Close()
 			return written, err
 		}
 		lineRows.Close()
+		for _, line := range lines {
+			if err = s.upsertSalesLine(ctx, tx, tenantID, documentID, line.lineID, line.description, line.quantity, line.lineTotal, line.lineRefund); err != nil {
+				return written, err
+			}
+			written++
+		}
 		written++
 	}
 	return written, nil
