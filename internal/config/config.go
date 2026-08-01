@@ -30,8 +30,19 @@ type Config struct {
 	BunnyPrivateStorageKey      string
 	StockDocumentRetentionDays  int
 	CloudflareAPIToken          string
+	CloudflareAPIEmail          string
+	CloudflareAPIKey            string
 	CloudflareAccountID         string
 	CloudflareZoneID            string
+	StripeSecretKey             string
+	StripeWebhookSecret         string
+	RegisterAPIToken            string // security token required on domain-register (anti-abuse)
+	InstaticBasePort            int
+	InstaticBaseDir             string
+	InstaticServerDir           string
+	InstaticMaxInstances        int
+	InstaticSeedAdminEmail      string
+	InstaticSeedAdminPassword   string
 	OpenAIAPIKey                string
 	OpenAIImageEditModel        string
 	OpenAIImageEditURL          string
@@ -85,8 +96,19 @@ func Load() Config {
 		BunnyPrivateStorageKey:      strings.TrimSpace(os.Getenv("BUNNY_PRIVATE_STORAGE_ACCESS_KEY")),
 		StockDocumentRetentionDays:  getenvInt("STOCK_DOCUMENT_RETENTION_DAYS", 365, 1, 3650),
 		CloudflareAPIToken:          os.Getenv("CLOUDFLARE_API_TOKEN"),
+		CloudflareAPIEmail:          os.Getenv("CLOUDFLARE_API_EMAIL"),
+		CloudflareAPIKey:            os.Getenv("CLOUDFLARE_API_KEY"),
 		CloudflareAccountID:         os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
 		CloudflareZoneID:            os.Getenv("CLOUDFLARE_ZONE_ID"),
+		StripeSecretKey:             strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY")),
+		StripeWebhookSecret:         strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET")),
+		RegisterAPIToken:            strings.TrimSpace(os.Getenv("REGISTER_API_TOKEN")),
+		InstaticBasePort:            getenvInt("INSTATIC_BASE_PORT", 39000, 1, 65535),
+		InstaticBaseDir:             getenv("INSTATIC_BASE_DIR", "/var/lib/instatic"),
+		InstaticServerDir:           getenv("INSTATIC_SERVER_DIR", "/var/www/newvillacarmen/backend/third_party/instatic"),
+		InstaticMaxInstances:        getenvInt("INSTATIC_MAX_INSTANCES", 8, 1, 256),
+		InstaticSeedAdminEmail:      getenv("INSTATIC_SEED_ADMIN_EMAIL", "website@menustudioai.com"),
+		InstaticSeedAdminPassword:   getenv("INSTATIC_SEED_ADMIN_PASSWORD", "ChangeMeWebsite1!"),
 		OpenAIAPIKey:                strings.TrimSpace(getenvFirst([]string{"WAVESPEED_API_KEY"}, "")),
 		OpenAIImageEditModel:        getenvFirst([]string{"WAVESPEED_IMAGE_EDIT_MODEL", "OPENAI_IMAGE_EDIT_MODEL", "OPENAI_IMAGE_MODEL"}, "openai/gpt-image-1.5/edit"),
 		OpenAIImageEditURL:          getenvFirst([]string{"WAVESPEED_IMAGE_EDIT_URL", "OPENAI_IMAGE_EDIT_URL", "OPENAI_IMAGE_URL"}, "https://api.wavespeed.ai/api/v3/openai/gpt-image-1.5/edit"),

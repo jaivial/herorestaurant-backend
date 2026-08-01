@@ -40,6 +40,8 @@ type Server struct {
 	botCapCount           map[int]int
 	botSem                chan struct{} // bounds concurrent inbound agent turns
 	provisionMu           sync.Mutex    // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
+	instatic              *instaticManager
+	siteBuilderHub        *siteBuilderWSHub
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -61,6 +63,10 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		rateLimit:             make(map[string]*rateLimitState),
 		botSem:                make(chan struct{}, botMaxConcurrentTurns),
 	}
+	s.instatic = newInstaticManager(db, cfg)
+	s.instatic.StartSupervisor()
+	s.instatic.BootRestore()
+	s.siteBuilderHub = newSiteBuilderWSHub()
 	go s.runBOFichajeAutoCutLoop()
 	return s
 }
@@ -68,6 +74,15 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	websiteBuilder := newWebsiteBuilder(s)
+
+	// Restaurant website virtual host: `<slug>.<app_base_url>` → instatic.
+	// Runs before path routing so restaurant sites never hit admin/API routes.
+	// Non-restaurant hosts fall through to normal routing.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s.serveRestaurantSiteIfHost(w, r, next)
+		})
+	})
 
 	// CORS for API and legacy endpoints.
 	r.Use(func(next http.Handler) http.Handler {
@@ -567,6 +582,18 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
 			RegisterSiteBuilderRoutes(r, s.db)
 		})
+		// Site builder realtime CRUD over WS.
+		r.With(s.requireBOSession, ajustesGate).Get("/site-builder/ws", s.handleBOSiteBuilderWS)
+		// Domain purchase billing (Stripe Checkout).
+		r.With(s.requireBOSession, ajustesGate).Post("/site-builder/billing/checkout", s.handleBillingCheckout)
+		// Cloudflare Registrar: domain search + purchase.
+		r.With(s.requireBOSession, ajustesGate).Get("/site-builder/domains/search", s.handleRegistrarSearch)
+		r.With(s.requireBOSession, ajustesGate).Post("/site-builder/domains/register", s.handleRegistrarRegister)
+		r.With(s.requireBOSession, ajustesGate).Post("/site-builder/domains/provision", s.handleRegistrarProvision)
+		// Instatic website-generator instance management (ensure/seed/publish/status)
+		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
+			s.instatic.RegisterInstaticRoutes(r)
+		})
 		r.With(s.requireBOSession, ajustesGate).Get("/domains/search", s.handleBOPremiumDomainsSearch)
 		r.With(s.requireBOSession, ajustesGate).Post("/domains/quote", s.handleBOPremiumDomainsQuote)
 		r.With(s.requireBOSession, ajustesGate).Post("/domains/register", s.handleBOPremiumDomainsRegister)
@@ -651,6 +678,9 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	r.Get("/public/website-builder/render/{kind}", s.handleWebsiteBuilderRenderFragment)
+
+	// Stripe webhook (signature-authenticated, not session).
+	r.Post("/stripe/webhook", s.handleStripeWebhook)
 
 	// Public booking JSON API — uses own tenant resolution via DEFAULT_RESTAURANT_ID fallback.
 	r.Get("/public/booking", s.handlePublicBookingGet)

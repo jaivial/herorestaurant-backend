@@ -9,3 +9,8 @@ tmp/
 /server.v2
 **/__pycache__/
 *.pyc
+server.new
+server.v2
+/vendor/
+/third_party/
+test-results/
