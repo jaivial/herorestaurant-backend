@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -371,5 +372,5 @@ func maxFloat(left, right float64) float64 {
 }
 
 func roundEUR(value float64) float64 {
-	return float64(int64(value*100+0.5)) / 100
+	return math.Round(value*100) / 100
 }
