@@ -42,6 +42,8 @@ type Server struct {
 	provisionMu           sync.Mutex    // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
 	instatic              *instaticManager
 	siteBuilderHub        *siteBuilderWSHub
+	assistantRateMu       sync.Mutex
+	assistantRateBuckets  map[string]*assistantRateBucket
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -65,7 +67,6 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	}
 	s.instatic = newInstaticManager(db, cfg)
 	s.instatic.StartSupervisor()
-	s.instatic.BootRestore()
 	s.siteBuilderHub = newSiteBuilderWSHub()
 	go s.runBOFichajeAutoCutLoop()
 	return s
@@ -383,6 +384,12 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/shifts/current", s.handleBOPOSShiftCurrent)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posShiftGate).Post("/pos/shifts/open", s.handleBOPOSShiftOpen)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posShiftGate).Post("/pos/shifts/{id}/close", s.handleBOPOSShiftClose)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/cash/summary", s.handleBOPOSCashSummary)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/cash/movements", s.handleBOPOSCashMovements)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCheckoutGate).Post("/pos/cash/movements", s.handleBOPOSCashMovementCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/cash/closures", s.handleBOPOSCashClosures)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/cash/closures/{id}", s.handleBOPOSCashClosureGet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posShiftGate).Post("/pos/cash/closures", s.handleBOPOSCashClosureCreate)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCheckoutGate).Post("/pos/drawer/open", s.handleBOPOSDrawerOpen)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tags", s.handleBOPOSTagsList)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Post("/pos/tags", s.handleBOPOSTagCreate)
@@ -657,6 +664,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, horariosGate).Get("/horarios/member-range", s.handleBOHorariosMemberRange)
 		r.With(s.requireBOSession, fichajeGate).Get("/horarios/my-schedule", s.handleBOHorariosMySchedule)
 
+		// Forky AI assistant (WebSocket chat, any logged-in user).
+		r.With(s.requireBOSession).Get("/assistant/ws", s.handleBOAssistantWS)
+
 		// Invoices management
 		r.With(s.requireBOSession, facturasGate).Get("/invoices", s.handleBOInvoicesList)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}", s.handleBOInvoiceGet)
@@ -690,8 +700,12 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/public/booking-policies", s.handlePublicBookingPolicies)
 	r.Get("/public/legal-page", s.handlePublicLegalPageGet)
 
-	// Embeddable booking widget API — accepts ?restaurant_id= query param.
-	s.RegisterWidgetRoutes(r)
+	// Embeddable booking widget API under /widget/* — accepts ?restaurant_id=.
+	// Same-origin on published restaurant sites (instatic proxy passes /widget/*
+	// through to here), so the page CSP needs no cross-origin connect-src.
+	r.Route("/widget", func(r chi.Router) {
+		s.RegisterWidgetRoutes(r)
+	})
 
 	// Multi-tenant WhatsApp bot webhook (UAZAPI). Tenant resolved by the
 	// instance token in the payload, not by Host header.
@@ -720,6 +734,8 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/menus/finde", s.handleMenuFinde)
 		r.Get("/postres", s.handlePostres)
 		r.Get("/vinos", s.handleVinos)
+		// Forky AI assistant for the public site (anonymous, session_token + rate limit).
+		r.Get("/assistant/ws", s.handlePublicAssistantWS)
 		r.Get("/comida/platos/categorias", s.handleComidaPublicPlatoCategoriesList)
 		r.Get("/comida/{tipo}", s.handleComidaPublicList)
 		r.Get("/comida/{tipo}/{id}", s.handleComidaPublicGet)

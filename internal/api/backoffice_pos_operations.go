@@ -420,19 +420,29 @@ func (s *Server) handleBOPOSShiftClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	var opening int64
 	var status string
-	if err = tx.QueryRowContext(r.Context(), `SELECT opening_cash_cents,status FROM pos_shifts WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, id).Scan(&opening, &status); err != nil || status != "OPEN" {
+	if err = tx.QueryRowContext(r.Context(), `SELECT status FROM pos_shifts WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, id).Scan(&status); err != nil || status != "OPEN" {
 		httpx.WriteError(w, 409, "Shift is not open")
 		return
 	}
-	var cash int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(p.amount_cents),0) FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id WHERE p.restaurant_id=? AND t.shift_id=? AND p.method='CASH' AND p.status='CAPTURED'`, a.ActiveRestaurantID, id).Scan(&cash); err != nil {
+	summary, summaryErr := s.loadPOSCashSummary(r.Context(), tx, a.ActiveRestaurantID, id)
+	if summaryErr != nil {
 		httpx.WriteError(w, 500, "Error calculating cash")
 		return
 	}
-	expected := opening + cash
-	_, err = tx.ExecContext(r.Context(), `UPDATE pos_shifts SET status='CLOSED',closed_by=?,closing_cash_counted_cents=?,expected_cash_cents=?,closed_at=NOW(),notes=COALESCE(?,notes) WHERE restaurant_id=? AND id=?`, a.User.ID, in.CountedCashCents, expected, stockNullableString(in.Notes), a.ActiveRestaurantID, id)
+	expected := summary.ExpectedCash
+	difference := in.CountedCashCents - expected
+	if _, err = tx.ExecContext(r.Context(), `UPDATE pos_shifts SET status='CLOSED',closed_by=?,closing_cash_counted_cents=?,expected_cash_cents=?,closed_at=NOW(),notes=COALESCE(?,notes) WHERE restaurant_id=? AND id=?`, a.User.ID, in.CountedCashCents, expected, stockNullableString(in.Notes), a.ActiveRestaurantID, id); err != nil {
+		httpx.WriteError(w, 500, "Error closing shift")
+		return
+	}
+	legacyKey := "legacy-shift-close:" + strconv.FormatInt(id, 10)
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO pos_cash_closures (restaurant_id,shift_id,terminal_key,closure_type,opened_at,closed_at,opening_cash_cents,sales_gross_cents,refunds_cents,discounts_cents,surcharges_cents,tips_cents,cash_sales_cents,cash_tips_cents,card_sales_cents,card_tips_cents,bank_sales_cents,bank_tips_cents,other_sales_cents,other_tips_cents,cash_refunds_cents,cash_in_cents,cash_out_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,voided_ticket_count,covers,open_visit_count,open_ticket_count,note,discrepancy_reason,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, id, summary.TerminalKey, "Z", summary.OpenedAt, time.Now(), summary.OpeningCash, summary.SalesGross, summary.Refunds, summary.Discounts, summary.Surcharges, summary.Tips, summary.CashSales, summary.CashTips, summary.CardSales, summary.CardTips, summary.BankSales, summary.BankTips, summary.OtherSales, summary.OtherTips, summary.CashRefunds, summary.CashIn, summary.CashOut, expected, in.CountedCashCents, difference, summary.TicketCount, summary.VoidedTicketCount, summary.Covers, summary.OpenVisitCount, summary.OpenTicketCount, stockNullableString(in.Notes), func() any {
+		if difference != 0 {
+			return "Legacy shift close"
+		}
+		return nil
+	}(), legacyKey, a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error closing shift")
 		return
@@ -441,5 +451,5 @@ func (s *Server) handleBOPOSShiftClose(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 500, "Error closing shift")
 		return
 	}
-	httpx.WriteJSON(w, 200, map[string]any{"success": true, "expectedCashCents": expected, "differenceCents": in.CountedCashCents - expected})
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "expectedCashCents": expected, "differenceCents": difference})
 }
