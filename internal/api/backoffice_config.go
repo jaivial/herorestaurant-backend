@@ -1759,6 +1759,14 @@ func websiteURLRespondsOK(ctx context.Context, websiteURL string) error {
 	return nil
 }
 
+const validEntityTypes = map[string]bool{
+	"autonomo": true,
+	"sl":       true,
+	"sl_new":   true,
+	"sl_micro": true,
+	"sa":       true,
+}
+
 type boRestaurantInfo struct {
 	Direccion            string `json:"direccion"`
 	Telefono             string `json:"telefono"`
@@ -1766,6 +1774,7 @@ type boRestaurantInfo struct {
 	CIF                  string `json:"cif"`
 	DireccionFacturacion string `json:"direccionFacturacion"`
 	Clasificacion        string `json:"clasificacion"`
+	TipoEmpresa          string `json:"tipoEmpresa"`
 	Website              string `json:"website"`
 	MenuURL              string `json:"menuUrl"`
 }
@@ -1777,12 +1786,13 @@ type boRestaurantInfoSetRequest struct {
 	CIF                  *string `json:"cif,omitempty"`
 	DireccionFacturacion *string `json:"direccionFacturacion,omitempty"`
 	Clasificacion        *string `json:"clasificacion,omitempty"`
+	TipoEmpresa          *string `json:"tipoEmpresa,omitempty"`
 	Website              *string `json:"website,omitempty"`
 	MenuURL              *string `json:"menuUrl,omitempty"`
 }
 
 func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRestaurantInfo, error) {
-	out := boRestaurantInfo{Clasificacion: "sociedad"}
+	out := boRestaurantInfo{Clasificacion: "sociedad", TipoEmpresa: "sl"}
 	var (
 		direccion            sql.NullString
 		telefono             sql.NullString
@@ -1790,15 +1800,16 @@ func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRe
 		cif                  sql.NullString
 		direccionFacturacion sql.NullString
 		clasificacion        sql.NullString
+		tipoEmpresa          sql.NullString
 		website              sql.NullString
 		menuURL              sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT direccion, telefono, email, cif, direccion_facturacion, clasificacion, website, menu_url
+		SELECT direccion, telefono, email, cif, direccion_facturacion, clasificacion, tipo_empresa, website, menu_url
 		FROM restaurant_info
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&direccion, &telefono, &email, &cif, &direccionFacturacion, &clasificacion, &website, &menuURL)
+	`, restaurantID).Scan(&direccion, &telefono, &email, &cif, &direccionFacturacion, &clasificacion, &tipoEmpresa, &website, &menuURL)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, nil
@@ -1814,6 +1825,12 @@ func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRe
 		v := strings.TrimSpace(clasificacion.String)
 		if v == "persona_fisica" || v == "sociedad" {
 			out.Clasificacion = v
+		}
+	}
+	if tipoEmpresa.Valid {
+		v := strings.TrimSpace(tipoEmpresa.String)
+		if validEntityTypes[v] {
+			out.TipoEmpresa = v
 		}
 	}
 	if website.Valid {
@@ -1922,6 +1939,18 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 			current.Clasificacion = v
 		}
 	}
+	if req.TipoEmpresa != nil {
+		v := strings.TrimSpace(*req.TipoEmpresa)
+		if validEntityTypes[v] {
+			current.TipoEmpresa = v
+			// Keep the legacy coarse classification consistent with the entity.
+			if v == "autonomo" {
+				current.Clasificacion = "persona_fisica"
+			} else {
+				current.Clasificacion = "sociedad"
+			}
+		}
+	}
 	if req.Website != nil {
 		normalizedWebsite, normalizeErr := normalizeRestaurantWebsiteURL(*req.Website)
 		if normalizeErr != nil {
@@ -1942,9 +1971,9 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 
 	_, err = s.db.ExecContext(r.Context(), `
 		INSERT INTO restaurant_info (
-			restaurant_id, direccion, telefono, email, cif, direccion_facturacion, clasificacion, website, menu_url
+			restaurant_id, direccion, telefono, email, cif, direccion_facturacion, clasificacion, tipo_empresa, website, menu_url
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			direccion = VALUES(direccion),
 			telefono = VALUES(telefono),
@@ -1952,9 +1981,10 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 			cif = VALUES(cif),
 			direccion_facturacion = VALUES(direccion_facturacion),
 			clasificacion = VALUES(clasificacion),
+			tipo_empresa = VALUES(tipo_empresa),
 			website = VALUES(website),
 			menu_url = VALUES(menu_url)
-	`, a.ActiveRestaurantID, current.Direccion, current.Telefono, current.Email, current.CIF, current.DireccionFacturacion, current.Clasificacion, current.Website, current.MenuURL)
+	`, a.ActiveRestaurantID, current.Direccion, current.Telefono, current.Email, current.CIF, current.DireccionFacturacion, current.Clasificacion, current.TipoEmpresa, current.Website, current.MenuURL)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando informacion del restaurante")
 		return

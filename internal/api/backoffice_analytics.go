@@ -82,7 +82,7 @@ func (s *Server) handleBOAnalyticsOverview(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	service := analytics.NewService(s.db)
-	overview, err := service.Overview(ctx, auth.ActiveRestaurantID, rangeValue, granularity, compare == "previous")
+	overview, err := service.OverviewWithBreakdowns(ctx, auth.ActiveRestaurantID, rangeValue, granularity, compare == "previous")
 	if err == nil && overview.DataQuality.RefreshRequired {
 		refreshRange := rangeValue
 		if compare == "previous" {
@@ -92,7 +92,7 @@ func (s *Server) handleBOAnalyticsOverview(w http.ResponseWriter, r *http.Reques
 		if _, refreshErr := service.Refresh(ctx, auth.ActiveRestaurantID, refreshRange); refreshErr != nil {
 			err = refreshErr
 		} else {
-			overview, err = service.Overview(ctx, auth.ActiveRestaurantID, rangeValue, granularity, compare == "previous")
+			overview, err = service.OverviewWithBreakdowns(ctx, auth.ActiveRestaurantID, rangeValue, granularity, compare == "previous")
 		}
 	}
 	if err != nil {
@@ -101,16 +101,21 @@ func (s *Server) handleBOAnalyticsOverview(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":        true,
-		"currency":       overview.Currency,
-		"from":           overview.From,
-		"to":             overview.To,
-		"granularity":    overview.Granularity,
-		"summary":        overview.Summary,
-		"comparison":     overview.Comparison,
-		"series":         overview.Series,
-		"wasteBreakdown": overview.WasteBreakdown,
-		"dataQuality":    overview.DataQuality,
+		"success":            true,
+		"currency":           overview.Currency,
+		"from":               overview.From,
+		"to":                 overview.To,
+		"granularity":        overview.Granularity,
+		"summary":            overview.Summary,
+		"comparison":         overview.Comparison,
+		"series":             overview.Series,
+		"wasteBreakdown":     overview.WasteBreakdown,
+		"dataQuality":        overview.DataQuality,
+		"topItems":           overview.TopItems,
+		"paymentMethods":     overview.PaymentMethods,
+		"dayOfWeek":          overview.DayOfWeek,
+		"hourlyDistribution": overview.HourlyDistribution,
+		"revenueByCategory":  overview.RevenueByCategory,
 	})
 }
 
