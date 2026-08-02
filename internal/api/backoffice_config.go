@@ -1759,7 +1759,7 @@ func websiteURLRespondsOK(ctx context.Context, websiteURL string) error {
 	return nil
 }
 
-const validEntityTypes = map[string]bool{
+var validEntityTypes = map[string]bool{
 	"autonomo": true,
 	"sl":       true,
 	"sl_new":   true,
