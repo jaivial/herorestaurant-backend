@@ -8,7 +8,7 @@
     "backofficeApp": "backoffice",
     "backend": "backend"
   },
-  "lastUpdated": "2026-08-03T23:16:00Z",
+  "lastUpdated": "2026-08-03T23:17:30Z",
   "coverage": {
     "public": {
       "routes": {
@@ -309,6 +309,12 @@
       "scope": "public route smoke matrix",
       "result": "15 passed",
       "command": "PLAYWRIGHT_BASE_URL=https://preact-dev.menustudioai.com npm run test:e2e -- --project=mobile-chromium e2e/public-route-smoke.spec.ts"
+    },
+    {
+      "id": "menu-schema-fix-local-2026-08-03",
+      "scope": "menus schema compatibility migration",
+      "result": "migration test and full backend suite passed",
+      "command": "cd backend && /tmp/go126/bin/go test ./internal/db/migrations && /tmp/go126/bin/go test ./..."
     }
   ],
   "bugs": [
@@ -370,11 +376,13 @@
     },
     {
       "id": "BUG-2026-08-03-remote-group-menus-api",
-      "status": "confirmed-remote",
+      "status": "fix-prepared-pending-deploy",
       "area": "backoffice menus",
       "rootCause": "Authenticated GET /api/admin/group-menus-v2 returns success=false for dev tenant, blocking menu cards",
       "evidence": "Real browser session with admin@villacarmen.com: GET /api/admin/group-menus-v2?includeDrafts=1 => HTTP 500 {success:false,message:\"Error consultando menus\"}; GET /api/admin/menus/selector => same 500; GET /api/admin/horarios => 200 success=true",
-      "nextAction": "Compare remote database migrations/schema for menus.is_draft and modified_at against backend migrations; rerun authenticated API regression after deployment migration correction"
+      "nextAction": "Compare remote database migrations/schema for menus.is_draft and modified_at against backend migrations; rerun authenticated API regression after deployment migration correction",
+      "fix": "Added migration 085_menus_schema_compatibility.sql to backfill menu_type, is_draft, and editor_version on already-renamed menus tables; added migration regression test",
+      "regression": "Go migration package and complete backend suite passed; remote rerun pending deployment"
     },
     {
       "id": "BUG-2026-08-03-remote-food-crud",
