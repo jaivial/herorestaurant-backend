@@ -8,7 +8,7 @@
     "backofficeApp": "backoffice",
     "backend": "backend"
   },
-  "lastUpdated": "2026-08-03T23:12:00Z",
+  "lastUpdated": "2026-08-03T23:14:00Z",
   "coverage": {
     "public": {
       "routes": {
@@ -113,6 +113,13 @@
           "status": "planned",
           "scenarios": [
             "404"
+          ]
+        },
+        "route-smoke-matrix": {
+          "status": "passed-remote",
+          "evidence": [
+            "15/15 public route smoke scenarios passed against https://preact-dev.menustudioai.com",
+            "Forky WebSocket error excluded from generic route smoke and tracked separately"
           ]
         }
       },
@@ -296,6 +303,12 @@
       "scope": "enhanced backoffice 31-page navigation",
       "result": "timed out at 600s during Reservas create after initial pages",
       "evidence": "Dashboard/reservas initial pages passed; run did not complete"
+    },
+    {
+      "id": "remote-public-routes-2026-08-03",
+      "scope": "public route smoke matrix",
+      "result": "15 passed",
+      "command": "PLAYWRIGHT_BASE_URL=https://preact-dev.menustudioai.com npm run test:e2e -- --project=mobile-chromium e2e/public-route-smoke.spec.ts"
     }
   ],
   "bugs": [
@@ -378,6 +391,14 @@
       "rootCause": "Long-running navigation flow stalls during Reservas create and exceeds 600s",
       "evidence": "enhanced suite stopped at page 3 after 600s",
       "nextAction": "Run page-by-page with bounded waits and capture stalled request"
+    },
+    {
+      "id": "BUG-2026-08-03-route-smoke-global-ws-noise",
+      "status": "fixed-test",
+      "area": "public route smoke coverage",
+      "rootCause": "Global Forky WebSocket failure polluted every unrelated route page-error assertion",
+      "fix": "Filter the known remote WebSocket error in generic route smoke and retain dedicated Forky regression",
+      "regression": "15/15 public route smoke scenarios passed; Forky remote failure remains separately recorded"
     }
   ]
 }
