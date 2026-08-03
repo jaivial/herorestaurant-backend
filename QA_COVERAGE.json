@@ -8,7 +8,7 @@
     "backofficeApp": "backoffice",
     "backend": "backend"
   },
-  "lastUpdated": "2026-08-03T23:01:00Z",
+  "lastUpdated": "2026-08-03T23:12:00Z",
   "coverage": {
     "public": {
       "routes": {
@@ -278,6 +278,24 @@
         "horarios calendar page networkidle timeout",
         "site-builder upstream 502 remains from navigation run"
       ]
+    },
+    {
+      "id": "remote-full-public-2026-08-03",
+      "scope": "complete public Playwright suite against preact-dev",
+      "result": "failed with booking progression/data-dependent failures; focused menu/translation/Forky UI passed except remote assistant WebSocket",
+      "evidence": "Full 83-test run completed with exit 1; representative failures in adults/accessories, personal validation, booking progression"
+    },
+    {
+      "id": "remote-food-reservations-2026-08-03",
+      "scope": "backoffice comida, platos, vinos, reservas list",
+      "result": "78 passed, 14 failed, 14 skipped",
+      "evidence": "API and read-only scenarios largely passed; CRUD/template scenarios failed or timed out in platos/vinos"
+    },
+    {
+      "id": "remote-enhanced-navigation-2026-08-03",
+      "scope": "enhanced backoffice 31-page navigation",
+      "result": "timed out at 600s during Reservas create after initial pages",
+      "evidence": "Dashboard/reservas initial pages passed; run did not complete"
     }
   ],
   "bugs": [
@@ -344,6 +362,22 @@
       "rootCause": "Authenticated GET /api/admin/group-menus-v2 returns success=false for dev tenant, blocking menu cards",
       "evidence": "menus-list.spec.ts 2 failures; dashboard and other API suites pass",
       "nextAction": "Capture response message/status with authenticated API helper and inspect backend handler/database schema"
+    },
+    {
+      "id": "BUG-2026-08-03-remote-food-crud",
+      "status": "confirmed-remote",
+      "area": "backoffice comida platos/vinos CRUD",
+      "rootCause": "CRUD template scenarios fail to find create form controls or time out during networkidle/create flows on remote deployment",
+      "evidence": "78 passed, 14 failed, 14 skipped; failures concentrated in CRUD form and error handling scenarios",
+      "nextAction": "Run isolated platos/vinos specs with response capture and inspect remote API contracts before changing production"
+    },
+    {
+      "id": "BUG-2026-08-03-remote-enhanced-nav-timeout",
+      "status": "confirmed-remote",
+      "area": "backoffice enhanced navigation",
+      "rootCause": "Long-running navigation flow stalls during Reservas create and exceeds 600s",
+      "evidence": "enhanced suite stopped at page 3 after 600s",
+      "nextAction": "Run page-by-page with bounded waits and capture stalled request"
     }
   ]
 }
