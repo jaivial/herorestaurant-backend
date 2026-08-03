@@ -8,7 +8,7 @@
     "backofficeApp": "backoffice",
     "backend": "backend"
   },
-  "lastUpdated": "2026-08-03T22:59:00Z",
+  "lastUpdated": "2026-08-03T23:01:00Z",
   "coverage": {
     "public": {
       "routes": {
@@ -162,6 +162,38 @@
               ]
             }
           }
+        },
+        "/app/dashboard": {
+          "status": "passed-remote",
+          "evidence": [
+            "dashboard focused suite passed: page, sidebar, metrics, calendar, console checks"
+          ]
+        },
+        "/app/config": {
+          "status": "passed-partial-remote",
+          "evidence": [
+            "config API and redirect focused suite passed",
+            "full navigation networkidle timed out once"
+          ]
+        },
+        "/app/menus": {
+          "status": "partial-failed-remote",
+          "evidence": [
+            "landing page passed; 2 menu API/card scenarios failed because group-menus-v2 response success=false"
+          ]
+        },
+        "/app/horarios": {
+          "status": "partial-failed-remote",
+          "evidence": [
+            "month/day/create/validation APIs passed; calendar page networkidle timed out"
+          ]
+        },
+        "/app/site-builder": {
+          "status": "failed-remote",
+          "evidence": [
+            "site-builder redirect expectation passed",
+            "editor iframe upstream returns 502 from editor-dev"
+          ]
         }
       },
       "roles": [
@@ -236,6 +268,16 @@
         "PLAYWRIGHT_BASE_URL=https://preact-dev.menustudioai.com npm run test:e2e -- --project=mobile-chromium e2e/booking-calendar-dates.spec.ts e2e/booking-party-size.spec.ts",
         "BACKOFFICE_URL=https://backoffice-dev.menustudioai.com E2E_ADMIN_EMAIL=admin@villacarmen.com E2E_ADMIN_PASSWORD=admin123 PLAYWRIGHT_SKIP_GLOBAL_SETUP=1 npm run test:e2e -- --project=chromium e2e/specs/full-navigation.spec.ts"
       ]
+    },
+    {
+      "id": "remote-core-features-2026-08-03",
+      "scope": "backoffice dashboard, config, menus, horarios core suites",
+      "result": "13 passed, 3 failed",
+      "failures": [
+        "group-menus-v2 returns success=false",
+        "horarios calendar page networkidle timeout",
+        "site-builder upstream 502 remains from navigation run"
+      ]
     }
   ],
   "bugs": [
@@ -294,6 +336,14 @@
       "rootCause": "editor-dev.menustudioai.com/admin/site?rid=1 returns 502",
       "evidence": "full-navigation remote run and direct curl both return 502",
       "nextAction": "Inspect editor instance availability and reverse proxy upstream"
+    },
+    {
+      "id": "BUG-2026-08-03-remote-group-menus-api",
+      "status": "confirmed-remote",
+      "area": "backoffice menus",
+      "rootCause": "Authenticated GET /api/admin/group-menus-v2 returns success=false for dev tenant, blocking menu cards",
+      "evidence": "menus-list.spec.ts 2 failures; dashboard and other API suites pass",
+      "nextAction": "Capture response message/status with authenticated API helper and inspect backend handler/database schema"
     }
   ]
 }
