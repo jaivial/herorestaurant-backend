@@ -8,7 +8,7 @@
     "backofficeApp": "backoffice",
     "backend": "backend"
   },
-  "lastUpdated": "2026-08-03T23:14:00Z",
+  "lastUpdated": "2026-08-03T23:16:00Z",
   "coverage": {
     "public": {
       "routes": {
@@ -373,8 +373,8 @@
       "status": "confirmed-remote",
       "area": "backoffice menus",
       "rootCause": "Authenticated GET /api/admin/group-menus-v2 returns success=false for dev tenant, blocking menu cards",
-      "evidence": "menus-list.spec.ts 2 failures; dashboard and other API suites pass",
-      "nextAction": "Capture response message/status with authenticated API helper and inspect backend handler/database schema"
+      "evidence": "Real browser session with admin@villacarmen.com: GET /api/admin/group-menus-v2?includeDrafts=1 => HTTP 500 {success:false,message:\"Error consultando menus\"}; GET /api/admin/menus/selector => same 500; GET /api/admin/horarios => 200 success=true",
+      "nextAction": "Compare remote database migrations/schema for menus.is_draft and modified_at against backend migrations; rerun authenticated API regression after deployment migration correction"
     },
     {
       "id": "BUG-2026-08-03-remote-food-crud",
