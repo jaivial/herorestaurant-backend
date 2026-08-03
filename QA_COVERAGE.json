@@ -1,12 +1,14 @@
 {
   "mission": "Full application Playwright QA for newvillacarmen",
   "target": {
-    "remoteUrl": "https://hermesv3menustudioai.com",
+    "publicUrl": "https://preact-dev.menustudioai.com",
+    "backofficeUrl": "https://backoffice-dev.menustudioai.com",
+    "remoteUrl": "https://preact-dev.menustudioai.com",
     "publicApp": "preactvillacarmen/frontend",
     "backofficeApp": "backoffice",
     "backend": "backend"
   },
-  "lastUpdated": "2026-08-03T22:48:00Z",
+  "lastUpdated": "2026-08-03T22:53:00Z",
   "coverage": {
     "public": {
       "routes": {
@@ -105,6 +107,18 @@
             "404"
           ]
         }
+      },
+      "remote": {
+        "baseUrl": "https://preact-dev.menustudioai.com",
+        "status": "partial-failed",
+        "evidence": [
+          "7/8 remote public smoke scenarios passed",
+          "Forky button, menu interactions, and translations passed",
+          "Forky anonymous WebSocket failed with browser ws error"
+        ],
+        "failedScenarios": [
+          "/api/assistant/ws anonymous chat round-trip"
+        ]
       }
     },
     "backoffice": {
@@ -134,7 +148,15 @@
         "desktop",
         "tablet",
         "mobile"
-      ]
+      ],
+      "remote": {
+        "baseUrl": "https://backoffice-dev.menustudioai.com",
+        "status": "passed",
+        "evidence": [
+          "12/12 remote authentication scenarios passed",
+          "login, invalid credentials, validation, responsive image, protected routes, logout, session expiry, and API contracts passed"
+        ]
+      }
     },
     "backend": {
       "status": "passed",
@@ -169,6 +191,15 @@
       "scope": "Go backend tests",
       "result": "passed",
       "command": "cd backend && /tmp/go126/bin/go test ./..."
+    },
+    {
+      "id": "remote-dev-2026-08-03",
+      "scope": "Corrected public and backoffice dev deployments",
+      "result": "public 7/8 passed; backoffice auth 12/12 passed",
+      "commands": [
+        "PLAYWRIGHT_BASE_URL=https://preact-dev.menustudioai.com npm run test:e2e -- --project=mobile-chromium e2e/menu-dish-add-button.spec.ts e2e/menu-translations.spec.ts e2e/forky-public.spec.ts",
+        "BACKOFFICE_URL=https://backoffice-dev.menustudioai.com E2E_ADMIN_EMAIL=admin@villacarmen.com E2E_ADMIN_PASSWORD=admin123 PLAYWRIGHT_SKIP_GLOBAL_SETUP=1 npm run test:e2e -- --project=chromium e2e/specs/auth/auth.spec.ts"
+      ]
     }
   ],
   "bugs": [
@@ -195,6 +226,14 @@
       "rootCause": "nullStr helper collided with production helper and returned wrong type",
       "fix": "Rename fixture helper to nullSQLStr",
       "regression": "Go test ./... passed"
+    },
+    {
+      "id": "BUG-2026-08-03-remote-forky-ws",
+      "status": "confirmed-remote",
+      "area": "public deployment /api/assistant/ws",
+      "rootCause": "Remote preact-dev WebSocket connection fails while static Forky UI and all other focused remote scenarios pass",
+      "evidence": "Playwright remote smoke: ws.onerror; local Forky E2E passes",
+      "nextAction": "Inspect deployment WebSocket upgrade/proxy configuration and rerun remote regression"
     }
   ]
 }
