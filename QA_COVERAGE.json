@@ -8,7 +8,7 @@
     "backofficeApp": "backoffice",
     "backend": "backend"
   },
-  "lastUpdated": "2026-08-03T23:17:30Z",
+  "lastUpdated": "2026-08-03T23:18:30Z",
   "coverage": {
     "public": {
       "routes": {
@@ -315,6 +315,12 @@
       "scope": "menus schema compatibility migration",
       "result": "migration test and full backend suite passed",
       "command": "cd backend && /tmp/go126/bin/go test ./internal/db/migrations && /tmp/go126/bin/go test ./..."
+    },
+    {
+      "id": "remote-menu-post-fix-rerun-2026-08-03",
+      "scope": "remote menu API regression after migration push",
+      "result": "still failed: 2 menu API/card checks, dishes catalog passed",
+      "evidence": "backoffice-dev remains on pre-fix behavior or migration 085 has not executed; migration fix commit 46a3d91 is pushed"
     }
   ],
   "bugs": [
@@ -376,11 +382,11 @@
     },
     {
       "id": "BUG-2026-08-03-remote-group-menus-api",
-      "status": "fix-prepared-pending-deploy",
+      "status": "fix-pushed-awaiting-remote-deploy",
       "area": "backoffice menus",
       "rootCause": "Authenticated GET /api/admin/group-menus-v2 returns success=false for dev tenant, blocking menu cards",
-      "evidence": "Real browser session with admin@villacarmen.com: GET /api/admin/group-menus-v2?includeDrafts=1 => HTTP 500 {success:false,message:\"Error consultando menus\"}; GET /api/admin/menus/selector => same 500; GET /api/admin/horarios => 200 success=true",
-      "nextAction": "Compare remote database migrations/schema for menus.is_draft and modified_at against backend migrations; rerun authenticated API regression after deployment migration correction",
+      "evidence": "Real browser session with admin@villacarmen.com: GET /api/admin/group-menus-v2?includeDrafts=1 => HTTP 500 {success:false,message:\"Error consultando menus\"}; GET /api/admin/menus/selector => same 500; GET /api/admin/horarios => 200 success=true; post-fix remote rerun still HTTP 500, indicating the corrected backend migration is not yet deployed to backoffice-dev or deployment migration execution is pending",
+      "nextAction": "Wait for deployment/migrations on backoffice-dev, then rerun menus-list.spec.ts and authenticated /api/admin/group-menus-v2 + /api/admin/menus/selector checks",
       "fix": "Added migration 085_menus_schema_compatibility.sql to backfill menu_type, is_draft, and editor_version on already-renamed menus tables; added migration regression test",
       "regression": "Go migration package and complete backend suite passed; remote rerun pending deployment"
     },
