@@ -1,0 +1,200 @@
+{
+  "mission": "Full application Playwright QA for newvillacarmen",
+  "target": {
+    "remoteUrl": "https://hermesv3menustudioai.com",
+    "publicApp": "preactvillacarmen/frontend",
+    "backofficeApp": "backoffice",
+    "backend": "backend"
+  },
+  "lastUpdated": "2026-08-03T22:48:00Z",
+  "coverage": {
+    "public": {
+      "routes": {
+        "/": {
+          "status": "passed-partial",
+          "scenarios": [
+            "loads",
+            "navigation",
+            "responsive",
+            "console-errors",
+            "network-errors"
+          ],
+          "evidence": [
+            "public focused E2E: Forky 2/2 passed",
+            "menu UI focused E2E: 8/8 passed"
+          ]
+        },
+        "/contacto": {
+          "status": "planned"
+        },
+        "/eventos": {
+          "status": "planned"
+        },
+        "/menu/:menuId": {
+          "status": "planned",
+          "scenarios": [
+            "loads",
+            "dish-interactions",
+            "translations",
+            "allergens",
+            "responsive"
+          ]
+        },
+        "/menufindesemana": {
+          "status": "planned"
+        },
+        "/menudeldia": {
+          "status": "planned"
+        },
+        "/menusdegrupos": {
+          "status": "planned",
+          "scenarios": [
+            "loads",
+            "party-size",
+            "mandatory-menu",
+            "rice",
+            "accessories"
+          ]
+        },
+        "/postres": {
+          "status": "planned"
+        },
+        "/vinos": {
+          "status": "planned"
+        },
+        "/cafes": {
+          "status": "planned"
+        },
+        "/bebidas": {
+          "status": "planned"
+        },
+        "/reservas": {
+          "status": "partial-failed",
+          "scenarios": [
+            "calendar",
+            "date-validation",
+            "party-size",
+            "personal-validation",
+            "submit"
+          ],
+          "evidence": [
+            "83-test mobile E2E run: calendar and party-size scenarios passed; booking progression scenarios failed/time out against current dev data/backend"
+          ]
+        },
+        "/confirm": {
+          "status": "planned"
+        },
+        "/cancel": {
+          "status": "planned"
+        },
+        "/update-rice": {
+          "status": "planned"
+        },
+        "/avisolegal": {
+          "status": "planned"
+        },
+        "/booking-policies": {
+          "status": "planned"
+        },
+        "/protecciondatos": {
+          "status": "planned"
+        },
+        "unknown-route": {
+          "status": "planned",
+          "scenarios": [
+            "404"
+          ]
+        }
+      }
+    },
+    "backoffice": {
+      "routes": {
+        "/login": {
+          "status": "passed",
+          "evidence": [
+            "auth.spec.ts: 12/12 passed on https://localhost:3010",
+            "responsive image and validation scenarios passed"
+          ]
+        },
+        "/app": {
+          "status": "passed-partial",
+          "evidence": [
+            "auth.spec.ts protected-route, login, logout, session scenarios passed"
+          ]
+        }
+      },
+      "roles": [
+        "root",
+        "admin",
+        "metre",
+        "jefe_cocina",
+        "employee"
+      ],
+      "viewports": [
+        "desktop",
+        "tablet",
+        "mobile"
+      ]
+    },
+    "backend": {
+      "status": "passed",
+      "scenarios": [
+        "health",
+        "auth",
+        "validation",
+        "tenant-isolation",
+        "error-shapes",
+        "timeouts"
+      ],
+      "evidence": [
+        "/tmp/go126/bin/go test ./... passed"
+      ]
+    }
+  },
+  "runs": [
+    {
+      "id": "public-focused-2026-08-03",
+      "scope": "Forky, menu interactions, translations",
+      "result": "8 passed, 1 failed before fix; 9 passed after Forky assertion fix",
+      "command": "cd preactvillacarmen/frontend && npm run test:e2e -- --project=mobile-chromium ..."
+    },
+    {
+      "id": "backoffice-auth-2026-08-03",
+      "scope": "login, session, protected routes, API contract",
+      "result": "12 passed",
+      "command": "cd backoffice && PORT=3010 BACKOFFICE_URL=https://localhost:3010 E2E_ADMIN_EMAIL=admin@villacarmen.com E2E_ADMIN_PASSWORD=admin123 npm run test:e2e -- --project=chromium e2e/specs/auth/auth.spec.ts"
+    },
+    {
+      "id": "backend-all-2026-08-03",
+      "scope": "Go backend tests",
+      "result": "passed",
+      "command": "cd backend && /tmp/go126/bin/go test ./..."
+    }
+  ],
+  "bugs": [
+    {
+      "id": "BUG-2026-08-03-forky-assertion",
+      "status": "fixed-test",
+      "area": "public E2E",
+      "rootCause": "Assertion required obsolete Villa Carmen-specific welcome wording while backend returned valid assistant identity wording",
+      "fix": "Use stable case-insensitive assistant identity regex",
+      "regression": "Forky public E2E 2/2 passed"
+    },
+    {
+      "id": "BUG-2026-08-03-auth-e2e-config",
+      "status": "fixed-test-infra",
+      "area": "backoffice E2E",
+      "rootCause": "Tests hardcoded localhost:3001 and stale admin account; shared cached session was invalidated by parallel logout",
+      "fix": "Honor PORT/BACKOFFICE_URL, use mission credentials, login per authenticated fixture context",
+      "regression": "Auth E2E 12/12 passed"
+    },
+    {
+      "id": "BUG-2026-08-03-go-test-helper",
+      "status": "fixed-test",
+      "area": "backend tests",
+      "rootCause": "nullStr helper collided with production helper and returned wrong type",
+      "fix": "Rename fixture helper to nullSQLStr",
+      "regression": "Go test ./... passed"
+    }
+  ]
+}

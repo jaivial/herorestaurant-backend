@@ -133,12 +133,12 @@ func TestPublicBookingToResponse(t *testing.T) {
 		PartySize:       4,
 		Children:        1,
 		CustomerName:    "Juan García",
-		Commentary:      nullStr("Mesa tranquila"),
+		Commentary:      nullSQLStr("Mesa tranquila"),
 		BabyStrollers:   sql.NullInt64{Int64: 1, Valid: true},
 		HighChairs:      sql.NullInt64{Int64: 2, Valid: true},
 		PreferredFloor:  sql.NullInt64{Int64: 2, Valid: true},
-		TableNumber:     nullStr("12"),
-		Status:          nullStr("confirmed"),
+		TableNumber:     nullSQLStr("12"),
+		Status:          nullSQLStr("confirmed"),
 	})
 	if resp.ID != 123 {
 		t.Errorf("expected ID 123, got %d", resp.ID)
@@ -173,8 +173,8 @@ func TestPublicBookingToResponseArroz(t *testing.T) {
 		ReservationTime: "21:30:00",
 		PartySize:       6,
 		CustomerName:    "María López",
-		ArrozType:       nullStr(`["Arroz negro"]`),
-		ArrozServings:   nullStr(`[4]`),
+		ArrozType:       nullSQLStr(`["Arroz negro"]`),
+		ArrozServings:   nullSQLStr(`[4]`),
 	})
 	if resp.ArrozDisplay != "Arroz negro x 4" {
 		t.Errorf("expected arroz display, got %s", resp.ArrozDisplay)
@@ -182,6 +182,6 @@ func TestPublicBookingToResponseArroz(t *testing.T) {
 }
 
 // Helper to create sql.NullString for tests
-func nullStr(s string) sql.NullString {
+func nullSQLStr(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
 }
