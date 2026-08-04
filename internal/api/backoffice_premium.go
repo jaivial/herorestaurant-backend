@@ -109,6 +109,7 @@ type boPremiumDomainVerifyRequest struct {
 type boPremiumTablesMutationRequest struct {
 	Entity          string         `json:"entity"`
 	ID              int64          `json:"id"`
+	NumeroMesa      *int           `json:"numero_mesa"`
 	Date            string         `json:"date"`
 	FloorNumber     *int           `json:"floor_number"`
 	AreaID          *int64         `json:"area_id"`
@@ -1372,6 +1373,7 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 	case "area":
 		item, err := s.createBOPremiumArea(r.Context(), a.ActiveRestaurantID, req)
 		if err != nil {
+			log.Printf("[ERROR] createBOPremiumArea failed: %v", err)
 			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_CREATE_FAILED", "No se pudo crear área")
 			return
 		}
@@ -1384,6 +1386,7 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 	case "table":
 		item, err := s.createBOPremiumTable(r.Context(), a.ActiveRestaurantID, req)
 		if err != nil {
+			log.Printf("[ERROR] createBOPremiumTable failed: %v", err)
 			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_CREATE_FAILED", "No se pudo crear mesa")
 			return
 		}
@@ -1485,35 +1488,37 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 			reqForDB.XPos = nil
 			reqForDB.YPos = nil
 		}
-		item, err := s.updateBOPremiumTable(r.Context(), a.ActiveRestaurantID, reqForDB)
-		if err != nil {
+		if _, err := s.updateBOPremiumTable(r.Context(), a.ActiveRestaurantID, reqForDB); err != nil {
 			log.Printf("[ERROR] updateBOPremiumTable failed: %v", err)
 			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar mesa")
 			return
 		}
 		if req.Date != "" && req.FloorNumber != nil && (req.XPos != nil || req.YPos != nil) {
-			tableID, _ := anyToInt64OK(item["id"])
-			if tableID > 0 {
+			if req.ID > 0 {
 				x := int64(0)
 				y := int64(0)
 				if req.XPos != nil {
 					x = int64(math.Round(*req.XPos))
-				} else if rawX, ok := anyToInt64OK(item["x_pos"]); ok {
-					x = rawX
 				}
 				if req.YPos != nil {
 					y = int64(math.Round(*req.YPos))
-				} else if rawY, ok := anyToInt64OK(item["y_pos"]); ok {
-					y = rawY
 				}
 				log.Printf("[DEBUG] upsertBOPremiumTableLayoutPosition: restaurantID=%d, date=%s, floor=%d, tableID=%d, x=%d, y=%d",
-					a.ActiveRestaurantID, req.Date, *req.FloorNumber, tableID, x, y)
-				if _, err := s.upsertBOPremiumTableLayoutPosition(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, tableID, x, y); err != nil {
+					a.ActiveRestaurantID, req.Date, *req.FloorNumber, req.ID, x, y)
+				if _, err := s.upsertBOPremiumTableLayoutPosition(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, req.ID, x, y); err != nil {
 					log.Printf("[ERROR] upsertBOPremiumTableLayoutPosition failed: %v", err)
 					writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar posicion del layout")
 					return
 				}
 			}
+		}
+		// Return the full, current table row (with layout position applied) so
+		// clients and the broadcast do not overwrite local state with defaults.
+		item, err := s.loadBOPremiumTableItem(r.Context(), a.ActiveRestaurantID, req.ID, req.Date, req.FloorNumber)
+		if err != nil {
+			log.Printf("[ERROR] loadBOPremiumTableItem failed: %v", err)
+			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar mesa")
+			return
 		}
 		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "table_updated", item)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -1869,6 +1874,18 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 	if name == "" {
 		name = "Mesa"
 	}
+	// The legacy/current restaurant_tables schema stores numero_mesa as a
+	// per-restaurant unique NOT NULL column. When the client does not supply
+	// one, derive the next number instead of letting the INSERT fail.
+	numeroMesa := 0
+	if req.NumeroMesa != nil && *req.NumeroMesa > 0 {
+		numeroMesa = *req.NumeroMesa
+	} else if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(numero_mesa), 0) + 1 FROM restaurant_tables WHERE restaurant_id = ?`,
+		restaurantID,
+	).Scan(&numeroMesa); err != nil || numeroMesa <= 0 {
+		numeroMesa = 1
+	}
 	areaID := int64(0)
 	if req.AreaID != nil {
 		areaID = *req.AreaID
@@ -1916,57 +1933,57 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 	variants := []boSQLVariant{
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, name, capacity, status, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				(restaurant_id, numero_mesa, area_id, name, capacity, status, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			args: []any{restaurantID, numeroMesa, areaID, name, capacity, statusArg, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
+		},
+		{
+			query: `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			args: []any{restaurantID, areaID, name, capacity, statusArg, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
+			args: []any{restaurantID, numeroMesa, areaID, name, capacity, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, name, capacity, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			args: []any{restaurantID, areaID, name, capacity, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
+				(restaurant_id, numero_mesa, area_id, name, capacity, status, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			args: []any{restaurantID, numeroMesa, areaID, name, capacity, statusArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, name, capacity, status, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				(restaurant_id, numero_mesa, area_id, name, capacity, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			args: []any{restaurantID, areaID, name, capacity, statusArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
+			args: []any{restaurantID, numeroMesa, areaID, name, capacity, xPos, yPos, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, name, capacity, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				(restaurant_id, numero_mesa, area_id, name, capacity, status, is_active, metadata_json, created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			args: []any{restaurantID, areaID, name, capacity, xPos, yPos, boolToTinyInt(isActive), metaArg},
+			args: []any{restaurantID, numeroMesa, areaID, name, capacity, statusArg, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, name, capacity, status, is_active, metadata_json, created_at, updated_at)
+				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			args: []any{restaurantID, areaID, name, capacity, statusArg, boolToTinyInt(isActive), metaArg},
+			args: []any{restaurantID, numeroMesa, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			args: []any{restaurantID, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
+				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			args: []any{restaurantID, numeroMesa, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			args: []any{restaurantID, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
+				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			args: []any{restaurantID, numeroMesa, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			args: []any{restaurantID, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
-		},
-		{
-			query: `INSERT INTO restaurant_tables
-				(restaurant_id, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-			args: []any{restaurantID, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
+				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			args: []any{restaurantID, numeroMesa, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
 			query: `INSERT INTO restaurant_tables
@@ -1996,6 +2013,7 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 	out := map[string]any{
 		"id":                id,
 		"restaurant_id":     restaurantID,
+		"numero_mesa":       numeroMesa,
 		"area_id":           areaID,
 		"name":              name,
 		"capacity":          capacity,
@@ -2014,6 +2032,24 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 }
 
 func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req boPremiumTablesMutationRequest) (map[string]any, error) {
+	// Load the current metadata_json so partial metadata patches (e.g. resize
+	// width/height) merge instead of replacing fields like rotation_deg and
+	// short_side_seats that only live inside metadata_json.
+	currentMeta := map[string]any{}
+	if req.ID > 0 {
+		current, found, qErr := s.queryOneAsMap(ctx, `SELECT metadata_json FROM restaurant_tables WHERE restaurant_id = ? AND id = ?`, restaurantID, req.ID)
+		if qErr != nil && !isSQLSchemaError(qErr) {
+			return nil, qErr
+		}
+		if found {
+			if m, ok := asStringAnyMap(current["metadata_json"]); ok {
+				for k, v := range m {
+					currentMeta[k] = v
+				}
+			}
+		}
+	}
+
 	nameArg := nullableString(stringPtrOr(req.Name, ""))
 	areaArg := any(nil)
 	if req.AreaID != nil {
@@ -2080,6 +2116,9 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 	}
 
 	metaMap := map[string]any{}
+	for k, v := range currentMeta {
+		metaMap[k] = v
+	}
 	for k, v := range req.Metadata {
 		metaMap[k] = v
 	}
@@ -2345,6 +2384,34 @@ func normalizeBOPremiumTableLayoutMap(layout map[string]any) map[string]any {
 	}
 	normalized["elements"] = nextElements
 	return normalized
+}
+
+func (s *Server) loadBOPremiumTableItem(ctx context.Context, restaurantID int, tableID int64, dateISO string, floorNumber *int) (map[string]any, error) {
+	row, found, err := s.queryOneAsMap(ctx, `SELECT * FROM restaurant_tables WHERE restaurant_id = ? AND id = ?`, restaurantID, tableID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return map[string]any{"id": tableID, "restaurant_id": restaurantID}, nil
+	}
+	table := normalizeBOPremiumTableRow(row)
+	if dateISO != "" && floorNumber != nil {
+		layout, lerr := s.loadBOPremiumTableLayout(ctx, restaurantID, dateISO, *floorNumber)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if layoutPositions, ok := asStringAnyMap(layout["table_positions"]); ok {
+			if pos, exists := asStringAnyMap(layoutPositions[strconv.FormatInt(tableID, 10)]); exists {
+				if x, ok := anyToInt64OK(pos["x_pos"]); ok {
+					table["x_pos"] = x
+				}
+				if y, ok := anyToInt64OK(pos["y_pos"]); ok {
+					table["y_pos"] = y
+				}
+			}
+		}
+	}
+	return table, nil
 }
 
 func (s *Server) loadBOPremiumTablesSnapshot(ctx context.Context, restaurantID int, dateISO string, floorNumber *int) ([]map[string]any, []map[string]any, map[string]any, error) {
@@ -3466,6 +3533,9 @@ func normalizeBOPremiumTableRow(row map[string]any) map[string]any {
 		"texture_image_url": textureImageURL,
 		"x_pos":             xPos,
 		"y_pos":             yPos,
+	}
+	if numeroMesa, ok := anyToInt64OK(row["numero_mesa"]); ok && numeroMesa > 0 {
+		out["numero_mesa"] = numeroMesa
 	}
 	if updatedAt := firstStringFromMap(row, "updated_at"); updatedAt != "" {
 		out["updated_at"] = updatedAt
