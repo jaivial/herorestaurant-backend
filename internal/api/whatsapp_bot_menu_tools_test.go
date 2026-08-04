@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestBotMenuCategoryLabel(t *testing.T) {
@@ -162,7 +161,6 @@ func TestBotToolBeverages_DB(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO CAFES (restaurant_id, tipo, nombre, precio, descripcion, titulo, active) VALUES (?, 'CAFE', 'Café solo', 1.50, 'Espresso', 'Cafés', 1)`, rid)
 	_, _ = db.Exec(`INSERT INTO BEBIDAS (restaurant_id, tipo, nombre, precio, descripcion, titulo, active) VALUES (?, 'BEBIDA', 'Agua mineral', 2.00, '50cl', 'Refrescos', 1)`, rid)
 	_, _ = db.Exec(`INSERT INTO VINOS (restaurant_id, nombre, precio, descripcion, tipo, bodega, denominacion_origen, anyo, active) VALUES (?, 'Rioja Reserva', 18.00, 'Tinto con cuerpo', 'TINTO', 'Bodega X', 'DO Rioja', '2018', 1)`, rid)
-	_ = time.Now()
 
 	coffee, _ := s.botToolCoffeeMenu(ctx, rid)
 	if !strings.Contains(coffee, "Café solo") || !strings.Contains(coffee, "Espresso") {

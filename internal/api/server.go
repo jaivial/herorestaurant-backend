@@ -20,22 +20,30 @@ import (
 )
 
 type Server struct {
-	db                  *sql.DB
-	cfg                 config.Config
-	tenantCache         tenantDomainCache
-	fichajeHub          *boFichajeHub
-	tablesHub           *boTablesHub
-	groupMenusV2AIHub   *boGroupMenuV2AIHub
-	groupMenusV2AIQueue chan struct{}
-	vinoAIHub           *boVinoAIHub
-	comidaAIHub         *boComidaAIHub
-	rateMu              sync.Mutex
-	rateLimit           map[string]*rateLimitState
-	botSeenMu           sync.Mutex
-	botSeen             map[string]int64
-	botCapMu            sync.Mutex
-	botCapDay           string
-	botCapCount         map[int]int
+	db                    *sql.DB
+	cfg                   config.Config
+	tenantCache           tenantDomainCache
+	fichajeHub            *boFichajeHub
+	tablesHub             *boTablesHub
+	sheetHub              *sheetWSHub
+	groupMenusV2AIHub     *boGroupMenuV2AIHub
+	groupMenusV2AIQueue   chan struct{}
+	vinoAIHub             *boVinoAIHub
+	comidaAIHub           *boComidaAIHub
+	whatsappConnectionHub *boWhatsAppConnectionHub
+	rateMu                sync.Mutex
+	rateLimit             map[string]*rateLimitState
+	botSeenMu             sync.Mutex
+	botSeen               map[string]int64
+	botCapMu              sync.Mutex
+	botCapDay             string
+	botCapCount           map[int]int
+	botSem                chan struct{} // bounds concurrent inbound agent turns
+	provisionMu           sync.Mutex    // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
+	instatic              *instaticManager
+	siteBuilderHub        *siteBuilderWSHub
+	assistantRateMu       sync.Mutex
+	assistantRateBuckets  map[string]*assistantRateBucket
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -44,16 +52,22 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		aiConcurrency = 1
 	}
 	s := &Server{
-		db:                  db,
-		cfg:                 cfg,
-		fichajeHub:          newBOFichajeHub(),
-		tablesHub:           newBOTablesHub(),
-		groupMenusV2AIHub:   newBOGroupMenuV2AIHub(),
-		groupMenusV2AIQueue: make(chan struct{}, aiConcurrency),
-		vinoAIHub:           newBOVinoAIHub(),
-		comidaAIHub:         newBOComidaAIHub(),
-		rateLimit:           make(map[string]*rateLimitState),
+		db:                    db,
+		cfg:                   cfg,
+		fichajeHub:            newBOFichajeHub(),
+		tablesHub:             newBOTablesHub(),
+		sheetHub:              newSheetWSHub(),
+		groupMenusV2AIHub:     newBOGroupMenuV2AIHub(),
+		groupMenusV2AIQueue:   make(chan struct{}, aiConcurrency),
+		vinoAIHub:             newBOVinoAIHub(),
+		comidaAIHub:           newBOComidaAIHub(),
+		whatsappConnectionHub: newBOWAConnectionHub(),
+		rateLimit:             make(map[string]*rateLimitState),
+		botSem:                make(chan struct{}, botMaxConcurrentTurns),
 	}
+	s.instatic = newInstaticManager(db, cfg)
+	s.instatic.StartSupervisor()
+	s.siteBuilderHub = newSiteBuilderWSHub()
 	go s.runBOFichajeAutoCutLoop()
 	return s
 }
@@ -61,6 +75,15 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	websiteBuilder := newWebsiteBuilder(s)
+
+	// Restaurant website virtual host: `<slug>.<app_base_url>` → instatic.
+	// Runs before path routing so restaurant sites never hit admin/API routes.
+	// Non-restaurant hosts fall through to normal routing.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s.serveRestaurantSiteIfHost(w, r, next)
+		})
+	})
 
 	// CORS for API and legacy endpoints.
 	r.Use(func(next http.Handler) http.Handler {
@@ -96,6 +119,8 @@ func (s *Server) Routes() http.Handler {
 		})
 	})
 
+	r.Get("/healthz", s.handleHealthz)
+
 	r.Route("/admin", func(r chi.Router) {
 		reservasGate := s.requireBOSection(boSectionReservas)
 		menusGate := s.requireBOSection(boSectionMenus)
@@ -104,6 +129,36 @@ func (s *Server) Routes() http.Handler {
 		fichajeGate := s.requireBOSection(boSectionFichaje)
 		horariosGate := s.requireBOSection(boSectionHorarios)
 		facturasGate := s.requireBOSection(boSectionFacturas)
+		stockViewGate := s.requireBOStockPermission(stockPermissionView)
+		stockTransferGate := s.requireBOStockPermission(stockPermissionTransfer)
+		stockItemsGate := s.requireBOStockPermission(stockPermissionItemsManage)
+		stockWarehousesGate := s.requireBOStockPermission(stockPermissionWarehousesManage)
+		stockCountPerformGate := s.requireBOStockPermission(stockPermissionCountPerform)
+		stockCountCloseGate := s.requireBOStockPermission(stockPermissionCountClose)
+		stockRecipesViewGate := s.requireBOStockPermission(stockPermissionRecipesView)
+		stockRecipesManageGate := s.requireBOStockPermission(stockPermissionRecipesManage)
+		stockProductionGate := s.requireBOStockPermission(stockPermissionProduction)
+		stockForecastGate := s.requireBOStockPermission(stockPermissionForecastView)
+		stockOCRUploadGate := s.requireBOStockPermission(stockPermissionOCRUpload)
+		stockOCRConfirmGate := s.requireBOStockPermission(stockPermissionOCRConfirm)
+		stockCostsViewGate := s.requireBOStockPermission(stockPermissionCostsView)
+		stockCostsManageGate := s.requireBOStockPermission(stockPermissionCostsManage)
+		stockSettingsGate := s.requireBOStockPermission(stockPermissionSettingsManage)
+		posViewGate := s.requireBOPOSPermission(posPermissionView)
+		posSellGate := s.requireBOPOSPermission(posPermissionSell)
+		posVisitManageGate := s.requireBOPOSPermission(posPermissionVisitManage)
+		posLineVoidGate := s.requireBOPOSPermission(posPermissionLineVoid)
+		posDiscountGate := s.requireBOPOSPermission(posPermissionDiscount)
+		posCheckoutGate := s.requireBOPOSPermission(posPermissionCheckout)
+		posRefundGate := s.requireBOPOSPermission(posPermissionRefund)
+		posShiftGate := s.requireBOPOSPermission(posPermissionShiftManage)
+		posCatalogGate := s.requireBOPOSPermission(posPermissionCatalog)
+		posStockMappingGate := s.requireBOPOSPermission(posPermissionStockMapping)
+		posCoversAdjustGate := s.requireBOPOSPermission(posPermissionCoversAdjust)
+		posReportsGate := s.requireBOPOSPermission(posPermissionReports)
+		posSettingsGate := s.requireBOPOSPermission(posPermissionSettings)
+		posKitchenGate := s.requireBOPOSPermission(posPermissionKitchen)
+		statisticsGate := s.requireBOSection(boSectionEstadisticas)
 		rolesAdminGate := s.requireBORoleImportanceAtLeast(90)
 		rootOnlyGate := s.requireBORoleImportanceAtLeast(100)
 
@@ -129,6 +184,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession).Post("/active-restaurant", s.handleBOSetActiveRestaurant)
 
 		r.With(s.requireBOSession, reservasGate).Get("/dashboard/metrics", s.handleBODashboardMetrics)
+		r.With(s.requireBOSession, menusGate).Get("/comida/counts", s.handleBOComidaCounts)
 
 		r.With(s.requireBOSession, reservasGate).Get("/calendar", s.handleBOCalendarMonth)
 
@@ -191,6 +247,203 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Post("/comida/{tipo}", s.handleBOComidaCreate)
 		r.With(s.requireBOSession, menusGate).Patch("/comida/{tipo}/{id}", s.handleBOComidaPatch)
 		r.With(s.requireBOSession, menusGate).Delete("/comida/{tipo}/{id}", s.handleBOComidaDelete)
+
+		// Stock control. Section gate is admin-only by default; role table can grant it later.
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/warehouses", s.handleBOStockWarehousesList)
+		r.With(s.requireBOSession, withBOStockTimeout, stockWarehousesGate).Post("/stock/warehouses", s.handleBOStockWarehouseCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockWarehousesGate).Patch("/stock/warehouses/{id}", s.handleBOStockWarehousePatch)
+		r.With(s.requireBOSession, withBOStockTimeout, stockWarehousesGate).Delete("/stock/warehouses/{id}", s.handleBOStockWarehouseDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/categories", s.handleBOStockCategoriesList)
+		r.With(s.requireBOSession, withBOStockTimeout, stockItemsGate).Post("/stock/categories", s.handleBOStockCategoryCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockItemsGate).Patch("/stock/categories/{id}", s.handleBOStockCategoryPatch)
+		r.With(s.requireBOSession, withBOStockTimeout, stockItemsGate).Delete("/stock/categories/{id}", s.handleBOStockCategoryDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/items", s.handleBOStockItemsList)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/item-options", s.handleBOStockItemOptions)
+		r.With(s.requireBOSession, withBOStockTimeout, stockItemsGate).Post("/stock/items", s.handleBOStockItemCreate)
+		r.With(s.requireBOSession, stockItemsGate).Post("/stock/items/import", s.handleBOStockItemsImport)
+		r.With(s.requireBOSession, withBOStockTimeout, stockItemsGate).Patch("/stock/items/{id}", s.handleBOStockItemPatch)
+		r.With(s.requireBOSession, withBOStockTimeout, stockItemsGate).Delete("/stock/items/{id}", s.handleBOStockItemDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, stockItemsGate).Patch("/stock/items/{id}/targets", s.handleBOStockLevelTargetsPatch)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/items/{id}/units", s.handleBOStockItemUnitsList)
+		r.With(s.requireBOSession, withBOStockTimeout, stockItemsGate).Post("/stock/items/{id}/units", s.handleBOStockItemUnitCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockItemsGate).Delete("/stock/items/{id}/units/{unitId}", s.handleBOStockItemUnitDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/items/{id}/movements", s.handleBOStockItemMovementsList)
+		r.With(s.requireBOSession, withBOStockTimeout).Post("/stock/items/{id}/movements", s.handleBOStockMovementCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockTransferGate).Post("/stock/transfers", s.handleBOStockTransferCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/summary", s.handleBOStockSummary)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/reconciliation", s.handleBOStockReconciliationGet)
+		r.With(s.requireBOSession, withBOStockTimeout, stockSettingsGate).Post("/stock/reconciliation/rebuild", s.handleBOStockReconciliationRebuild)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/settings", s.handleBOStockSettingsGet)
+		r.With(s.requireBOSession, withBOStockTimeout, stockSettingsGate).Patch("/stock/settings", s.handleBOStockSettingsPatch)
+		r.With(s.requireBOSession, stockSettingsGate, s.requireBOStockAI).Post("/stock/settings/classify-seasonality", s.handleBOStockSeasonalityClassify)
+		r.With(s.requireBOSession, withBOStockTimeout, stockSettingsGate).Get("/stock/roles/{slug}/permissions", s.handleBOStockRolePermissionsGet)
+		r.With(s.requireBOSession, withBOStockTimeout, stockSettingsGate).Put("/stock/roles/{slug}/permissions", s.handleBOStockRolePermissionsPut)
+
+		sheetsViewGate := s.requireBOStockPermission(stockPermissionSheetsView)
+		sheetsManageGate := s.requireBOStockPermission(stockPermissionSheetsManage)
+		sheetsPublishGate := s.requireBOStockPermission(stockPermissionSheetsPublish)
+		sheetsDeleteGate := s.requireBOStockPermission(stockPermissionSheetsDelete)
+		sheetsStepsGate := s.requireBOStockPermission(stockPermissionSheetsStepsManage)
+		sheetsImagesAIGate := s.requireBOStockPermission(stockPermissionSheetsImagesAI)
+		productionTypeGate := s.requireBOStockPermission(comidaPermissionProductionTypeManage)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsManageGate).Post("/comida/technical-sheets", s.handleBOTechnicalSheetCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsManageGate).Post("/comida/technical-sheets/ensure", s.handleBOTechnicalSheetEnsureForProduct)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsViewGate).Get("/comida/technical-sheets/{id}", s.handleBOTechnicalSheetGet)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsManageGate).Patch("/comida/technical-sheets/{id}", s.handleBOTechnicalSheetPatch)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsPublishGate).Post("/comida/technical-sheets/{id}/publish", s.handleBOTechnicalSheetPublish)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsViewGate).Get("/comida/technical-sheets/{id}/allergens", s.handleBOTechnicalSheetAllergensGet)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsManageGate).Patch("/comida/technical-sheets/{id}/allergens", s.handleBOTechnicalSheetAllergensPatch)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsViewGate).Get("/comida/technical-sheets", s.handleBOTechnicalSheetList)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsViewGate).Get("/comida/technical-sheets/{id}/usage", s.handleBOTechnicalSheetUsage)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsViewGate).Get("/comida/technical-sheets/{id}/cost", s.handleBOTechnicalSheetCost)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsManageGate).Post("/comida/technical-sheets/{id}/duplicate", s.handleBOTechnicalSheetDuplicate)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsDeleteGate).Delete("/comida/technical-sheets/{id}", s.handleBOTechnicalSheetDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsViewGate).Get("/comida/technical-sheets/{id}/components", s.handleBOTechnicalSheetComponentsList)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsManageGate).Post("/comida/technical-sheets/{id}/components", s.handleBOTechnicalSheetComponentCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsManageGate).Patch("/comida/technical-sheets/{id}/components/{componentId}", s.handleBOTechnicalSheetComponentPatch)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsManageGate).Delete("/comida/technical-sheets/{id}/components/{componentId}", s.handleBOTechnicalSheetComponentDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsViewGate).Get("/comida/technical-sheets/{id}/steps", s.handleBOTechnicalSheetStepsList)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsStepsGate).Post("/comida/technical-sheets/{id}/steps", s.handleBOTechnicalSheetStepCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsStepsGate).Patch("/comida/technical-sheets/{id}/steps/{stepId}", s.handleBOTechnicalSheetStepPatch)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsStepsGate).Delete("/comida/technical-sheets/{id}/steps/{stepId}", s.handleBOTechnicalSheetStepDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsStepsGate).Put("/comida/technical-sheets/{id}/steps/order", s.handleBOTechnicalSheetStepsReorder)
+		r.With(s.requireBOSession, withBOStockTimeout, productionTypeGate).Patch("/comida/items/{id}/production-type", s.handleBOComidaProductionTypePatch)
+		r.With(s.requireBOSession, withBOStockTimeout, productionTypeGate).Post("/comida/bulk-stock-link/preview", s.handleBOComidaBulkLinkPreview)
+		r.With(s.requireBOSession, withBOStockTimeout, productionTypeGate).Post("/comida/bulk-stock-link/apply", s.handleBOComidaBulkLinkApply)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsImagesAIGate).Post("/comida/technical-sheets/{id}/steps/{stepId}/image-jobs", s.handleBOTechnicalSheetStepImageJobCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsViewGate).Get("/comida/technical-sheets/{id}/steps/{stepId}/image-jobs", s.handleBOTechnicalSheetStepImageJobGet)
+		r.With(s.requireBOSession, withBOStockTimeout, sheetsStepsGate).Post("/comida/technical-sheets/{id}/steps/{stepId}/image", s.handleBOTechnicalSheetStepImageUpload)
+		r.With(s.requireBOSession, sheetsViewGate).Get("/comida/technical-sheets/ws", s.handleBOTechnicalSheetsWS)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCountPerformGate).Post("/stock/counts", s.handleBOStockCountCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/counts/{id}", s.handleBOStockCountGet)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCountCloseGate).Post("/stock/counts/{id}/close", s.handleBOStockCountClose)
+		r.With(s.requireBOSession, withBOStockTimeout, stockRecipesViewGate).Get("/stock/recipes", s.handleBOStockRecipesList)
+		r.With(s.requireBOSession, withBOStockTimeout, stockRecipesViewGate).Get("/stock/recipes/{id}", s.handleBOStockRecipeGet)
+		r.With(s.requireBOSession, withBOStockTimeout, stockRecipesManageGate).Post("/stock/recipes", s.handleBOStockRecipeCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockRecipesManageGate).Patch("/stock/recipes/{id}", s.handleBOStockRecipePatch)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate).Patch("/stock/recipes/{id}/pricing", s.handleBOStockRecipePricingPatch)
+		r.With(s.requireBOSession, withBOStockTimeout, stockRecipesManageGate).Delete("/stock/recipes/{id}", s.handleBOStockRecipeDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, stockRecipesViewGate).Post("/stock/recipes/{id}/production/preview", s.handleBOStockProductionPreview)
+		r.With(s.requireBOSession, withBOStockTimeout, stockProductionGate).Post("/stock/recipes/{id}/production", s.handleBOStockProductionCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsViewGate, rolesAdminGate).Get("/stock/production-orders", s.handleBOProductionOrdersList)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsViewGate, rolesAdminGate).Get("/stock/production-labour/entries", s.handleBOProductionLabourEntries)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsViewGate, rolesAdminGate).Get("/stock/production-orders/{id}/labour", s.handleBOProductionLabourList)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate, rolesAdminGate).Post("/stock/production-orders/{id}/labour", s.handleBOProductionLabourCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate, rolesAdminGate).Delete("/stock/production-orders/{id}/labour/{allocationId}", s.handleBOProductionLabourDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, stockForecastGate).Put("/stock/affluence", s.handleBOStockAffluenceUpsert)
+		r.With(s.requireBOSession, withBOStockTimeout, stockForecastGate).Get("/stock/forecast", s.handleBOStockForecast)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsViewGate).Get("/stock/vat-rates", s.handleBOStockVATList)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate).Post("/stock/vat-rates", s.handleBOStockVATCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate).Patch("/stock/vat-rates/{id}", s.handleBOStockVATPatch)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate).Delete("/stock/vat-rates/{id}", s.handleBOStockVATDelete)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate).Post("/stock/items/{id}/prices", s.handleBOStockItemPriceCreate)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsViewGate).Get("/stock/costing", s.handleBOStockCosting)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate).Get("/stock/labour-members", s.handleBOStockLabourMembers)
+		r.With(s.requireBOSession, stockForecastGate, stockCostsViewGate, s.requireBOStockAI).Post("/stock/ai/recommendations", s.handleBOStockAIRecommendations)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsViewGate).Get("/stock/margin-scopes", s.handleBOStockMarginScopesList)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsViewGate).Get("/stock/margin-scopes/defaults", s.handleBOStockMarginScopeDefaults)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsViewGate).Get("/stock/margin-scopes/resolve", s.handleBOStockMarginScopeResolve)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsViewGate).Get("/stock/margin-scopes/targets", s.handleBOStockMarginTargets)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate).Put("/stock/margin-scopes", s.handleBOStockMarginScopePut)
+		r.With(s.requireBOSession, withBOStockTimeout, stockCostsManageGate).Delete("/stock/margin-scopes/{id}", s.handleBOStockMarginScopeDelete)
+		r.With(s.requireBOSession, stockOCRUploadGate).Get("/stock/documents", s.handleBOStockDocumentsList)
+		r.With(s.requireBOSession, stockOCRUploadGate).Get("/stock/documents/{id}", s.handleBOStockDocumentGet)
+		r.With(s.requireBOSession, stockOCRUploadGate).Get("/stock/documents/{id}/original", s.handleBOStockDocumentOriginalGet)
+		r.With(s.requireBOSession, stockOCRConfirmGate).Delete("/stock/documents/{id}/original", s.handleBOStockDocumentOriginalDelete)
+		r.With(s.requireBOSession, stockOCRUploadGate, s.requireBOStockAI).Post("/stock/documents/extract-text", s.handleBOStockDocumentTextExtract)
+		r.With(s.requireBOSession, stockOCRUploadGate, s.requireBOStockAI).Post("/stock/documents/upload", s.handleBOStockDocumentUpload)
+		r.With(s.requireBOSession, stockOCRUploadGate).Patch("/stock/documents/{id}/review", s.handleBOStockDocumentReview)
+		r.With(s.requireBOSession, stockOCRUploadGate).Post("/stock/documents/{id}/reject", s.handleBOStockDocumentReject)
+		r.With(s.requireBOSession, stockOCRConfirmGate).Post("/stock/documents/{id}/confirm-invoice", s.handleBOStockInvoiceConfirm)
+		r.With(s.requireBOSession, stockOCRConfirmGate).Post("/stock/documents/{id}/confirm-recipe", s.handleBOStockRecipeDocumentConfirm)
+
+		// POS. Paid checkout is authoritative boundary for stock deductions and covers.
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/bootstrap", s.handleBOPOSBootstrap)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/settings", s.handleBOPOSSettingsGet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Patch("/pos/settings", s.handleBOPOSSettingsPatch)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/service-periods", s.handleBOPOSServicePeriodsList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Post("/pos/service-periods", s.handleBOPOSServicePeriodCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Patch("/pos/service-periods/{id}", s.handleBOPOSServicePeriodPatch)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Delete("/pos/service-periods/{id}", s.handleBOPOSServicePeriodDelete)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/categories", s.handleBOPOSCategoriesList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Post("/pos/categories", s.handleBOPOSCategoryCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Patch("/pos/categories/{id}", s.handleBOPOSCategoryPatch)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Delete("/pos/categories/{id}", s.handleBOPOSCategoryDelete)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/products", s.handleBOPOSProductsList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/products/{id}", s.handleBOPOSProductGet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Post("/pos/products", s.handleBOPOSProductCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Patch("/pos/products/{id}", s.handleBOPOSProductPatch)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Delete("/pos/products/{id}", s.handleBOPOSProductDelete)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Post("/pos/products/import-preview", s.handleBOPOSImportPreview)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Post("/pos/products/import-confirm", s.handleBOPOSImportConfirm)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/products/{id}/stock-rules", s.handleBOPOSStockRulesGet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posStockMappingGate).Put("/pos/products/{id}/stock-rules", s.handleBOPOSStockRulesPut)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posStockMappingGate).Get("/pos/stock-readiness", s.handleBOPOSStockReadiness)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posStockMappingGate).Get("/pos/stock-exceptions", s.handleBOPOSStockExceptionsList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posStockMappingGate).Post("/pos/stock-exceptions/replay", s.handleBOPOSStockExceptionsReplay)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/shifts/current", s.handleBOPOSShiftCurrent)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posShiftGate).Post("/pos/shifts/open", s.handleBOPOSShiftOpen)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posShiftGate).Post("/pos/shifts/{id}/close", s.handleBOPOSShiftClose)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/cash/summary", s.handleBOPOSCashSummary)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/cash/movements", s.handleBOPOSCashMovements)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCheckoutGate).Post("/pos/cash/movements", s.handleBOPOSCashMovementCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/cash/closures", s.handleBOPOSCashClosures)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/cash/closures/{id}", s.handleBOPOSCashClosureGet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posShiftGate).Post("/pos/cash/closures", s.handleBOPOSCashClosureCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCheckoutGate).Post("/pos/drawer/open", s.handleBOPOSDrawerOpen)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tags", s.handleBOPOSTagsList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Post("/pos/tags", s.handleBOPOSTagCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tickets", s.handleBOPOSTicketsList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tickets/{id}", s.handleBOPOSTicketGet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/visits", s.handleBOPOSVisitsList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/reservations/eligible", s.handleBOPOSReservationsEligible)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/reservations/{bookingId}/visit", s.handleBOPOSReservationVisit)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/visits/{id}", s.handleBOPOSVisitGet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/visits", s.handleBOPOSVisitCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posVisitManageGate).Patch("/pos/visits/{id}", s.handleBOPOSVisitPatch)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posVisitManageGate).Post("/pos/visits/{id}/cancel", s.handleBOPOSVisitCancel)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posVisitManageGate).Post("/pos/visits/{id}/park", s.handleBOPOSVisitPark)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posVisitManageGate).Post("/pos/visits/{id}/merge", s.handleBOPOSVisitMerge)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Patch("/pos/visits/{id}/customer", s.handleBOPOSVisitCustomer)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/visits/{id}/tickets", s.handleBOPOSVisitTicketCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCheckoutGate).Post("/pos/visits/{id}/close", s.handleBOPOSVisitClose)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/void", s.handleBOPOSTicketVoid)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/lines", s.handleBOPOSLineCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Patch("/pos/tickets/{id}/lines/{lineId}", s.handleBOPOSLinePatch)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/lines/{lineId}/move", s.handleBOPOSLineMove)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posLineVoidGate).Post("/pos/tickets/{id}/lines/{lineId}/void", s.handleBOPOSLineVoid)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posDiscountGate).Post("/pos/tickets/{id}/discount", s.handleBOPOSDiscount)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posDiscountGate).Post("/pos/tickets/{id}/adjustments", s.handleBOPOSTicketAdjustment)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posDiscountGate).Post("/pos/tickets/{id}/lines/{lineId}/comp", s.handleBOPOSLineComp)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Patch("/pos/tickets/{id}/operator", s.handleBOPOSTicketOperator)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/tags", s.handleBOPOSTicketTagAttach)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/lines/{lineId}/tags", s.handleBOPOSLineTagAttach)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCheckoutGate).Post("/pos/tickets/{id}/checkout", s.handleBOPOSCheckout)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posRefundGate).Post("/pos/tickets/{id}/refunds", s.handleBOPOSRefund)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/covers", s.handleBOPOSCoversReport)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCoversAdjustGate).Post("/pos/covers/adjustments", s.handleBOPOSCoverAdjustment)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/covers/reconciliation", s.handleBOPOSCoversReconciliation)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Post("/pos/covers/reconciliation/rebuild", s.handleBOPOSCoversRebuild)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/reports/sales", s.handleBOPOSSalesReport)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/reports/stock", s.handleBOPOSStockReport)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/reports/card-reconciliation", s.handleBOPOSCardReconciliation)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/reports/sales.csv", s.handleBOPOSExportSales)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/accounting/export.csv", s.handleBOAccountingExport)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Get("/pos/health", s.handleBOPOSHealth)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posStockMappingGate).Post("/pos/stock-anomalies/{id}/resolve", s.handleBOPOSStockAnomalyResolve)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Get("/pos/roles/{slug}/permissions", s.handleBOPOSRolePermissionsGet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Put("/pos/roles/{slug}/permissions", s.handleBOPOSRolePermissionsPut)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/kitchen/stations", s.handleBOPOSKitchenStationsList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posKitchenGate).Post("/pos/kitchen/stations", s.handleBOPOSKitchenStationCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posKitchenGate).Patch("/pos/kitchen/stations/{id}", s.handleBOPOSKitchenStationPatch)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/kitchen/routes", s.handleBOPOSKitchenRoutesList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posKitchenGate).Post("/pos/kitchen/routes", s.handleBOPOSKitchenRouteCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posKitchenGate).Delete("/pos/kitchen/routes/{id}", s.handleBOPOSKitchenRouteDelete)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/kitchen-dispatches", s.handleBOPOSKitchenDispatchCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/kitchen/queue", s.handleBOPOSKitchenQueue)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posKitchenGate).Post("/pos/kitchen/dispatches/{id}/status", s.handleBOPOSKitchenDispatchStatus)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Get("/pos/activation-readiness", s.handleBOPOSActivationReadiness)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Post("/pos/activation-acceptances", s.handleBOPOSActivationAccept)
 
 		// Legacy aliases consumed by current backoffice comida screen.
 		r.With(s.requireBOSession, menusGate).Get("/platos", s.handleBOPlatosList)
@@ -336,6 +589,18 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
 			RegisterSiteBuilderRoutes(r, s.db)
 		})
+		// Site builder realtime CRUD over WS.
+		r.With(s.requireBOSession, ajustesGate).Get("/site-builder/ws", s.handleBOSiteBuilderWS)
+		// Domain purchase billing (Stripe Checkout).
+		r.With(s.requireBOSession, ajustesGate).Post("/site-builder/billing/checkout", s.handleBillingCheckout)
+		// Cloudflare Registrar: domain search + purchase.
+		r.With(s.requireBOSession, ajustesGate).Get("/site-builder/domains/search", s.handleRegistrarSearch)
+		r.With(s.requireBOSession, ajustesGate).Post("/site-builder/domains/register", s.handleRegistrarRegister)
+		r.With(s.requireBOSession, ajustesGate).Post("/site-builder/domains/provision", s.handleRegistrarProvision)
+		// Instatic website-generator instance management (ensure/seed/publish/status)
+		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
+			s.instatic.RegisterInstaticRoutes(r)
+		})
 		r.With(s.requireBOSession, ajustesGate).Get("/domains/search", s.handleBOPremiumDomainsSearch)
 		r.With(s.requireBOSession, ajustesGate).Post("/domains/quote", s.handleBOPremiumDomainsQuote)
 		r.With(s.requireBOSession, ajustesGate).Post("/domains/register", s.handleBOPremiumDomainsRegister)
@@ -353,6 +618,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members", s.handleBOMemberCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}", s.handleBOMemberGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/members/{id}", s.handleBOMemberPatch)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/compensations", s.handleBOMemberCompensationsList)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/compensations", s.handleBOMemberCompensationCreate)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/members/{id}/compensations/{compensationId}", s.handleBOMemberCompensationPatch)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Delete("/members/{id}/compensations/{compensationId}", s.handleBOMemberCompensationDelete)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Put("/members/{id}/phone", s.handleBOMemberPhonePut)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/avatar", s.handleBOMemberAvatarUpload)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/stats", s.handleBOMemberStats)
@@ -367,10 +636,12 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/roles", s.handleBORoleCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/users/{id}/role", s.handleBOUserRolePatch)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/send", s.handleBOMembersWhatsAppSend)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/subscribe", s.handleBOMembersWhatsAppSubscribe)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
-		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/members/whatsapp/subscribe", s.handleBOMembersWhatsAppSubscribe)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/members/whatsapp/ws", s.handleBOMembersWhatsAppWS)
+		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/members/whatsapp/cancel", s.handleBOMembersWhatsAppCancel)
 
 		// Fichaje and schedules.
 		r.With(s.requireBOSession, fichajeGate).Get("/fichaje/ping", s.handleBOFichajePing)
@@ -382,6 +653,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, fichajeGate, rolesAdminGate).Post("/fichaje/admin/stop", s.handleBOFichajeAdminStop)
 		r.With(s.requireBOSession, fichajeGate, rolesAdminGate).Get("/fichaje/entries", s.handleBOFichajeEntriesList)
 		r.With(s.requireBOSession, fichajeGate, rolesAdminGate).Patch("/fichaje/entries/{id}", s.handleBOFichajeEntryPatch)
+		r.With(s.requireBOSession, fichajeGate, rolesAdminGate).Get("/fichaje/labour-cost", s.handleBOFichajeLabourCost)
 
 		r.With(s.requireBOSession, horariosGate).Get("/horarios", s.handleBOHorariosList)
 		r.With(s.requireBOSession, horariosGate).Post("/horarios", s.handleBOHorariosAssign)
@@ -391,6 +663,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, horariosGate).Get("/horarios/calendar", s.handleBOHorariosCalendar)
 		r.With(s.requireBOSession, horariosGate).Get("/horarios/member-range", s.handleBOHorariosMemberRange)
 		r.With(s.requireBOSession, fichajeGate).Get("/horarios/my-schedule", s.handleBOHorariosMySchedule)
+
+		// Forky AI assistant (WebSocket chat, any logged-in user).
+		r.With(s.requireBOSession).Get("/assistant/ws", s.handleBOAssistantWS)
 
 		// Invoices management
 		r.With(s.requireBOSession, facturasGate).Get("/invoices", s.handleBOInvoicesList)
@@ -406,9 +681,41 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/comments", s.handleBOInvoiceCommentCreate)
 		r.With(s.requireBOSession, facturasGate).Put("/invoices/{id}/comments/{commentId}", s.handleBOInvoiceCommentUpdate)
 		r.With(s.requireBOSession, facturasGate).Delete("/invoices/{id}/comments/{commentId}", s.handleBOInvoiceCommentDelete)
+
+		// Analytics V1 uses an idempotent selected-range rebuild; it has no outbox.
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/overview", s.handleBOAnalyticsOverview)
+		r.With(s.requireBOSession, statisticsGate).Post("/analytics/refresh", s.handleBOAnalyticsRefresh)
+
+		// Platform (superadmin) endpoints — cross-tenant management.
+		// All gated by requireBOSuperadmin (is_superadmin=1 only).
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/dashboard", s.handlePlatformDashboard)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/restaurants", s.handlePlatformRestaurantsList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/restaurants", s.handlePlatformRestaurantCreate)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Patch("/platform/restaurants/{id}", s.handlePlatformRestaurantPatch)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/restaurants/{id}/deactivate", s.handlePlatformRestaurantDeactivate)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/restaurants/{id}/activate", s.handlePlatformRestaurantActivate)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/users", s.handlePlatformUsersList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/users", s.handlePlatformUserCreate)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Patch("/platform/users/{id}", s.handlePlatformUserPatch)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/users/{id}/password", s.handlePlatformUserPasswordReset)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/users/{id}/revoke-sessions", s.handlePlatformUserRevokeSessions)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/users/{id}/assign", s.handlePlatformUserAssign)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Delete("/platform/users/{id}/assign/{restaurantId}", s.handlePlatformUserUnassign)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/subscriptions", s.handlePlatformSubscriptionsList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/subscriptions/{id}/toggle", s.handlePlatformSubscriptionToggle)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/whatsapp", s.handlePlatformWhatsAppList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/whatsapp/{id}/renew-qr", s.handlePlatformWhatsAppRenewQR)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/whatsapp/{id}/disconnect", s.handlePlatformWhatsAppDisconnect)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/uazapi-servers", s.handlePlatformUAZAPIServersList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/domains", s.handlePlatformDomainsList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/stripe/payments", s.handlePlatformStripePaymentsList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/stripe/refund", s.handlePlatformStripeRefund)
 	})
 
 	r.Get("/public/website-builder/render/{kind}", s.handleWebsiteBuilderRenderFragment)
+
+	// Stripe webhook (signature-authenticated, not session).
+	r.Post("/stripe/webhook", s.handleStripeWebhook)
 
 	// Public booking JSON API — uses own tenant resolution via DEFAULT_RESTAURANT_ID fallback.
 	r.Get("/public/booking", s.handlePublicBookingGet)
@@ -418,12 +725,17 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/public/booking-policies", s.handlePublicBookingPolicies)
 	r.Get("/public/legal-page", s.handlePublicLegalPageGet)
 
-	// Embeddable booking widget API — accepts ?restaurant_id= query param.
-	s.RegisterWidgetRoutes(r)
+	// Embeddable booking widget API under /widget/* — accepts ?restaurant_id=.
+	// Same-origin on published restaurant sites (instatic proxy passes /widget/*
+	// through to here), so the page CSP needs no cross-origin connect-src.
+	r.Route("/widget", func(r chi.Router) {
+		s.RegisterWidgetRoutes(r)
+	})
 
 	// Multi-tenant WhatsApp bot webhook (UAZAPI). Tenant resolved by the
 	// instance token in the payload, not by Host header.
 	r.Post("/bot/webhook", s.handleBotWebhook)
+	r.Post("/bot/webhook/evolution/{secret}", s.handleBotWebhookEvolution)
 
 	// Everything below is restaurant-scoped.
 	r.Group(func(r chi.Router) {
@@ -447,6 +759,8 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/menus/finde", s.handleMenuFinde)
 		r.Get("/postres", s.handlePostres)
 		r.Get("/vinos", s.handleVinos)
+		// Forky AI assistant for the public site (anonymous, session_token + rate limit).
+		r.Get("/assistant/ws", s.handlePublicAssistantWS)
 		r.Get("/comida/platos/categorias", s.handleComidaPublicPlatoCategoriesList)
 		r.Get("/comida/{tipo}", s.handleComidaPublicList)
 		r.Get("/comida/{tipo}/{id}", s.handleComidaPublicGet)

@@ -26,9 +26,23 @@ type Config struct {
 	BunnyMemberPullBaseURL      string
 	BunnyMemberStorageZone      string
 	BunnyMemberStorageKey       string
+	BunnyPrivateStorageZone     string
+	BunnyPrivateStorageKey      string
+	StockDocumentRetentionDays  int
 	CloudflareAPIToken          string
+	CloudflareAPIEmail          string
+	CloudflareAPIKey            string
 	CloudflareAccountID         string
 	CloudflareZoneID            string
+	StripeSecretKey             string
+	StripeWebhookSecret         string
+	RegisterAPIToken            string // security token required on domain-register (anti-abuse)
+	InstaticBasePort            int
+	InstaticBaseDir             string
+	InstaticServerDir           string
+	InstaticMaxInstances        int
+	InstaticSeedAdminEmail      string
+	InstaticSeedAdminPassword   string
 	OpenAIAPIKey                string
 	OpenAIImageEditModel        string
 	OpenAIImageEditURL          string
@@ -42,12 +56,23 @@ type Config struct {
 	MiniMaxModel                string
 	MiniMaxTranslateTimeout     time.Duration
 	MiniMaxTranslateConcurrency int
+	StockOCRProvider            string
+	PaddleOCRGatewayURL         string
+	PaddleOCRModel              string
+	PaddleOCRTimeout            time.Duration
 	BotModel                    string
 	BotTimeout                  time.Duration
 	BotMaxTokens                int
 	BotMaxIterations            int
 	BotHistoryLimit             int
 	BotDailyTurnsCap            int
+	AssistantModel              string
+	AssistantTimeout            time.Duration
+	AssistantMaxTokens          int
+	AssistantHistoryLimit       int
+	AssistantPublicRateLimit    int
+	BotPublicWebhookURL         string
+	EvolutionWebhookSecret      string
 	SMTPHost                    string
 	SMTPPort                    int
 	SMTPUsername                string
@@ -72,9 +97,23 @@ func Load() Config {
 		BunnyMemberPullBaseURL:      defaultMembersPull,
 		BunnyMemberStorageZone:      getenv("BUNNY_MEMBERS_STORAGE_ZONE", "herorestaurant"),
 		BunnyMemberStorageKey:       getenv("BUNNY_MEMBERS_STORAGE_ACCESS_KEY", defaultKey),
+		BunnyPrivateStorageZone:     strings.TrimSpace(os.Getenv("BUNNY_PRIVATE_STORAGE_ZONE")),
+		BunnyPrivateStorageKey:      strings.TrimSpace(os.Getenv("BUNNY_PRIVATE_STORAGE_ACCESS_KEY")),
+		StockDocumentRetentionDays:  getenvInt("STOCK_DOCUMENT_RETENTION_DAYS", 365, 1, 3650),
 		CloudflareAPIToken:          os.Getenv("CLOUDFLARE_API_TOKEN"),
+		CloudflareAPIEmail:          os.Getenv("CLOUDFLARE_API_EMAIL"),
+		CloudflareAPIKey:            os.Getenv("CLOUDFLARE_API_KEY"),
 		CloudflareAccountID:         os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
 		CloudflareZoneID:            os.Getenv("CLOUDFLARE_ZONE_ID"),
+		StripeSecretKey:             strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY")),
+		StripeWebhookSecret:         strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET")),
+		RegisterAPIToken:            strings.TrimSpace(os.Getenv("REGISTER_API_TOKEN")),
+		InstaticBasePort:            getenvInt("INSTATIC_BASE_PORT", 39000, 1, 65535),
+		InstaticBaseDir:             getenv("INSTATIC_BASE_DIR", "/var/lib/instatic"),
+		InstaticServerDir:           getenv("INSTATIC_SERVER_DIR", "/var/www/newvillacarmen/backend/third_party/instatic"),
+		InstaticMaxInstances:        getenvInt("INSTATIC_MAX_INSTANCES", 8, 1, 256),
+		InstaticSeedAdminEmail:      getenv("INSTATIC_SEED_ADMIN_EMAIL", "website@menustudioai.com"),
+		InstaticSeedAdminPassword:   getenv("INSTATIC_SEED_ADMIN_PASSWORD", "ChangeMeWebsite1!"),
 		OpenAIAPIKey:                strings.TrimSpace(getenvFirst([]string{"WAVESPEED_API_KEY"}, "")),
 		OpenAIImageEditModel:        getenvFirst([]string{"WAVESPEED_IMAGE_EDIT_MODEL", "OPENAI_IMAGE_EDIT_MODEL", "OPENAI_IMAGE_MODEL"}, "openai/gpt-image-1.5/edit"),
 		OpenAIImageEditURL:          getenvFirst([]string{"WAVESPEED_IMAGE_EDIT_URL", "OPENAI_IMAGE_EDIT_URL", "OPENAI_IMAGE_URL"}, "https://api.wavespeed.ai/api/v3/openai/gpt-image-1.5/edit"),
@@ -88,12 +127,23 @@ func Load() Config {
 		MiniMaxModel:                getenv("MINIMAX_MODEL", "MiniMax-M3"),
 		MiniMaxTranslateTimeout:     time.Duration(getenvInt("MINIMAX_TRANSLATE_TIMEOUT_SECONDS", 20, 5, 120)) * time.Second,
 		MiniMaxTranslateConcurrency: getenvInt("MINIMAX_TRANSLATE_CONCURRENCY", 4, 1, 32),
+		StockOCRProvider:            strings.ToLower(strings.TrimSpace(getenv("STOCK_OCR_PROVIDER", "minimax"))),
+		PaddleOCRGatewayURL:         strings.TrimRight(strings.TrimSpace(getenv("PADDLEOCR_GATEWAY_URL", "http://127.0.0.1:8090")), "/"),
+		PaddleOCRModel:              getenv("PADDLEOCR_MODEL", "PaddleOCR-VL-1.6"),
+		PaddleOCRTimeout:            time.Duration(getenvInt("PADDLEOCR_TIMEOUT_SECONDS", 180, 5, 900)) * time.Second,
 		BotModel:                    getenv("BOT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3")),
 		BotTimeout:                  time.Duration(getenvInt("BOT_MINIMAX_TIMEOUT_SECONDS", 45, 5, 300)) * time.Second,
 		BotMaxTokens:                getenvInt("BOT_MINIMAX_MAX_TOKENS", 1024, 128, 8192),
 		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 8, 1, 20),
 		BotHistoryLimit:             getenvInt("BOT_HISTORY_LIMIT", 20, 2, 100),
 		BotDailyTurnsCap:            getenvInt("BOT_DAILY_TURNS_CAP", 2000, 1, 1000000),
+		AssistantModel:              getenv("ASSISTANT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3")),
+		AssistantTimeout:            time.Duration(getenvInt("ASSISTANT_TIMEOUT_SECONDS", 60, 5, 600)) * time.Second,
+		AssistantMaxTokens:          getenvInt("ASSISTANT_MAX_TOKENS", 1024, 128, 8192),
+		AssistantHistoryLimit:       getenvInt("ASSISTANT_HISTORY_LIMIT", 20, 2, 100),
+		AssistantPublicRateLimit:    getenvInt("ASSISTANT_PUBLIC_RATE_LIMIT", 20, 1, 1000),
+		BotPublicWebhookURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("BOT_PUBLIC_WEBHOOK_URL")), "/"),
+		EvolutionWebhookSecret:      strings.TrimSpace(os.Getenv("EVOLUTION_WEBHOOK_SECRET")),
 		SMTPHost:                    strings.TrimSpace(os.Getenv("SMTP_HOST")),
 		SMTPPort:                    getenvInt("SMTP_PORT", 587, 1, 65535),
 		SMTPUsername:                strings.TrimSpace(os.Getenv("SMTP_USERNAME")),

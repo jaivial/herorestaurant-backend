@@ -193,12 +193,12 @@ func (s *Server) resolveInvoiceLogoURL(ctx context.Context, restaurantID int, br
 func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID int) (*Invoice, error) {
 	var inv Invoice
 	var (
-		invoiceNumber, customerSurname, customerDniCif, customerPhone                               sql.NullString
-		addrStreet, addrNumber, addrPostal, addrCity, addrProvince, addrCountry                     sql.NullString
+		invoiceNumber, customerSurname, customerDniCif, customerPhone                                 sql.NullString
+		addrStreet, addrNumber, addrPostal, addrCity, addrProvince, addrCountry                       sql.NullString
 		paymentMethod, accountImageURL, paymentDate, reservationDate, reservationCustomerName, pdfURL sql.NullString
-		reservationID, reservationPartySize                                                         sql.NullInt64
-		subtotal, ivaRate, ivaAmount, total, discountValue, discountAmount, depositAmount           sql.NullFloat64
-		discountType, discountReason, dueDate, internalNotes, category, tags, depositType            sql.NullString
+		reservationID, reservationPartySize                                                           sql.NullInt64
+		subtotal, ivaRate, ivaAmount, total, discountValue, discountAmount, depositAmount             sql.NullFloat64
+		discountType, discountReason, dueDate, internalNotes, category, tags, depositType             sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT

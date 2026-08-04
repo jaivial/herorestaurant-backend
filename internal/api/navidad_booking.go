@@ -4,18 +4,28 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"preactvillacarmen/internal/httpx"
 )
+
+// uazapiTokenRe matches a token query param so instance tokens can be stripped
+// from transport errors before they are logged.
+var uazapiTokenRe = regexp.MustCompile(`(?i)([?&]token=)[^&\s"]+`)
+
+func redactUazapiToken(s string) string {
+	return uazapiTokenRe.ReplaceAllString(s, "${1}REDACTED")
+}
 
 type fixedWindowLimiter struct {
 	mu   sync.Mutex
@@ -80,7 +90,9 @@ func sendUazAPI(ctx context.Context, endpoint string, payload any) (body string,
 
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
-		return "", 0, err
+		// The transport error embeds the full request URL, which may carry a
+		// ?token=<instance token> — redact it before it can reach logs.
+		return "", 0, errors.New(redactUazapiToken(err.Error()))
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)

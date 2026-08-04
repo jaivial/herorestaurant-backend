@@ -73,3 +73,69 @@ func TestBotUazapiSend_HTTPError(t *testing.T) {
 		t.Fatal("expected error on 401")
 	}
 }
+
+func TestBotUazapiConfigureWebhook_SetsUrlAndEvents(t *testing.T) {
+	var gotPath, gotToken string
+	var gotPayload map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotToken = r.URL.Query().Get("token")
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotPayload)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"updated":true}`))
+	}))
+	defer srv.Close()
+
+	err := botUazapiConfigureWebhook(context.Background(), srv.URL, "inst-tok", "https://api.example.com/bot/webhook", nil)
+	if err != nil {
+		t.Fatalf("configure webhook error: %v", err)
+	}
+	if gotPath != "/webhook" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotToken != "inst-tok" {
+		t.Errorf("token = %q", gotToken)
+	}
+	if gotPayload["url"] != "https://api.example.com/bot/webhook" {
+		t.Errorf("url = %v", gotPayload["url"])
+	}
+	evs, ok := gotPayload["events"].([]any)
+	if !ok || len(evs) != 2 {
+		t.Errorf("events = %v", gotPayload["events"])
+	}
+}
+
+func TestBotUazapiConfigureWebhook_ErrorsOnEmptyBase(t *testing.T) {
+	if err := botUazapiConfigureWebhook(context.Background(), "", "tok", "https://x/bot/webhook", nil); err == nil {
+		t.Fatal("expected error for empty base url")
+	}
+}
+
+func TestBotUazapiConfigureWebhook_PropagatesHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"nope"}`))
+	}))
+	defer srv.Close()
+	if err := botUazapiConfigureWebhook(context.Background(), srv.URL, "t", "https://x/bot/webhook", nil); err == nil {
+		t.Fatal("expected error for non-2xx response")
+	}
+}
+
+func TestUAZAPIConnState_PrefersInstanceStatusAndQR(t *testing.T) {
+	state := (&uazapiGateway{}).connState(map[string]any{
+		"connected": false,
+		"loggedIn":  false,
+		"status":    map[string]any{"connected": false, "loggedIn": false},
+		"instance": map[string]any{
+			"status":   "connecting",
+			"qrcode":   "data:image/png;base64,REAL",
+			"paircode": "",
+			"owner":    "34960255536@s.whatsapp.net",
+		},
+	})
+	if state.Status != "connecting" || state.QR != "data:image/png;base64,REAL" || state.ConnectedPhone != "34960255536" {
+		t.Fatalf("state=%+v", state)
+	}
+}

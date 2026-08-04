@@ -1,0 +1,13 @@
+[Unit]
+Description=VillaCarmen stock and POS operations check
+After=network-online.target mysql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/newvillacarmen/backend
+EnvironmentFile=-/etc/villacarmen/backend.env
+ExecStart=/var/www/newvillacarmen/backend/bin/ops-check
+User=www-data
+Group=www-data
+NoNewPrivileges=true
+PrivateTmp=true

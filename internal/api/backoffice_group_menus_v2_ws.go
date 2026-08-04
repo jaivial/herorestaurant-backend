@@ -99,13 +99,13 @@ type boGroupMenuV2AIMenuPreviewImageJob struct {
 }
 
 type boGroupMenuV2AISliderImageJob struct {
-	RestaurantID  int
-	MenuID        int64
-	GenerationID  string
-	RawImage      []byte
-	ContentType   string
-	APIKey        string
-	EditURL       string
+	RestaurantID int
+	MenuID       int64
+	GenerationID string
+	RawImage     []byte
+	ContentType  string
+	APIKey       string
+	EditURL      string
 }
 
 func (s *Server) logBOGroupMenuV2AITrace(format string, args ...any) {

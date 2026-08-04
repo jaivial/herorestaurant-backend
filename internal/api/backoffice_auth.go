@@ -237,24 +237,27 @@ func (s *Server) handleBOMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	activeID := a.ActiveRestaurantID
+	roleSlug := a.User.Role
+	roleImportance := a.User.RoleImportance
+	sectionAccess := a.User.SectionAccess
 	if activeID == 0 || !restaurantInList(restaurants, activeID) {
 		activeID = restaurants[0].ID
 		_, _ = s.db.ExecContext(r.Context(), "UPDATE bo_sessions SET active_restaurant_id = ? WHERE id = ?", activeID, a.SessionID)
-	}
-	roleSlug, err := s.getBOUserRoleForRestaurant(r.Context(), a.User.ID, activeID, a.User.isSuperadmin)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo rol")
-		return
-	}
-	roleImportance, err := s.roleImportance(r.Context(), roleSlug)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo importancia de rol")
-		return
-	}
-	sectionAccess, err := s.roleSections(r.Context(), roleSlug)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo permisos de rol")
-		return
+		roleSlug, err = s.getBOUserRoleForRestaurant(r.Context(), a.User.ID, activeID, a.User.isSuperadmin)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo rol")
+			return
+		}
+		roleImportance, err = s.roleImportance(r.Context(), roleSlug)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo importancia de rol")
+			return
+		}
+		sectionAccess, err = s.roleSections(r.Context(), roleSlug)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo permisos de rol")
+			return
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

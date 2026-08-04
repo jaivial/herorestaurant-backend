@@ -14,6 +14,11 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
+// botMaxConcurrentTurns bounds simultaneous inbound agent turns across all
+// tenants so a burst cannot spawn unbounded goroutines. ponytail: fixed cap;
+// make it configurable if a large fleet needs per-tenant fairness.
+const botMaxConcurrentTurns = 32
+
 // botWebhookMessage is the normalized inbound WhatsApp message extracted from
 // a UAZAPI webhook payload.
 type botWebhookMessage struct {
@@ -81,7 +86,7 @@ func parseBotWebhookMessage(body []byte) (botWebhookMessage, bool) {
 	out := botWebhookMessage{
 		Sender:    sender,
 		Text:      text,
-		PushName:  pushName,
+		PushName:  sanitizeBotPushName(pushName),
 		MessageID: messageID,
 		FromMe:    msg.FromMe,
 	}
@@ -95,6 +100,109 @@ func parseBotWebhookMessage(body []byte) (botWebhookMessage, bool) {
 	out.Owner = strings.TrimSpace(tokenField.Owner)
 
 	return out, true
+}
+
+// botConnectionEvent is a normalized UAZAPI instance/connection lifecycle event
+// (connection.update, qrcode, pairing) used to keep the provisioning row and the
+// backoffice QR screen in sync without polling /instance/status.
+type botConnectionEvent struct {
+	InstanceToken  string
+	Owner          string
+	Status         string
+	ConnectedPhone string
+	QR             string
+	PairCode       string
+}
+
+// parseBotConnectionEvent extracts a connection lifecycle event from a UAZAPI
+// webhook body. Returns ok=false for message payloads (handled elsewhere).
+func parseBotConnectionEvent(body []byte) (botConnectionEvent, bool) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(body, &root); err != nil {
+		return botConnectionEvent{}, false
+	}
+	// If it carries a direct chat message, it is not a connection event.
+	if _, hasMsg := root["message"]; hasMsg {
+		return botConnectionEvent{}, false
+	}
+
+	eventType := strings.ToLower(strings.TrimSpace(jsonStringField(root, "event", "EventType", "type", "eventType")))
+	// Only treat known lifecycle events (or presence of qr/status) as connection.
+	hasQR := len(root["qrcode"]) > 0 || len(root["qr"]) > 0
+	looksConn := strings.Contains(eventType, "connect") || strings.Contains(eventType, "qr") ||
+		strings.Contains(eventType, "pair") || strings.Contains(eventType, "status") || hasQR
+	if !looksConn {
+		return botConnectionEvent{}, false
+	}
+
+	ev := botConnectionEvent{
+		InstanceToken:  strings.TrimSpace(jsonStringField(root, "token", "instance_token", "instanceToken")),
+		Owner:          digitsOnly(jsonStringField(root, "owner", "wid", "connected_phone", "phone", "number")),
+		Status:         jsonStringField(root, "status", "state", "connection", "connectionState", "connection_status"),
+		ConnectedPhone: digitsOnly(jsonStringField(root, "phone", "number", "wid", "connected_phone")),
+		QR:             jsonStringField(root, "qrcode", "qr", "qr_code", "qrCode", "base64", "base64_qr"),
+		PairCode:       jsonStringField(root, "pair_code", "pairCode", "paircode", "code"),
+	}
+	if ev.InstanceToken == "" && ev.Owner == "" {
+		// Try nested instance object.
+		if raw, ok := root["instance"]; ok {
+			var inst map[string]json.RawMessage
+			if json.Unmarshal(raw, &inst) == nil {
+				ev.InstanceToken = strings.TrimSpace(jsonStringField(inst, "token", "instance_token", "instanceToken"))
+				if ev.Owner == "" {
+					ev.Owner = digitsOnly(jsonStringField(inst, "owner", "phone", "number", "wid"))
+				}
+				if ev.Status == "" {
+					ev.Status = jsonStringField(inst, "status", "state")
+				}
+			}
+		}
+	}
+	if ev.InstanceToken == "" && ev.Owner == "" {
+		return botConnectionEvent{}, false
+	}
+	return ev, true
+}
+
+// jsonStringField returns the first present string field (by any of keys) from a
+// raw JSON object map.
+func jsonStringField(root map[string]json.RawMessage, keys ...string) string {
+	for _, k := range keys {
+		raw, ok := root[k]
+		if !ok {
+			continue
+		}
+		var str string
+		if json.Unmarshal(raw, &str) == nil && strings.TrimSpace(str) != "" {
+			return strings.TrimSpace(str)
+		}
+	}
+	return ""
+}
+
+// handleBotConnectionEvent maps the lifecycle event to a restaurant and updates
+// its provisioning row so the QR onboarding UI reflects the live state.
+func (s *Server) handleBotConnectionEvent(ctx context.Context, ev botConnectionEvent) bool {
+	restaurantID, ok := s.resolveBotRestaurant(ctx, ev.InstanceToken, ev.Owner)
+	if !ok {
+		return false
+	}
+	status := normalizeUAZAPIConnectionStatus(ev.Status)
+	if status == "" && (ev.QR != "" || ev.PairCode != "") {
+		status = "pending"
+	}
+	if err := s.updateRestaurantUAZAPIInstanceRuntime(ctx, restaurantID, status, ev.ConnectedPhone, ev.QR, ev.PairCode); err != nil {
+		log.Printf("[bot] restaurant=%d connection event update failed: %v", restaurantID, err)
+		return false
+	}
+	// On connect, (re)assert webhook + integration sync defensively.
+	if isUAZAPIConnected(status) {
+		if rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); err == nil && found {
+			_ = s.syncRestaurantUAZAPIIntegration(ctx, restaurantID, rec.ServerBaseURL, rec.InstanceToken)
+		}
+	}
+	s.broadcastWhatsAppConnection(ctx, restaurantID)
+	return true
 }
 
 // botSeenBefore is an in-process dedup on (sender, messageID) with pruning.
@@ -177,24 +285,51 @@ func (s *Server) handleBotWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Connection lifecycle events (qr/pairing/connected) update provisioning
+	// state so the QR onboarding UI stays live without polling.
+	if ev, isConn := parseBotConnectionEvent(body); isConn {
+		updated := s.handleBotConnectionEvent(r.Context(), ev)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": updated, "connection": true})
+		return
+	}
+
 	msg, ok := parseBotWebhookMessage(body)
 	if !ok || msg.FromMe {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false})
 		return
 	}
 
-	restaurantID, ok := s.resolveBotRestaurant(r.Context(), msg.InstanceToken, msg.Owner)
+	// A message must carry a valid instance token. Owner (phone) resolution is
+	// only trusted for connection lifecycle events; allowing owner-only message
+	// routing would let a forged webhook drive any tenant's bot.
+	restaurantID, ok := s.resolveBotRestaurant(r.Context(), msg.InstanceToken, "")
 	if !ok {
-		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{
+		// Unknown/unauthenticated: 200 so the provider does not disable or hammer
+		// the webhook on non-2xx responses.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"processed": false,
 			"message":   "unknown instance",
 		})
 		return
 	}
 
+	s.processInboundBotMessage(w, r, restaurantID, msg)
+}
+
+// processInboundBotMessage runs the shared inbound pipeline (entitlement gate,
+// dedup, daily cap, media fallback, bounded background agent turn) for a
+// resolved tenant. Used by both the UAZAPI and Evolution webhook handlers.
+func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request, restaurantID int, msg botWebhookMessage) {
 	// Subscription gate: WhatsApp Pack must be active.
 	entitled, err := s.hasActiveRecurringFeature(r.Context(), restaurantID, boPremiumWhatsAppFeatureKey)
-	if err != nil || !entitled {
+	if err != nil {
+		// A transient entitlement lookup failure must not masquerade as
+		// "unsubscribed" — that would silently drop a paying tenant's message.
+		log.Printf("[bot] restaurant=%d entitlement check failed: %v", restaurantID, err)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "code": "ENTITLEMENT_CHECK_FAILED"})
+		return
+	}
+	if !entitled {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"processed": false,
 			"code":      "NEEDS_SUBSCRIPTION",
@@ -202,32 +337,42 @@ func (s *Server) handleBotWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if msg.Text == "" {
-		// Unsupported media: polite fallback.
-		uazURL, uazToken := s.uazapiBaseAndToken(r.Context(), restaurantID)
-		if uazURL != "" {
-			_ = botUazapiSend(r.Context(), uazURL, uazToken, "text", map[string]any{
-				"number": msg.Sender,
-				"text":   "Ahora mismo solo puedo gestionar mensajes de texto. ¿Me lo puedes escribir por aquí?",
-			})
-		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "unsupportedContent": true})
-		return
-	}
-
+	// Dedup + daily cap first, so provider retries neither re-trigger replies
+	// (incl. the unsupported-media fallback) nor bypass the per-tenant cap.
 	if s.botSeenBefore(msg.Sender, msg.MessageID) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "duplicate": true})
 		return
 	}
-
-	// Daily cap per restaurant.
 	if !s.botCheckDailyCap(restaurantID) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "code": "DAILY_CAP"})
 		return
 	}
 
-	// Process in background: UAZAPI webhooks time out quickly.
+	if msg.Text == "" {
+		// Unsupported media: polite fallback.
+		if gw, ok := s.botGatewayFor(r.Context(), restaurantID); ok {
+			_ = gw.SendText(r.Context(), msg.Sender, "Ahora mismo solo puedo gestionar mensajes de texto. ¿Me lo puedes escribir por aquí?")
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "unsupportedContent": true})
+		return
+	}
+
+	// Process in background (bounded): provider webhooks time out quickly. A
+	// recover() keeps one bad turn from crashing the whole multi-tenant process.
+	select {
+	case s.botSem <- struct{}{}:
+	default:
+		// At capacity: shed load rather than pile up unbounded goroutines.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "code": "BUSY"})
+		return
+	}
 	go func() {
+		defer func() {
+			<-s.botSem
+			if rec := recover(); rec != nil {
+				log.Printf("[bot] restaurant=%d sender=%s PANIC recovered: %v", restaurantID, msg.Sender, rec)
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		if err := s.botProcessMessage(ctx, restaurantID, msg); err != nil {
@@ -262,6 +407,32 @@ func (s *Server) botCheckDailyCap(restaurantID int) bool {
 	return true
 }
 
+// sanitizeBotPushName strips control chars / markdown / newlines and length-caps
+// the customer-controlled WhatsApp display name before it is interpolated into
+// the system prompt, closing a prompt-injection vector (attacker sets their
+// display name to instructions).
+func sanitizeBotPushName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n', r == '\r', r == '\t':
+			return ' '
+		case r < 0x20: // other control chars
+			return -1
+		case r == '*', r == '#', r == '`', r == '_', r == '[', r == ']', r == '<', r == '>', r == '{', r == '}':
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.Join(strings.Fields(name), " ") // collapse whitespace
+	if len(name) > 60 {
+		name = strings.TrimSpace(name[:60])
+	}
+	if name == "" {
+		name = "Cliente"
+	}
+	return name
+}
+
 // botProcessMessage runs the full agent turn for an inbound message.
 func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg botWebhookMessage) error {
 	tenant := s.loadBotTenantConfig(ctx, restaurantID)
@@ -277,9 +448,67 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 
 	result, err := s.botRunAgentLoop(ctx, tenant.Model, system, messages, tools, exec)
 	if err != nil {
+		// Never ghost the customer: send a graceful fallback on any LLM failure.
+		s.botSendFallback(ctx, restaurantID, msg.Sender)
 		return err
+	}
+	// If the model ended its turn without actually delivering anything (plain
+	// text, or only read-only tools), send the final assistant text so the
+	// customer is never left in silence.
+	if !botDeliveredReply(result.ToolCalls) {
+		if text := botFinalAssistantText(result.Messages); text != "" {
+			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && gw.SendText(ctx, msg.Sender, text) == nil {
+				s.botSaveMessage(ctx, restaurantID, msg.Sender, "assistant", text, "")
+			}
+		} else {
+			s.botSendFallback(ctx, restaurantID, msg.Sender)
+		}
 	}
 	log.Printf("[bot] restaurant=%d sender=%s iterations=%d tools=%s",
 		restaurantID, msg.Sender, result.Iterations, strings.Join(result.ToolCalls, ","))
 	return nil
+}
+
+// botDeliveryTools are the tools that actually push a message to the customer.
+var botDeliveryTools = map[string]bool{
+	"send_message": true, "send_menu_buttons": true, "send_image": true,
+	"send_document": true, "send_location": true, "send_contact": true,
+}
+
+func botDeliveredReply(toolCalls []string) bool {
+	for _, name := range toolCalls {
+		if botDeliveryTools[name] {
+			return true
+		}
+	}
+	return false
+}
+
+// botFinalAssistantText returns the concatenated text of the last assistant turn.
+func botFinalAssistantText(msgs []botMessage) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "assistant" {
+			continue
+		}
+		var parts []string
+		for _, b := range msgs[i].Content {
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				parts = append(parts, strings.TrimSpace(b.Text))
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	}
+	return ""
+}
+
+// botSendFallback delivers a generic apology when the agent produced no reply.
+func (s *Server) botSendFallback(ctx context.Context, restaurantID int, sender string) {
+	const fallback = "Perdona, ahora mismo no puedo responderte. ¿Puedes intentarlo de nuevo en un momento?"
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return
+	}
+	if gw.SendText(ctx, sender, fallback) == nil {
+		s.botSaveMessage(ctx, restaurantID, sender, "assistant", fallback, "")
+	}
 }

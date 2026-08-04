@@ -99,3 +99,45 @@ func TestBotDedup(t *testing.T) {
 		t.Error("different message id should not be seen")
 	}
 }
+
+func TestParseBotConnectionEvent_QREvent(t *testing.T) {
+	body := []byte(`{"event":"qrcode","token":"inst-1","qrcode":"data:image/png;base64,AAAA","status":"connecting"}`)
+	ev, ok := parseBotConnectionEvent(body)
+	if !ok {
+		t.Fatal("expected connection event")
+	}
+	if ev.InstanceToken != "inst-1" {
+		t.Errorf("token = %q", ev.InstanceToken)
+	}
+	if ev.QR == "" {
+		t.Errorf("expected qr payload")
+	}
+}
+
+func TestParseBotConnectionEvent_ConnectedEvent(t *testing.T) {
+	body := []byte(`{"EventType":"connection","token":"inst-2","status":"connected","phone":"34612345678"}`)
+	ev, ok := parseBotConnectionEvent(body)
+	if !ok {
+		t.Fatal("expected connection event")
+	}
+	if normalizeUAZAPIConnectionStatus(ev.Status) != "connected" {
+		t.Errorf("status = %q", ev.Status)
+	}
+	if ev.ConnectedPhone != "34612345678" {
+		t.Errorf("phone = %q", ev.ConnectedPhone)
+	}
+}
+
+func TestParseBotConnectionEvent_IgnoresMessages(t *testing.T) {
+	body := []byte(`{"message":{"chatid":"34600000000@s.whatsapp.net","text":"hola"},"token":"inst-3"}`)
+	if _, ok := parseBotConnectionEvent(body); ok {
+		t.Fatal("message payload must not be treated as connection event")
+	}
+}
+
+func TestParseBotConnectionEvent_RequiresIdentity(t *testing.T) {
+	body := []byte(`{"event":"qrcode","qrcode":"x"}`)
+	if _, ok := parseBotConnectionEvent(body); ok {
+		t.Fatal("connection event without token/owner must be rejected")
+	}
+}

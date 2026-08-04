@@ -41,10 +41,10 @@ type invoiceRenderParty struct {
 
 type invoiceRenderLine struct {
 	Description string
-	Quantity   string
-	UnitPrice  string
-	IVARate    string
-	Total      string
+	Quantity    string
+	UnitPrice   string
+	IVARate     string
+	Total       string
 }
 
 type invoiceRenderData struct {
