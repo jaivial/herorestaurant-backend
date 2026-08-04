@@ -20,3 +20,15 @@ func TestMenusSchemaCompatibilityMigrationTargetsRenamedTable(t *testing.T) {
 		}
 	}
 }
+
+func TestMenusSchemaCompatibilityMigrationRenamesLegacyTableWhenNeeded(t *testing.T) {
+	source, err := migrationFS.ReadFile("085_menus_schema_compatibility.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "TABLE_NAME = 'menusDeGrupos'") ||
+		!strings.Contains(text, "RENAME TABLE `menusDeGrupos` TO `menus`") {
+		t.Fatal("compatibility migration must repair stale legacy table name")
+	}
+}

@@ -1,7 +1,11 @@
--- Ensure the renamed menus table has columns introduced before the rename.
--- Some installations were created with `menus` already present, causing the
--- pre-rename migration 008 to no-op and leaving the backoffice menu queries
--- without their required columns.
+-- Ensure the renamed menus table exists before applying compatibility columns.
+-- Some legacy databases have only menusDeGrupos because migration 036 was
+-- recorded as applied before the table was imported.
+
+SET @legacy_exists := (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menusDeGrupos');
+SET @menus_exists := (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menus');
+SET @ddl := IF(@legacy_exists = 1 AND @menus_exists = 0, 'RENAME TABLE `menusDeGrupos` TO `menus`', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @menus_exists := (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'menus');
 
