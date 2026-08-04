@@ -8,7 +8,7 @@
     "backofficeApp": "backoffice",
     "backend": "backend"
   },
-  "lastUpdated": "2026-08-03T23:18:30Z",
+  "lastUpdated": "2026-08-04T07:58:30Z",
   "coverage": {
     "public": {
       "routes": {
@@ -184,9 +184,10 @@
           ]
         },
         "/app/menus": {
-          "status": "partial-failed-remote",
+          "status": "passed-remote",
           "evidence": [
-            "landing page passed; 2 menu API/card scenarios failed because group-menus-v2 response success=false"
+            "menus-list.spec.ts 4/4 passed after Docker redeploy",
+            "group-menus-v2 and menu selector APIs now return success=true"
           ]
         },
         "/app/horarios": {
@@ -321,6 +322,13 @@
       "scope": "remote menu API regression after migration push",
       "result": "still failed: 2 menu API/card checks, dishes catalog passed",
       "evidence": "backoffice-dev remains on pre-fix behavior or migration 085 has not executed; migration fix commit 46a3d91 is pushed"
+    },
+    {
+      "id": "remote-menu-fix-verified-2026-08-04",
+      "scope": "backoffice menus after Docker migration redeploy",
+      "result": "4 passed",
+      "command": "BACKOFFICE_URL=https://backoffice-dev.menustudioai.com E2E_ADMIN_EMAIL=admin@villacarmen.com E2E_ADMIN_PASSWORD=admin123 PLAYWRIGHT_SKIP_GLOBAL_SETUP=1 npm run test:e2e -- --project=chromium e2e/specs/menus/menus-list.spec.ts",
+      "deployment": "sudo docker compose -f docker-compose.dev.yml up -d --build backend"
     }
   ],
   "bugs": [
@@ -382,13 +390,13 @@
     },
     {
       "id": "BUG-2026-08-03-remote-group-menus-api",
-      "status": "fix-pushed-awaiting-remote-deploy",
+      "status": "fixed-verified-remote",
       "area": "backoffice menus",
       "rootCause": "Authenticated GET /api/admin/group-menus-v2 returns success=false for dev tenant, blocking menu cards",
       "evidence": "Real browser session with admin@villacarmen.com: GET /api/admin/group-menus-v2?includeDrafts=1 => HTTP 500 {success:false,message:\"Error consultando menus\"}; GET /api/admin/menus/selector => same 500; GET /api/admin/horarios => 200 success=true; post-fix remote rerun still HTTP 500, indicating the corrected backend migration is not yet deployed to backoffice-dev or deployment migration execution is pending",
       "nextAction": "Wait for deployment/migrations on backoffice-dev, then rerun menus-list.spec.ts and authenticated /api/admin/group-menus-v2 + /api/admin/menus/selector checks",
-      "fix": "Added migration 085_menus_schema_compatibility.sql to backfill menu_type, is_draft, and editor_version on already-renamed menus tables; added migration regression test",
-      "regression": "Go migration package and complete backend suite passed; remote rerun pending deployment"
+      "fix": "Added versioned migration 086 to rename stale menusDeGrupos to menus and ensure required columns; redeployed backend Docker container with sudo",
+      "regression": "Remote menus-list.spec.ts 4/4 passed after migration 086 redeploy"
     },
     {
       "id": "BUG-2026-08-03-remote-food-crud",
