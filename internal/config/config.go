@@ -66,6 +66,11 @@ type Config struct {
 	BotMaxIterations            int
 	BotHistoryLimit             int
 	BotDailyTurnsCap            int
+	AssistantModel              string
+	AssistantTimeout            time.Duration
+	AssistantMaxTokens          int
+	AssistantHistoryLimit       int
+	AssistantPublicRateLimit    int
 	BotPublicWebhookURL         string
 	EvolutionWebhookSecret      string
 	SMTPHost                    string
@@ -132,6 +137,11 @@ func Load() Config {
 		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 8, 1, 20),
 		BotHistoryLimit:             getenvInt("BOT_HISTORY_LIMIT", 20, 2, 100),
 		BotDailyTurnsCap:            getenvInt("BOT_DAILY_TURNS_CAP", 2000, 1, 1000000),
+		AssistantModel:              getenv("ASSISTANT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3")),
+		AssistantTimeout:            time.Duration(getenvInt("ASSISTANT_TIMEOUT_SECONDS", 60, 5, 600)) * time.Second,
+		AssistantMaxTokens:          getenvInt("ASSISTANT_MAX_TOKENS", 1024, 128, 8192),
+		AssistantHistoryLimit:       getenvInt("ASSISTANT_HISTORY_LIMIT", 20, 2, 100),
+		AssistantPublicRateLimit:    getenvInt("ASSISTANT_PUBLIC_RATE_LIMIT", 20, 1, 1000),
 		BotPublicWebhookURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("BOT_PUBLIC_WEBHOOK_URL")), "/"),
 		EvolutionWebhookSecret:      strings.TrimSpace(os.Getenv("EVOLUTION_WEBHOOK_SECRET")),
 		SMTPHost:                    strings.TrimSpace(os.Getenv("SMTP_HOST")),

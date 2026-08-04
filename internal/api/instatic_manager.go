@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,19 +23,33 @@ import (
 	"preactvillacarmen/internal/integrations"
 )
 
-// ---------------------------------------------------------------------------
-// Instatic instance manager: one Bun+instatic process per restaurant.
+// bookingWidgetJS is the vanilla booking widget, injected into every generated
+// site as a same-origin runtime script (CSP script-src 'self').
+// ponytail: one embedded IIFE for all restaurants; move to instatic/scripts/ if
+// widget iteration outpaces Go rebuilds.
 //
-// ponytail: minimal supervisor — spawn, health-poll, restart on death. No
-// container orchestration, no auto-scaling. If restaurants with websites grow
-// past ~8, move to one Docker container per instance (compose per instance).
+//go:embed booking_widget.iife.js
+var bookingWidgetJS string
+
+// ---------------------------------------------------------------------------
+// Instatic instance manager: on-demand Bun+instatic process per restaurant.
+//
+// Serving is 100% static (see instatic_proxy.go) — instances exist only for
+// editing/publishing. Each EnsureRunning stamps lastActivity; the supervisor
+// idle-reaps instances quiet longer than instaticIdleTTL, so steady-state
+// process count is zero.
+//
+// ponytail: minimal supervisor — spawn on demand, idle-reap. No container
+// orchestration. If concurrent editors grow past ~8, move to one Docker
+// container per instance (compose per instance).
 // ---------------------------------------------------------------------------
 
 const (
 	instaticHealthTimeout = 5 * time.Second
-	instaticHealthEvery   = 15 * time.Second
+	instaticHealthEvery   = 30 * time.Second
 	instaticBootTimeout   = 40 * time.Second
 	instaticHttpTimeout   = 25 * time.Second
+	instaticIdleTTL       = 15 * time.Minute
 )
 
 type instaticManager struct {
@@ -45,6 +61,9 @@ type instaticManager struct {
 	proc map[int]*exec.Cmd
 	// ready is the HTTP base URL for a restaurant's running instance.
 	ready map[int]string
+	// lastActivity records the last EnsureRunning (edit/seed/publish) time per
+	// restaurant; the supervisor reaps instances idle past instaticIdleTTL.
+	lastActivity map[int]time.Time
 	// portByRestaurant assigns the instance port once, stable across restarts
 	// so reverse-proxy mappings survive.
 	portByRestaurant map[int]int
@@ -58,6 +77,7 @@ func newInstaticManager(db *sql.DB, cfg config.Config) *instaticManager {
 		cfg:              cfg,
 		proc:             map[int]*exec.Cmd{},
 		ready:            map[int]string{},
+		lastActivity:     map[int]time.Time{},
 		portByRestaurant: map[int]int{},
 		stop:             make(chan struct{}),
 	}
@@ -111,8 +131,16 @@ func (m *instaticManager) instanceDataDir(restaurantID int) string {
 // bootstrapping setup + login on first start.
 func (m *instaticManager) EnsureRunning(ctx context.Context, restaurantID int) (string, error) {
 	m.mu.Lock()
+	m.lastActivity[restaurantID] = time.Now() // keep alive: reaper spares recent activity
 	base, ok := m.ready[restaurantID]
-	_, spawning := m.proc[restaurantID]
+	cmd, tracked := m.proc[restaurantID]
+	// A tracked proc that has exited (crash, external kill) is not "spawning" —
+	// drop it so we restart instead of polling a dead port until timeout.
+	spawning := tracked && cmd.Process != nil && cmd.ProcessState == nil
+	if tracked && !spawning {
+		delete(m.proc, restaurantID)
+		delete(m.ready, restaurantID)
+	}
 	m.mu.Unlock()
 	if ok && m.health(ctx, base) {
 		return base, nil
@@ -140,7 +168,11 @@ func (m *instaticManager) start(ctx context.Context, restaurantID int) error {
 	sub := m.subdomainFor(restaurantID)
 	origin := fmt.Sprintf("https://%s", sub)
 
-	cmd := exec.CommandContext(ctx, "bun", "run", "dev:server")
+	// Detached from the request ctx: the reaper/Stop own the lifetime (a request-
+	// scoped ctx would kill the instance on HTTP response, racing the next start's
+	// port bind). No `--watch` — the watch wrapper re-runs Bun.serve() on reload
+	// (EADDRINUSE) and leaves an orphan child on Kill (single process is killable).
+	cmd := exec.Command("bun", "server/index.ts")
 	cmd.Dir = m.cfg.InstaticServerDir
 	cmd.Env = append(os.Environ(),
 		"PORT="+fmt.Sprintf("%d", port),
@@ -271,6 +303,14 @@ func (m *instaticManager) ensureBootstrapped(ctx context.Context, restaurantID i
 	return nil
 }
 
+// sessionToken returns the stored instatic admin session cookie value for a
+// restaurant (empty if not bootstrapped).
+func (m *instaticManager) sessionToken(restaurantID int) string {
+	var token string
+	_ = m.db.QueryRow(`SELECT instatic_session_token FROM instatic_instances WHERE restaurant_id=?`, restaurantID).Scan(&token)
+	return token
+}
+
 // disableStepUp flips the owner's step_up_auth_mode to 'disabled' via sqlite3.
 func (m *instaticManager) disableStepUp(ctx context.Context, restaurantID int) error {
 	dir := m.instanceDataDir(restaurantID)
@@ -391,6 +431,7 @@ func (m *instaticManager) Stop(restaurantID int) {
 	cmd, ok := m.proc[restaurantID]
 	delete(m.proc, restaurantID)
 	delete(m.ready, restaurantID)
+	delete(m.lastActivity, restaurantID)
 	m.mu.Unlock()
 	if ok && cmd.Process != nil {
 		_ = cmd.Process.Kill()
@@ -399,7 +440,7 @@ func (m *instaticManager) Stop(restaurantID int) {
 	_, _ = m.db.Exec(`UPDATE instatic_instances SET status='stopped' WHERE restaurant_id=?`, restaurantID)
 }
 
-// StartSupervisor runs the periodic health-check loop in the background.
+// StartSupervisor runs the periodic idle-reaper loop in the background.
 func (m *instaticManager) StartSupervisor() {
 	go func() {
 		t := time.NewTicker(instaticHealthEvery)
@@ -415,51 +456,29 @@ func (m *instaticManager) StartSupervisor() {
 	}()
 }
 
-// BootRestore restarts any instance the DB marks as running — so restaurant
-// sites survive a backend restart without manual intervention.
-func (m *instaticManager) BootRestore() {
-	rows, err := m.db.Query(`SELECT restaurant_id FROM instatic_instances WHERE status='running'`)
-	if err != nil {
-		return
-	}
-	var ids []int
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err == nil {
-			ids = append(ids, id)
-		}
-	}
-	rows.Close()
-	for _, id := range ids {
-		ctx, cancel := context.WithTimeout(context.Background(), instaticBootTimeout)
-		_ = m.start(ctx, id)
-		cancel()
-	}
-}
-
-// StopSupervisor halts the health-check loop.
+// StopSupervisor halts the reaper loop.
 func (m *instaticManager) StopSupervisor() {
 	close(m.stop)
 }
 
-// sweep restarts any instance whose process died but should be running.
+// sweep reaps instances that are idle past instaticIdleTTL or whose process has
+// died. Nothing is auto-restarted — EnsureRunning respawns on the next
+// edit/seed/publish. This keeps steady-state process count at zero.
 func (m *instaticManager) sweep() {
+	now := time.Now()
 	m.mu.Lock()
-	ids := make([]int, 0, len(m.proc))
+	var reap []int
 	for id, cmd := range m.proc {
-		if cmd.Process == nil || cmd.ProcessState != nil {
-			ids = append(ids, id)
+		dead := cmd.Process == nil || cmd.ProcessState != nil
+		last, ok := m.lastActivity[id]
+		idle := !ok || now.Sub(last) > instaticIdleTTL
+		if dead || idle {
+			reap = append(reap, id)
 		}
 	}
 	m.mu.Unlock()
-	for _, id := range ids {
-		ctx, cancel := context.WithTimeout(context.Background(), instaticBootTimeout)
-		m.mu.Lock()
-		delete(m.proc, id)
-		delete(m.ready, id)
-		m.mu.Unlock()
-		_ = m.start(ctx, id)
-		cancel()
+	for _, id := range reap {
+		m.Stop(id)
 	}
 }
 
@@ -506,11 +525,16 @@ func (m *instaticManager) handleEnsure(w http.ResponseWriter, r *http.Request) {
 
 func (m *instaticManager) handleSeed(w http.ResponseWriter, r *http.Request) {
 	restaurantID := chiURLInt(r, "restaurantId")
-	if err := m.seedSite(r.Context(), restaurantID); err != nil {
+	var templateID string
+	_ = m.db.QueryRowContext(r.Context(), `SELECT template_id FROM restaurant_websites WHERE restaurant_id=? LIMIT 1`, restaurantID).Scan(&templateID)
+	if strings.TrimSpace(templateID) == "" {
+		templateID = "villa-carmen"
+	}
+	if err := m.seedSite(r.Context(), restaurantID, templateID); err != nil {
 		httpxWriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"success": true})
+	writeJSON(w, map[string]any{"success": true, "template": templateID})
 }
 
 func (m *instaticManager) handlePublish(w http.ResponseWriter, r *http.Request) {
@@ -545,7 +569,7 @@ func (m *instaticManager) handleProvisionDomain(w http.ResponseWriter, r *http.R
 // seedSite provisions the restaurant's content into its instatic instance by
 // invoking the bun restaurant-seed script. Go owns the data extraction; the
 // script owns instatic's schema (valid page trees via createNode/insertNode).
-func (m *instaticManager) seedSite(ctx context.Context, restaurantID int) error {
+func (m *instaticManager) seedSite(ctx context.Context, restaurantID int, template string) error {
 	base, err := m.EnsureRunning(ctx, restaurantID)
 	if err != nil {
 		return err
@@ -557,7 +581,7 @@ func (m *instaticManager) seedSite(ctx context.Context, restaurantID int) error 
 		return fmt.Errorf("seed: no session for restaurant %d: %w", restaurantID, err)
 	}
 
-	payload, err := m.buildRestaurantPayload(ctx, restaurantID)
+	payload, err := m.buildRestaurantPayload(ctx, restaurantID, template)
 	if err != nil {
 		return err
 	}
@@ -582,8 +606,11 @@ func (m *instaticManager) seedSite(ctx context.Context, restaurantID int) error 
 
 // buildRestaurantPayload extracts restaurant info + menu + hours from MySQL
 // into the JSON shape the instatic seeder expects.
-func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurantID int) (map[string]any, error) {
+func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurantID int, template string) (map[string]any, error) {
 	payload := map[string]any{}
+	payload["template"] = template
+	payload["restaurantId"] = restaurantID
+	payload["widgetScript"] = bookingWidgetJS
 
 	var name, address, phone, email string
 	_ = m.db.QueryRowContext(ctx, `SELECT name FROM restaurants WHERE id=?`, restaurantID).Scan(&name)
@@ -593,57 +620,66 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 	payload["phone"] = phone
 	payload["email"] = email
 
-	// Menu from `menus`: entrantes = JSON array of strings; principales/postre
-	// = JSON object { titulo_*, items: [string] }. Prices are inline in the
-	// item text (e.g. "(+2€)"). Best-effort parse — bad rows are skipped.
-	type menuRow struct {
-		Title      string
-		Entrantes  string
-		Principales string
-		Postre     string
+	// Branding: brand name overrides the plain restaurant name; logo + colors.
+	var brandName, logo, brandPrimary, brandAccent sql.NullString
+	_ = m.db.QueryRowContext(ctx, `SELECT brand_name, logo_url, primary_color, accent_color FROM restaurant_branding WHERE restaurant_id=?`, restaurantID).
+		Scan(&brandName, &logo, &brandPrimary, &brandAccent)
+	if brandName.Valid && brandName.String != "" {
+		payload["name"] = brandName.String
 	}
-	var sections []map[string]any
-	rows, err := m.db.QueryContext(ctx, `SELECT menu_title, entrantes, principales, postre FROM menus WHERE restaurant_id=? AND active=1 ORDER BY id`, restaurantID)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var mr menuRow
-			if err := rows.Scan(&mr.Title, &mr.Entrantes, &mr.Principales, &mr.Postre); err != nil {
-				continue
-			}
-			if mr.Title == "" {
-				continue
-			}
-			items := []any{}
-			// entrantes: JSON array of strings.
-			var entrantes []string
-			if json.Unmarshal([]byte(mr.Entrantes), &entrantes) == nil {
-				for _, it := range entrantes {
-					items = append(items, map[string]any{"name": it})
-				}
-			}
-			// principales + postre: object with items array, or bare array.
-			for _, raw := range []string{mr.Principales, mr.Postre} {
-				var obj struct {
-					Items []string `json:"items"`
-				}
-				if json.Unmarshal([]byte(raw), &obj) == nil && len(obj.Items) > 0 {
-					for _, it := range obj.Items {
-						items = append(items, map[string]any{"name": it})
-					}
-					continue
-				}
-				var arr []string
-				if json.Unmarshal([]byte(raw), &arr) == nil {
-					for _, it := range arr {
-						items = append(items, map[string]any{"name": it})
-					}
-				}
-			}
-			sections = append(sections, map[string]any{"title": mr.Title, "items": items})
-		}
+	payload["logo"] = nullStringValue(logo)
+	payload["primaryColor"] = nullStringValue(brandPrimary)
+	payload["accentColor"] = nullStringValue(brandAccent)
+
+	// Widget colors (booking form theming) from widget_settings.
+	var wc struct{ p, s, b, sf, t, mu, font sql.NullString }
+	_ = m.db.QueryRowContext(ctx, `SELECT primary_color, success_color, border_color, surface_color, text_color, muted_color, font_stack FROM widget_settings WHERE restaurant_id=?`, restaurantID).
+		Scan(&wc.p, &wc.s, &wc.b, &wc.sf, &wc.t, &wc.mu, &wc.font)
+	payload["widgetColors"] = map[string]any{
+		"primary": nullStringValue(wc.p), "success": nullStringValue(wc.s), "border": nullStringValue(wc.b),
+		"surface": nullStringValue(wc.sf), "text": nullStringValue(wc.t), "muted": nullStringValue(wc.mu),
+		"font": nullStringValue(wc.font),
+	}
+
+	// Menu from `comida_items` (the live editable menu): rich rows grouped by
+	// categoria, in DB order. name/price/desc/allergens/supplement.
+	sections := m.comidaSections(ctx, restaurantID)
+	if len(sections) == 0 {
+		sections = m.legacyMenuSections(ctx, restaurantID) // fallback: old `menus` table
 	}
 	payload["menuSections"] = sections
+
+	// Gallery images (menu_slider_images.image_path, in position order).
+	var gallery []string
+	if grows, gerr := m.db.QueryContext(ctx, `SELECT image_path FROM menu_slider_images WHERE restaurant_id=? ORDER BY position, id`, restaurantID); gerr == nil {
+		defer grows.Close()
+		for grows.Next() {
+			var p string
+			if grows.Scan(&p) == nil && p != "" {
+				gallery = append(gallery, p)
+			}
+		}
+	}
+	payload["gallery"] = gallery
+
+	// Wines (VINOS, active) grouped for a cellar section.
+	var wines []map[string]any
+	if wrows, werr := m.db.QueryContext(ctx, `SELECT nombre, precio, tipo, bodega, descripcion FROM VINOS WHERE restaurant_id=? AND active=1 ORDER BY tipo, nombre`, restaurantID); werr == nil {
+		defer wrows.Close()
+		for wrows.Next() {
+			var nombre, tipo, bodega, desc sql.NullString
+			var precio sql.NullFloat64
+			if wrows.Scan(&nombre, &precio, &tipo, &bodega, &desc) != nil {
+				continue
+			}
+			wines = append(wines, map[string]any{
+				"name": nullStringValue(nombre), "type": nullStringValue(tipo),
+				"winery": nullStringValue(bodega), "desc": nullStringValue(desc),
+				"price": priceStr(precio),
+			})
+		}
+	}
+	payload["wines"] = wines
 
 	// Opening hours from `openinghours`: hoursarray = JSON array of HH:MM slots.
 	// Derive the open→close range from the earliest and latest slot per day.
@@ -669,6 +705,103 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 	payload["hours"] = hours
 
 	return payload, nil
+}
+
+// comidaSections builds rich menu sections from the live comida_items table,
+// grouped by categoria in DB order (preserves first-seen category order).
+func (m *instaticManager) comidaSections(ctx context.Context, restaurantID int) []map[string]any {
+	rows, err := m.db.QueryContext(ctx, `SELECT nombre, precio, suplemento, descripcion, alergenos_json, categoria FROM comida_items WHERE restaurant_id=? AND active=1 ORDER BY category_id, id`, restaurantID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	order := []string{}
+	byCat := map[string][]any{}
+	for rows.Next() {
+		var nombre, desc, alerg, cat sql.NullString
+		var precio sql.NullFloat64
+		var supl sql.NullFloat64
+		if rows.Scan(&nombre, &precio, &supl, &desc, &alerg, &cat) != nil {
+			continue
+		}
+		title := nullStringValue(cat)
+		if title == "" {
+			title = "Carta"
+		}
+		if _, ok := byCat[title]; !ok {
+			order = append(order, title)
+		}
+		var allergens []string
+		if alerg.Valid {
+			_ = json.Unmarshal([]byte(alerg.String), &allergens) // best-effort
+		}
+		item := map[string]any{
+			"name": nullStringValue(nombre), "price": priceStr(precio),
+			"desc": nullStringValue(desc), "allergens": allergens,
+		}
+		if supl.Valid && supl.Float64 > 0 {
+			item["supplement"] = priceStr(supl)
+		}
+		byCat[title] = append(byCat[title], item)
+	}
+	sections := make([]map[string]any, 0, len(order))
+	for _, title := range order {
+		sections = append(sections, map[string]any{"title": title, "items": byCat[title]})
+	}
+	return sections
+}
+
+// legacyMenuSections is the old `menus`-table parser, kept only as a fallback
+// for restaurants that never migrated to comida_items.
+// ponytail: dead once all restaurants use comida_items — delete then.
+func (m *instaticManager) legacyMenuSections(ctx context.Context, restaurantID int) []map[string]any {
+	var sections []map[string]any
+	rows, err := m.db.QueryContext(ctx, `SELECT menu_title, entrantes, principales, postre FROM menus WHERE restaurant_id=? AND active=1 ORDER BY id`, restaurantID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var title, entrantes, principales, postre string
+		if rows.Scan(&title, &entrantes, &principales, &postre) != nil || title == "" {
+			continue
+		}
+		items := []any{}
+		var ent []string
+		if json.Unmarshal([]byte(entrantes), &ent) == nil {
+			for _, it := range ent {
+				items = append(items, map[string]any{"name": it})
+			}
+		}
+		for _, raw := range []string{principales, postre} {
+			var obj struct {
+				Items []string `json:"items"`
+			}
+			if json.Unmarshal([]byte(raw), &obj) == nil && len(obj.Items) > 0 {
+				for _, it := range obj.Items {
+					items = append(items, map[string]any{"name": it})
+				}
+				continue
+			}
+			var arr []string
+			if json.Unmarshal([]byte(raw), &arr) == nil {
+				for _, it := range arr {
+					items = append(items, map[string]any{"name": it})
+				}
+			}
+		}
+		sections = append(sections, map[string]any{"title": title, "items": items})
+	}
+	return sections
+}
+
+// priceStr renders a nullable decimal price as a compact string ("18" / "18.5"),
+// empty when null/zero.
+func priceStr(v sql.NullFloat64) string {
+	if !v.Valid || v.Float64 == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(v.Float64, 'f', -1, 64)
 }
 
 func writeJSONFile(path string, v any) error {

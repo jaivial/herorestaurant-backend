@@ -685,6 +685,31 @@ func (s *Server) Routes() http.Handler {
 		// Analytics V1 uses an idempotent selected-range rebuild; it has no outbox.
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/overview", s.handleBOAnalyticsOverview)
 		r.With(s.requireBOSession, statisticsGate).Post("/analytics/refresh", s.handleBOAnalyticsRefresh)
+
+		// Platform (superadmin) endpoints — cross-tenant management.
+		// All gated by requireBOSuperadmin (is_superadmin=1 only).
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/dashboard", s.handlePlatformDashboard)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/restaurants", s.handlePlatformRestaurantsList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/restaurants", s.handlePlatformRestaurantCreate)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Patch("/platform/restaurants/{id}", s.handlePlatformRestaurantPatch)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/restaurants/{id}/deactivate", s.handlePlatformRestaurantDeactivate)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/restaurants/{id}/activate", s.handlePlatformRestaurantActivate)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/users", s.handlePlatformUsersList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/users", s.handlePlatformUserCreate)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Patch("/platform/users/{id}", s.handlePlatformUserPatch)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/users/{id}/password", s.handlePlatformUserPasswordReset)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/users/{id}/revoke-sessions", s.handlePlatformUserRevokeSessions)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/users/{id}/assign", s.handlePlatformUserAssign)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Delete("/platform/users/{id}/assign/{restaurantId}", s.handlePlatformUserUnassign)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/subscriptions", s.handlePlatformSubscriptionsList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/subscriptions/{id}/toggle", s.handlePlatformSubscriptionToggle)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/whatsapp", s.handlePlatformWhatsAppList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/whatsapp/{id}/renew-qr", s.handlePlatformWhatsAppRenewQR)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/whatsapp/{id}/disconnect", s.handlePlatformWhatsAppDisconnect)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/uazapi-servers", s.handlePlatformUAZAPIServersList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/domains", s.handlePlatformDomainsList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/stripe/payments", s.handlePlatformStripePaymentsList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/stripe/refund", s.handlePlatformStripeRefund)
 	})
 
 	r.Get("/public/website-builder/render/{kind}", s.handleWebsiteBuilderRenderFragment)

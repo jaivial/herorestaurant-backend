@@ -25,6 +25,7 @@ const (
 	boSectionStock        = "stock"
 	boSectionPOS          = "pos"
 	boSectionEstadisticas = "estadisticas"
+	boSectionPlataforma   = "plataforma"
 )
 
 var defaultRolePermissions = map[string]map[string]bool{
@@ -42,6 +43,7 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionStock:        true,
 		boSectionPOS:          true,
 		boSectionEstadisticas: true,
+		boSectionPlataforma:   true,
 	},
 	"admin": {
 		boSectionReservas:     true,
@@ -182,6 +184,8 @@ func normalizeBOSection(section string) string {
 		return boSectionPOS
 	case boSectionEstadisticas:
 		return boSectionEstadisticas
+	case boSectionPlataforma:
+		return boSectionPlataforma
 	default:
 		return ""
 	}

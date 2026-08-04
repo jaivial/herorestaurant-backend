@@ -2790,3 +2790,36 @@ Manual `CARD` rows require an external terminal reference; PAN/CVV are never acc
 Kitchen dispatch stores immutable per-station `ADD`/`VOID` deltas. Payment never dispatches kitchen work. Switching stock or covers to `LIVE` consumes one fresh tenant-scoped acceptance in same transaction.
 
 Covers are counted from closed `DINE_IN` visits, not tickets. Split bills therefore count visit covers once. `TAKEAWAY`, `DELIVERY`, open and cancelled visits contribute zero. `LIVE` mode writes `stock_affluence_daily.source='POS'`; manual stock-affluence writes to a POS-owned key return `409 POS_COVERS_AUTHORITATIVE`.
+
+### GET /api/admin/assistant/ws
+
+Forky AI assistant chat over WebSocket. Auth: backoffice session cookie
+(`bo_session`); unauthenticated handshakes get HTTP 401. Origin check follows
+the other backoffice sockets (`allowBOWebSocketOrigin`). Any logged-in user.
+
+Frames are JSON text messages:
+
+| Direction | Frame | Notes |
+|---|---|---|
+| client → server | `{"type":"hello","session_id":null|int}` | null creates a new session (row owned by user+restaurant); an id reuses the caller's session |
+| server → client | `{"type":"hello","session_id":int,"history":[{role,content}…]}` | last `ASSISTANT_HISTORY_LIMIT` messages, oldest-first |
+| client → server | `{"type":"message","content":"…"}` | one user turn; rejected with a `busy` error while a generation is in flight |
+| server → client | `{"type":"status","state":"thinking"}` → `{"type":"delta","text":"…"}*` → `{"type":"done"}` | deltas are streamed MiniMax text (≤120 runes per frame) |
+| client → server | `{"type":"ping"}` | server replies `{"type":"pong"}` |
+| server → client | `{"type":"error","message":"…"}` | any failure; no `done` follows |
+
+Behavior:
+- The user message is persisted before the LLM call; the assistant reply is
+  persisted after the stream completes; `done` is only sent after the commit.
+- Context for the LLM: the system prompt (Forky persona, Spanish, restaurant
+  name/phone from `restaurants`) + the last `ASSISTANT_HISTORY_LIMIT` persisted
+  messages + the new user message.
+- Model: `ASSISTANT_MINIMAX_MODEL` (default `MiniMax-M3`) via the same
+  Anthropic-compatible Messages API as the translation system
+  (`MINIMAX_BASE_URL`/`MINIMAX_API_KEY`), `stream: true` (SSE).
+- Persistence: `assistant_sessions` / `assistant_messages` (migration 082).
+- One generation per connection; client disconnect cancels the LLM call.
+
+Env knobs (defaults): `ASSISTANT_MINIMAX_MODEL` (`MiniMax-M3`),
+`ASSISTANT_TIMEOUT_SECONDS` (60), `ASSISTANT_MAX_TOKENS` (1024),
+`ASSISTANT_HISTORY_LIMIT` (20).
