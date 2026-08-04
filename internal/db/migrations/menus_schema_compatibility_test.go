@@ -32,3 +32,9 @@ func TestMenusSchemaCompatibilityMigrationRenamesLegacyTableWhenNeeded(t *testin
 		t.Fatal("compatibility migration must repair stale legacy table name")
 	}
 }
+
+func TestMenusStaleTableRepairMigrationIsVersionedSeparately(t *testing.T) {
+	if _, err := migrationFS.ReadFile("086_menus_stale_table_repair.sql"); err != nil {
+		t.Fatal("stale-table repair must be a new migration version so it executes on databases that skipped 085")
+	}
+}
