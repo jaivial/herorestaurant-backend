@@ -3021,6 +3021,9 @@ func (s *Server) broadcastBOTablesEvent(restaurantID int, eventType string, data
 			if date, ok := m["date"].(string); ok {
 				payload["date"] = date
 			}
+			if layout, ok := asStringAnyMap(m["layout"]); ok {
+				payload["layout"] = layout
+			}
 		}
 	}
 	s.tablesHub.broadcast(restaurantID, payload)
