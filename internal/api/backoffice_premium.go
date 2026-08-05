@@ -130,6 +130,15 @@ type boPremiumTablesMutationRequest struct {
 	Metadata        map[string]any `json:"metadata"`
 }
 
+type boPremiumTablesWSMutation struct {
+	Type        string         `json:"type"`
+	Date        string         `json:"date"`
+	FloorNumber int            `json:"floor_number"`
+	Scope       string         `json:"scope"`
+	Metadata    map[string]any `json:"metadata"`
+	Data        map[string]any `json:"data"`
+}
+
 type boMembersWhatsAppSendRequest struct {
 	MemberID *int64 `json:"member_id"`
 	Phone    string `json:"phone"`
@@ -1391,8 +1400,8 @@ func (s *Server) handleBOPremiumTablesTemplateSave(w http.ResponseWriter, r *htt
 	}
 
 	var req struct {
-		Data        map[string]any `json:"data"`
-		Template    map[string]any `json:"template"`
+		Data        map[string]any   `json:"data"`
+		Template    map[string]any   `json:"template"`
 		LimitPoints []map[string]any `json:"limit_points"`
 		Elements    []map[string]any `json:"elements"`
 	}
@@ -1711,12 +1720,109 @@ func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 			var msg struct {
-				Type string `json:"type"`
+				Type        string         `json:"type"`
+				Date        string         `json:"date"`
+				FloorNumber int            `json:"floor_number"`
+				Scope       string         `json:"scope"`
+				Metadata    map[string]any `json:"metadata"`
+				Data        map[string]any `json:"data"`
 			}
 			if err := json.Unmarshal(raw, &msg); err != nil {
 				continue
 			}
 			typ := strings.ToLower(strings.TrimSpace(msg.Type))
+			if typ == "table_edit" {
+				if msg.FloorNumber < 0 || len(msg.Data) == 0 {
+					continue
+				}
+				{
+					data := map[string]any{}
+					for key, value := range msg.Data {
+						data[key] = value
+					}
+					data["date"] = msg.Date
+					data["floor_number"] = msg.FloorNumber
+					data["entity"] = "table"
+					rawData, marshalErr := json.Marshal(data)
+					if marshalErr != nil {
+						continue
+					}
+					var req boPremiumTablesMutationRequest
+					if json.Unmarshal(rawData, &req) != nil || req.ID <= 0 {
+						continue
+					}
+					req.Date = strings.TrimSpace(msg.Date)
+					req.FloorNumber = &msg.FloorNumber
+					reqForDB := req
+					if req.XPos != nil || req.YPos != nil {
+						reqForDB.XPos = nil
+						reqForDB.YPos = nil
+					}
+					if _, saveErr := s.updateBOPremiumTable(r.Context(), a.ActiveRestaurantID, reqForDB); saveErr != nil {
+						continue
+					}
+					if req.XPos != nil || req.YPos != nil {
+						x, y := int64(0), int64(0)
+						if req.XPos != nil {
+							x = int64(math.Round(*req.XPos))
+						}
+						if req.YPos != nil {
+							y = int64(math.Round(*req.YPos))
+						}
+						if _, saveErr := s.upsertBOPremiumTableLayoutPosition(r.Context(), a.ActiveRestaurantID, req.Date, msg.FloorNumber, req.ID, x, y); saveErr != nil {
+							continue
+						}
+					}
+					item, loadErr := s.loadBOPremiumTableItem(r.Context(), a.ActiveRestaurantID, req.ID, req.Date, req.FloorNumber)
+					if loadErr == nil {
+						s.broadcastBOTablesEvent(a.ActiveRestaurantID, "table_updated", item)
+					}
+					continue
+				}
+			}
+			if typ == "layout_edit" {
+				if !isDateISO(strings.TrimSpace(msg.Date)) || msg.FloorNumber < 0 || len(msg.Metadata) == 0 {
+					_ = client.writeJSON(map[string]any{"type": "map_edit_error", "message": "layout_edit invalido"})
+					continue
+				}
+				layout, saveErr := s.patchBOPremiumTableLayout(r.Context(), a.ActiveRestaurantID, strings.TrimSpace(msg.Date), msg.FloorNumber, msg.Metadata)
+				if saveErr != nil {
+					_ = client.writeJSON(map[string]any{"type": "map_edit_error", "message": "No se pudo guardar el layout"})
+					continue
+				}
+				s.broadcastBOTablesEvent(a.ActiveRestaurantID, "layout_updated", map[string]any{
+					"date": msg.Date, "floor_number": msg.FloorNumber, "layout": layout,
+				})
+				continue
+			}
+			if typ == "template_edit" {
+				if msg.FloorNumber < 0 || len(msg.Data) == 0 {
+					_ = client.writeJSON(map[string]any{"type": "map_edit_error", "message": "template_edit invalido"})
+					continue
+				}
+				tpl := msg.Data
+				tpl["template_updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				saved, saveErr := s.upsertBOPremiumTableLayoutTemplate(r.Context(), a.ActiveRestaurantID, msg.FloorNumber, tpl)
+				if saveErr != nil {
+					_ = client.writeJSON(map[string]any{"type": "map_edit_error", "message": "No se pudo guardar la plantilla"})
+					continue
+				}
+				s.broadcastBOTablesEvent(a.ActiveRestaurantID, "template_updated", map[string]any{
+					"floor_number": msg.FloorNumber, "template": saved,
+				})
+				continue
+			}
+			if typ == "template_delete" {
+				if msg.FloorNumber < 0 {
+					continue
+				}
+				if saveErr := s.deleteBOPremiumTableLayoutTemplate(r.Context(), a.ActiveRestaurantID, msg.FloorNumber); saveErr != nil {
+					_ = client.writeJSON(map[string]any{"type": "map_edit_error", "message": "No se pudo eliminar la plantilla"})
+					continue
+				}
+				s.broadcastBOTablesEvent(a.ActiveRestaurantID, "template_cleared", map[string]any{"floor_number": msg.FloorNumber})
+				continue
+			}
 			if typ != "sync" && typ != "refresh" && typ != "join_tables" {
 				continue
 			}
