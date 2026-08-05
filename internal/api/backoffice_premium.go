@@ -1522,6 +1522,11 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 		item, err := s.createBOPremiumTable(r.Context(), a.ActiveRestaurantID, req)
 		if err != nil {
 			log.Printf("[ERROR] createBOPremiumTable failed: %v", err)
+			var conflict *posTableConflictError
+			if errors.As(err, &conflict) {
+				writeBOPremiumError(w, http.StatusConflict, "TABLES_CREATE_CONFLICT", conflict.Error())
+				return
+			}
 			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_CREATE_FAILED", "No se pudo crear mesa")
 			return
 		}
@@ -2239,6 +2244,9 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 		}
 		if isSQLSchemaError(insertErr) {
 			continue
+		}
+		if isSQLDuplicateError(insertErr) {
+			return nil, &posTableConflictError{msg: fmt.Sprintf("ya existe una mesa llamada %q", name)}
 		}
 		return nil, insertErr
 	}
@@ -3958,6 +3966,13 @@ func normalizeBOPremiumTableRow(row map[string]any) map[string]any {
 	}
 	return out
 }
+
+// posTableConflictError marks a client-addressable conflict (e.g. a table
+// name that already exists) so handlers can return 409 instead of a generic
+// 500 "no se pudo crear mesa".
+type posTableConflictError struct{ msg string }
+
+func (e *posTableConflictError) Error() string { return e.msg }
 
 func isSQLSchemaError(err error) bool {
 	if err == nil {
