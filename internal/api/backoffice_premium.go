@@ -1321,7 +1321,7 @@ func (s *Server) handleBOPremiumTablesList(w http.ResponseWriter, r *http.Reques
 		floorNumber = &parsed
 	}
 
-	areas, tables, layout, err := s.loadBOPremiumTablesSnapshot(r.Context(), a.ActiveRestaurantID, dateISO, floorNumber)
+	areas, tables, layout, err := s.loadBOPremiumTablesSnapshotWithTemplate(r.Context(), a.ActiveRestaurantID, dateISO, floorNumber)
 	if err != nil {
 		writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_READ_FAILED", "No se pudieron cargar mesas")
 		return
@@ -1339,6 +1339,132 @@ func (s *Server) handleBOPremiumTablesList(w http.ResponseWriter, r *http.Reques
 		},
 		"areas":  areas,
 		"tables": tables,
+	})
+}
+
+// handleBOPremiumTablesTemplateGet returns the cross-day layout template for
+// a given floor. The template owns limit_area_template_points and the
+// draw_elements_template (kind/preset/position/size/rotation/display_mode).
+// Customer booking data is intentionally excluded.
+func (s *Server) handleBOPremiumTablesTemplateGet(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	floorNumber, err := strconv.Atoi(strings.TrimSpace(chi.URLParam(r, "floorNumber")))
+	if err != nil || floorNumber < 0 {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "floorNumber invalido")
+		return
+	}
+	tpl, err := s.loadBOPremiumTableLayoutTemplate(r.Context(), a.ActiveRestaurantID, floorNumber)
+	if err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "TEMPLATE_READ_FAILED", "No se pudo leer la plantilla")
+		return
+	}
+	hasTemplate := tpl != nil && tplLen(tpl) > 0
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"entity":       "template",
+		"floor_number": floorNumber,
+		"has_template": hasTemplate,
+		"template":     tpl,
+		"scope":        "template",
+	})
+}
+
+// handleBOPremiumTablesTemplateSave persists the cross-day template from a
+// per-day layout payload. The client must send the full resolved layout
+// (elements, limit_points, template fields) so the backend can store it
+// verbatim. We strip per-day fields (booking_states, table_positions) and
+// only keep the template fields.
+func (s *Server) handleBOPremiumTablesTemplateSave(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	floorNumber, err := strconv.Atoi(strings.TrimSpace(chi.URLParam(r, "floorNumber")))
+	if err != nil || floorNumber < 0 {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "floorNumber invalido")
+		return
+	}
+
+	var req struct {
+		Data        map[string]any `json:"data"`
+		Template    map[string]any `json:"template"`
+		LimitPoints []map[string]any `json:"limit_points"`
+		Elements    []map[string]any `json:"elements"`
+	}
+	if err := readJSONBody(r, &req); err != nil {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "JSON invalido")
+		return
+	}
+
+	tpl := map[string]any{}
+	if src, ok := asStringAnyMap(req.Data); ok && len(src) > 0 {
+		tpl = src
+	} else if src, ok := asStringAnyMap(req.Template); ok && len(src) > 0 {
+		tpl = src
+	}
+	if len(tpl) == 0 {
+		tpl = map[string]any{}
+	}
+
+	if req.LimitPoints != nil {
+		tpl["limit_area_template_points"] = req.LimitPoints
+	}
+	if req.Elements != nil {
+		tpl["draw_elements_template"] = req.Elements
+	}
+	tpl["template_updated_at"] = time.Now().UTC().Format(time.RFC3339)
+
+	saved, err := s.upsertBOPremiumTableLayoutTemplate(r.Context(), a.ActiveRestaurantID, floorNumber, tpl)
+	if err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "TEMPLATE_SAVE_FAILED", "No se pudo guardar la plantilla")
+		return
+	}
+	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "template_updated", map[string]any{
+		"floor_number": floorNumber,
+		"template":     saved,
+	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"entity":       "template",
+		"floor_number": floorNumber,
+		"template":     saved,
+		"scope":        "template",
+	})
+}
+
+// handleBOPremiumTablesTemplateDelete removes the cross-day template for a
+// given floor. After deletion, every day falls back to its own per-day
+// layout (or empty if none).
+func (s *Server) handleBOPremiumTablesTemplateDelete(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	floorNumber, err := strconv.Atoi(strings.TrimSpace(chi.URLParam(r, "floorNumber")))
+	if err != nil || floorNumber < 0 {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "floorNumber invalido")
+		return
+	}
+	if err := s.deleteBOPremiumTableLayoutTemplate(r.Context(), a.ActiveRestaurantID, floorNumber); err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "TEMPLATE_DELETE_FAILED", "No se pudo eliminar la plantilla")
+		return
+	}
+	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "template_cleared", map[string]any{
+		"floor_number": floorNumber,
+	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"entity":       "template",
+		"floor_number": floorNumber,
+		"template":     map[string]any{},
+		"has_template": false,
+		"scope":        "day",
 	})
 }
 
@@ -1456,6 +1582,11 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar layout")
 			return
 		}
+		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "layout_updated", map[string]any{
+			"date":         req.Date,
+			"floor_number": *req.FloorNumber,
+			"layout":       layout,
+		})
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"entity":  "layout",
@@ -1557,7 +1688,7 @@ func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request)
 		return conn.SetReadDeadline(time.Now().Add(70 * time.Second))
 	})
 
-	if areas, tables, layout, err := s.loadBOPremiumTablesSnapshot(r.Context(), a.ActiveRestaurantID, "", nil); err == nil {
+	if areas, tables, layout, err := s.loadBOPremiumTablesSnapshotWithTemplate(r.Context(), a.ActiveRestaurantID, "", nil); err == nil {
 		_ = client.writeJSON(map[string]any{
 			"type":         "hello",
 			"restaurantId": a.ActiveRestaurantID,
@@ -1589,7 +1720,7 @@ func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request)
 			if typ != "sync" && typ != "refresh" && typ != "join_tables" {
 				continue
 			}
-			areas, tables, layout, err := s.loadBOPremiumTablesSnapshot(r.Context(), a.ActiveRestaurantID, "", nil)
+			areas, tables, layout, err := s.loadBOPremiumTablesSnapshotWithTemplate(r.Context(), a.ActiveRestaurantID, "", nil)
 			if err != nil {
 				continue
 			}
@@ -2567,9 +2698,166 @@ func (s *Server) patchBOPremiumTableLayout(ctx context.Context, restaurantID int
 		return nil, err
 	}
 	for k, v := range patch {
+		// Per-day layout never owns template-only fields.
+		if isBOPremiumTemplateOnlyField(k) {
+			continue
+		}
 		layout[k] = v
 	}
 	return s.upsertBOPremiumTableLayout(ctx, restaurantID, dateISO, floorNumber, layout)
+}
+
+// boPremiumTemplateOnlyFields lists the keys that belong to the cross-day
+// template and must never be written by the per-day layout patch endpoint.
+var boPremiumTemplateOnlyFields = map[string]struct{}{
+	"limit_area_template_points": {},
+	"draw_elements_template":     {},
+	"template_updated_at":        {},
+}
+
+func isBOPremiumTemplateOnlyField(key string) bool {
+	_, ok := boPremiumTemplateOnlyFields[key]
+	return ok
+}
+
+func (s *Server) loadBOPremiumTableLayoutTemplate(ctx context.Context, restaurantID int, floorNumber int) (map[string]any, error) {
+	if floorNumber < 0 {
+		return nil, nil
+	}
+	var raw sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT data_json
+		FROM restaurant_table_layout_templates
+		WHERE restaurant_id = ? AND floor_number = ?
+		LIMIT 1
+	`, restaurantID, floorNumber).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if isSQLSchemaError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !raw.Valid {
+		return nil, nil
+	}
+	parsed, ok := asStringAnyMap(raw.String)
+	if !ok {
+		return map[string]any{}, nil
+	}
+	return normalizeBOPremiumTableLayoutMap(parsed), nil
+}
+
+func (s *Server) upsertBOPremiumTableLayoutTemplate(ctx context.Context, restaurantID int, floorNumber int, data map[string]any) (map[string]any, error) {
+	if floorNumber < 0 {
+		return nil, nil
+	}
+	normalized := normalizeBOPremiumTableLayoutMap(data)
+	raw, _ := json.Marshal(normalized)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO restaurant_table_layout_templates (restaurant_id, floor_number, data_json, created_at, updated_at)
+		VALUES (?, ?, ?, NOW(), NOW())
+		ON DUPLICATE KEY UPDATE
+			data_json = VALUES(data_json),
+			updated_at = NOW()
+	`, restaurantID, floorNumber, string(raw))
+	if err != nil {
+		if isSQLSchemaError(err) {
+			return normalized, nil
+		}
+		return nil, err
+	}
+	return normalized, nil
+}
+
+func (s *Server) deleteBOPremiumTableLayoutTemplate(ctx context.Context, restaurantID int, floorNumber int) error {
+	if floorNumber < 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM restaurant_table_layout_templates
+		WHERE restaurant_id = ? AND floor_number = ?
+	`, restaurantID, floorNumber)
+	if err != nil && !isSQLSchemaError(err) {
+		return err
+	}
+	return nil
+}
+
+// loadBOPremiumTablesSnapshot now merges the per-day layout with the floor
+// template so the front-end always receives the resolved view. The original
+// per-day row is preserved untouched in the database; the template is the
+// source of truth for limit_area_template_points / draw_elements_template.
+func (s *Server) loadBOPremiumTablesSnapshotWithTemplate(ctx context.Context, restaurantID int, dateISO string, floorNumber *int) ([]map[string]any, []map[string]any, map[string]any, error) {
+	areas, tables, layout, err := s.loadBOPremiumTablesSnapshot(ctx, restaurantID, dateISO, floorNumber)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if dateISO == "" || floorNumber == nil {
+		return areas, tables, layout, nil
+	}
+	tpl, tplErr := s.loadBOPremiumTableLayoutTemplate(ctx, restaurantID, *floorNumber)
+	if tplErr != nil || tplLen(tpl) == 0 {
+		return areas, tables, layout, nil
+	}
+	merged := mergeBOPremiumLayoutWithTemplate(layout, tpl)
+	// Also inject the template + scope flag at the snapshot level so the
+	// client can render the toggle correctly without a second round trip.
+	merged["template"] = tpl
+	merged["scope"] = tplScopeForLayout(layout, tpl)
+	return areas, tables, merged, nil
+}
+
+func tplLen(tpl map[string]any) int {
+	if len(tpl) == 0 {
+		return 0
+	}
+	if v, ok := asStringAnyMap(tpl); ok {
+		return len(v)
+	}
+	return len(tpl)
+}
+
+// mergeBOPremiumLayoutWithTemplate layers the template fields into the per-day
+// layout unless the per-day layout has explicit overrides for those fields
+// (per-day overrides are detected by the presence of any template-key
+// override set when the user previously switched to day-specific changes).
+func mergeBOPremiumLayoutWithTemplate(layout map[string]any, tpl map[string]any) map[string]any {
+	if layout == nil {
+		layout = map[string]any{}
+	}
+	if tpl == nil || len(tpl) == 0 {
+		return layout
+	}
+	// If the per-day layout explicitly opts into day-specific changes, the
+	// client stores `_template_scope = "day"` and the per-day values win.
+	if scope, _ := layout["_template_scope"].(string); scope == "day" {
+		return layout
+	}
+	for _, key := range []string{"limit_area_template_points", "draw_elements_template"} {
+		if _, hasOverride := layout["_"+key+"_override"]; hasOverride {
+			continue
+		}
+		if v, ok := tpl[key]; ok {
+			layout[key] = v
+		}
+	}
+	return layout
+}
+
+// tplScopeForLayout inspects the per-day layout to decide the default scope
+// the toggle should show. After a template is saved, the default is
+// "template" (global). The user can switch to "day" to make overrides.
+func tplScopeForLayout(layout map[string]any, tpl map[string]any) string {
+	if scope, _ := layout["_template_scope"].(string); scope == "day" {
+		return "day"
+	}
+	if scope, _ := layout["_template_scope"].(string); scope == "template" {
+		return "template"
+	}
+	return "template"
 }
 
 func (s *Server) broadcastBOTablesEvent(restaurantID int, eventType string, data any) {
@@ -2599,6 +2887,25 @@ func (s *Server) broadcastBOTablesEvent(restaurantID int, eventType string, data
 			}
 			if y, ok := anyToInt64OK(table["y_pos"]); ok {
 				payload["y_pos"] = y
+			}
+		}
+		if eventType == "template_updated" || eventType == "template_cleared" {
+			if floor, ok := anyToInt64OK(m["floor_number"]); ok {
+				payload["floor_number"] = floor
+			}
+			if date, ok := m["date"].(string); ok {
+				payload["date"] = date
+			}
+			if template, ok := asStringAnyMap(m["template"]); ok {
+				payload["template"] = template
+			}
+		}
+		if eventType == "layout_updated" {
+			if floor, ok := anyToInt64OK(m["floor_number"]); ok {
+				payload["floor_number"] = floor
+			}
+			if date, ok := m["date"].(string); ok {
+				payload["date"] = date
 			}
 		}
 	}
