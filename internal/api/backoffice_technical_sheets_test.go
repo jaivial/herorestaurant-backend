@@ -124,12 +124,88 @@ func TestCreateSheetAlsoCreatesOutputItemAndUnit(t *testing.T) {
 	if units != 1 {
 		t.Fatalf("got %d units want 1", units)
 	}
+
+	// The default path must keep producing the historical ud/1 unit, not just
+	// any single row: the defaulting rule is exactly what this PR touched.
+	var code, label string
+	var factor float64
+	if err := s.db.QueryRow(`SELECT code,label,factor_to_base FROM stock_item_units WHERE restaurant_id=1 AND stock_item_id=?`, outputItemID).Scan(&code, &label, &factor); err != nil {
+		t.Fatal(err)
+	}
+	if code != "ud" || label != "ud" || factor != 1 {
+		t.Fatalf("unit code=%s label=%s factor=%v want ud/ud/1", code, label, factor)
+	}
 }
 
 func TestCreateSheetRejectsEmptyName(t *testing.T) {
 	s := sheetsTestServer(t)
 	rec := httptest.NewRecorder()
 	s.handleBOTechnicalSheetCreate(rec, sheetReq("POST", "/comida/technical-sheets", `{"name":"   "}`, nil))
+	if rec.Code != 400 {
+		t.Fatalf("status %d want 400", rec.Code)
+	}
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM stock_items WHERE restaurant_id=1`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("a rejected create leaked %d stock items", n)
+	}
+}
+
+// Stock creation lets the user pick the dimension and display unit the sheet's
+// output article should use; the create must apply them instead of always
+// forcing COUNT/ud.
+func TestCreateSheetHonoursCustomOutputUnit(t *testing.T) {
+	s := sheetsTestServer(t)
+	rec := httptest.NewRecorder()
+	s.handleBOTechnicalSheetCreate(rec, sheetReq("POST", "/comida/technical-sheets",
+		`{"name":"Pure de patata","portions":4,"baseDimension":"MASS","displayUnitCode":"kg","displayUnitLabel":"kg","displayUnitFactor":1000}`, nil))
+	if rec.Code != 200 {
+		t.Fatalf("create status %d body %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		SheetID int64 `json:"sheetId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	var outputItemID int64
+	if err := s.db.QueryRow(`SELECT output_item_id FROM stock_recipes WHERE restaurant_id=1 AND id=?`, out.SheetID).Scan(&outputItemID); err != nil {
+		t.Fatal(err)
+	}
+	var dimension, baseUnit string
+	if err := s.db.QueryRow(`SELECT base_dimension,base_unit FROM stock_items WHERE restaurant_id=1 AND id=?`, outputItemID).Scan(&dimension, &baseUnit); err != nil {
+		t.Fatal(err)
+	}
+	if dimension != "MASS" || baseUnit != "g" {
+		t.Fatalf("output item dimension=%s base=%s want MASS/g", dimension, baseUnit)
+	}
+	var code, label string
+	var factor float64
+	if err := s.db.QueryRow(`SELECT code,label,factor_to_base FROM stock_item_units WHERE restaurant_id=1 AND stock_item_id=?`, outputItemID).Scan(&code, &label, &factor); err != nil {
+		t.Fatal(err)
+	}
+	if code != "kg" || label != "kg" || factor != 1000 {
+		t.Fatalf("unit code=%s label=%s factor=%v want kg/kg/1000", code, label, factor)
+	}
+}
+
+func TestCreateSheetRejectsInvalidBaseDimension(t *testing.T) {
+	s := sheetsTestServer(t)
+	rec := httptest.NewRecorder()
+	s.handleBOTechnicalSheetCreate(rec, sheetReq("POST", "/comida/technical-sheets",
+		`{"name":"X","baseDimension":"BOGUS"}`, nil))
+	if rec.Code != 400 {
+		t.Fatalf("status %d want 400", rec.Code)
+	}
+}
+
+// An explicit factor of zero or negative is a client bug, not an omission:
+// reject it instead of silently storing factor 1.
+func TestCreateSheetRejectsInvalidDisplayUnitFactor(t *testing.T) {
+	s := sheetsTestServer(t)
+	rec := httptest.NewRecorder()
+	s.handleBOTechnicalSheetCreate(rec, sheetReq("POST", "/comida/technical-sheets",
+		`{"name":"X","displayUnitFactor":0}`, nil))
 	if rec.Code != 400 {
 		t.Fatalf("status %d want 400", rec.Code)
 	}
