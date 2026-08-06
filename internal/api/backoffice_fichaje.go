@@ -74,6 +74,65 @@ type boHorariosAssignRequest struct {
 	EndTime   string `json:"endTime"`
 }
 
+// scheduleOverlaps reports whether two HH:MM intervals overlap. The end time is
+// exclusive: 09:00-12:00 does not overlap 12:00-15:00.
+func scheduleOverlaps(startA, endA, startB, endB string) bool {
+	startAMin, okA := hhmmToMinutes(startA)
+	if !okA {
+		return false
+	}
+	endAMin, okB := hhmmToMinutes(endA)
+	if !okB {
+		return false
+	}
+	startBMin, okC := hhmmToMinutes(startB)
+	if !okC {
+		return false
+	}
+	endBMin, okD := hhmmToMinutes(endB)
+	if !okD {
+		return false
+	}
+	return startAMin < endBMin && endAMin > startBMin
+}
+
+// memberScheduleIDsOnDate returns the existing schedule ids+times for a member
+// on a given date, used to reject overlapping multi-shift entries.
+func (s *Server) memberScheduleTimesOnDate(ctx context.Context, restaurantID, memberID int, dateISO string) ([]struct {
+	ID        int64
+	StartTime string
+	EndTime   string
+}, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, TIME_FORMAT(start_time, '%H:%i'), TIME_FORMAT(end_time, '%H:%i')
+		FROM member_work_schedules
+		WHERE restaurant_id = ? AND restaurant_member_id = ? AND work_date = ?
+		ORDER BY start_time
+	`, restaurantID, memberID, dateISO)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []struct {
+		ID        int64
+		StartTime string
+		EndTime   string
+	}{}
+	for rows.Next() {
+		var item struct {
+			ID        int64
+			StartTime string
+			EndTime   string
+		}
+		if err := rows.Scan(&item.ID, &item.StartTime, &item.EndTime); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 type boFichajeTimeEntry struct {
 	ID            int64   `json:"id"`
 	MemberID      int     `json:"memberId"`
@@ -1262,15 +1321,27 @@ func (s *Server) handleBOHorariosAssign(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Multi-shift days are allowed, but shifts must not overlap: a member
+	// cannot be scheduled twice for the same minutes.
+	existing, err := s.memberScheduleTimesOnDate(r.Context(), a.ActiveRestaurantID, req.MemberID, date.Format("2006-01-02"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error validando horarios")
+		return
+	}
+	for _, item := range existing {
+		if scheduleOverlaps(startHHMM, endHHMM, item.StartTime, item.EndTime) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "El turno se solapa con otro turno asignado ese día",
+			})
+			return
+		}
+	}
+
 	res, err := s.db.ExecContext(r.Context(), `
 		INSERT INTO member_work_schedules
 			(restaurant_member_id, restaurant_id, work_date, start_time, end_time)
 		VALUES (?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			start_time = VALUES(start_time),
-			end_time = VALUES(end_time),
-			updated_at = CURRENT_TIMESTAMP,
-			id = LAST_INSERT_ID(id)
 	`, req.MemberID, a.ActiveRestaurantID, date.Format("2006-01-02"), startHHMM+":00", endHHMM+":00")
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando horario")
@@ -1350,6 +1421,31 @@ func (s *Server) handleBOHorariosUpdate(w http.ResponseWriter, r *http.Request) 
 			"message": "La hora de salida debe ser mayor que la de entrada",
 		})
 		return
+	}
+
+	// Reject overlaps with the member's other shifts on the same day, except
+	// the schedule being edited.
+	current, err := s.getBOHorarioByID(r.Context(), a.ActiveRestaurantID, int64(scheduleID))
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo horario")
+		return
+	}
+	existing, err := s.memberScheduleTimesOnDate(r.Context(), a.ActiveRestaurantID, current.MemberID, current.Date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error validando horarios")
+		return
+	}
+	for _, item := range existing {
+		if item.ID == int64(scheduleID) {
+			continue
+		}
+		if scheduleOverlaps(startHHMM, endHHMM, item.StartTime, item.EndTime) {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"message": "El turno se solapa con otro turno asignado ese día",
+			})
+			return
+		}
 	}
 
 	_, err = s.db.ExecContext(r.Context(), `
