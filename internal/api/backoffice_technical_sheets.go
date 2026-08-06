@@ -73,15 +73,15 @@ func (s *Server) loadSheet(ctx context.Context, restaurantID int, sheetID int64)
 func (s *Server) handleBOTechnicalSheetCreate(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	var in struct {
-		Name              string  `json:"name"`
-		Portions          int     `json:"portions"`
-		PrepTimeMin       *int    `json:"prepTimeMin"`
-		ImageURL          string  `json:"imageUrl"`
-		WastePct          float64 `json:"wastePct"`
-		BaseDimension     string  `json:"baseDimension"`
-		DisplayUnitCode   string  `json:"displayUnitCode"`
-		DisplayUnitLabel  string  `json:"displayUnitLabel"`
-		DisplayUnitFactor float64 `json:"displayUnitFactor"`
+		Name              string   `json:"name"`
+		Portions          int      `json:"portions"`
+		PrepTimeMin       *int     `json:"prepTimeMin"`
+		ImageURL          string   `json:"imageUrl"`
+		WastePct          float64  `json:"wastePct"`
+		BaseDimension     *string  `json:"baseDimension"`
+		DisplayUnitCode   *string  `json:"displayUnitCode"`
+		DisplayUnitLabel  *string  `json:"displayUnitLabel"`
+		DisplayUnitFactor *float64 `json:"displayUnitFactor"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid technical sheet")
@@ -101,26 +101,37 @@ func (s *Server) handleBOTechnicalSheetCreate(w http.ResponseWriter, r *http.Req
 	}
 	// The output item defaults to "COUNT"/"ud" (the historical behaviour);
 	// stock creation can pass a real dimension and display unit so the article
-	// that the sheet produces matches how the kitchen counts it.
-	baseDimension := strings.ToUpper(strings.TrimSpace(in.BaseDimension))
-	if baseDimension == "" {
-		baseDimension = "COUNT"
+	// that the sheet produces matches how the kitchen counts it. Only nil
+	// fields take the default: an explicitly invalid value is a client bug and
+	// must not be silently stored.
+	baseDimension := "COUNT"
+	if in.BaseDimension != nil {
+		baseDimension = strings.ToUpper(strings.TrimSpace(*in.BaseDimension))
 	}
 	baseUnit, ok := stockBaseUnitForDimension(baseDimension)
 	if !ok {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid base dimension")
 		return
 	}
-	if in.DisplayUnitFactor <= 0 {
-		in.DisplayUnitFactor = 1
+	factor := 1.0
+	if in.DisplayUnitFactor != nil {
+		if *in.DisplayUnitFactor <= 0 {
+			httpx.WriteError(w, http.StatusBadRequest, "Invalid display unit factor")
+			return
+		}
+		factor = *in.DisplayUnitFactor
 	}
-	displayUnitCode := strings.TrimSpace(in.DisplayUnitCode)
-	if displayUnitCode == "" {
-		displayUnitCode = baseUnit
+	displayUnitCode := baseUnit
+	if in.DisplayUnitCode != nil {
+		if code := strings.TrimSpace(*in.DisplayUnitCode); code != "" {
+			displayUnitCode = code
+		}
 	}
-	displayUnitLabel := strings.TrimSpace(in.DisplayUnitLabel)
-	if displayUnitLabel == "" {
-		displayUnitLabel = displayUnitCode
+	displayUnitLabel := displayUnitCode
+	if in.DisplayUnitLabel != nil {
+		if label := strings.TrimSpace(*in.DisplayUnitLabel); label != "" {
+			displayUnitLabel = label
+		}
 	}
 
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -144,7 +155,7 @@ func (s *Server) handleBOTechnicalSheetCreate(w http.ResponseWriter, r *http.Req
 
 	if _, err = tx.ExecContext(r.Context(), `
 		INSERT INTO stock_item_units (restaurant_id,stock_item_id,code,label,factor_to_base,is_default_display,can_recipe,can_count)
-		VALUES (?,?,?,?,?,1,1,1)`, a.ActiveRestaurantID, outputItemID, displayUnitCode, displayUnitLabel, in.DisplayUnitFactor); err != nil {
+		VALUES (?,?,?,?,?,1,1,1)`, a.ActiveRestaurantID, outputItemID, displayUnitCode, displayUnitLabel, factor); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando la unidad de salida")
 		return
 	}
