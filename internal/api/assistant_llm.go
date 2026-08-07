@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 // assistantMaxFrameRunes caps each delta frame relayed to the WebSocket client
@@ -43,22 +45,20 @@ type assistantLLMResult struct {
 	StopReason string
 }
 
-// assistantStream calls the MiniMax Anthropic-compatible Messages API
-// ({MINIMAX_BASE_URL}/v1/messages) with stream:true and relays text deltas to
-// emit. Long deltas are split into assistantMaxFrameRunes-rune chunks.
+// assistantStream calls the Messages API through the official Anthropic SDK.
 func (s *Server) assistantStream(ctx context.Context, system string, msgs []assistantChatMessage, emit func(chunk string) error) error {
 	_, err := s.assistantCall(ctx, system, msgs, nil, emit)
 	return err
 }
 
-// assistantCall executes one model turn. Kept non-streaming for tool turns so
-// tool_use blocks can be persisted and answered before the next model turn.
+// assistantCall uses the SDK for request construction, authentication,
+// streaming, tool blocks, and response decoding. The configured MiniMax
+// endpoint is Anthropic-compatible, so it is supplied as the SDK base URL.
 func (s *Server) assistantCall(ctx context.Context, system string, msgs []assistantChatMessage, tools []assistantToolDef, emit func(string) error) (result assistantLLMResult, err error) {
 	apiKey := strings.TrimSpace(s.cfg.MiniMaxAPIKey)
 	if apiKey == "" {
-		return assistantLLMResult{}, errors.New("minimax api key not configured")
+		return result, errors.New("minimax api key not configured")
 	}
-
 	model := strings.TrimSpace(s.cfg.AssistantModel)
 	if model == "" {
 		model = strings.TrimSpace(s.cfg.MiniMaxModel)
@@ -67,31 +67,6 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 	if maxTokens <= 0 {
 		maxTokens = 1024
 	}
-
-	content := make([]map[string]any, 0, len(msgs))
-	for _, m := range msgs {
-		messageContent := m.Content
-		if text, ok := m.Content.(string); ok {
-			messageContent = []map[string]any{{"type": "text", "text": text}}
-		}
-		content = append(content, map[string]any{"role": m.Role, "content": messageContent})
-	}
-
-	body := map[string]any{
-		"model": model, "max_tokens": maxTokens, "system": system,
-		"messages": content, "stream": emit != nil,
-	}
-	if len(tools) > 0 {
-		body["tools"] = tools
-		// Explicitly select automatic tool routing for MiniMax-compatible
-		// endpoints; some deployments otherwise silently ignore the tools array.
-		body["tool_choice"] = map[string]any{"type": "auto"}
-	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return assistantLLMResult{}, err
-	}
-
 	timeout := s.cfg.AssistantTimeout
 	if timeout <= 0 {
 		timeout = 60 * time.Second
@@ -99,45 +74,47 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/v1/messages", bytes.NewReader(raw))
-	if err != nil {
-		return assistantLLMResult{}, err
+	// Marshal the existing persisted block representation into SDK params. This
+	// preserves text, tool_use and tool_result blocks without lossy conversions.
+	messageContent := make([]map[string]any, 0, len(msgs))
+	messageParams := make([]anthropic.MessageParam, 0, len(msgs))
+	for _, m := range msgs {
+		itemContent := m.Content
+		if text, ok := itemContent.(string); ok {
+			itemContent = []map[string]any{{"type": "text", "text": text}}
+		}
+		messageContent = append(messageContent, map[string]any{"role": m.Role, "content": itemContent})
+		blocks, marshalErr := json.Marshal(map[string]any{"role": m.Role, "content": itemContent})
+		if marshalErr != nil {
+			return result, marshalErr
+		}
+		var message anthropic.MessageParam
+		if unmarshalErr := json.Unmarshal(blocks, &message); unmarshalErr != nil {
+			return result, unmarshalErr
+		}
+		messageParams = append(messageParams, message)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return assistantLLMResult{}, err
+	body := map[string]any{"model": model, "max_tokens": maxTokens, "system": []map[string]string{{"type": "text", "text": system}}, "messages": messageParams}
+	if len(tools) > 0 {
+		body["tools"] = tools
+		body["tool_choice"] = map[string]any{"type": "auto"}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return assistantLLMResult{}, fmt.Errorf("minimax http %d", resp.StatusCode)
+	raw, marshalErr := json.Marshal(body)
+	if marshalErr != nil {
+		return result, marshalErr
 	}
-
+	var params anthropic.MessageNewParams
+	if unmarshalErr := json.Unmarshal(raw, &params); unmarshalErr != nil {
+		return result, unmarshalErr
+	}
+	client := anthropic.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/"))
 	if emit == nil {
-		// Non-streaming tool turns return one regular JSON message (not SSE).
-		// Parse it directly; treating it as SSE silently discarded all tool_use
-		// blocks from MiniMax's Anthropic-compatible endpoint.
-		b, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return result, readErr
+		message, callErr := client.Messages.New(ctx, params)
+		if callErr != nil {
+			return result, callErr
 		}
-		var msg struct {
-			StopReason string `json:"stop_reason"`
-			Content    []struct {
-				Type  string          `json:"type"`
-				ID    string          `json:"id"`
-				Name  string          `json:"name"`
-				Text  string          `json:"text"`
-				Input json.RawMessage `json:"input"`
-			} `json:"content"`
-		}
-		if err := json.Unmarshal(b, &msg); err != nil {
-			return result, fmt.Errorf("minimax response decode: %w", err)
-		}
-		result.StopReason = msg.StopReason
-		for _, block := range msg.Content {
+		result.StopReason = string(message.StopReason)
+		for _, block := range message.Content {
 			if block.Type == "text" {
 				result.Text += block.Text
 			}
@@ -147,30 +124,36 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 		}
 		return result, nil
 	}
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
-	// Tool inputs are streamed as JSON fragments. Keep one accumulator per
-	// content block; MiniMax may emit content_block_start before any input.
-	toolInputs := make(map[int]string)
-	toolIndexes := make(map[string]int)
-	ensureTool := func(index int, id, name string, input json.RawMessage) int {
-		if existing, ok := toolIndexes[id]; ok && id != "" {
-			return existing
-		}
-		if index < 0 {
-			index = len(result.ToolUses)
-		}
-		for len(result.ToolUses) <= index {
-			result.ToolUses = append(result.ToolUses, assistantToolUse{})
-		}
-		result.ToolUses[index] = assistantToolUse{ID: id, Name: name, Input: input}
-		if id != "" {
-			toolIndexes[id] = index
-		}
-		return index
+	// MiniMax's deployed SSE dialect omits `event:` lines and is not accepted by
+	// the SDK stream decoder. Keep the official SDK for non-streaming tool turns,
+	// but use the compatible raw SSE transport for streamed UI text.
+	streamBody := map[string]any{"model": model, "max_tokens": maxTokens, "system": system, "messages": messageContent, "stream": true}
+	if len(tools) > 0 {
+		streamBody["tools"] = tools
+		streamBody["tool_choice"] = map[string]any{"type": "auto"}
 	}
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	streamRaw, marshalErr := json.Marshal(streamBody)
+	if marshalErr != nil {
+		return result, marshalErr
+	}
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/v1/messages", bytes.NewReader(streamRaw))
+	if reqErr != nil {
+		return result, reqErr
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, reqErr := http.DefaultClient.Do(req)
+	if reqErr != nil {
+		return result, reqErr
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return result, fmt.Errorf("minimax http %d", resp.StatusCode)
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
@@ -178,91 +161,53 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 		if data == "" || data == "[DONE]" {
 			continue
 		}
-		var ev struct {
+		var frame struct {
 			Type       string `json:"type"`
 			StopReason string `json:"stop_reason"`
 			Content    []struct {
-				Index          int `json:"index"`
-				Type, ID, Name string
-				Text           string          `json:"text"`
-				Input          json.RawMessage `json:"input"`
+				Type, ID, Name, Text string
+				Input                json.RawMessage `json:"input"`
 			} `json:"content"`
-			Delta *struct {
-				Type        string `json:"type"`
-				Text        string `json:"text"`
-				PartialJSON string `json:"partial_json"`
-			} `json:"delta"`
+			Delta *struct{ Type, Text, PartialJSON string } `json:"delta"`
 			Error *struct {
-				Type    string `json:"type"`
 				Message string `json:"message"`
 			} `json:"error"`
 		}
-		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			continue // tolerate unknown frames
+		if json.Unmarshal([]byte(data), &frame) != nil {
+			continue
 		}
-		if ev.StopReason != "" {
-			result.StopReason = ev.StopReason
+		if frame.Type == "error" {
+			message := "minimax sse error"
+			if frame.Error != nil && frame.Error.Message != "" {
+				message += ": " + frame.Error.Message
+			}
+			return result, errors.New(message)
 		}
-		switch ev.Type {
-		case "message_start":
-		case "message_stop":
-		case "content_block_start":
-			for i, block := range ev.Content {
-				if block.Type == "tool_use" {
-					idx := block.Index
-					if idx == 0 && i > 0 {
-						idx = i
-					}
-					idx = ensureTool(idx, block.ID, block.Name, block.Input)
-					if len(block.Input) > 0 && string(block.Input) != "null" {
-						toolInputs[idx] = string(block.Input)
-					}
+		if frame.StopReason != "" {
+			result.StopReason = frame.StopReason
+		}
+		for _, block := range frame.Content {
+			if block.Type == "tool_use" {
+				result.ToolUses = append(result.ToolUses, assistantToolUse{ID: block.ID, Name: block.Name, Input: block.Input})
+			}
+		}
+		if frame.Delta == nil {
+			continue
+		}
+		if frame.Delta.Type == "text_delta" {
+			for _, chunk := range splitRunes(frame.Delta.Text, assistantMaxFrameRunes) {
+				result.Text += chunk
+				if err := emit(chunk); err != nil {
+					return result, err
 				}
 			}
-		case "message":
-			for _, block := range ev.Content {
-				if block.Type == "text" && block.Text != "" {
-					result.Text += block.Text
-					if emit != nil {
-						if err := emit(block.Text); err != nil {
-							return result, err
-						}
-					}
-				}
-				if block.Type == "tool_use" {
-					ensureTool(len(result.ToolUses), block.ID, block.Name, block.Input)
-				}
-			}
-		case "content_block_delta":
-			if ev.Delta != nil && ev.Delta.Type == "input_json_delta" {
-				// Index is supplied by real MiniMax events; absent index is
-				// tolerated by attaching to the latest tool block.
-				idx := len(result.ToolUses) - 1
-				toolInputs[idx] += ev.Delta.PartialJSON
-				if idx >= 0 {
-					result.ToolUses[idx].Input = json.RawMessage(toolInputs[idx])
-				}
-			}
-			if ev.Delta != nil && ev.Delta.Type == "text_delta" && ev.Delta.Text != "" {
-				for _, chunk := range splitRunes(ev.Delta.Text, assistantMaxFrameRunes) {
-					result.Text += chunk
-					if emit == nil {
-						continue
-					}
-					if err := emit(chunk); err != nil {
-						return result, err
-					}
-				}
-			}
-		case "error":
-			msg := "minimax sse error"
-			if ev.Error != nil {
-				msg += ": " + ev.Error.Message
-			}
-			return result, errors.New(msg)
+		}
+		if frame.Delta.Type == "input_json_delta" && len(result.ToolUses) > 0 {
+			i := len(result.ToolUses) - 1
+			result.ToolUses[i].Input = append(result.ToolUses[i].Input, []byte(frame.Delta.PartialJSON)...)
 		}
 	}
-	if err := sc.Err(); err != nil {
+	if err := scanner.Err(); err != nil {
 		return result, err
 	}
 	return result, nil

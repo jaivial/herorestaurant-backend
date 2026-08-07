@@ -3,6 +3,7 @@ module preactvillacarmen
 go 1.26
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.62.0
 	github.com/chromedp/cdproto v0.0.0-20241022234722-4d5d5faf59fb
 	github.com/chromedp/chromedp v0.11.2
 	github.com/go-chi/chi/v5 v5.2.5
@@ -16,7 +17,6 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.62.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
