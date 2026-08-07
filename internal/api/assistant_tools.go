@@ -45,6 +45,21 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 			result["error"] = err.Error()
 		}
 		s.assistantAudit(ctx, restaurantID, "TOOL_CALL", "forky_tool", 0, result)
+		// Best-effort structured audit (migration 015); deployments without the
+		// migration retain the legacy audit row above.
+		uid := any(nil)
+		if auth, ok := boAuthFromContext(ctx); ok {
+			uid = auth.User.ID
+		}
+		var summary any = result
+		if b, e := json.Marshal(summary); e == nil {
+			_, _ = s.db.ExecContext(ctx, `INSERT INTO assistant_tool_audit (user_id,restaurant_id,tool_name,tool_version,result_summary,error_message,duration_ms) VALUES (?,?,?,?,?,?,?)`, uid, restaurantID, name, "1", string(b), func() any {
+				if err != nil {
+					return err.Error()
+				}
+				return nil
+			}(), time.Since(started).Milliseconds())
+		}
 	}
 	return out, err
 }
