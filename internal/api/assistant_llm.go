@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -114,6 +115,38 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 		return assistantLLMResult{}, fmt.Errorf("minimax http %d", resp.StatusCode)
 	}
 
+	if emit == nil {
+		// Non-streaming tool turns return one regular JSON message (not SSE).
+		// Parse it directly; treating it as SSE silently discarded all tool_use
+		// blocks from MiniMax's Anthropic-compatible endpoint.
+		b, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return result, readErr
+		}
+		var msg struct {
+			StopReason string `json:"stop_reason"`
+			Content    []struct {
+				Type  string          `json:"type"`
+				ID    string          `json:"id"`
+				Name  string          `json:"name"`
+				Text  string          `json:"text"`
+				Input json.RawMessage `json:"input"`
+			} `json:"content"`
+		}
+		if err := json.Unmarshal(b, &msg); err != nil {
+			return result, fmt.Errorf("minimax response decode: %w", err)
+		}
+		result.StopReason = msg.StopReason
+		for _, block := range msg.Content {
+			if block.Type == "text" {
+				result.Text += block.Text
+			}
+			if block.Type == "tool_use" {
+				result.ToolUses = append(result.ToolUses, assistantToolUse{ID: block.ID, Name: block.Name, Input: block.Input})
+			}
+		}
+		return result, nil
+	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	// Tool inputs are streamed as JSON fragments. Keep one accumulator per
