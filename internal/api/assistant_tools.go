@@ -98,7 +98,7 @@ func (s *Server) assistantBookingSeries(ctx context.Context, rid int, from, to s
 		q += " AND reservation_date<=?"
 		args = append(args, to)
 	}
-	q += " GROUP BY reservation_date ORDER BY reservation_date"
+	q += " GROUP BY reservation_date ORDER BY reservation_date LIMIT 500"
 	rows, e := s.db.QueryContext(ctx, q, args...)
 	if e != nil {
 		return "", e
