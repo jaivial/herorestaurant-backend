@@ -22,6 +22,13 @@ func assistantCatalogToolDefs() []assistantToolDef {
 		{Name: "customers_list", Description: "Lista clientes y fuentes del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"search":{"type":"string"},"limit":{"type":"integer"}}}`)},
 		{Name: "stock_items_list", Description: "Lista artículos de stock del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"search":{"type":"string"},"limit":{"type":"integer"}}}`)},
 		{Name: "pos_visits_list", Description: "Lista visitas POS del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"status":{"type":"string"},"limit":{"type":"integer"}}}`)},
+		{Name: "invoices_list", Description: "Lista facturas del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)},
+		{Name: "recipes_list", Description: "Lista recetas del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)},
+		{Name: "production_list", Description: "Lista producción del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)},
+		{Name: "waste_costs_list", Description: "Lista mermas y costes del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)},
+		{Name: "restaurant_settings_get", Description: "Lee configuración del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
+		{Name: "whatsapp_bot_config_get", Description: "Lee configuración del bot WhatsApp del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
+		{Name: "site_published_content_get", Description: "Lee contenido publicado del sitio del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
 	}
 }
 
@@ -48,6 +55,9 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 	}
 	if strings.HasSuffix(name, "_list") && name != "catalog_list" {
 		return s.assistantTypedDomainList(ctx, rid, name, raw)
+	}
+	if name == "restaurant_settings_get" || name == "whatsapp_bot_config_get" || name == "site_published_content_get" {
+		return s.assistantSafeRead(ctx, rid, name)
 	}
 	spec, ok := assistantCatalogResources()[strings.ToLower(in.Resource)]
 	if !ok {
@@ -206,6 +216,14 @@ func (s *Server) assistantTypedDomainList(ctx context.Context, rid int, name str
 			q += ` AND status=?`
 			args = append(args, in.Status)
 		}
+	case "invoices_list":
+		q = `SELECT id,status,total,created_at FROM recurring_invoices WHERE restaurant_id=?`
+	case "recipes_list":
+		q = `SELECT id,name,portions,prep_time_min,waste_pct FROM stock_recipes WHERE restaurant_id=?`
+	case "production_list":
+		q = `SELECT id,output_item_id,output_qty_base,status,created_at FROM stock_productions WHERE restaurant_id=?`
+	case "waste_costs_list":
+		q = `SELECT id,item_id,quantity,unit_cost,created_at FROM stock_waste WHERE restaurant_id=?`
 	default:
 		return "", fmt.Errorf("herramienta desconocida: %s", name)
 	}
@@ -225,4 +243,47 @@ func (s *Server) assistantTypedDomainList(ctx context.Context, rid int, name str
 		out = append(out, map[string]any{"id": id, "value_1": vals[0], "value_2": vals[1], "value_3": vals[2], "value_4": vals[3]})
 	}
 	return botJSON(map[string]any{"items": out, "tool": name}), rows.Err()
+}
+
+func (s *Server) assistantSafeRead(ctx context.Context, rid int, name string) (string, error) {
+	var q string
+	switch name {
+	case "restaurant_settings_get":
+		q = `SELECT id, name, phone, email, address FROM restaurants WHERE id=? LIMIT 1`
+	case "whatsapp_bot_config_get":
+		q = `SELECT restaurant_id, config_json FROM whatsapp_bot_config WHERE restaurant_id=? LIMIT 1`
+	case "site_published_content_get":
+		q = `SELECT id, name, published_version_id, status FROM site_builder_sites WHERE restaurant_id=? AND status='published' ORDER BY id DESC LIMIT 1`
+	default:
+		return "", fmt.Errorf("herramienta desconocida: %s", name)
+	}
+	rows, e := s.db.QueryContext(ctx, q, rid)
+	if e != nil {
+		return "", e
+	}
+	defer rows.Close()
+	cols, e := rows.Columns()
+	if e != nil {
+		return "", e
+	}
+	if !rows.Next() {
+		return botJSON(map[string]any{"found": false, "tool": name}), rows.Err()
+	}
+	vals := make([]any, len(cols))
+	ptr := make([]any, len(cols))
+	for i := range vals {
+		ptr[i] = &vals[i]
+	}
+	if e = rows.Scan(ptr...); e != nil {
+		return "", e
+	}
+	out := map[string]any{"tool": name}
+	for i, c := range cols {
+		if b, ok := vals[i].([]byte); ok {
+			out[c] = string(b)
+		} else {
+			out[c] = vals[i]
+		}
+	}
+	return botJSON(out), rows.Err()
 }
