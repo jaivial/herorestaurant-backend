@@ -135,6 +135,9 @@ func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name str
 		if err != nil {
 			return "", err
 		}
+		if lightweight {
+			return botJSON(map[string]any{"requires_confirmation": true}), nil
+		}
 		return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
 	}
 	if strings.TrimSpace(in.ConfirmationToken) == "" {
