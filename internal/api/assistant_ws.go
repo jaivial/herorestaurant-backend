@@ -399,8 +399,37 @@ func assistantDirectIntent(content string) (string, json.RawMessage, bool) {
 	if strings.Contains(l, "qué restaurante") || strings.Contains(l, "que restaurante") || strings.Contains(l, "nombre del restaurante") {
 		return "restaurant_info", json.RawMessage(`{}`), true
 	}
-	if strings.Contains(l, "reservas") && (strings.Contains(l, "mes") || strings.Contains(l, "próximo") || strings.Contains(l, "proximo")) {
-		return "bookings_summary", json.RawMessage(`{}`), true
+	if strings.Contains(l, "reservas") {
+		if strings.Contains(l, "semana que viene") || strings.Contains(l, "próxima semana") || strings.Contains(l, "proxima semana") {
+			now := time.Now()
+			weekday := int(now.Weekday())
+			if weekday == 0 {
+				weekday = 7
+			}
+			nextMonday := now.AddDate(0, 0, 8-weekday)
+			nextSunday := nextMonday.AddDate(0, 0, 6)
+			input := map[string]string{
+				"date_from": nextMonday.Format("2006-01-02"),
+				"date_to":   nextSunday.Format("2006-01-02"),
+			}
+			encoded, _ := json.Marshal(input)
+			return "bookings_summary", encoded, true
+		}
+		if strings.Contains(l, "esta semana") {
+			now := time.Now()
+			weekday := int(now.Weekday())
+			if weekday == 0 {
+				weekday = 7
+			}
+			monday := now.AddDate(0, 0, 1-weekday)
+			sunday := monday.AddDate(0, 0, 6)
+			input := map[string]string{"date_from": monday.Format("2006-01-02"), "date_to": sunday.Format("2006-01-02")}
+			encoded, _ := json.Marshal(input)
+			return "bookings_summary", encoded, true
+		}
+		if strings.Contains(l, "mes") || strings.Contains(l, "próximo") || strings.Contains(l, "proximo") {
+			return "bookings_summary", json.RawMessage(`{}`), true
+		}
 	}
 	return "", nil, false
 }

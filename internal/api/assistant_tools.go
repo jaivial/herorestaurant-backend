@@ -11,7 +11,7 @@ import (
 func assistantToolDefs() []assistantToolDef {
 	defs := []assistantToolDef{
 		{Name: "restaurant_info", Description: "Lee datos básicos del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
-		{Name: "bookings_summary", Description: "Devuelve resumen de reservas del restaurante activo para una fecha opcional.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"}}}`)},
+		{Name: "bookings_summary", Description: "Devuelve resumen de reservas del restaurante activo para una fecha o rango opcional.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"}}}`)},
 		{Name: "restaurant_query", Description: "Consulta datos agregados seguros del restaurante activo. resource: bookings, menus o wines.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string","enum":["bookings","menus","wines"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["resource"]}`)},
 		{Name: "create_booking", Description: "Crea reserva solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","time","people","name","confirmed"]}`)},
 		{Name: "update_booking", Description: "Actualiza reserva del restaurante activo solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}`)},
@@ -71,7 +71,12 @@ func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID in
 	if restaurantID <= 0 {
 		return "", fmt.Errorf("restaurante activo no disponible")
 	}
-	var in struct{ Resource, Date, DateFrom, DateTo string }
+	var in struct {
+		Resource string `json:"resource"`
+		Date     string `json:"date"`
+		DateFrom string `json:"date_from"`
+		DateTo   string `json:"date_to"`
+	}
 	_ = json.Unmarshal(input, &in)
 	switch name {
 	case "catalog_list", "catalog_get", "catalog_create", "catalog_update", "catalog_delete":
@@ -96,12 +101,21 @@ func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID in
 		if strings.TrimSpace(in.Date) != "" {
 			q += " AND reservation_date=?"
 			args = append(args, in.Date)
+		} else {
+			if strings.TrimSpace(in.DateFrom) != "" {
+				q += " AND reservation_date>=?"
+				args = append(args, in.DateFrom)
+			}
+			if strings.TrimSpace(in.DateTo) != "" {
+				q += " AND reservation_date<=?"
+				args = append(args, in.DateTo)
+			}
 		}
 		err := s.db.QueryRowContext(ctx, q, args...).Scan(&total, &people)
 		if err != nil {
 			return "", err
 		}
-		return botJSON(map[string]any{"total": total, "people": people, "date": in.Date}), nil
+		return botJSON(map[string]any{"total": total, "people": people, "date": in.Date, "date_from": in.DateFrom, "date_to": in.DateTo}), nil
 	case "create_booking", "update_booking", "delete_booking":
 		return s.assistantBookingMutation(ctx, restaurantID, name, input)
 	case "pos_visit_create", "pos_ticket_create", "pos_payment_create", "pos_refund_create":
