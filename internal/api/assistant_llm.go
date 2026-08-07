@@ -113,6 +113,26 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	// Tool inputs are streamed as JSON fragments. Keep one accumulator per
+	// content block; MiniMax may emit content_block_start before any input.
+	toolInputs := make(map[int]string)
+	toolIndexes := make(map[string]int)
+	ensureTool := func(index int, id, name string, input json.RawMessage) int {
+		if existing, ok := toolIndexes[id]; ok && id != "" {
+			return existing
+		}
+		if index < 0 {
+			index = len(result.ToolUses)
+		}
+		for len(result.ToolUses) <= index {
+			result.ToolUses = append(result.ToolUses, assistantToolUse{})
+		}
+		result.ToolUses[index] = assistantToolUse{ID: id, Name: name, Input: input}
+		if id != "" {
+			toolIndexes[id] = index
+		}
+		return index
+	}
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if !strings.HasPrefix(line, "data:") {
@@ -126,13 +146,15 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 			Type       string `json:"type"`
 			StopReason string `json:"stop_reason"`
 			Content    []struct {
+				Index          int `json:"index"`
 				Type, ID, Name string
 				Text           string          `json:"text"`
 				Input          json.RawMessage `json:"input"`
 			} `json:"content"`
 			Delta *struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				PartialJSON string `json:"partial_json"`
 			} `json:"delta"`
 			Error *struct {
 				Type    string `json:"type"`
@@ -149,9 +171,16 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 		case "message_start":
 		case "message_stop":
 		case "content_block_start":
-			for _, block := range ev.Content {
+			for i, block := range ev.Content {
 				if block.Type == "tool_use" {
-					result.ToolUses = append(result.ToolUses, assistantToolUse{ID: block.ID, Name: block.Name, Input: block.Input})
+					idx := block.Index
+					if idx == 0 && i > 0 {
+						idx = i
+					}
+					idx = ensureTool(idx, block.ID, block.Name, block.Input)
+					if len(block.Input) > 0 && string(block.Input) != "null" {
+						toolInputs[idx] = string(block.Input)
+					}
 				}
 			}
 		case "message":
@@ -165,10 +194,19 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 					}
 				}
 				if block.Type == "tool_use" {
-					result.ToolUses = append(result.ToolUses, assistantToolUse{ID: block.ID, Name: block.Name, Input: block.Input})
+					ensureTool(len(result.ToolUses), block.ID, block.Name, block.Input)
 				}
 			}
 		case "content_block_delta":
+			if ev.Delta != nil && ev.Delta.Type == "input_json_delta" {
+				// Index is supplied by real MiniMax events; absent index is
+				// tolerated by attaching to the latest tool block.
+				idx := len(result.ToolUses) - 1
+				toolInputs[idx] += ev.Delta.PartialJSON
+				if idx >= 0 {
+					result.ToolUses[idx].Input = json.RawMessage(toolInputs[idx])
+				}
+			}
 			if ev.Delta != nil && ev.Delta.Type == "text_delta" && ev.Delta.Text != "" {
 				for _, chunk := range splitRunes(ev.Delta.Text, assistantMaxFrameRunes) {
 					result.Text += chunk
