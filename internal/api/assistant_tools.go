@@ -21,6 +21,17 @@ func assistantToolDefs() []assistantToolDef {
 }
 
 func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, name string, input json.RawMessage) (string, error) {
+	if assistantToolWrites(name) {
+		if auth, ok := boAuthFromContext(ctx); ok {
+			role := strings.ToLower(strings.TrimSpace(auth.Role))
+			if role == "" {
+				role = strings.ToLower(strings.TrimSpace(auth.User.Role))
+			}
+			if role == "viewer" || role == "lectura" || role == "readonly" || role == "read_only" {
+				return "", fmt.Errorf("permiso insuficiente para %s", name)
+			}
+		}
+	}
 	started := time.Now()
 	out, err := s.assistantExecuteToolUnsafe(ctx, restaurantID, name, input)
 	// Tool calls are auditable even when the underlying operation fails. Secrets
@@ -205,4 +216,12 @@ func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name str
 		return botJSON(map[string]any{"deleted": n == 1, "booking_id": in.BookingID}), nil
 	}
 	return "", fmt.Errorf("mutation inválida")
+}
+
+func assistantToolWrites(name string) bool {
+	switch name {
+	case "create_booking", "update_booking", "delete_booking", "catalog_create", "catalog_update", "catalog_delete":
+		return true
+	}
+	return false
 }
