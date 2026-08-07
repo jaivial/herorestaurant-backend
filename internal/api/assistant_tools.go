@@ -9,7 +9,7 @@ import (
 )
 
 func assistantToolDefs() []assistantToolDef {
-	return []assistantToolDef{
+	defs := []assistantToolDef{
 		{Name: "restaurant_info", Description: "Lee datos básicos del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
 		{Name: "bookings_summary", Description: "Devuelve resumen de reservas del restaurante activo para una fecha opcional.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"}}}`)},
 		{Name: "restaurant_query", Description: "Consulta datos agregados seguros del restaurante activo. resource: bookings, menus o wines.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string","enum":["bookings","menus","wines"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["resource"]}`)},
