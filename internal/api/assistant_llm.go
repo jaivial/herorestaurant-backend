@@ -246,6 +246,9 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 	}
 	var sb strings.Builder
 	sb.WriteString(base)
+	sb.WriteString(" Hoy es " + time.Now().Format("2006-01-02") + ". " +
+		"Para consultas como «esta semana», «la semana que viene», «próxima semana» o «este mes», " +
+		"calcula las fechas exactas (YYYY-MM-DD) usando la fecha de hoy y pasa los rangos a la herramienta correspondiente.")
 	if name != "" {
 		sb.WriteString(" El restaurante se llama " + name + ".")
 	}
