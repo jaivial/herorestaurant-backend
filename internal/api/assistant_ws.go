@@ -323,6 +323,8 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		restaurantID = c.auth.ActiveRestaurantID
 	} else if rid, ok := restaurantIDFromContext(ctx); ok {
 		restaurantID = rid
+	} else {
+		restaurantID = c.restaurantID
 	}
 	prompt := c.s.buildAssistantSystemPrompt(ctx, restaurantID)
 	_ = c.writeJSON(map[string]any{"type": "status", "state": "thinking"})
