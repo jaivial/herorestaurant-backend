@@ -78,8 +78,13 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 		return
 	}
 	var auth *boAuth
+	wsCtx := r.Context()
 	if ok {
 		auth = &a
+		// Preserve the authenticated principal for goroutines handling messages.
+		// Without this, tool authorization sees an anonymous context even though
+		// the WebSocket handshake was authenticated.
+		wsCtx = withBOAuth(wsCtx, a)
 	}
 
 	upgrader := websocket.Upgrader{
@@ -121,10 +126,10 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 		}
 		switch frame.Type {
 		case "hello":
-			c.handleHello(r.Context(), frame.SessionID, frame.SessionToken)
+			c.handleHello(wsCtx, frame.SessionID, frame.SessionToken)
 		case "message":
 			if c.tryStart() {
-				go c.handleMessage(r.Context(), frame.Content)
+				go c.handleMessage(wsCtx, frame.Content)
 			} else {
 				_ = c.writeJSON(map[string]any{"type": "error", "message": "busy: espera a que termine la respuesta anterior"})
 			}
