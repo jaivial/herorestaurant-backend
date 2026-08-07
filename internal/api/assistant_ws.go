@@ -277,7 +277,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		return
 	}
 
-	if c.auth == nil && !c.s.assistantRateLimit(c.ip) {
+	if !c.s.assistantRateLimit(c.ip) {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "rate_limited: demasiados mensajes, espera un momento"})
 		return
 	}
