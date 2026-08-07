@@ -35,3 +35,10 @@ Current definitions are version 1. Clients must use the structured `tool_use` / 
 | `pos_visits_list` | active restaurant | 100 | none |
 
 Read tools reject arbitrary table/column names and always bind the active restaurant in SQL.
+
+| `pos_visit_create` | active restaurant | write:pos | open visit | confirmation token |
+| `pos_ticket_create` | active restaurant | write:pos | create ticket | confirmation token |
+| `pos_payment_create` | active restaurant | write:pos | payment | confirmation token |
+| `pos_refund_create` | active restaurant | write:pos | refund | confirmation token |
+| `invoices_list`, `recipes_list`, `production_list`, `waste_costs_list` | active restaurant | read:domain | none | no |
+| `restaurant_settings_get`, `whatsapp_bot_config_get`, `site_published_content_get` | active restaurant | read:settings | none | no |
