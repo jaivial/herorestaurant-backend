@@ -347,7 +347,11 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: blocks})
 		results := make([]map[string]any, 0, len(result.ToolUses))
 		for _, use := range result.ToolUses {
-			out, toolErr := c.s.assistantExecuteTool(ctx, restaurantID, use.Name, use.Input)
+			// Bound every tool independently so a slow catalog/analytics query cannot
+			// consume the whole conversation or hold the websocket indefinitely.
+			toolCtx, cancelTool := context.WithTimeout(ctx, 5*time.Second)
+			out, toolErr := c.s.assistantExecuteTool(toolCtx, restaurantID, use.Name, use.Input)
+			cancelTool()
 			if toolErr != nil {
 				out = botJSON(map[string]any{"error": toolErr.Error()})
 			}
