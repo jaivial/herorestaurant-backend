@@ -326,6 +326,24 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 	}
 	prompt := c.s.buildAssistantSystemPrompt(ctx, restaurantID)
 	_ = c.writeJSON(map[string]any{"type": "status", "state": "thinking"})
+	// Deterministic fallback for factual intents. Some compatible MiniMax
+	// deployments silently ignore the tools field; never hallucinate restaurant
+	// identity or reservation data in that case.
+	if toolName, toolInput, ok := assistantDirectIntent(content); ok && restaurantID > 0 {
+		out, toolErr := c.s.assistantExecuteTool(ctx, restaurantID, toolName, toolInput)
+		if toolErr != nil {
+			_ = c.writeJSON(map[string]any{"type": "error", "message": toolErr.Error()})
+			return
+		}
+		answer := out
+		if toolName == "restaurant_info" {
+			answer = "El restaurante activo es: " + out
+		}
+		_ = c.writeJSON(map[string]any{"type": "delta", "text": answer})
+		_, _ = c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, answer)
+		_ = c.writeJSON(map[string]any{"type": "done"})
+		return
+	}
 	toolDefs := assistantToolDefs()
 	toolMsgs := append([]assistantChatMessage{}, hist...)
 	var final strings.Builder
@@ -369,4 +387,15 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		return
 	}
 	_ = c.writeJSON(map[string]any{"type": "done"})
+}
+
+func assistantDirectIntent(content string) (string, json.RawMessage, bool) {
+	l := strings.ToLower(content)
+	if strings.Contains(l, "qué restaurante") || strings.Contains(l, "que restaurante") || strings.Contains(l, "nombre del restaurante") {
+		return "restaurant_info", json.RawMessage(`{}`), true
+	}
+	if strings.Contains(l, "reservas") && (strings.Contains(l, "mes") || strings.Contains(l, "próximo") || strings.Contains(l, "proximo")) {
+		return "bookings_summary", json.RawMessage(`{}`), true
+	}
+	return "", nil, false
 }
