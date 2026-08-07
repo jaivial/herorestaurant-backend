@@ -2,6 +2,8 @@
 
 ## Estado actual
 
+> Última auditoría: backend tools, RBAC, confirmaciones, auditoría, límites, CI y renderer accesible están implementados. Los puntos marcados como integración requieren credenciales/servicios del entorno de despliegue.
+
 Forky ya dispone de:
 
 - Contexto de usuario autenticado y restaurante activo.
