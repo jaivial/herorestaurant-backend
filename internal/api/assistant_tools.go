@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 func assistantToolDefs() []assistantToolDef {
@@ -115,18 +116,29 @@ func (s *Server) assistantAudit(ctx context.Context, restaurantID int, action, e
 
 func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name string, input json.RawMessage) (string, error) {
 	var in struct {
-		BookingID    int    `json:"booking_id"`
-		Date         string `json:"date"`
-		Time         string `json:"time"`
-		CustomerName string `json:"name"`
-		People       int    `json:"people"`
-		Confirmed    bool   `json:"confirmed"`
+		BookingID         int    `json:"booking_id"`
+		Date              string `json:"date"`
+		Time              string `json:"time"`
+		CustomerName      string `json:"name"`
+		People            int    `json:"people"`
+		Confirmed         bool   `json:"confirmed"`
+		ConfirmationToken string `json:"confirmation_token"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", err
 	}
 	if !in.Confirmed {
-		return botJSON(map[string]any{"requires_confirmation": true}), nil
+		tok, err := s.confirmationStore.Issue("", fmt.Sprint(rid), name, "", "", 2*time.Minute)
+		if err != nil {
+			return "", err
+		}
+		return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
+	}
+	if strings.TrimSpace(in.ConfirmationToken) == "" {
+		return "", fmt.Errorf("confirmation_token requerido")
+	}
+	if err := s.confirmationStore.Consume(in.ConfirmationToken, "", fmt.Sprint(rid), name, "", ""); err != nil {
+		return "", err
 	}
 	switch name {
 	case "create_booking":
