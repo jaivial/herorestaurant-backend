@@ -19,7 +19,7 @@ const assistantMaxFrameRunes = 120
 // assistantChatMessage is one conversation turn sent to the LLM.
 type assistantChatMessage struct {
 	Role    string
-	Content string
+	Content any
 }
 
 // assistantToolDef uses Anthropic-compatible custom tools. Tool execution is
@@ -69,10 +69,11 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 
 	content := make([]map[string]any, 0, len(msgs))
 	for _, m := range msgs {
-		content = append(content, map[string]any{
-			"role":    m.Role,
-			"content": []map[string]any{{"type": "text", "text": m.Content}},
-		})
+		messageContent := m.Content
+		if text, ok := m.Content.(string); ok {
+			messageContent = []map[string]any{{"type": "text", "text": text}}
+		}
+		content = append(content, map[string]any{"role": m.Role, "content": messageContent})
 	}
 
 	body := map[string]any{

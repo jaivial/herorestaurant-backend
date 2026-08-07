@@ -337,14 +337,23 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		if len(result.ToolUses) == 0 {
 			break
 		}
-		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: result.Text})
+		blocks := make([]map[string]any, 0, len(result.ToolUses)+1)
+		if result.Text != "" {
+			blocks = append(blocks, map[string]any{"type": "text", "text": result.Text})
+		}
+		for _, use := range result.ToolUses {
+			blocks = append(blocks, map[string]any{"type": "tool_use", "id": use.ID, "name": use.Name, "input": json.RawMessage(use.Input)})
+		}
+		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: blocks})
+		results := make([]map[string]any, 0, len(result.ToolUses))
 		for _, use := range result.ToolUses {
 			out, toolErr := c.s.assistantExecuteTool(ctx, restaurantID, use.Name, use.Input)
 			if toolErr != nil {
 				out = botJSON(map[string]any{"error": toolErr.Error()})
 			}
-			toolMsgs = append(toolMsgs, assistantChatMessage{Role: "user", Content: "tool_result " + use.ID + ": " + out})
+			results = append(results, map[string]any{"type": "tool_result", "tool_use_id": use.ID, "content": out})
 		}
+		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "user", Content: results})
 	}
 	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, final.String()); err != nil {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist reply"})
