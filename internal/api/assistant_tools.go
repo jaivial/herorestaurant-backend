@@ -128,6 +128,9 @@ func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name str
 		return "", err
 	}
 	if !in.Confirmed {
+		if s.confirmationStore == nil {
+			s.confirmationStore = newConfirmationStore()
+		}
 		tok, err := s.confirmationStore.Issue("", fmt.Sprint(rid), name, "", "", 2*time.Minute)
 		if err != nil {
 			return "", err
