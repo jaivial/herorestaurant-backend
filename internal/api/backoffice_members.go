@@ -315,6 +315,13 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	affected, _ := result.RowsAffected()
+	if req.WhatsAppNumber != nil || req.Phone != nil {
+		_, err = tx.ExecContext(r.Context(), `UPDATE restaurant_members SET whatsapp_verified_at=NULL, whatsapp_verification_digest=NULL, whatsapp_verification_expires_at=NULL, whatsapp_verification_attempts=0 WHERE id=? AND restaurant_id=?`, memberID, a.ActiveRestaurantID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "No se pudo reiniciar la verificacion de WhatsApp")
+			return
+		}
+	}
 	if affected == 0 {
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
 			"success": false,
@@ -378,7 +385,7 @@ func (s *Server) handleBOMemberPhonePut(w http.ResponseWriter, r *http.Request) 
 
 	_, err = s.db.ExecContext(r.Context(), `
 		UPDATE restaurant_members
-		SET phone = ?, whatsapp_number = ?
+		SET phone = ?, whatsapp_number = ?, whatsapp_verified_at = NULL, whatsapp_verification_digest = NULL, whatsapp_verification_expires_at = NULL, whatsapp_verification_attempts = 0
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
 	`, phone, phone, memberID, a.ActiveRestaurantID)
 	if err != nil {

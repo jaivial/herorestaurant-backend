@@ -148,6 +148,21 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 			},"required":["booking_id","confirmed"]}`),
 		},
 		{
+			Name:        "get_member_schedule",
+			Description: "Consulta los turnos de trabajo del empleado identificado por su teléfono de WhatsApp. Solo devuelve sus propios turnos.",
+			InputSchema: botSchema(`{"type":"object","properties":{"week":{"type":"string","enum":["current","next"],"description":"Semana actual o siguiente (opcional)"},"date":{"type":"string","description":"Un día concreto (opcional)"},"date_from":{"type":"string","description":"Fecha inicial YYYY-MM-DD (opcional)"},"date_to":{"type":"string","description":"Fecha final YYYY-MM-DD (opcional)"},"from_date":{"type":"string","description":"Alias de date_from (opcional)"},"to_date":{"type":"string","description":"Alias de date_to (opcional)"}}}`),
+		},
+		{
+			Name:        "get_member_attendance",
+			Description: "Consulta el registro de fichajes (asistencia) del empleado identificado por su teléfono. Solo devuelve sus propios registros.",
+			InputSchema: botSchema(`{"type":"object","properties":{"week":{"type":"string","enum":["current","next"],"description":"Semana actual o siguiente (opcional)"},"date":{"type":"string","description":"Un día concreto (opcional)"},"date_from":{"type":"string","description":"Fecha inicial YYYY-MM-DD (opcional)"},"date_to":{"type":"string","description":"Fecha final YYYY-MM-DD (opcional)"},"from_date":{"type":"string","description":"Alias de date_from (opcional)"},"to_date":{"type":"string","description":"Alias de date_to (opcional)"}}}`),
+		},
+		{
+			Name:        "get_member_access",
+			Description: "Comprueba si el empleado tiene acceso al backoffice y si debe configurar o cambiar su contraseña. Nunca devuelve contraseñas.",
+			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+		},
+		{
 			Name:        "send_menu_buttons",
 			Description: "Envía un mensaje con botones de respuesta rápida al cliente (máximo 3 opciones).",
 			InputSchema: botSchema(`{"type":"object","properties":{"text":{"type":"string","description":"Texto del mensaje"},"choices":{"type":"array","items":{"type":"string"},"description":"Opciones de los botones"}},"required":["text","choices"]}`),

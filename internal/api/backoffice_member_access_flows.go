@@ -654,7 +654,7 @@ func (s *Server) sendMemberInvitation(ctx context.Context, restaurantID int, ema
 		results = append(results, boDeliveryAttempt{Channel: "email", Target: email, Sent: err == nil, Error: errorString(err)})
 	}
 	if strings.TrimSpace(phone) != "" {
-		err := s.sendWhatsAppMessage(ctx, restaurantID, phone, waText)
+		err := s.sendVerifiedMemberWhatsApp(ctx, restaurantID, phone, waText)
 		results = append(results, boDeliveryAttempt{Channel: "whatsapp", Target: phone, Sent: err == nil, Error: errorString(err)})
 	}
 	return results
@@ -672,7 +672,7 @@ func (s *Server) sendMemberPasswordReset(ctx context.Context, restaurantID int, 
 		results = append(results, boDeliveryAttempt{Channel: "email", Target: email, Sent: err == nil, Error: errorString(err)})
 	}
 	if strings.TrimSpace(phone) != "" {
-		err := s.sendWhatsAppMessage(ctx, restaurantID, phone, waText)
+		err := s.sendVerifiedMemberWhatsApp(ctx, restaurantID, phone, waText)
 		results = append(results, boDeliveryAttempt{Channel: "whatsapp", Target: phone, Sent: err == nil, Error: errorString(err)})
 	}
 	return results
@@ -1780,15 +1780,10 @@ func (s *Server) handleBOPasswordResetConfirm(w http.ResponseWriter, r *http.Req
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(r.Context(), `
-		UPDATE bo_users
-		SET password_hash = ?, must_change_password = 0
-		WHERE id = ?
-	`, string(hash), rec.BOUserID); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo actualizar password")
-		return
-	}
-
+	// Consume the token before changing the password.  The conditional UPDATE
+	// serializes concurrent confirmations: only the request that successfully
+	// claims the token may mutate the account (otherwise a losing request could
+	// overwrite the winner's password while reporting an invalid token).
 	res, err := tx.ExecContext(r.Context(), `
 		UPDATE bo_password_reset_tokens
 		SET used_at = NOW(), used_ip = ?, used_user_agent = ?
@@ -1804,6 +1799,15 @@ func (s *Server) handleBOPasswordResetConfirm(w http.ResponseWriter, r *http.Req
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Token de reset invalido o expirado"})
+		return
+	}
+
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE bo_users
+		SET password_hash = ?, must_change_password = 0
+		WHERE id = ?
+	`, string(hash), rec.BOUserID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo actualizar password")
 		return
 	}
 

@@ -3066,6 +3066,17 @@ func (s *Server) handleBOMembersWhatsAppSend(w http.ResponseWriter, r *http.Requ
 	}
 
 	phone := normalizeWhatsAppNumber(req.Phone)
+	if req.MemberID != nil {
+		var verifiedAt sql.NullTime
+		if qerr := s.db.QueryRowContext(r.Context(), `SELECT whatsapp_verified_at FROM restaurant_members WHERE restaurant_id = ? AND id = ? AND is_active = 1`, a.ActiveRestaurantID, *req.MemberID).Scan(&verifiedAt); qerr != nil && !errors.Is(qerr, sql.ErrNoRows) {
+			writeBOPremiumError(w, http.StatusInternalServerError, "WHATSAPP_SEND_FAILED", "No se pudo validar el teléfono")
+			return
+		}
+		if !verifiedAt.Valid {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "code": "PHONE_NOT_VERIFIED", "message": "Debes verificar el teléfono del miembro antes de enviar mensajes"})
+			return
+		}
+	}
 	if phone == "" && req.MemberID != nil {
 		var dbWhatsApp sql.NullString
 		var dbPhone sql.NullString

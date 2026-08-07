@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBotToolDefs_CoreToolsPresent(t *testing.T) {
@@ -24,6 +25,9 @@ func TestBotToolDefs_CoreToolsPresent(t *testing.T) {
 		"create_booking",
 		"cancel_booking",
 		"modify_booking",
+		"get_member_schedule",
+		"get_member_attendance",
+		"get_member_access",
 		"send_image",
 		"send_document",
 		"send_location",
@@ -100,5 +104,36 @@ func TestParseBotDateInput(t *testing.T) {
 	}
 	if _, err := parseBotDate("mañana"); err == nil {
 		t.Error("expected error for natural language date")
+	}
+}
+
+func TestBotMemberDateRangeAliases(t *testing.T) {
+	from, to, err := botMemberDateRange(json.RawMessage(`{"from_date":"15/05/2026","to_date":"18/05/2026"}`))
+	if err != nil || from != "2026-05-15" || to != "2026-05-18" {
+		t.Fatalf("aliases = %q, %q, %v", from, to, err)
+	}
+	from, to, err = botMemberDateRange(json.RawMessage(`{"date":"2026-05-20"}`))
+	if err != nil || from != "2026-05-20" || to != from {
+		t.Fatalf("date = %q, %q, %v", from, to, err)
+	}
+}
+
+func TestBotMemberDateRangeWeeks(t *testing.T) {
+	for _, week := range []string{"current", "next"} {
+		from, to, err := botMemberDateRange(json.RawMessage(`{"week":"` + week + `"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, _ := time.Parse("2006-01-02", from)
+		tt, _ := time.Parse("2006-01-02", to)
+		if f.Weekday() != time.Monday || tt.Sub(f) != 6*24*time.Hour {
+			t.Fatalf("%s = %s..%s", week, from, to)
+		}
+		if week == "next" && !f.After(time.Now().AddDate(0, 0, -1)) {
+			t.Fatalf("next week starts in past: %s", from)
+		}
+	}
+	if _, _, err := botMemberDateRange(json.RawMessage(`{"week":"later"}`)); err == nil {
+		t.Fatal("invalid week accepted")
 	}
 }

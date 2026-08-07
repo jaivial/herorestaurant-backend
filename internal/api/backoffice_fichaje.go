@@ -421,6 +421,8 @@ func (s *Server) handleBOFichajeState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBOFichajeStart(w http.ResponseWriter, r *http.Request) {
+	s.fichajeMu.Lock()
+	defer s.fichajeMu.Unlock()
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
@@ -584,6 +586,8 @@ func (s *Server) handleBOFichajeStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBOFichajeAdminStart(w http.ResponseWriter, r *http.Request) {
+	s.fichajeMu.Lock()
+	defer s.fichajeMu.Unlock()
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
@@ -1262,6 +1266,8 @@ func (s *Server) handleBOHorariosCalendar(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleBOHorariosAssign(w http.ResponseWriter, r *http.Request) {
+	s.scheduleMu.Lock()
+	defer s.scheduleMu.Unlock()
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
@@ -1359,6 +1365,7 @@ func (s *Server) handleBOHorariosAssign(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.broadcastBOFichajeEvent(a.ActiveRestaurantID, "schedule_updated", nil, &schedule)
+	s.notifyScheduleChange(a.ActiveRestaurantID, req.MemberID, schedule, false)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
@@ -1372,6 +1379,8 @@ type boHorariosUpdateRequest struct {
 }
 
 func (s *Server) handleBOHorariosUpdate(w http.ResponseWriter, r *http.Request) {
+	s.scheduleMu.Lock()
+	defer s.scheduleMu.Unlock()
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
@@ -1465,6 +1474,7 @@ func (s *Server) handleBOHorariosUpdate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.broadcastBOFichajeEvent(a.ActiveRestaurantID, "schedule_updated", nil, &schedule)
+	s.notifyScheduleChange(a.ActiveRestaurantID, schedule.MemberID, schedule, true)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,

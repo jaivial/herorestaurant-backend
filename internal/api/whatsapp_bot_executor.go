@@ -67,6 +67,12 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolCancelBooking(ctx, restaurantID, msg.Sender, input)
 	case "modify_booking":
 		return s.botToolModifyBooking(ctx, restaurantID, msg.Sender, input)
+	case "get_member_schedule":
+		return s.botToolMemberSchedule(ctx, restaurantID, msg.Sender, input)
+	case "get_member_attendance":
+		return s.botToolMemberAttendance(ctx, restaurantID, msg.Sender, input)
+	case "get_member_access":
+		return s.botToolMemberAccess(ctx, restaurantID, msg.Sender)
 	case "send_menu_buttons":
 		return s.botToolSendButtons(ctx, restaurantID, msg, input)
 	case "send_image", "send_document":
@@ -841,4 +847,265 @@ func botOverCapacity(limit, total, existing, want int) (over bool, free int) {
 	free = maxInt(0, limit-(total-existing))
 	over = limit <= 0 || (total-existing+want) > limit
 	return over, free
+}
+
+// botMemberForPhone resolves an active employee by either phone field. The
+// comparison is done in Go because existing installations store numbers in
+// national and E.164 formats inconsistently.
+func (s *Server) botMemberForPhone(ctx context.Context, restaurantID int, phone string) (int64, string, error) {
+	want := digitsOnly(phone)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, first_name, last_name, COALESCE(phone,''), COALESCE(whatsapp_number,'') FROM restaurant_members WHERE restaurant_id=? AND is_active=1`, restaurantID)
+	if err != nil {
+		return 0, "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var first, last, p, wp string
+		if err := rows.Scan(&id, &first, &last, &p, &wp); err != nil {
+			return 0, "", err
+		}
+		for _, candidate := range []string{p, wp} {
+			d := digitsOnly(candidate)
+			if d != "" && (d == want || strings.TrimPrefix(d, "34") == strings.TrimPrefix(want, "34")) {
+				return id, strings.TrimSpace(first + " " + last), nil
+			}
+		}
+	}
+	return 0, "", nil
+}
+
+func botMemberDateRange(input json.RawMessage) (string, string, error) {
+	var in struct {
+		Week     string `json:"week"`
+		Date     string `json:"date"`
+		DateFrom string `json:"date_from"`
+		DateTo   string `json:"date_to"`
+		FromDate string `json:"from_date"`
+		ToDate   string `json:"to_date"`
+	}
+	if err := json.Unmarshal(input, &in); err != nil {
+		return "", "", errors.New("parámetros inválidos")
+	}
+	// A week is always Monday-Sunday in the restaurant's local calendar.
+	// Explicit dates remain supported for backwards compatibility and take
+	// precedence when supplied alongside week.
+	fromRaw := strings.TrimSpace(in.DateFrom)
+	if fromRaw == "" {
+		fromRaw = strings.TrimSpace(in.FromDate)
+	}
+	toRaw := strings.TrimSpace(in.DateTo)
+	if toRaw == "" {
+		toRaw = strings.TrimSpace(in.ToDate)
+	}
+	if fromRaw == "" {
+		fromRaw = strings.TrimSpace(in.Date)
+	}
+	if fromRaw == "" && toRaw == "" && strings.TrimSpace(in.Week) != "" {
+		week := strings.ToLower(strings.TrimSpace(in.Week))
+		if week != "current" && week != "next" {
+			return "", "", errors.New(`week debe ser "current" o "next"`)
+		}
+		now := time.Now()
+		mondayOffset := (int(now.Weekday()) + 6) % 7
+		monday := now.AddDate(0, 0, -mondayOffset)
+		if week == "next" {
+			monday = monday.AddDate(0, 0, 7)
+		}
+		return monday.Format("2006-01-02"), monday.AddDate(0, 0, 6).Format("2006-01-02"), nil
+	}
+	if fromRaw == "" {
+		fromRaw = time.Now().Format("2006-01-02")
+	}
+	if toRaw == "" {
+		toRaw = fromRaw
+	}
+	var err error
+	from, err := parseBotDate(fromRaw)
+	if err != nil {
+		return "", "", err
+	}
+	to, err := parseBotDate(toRaw)
+	if err != nil {
+		return "", "", err
+	}
+	if from > to {
+		return "", "", errors.New("date_from no puede ser posterior a date_to")
+	}
+	return from, to, nil
+}
+
+func (s *Server) botToolMemberSchedule(ctx context.Context, restaurantID int, phone string, input json.RawMessage) (string, error) {
+	id, name, err := s.botMemberForPhone(ctx, restaurantID, phone)
+	if err != nil {
+		return botJSON(map[string]any{"error": "error consultando empleado"}), nil
+	}
+	if id == 0 {
+		return botJSON(map[string]any{"error": "no hay un empleado activo asociado a este teléfono"}), nil
+	}
+	from, to, err := botMemberDateRange(input)
+	if err != nil {
+		return botJSON(map[string]any{"error": err.Error()}), nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, DATE_FORMAT(work_date,'%Y-%m-%d'), TIME_FORMAT(start_time,'%H:%i'), TIME_FORMAT(end_time,'%H:%i'), COALESCE(notes,'') FROM member_work_schedules WHERE restaurant_id=? AND restaurant_member_id=? AND work_date BETWEEN ? AND ? ORDER BY work_date,start_time,id LIMIT 100`, restaurantID, id, from, to)
+	if err != nil {
+		return botJSON(map[string]any{"error": "error consultando horario"}), nil
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var sid int64
+		var date, start, end, note string
+		if err := rows.Scan(&sid, &date, &start, &end, &note); err != nil {
+			return botJSON(map[string]any{"error": "error leyendo horario"}), nil
+		}
+		out = append(out, map[string]any{"id": sid, "date": date, "start_time": start, "end_time": end, "notes": note})
+	}
+	return botJSON(map[string]any{"member": name, "date_from": from, "date_to": to, "schedules": out, "count": len(out)}), nil
+}
+
+func (s *Server) botToolMemberAttendance(ctx context.Context, restaurantID int, phone string, input json.RawMessage) (string, error) {
+	id, name, err := s.botMemberForPhone(ctx, restaurantID, phone)
+	if err != nil {
+		return botJSON(map[string]any{"error": "error consultando empleado"}), nil
+	}
+	if id == 0 {
+		return botJSON(map[string]any{"error": "no hay un empleado activo asociado a este teléfono"}), nil
+	}
+	from, to, err := botMemberDateRange(input)
+	if err != nil {
+		return botJSON(map[string]any{"error": err.Error()}), nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,DATE_FORMAT(work_date,'%Y-%m-%d'),COALESCE(TIME_FORMAT(start_time,'%H:%i'),''),COALESCE(TIME_FORMAT(end_time,'%H:%i'),''),minutes_worked,COALESCE(source,''),COALESCE(notes,'') FROM member_time_entries WHERE restaurant_id=? AND restaurant_member_id=? AND work_date BETWEEN ? AND ? ORDER BY work_date,start_time,id LIMIT 100`, restaurantID, id, from, to)
+	if err != nil {
+		return botJSON(map[string]any{"error": "error consultando asistencia"}), nil
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	total := 0
+	for rows.Next() {
+		var eid int64
+		var date, start, end, source, note string
+		var mins int
+		if err := rows.Scan(&eid, &date, &start, &end, &mins, &source, &note); err != nil {
+			return botJSON(map[string]any{"error": "error leyendo asistencia"}), nil
+		}
+		total += mins
+		out = append(out, map[string]any{"id": eid, "date": date, "start_time": start, "end_time": end, "minutes_worked": mins, "source": source, "notes": note})
+	}
+	return botJSON(map[string]any{"member": name, "date_from": from, "date_to": to, "entries": out, "count": len(out), "total_minutes": total}), nil
+}
+
+func (s *Server) botToolMemberAccess(ctx context.Context, restaurantID int, phone string) (string, error) {
+	id, name, err := s.botMemberForPhone(ctx, restaurantID, phone)
+	if err != nil {
+		return botJSON(map[string]any{"error": "error consultando empleado"}), nil
+	}
+	if id == 0 {
+		return botJSON(map[string]any{"error": "no hay un empleado activo asociado a este teléfono"}), nil
+	}
+	var userID sql.NullInt64
+	var email sql.NullString
+	var must sql.NullBool
+	err = s.db.QueryRowContext(ctx, `SELECT m.bo_user_id,COALESCE(u.email,''),COALESCE(u.must_change_password,0) FROM restaurant_members m LEFT JOIN bo_users u ON u.id=m.bo_user_id WHERE m.restaurant_id=? AND m.id=?`, restaurantID, id).Scan(&userID, &email, &must)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return botJSON(map[string]any{"error": "error consultando acceso"}), nil
+	}
+	return botJSON(map[string]any{"member": name, "has_access": userID.Valid && userID.Int64 > 0, "email": email.String, "must_change_password": must.Bool, "password": nil}), nil
+}
+
+// botHandleAttendanceCommand executes the small, deliberately non-LLM clock
+// command surface exposed over WhatsApp. Exact commands only are accepted.
+// Returning false means the message belongs to the normal conversational bot.
+// botAttendanceCommand recognizes the deliberately small, exact command
+// surface exposed over WhatsApp. It is kept independent from Server so command
+// recognition can be tested without a database or provider connection.
+func botAttendanceCommand(text string) (string, bool) {
+	command := strings.ToLower(strings.TrimSpace(text))
+	command = strings.TrimPrefix(command, "/")
+	switch command {
+	case "start", "iniciar":
+		return "start", true
+	case "stop", "detener":
+		return "stop", true
+	case "status", "estado", "fichaje":
+		return "status", true
+	default:
+		return "", false
+	}
+}
+
+func (s *Server) botHandleAttendanceCommand(ctx context.Context, restaurantID int, msg botWebhookMessage) bool {
+	command, ok := botAttendanceCommand(msg.Text)
+	if !ok {
+		return false
+	}
+	id, _, err := s.botMemberForPhone(ctx, restaurantID, msg.Sender)
+	if err != nil || id == 0 {
+		s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "No hay un empleado activo asociado a este teléfono.")
+		return true
+	}
+	entitled, entitlementErr := s.hasActiveRecurringFeature(ctx, restaurantID, boPremiumWhatsAppFeatureKey)
+	if entitlementErr != nil || !entitled {
+		s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "El fichaje por WhatsApp no está habilitado para este restaurante.")
+		return true
+	}
+	var verified bool
+	if err := s.db.QueryRowContext(ctx, `SELECT whatsapp_verified_at IS NOT NULL FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1`, restaurantID, id).Scan(&verified); err != nil || !verified {
+		s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "Debes verificar tu número de WhatsApp antes de fichar.")
+		return true
+	}
+	// Serialize check-then-write operations, as the backoffice handlers do.
+	s.fichajeMu.Lock()
+	defer s.fichajeMu.Unlock()
+	var entryID int64
+	var workDate, start string
+	err = s.db.QueryRowContext(ctx, `SELECT id, DATE_FORMAT(work_date,'%Y-%m-%d'), TIME_FORMAT(start_time,'%H:%i')
+		FROM member_time_entries WHERE restaurant_id=? AND restaurant_member_id=? AND end_time IS NULL ORDER BY id DESC LIMIT 1`, restaurantID, id).Scan(&entryID, &workDate, &start)
+	active := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "No se ha podido consultar el fichaje.")
+		return true
+	}
+
+	switch command {
+	case "start", "iniciar":
+		if active {
+			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "Ya tienes un fichaje activo desde "+start+".")
+			return true
+		}
+		now := time.Now().In(boMadridTZ)
+		res, e := s.db.ExecContext(ctx, `INSERT INTO member_time_entries (restaurant_member_id,restaurant_id,work_date,start_time,end_time,minutes_worked,source) VALUES (?,?,?,?,NULL,0,'whatsapp')`, id, restaurantID, now.Format("2006-01-02"), now.Format("15:04:05"))
+		if e != nil {
+			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "No se ha podido iniciar el fichaje.")
+		} else {
+			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "Fichaje iniciado a las "+now.Format("15:04")+".")
+			_ = res
+		}
+	case "stop", "detener":
+		if !active {
+			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "No tienes un fichaje activo.")
+			return true
+		}
+		now := time.Now().In(boMadridTZ)
+		_, e := s.db.ExecContext(ctx, `UPDATE member_time_entries SET end_time=?, minutes_worked=GREATEST(0,TIMESTAMPDIFF(MINUTE,CONCAT(work_date,' ',start_time),?)), source='whatsapp' WHERE id=? AND restaurant_id=? AND restaurant_member_id=? AND end_time IS NULL`, now.Format("15:04:05"), now.Format("2006-01-02 15:04:05"), entryID, restaurantID, id)
+		if e != nil {
+			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "No se ha podido detener el fichaje.")
+		} else {
+			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "Fichaje detenido a las "+now.Format("15:04")+".")
+		}
+	case "status", "estado", "fichaje":
+		if active {
+			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "Tienes un fichaje activo desde "+start+" del "+workDate+".")
+		} else {
+			s.botSendAttendanceReply(ctx, restaurantID, msg.Sender, "No tienes un fichaje activo.")
+		}
+	}
+	return true
+}
+
+func (s *Server) botSendAttendanceReply(ctx context.Context, restaurantID int, sender, text string) {
+	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && gw.SendText(ctx, sender, text) == nil {
+		s.botSaveMessage(ctx, restaurantID, sender, "assistant", text, "attendance")
+	}
 }

@@ -51,6 +51,7 @@ type Config struct {
 	OpenAIMaxInputBytes         int
 	OpenAIMaxOutputBytes        int
 	OpenAIConcurrency           int
+	PreShiftReminderMinutes     int
 	MiniMaxAPIKey               string
 	MiniMaxBaseURL              string
 	MiniMaxModel                string
@@ -122,6 +123,7 @@ func Load() Config {
 		OpenAIMaxInputBytes:         getenvIntFirst([]string{"WAVESPEED_IMAGE_MAX_INPUT_BYTES", "OPENAI_IMAGE_MAX_INPUT_BYTES"}, 8<<20, 1<<20, 32<<20),
 		OpenAIMaxOutputBytes:        getenvIntFirst([]string{"WAVESPEED_IMAGE_MAX_OUTPUT_BYTES", "OPENAI_IMAGE_MAX_OUTPUT_BYTES"}, 8<<20, 64*1024, 64<<20),
 		OpenAIConcurrency:           getenvIntFirst([]string{"WAVESPEED_IMAGE_CONCURRENCY", "OPENAI_IMAGE_CONCURRENCY", "OPENAI_IMAGE_EDIT_CONCURRENCY"}, 2, 1, 32),
+		PreShiftReminderMinutes:     getenvIntFirst([]string{"PRE_SHIFT_REMINDER_MINUTES", "PRESHIFT_REMINDER_MINUTES"}, 10, 5, 10),
 		MiniMaxAPIKey:               strings.TrimSpace(os.Getenv("MINIMAX_API_KEY")),
 		MiniMaxBaseURL:              strings.TrimRight(getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic"), "/"),
 		MiniMaxModel:                getenv("MINIMAX_MODEL", "MiniMax-M3"),

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
@@ -32,18 +33,23 @@ type Server struct {
 	comidaAIHub           *boComidaAIHub
 	whatsappConnectionHub *boWhatsAppConnectionHub
 	rateMu                sync.Mutex
-	rateLimit             map[string]*rateLimitState
-	botSeenMu             sync.Mutex
-	botSeen               map[string]int64
-	botCapMu              sync.Mutex
-	botCapDay             string
-	botCapCount           map[int]int
-	botSem                chan struct{} // bounds concurrent inbound agent turns
-	provisionMu           sync.Mutex    // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
-	instatic              *instaticManager
-	siteBuilderHub        *siteBuilderWSHub
-	assistantRateMu       sync.Mutex
-	assistantRateBuckets  map[string]*assistantRateBucket
+	// fichajeMu serializes check-then-write clock operations. The active-entry
+	// invariant must hold even when two kiosk requests arrive concurrently.
+	fichajeMu sync.Mutex
+	// scheduleMu protects overlap validation followed by schedule writes.
+	scheduleMu           sync.Mutex
+	rateLimit            map[string]*rateLimitState
+	botSeenMu            sync.Mutex
+	botSeen              map[string]int64
+	botCapMu             sync.Mutex
+	botCapDay            string
+	botCapCount          map[int]int
+	botSem               chan struct{} // bounds concurrent inbound agent turns
+	provisionMu          sync.Mutex    // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
+	instatic             *instaticManager
+	siteBuilderHub       *siteBuilderWSHub
+	assistantRateMu      sync.Mutex
+	assistantRateBuckets map[string]*assistantRateBucket
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -69,6 +75,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	s.instatic.StartSupervisor()
 	s.siteBuilderHub = newSiteBuilderWSHub()
 	go s.runBOFichajeAutoCutLoop()
+	go s.runPreShiftReminderLoop(context.Background())
 	return s
 }
 
@@ -628,6 +635,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/members/{id}/compensations/{compensationId}", s.handleBOMemberCompensationPatch)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Delete("/members/{id}/compensations/{compensationId}", s.handleBOMemberCompensationDelete)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Put("/members/{id}/phone", s.handleBOMemberPhonePut)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/whatsapp/verification/send", s.handleBOMemberWhatsAppVerificationSend)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/whatsapp/verification/confirm", s.handleBOMemberWhatsAppVerificationConfirm)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/phone/verification/send", s.handleBOMemberWhatsAppVerificationSend)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/phone/verification/confirm", s.handleBOMemberWhatsAppVerificationConfirm)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/avatar", s.handleBOMemberAvatarUpload)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/stats", s.handleBOMemberStats)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/stats-year", s.handleBOMemberStatsYear)

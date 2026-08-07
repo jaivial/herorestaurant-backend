@@ -357,6 +357,14 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Attendance commands are handled locally and never sent to the LLM. This
+	// prevents prompt injection and guarantees that clock operations are scoped
+	// to the sender's active member record and this restaurant.
+	if handled := s.botHandleAttendanceCommand(r.Context(), restaurantID, msg); handled {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "attendanceCommand": true})
+		return
+	}
+
 	// Process in background (bounded): provider webhooks time out quickly. A
 	// recover() keeps one bad turn from crashing the whole multi-tenant process.
 	select {
