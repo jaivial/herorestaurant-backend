@@ -18,6 +18,10 @@ func assistantCatalogToolDefs() []assistantToolDef {
 		{Name: "catalog_update", Description: "Actualiza recurso del restaurante activo. Requiere confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string"},"id":{"type":"integer"},"name":{"type":"string"},"description":{"type":"string"},"price":{"type":"number"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["resource","id","confirmed"]}`)},
 		{Name: "catalog_delete", Description: "Elimina/desactiva recurso del restaurante activo. Requiere confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string"},"id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["resource","id","confirmed"]}`)},
 		{Name: "analytics_report", Description: "Devuelve métricas y series del restaurante activo para gráficos.", InputSchema: json.RawMessage(`{"type":"object","properties":{"metric":{"type":"string","enum":["bookings","revenue","products","stock"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["metric"]}`)},
+		{Name: "schedules_list", Description: "Lista horarios laborales del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"limit":{"type":"integer"}}}`)},
+		{Name: "customers_list", Description: "Lista clientes y fuentes del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"search":{"type":"string"},"limit":{"type":"integer"}}}`)},
+		{Name: "stock_items_list", Description: "Lista artículos de stock del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"search":{"type":"string"},"limit":{"type":"integer"}}}`)},
+		{Name: "pos_visits_list", Description: "Lista visitas POS del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"status":{"type":"string"},"limit":{"type":"integer"}}}`)},
 	}
 }
 
@@ -41,6 +45,9 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return "", err
+	}
+	if strings.HasSuffix(name, "_list") && name != "catalog_list" {
+		return s.assistantTypedDomainList(ctx, rid, name, raw)
 	}
 	spec, ok := assistantCatalogResources()[strings.ToLower(in.Resource)]
 	if !ok {
@@ -152,4 +159,70 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		return botJSON(map[string]any{"deleted": n == 1}), nil
 	}
 	return "", fmt.Errorf("tool no soportada")
+}
+
+// assistantTypedDomainList provides read-only, tenant-scoped domain queries.
+// Tables and columns are fixed here (never supplied by the model).
+func (s *Server) assistantTypedDomainList(ctx context.Context, rid int, name string, raw json.RawMessage) (string, error) {
+	var in struct {
+		Search, Date, Status string
+		Limit                int
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return "", err
+	}
+	if in.Limit < 1 || in.Limit > 100 {
+		in.Limit = 50
+	}
+	var q string
+	args := []any{rid}
+	switch name {
+	case "schedules_list":
+		q = `SELECT id,work_date,start_time,end_time,notes FROM member_work_schedules WHERE restaurant_id=?`
+		if in.Date != "" {
+			q += ` AND work_date=?`
+			args = append(args, in.Date)
+		}
+	case "customers_list":
+		q = `SELECT id,name,email,phone FROM analytics_customers WHERE restaurant_id=?`
+		if in.Search != "" {
+			q += ` AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)`
+			v := "%" + in.Search + "%"
+			args = append(args, v, v, v)
+		}
+	case "stock_items_list":
+		q = `SELECT id,name,base_unit,kind,status FROM stock_items WHERE restaurant_id=?`
+		if in.Search != "" {
+			q += ` AND name LIKE ?`
+			args = append(args, "%"+in.Search+"%")
+		}
+	case "pos_visits_list":
+		q = `SELECT id,channel,service_date,status,covers FROM pos_visits WHERE restaurant_id=?`
+		if in.Date != "" {
+			q += ` AND service_date=?`
+			args = append(args, in.Date)
+		}
+		if in.Status != "" {
+			q += ` AND status=?`
+			args = append(args, in.Status)
+		}
+	default:
+		return "", fmt.Errorf("herramienta desconocida: %s", name)
+	}
+	q += fmt.Sprintf(" ORDER BY id DESC LIMIT %d", in.Limit)
+	rows, e := s.db.QueryContext(ctx, q, args...)
+	if e != nil {
+		return "", e
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id int
+		var vals [4]any
+		if e = rows.Scan(&id, &vals[0], &vals[1], &vals[2], &vals[3]); e != nil {
+			return "", e
+		}
+		out = append(out, map[string]any{"id": id, "value_1": vals[0], "value_2": vals[1], "value_3": vals[2], "value_4": vals[3]})
+	}
+	return botJSON(map[string]any{"items": out, "tool": name}), rows.Err()
 }
