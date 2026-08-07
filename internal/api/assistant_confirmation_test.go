@@ -25,3 +25,12 @@ func TestConfirmationBinding(t *testing.T) {
 		t.Fatal("cross tenant token accepted")
 	}
 }
+
+func TestConfirmationArgumentsCanonicalAndBound(t *testing.T) {
+	s := newConfirmationStore()
+	a := confirmationArguments([]byte(`{"booking_id":4,"confirmed":false}`))
+	tok, _ := s.Issue("u", "r", "delete_booking", a, "sid", time.Minute)
+	if e := s.Consume(tok, "u", "r", "delete_booking", confirmationArguments([]byte(`{"booking_id":5,"confirmed":true,"confirmation_token":"x"}`)), "sid"); e == nil {
+		t.Fatal("argument change accepted")
+	}
+}
