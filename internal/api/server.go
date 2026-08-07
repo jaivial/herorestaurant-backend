@@ -50,6 +50,7 @@ type Server struct {
 	siteBuilderHub       *siteBuilderWSHub
 	assistantRateMu      sync.Mutex
 	assistantRateBuckets map[string]*assistantRateBucket
+	confirmationStore    *confirmationStore
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -70,6 +71,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		whatsappConnectionHub: newBOWAConnectionHub(),
 		rateLimit:             make(map[string]*rateLimitState),
 		botSem:                make(chan struct{}, botMaxConcurrentTurns),
+		confirmationStore:     newConfirmationStore(),
 	}
 	s.instatic = newInstaticManager(db, cfg)
 	s.instatic.StartSupervisor()
