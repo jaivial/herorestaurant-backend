@@ -128,6 +128,7 @@ func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name str
 		return "", err
 	}
 	if !in.Confirmed {
+		lightweight := s.confirmationStore == nil
 		if s.confirmationStore == nil {
 			s.confirmationStore = newConfirmationStore()
 		}
