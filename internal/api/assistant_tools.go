@@ -76,6 +76,10 @@ func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID in
 	switch name {
 	case "catalog_list", "catalog_get", "catalog_create", "catalog_update", "catalog_delete":
 		return s.assistantCatalogTool(ctx, restaurantID, name, input)
+	case "schedules_list", "customers_list", "stock_items_list", "pos_visits_list",
+		"invoices_list", "recipes_list", "production_list", "waste_costs_list",
+		"restaurant_settings_get", "whatsapp_bot_config_get", "site_published_content_get":
+		return s.assistantCatalogTool(ctx, restaurantID, name, input)
 	case "analytics_report":
 		return s.assistantAnalyticsTool(ctx, restaurantID, input)
 	case "restaurant_info":
@@ -264,6 +268,18 @@ func assistantToolAllowed(a boAuth, tool string) bool {
 		section = "comida"
 	case "analytics_report":
 		section = "estadisticas"
+	case "schedules_list":
+		section = "horarios"
+	case "customers_list":
+		section = "reservas"
+	case "stock_items_list", "recipes_list", "production_list", "waste_costs_list":
+		section = "stock"
+	case "pos_visits_list", "pos_visit_create", "pos_ticket_create", "pos_payment_create", "pos_refund_create":
+		section = "pos"
+	case "invoices_list":
+		section = "facturas"
+	case "restaurant_settings_get", "whatsapp_bot_config_get", "site_published_content_get":
+		section = "plataforma"
 	default:
 		return false
 	}
