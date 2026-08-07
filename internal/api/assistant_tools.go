@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -101,12 +100,27 @@ func (s *Server) assistantBookingSeries(ctx context.Context, rid int, from, to s
 	return botJSON(map[string]any{"series": out}), rows.Err()
 }
 
+func (s *Server) assistantAudit(ctx context.Context, restaurantID int, action, entity string, entityID int, after any) {
+	// Auditing must never make a successful assistant operation fail. The table is
+	// installed by the base migration, but this also keeps older installations
+	// compatible while they are being upgraded.
+	var payload any
+	if after != nil {
+		if b, err := json.Marshal(after); err == nil {
+			payload = string(b)
+		}
+	}
+	_, _ = s.db.ExecContext(ctx, `INSERT INTO audit_log (restaurant_id,action,entity,entity_id,after_json) VALUES (?,?,?,?,?)`, restaurantID, action, entity, fmt.Sprint(entityID), payload)
+}
+
 func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name string, input json.RawMessage) (string, error) {
 	var in struct {
-		BookingID                int `json:"booking_id"`
-		Date, Time, CustomerName string
-		People                   int
-		Confirmed                bool
+		BookingID    int    `json:"booking_id"`
+		Date         string `json:"date"`
+		Time         string `json:"time"`
+		CustomerName string `json:"name"`
+		People       int    `json:"people"`
+		Confirmed    bool   `json:"confirmed"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", err
@@ -124,23 +138,36 @@ func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name str
 			return "", err
 		}
 		id, _ := res.LastInsertId()
+		s.assistantAudit(ctx, rid, "CREATE", "booking", int(id), map[string]any{"date": in.Date, "time": in.Time, "people": in.People, "name": in.CustomerName})
 		return botJSON(map[string]any{"created": true, "booking_id": id}), nil
 	case "update_booking":
 		if in.BookingID < 1 {
 			return "", fmt.Errorf("booking_id inválido")
+		}
+		if in.Date == "" && in.Time == "" && in.People < 1 {
+			return "", fmt.Errorf("se requiere al menos un cambio")
 		}
 		res, err := s.db.ExecContext(ctx, `UPDATE bookings SET reservation_date=COALESCE(NULLIF(?,''),reservation_date), reservation_time=COALESCE(NULLIF(?,''),reservation_time), party_size=CASE WHEN ? > 0 THEN ? ELSE party_size END WHERE restaurant_id=? AND id=?`, in.Date, in.Time, in.People, in.People, rid, in.BookingID)
 		if err != nil {
 			return "", err
 		}
 		n, _ := res.RowsAffected()
+		if n == 1 {
+			s.assistantAudit(ctx, rid, "UPDATE", "booking", in.BookingID, map[string]any{"date": in.Date, "time": in.Time, "people": in.People})
+		}
 		return botJSON(map[string]any{"updated": n == 1, "booking_id": in.BookingID}), nil
 	case "delete_booking":
+		if in.BookingID < 1 {
+			return "", fmt.Errorf("booking_id inválido")
+		}
 		res, err := s.db.ExecContext(ctx, `UPDATE bookings SET status='cancelled' WHERE restaurant_id=? AND id=?`, rid, in.BookingID)
 		if err != nil {
 			return "", err
 		}
 		n, _ := res.RowsAffected()
+		if n == 1 {
+			s.assistantAudit(ctx, rid, "DELETE", "booking", in.BookingID, map[string]any{"status": "cancelled"})
+		}
 		return botJSON(map[string]any{"deleted": n == 1, "booking_id": in.BookingID}), nil
 	}
 	return "", fmt.Errorf("mutation inválida")
