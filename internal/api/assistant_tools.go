@@ -245,28 +245,47 @@ func assistantToolWrites(name string) bool {
 	return false
 }
 
-
 // assistantToolAllowed maps Forky tools to the same section permissions exposed
 // by boAuth. Explicit SectionAccess is authoritative; otherwise role defaults
 // are used. Writes additionally require the section's write capability.
 func assistantToolAllowed(a boAuth, tool string) bool {
 	section, write := "", assistantToolWrites(tool)
 	switch tool {
-	case "restaurant_info", "bookings_summary", "restaurant_query", "create_booking", "update_booking", "delete_booking": section = "reservas"
-	case "catalog_list", "catalog_get": section = "comida"
-	case "catalog_create", "catalog_update", "catalog_delete": section = "comida"
-	case "analytics_report": section = "estadisticas"
-	default: return false
+	case "restaurant_info", "bookings_summary", "restaurant_query", "create_booking", "update_booking", "delete_booking":
+		section = "reservas"
+	case "catalog_list", "catalog_get":
+		section = "comida"
+	case "catalog_create", "catalog_update", "catalog_delete":
+		section = "comida"
+	case "analytics_report":
+		section = "estadisticas"
+	default:
+		return false
 	}
-	role := strings.ToLower(strings.TrimSpace(a.Role)); if role == "" { role = strings.ToLower(strings.TrimSpace(a.User.Role)) }
+	role := strings.ToLower(strings.TrimSpace(a.Role))
+	if role == "" {
+		role = strings.ToLower(strings.TrimSpace(a.User.Role))
+	}
 	allowed := map[string]bool{}
-	for _, x := range a.User.SectionAccess { allowed[strings.ToLower(strings.TrimSpace(x))] = true }
-	if len(allowed) == 0 {
-		if role == "root" || role == "admin" || role == "owner" { allowed[section] = true }
-		if role == "metre" { allowed["reservas"], allowed["comida"] = true, true }
-		if role == "jefe_cocina" { allowed["comida"] = true }
+	for _, x := range a.User.SectionAccess {
+		allowed[strings.ToLower(strings.TrimSpace(x))] = true
 	}
-	if !allowed[section] { return false }
-	if write && (role == "viewer" || role == "lectura" || role == "readonly" || role == "read_only" || role == "camarero") { return false }
+	if len(allowed) == 0 {
+		if role == "root" || role == "admin" || role == "owner" {
+			allowed[section] = true
+		}
+		if role == "metre" {
+			allowed["reservas"], allowed["comida"] = true, true
+		}
+		if role == "jefe_cocina" {
+			allowed["comida"] = true
+		}
+	}
+	if !allowed[section] {
+		return false
+	}
+	if write && (role == "viewer" || role == "lectura" || role == "readonly" || role == "read_only" || role == "camarero") {
+		return false
+	}
 	return true
 }
