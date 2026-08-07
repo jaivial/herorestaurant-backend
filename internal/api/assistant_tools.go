@@ -15,6 +15,10 @@ func assistantToolDefs() []assistantToolDef {
 		{Name: "restaurant_query", Description: "Consulta datos agregados seguros del restaurante activo. resource: bookings, menus o wines.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string","enum":["bookings","menus","wines"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["resource"]}`)},
 		{Name: "create_booking", Description: "Crea reserva solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","time","people","name","confirmed"]}`)},
 		{Name: "update_booking", Description: "Actualiza reserva del restaurante activo solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}`)},
+		{Name: "pos_visit_create", Description: "Abre una visita POS en el restaurante activo. Requiere confirmación.", InputSchema: json.RawMessage(`{"type":"object","properties":{"channel":{"type":"string"},"covers":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["channel","covers","confirmed"]}`)},
+		{Name: "pos_ticket_create", Description: "Crea un ticket POS para una visita propia. Requiere confirmación.", InputSchema: json.RawMessage(`{"type":"object","properties":{"visit_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["visit_id","confirmed"]}`)},
+		{Name: "pos_payment_create", Description: "Registra un pago POS en ticket del restaurante activo. Requiere confirmación.", InputSchema: json.RawMessage(`{"type":"object","properties":{"ticket_id":{"type":"integer"},"method":{"type":"string","enum":["CASH","CARD","BANK","OTHER"]},"amount_cents":{"type":"integer"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","method","amount_cents","idempotency_key","confirmed"]}`)},
+		{Name: "pos_refund_create", Description: "Reembolsa un ticket POS. Requiere confirmación.", InputSchema: json.RawMessage(`{"type":"object","properties":{"ticket_id":{"type":"integer"},"amount_cents":{"type":"integer"},"reason":{"type":"string"},"payment_method":{"type":"string","enum":["CASH","CARD","BANK","OTHER"]},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","amount_cents","reason","payment_method","idempotency_key","confirmed"]}`)},
 		{Name: "delete_booking", Description: "Cancela reserva solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}`)},
 	}
 	return append(defs, assistantCatalogToolDefs()...)
@@ -24,16 +28,10 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 	if len(input) > 64*1024 {
 		return "", fmt.Errorf("tool input demasiado grande")
 	}
-	if assistantToolWrites(name) {
-		if auth, ok := boAuthFromContext(ctx); ok {
-			role := strings.ToLower(strings.TrimSpace(auth.Role))
-			if role == "" {
-				role = strings.ToLower(strings.TrimSpace(auth.User.Role))
-			}
-			if role == "viewer" || role == "lectura" || role == "readonly" || role == "read_only" {
-				return "", fmt.Errorf("permiso insuficiente para %s", name)
-			}
-		}
+	// Authorize before touching the database. Missing backoffice auth is denied
+	// for assistant tools (public assistant requests use a separate path).
+	if auth, ok := boAuthFromContext(ctx); !ok || !assistantToolAllowed(auth, name) {
+		return "", fmt.Errorf("permiso insuficiente para %s", name)
 	}
 	started := time.Now()
 	out, err := s.assistantExecuteToolUnsafe(ctx, restaurantID, name, input)
@@ -97,6 +95,8 @@ func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID in
 		return botJSON(map[string]any{"total": total, "people": people, "date": in.Date}), nil
 	case "create_booking", "update_booking", "delete_booking":
 		return s.assistantBookingMutation(ctx, restaurantID, name, input)
+	case "pos_visit_create", "pos_ticket_create", "pos_payment_create", "pos_refund_create":
+		return s.assistantPOSMutation(ctx, restaurantID, name, input)
 	case "restaurant_query":
 		switch in.Resource {
 		case "bookings":
@@ -239,7 +239,34 @@ func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name str
 func assistantToolWrites(name string) bool {
 	switch name {
 	case "create_booking", "update_booking", "delete_booking", "catalog_create", "catalog_update", "catalog_delete":
+	case "pos_visit_create", "pos_ticket_create", "pos_payment_create", "pos_refund_create":
 		return true
 	}
 	return false
+}
+
+
+// assistantToolAllowed maps Forky tools to the same section permissions exposed
+// by boAuth. Explicit SectionAccess is authoritative; otherwise role defaults
+// are used. Writes additionally require the section's write capability.
+func assistantToolAllowed(a boAuth, tool string) bool {
+	section, write := "", assistantToolWrites(tool)
+	switch tool {
+	case "restaurant_info", "bookings_summary", "restaurant_query", "create_booking", "update_booking", "delete_booking": section = "reservas"
+	case "catalog_list", "catalog_get": section = "comida"
+	case "catalog_create", "catalog_update", "catalog_delete": section = "comida"
+	case "analytics_report": section = "estadisticas"
+	default: return false
+	}
+	role := strings.ToLower(strings.TrimSpace(a.Role)); if role == "" { role = strings.ToLower(strings.TrimSpace(a.User.Role)) }
+	allowed := map[string]bool{}
+	for _, x := range a.User.SectionAccess { allowed[strings.ToLower(strings.TrimSpace(x))] = true }
+	if len(allowed) == 0 {
+		if role == "root" || role == "admin" || role == "owner" { allowed[section] = true }
+		if role == "metre" { allowed["reservas"], allowed["comida"] = true, true }
+		if role == "jefe_cocina" { allowed["comida"] = true }
+	}
+	if !allowed[section] { return false }
+	if write && (role == "viewer" || role == "lectura" || role == "readonly" || role == "read_only" || role == "camarero") { return false }
+	return true
 }
