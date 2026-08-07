@@ -284,7 +284,20 @@ func (s *Server) provisionAndConnectRestaurantWhatsApp(ctx context.Context, rest
 		return nil, errors.New("telefono invalido")
 	}
 
-	st, err := s.gatewayForInstance(rec).Connect(ctx, normalizedPhone)
+	// Evolution starts a freshly-created instance in `connecting` before the
+	// explicit connect request arrives. Its controller returns the already
+	// generated QR in that state and silently ignores `number`, so a pairing
+	// login would receive a QR/raw protocol payload instead of a real code.
+	// Reset that transient connection first when the operator explicitly chose
+	// phone-code pairing.
+	gateway := s.gatewayForInstance(rec)
+	if normalizedPhone != "" && strings.EqualFold(rec.Provider, "evolution") && (rec.Status == "connecting" || rec.Status == "pending" || rec.Status == "provisioned") {
+		if err := gateway.Disconnect(ctx); err != nil {
+			log.Printf("[evolution] restaurant=%d reset pending pairing before phone-code login: %v", restaurantID, err)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	st, err := gateway.Connect(ctx, normalizedPhone)
 	if err != nil {
 		return nil, err
 	}
@@ -408,9 +421,22 @@ func (s *Server) refreshRestaurantUAZAPIConnectionStatus(ctx context.Context, re
 	}
 	qr := st.QR
 	pairCode := st.PairCode
+	if pairCode == "" { pairCode = rec.PairCode }
+	if qr == "" { qr = rec.QRPayload }
 	connectedPhone := st.ConnectedPhone
 	if connectedPhone == "" {
 		connectedPhone = rec.ConnectedPhone
+	}
+
+	// Evolution emits QR refresh events without always including the current
+	// device-linking code. Re-fetch the pairing response while connecting so a
+	// stale code is never persisted/displayed after a QR rotation.
+	if strings.EqualFold(rec.Provider, "evolution") &&
+		!isUAZAPIConnected(status) && pairCode == "" && connectedPhone != "" {
+		if refreshed, connectErr := s.gatewayForInstance(rec).Connect(ctx, connectedPhone); connectErr == nil {
+			if refreshed.PairCode != "" { pairCode = refreshed.PairCode }
+			if refreshed.QR != "" { qr = refreshed.QR }
+		}
 	}
 
 	if isUAZAPIConnected(status) {
@@ -946,6 +972,8 @@ func normalizeUAZAPIConnectionStatus(raw string) string {
 		return "connected"
 	case strings.Contains(raw, "connecting"):
 		return "connecting"
+	case strings.HasPrefix(raw, "failed_"):
+		return raw
 	case strings.Contains(raw, "fail"), strings.Contains(raw, "error"):
 		return "failed"
 	case strings.Contains(raw, "qr"), strings.Contains(raw, "pair"):
