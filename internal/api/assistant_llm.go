@@ -82,6 +82,9 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 	}
 	if len(tools) > 0 {
 		body["tools"] = tools
+		// Explicitly select automatic tool routing for MiniMax-compatible
+		// endpoints; some deployments otherwise silently ignore the tools array.
+		body["tool_choice"] = map[string]any{"type": "auto"}
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
