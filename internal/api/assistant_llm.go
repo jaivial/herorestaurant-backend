@@ -96,7 +96,7 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/v1/messages", bytes.NewReader(raw))
 	if err != nil {
-		return err
+		return assistantLLMResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -175,7 +175,7 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 						continue
 					}
 					if err := emit(chunk); err != nil {
-						return err
+						return result, err
 					}
 				}
 			}
@@ -184,11 +184,11 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 			if ev.Error != nil {
 				msg += ": " + ev.Error.Message
 			}
-			return errors.New(msg)
+			return result, errors.New(msg)
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return err
+		return result, err
 	}
 	return result, nil
 }
