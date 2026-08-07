@@ -10,10 +10,17 @@ import (
 
 func (s *Server) assistantPOSMutation(ctx context.Context, rid int, name string, input json.RawMessage) (string, error) {
 	var in struct {
-		VisitID, TicketID, Covers, AmountCents                 int
-		Channel, Method, PaymentMethod, Reason, IdempotencyKey string
-		Confirmed                                              bool
-		ConfirmationToken                                      string
+		VisitID           int    `json:"visit_id"`
+		TicketID          int    `json:"ticket_id"`
+		Covers            int    `json:"covers"`
+		AmountCents       int    `json:"amount_cents"`
+		Channel           string `json:"channel"`
+		Method            string `json:"method"`
+		PaymentMethod     string `json:"payment_method"`
+		Reason            string `json:"reason"`
+		IdempotencyKey    string `json:"idempotency_key"`
+		Confirmed         bool   `json:"confirmed"`
+		ConfirmationToken string `json:"confirmation_token"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", err
