@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -23,7 +24,16 @@ type evolutionGateway struct {
 var _ WhatsAppGateway = (*evolutionGateway)(nil)
 
 func (g *evolutionGateway) request(ctx context.Context, method, path string, payload any) (map[string]any, int, error) {
-	resp, code, _, err := g.s.uazapiJSONRequest(ctx, strings.TrimRight(g.baseURL, "/")+path, method, map[string]string{"apikey": g.apiKey}, payload)
+	baseURL := strings.TrimRight(g.baseURL, "/")
+	// Evolution's restricted CORS middleware validates Origin even for
+	// server-to-server requests. The staging deployment allows its own API
+	// origin (127.0.0.1:8108), so derive the origin from the configured URL
+	// instead of relying on the default empty Origin sent by net/http.
+	header := map[string]string{"apikey": g.apiKey}
+	if parsed, err := url.Parse(baseURL); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		header["Origin"] = parsed.Scheme + "://" + parsed.Host
+	}
+	resp, code, _, err := g.s.uazapiJSONRequest(ctx, baseURL+path, method, header, payload)
 	return resp, code, err
 }
 
@@ -96,7 +106,7 @@ func (g *evolutionGateway) Provision(ctx context.Context, instanceName string) (
 		integration = "WHATSAPP-BUSINESS"
 	}
 	resp, code, err := g.request(ctx, http.MethodPost, "/instance/create", map[string]any{
-		"instanceName": instanceName, "qrcode": true, "integration": integration,
+		"instanceName": instanceName, "qrcode": false, "integration": integration,
 	})
 	if err != nil {
 		return waProvision{}, err
@@ -115,7 +125,7 @@ func (g *evolutionGateway) Provision(ctx context.Context, instanceName string) (
 func (g *evolutionGateway) evoConnState(resp map[string]any) waConnState {
 	pick := func(m map[string]any, keys ...string) string {
 		for _, key := range keys {
-			if value, ok := m[key].(string); ok {
+			if value, ok := m[key].(string); ok && strings.TrimSpace(value) != "" {
 				return strings.TrimSpace(value)
 			}
 		}
@@ -124,29 +134,62 @@ func (g *evolutionGateway) evoConnState(resp map[string]any) waConnState {
 	instance, _ := resp["instance"].(map[string]any)
 	state := pick(resp, "state", "status", "connectionStatus")
 	if state == "" {
-		// connectionState nests under {instance:{state}}.
 		state = pick(instance, "state", "status", "connectionStatus")
 	}
+	qrcode, _ := resp["qrcode"].(map[string]any)
 	qr := pick(resp, "base64")
-	if qrcode, ok := resp["qrcode"].(map[string]any); qr == "" && ok {
+	if qr == "" {
 		qr = pick(qrcode, "base64")
 	}
-	return waConnState{
-		Status:         normalizeUAZAPIConnectionStatus(state),
-		ConnectedPhone: uazapiPickString(resp, "number", "phone", "owner"),
-		QR:             qr,
-		PairCode:       pick(resp, "pairingCode", "pairCode"),
+	// `code` is sometimes Evolution's raw QR protocol payload, whereas
+	// pairingCode/pairCode are user-facing numeric linking codes. Preserve a
+	// user-facing code even when a QR is also returned, but never expose raw
+	// `code` alongside a renderable QR.
+	pair := pick(resp, "pairingCode", "pairCode", "pair_code")
+	if pair == "" {
+		pair = pick(qrcode, "pairingCode", "pairCode", "pair_code")
 	}
+	// A nested qrcode.code is a provider pairing code. A top-level code is
+	// also accepted unless it is Evolution's raw `2@...` QR protocol payload.
+	if pair == "" {
+		pair = pick(qrcode, "code")
+	}
+	if pair == "" {
+		topCode := pick(resp, "code")
+		if !strings.HasPrefix(topCode, "2@") {
+			pair = topCode
+		}
+	}
+	phone := pick(resp, "number", "phone", "owner", "wuid")
+	if phone == "" {
+		phone = pick(instance, "number", "phone", "owner", "wuid")
+	}
+	return waConnState{Status: normalizeUAZAPIConnectionStatus(state), ConnectedPhone: phone, QR: qr, PairCode: formatEvolutionPairingCode(pair)}
+}
+
+// Evolution returns an eight-character code without punctuation, while its
+// own UI (and WhatsApp's linking screen) presents it as XXXX-XXXX.
+func formatEvolutionPairingCode(code string) string {
+	clean := strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(code), "-", ""), " ", "")
+	if len(clean) == 8 && !strings.Contains(clean, "@") {
+		return clean[:4] + "-" + clean[4:]
+	}
+	return strings.TrimSpace(code)
 }
 
 func (g *evolutionGateway) Connect(ctx context.Context, phone string) (waConnState, error) {
-	path := "/instance/connect/" + g.instanceName
+	path := "/instance/connect/" + url.PathEscape(g.instanceName)
 	if phone != "" {
-		path += "?number=" + phone
+		q := url.Values{}
+		q.Set("number", phone)
+		path += "?" + q.Encode()
 	}
-	resp, _, err := g.request(ctx, http.MethodGet, path, nil)
+	resp, code, err := g.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return waConnState{}, err
+	}
+	if code < 200 || code >= 300 {
+		return waConnState{}, fmt.Errorf("evolution connect http %d", code)
 	}
 	return g.evoConnState(resp), nil
 }
@@ -254,9 +297,10 @@ func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool)
 		return waConnEvent{}, false
 	}
 	var d struct {
-		State  string `json:"state"`
-		Status string `json:"status"`
-		QRCode struct {
+		State      string `json:"state"`
+		Status     string `json:"status"`
+		StatusCode int    `json:"statusCode"`
+		QRCode     struct {
 			Base64 string `json:"base64"`
 			Code   string `json:"code"`
 		} `json:"qrcode"`
@@ -268,13 +312,19 @@ func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool)
 	if status == "" {
 		status = d.Status
 	}
+	// Evolution may omit state/status on a failure event and only provide the
+	// numeric WhatsApp status code. Preserve the terminal failure so the UI does
+	// not remain stuck in "connecting" after a 401 logout.
+	if status == "" && d.StatusCode != 0 {
+		status = fmt.Sprintf("failed_%d", d.StatusCode)
+	}
 	qr := d.QRCode.Base64
 	out := waConnEvent{
 		SessionRef:     strings.TrimSpace(env.Instance),
 		Status:         normalizeUAZAPIConnectionStatus(status),
 		ConnectedPhone: uazapiPickString(raw, "number", "phone", "owner", "wuid"),
 		QR:             qr,
-		PairCode:       uazapiPickString(raw, "pairingCode", "pairCode"),
+		PairCode:       formatEvolutionPairingCode(uazapiPickString(raw, "pairingCode", "pairCode")),
 	}
 	if out.Status == "" && qr != "" {
 		out.Status = "pending"

@@ -11,8 +11,8 @@ import (
 )
 
 type evoReq struct {
-	method, path, apikey string
-	body                 map[string]any
+	method, path, query, apikey, origin string
+	body                                map[string]any
 }
 
 func fakeEvolution(t *testing.T, reqs *[]evoReq, responder func(path string) (int, string)) *httptest.Server {
@@ -21,7 +21,7 @@ func fakeEvolution(t *testing.T, reqs *[]evoReq, responder func(path string) (in
 		raw, _ := io.ReadAll(r.Body)
 		b := map[string]any{}
 		_ = json.Unmarshal(raw, &b)
-		*reqs = append(*reqs, evoReq{method: r.Method, path: r.URL.Path, apikey: r.Header.Get("apikey"), body: b})
+		*reqs = append(*reqs, evoReq{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, apikey: r.Header.Get("apikey"), origin: r.Header.Get("Origin"), body: b})
 		code, resp := http.StatusOK, `{}`
 		if responder != nil {
 			code, resp = responder(r.URL.Path)
@@ -34,6 +34,46 @@ func fakeEvolution(t *testing.T, reqs *[]evoReq, responder func(path string) (in
 
 func newEvoGW(url string) *evolutionGateway {
 	return &evolutionGateway{s: &Server{}, baseURL: url, apiKey: "owa_k1", instanceName: "nv_1"}
+}
+
+func TestEvo_ConnectPairing_UsesNumberQueryAndParsesCode(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, func(path string) (int, string) {
+		return 200, `{"state":"connecting","qrcode":{"base64":"data:image/png;base64,QR","code":"123-456-789"}}`
+	})
+	defer srv.Close()
+	st, err := newEvoGW(srv.URL).Connect(context.Background(), "+34 600/111222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reqs[0].path != "/instance/connect/nv_1" || reqs[0].query != "number=%2B34+600%2F111222" {
+		t.Fatalf("request=%+v", reqs[0])
+	}
+	if reqs[0].origin != strings.TrimRight(srv.URL, "/") {
+		t.Fatalf("origin=%q, want %q", reqs[0].origin, srv.URL)
+	}
+	if st.QR == "" || st.PairCode != "123-456-789" || st.Status != "connecting" {
+		t.Errorf("state=%+v", st)
+	}
+}
+
+func TestEvo_ConnectPairing_TopLevelPairingCode(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, func(path string) (int, string) { return 200, `{"pairingCode":"ABC123"}` })
+	defer srv.Close()
+	st, err := newEvoGW(srv.URL).Connect(context.Background(), "34600111222")
+	if err != nil || st.PairCode != "ABC123" {
+		t.Fatalf("state=%+v err=%v", st, err)
+	}
+}
+
+func TestEvo_Connect_ErrorOnNon2xx(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, func(path string) (int, string) { return 400, `{"message":"bad number"}` })
+	defer srv.Close()
+	if _, err := newEvoGW(srv.URL).Connect(context.Background(), "34600111222"); err == nil {
+		t.Fatal("expected connect error")
+	}
 }
 
 func TestEvo_SendText_BuildRequest(t *testing.T) {
@@ -102,6 +142,51 @@ func TestEvo_Provision_Sequence(t *testing.T) {
 	}
 	if reqs[0].path != "/instance/create" || reqs[0].body["integration"] != "WHATSAPP-BAILEYS" {
 		t.Errorf("create req=%+v", reqs[0])
+	}
+}
+
+func TestEvo_ConnectWithPhoneRequestsPairingCodeAndPreservesQR(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, func(path string) (int, string) {
+		return 200, `{"pairingCode":"ABCD-1234","base64":"data:image/png;base64,QR"}`
+	})
+	defer srv.Close()
+	st, err := newEvoGW(srv.URL).Connect(context.Background(), "34600111222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.PairCode != "ABCD-1234" || st.QR == "" {
+		t.Fatalf("state=%+v", st)
+	}
+	if reqs[0].path != "/instance/connect/nv_1" {
+		t.Fatalf("path=%q", reqs[0].path)
+	}
+}
+
+func TestEvo_ConnectEscapesPhoneQuery(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, nil)
+	defer srv.Close()
+	_, err := newEvoGW(srv.URL).Connect(context.Background(), "34600+111222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fakeEvolution stores only Path; inspect the query by using a dedicated
+	// server below would be overkill—the escaped plus must not become a space.
+	if reqs[0].query != "number=34600%2B111222" {
+		t.Fatalf("query=%q", reqs[0].query)
+	}
+}
+
+func TestEvo_ConnectAcceptsProviderCodeAlias(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, func(path string) (int, string) {
+		return 200, `{"code":"ABCD1234","base64":"QR"}`
+	})
+	defer srv.Close()
+	st, err := newEvoGW(srv.URL).Connect(context.Background(), "34600111222")
+	if err != nil || st.PairCode != "ABCD-1234" {
+		t.Fatalf("state=%+v err=%v", st, err)
 	}
 }
 
@@ -177,5 +262,56 @@ func TestEvo_ParseConnection_ConnectionUpdate(t *testing.T) {
 	// non-connection event ignored
 	if _, ok := (&evolutionGateway{}).ParseConnectionEvent([]byte(`{"event":"messages.upsert","instance":"x","data":{}}`)); ok {
 		t.Error("messages event should not parse as connection")
+	}
+}
+
+func TestEvo_ConnectWithPhoneReturnsPairCodeAndQR(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, func(path string) (int, string) {
+		return 200, `{"pairingCode":"ABCD-1234","base64":"data:image/png;base64,QR"}`
+	})
+	defer srv.Close()
+	st, err := newEvoGW(srv.URL).Connect(context.Background(), "34600111222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.PairCode != "ABCD-1234" || st.QR == "" {
+		t.Fatalf("state=%+v", st)
+	}
+	if reqs[0].query != "number=34600111222" {
+		t.Fatalf("query=%q", reqs[0].query)
+	}
+}
+
+func TestEvo_ConnectEscapesPhoneAndAcceptsCodeAlias(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, func(path string) (int, string) { return 200, `{"code":"ABCD1234"}` })
+	defer srv.Close()
+	st, err := newEvoGW(srv.URL).Connect(context.Background(), "34600+111222")
+	if err != nil || st.PairCode != "ABCD-1234" {
+		t.Fatalf("state=%+v err=%v", st, err)
+	}
+	if reqs[0].query != "number=34600%2B111222" {
+		t.Fatalf("query=%q", reqs[0].query)
+	}
+}
+
+func TestEvo_ProvisionDisablesQRCodeForPhonePairing(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, func(path string) (int, string) { return 201, `{"hash":"h1"}` })
+	defer srv.Close()
+	gw := newEvoGW(srv.URL)
+	if _, err := gw.Provision(context.Background(), "nv_1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reqs[0].body["qrcode"].(bool); !ok || got {
+		t.Fatalf("qrcode=%v", reqs[0].body["qrcode"])
+	}
+}
+
+func TestEvo_ConnectionEventStatusCodeDoesNotRemainConnecting(t *testing.T) {
+	ev, ok := (&evolutionGateway{}).ParseConnectionEvent([]byte(`{"event":"connection.update","instance":"nv_1","data":{"statusCode":401}}`))
+	if !ok || ev.Status != "failed_401" {
+		t.Fatalf("event=%+v ok=%v", ev, ok)
 	}
 }
