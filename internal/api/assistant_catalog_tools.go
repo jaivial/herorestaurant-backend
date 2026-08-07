@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // assistantCatalogToolDefs exposes the safe, common CRUD surface used by
@@ -35,6 +36,7 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		ID, Limit                           int
 		Price                               float64
 		Confirmed                           bool
+		ConfirmationToken                   string `json:"confirmation_token"`
 		Metric, DateFrom, DateTo            string
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
@@ -84,7 +86,19 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		return botJSON(map[string]any{"id": id, "name": n, "description": d, "price": p}), nil
 	case "catalog_create":
 		if !in.Confirmed {
-			return botJSON(map[string]any{"requires_confirmation": true}), nil
+			if s.confirmationStore == nil {
+				return botJSON(map[string]any{"requires_confirmation": true}), nil
+			}
+			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, "", "", 2*time.Minute)
+			if e != nil {
+				return "", e
+			}
+			return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
+		}
+		if s.confirmationStore != nil {
+			if e := s.confirmationStore.Consume(in.ConfirmationToken, "", fmt.Sprint(rid), name, "", ""); e != nil {
+				return "", e
+			}
 		}
 		res, e := s.db.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (restaurant_id,%s,%s,%s) VALUES (?,?,?,?)", spec.table, spec.name, spec.desc, spec.price), rid, in.Name, in.Description, in.Price)
 		if e != nil {
@@ -94,7 +108,19 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		return botJSON(map[string]any{"created": true, "id": id}), nil
 	case "catalog_update":
 		if !in.Confirmed {
-			return botJSON(map[string]any{"requires_confirmation": true}), nil
+			if s.confirmationStore == nil {
+				return botJSON(map[string]any{"requires_confirmation": true}), nil
+			}
+			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, "", "", 2*time.Minute)
+			if e != nil {
+				return "", e
+			}
+			return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
+		}
+		if s.confirmationStore != nil {
+			if e := s.confirmationStore.Consume(in.ConfirmationToken, "", fmt.Sprint(rid), name, "", ""); e != nil {
+				return "", e
+			}
 		}
 		res, e := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=COALESCE(NULLIF(?,''),%s),%s=COALESCE(NULLIF(?,''),%s),%s=? WHERE restaurant_id=? AND id=?", spec.table, spec.name, spec.name, spec.desc, spec.desc, spec.price), in.Name, in.Description, in.Price, rid, in.ID)
 		if e != nil {
@@ -104,7 +130,19 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		return botJSON(map[string]any{"updated": n == 1}), nil
 	case "catalog_delete":
 		if !in.Confirmed {
-			return botJSON(map[string]any{"requires_confirmation": true}), nil
+			if s.confirmationStore == nil {
+				return botJSON(map[string]any{"requires_confirmation": true}), nil
+			}
+			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, "", "", 2*time.Minute)
+			if e != nil {
+				return "", e
+			}
+			return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
+		}
+		if s.confirmationStore != nil {
+			if e := s.confirmationStore.Consume(in.ConfirmationToken, "", fmt.Sprint(rid), name, "", ""); e != nil {
+				return "", e
+			}
 		}
 		res, e := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=? WHERE restaurant_id=? AND id=?", spec.table, spec.softDelete), 0, rid, in.ID)
 		if e != nil {
