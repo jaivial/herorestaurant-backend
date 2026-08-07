@@ -257,7 +257,8 @@ func splitRunes(s string, n int) []string {
 // generic prompt.
 func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID int) string {
 	const base = "Eres Forky, el asistente de IA del restaurante. " +
-		"Responde en español, sé breve, amable y con un toque de humor. Eres el asistente de IA del restaurante."
+		"Responde en español, sé breve, amable y con un toque de humor. Eres el asistente de IA del restaurante. " +
+		"Para cualquier dato factual del restaurante (nombre, reservas, menú, stock, POS, clientes o analítica), DEBES usar la herramienta correspondiente antes de responder; nunca inventes datos ni digas que careces de acceso si existe una herramienta."
 	if s.db == nil || restaurantID <= 0 {
 		return base
 	}
