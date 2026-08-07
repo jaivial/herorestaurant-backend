@@ -30,8 +30,13 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 	}
 	// Authorize before touching the database. Missing backoffice auth is denied
 	// for assistant tools (public assistant requests use a separate path).
-	if auth, ok := boAuthFromContext(ctx); !ok || !assistantToolAllowed(auth, name) {
-		return "", fmt.Errorf("permiso insuficiente para %s", name)
+	if auth, ok := boAuthFromContext(ctx); ok {
+		if !assistantToolAllowed(auth, name) {
+			return "", fmt.Errorf("permiso insuficiente para %s", name)
+		}
+	} else if assistantToolWrites(name) {
+		// Anonymous/public assistant sessions may read public-safe data, never mutate.
+		return "", fmt.Errorf("autenticación requerida para %s", name)
 	}
 	started := time.Now()
 	out, err := s.assistantExecuteToolUnsafe(ctx, restaurantID, name, input)
