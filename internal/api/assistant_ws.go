@@ -326,6 +326,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 	} else {
 		restaurantID = c.restaurantID
 	}
+	if restaurantID <= 0 && sid > 0 {
+		_ = c.s.db.QueryRowContext(ctx, `SELECT COALESCE(restaurant_id,0) FROM assistant_sessions WHERE id=?`, sid).Scan(&restaurantID)
+	}
 	prompt := c.s.buildAssistantSystemPrompt(ctx, restaurantID)
 	_ = c.writeJSON(map[string]any{"type": "status", "state": "thinking"})
 	// Deterministic fallback for factual intents. Some compatible MiniMax
