@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -343,6 +344,8 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		answer := out
 		if toolName == "restaurant_info" {
 			answer = "El restaurante activo es: " + out
+		} else if toolName == "bookings_summary" {
+			answer = formatBookingsSummary(out)
 		}
 		_ = c.writeJSON(map[string]any{"type": "delta", "text": answer})
 		_, _ = c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, answer)
@@ -392,6 +395,27 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		return
 	}
 	_ = c.writeJSON(map[string]any{"type": "done"})
+}
+
+func formatBookingsSummary(raw string) string {
+	var data struct {
+		Date     string `json:"date"`
+		DateFrom string `json:"date_from"`
+		DateTo   string `json:"date_to"`
+		People   int    `json:"people"`
+		Total    int    `json:"total"`
+	}
+	if json.Unmarshal([]byte(raw), &data) != nil {
+		return raw
+	}
+	period := data.Date
+	if period == "" && data.DateFrom != "" && data.DateTo != "" {
+		period = data.DateFrom + " a " + data.DateTo
+	}
+	if period == "" {
+		period = "el periodo solicitado"
+	}
+	return fmt.Sprintf("Para %s hay %d reserva(s), con un total de %d persona(s).", period, data.Total, data.People)
 }
 
 func assistantDirectIntent(content string) (string, json.RawMessage, bool) {
