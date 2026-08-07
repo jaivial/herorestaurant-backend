@@ -17,6 +17,7 @@ func assistantToolDefs() []assistantToolDef {
 		{Name: "update_booking", Description: "Actualiza reserva del restaurante activo solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"confirmed":{"type":"boolean"}},"required":["booking_id","confirmed"]}`)},
 		{Name: "delete_booking", Description: "Cancela reserva solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"confirmed":{"type":"boolean"}},"required":["booking_id","confirmed"]}`)},
 	}
+	return append(defs, assistantCatalogToolDefs()...)
 }
 
 func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, name string, input json.RawMessage) (string, error) {
@@ -26,6 +27,10 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 	var in struct{ Resource, Date, DateFrom, DateTo string }
 	_ = json.Unmarshal(input, &in)
 	switch name {
+	case "catalog_list", "catalog_get", "catalog_create", "catalog_update", "catalog_delete":
+		return s.assistantCatalogTool(ctx, restaurantID, name, input)
+	case "analytics_report":
+		return s.assistantAnalyticsTool(ctx, restaurantID, input)
 	case "restaurant_info":
 		var name, phone string
 		err := s.db.QueryRowContext(ctx, "SELECT name, phone FROM restaurants WHERE id=?", restaurantID).Scan(&name, &phone)
