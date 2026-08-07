@@ -21,6 +21,21 @@ func assistantToolDefs() []assistantToolDef {
 }
 
 func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, name string, input json.RawMessage) (string, error) {
+	started := time.Now()
+	out, err := s.assistantExecuteToolUnsafe(ctx, restaurantID, name, input)
+	// Tool calls are auditable even when the underlying operation fails. Secrets
+	// are not persisted: input is recorded only as a bounded structural summary.
+	if s.db != nil {
+		result := map[string]any{"tool": name, "duration_ms": time.Since(started).Milliseconds(), "ok": err == nil}
+		if err != nil {
+			result["error"] = err.Error()
+		}
+		s.assistantAudit(ctx, restaurantID, "TOOL_CALL", "forky_tool", 0, result)
+	}
+	return out, err
+}
+
+func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID int, name string, input json.RawMessage) (string, error) {
 	if restaurantID <= 0 {
 		return "", fmt.Errorf("restaurante activo no disponible")
 	}
