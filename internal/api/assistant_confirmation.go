@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -56,4 +57,17 @@ func (s *confirmationStore) Consume(tok, user, restaurant, tool, args, session s
 	s.entries[k] = e
 	delete(s.entries, k)
 	return nil
+}
+
+// confirmationArguments canonicalizes model input while excluding the mutable
+// confirmation fields, binding the token to the actual operation arguments.
+func confirmationArguments(raw []byte) string {
+	var v map[string]any
+	if json.Unmarshal(raw, &v) != nil {
+		return string(raw)
+	}
+	delete(v, "confirmed")
+	delete(v, "confirmation_token")
+	b, _ := json.Marshal(v)
+	return string(b)
 }

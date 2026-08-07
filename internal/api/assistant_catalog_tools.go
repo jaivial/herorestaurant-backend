@@ -106,7 +106,7 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 			if s.confirmationStore == nil {
 				return botJSON(map[string]any{"requires_confirmation": true}), nil
 			}
-			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, "", "", 2*time.Minute)
+			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, confirmationArguments(input), "", 2*time.Minute)
 			if e != nil {
 				return "", e
 			}
@@ -128,7 +128,7 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 			if s.confirmationStore == nil {
 				return botJSON(map[string]any{"requires_confirmation": true}), nil
 			}
-			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, "", "", 2*time.Minute)
+			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, confirmationArguments(input), "", 2*time.Minute)
 			if e != nil {
 				return "", e
 			}
@@ -150,7 +150,7 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 			if s.confirmationStore == nil {
 				return botJSON(map[string]any{"requires_confirmation": true}), nil
 			}
-			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, "", "", 2*time.Minute)
+			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, confirmationArguments(input), "", 2*time.Minute)
 			if e != nil {
 				return "", e
 			}

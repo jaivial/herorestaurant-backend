@@ -29,7 +29,7 @@ func (s *Server) assistantPOSMutation(ctx context.Context, rid int, name string,
 		if s.confirmationStore == nil {
 			s.confirmationStore = newConfirmationStore()
 		}
-		tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, "", "", 2*time.Minute)
+		tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, confirmationArguments(input), "", 2*time.Minute)
 		if e != nil {
 			return "", e
 		}
