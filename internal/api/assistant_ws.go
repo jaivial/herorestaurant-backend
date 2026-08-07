@@ -15,14 +15,15 @@ import (
 
 // assistantClient is one Forky assistant WebSocket connection.
 type assistantClient struct {
-	s           *Server
-	auth        *boAuth // nil for anonymous public-site sessions
-	conn        *websocket.Conn
-	mu          sync.Mutex // guards writes + busy
-	busy        bool       // one generation in flight
-	ip          string
-	sessionID   int64
-	sessionInit bool
+	s            *Server
+	auth         *boAuth // nil for anonymous public-site sessions
+	conn         *websocket.Conn
+	mu           sync.Mutex // guards writes + busy
+	busy         bool       // one generation in flight
+	ip           string
+	sessionID    int64
+	sessionInit  bool
+	restaurantID int
 }
 
 // assistantClientIP extracts the caller IP for anonymous rate limiting.
@@ -243,7 +244,7 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 	} else {
 		res, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_sessions (restaurant_id, user_id) VALUES (?, ?)`, c.auth.ActiveRestaurantID, c.auth.User.ID)
 		if err != nil {
-		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to create session"})
+			_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to create session"})
 			return
 		}
 		sid, _ = res.LastInsertId()
@@ -251,6 +252,11 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 
 	c.sessionID = sid
 	c.sessionInit = true
+	if c.auth != nil {
+		c.restaurantID = c.auth.ActiveRestaurantID
+	} else {
+		_ = c.s.db.QueryRowContext(ctx, `SELECT COALESCE(restaurant_id, 0) FROM assistant_sessions WHERE id=?`, sid).Scan(&c.restaurantID)
+	}
 
 	hist, err := c.loadHistory(ctx, sid)
 	if err != nil {
@@ -314,20 +320,33 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		restaurantID = rid
 	}
 	prompt := c.s.buildAssistantSystemPrompt(ctx, restaurantID)
-
 	_ = c.writeJSON(map[string]any{"type": "status", "state": "thinking"})
-
-	var sb strings.Builder
-	err = c.s.assistantStream(ctx, prompt, hist, func(chunk string) error {
-		sb.WriteString(chunk)
-		return c.writeJSON(map[string]any{"type": "delta", "text": chunk})
-	})
-	if err != nil {
-		_ = c.writeJSON(map[string]any{"type": "error", "message": err.Error()})
-		return
+	toolDefs := assistantToolDefs()
+	toolMsgs := append([]assistantChatMessage{}, hist...)
+	var final strings.Builder
+	for turn := 0; turn < 6; turn++ {
+		result, callErr := c.s.assistantCall(ctx, prompt, toolMsgs, toolDefs, nil)
+		if callErr != nil {
+			_ = c.writeJSON(map[string]any{"type": "error", "message": callErr.Error()})
+			return
+		}
+		if result.Text != "" {
+			final.WriteString(result.Text)
+			_ = c.writeJSON(map[string]any{"type": "delta", "text": result.Text})
+		}
+		if len(result.ToolUses) == 0 {
+			break
+		}
+		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: result.Text})
+		for _, use := range result.ToolUses {
+			out, toolErr := c.s.assistantExecuteTool(ctx, restaurantID, use.Name, use.Input)
+			if toolErr != nil {
+				out = botJSON(map[string]any{"error": toolErr.Error()})
+			}
+			toolMsgs = append(toolMsgs, assistantChatMessage{Role: "user", Content: "tool_result " + use.ID + ": " + out})
+		}
 	}
-
-	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, sb.String()); err != nil {
+	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, final.String()); err != nil {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist reply"})
 		return
 	}

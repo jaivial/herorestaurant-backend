@@ -22,13 +22,40 @@ type assistantChatMessage struct {
 	Content string
 }
 
+// assistantToolDef uses Anthropic-compatible custom tools. Tool execution is
+// always server-side and tenant-scoped; model never receives raw DB access.
+type assistantToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
+
+type assistantToolUse struct {
+	ID    string
+	Name  string
+	Input json.RawMessage
+}
+
+type assistantLLMResult struct {
+	Text       string
+	ToolUses   []assistantToolUse
+	StopReason string
+}
+
 // assistantStream calls the MiniMax Anthropic-compatible Messages API
 // ({MINIMAX_BASE_URL}/v1/messages) with stream:true and relays text deltas to
 // emit. Long deltas are split into assistantMaxFrameRunes-rune chunks.
 func (s *Server) assistantStream(ctx context.Context, system string, msgs []assistantChatMessage, emit func(chunk string) error) error {
+	_, err := s.assistantCall(ctx, system, msgs, nil, emit)
+	return err
+}
+
+// assistantCall executes one model turn. Kept non-streaming for tool turns so
+// tool_use blocks can be persisted and answered before the next model turn.
+func (s *Server) assistantCall(ctx context.Context, system string, msgs []assistantChatMessage, tools []assistantToolDef, emit func(string) error) (result assistantLLMResult, err error) {
 	apiKey := strings.TrimSpace(s.cfg.MiniMaxAPIKey)
 	if apiKey == "" {
-		return errors.New("minimax api key not configured")
+		return assistantLLMResult{}, errors.New("minimax api key not configured")
 	}
 
 	model := strings.TrimSpace(s.cfg.AssistantModel)
@@ -48,15 +75,16 @@ func (s *Server) assistantStream(ctx context.Context, system string, msgs []assi
 		})
 	}
 
-	raw, err := json.Marshal(map[string]any{
-		"model":      model,
-		"max_tokens": maxTokens,
-		"system":     system,
-		"messages":   content,
-		"stream":     true,
-	})
+	body := map[string]any{
+		"model": model, "max_tokens": maxTokens, "system": system,
+		"messages": content, "stream": emit != nil,
+	}
+	if len(tools) > 0 {
+		body["tools"] = tools
+	}
+	raw, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return assistantLLMResult{}, err
 	}
 
 	timeout := s.cfg.AssistantTimeout
@@ -75,11 +103,11 @@ func (s *Server) assistantStream(ctx context.Context, system string, msgs []assi
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return assistantLLMResult{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("minimax http %d", resp.StatusCode)
+		return assistantLLMResult{}, fmt.Errorf("minimax http %d", resp.StatusCode)
 	}
 
 	sc := bufio.NewScanner(resp.Body)
@@ -94,7 +122,13 @@ func (s *Server) assistantStream(ctx context.Context, system string, msgs []assi
 			continue
 		}
 		var ev struct {
-			Type  string `json:"type"`
+			Type       string `json:"type"`
+			StopReason string `json:"stop_reason"`
+			Content    []struct {
+				Type, ID, Name string
+				Text           string          `json:"text"`
+				Input          json.RawMessage `json:"input"`
+			} `json:"content"`
 			Delta *struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -107,10 +141,39 @@ func (s *Server) assistantStream(ctx context.Context, system string, msgs []assi
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
 			continue // tolerate unknown frames
 		}
+		if ev.StopReason != "" {
+			result.StopReason = ev.StopReason
+		}
 		switch ev.Type {
+		case "message_start":
+		case "message_stop":
+		case "content_block_start":
+			for _, block := range ev.Content {
+				if block.Type == "tool_use" {
+					result.ToolUses = append(result.ToolUses, assistantToolUse{ID: block.ID, Name: block.Name, Input: block.Input})
+				}
+			}
+		case "message":
+			for _, block := range ev.Content {
+				if block.Type == "text" && block.Text != "" {
+					result.Text += block.Text
+					if emit != nil {
+						if err := emit(block.Text); err != nil {
+							return result, err
+						}
+					}
+				}
+				if block.Type == "tool_use" {
+					result.ToolUses = append(result.ToolUses, assistantToolUse{ID: block.ID, Name: block.Name, Input: block.Input})
+				}
+			}
 		case "content_block_delta":
 			if ev.Delta != nil && ev.Delta.Type == "text_delta" && ev.Delta.Text != "" {
 				for _, chunk := range splitRunes(ev.Delta.Text, assistantMaxFrameRunes) {
+					result.Text += chunk
+					if emit == nil {
+						continue
+					}
 					if err := emit(chunk); err != nil {
 						return err
 					}
@@ -127,7 +190,7 @@ func (s *Server) assistantStream(ctx context.Context, system string, msgs []assi
 	if err := sc.Err(); err != nil {
 		return err
 	}
-	return nil
+	return result, nil
 }
 
 // splitRunes splits s into chunks of at most n runes each (rune-safe).
