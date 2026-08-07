@@ -23,3 +23,15 @@ All booking mutations enforce restaurant ownership in SQL (`WHERE restaurant_id=
 ## Versioning
 
 Current definitions are version 1. Clients must use the structured `tool_use` / `tool_result` protocol exposed by the assistant WebSocket.
+
+
+## Read-only domain tools
+
+| Tool | Scope | Limit | Side effects |
+|---|---|---:|---|
+| `schedules_list` | active restaurant | 100 | none |
+| `customers_list` | active restaurant | 100 | none |
+| `stock_items_list` | active restaurant | 100 | none |
+| `pos_visits_list` | active restaurant | 100 | none |
+
+Read tools reject arbitrary table/column names and always bind the active restaurant in SQL.
