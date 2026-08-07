@@ -21,6 +21,9 @@ func assistantToolDefs() []assistantToolDef {
 }
 
 func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, name string, input json.RawMessage) (string, error) {
+	if len(input) > 64*1024 {
+		return "", fmt.Errorf("tool input demasiado grande")
+	}
 	if assistantToolWrites(name) {
 		if auth, ok := boAuthFromContext(ctx); ok {
 			role := strings.ToLower(strings.TrimSpace(auth.Role))
