@@ -22,9 +22,9 @@ Ramas actuales:
 
 ### 1. Ejecutar tests con toolchain compatible
 
-- Actualizar entorno CI/dev a Go 1.21 o superior; dependencias actuales requieren Go 1.21/1.22.
-- Ejecutar `go test ./...`.
-- Ejecutar `go vet ./...`.
+- Actualizar entorno CI/dev al toolchain declarado en `backend/go.mod` (actualmente Go 1.26; las dependencias usan APIs de Go moderno). El workflow `backend/.github/workflows/quality.yml` lo configura automáticamente.
+- Ejecutar `go test ./...` (CI).
+- Ejecutar `go vet ./...` (CI).
 - Ejecutar tests de integración con MySQL y migraciones reales.
 - Resolver cualquier discrepancia entre columnas asumidas por tools genéricas y esquema real.
 
