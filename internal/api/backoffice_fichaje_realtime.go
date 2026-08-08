@@ -14,7 +14,7 @@ import (
 // grouped by hour (0-23), plus the running total across the day.
 func (s *Server) posRevenueSnapshot(ctx context.Context, restaurantID int, date time.Time) (map[string]any, error) {
 	dateISO := date.Format("2006-01-02")
-	rows, err := s.db.QueryContext(ctx, `SELECT HOUR(t.opened_at),COALESCE(SUM(t.total_gross_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY HOUR(t.opened_at)`, restaurantID, dateISO)
+	rows, err := s.db.QueryContext(ctx, `SELECT HOUR(t.opened_at),COALESCE(SUM(t.total_gross_cents - t.refunded_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY HOUR(t.opened_at)`, restaurantID, dateISO)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +43,9 @@ func (s *Server) broadcastBOFichajeRevenue(restaurantID int, date time.Time) {
 	if s.fichajeHub == nil || restaurantID <= 0 {
 		return
 	}
-	snapshot, err := s.posRevenueSnapshot(context.Background(), restaurantID, date)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	snapshot, err := s.posRevenueSnapshot(ctx, restaurantID, date)
 	if err != nil {
 		return
 	}
@@ -124,8 +126,8 @@ func (s *Server) handleBOPOSTicketsSeries(w http.ResponseWriter, r *http.Request
 	dateISO := date.Format("2006-01-02")
 
 	// Revenue by 5' bucket: open tickets grouped by the 5-minute bucket of
-	// their open time.
-	revRows, err := s.db.QueryContext(r.Context(), `SELECT DATE_FORMAT(t.opened_at,'%H:%i'),COALESCE(SUM(t.total_gross_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY DATE_FORMAT(t.opened_at,'%H:%i')`, a.ActiveRestaurantID, dateISO)
+	// their open time (net of refunds).
+	revRows, err := s.db.QueryContext(r.Context(), `SELECT TIME_FORMAT(SEC_TO_TIME(FLOOR(TIME_TO_SEC(TIME(t.opened_at))/300)*300),'%H:%i'),COALESCE(SUM(t.total_gross_cents - t.refunded_cents),0) FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('OPEN','PARTIALLY_REFUNDED') GROUP BY TIME_FORMAT(SEC_TO_TIME(FLOOR(TIME_TO_SEC(TIME(t.opened_at))/300)*300),'%H:%i')`, a.ActiveRestaurantID, dateISO)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando serie de ingresos")
 		return
