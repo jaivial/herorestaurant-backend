@@ -403,6 +403,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tags", s.handleBOPOSTagsList)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCatalogGate).Post("/pos/tags", s.handleBOPOSTagCreate)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tickets", s.handleBOPOSTicketsList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tickets/hourly", s.handleBOPOSTicketsHourly)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tickets/series", s.handleBOPOSTicketsSeries)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tickets/{id}", s.handleBOPOSTicketGet)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/visits", s.handleBOPOSVisitsList)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/reservations/eligible", s.handleBOPOSReservationsEligible)
@@ -672,6 +674,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, fichajeGate, rolesAdminGate).Get("/fichaje/entries", s.handleBOFichajeEntriesList)
 		r.With(s.requireBOSession, fichajeGate, rolesAdminGate).Patch("/fichaje/entries/{id}", s.handleBOFichajeEntryPatch)
 		r.With(s.requireBOSession, fichajeGate, rolesAdminGate).Get("/fichaje/labour-cost", s.handleBOFichajeLabourCost)
+		r.With(s.requireBOSession, fichajeGate, rolesAdminGate).Get("/fichaje/hourly-costs", s.handleBOFichajeHourlyCosts)
 
 		r.With(s.requireBOSession, horariosGate).Get("/horarios", s.handleBOHorariosList)
 		r.With(s.requireBOSession, horariosGate).Post("/horarios", s.handleBOHorariosAssign)

@@ -409,6 +409,7 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "pos_ticket_paid", map[string]any{"ticketId": ticketID, "visitId": visitID, "visitClosed": visitClosed, "tableId": stockNullableDBInt(tableID)})
+	s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
 	ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket, "stockStatus": stockStatus, "visitClosed": visitClosed})
 }

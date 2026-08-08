@@ -838,6 +838,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ticket")
 		return
 	}
+	s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "ticket": ticket})
 }
 
@@ -887,6 +888,7 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
+	s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket})
 }
 
@@ -922,5 +924,6 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
+	s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket})
 }
