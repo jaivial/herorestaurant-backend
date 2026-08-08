@@ -2015,6 +2015,7 @@ Response:
 - `Area`: incluye `tables` (mesas de esa area).
 - `Table` incluye como minimo:
   - `id`, `area_id`, `name`, `capacity`, `status`, `x_pos`, `y_pos`
+  - `numero_mesa` (string, identificador unico por restaurante, p.ej. `"4"`, `"4B"`, `"4-B"`; se muestra en el nodo del mapa)
   - `shape` (`round|square`)
   - `fill_color`, `outline_color`, `style_preset`, `texture_image_url`
   - `metadata` (si existe en DB)
@@ -2023,8 +2024,9 @@ Response:
 
 Body JSON:
 - `entity`: `"table"` (default) o `"area"`.
-- Para `table`: admite `area_id`, `name`, `capacity|seats`, `status`, `shape`, `fill_color`, `outline_color`, `style_preset`, `texture_image_url`, `x_pos`, `y_pos`, `is_active`, `metadata`.
+- Para `table`: admite `area_id`, `name`, `numero_mesa` (string alfanumerico unico por restaurante; si se omite, el backend deriva el siguiente numero libre), `capacity|seats`, `status`, `shape`, `fill_color`, `outline_color`, `style_preset`, `texture_image_url`, `x_pos`, `y_pos`, `is_active`, `metadata`.
 - Para `area`: admite `name`, `display_order|sort_order`, `is_active`, `metadata`.
+- Conflictos: si `numero_mesa` (o `name`) ya existe en el restaurante, responde `409` con `{ success: false, code: "TABLES_CREATE_CONFLICT", message }`.
 
 Response:
 - `table`: `{ success: true, entity: "table", item: Table, table: Table }`
@@ -2034,6 +2036,7 @@ Response:
 
 Body JSON:
 - `id` (required) + mismos campos opcionales de `POST` para actualizar.
+- `numero_mesa` es editable y debe ser unico por restaurante; conflicto -> `409` con `code: "TABLES_CREATE_CONFLICT"`.
 - Para posicion por layout diario: incluir `date` + `floor_number` junto a `x_pos`/`y_pos`.
 - `entity: "layout"` permite guardar metadata de mapa por dia/planta (por ejemplo `elements`, `booking_states`) usando `date` + `floor_number` + `metadata`.
 - En `metadata.elements[]` se soporta `display_mode` por elemento (`"asset" | "text" | "both"`). Si falta o es inválido se normaliza a `"both"`.
