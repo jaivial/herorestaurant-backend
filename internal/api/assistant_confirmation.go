@@ -41,6 +41,8 @@ func (s *confirmationStore) Issue(user, restaurant, tool, args, session string, 
 	d := sha256.Sum256([]byte(tok))
 	k := hex.EncodeToString(d[:])
 	if s.db != nil {
+		// Opportunistic purge of expired tokens keeps the table bounded.
+		_, _ = s.db.Exec(`DELETE FROM forky_confirmation_tokens WHERE expires_at <= NOW()`)
 		_, err := s.db.Exec(`
 			INSERT INTO forky_confirmation_tokens (token_hash, user_id, restaurant_id, tool, args_hash, session_key, expires_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
