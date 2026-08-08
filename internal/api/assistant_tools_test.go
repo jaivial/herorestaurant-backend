@@ -26,7 +26,7 @@ func TestAssistantToolDefsExposeCRUDAndAnalytics(t *testing.T) {
 
 func TestAssistantBookingMutationRequiresConfirmation(t *testing.T) {
 	s := &Server{}
-	got, err := s.assistantBookingMutation(context.Background(), 1, "delete_booking", json.RawMessage(`{"booking_id":4,"confirmed":false}`))
+	got, err := s.assistantDeleteBooking(context.Background(), 1, json.RawMessage(`{"booking_id":4,"confirmed":false}`))
 	if err != nil {
 		t.Fatal(err)
 	}

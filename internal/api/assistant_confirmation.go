@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -11,11 +12,13 @@ import (
 	"time"
 )
 
-// confirmationStore issues short-lived, single-use confirmation tokens. Tokens
-// are opaque and stored only as hashes, preventing replay and disclosure.
+// confirmationStore issues short-lived, single-use confirmation tokens. When a
+// database is available the tokens are persisted (survive restarts and work
+// across replicas); otherwise an in-memory map is used (unit tests, nil db).
 type confirmationStore struct {
 	mu      sync.Mutex
 	entries map[string]confirmationEntry
+	db      *sql.DB
 }
 type confirmationEntry struct {
 	digest, user, restaurant, tool, args, session string
@@ -23,8 +26,8 @@ type confirmationEntry struct {
 	used                                          bool
 }
 
-func newConfirmationStore() *confirmationStore {
-	return &confirmationStore{entries: make(map[string]confirmationEntry)}
+func newConfirmationStore(db *sql.DB) *confirmationStore {
+	return &confirmationStore{entries: make(map[string]confirmationEntry), db: db}
 }
 func (s *confirmationStore) Issue(user, restaurant, tool, args, session string, ttl time.Duration) (string, error) {
 	if ttl <= 0 {
@@ -36,14 +39,44 @@ func (s *confirmationStore) Issue(user, restaurant, tool, args, session string, 
 	}
 	tok := base64.RawURLEncoding.EncodeToString(b)
 	d := sha256.Sum256([]byte(tok))
+	k := hex.EncodeToString(d[:])
+	if s.db != nil {
+		_, err := s.db.Exec(`
+			INSERT INTO forky_confirmation_tokens (token_hash, user_id, restaurant_id, tool, args_hash, session_key, expires_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, k, user, restaurant, tool, sha256Hex(args), session, time.Now().Add(ttl))
+		if err != nil {
+			return "", err
+		}
+		return tok, nil
+	}
 	s.mu.Lock()
-	s.entries[hex.EncodeToString(d[:])] = confirmationEntry{digest: hex.EncodeToString(d[:]), user: user, restaurant: restaurant, tool: tool, args: args, session: session, expires: time.Now().Add(ttl)}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	s.entries[k] = confirmationEntry{digest: k, user: user, restaurant: restaurant, tool: tool, args: args, session: session, expires: time.Now().Add(ttl)}
 	return tok, nil
 }
 func (s *confirmationStore) Consume(tok, user, restaurant, tool, args, session string) error {
 	d := sha256.Sum256([]byte(tok))
 	k := hex.EncodeToString(d[:])
+	if s.db != nil {
+		// Atomic single-use: the row is deleted on consume, so a replay (or an
+		// expired/mismatched token) affects zero rows.
+		res, err := s.db.Exec(`
+			DELETE FROM forky_confirmation_tokens
+			WHERE token_hash = ? AND user_id = ? AND restaurant_id = ? AND tool = ? AND args_hash = ? AND session_key = ? AND expires_at > NOW()
+		`, k, user, restaurant, tool, sha256Hex(args), session)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return fmt.Errorf("confirmation token expired or invalid")
+		}
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[k]

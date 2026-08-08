@@ -153,7 +153,7 @@ func TestAssistantAnonymousCannotCallBackofficeTools(t *testing.T) {
 }
 
 func TestAssistantConfirmationHelpers(t *testing.T) {
-	s := &Server{confirmationStore: newConfirmationStore()}
+	s := &Server{confirmationStore: newConfirmationStore(nil)}
 	args := json.RawMessage(`{"date":"2026-08-07","time":"20:00","people":2,"name":"Ana"}`)
 	out, err := s.assistantRequireConfirmation(1, "create_booking", args)
 	if err != nil {

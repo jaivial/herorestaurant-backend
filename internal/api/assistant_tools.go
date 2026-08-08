@@ -5,8 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"preactvillacarmen/internal/httpx"
 )
 
 func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, name string, input json.RawMessage) (string, error) {
@@ -262,68 +266,88 @@ func (s *Server) assistantAudit(ctx context.Context, restaurantID int, action, e
 	_, _ = s.db.ExecContext(ctx, `INSERT INTO audit_log (restaurant_id,action,entity,entity_id,after_json) VALUES (?,?,?,?,?)`, restaurantID, action, entity, fmt.Sprint(entityID), payload)
 }
 
-func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name string, input json.RawMessage) (string, error) {
+// assistantCreateBooking routes booking creation through the real backoffice
+// domain handler (boNormalizeAndValidateBookingInput + boInsertBooking +
+// notifications), so the tool enforces the same input rules as the product UI
+// (valid date/time, party size, name, phone) instead of a raw INSERT.
+func (s *Server) assistantCreateBooking(ctx context.Context, rid int, input json.RawMessage) (string, error) {
 	var in struct {
-		BookingID         int    `json:"booking_id"`
-		Date              string `json:"date"`
-		Time              string `json:"time"`
-		CustomerName      string `json:"name"`
-		People            int    `json:"people"`
-		Confirmed         bool   `json:"confirmed"`
-		ConfirmationToken string `json:"confirmation_token"`
+		Date                    string `json:"date"`
+		Time                    string `json:"time"`
+		People                  int    `json:"people"`
+		Name                    string `json:"name"`
+		ContactPhone            string `json:"contact_phone"`
+		ContactPhoneCountryCode string `json:"contact_phone_country_code"`
 	}
-	if err := json.Unmarshal(input, &in); err != nil {
-		return "", err
+	_ = json.Unmarshal(input, &in)
+	return s.assistantConfirmedMutation(ctx, rid, "create_booking", s.handleBOBookingCreate, input, assistantHandlerInput{
+		Method: "POST",
+		Body: map[string]any{
+			"reservation_date":           in.Date,
+			"reservation_time":           in.Time,
+			"party_size":                 in.People,
+			"customer_name":              in.Name,
+			"contact_phone":              in.ContactPhone,
+			"contact_phone_country_code": in.ContactPhoneCountryCode,
+		},
+	})
+}
+
+// assistantUpdateBooking routes booking updates through the real backoffice
+// PATCH handler, so validation/normalization and ownership checks apply.
+func (s *Server) assistantUpdateBooking(ctx context.Context, rid int, input json.RawMessage) (string, error) {
+	var in struct {
+		BookingID int    `json:"booking_id"`
+		Date      string `json:"date"`
+		Time      string `json:"time"`
+		People    int    `json:"people"`
+		Name      string `json:"name"`
 	}
-	if !in.Confirmed {
-		return s.assistantRequireConfirmation(rid, name, input)
+	_ = json.Unmarshal(input, &in)
+	body := map[string]any{}
+	if in.Date != "" {
+		body["reservation_date"] = in.Date
 	}
-	if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, input); err != nil {
-		return "", err
+	if in.Time != "" {
+		body["reservation_time"] = in.Time
 	}
-	switch name {
-	case "create_booking":
-		if in.Date == "" || in.Time == "" || in.People < 1 || in.CustomerName == "" {
-			return "", fmt.Errorf("date, time, people y name son obligatorios")
+	if in.People > 0 {
+		body["party_size"] = in.People
+	}
+	if in.Name != "" {
+		body["customer_name"] = in.Name
+	}
+	return s.assistantConfirmedMutation(ctx, rid, "update_booking", s.handleBOBookingPatch, input, assistantHandlerInput{
+		Method:   "PATCH",
+		URLParam: map[string]string{"id": strconv.Itoa(in.BookingID)},
+		Body:     body,
+	})
+}
+
+// assistantDeleteBooking soft-cancels a booking of the active restaurant.
+func (s *Server) assistantDeleteBooking(ctx context.Context, rid int, input json.RawMessage) (string, error) {
+	var in struct {
+		BookingID int `json:"booking_id"`
+	}
+	_ = json.Unmarshal(input, &in)
+	if in.BookingID < 1 {
+		return "", fmt.Errorf("booking_id inválido")
+	}
+	return s.assistantConfirmedMutation(ctx, rid, "delete_booking", func(w http.ResponseWriter, r *http.Request) {
+		a, ok := boAuthFromContext(r.Context())
+		if !ok {
+			httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
+			return
 		}
-		res, err := s.db.ExecContext(ctx, `INSERT INTO bookings (restaurant_id,reservation_date,reservation_time,party_size,customer_name,status) VALUES (?,?,?,?,?,'confirmed')`, rid, in.Date, in.Time, in.People, in.CustomerName)
+		res, err := s.db.ExecContext(r.Context(), `UPDATE bookings SET status='cancelled' WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, in.BookingID)
 		if err != nil {
-			return "", err
-		}
-		id, _ := res.LastInsertId()
-		s.assistantAudit(ctx, rid, "CREATE", "booking", int(id), map[string]any{"date": in.Date, "time": in.Time, "people": in.People, "name": in.CustomerName})
-		return botJSON(map[string]any{"created": true, "booking_id": id}), nil
-	case "update_booking":
-		if in.BookingID < 1 {
-			return "", fmt.Errorf("booking_id inválido")
-		}
-		if in.Date == "" && in.Time == "" && in.People < 1 {
-			return "", fmt.Errorf("se requiere al menos un cambio")
-		}
-		res, err := s.db.ExecContext(ctx, `UPDATE bookings SET reservation_date=COALESCE(NULLIF(?,''),reservation_date), reservation_time=COALESCE(NULLIF(?,''),reservation_time), party_size=CASE WHEN ? > 0 THEN ? ELSE party_size END WHERE restaurant_id=? AND id=?`, in.Date, in.Time, in.People, in.People, rid, in.BookingID)
-		if err != nil {
-			return "", err
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
+			return
 		}
 		n, _ := res.RowsAffected()
-		if n == 1 {
-			s.assistantAudit(ctx, rid, "UPDATE", "booking", in.BookingID, map[string]any{"date": in.Date, "time": in.Time, "people": in.People})
-		}
-		return botJSON(map[string]any{"updated": n == 1, "booking_id": in.BookingID}), nil
-	case "delete_booking":
-		if in.BookingID < 1 {
-			return "", fmt.Errorf("booking_id inválido")
-		}
-		res, err := s.db.ExecContext(ctx, `UPDATE bookings SET status='cancelled' WHERE restaurant_id=? AND id=?`, rid, in.BookingID)
-		if err != nil {
-			return "", err
-		}
-		n, _ := res.RowsAffected()
-		if n == 1 {
-			s.assistantAudit(ctx, rid, "DELETE", "booking", in.BookingID, map[string]any{"status": "cancelled"})
-		}
-		return botJSON(map[string]any{"deleted": n == 1, "booking_id": in.BookingID}), nil
-	}
-	return "", fmt.Errorf("mutation inválida")
+		s.assistantAudit(r.Context(), a.ActiveRestaurantID, "DELETE", "booking", in.BookingID, map[string]any{"status": "cancelled"})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": n == 1, "deleted": n == 1, "booking_id": in.BookingID})
+	}, input, assistantHandlerInput{Method: "POST", Body: map[string]any{}})
 }
 
 // assistantToolAllowed maps Forky tools to the same section permissions exposed

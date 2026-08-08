@@ -14,7 +14,7 @@ import (
 // A store is created lazily so the flow works in any configuration.
 func (s *Server) assistantRequireConfirmation(rid int, tool string, input json.RawMessage) (string, error) {
 	if s.confirmationStore == nil {
-		s.confirmationStore = newConfirmationStore()
+		s.confirmationStore = newConfirmationStore(nil)
 	}
 	tok, err := s.confirmationStore.Issue("", fmt.Sprint(rid), tool, confirmationArguments(input), "", 2*time.Minute)
 	if err != nil {

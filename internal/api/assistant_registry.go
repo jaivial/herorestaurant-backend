@@ -57,22 +57,28 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
-		Name: "create_booking", Description: "Crea reserva solo con confirmed=true.", Write: true, Confirm: true,
-		Schema:         json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","time","people","name","confirmed"]}`),
+		Name: "create_booking", Description: "Crea reserva del restaurante activo con las reglas del flujo real (fecha, hora, personas, nombre y teléfono). Requiere confirmed=true.", Write: true, Confirm: true,
+		Schema:         json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","time","people","name","confirmed"]}`),
 		BackofficeOnly: true, Section: "reservas",
-		Handler: bookingMutationHandler("create_booking"),
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantCreateBooking(ctx, rid, input)
+		},
 	},
 	{
-		Name: "update_booking", Description: "Actualiza reserva del restaurante activo solo con confirmed=true.", Write: true, Confirm: true,
-		Schema:         json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}`),
+		Name: "update_booking", Description: "Actualiza reserva del restaurante activo con las reglas del flujo real. Requiere confirmed=true.", Write: true, Confirm: true,
+		Schema:         json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}`),
 		BackofficeOnly: true, Section: "reservas",
-		Handler: bookingMutationHandler("update_booking"),
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantUpdateBooking(ctx, rid, input)
+		},
 	},
 	{
-		Name: "delete_booking", Description: "Cancela reserva solo con confirmed=true.", Write: true, Confirm: true,
+		Name: "delete_booking", Description: "Cancela reserva del restaurante activo. Requiere confirmed=true.", Write: true, Confirm: true,
 		Schema:         json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}`),
 		BackofficeOnly: true, Section: "reservas",
-		Handler: bookingMutationHandler("delete_booking"),
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDeleteBooking(ctx, rid, input)
+		},
 	},
 	{
 		Name: "customers_list", Description: "Lista clientes y fuentes del restaurante activo.",
@@ -496,13 +502,6 @@ var assistantToolRegistry = []assistantTool{
 func catalogHandler(name string) assistantToolHandler {
 	return func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
 		return s.assistantCatalogTool(ctx, rid, name, input)
-	}
-}
-
-// bookingMutationHandler binds a booking mutation to its registry entry.
-func bookingMutationHandler(name string) assistantToolHandler {
-	return func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
-		return s.assistantBookingMutation(ctx, rid, name, input)
 	}
 }
 

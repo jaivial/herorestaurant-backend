@@ -18,7 +18,7 @@ func TestAssistantPOSMutationConfirmation(t *testing.T) {
 	}
 }
 func TestAssistantPOSMutationRejectsMissingToken(t *testing.T) {
-	s := &Server{confirmationStore: newConfirmationStore()}
+	s := &Server{confirmationStore: newConfirmationStore(nil)}
 	if _, e := s.assistantPOSMutation(context.Background(), 1, "pos_visit_create", json.RawMessage(`{"channel":"DINE_IN","covers":2,"confirmed":true}`)); e == nil {
 		t.Fatal("accepted missing token")
 	}
