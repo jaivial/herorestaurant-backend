@@ -109,7 +109,7 @@ type boPremiumDomainVerifyRequest struct {
 type boPremiumTablesMutationRequest struct {
 	Entity          string         `json:"entity"`
 	ID              int64          `json:"id"`
-	NumeroMesa      *int           `json:"numero_mesa"`
+	NumeroMesa      *string        `json:"numero_mesa"`
 	Date            string         `json:"date"`
 	FloorNumber     *int           `json:"floor_number"`
 	AreaID          *int64         `json:"area_id"`
@@ -1477,6 +1477,24 @@ func (s *Server) handleBOPremiumTablesTemplateDelete(w http.ResponseWriter, r *h
 	})
 }
 
+// maxTableNumeroLen matches the restaurant_tables.numero_mesa VARCHAR(32)
+// column (migration 093). Inputs longer than this are rejected at the handler
+// with a clear 400 instead of letting MySQL fail with a generic "Data too long".
+const maxTableNumeroLen = 32
+
+// validateTableNumero returns a non-empty message when the supplied numero_mesa
+// (if any) exceeds the column length. Empty/nil values are allowed (the create
+// path auto-derives one).
+func validateTableNumero(req boPremiumTablesMutationRequest) (msg string, ok bool) {
+	if req.NumeroMesa == nil {
+		return "", true
+	}
+	if v := strings.TrimSpace(*req.NumeroMesa); len(v) > maxTableNumeroLen {
+		return fmt.Sprintf("numero_mesa demasiado largo (máximo %d caracteres)", maxTableNumeroLen), false
+	}
+	return "", true
+}
+
 func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -1496,6 +1514,10 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 	}
 	if req.Date != "" && (req.FloorNumber == nil || *req.FloorNumber < 0) {
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "floor_number invalido")
+		return
+	}
+	if msg, ok := validateTableNumero(req); !ok {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", msg)
 		return
 	}
 
@@ -1576,6 +1598,10 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 	req.Date = strings.TrimSpace(req.Date)
 	if req.Date != "" && !isDateISO(req.Date) {
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "date invalida")
+		return
+	}
+	if msg, ok := validateTableNumero(req); !ok {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", msg)
 		return
 	}
 
@@ -2111,22 +2137,58 @@ func (s *Server) updateBOPremiumArea(ctx context.Context, restaurantID int, req 
 	return out, nil
 }
 
+// deriveNextTableNumero returns the next free table number for a restaurant by
+// scanning existing numero_mesa values, parsing the numeric ones, and returning
+// max+1 as a string. Falls back to "1" when there are no numeric values or the
+// scan fails. Used only when the client does not supply a numero_mesa.
+func (s *Server) deriveNextTableNumero(ctx context.Context, restaurantID int) string {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT numero_mesa FROM restaurant_tables WHERE restaurant_id = ?`,
+		restaurantID,
+	)
+	if err != nil {
+		return "1"
+	}
+	defer rows.Close()
+	maxNum := 0
+	for rows.Next() {
+		var raw sql.NullString
+		if err := rows.Scan(&raw); err != nil {
+			continue
+		}
+		if !raw.Valid {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(raw.String)); err == nil && n > maxNum {
+			maxNum = n
+		}
+	}
+	return strconv.Itoa(maxNum + 1)
+}
+
 func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req boPremiumTablesMutationRequest) (map[string]any, error) {
 	name := strings.TrimSpace(stringPtrOr(req.Name, "Mesa"))
 	if name == "" {
 		name = "Mesa"
 	}
-	// The legacy/current restaurant_tables schema stores numero_mesa as a
-	// per-restaurant unique NOT NULL column. When the client does not supply
-	// one, derive the next number instead of letting the INSERT fail.
-	numeroMesa := 0
-	if req.NumeroMesa != nil && *req.NumeroMesa > 0 {
-		numeroMesa = *req.NumeroMesa
-	} else if err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(numero_mesa), 0) + 1 FROM restaurant_tables WHERE restaurant_id = ?`,
-		restaurantID,
-	).Scan(&numeroMesa); err != nil || numeroMesa <= 0 {
-		numeroMesa = 1
+	// numero_mesa is a per-restaurant unique alphanumeric identifier
+	// (e.g. "4", "4B", "4-B"). When the client does not supply one, derive the
+	// next free number by scanning numeric values already in use.
+	numeroMesa := ""
+	if req.NumeroMesa != nil {
+		numeroMesa = strings.TrimSpace(*req.NumeroMesa)
+	}
+	if numeroMesa == "" {
+		numeroMesa = s.deriveNextTableNumero(ctx, restaurantID)
+	}
+	// Pre-check uniqueness so we can return a clear conflict message instead
+	// of relying solely on the DB unique constraint.
+	var dupCount int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM restaurant_tables WHERE restaurant_id = ? AND numero_mesa = ?`,
+		restaurantID, numeroMesa,
+	).Scan(&dupCount); err == nil && dupCount > 0 {
+		return nil, &posTableConflictError{msg: fmt.Sprintf("ya existe una mesa con el número %q", numeroMesa)}
 	}
 	areaID := int64(0)
 	if req.AreaID != nil {
@@ -2246,7 +2308,7 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 			continue
 		}
 		if isSQLDuplicateError(insertErr) {
-			return nil, &posTableConflictError{msg: fmt.Sprintf("ya existe una mesa llamada %q", name)}
+			return nil, &posTableConflictError{msg: fmt.Sprintf("ya existe una mesa llamada %q o con el número %q", name, numeroMesa)}
 		}
 		return nil, insertErr
 	}
@@ -2291,6 +2353,24 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 				for k, v := range m {
 					currentMeta[k] = v
 				}
+			}
+		}
+	}
+
+	numeroMesa := ""
+	numeroMesaArg := any(nil)
+	if req.NumeroMesa != nil {
+		numeroMesa = strings.TrimSpace(*req.NumeroMesa)
+		if numeroMesa != "" {
+			numeroMesaArg = numeroMesa
+			// Pre-check uniqueness excluding the row being updated so we can
+			// return a clear conflict instead of relying on the DB constraint.
+			var dupCount int
+			if err := s.db.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM restaurant_tables WHERE restaurant_id = ? AND numero_mesa = ? AND id <> ?`,
+				restaurantID, numeroMesa, req.ID,
+			).Scan(&dupCount); err == nil && dupCount > 0 {
+				return nil, &posTableConflictError{msg: fmt.Sprintf("ya existe una mesa con el número %q", numeroMesa)}
 			}
 		}
 	}
@@ -2533,12 +2613,30 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 		return nil, updateErr
 	}
 
+	// numero_mesa is updated via a dedicated statement (the column is guaranteed
+	// to exist since the table's creation migration) so the multi-variant
+	// fallbacks above do not need to carry it.
+	if numeroMesaArg != nil {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE restaurant_tables SET numero_mesa = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?`,
+			numeroMesa, req.ID, restaurantID,
+		); err != nil {
+			if isSQLDuplicateError(err) {
+				return nil, &posTableConflictError{msg: fmt.Sprintf("ya existe una mesa con el número %q", numeroMesa)}
+			}
+			return nil, err
+		}
+	}
+
 	out := map[string]any{
 		"id":            req.ID,
 		"restaurant_id": restaurantID,
 	}
 	if req.Name != nil {
 		out["name"] = strings.TrimSpace(*req.Name)
+	}
+	if numeroMesa != "" {
+		out["numero_mesa"] = numeroMesa
 	}
 	if req.AreaID != nil {
 		out["area_id"] = *req.AreaID
@@ -3969,7 +4067,7 @@ func normalizeBOPremiumTableRow(row map[string]any) map[string]any {
 		"x_pos":             xPos,
 		"y_pos":             yPos,
 	}
-	if numeroMesa, ok := anyToInt64OK(row["numero_mesa"]); ok && numeroMesa > 0 {
+	if numeroMesa := firstStringFromMap(row, "numero_mesa"); numeroMesa != "" {
 		out["numero_mesa"] = numeroMesa
 	}
 	if updatedAt := firstStringFromMap(row, "updated_at"); updatedAt != "" {
