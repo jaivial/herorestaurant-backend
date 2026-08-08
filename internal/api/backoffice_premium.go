@@ -1477,6 +1477,24 @@ func (s *Server) handleBOPremiumTablesTemplateDelete(w http.ResponseWriter, r *h
 	})
 }
 
+// maxTableNumeroLen matches the restaurant_tables.numero_mesa VARCHAR(32)
+// column (migration 093). Inputs longer than this are rejected at the handler
+// with a clear 400 instead of letting MySQL fail with a generic "Data too long".
+const maxTableNumeroLen = 32
+
+// validateTableNumero returns a non-empty message when the supplied numero_mesa
+// (if any) exceeds the column length. Empty/nil values are allowed (the create
+// path auto-derives one).
+func validateTableNumero(req boPremiumTablesMutationRequest) (msg string, ok bool) {
+	if req.NumeroMesa == nil {
+		return "", true
+	}
+	if v := strings.TrimSpace(*req.NumeroMesa); len(v) > maxTableNumeroLen {
+		return fmt.Sprintf("numero_mesa demasiado largo (máximo %d caracteres)", maxTableNumeroLen), false
+	}
+	return "", true
+}
+
 func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -1496,6 +1514,10 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 	}
 	if req.Date != "" && (req.FloorNumber == nil || *req.FloorNumber < 0) {
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "floor_number invalido")
+		return
+	}
+	if msg, ok := validateTableNumero(req); !ok {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", msg)
 		return
 	}
 
@@ -1576,6 +1598,10 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 	req.Date = strings.TrimSpace(req.Date)
 	if req.Date != "" && !isDateISO(req.Date) {
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "date invalida")
+		return
+	}
+	if msg, ok := validateTableNumero(req); !ok {
+		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", msg)
 		return
 	}
 

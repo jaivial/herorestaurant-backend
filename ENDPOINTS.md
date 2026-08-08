@@ -2024,7 +2024,7 @@ Response:
 
 Body JSON:
 - `entity`: `"table"` (default) o `"area"`.
-- Para `table`: admite `area_id`, `name`, `numero_mesa` (string alfanumerico unico por restaurante; si se omite, el backend deriva el siguiente numero libre), `capacity|seats`, `status`, `shape`, `fill_color`, `outline_color`, `style_preset`, `texture_image_url`, `x_pos`, `y_pos`, `is_active`, `metadata`.
+- Para `table`: admite `area_id`, `name`, `numero_mesa` (string alfanumerico unico por restaurante, máx 32 caracteres; si se omite, el backend deriva el siguiente numero libre), `capacity|seats`, `status`, `shape`, `fill_color`, `outline_color`, `style_preset`, `texture_image_url`, `x_pos`, `y_pos`, `is_active`, `metadata`.
 - Para `area`: admite `name`, `display_order|sort_order`, `is_active`, `metadata`.
 - Conflictos: si `numero_mesa` (o `name`) ya existe en el restaurante, responde `409` con `{ success: false, code: "TABLES_CREATE_CONFLICT", message }`.
 
