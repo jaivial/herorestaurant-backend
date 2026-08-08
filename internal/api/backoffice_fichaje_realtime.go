@@ -146,7 +146,7 @@ func (s *Server) handleBOPOSTicketsSeries(w http.ResponseWriter, r *http.Request
 	revRows.Close()
 
 	// Labour cost per hour for the day from persisted time entries.
-	costRows, err := s.db.QueryContext(r.Context(), `SELECT LPAD(HOUR(e.start_time),2,'0'),SUM(e.minutes_worked/60*(CASE c.pay_type WHEN 'MONTHLY' THEN c.gross_amount/c.monthly_hours ELSE c.gross_amount END)*(1+c.employer_cost_pct/100)) FROM member_time_entries e LEFT JOIN member_compensations c ON c.restaurant_id=e.restaurant_id AND c.restaurant_member_id=e.restaurant_member_id AND c.deleted_at IS NULL AND e.work_date BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE e.restaurant_id=? AND e.work_date=? GROUP BY LPAD(HOUR(e.start_time),2,'0')`, a.ActiveRestaurantID, dateISO)
+	costRows, err := s.db.QueryContext(r.Context(), `SELECT LPAD(HOUR(e.start_time),2,'0'),COALESCE(SUM(e.minutes_worked/60*(CASE c.pay_type WHEN 'MONTHLY' THEN c.gross_amount/c.monthly_hours ELSE c.gross_amount END)*(1+c.employer_cost_pct/100)),0) FROM member_time_entries e LEFT JOIN member_compensations c ON c.restaurant_id=e.restaurant_id AND c.restaurant_member_id=e.restaurant_member_id AND c.deleted_at IS NULL AND e.work_date BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE e.restaurant_id=? AND e.work_date=? GROUP BY LPAD(HOUR(e.start_time),2,'0')`, a.ActiveRestaurantID, dateISO)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando serie de coste")
 		return
