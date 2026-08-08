@@ -90,7 +90,6 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 		}
 	}
 
-
 	// The catalogue lives in three tables with different primary keys, so the
 	// statement is chosen by source rather than contorting one query to serve
 	// all of them.

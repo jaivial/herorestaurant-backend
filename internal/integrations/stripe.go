@@ -92,9 +92,9 @@ func (s *StripeClient) CreateCheckoutSession(ctx context.Context, amountCents in
 
 // Event is a Stripe webhook event (subset).
 type Event struct {
-	ID     string          `json:"id"`
-	Type   string          `json:"type"`
-	Data   EventData       `json:"data"`
+	ID   string    `json:"id"`
+	Type string    `json:"type"`
+	Data EventData `json:"data"`
 }
 
 type EventData struct {

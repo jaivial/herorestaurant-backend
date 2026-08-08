@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"preactvillacarmen/internal/api"
@@ -23,8 +24,12 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if err := migrations.Apply(ctx, db); err != nil {
-		log.Fatalf("Failed to apply migrations: %v", err)
+	// SKIP_MIGRATIONS=1 starts against an already-migrated database (used by
+	// dev/test tooling such as the Forky e2e stub backend).
+	if os.Getenv("SKIP_MIGRATIONS") != "1" {
+		if err := migrations.Apply(ctx, db); err != nil {
+			log.Fatalf("Failed to apply migrations: %v", err)
+		}
 	}
 
 	server := api.NewServer(db, cfg)

@@ -43,6 +43,7 @@ func stockCostMetrics(grossPrice, vatRate, cost float64) (net, foodCostPct, marg
 	margin = net - cost
 	return
 }
+
 // stockDefaultMarginZone classifies a food-cost percentage using the
 // owner-approved standard (RED >40%, AMBER 35-40%, GREEN 25-35%, PURPLE <25%).
 //

@@ -373,11 +373,11 @@ func TestSheetListCarriesTheFieldsThatFillTheProductForm(t *testing.T) {
 	s.handleBOTechnicalSheetList(rec, sheetReq("GET", "/comida/technical-sheets", "", nil))
 	var out struct {
 		Sheets []struct {
-			Name              string   `json:"name"`
-			SellingPriceGross *float64 `json:"sellingPriceGross"`
-			PrepTimeMin       *int     `json:"prepTimeMin"`
-			StepCount         *int     `json:"stepCount"`
-			ComponentCount    *int     `json:"componentCount"`
+			Name              string    `json:"name"`
+			SellingPriceGross *float64  `json:"sellingPriceGross"`
+			PrepTimeMin       *int      `json:"prepTimeMin"`
+			StepCount         *int      `json:"stepCount"`
+			ComponentCount    *int      `json:"componentCount"`
 			Allergens         *[]string `json:"allergens"`
 		} `json:"sheets"`
 	}

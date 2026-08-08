@@ -15,14 +15,15 @@ import (
 
 // assistantClient is one Forky assistant WebSocket connection.
 type assistantClient struct {
-	s           *Server
-	auth        *boAuth // nil for anonymous public-site sessions
-	conn        *websocket.Conn
-	mu          sync.Mutex // guards writes + busy
-	busy        bool       // one generation in flight
-	ip          string
-	sessionID   int64
-	sessionInit bool
+	s            *Server
+	auth         *boAuth // nil for anonymous public-site sessions
+	conn         *websocket.Conn
+	mu           sync.Mutex // guards writes + busy
+	busy         bool       // one generation in flight
+	ip           string
+	sessionID    int64
+	sessionInit  bool
+	restaurantID int
 }
 
 // assistantClientIP extracts the caller IP for anonymous rate limiting.
@@ -77,8 +78,13 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 		return
 	}
 	var auth *boAuth
+	wsCtx := r.Context()
 	if ok {
 		auth = &a
+		// Preserve the authenticated principal for goroutines handling messages.
+		// Without this, tool authorization sees an anonymous context even though
+		// the WebSocket handshake was authenticated.
+		wsCtx = withBOAuth(wsCtx, a)
 	}
 
 	upgrader := websocket.Upgrader{
@@ -120,10 +126,10 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 		}
 		switch frame.Type {
 		case "hello":
-			c.handleHello(r.Context(), frame.SessionID, frame.SessionToken)
+			c.handleHello(wsCtx, frame.SessionID, frame.SessionToken)
 		case "message":
 			if c.tryStart() {
-				go c.handleMessage(r.Context(), frame.Content)
+				go c.handleMessage(wsCtx, frame.Content)
 			} else {
 				_ = c.writeJSON(map[string]any{"type": "error", "message": "busy: espera a que termine la respuesta anterior"})
 			}
@@ -243,7 +249,7 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 	} else {
 		res, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_sessions (restaurant_id, user_id) VALUES (?, ?)`, c.auth.ActiveRestaurantID, c.auth.User.ID)
 		if err != nil {
-		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to create session"})
+			_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to create session"})
 			return
 		}
 		sid, _ = res.LastInsertId()
@@ -251,6 +257,11 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 
 	c.sessionID = sid
 	c.sessionInit = true
+	if c.auth != nil {
+		c.restaurantID = c.auth.ActiveRestaurantID
+	} else {
+		_ = c.s.db.QueryRowContext(ctx, `SELECT COALESCE(restaurant_id, 0) FROM assistant_sessions WHERE id=?`, sid).Scan(&c.restaurantID)
+	}
 
 	hist, err := c.loadHistory(ctx, sid)
 	if err != nil {
@@ -271,7 +282,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		return
 	}
 
-	if c.auth == nil && !c.s.assistantRateLimit(c.ip) {
+	if !c.s.assistantRateLimit(c.ip) {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "rate_limited: demasiados mensajes, espera un momento"})
 		return
 	}
@@ -312,22 +323,57 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		restaurantID = c.auth.ActiveRestaurantID
 	} else if rid, ok := restaurantIDFromContext(ctx); ok {
 		restaurantID = rid
+	} else {
+		restaurantID = c.restaurantID
+	}
+	if restaurantID <= 0 && sid > 0 {
+		_ = c.s.db.QueryRowContext(ctx, `SELECT COALESCE(restaurant_id,0) FROM assistant_sessions WHERE id=?`, sid).Scan(&restaurantID)
 	}
 	prompt := c.s.buildAssistantSystemPrompt(ctx, restaurantID)
-
 	_ = c.writeJSON(map[string]any{"type": "status", "state": "thinking"})
-
-	var sb strings.Builder
-	err = c.s.assistantStream(ctx, prompt, hist, func(chunk string) error {
-		sb.WriteString(chunk)
-		return c.writeJSON(map[string]any{"type": "delta", "text": chunk})
-	})
-	if err != nil {
-		_ = c.writeJSON(map[string]any{"type": "error", "message": err.Error()})
-		return
+	toolDefs := assistantToolDefs()
+	toolMsgs := append([]assistantChatMessage{}, hist...)
+	var final strings.Builder
+	for turn := 0; turn < 6; turn++ {
+		result, callErr := c.s.assistantCall(ctx, prompt, toolMsgs, toolDefs, nil)
+		if callErr != nil {
+			_ = c.writeJSON(map[string]any{"type": "error", "message": callErr.Error()})
+			return
+		}
+		// MiniMax occasionally wraps the whole reply in base64 (an encoding quirk
+		// that persists to the DB). Recover the readable text before streaming it to
+		// the client and before persisting, so the chat never shows a raw blob.
+		turnText := assistantRecoverEncodedReply(result.Text)
+		if turnText != "" {
+			final.WriteString(turnText)
+			_ = c.writeJSON(map[string]any{"type": "delta", "text": turnText})
+		}
+		if len(result.ToolUses) == 0 {
+			break
+		}
+		blocks := make([]map[string]any, 0, len(result.ToolUses)+1)
+		if turnText != "" {
+			blocks = append(blocks, map[string]any{"type": "text", "text": turnText})
+		}
+		for _, use := range result.ToolUses {
+			blocks = append(blocks, map[string]any{"type": "tool_use", "id": use.ID, "name": use.Name, "input": json.RawMessage(use.Input)})
+		}
+		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: blocks})
+		results := make([]map[string]any, 0, len(result.ToolUses))
+		for _, use := range result.ToolUses {
+			// Bound every tool independently so a slow catalog/analytics query cannot
+			// consume the whole conversation or hold the websocket indefinitely.
+			toolCtx, cancelTool := context.WithTimeout(ctx, 5*time.Second)
+			out, toolErr := c.s.assistantExecuteTool(toolCtx, restaurantID, use.Name, use.Input)
+			cancelTool()
+			if toolErr != nil {
+				out = botJSON(map[string]any{"error": toolErr.Error()})
+			}
+			results = append(results, map[string]any{"type": "tool_result", "tool_use_id": use.ID, "content": out})
+		}
+		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "user", Content: results})
 	}
-
-	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, sb.String()); err != nil {
+	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, final.String()); err != nil {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist reply"})
 		return
 	}

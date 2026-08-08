@@ -504,12 +504,12 @@ func (m *instaticManager) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status = "running"
 	}
 	writeJSON(w, map[string]any{
-		"success":  true,
-		"status":   status,
-		"base":     base,
-		"ready":    ready,
+		"success":       true,
+		"status":        status,
+		"base":          base,
+		"ready":         ready,
 		"restaurant_id": restaurantID,
-		"port":     m.portFor(restaurantID),
+		"port":          m.portFor(restaurantID),
 	})
 }
 

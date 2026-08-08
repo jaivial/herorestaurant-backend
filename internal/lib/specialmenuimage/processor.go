@@ -205,55 +205,55 @@ func encodeWebPWithLimit(ctx context.Context, sourcePath string, tmpDir string) 
 }
 
 func encodeWebPWithLimitBytes(ctx context.Context, sourcePath string, tmpDir string, maxOutputBytes int) ([]byte, error) {
- 	magickPath, magickArgs, err := pickImageMagickCommand(sourcePath)
- 	if err != nil {
- 		return nil, err
- 	}
- 
- 	dimensions := []int{1700, 1500, 1300, 1150, 1000, 900, 820, 740, 660, 580, 520, 460}
- 	qualities := []int{88, 82, 76, 70, 64, 58, 52, 46, 40, 34, 28}
- 	outputPath := filepath.Join(tmpDir, "normalized.webp")
- 
- 	best := []byte(nil)
- 	for _, dim := range dimensions {
- 		for _, quality := range qualities {
- 			args := append([]string{}, magickArgs...)
- 			args = append(
- 				args,
- 				"-auto-orient",
- 				"-strip",
- 				"-thumbnail", fmt.Sprintf("%dx%d>", dim, dim),
- 				"-define", "webp:method=6",
- 				"-quality", strconv.Itoa(quality),
- 				outputPath,
- 			)
- 
- 			if err := runCommand(ctx, magickPath, args...); err != nil {
- 				return nil, err
- 			}
- 
- 			raw, readErr := os.ReadFile(outputPath)
- 			if readErr != nil {
- 				return nil, readErr
- 			}
- 			if len(raw) == 0 {
- 				continue
- 			}
- 
- 			if len(best) == 0 || len(raw) < len(best) {
- 				best = raw
- 			}
- 			if len(raw) <= maxOutputBytes {
- 				return raw, nil
- 			}
- 		}
- 	}
- 
- 	if len(best) == 0 {
- 		return nil, errors.New("failed to produce webp image")
- 	}
- 	return nil, fmt.Errorf("no se pudo reducir la imagen por debajo de %dKB (resultado minimo: %dKB)", maxOutputBytes/1024, (len(best)+1023)/1024)
- }
+	magickPath, magickArgs, err := pickImageMagickCommand(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+
+	dimensions := []int{1700, 1500, 1300, 1150, 1000, 900, 820, 740, 660, 580, 520, 460}
+	qualities := []int{88, 82, 76, 70, 64, 58, 52, 46, 40, 34, 28}
+	outputPath := filepath.Join(tmpDir, "normalized.webp")
+
+	best := []byte(nil)
+	for _, dim := range dimensions {
+		for _, quality := range qualities {
+			args := append([]string{}, magickArgs...)
+			args = append(
+				args,
+				"-auto-orient",
+				"-strip",
+				"-thumbnail", fmt.Sprintf("%dx%d>", dim, dim),
+				"-define", "webp:method=6",
+				"-quality", strconv.Itoa(quality),
+				outputPath,
+			)
+
+			if err := runCommand(ctx, magickPath, args...); err != nil {
+				return nil, err
+			}
+
+			raw, readErr := os.ReadFile(outputPath)
+			if readErr != nil {
+				return nil, readErr
+			}
+			if len(raw) == 0 {
+				continue
+			}
+
+			if len(best) == 0 || len(raw) < len(best) {
+				best = raw
+			}
+			if len(raw) <= maxOutputBytes {
+				return raw, nil
+			}
+		}
+	}
+
+	if len(best) == 0 {
+		return nil, errors.New("failed to produce webp image")
+	}
+	return nil, fmt.Errorf("no se pudo reducir la imagen por debajo de %dKB (resultado minimo: %dKB)", maxOutputBytes/1024, (len(best)+1023)/1024)
+}
 
 func NormalizeToWebPWithLimit(ctx context.Context, input []byte, fileName string, declaredContentType string, maxOutputBytes int) ([]byte, error) {
 	if len(input) == 0 {
