@@ -71,19 +71,19 @@ func (c *PlatformStripeClient) ListCharges(ctx context.Context, limit int) ([]ma
 
 	var raw struct {
 		Data []struct {
-			ID             string                 `json:"id"`
-			Amount         int64                  `json:"amount"`
-			AmountRefunded int64                  `json:"amount_refunded"`
-			Currency       string                 `json:"currency"`
-			Status         string                 `json:"status"`
-			Paid           bool                   `json:"paid"`
-			Refunded       bool                   `json:"refunded"`
-			ReceiptEmail   string                 `json:"receipt_email"`
-			Description    string                 `json:"description"`
-			Created        int64                  `json:"created"`
-			PaymentIntent  string                 `json:"payment_intent"`
-					Metadata       map[string]string      `json:"metadata"`
-			BillingDetails map[string]any         `json:"billing_details"`
+			ID             string            `json:"id"`
+			Amount         int64             `json:"amount"`
+			AmountRefunded int64             `json:"amount_refunded"`
+			Currency       string            `json:"currency"`
+			Status         string            `json:"status"`
+			Paid           bool              `json:"paid"`
+			Refunded       bool              `json:"refunded"`
+			ReceiptEmail   string            `json:"receipt_email"`
+			Description    string            `json:"description"`
+			Created        int64             `json:"created"`
+			PaymentIntent  string            `json:"payment_intent"`
+			Metadata       map[string]string `json:"metadata"`
+			BillingDetails map[string]any    `json:"billing_details"`
 		} `json:"data"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/charges", form, &raw); err != nil {

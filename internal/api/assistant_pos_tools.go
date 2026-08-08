@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 )
 
 func (s *Server) assistantPOSMutation(ctx context.Context, rid int, name string, input json.RawMessage) (string, error) {
@@ -26,20 +25,10 @@ func (s *Server) assistantPOSMutation(ctx context.Context, rid int, name string,
 		return "", err
 	}
 	if !in.Confirmed {
-		if s.confirmationStore == nil {
-			s.confirmationStore = newConfirmationStore()
-		}
-		tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, confirmationArguments(input), "", 2*time.Minute)
-		if e != nil {
-			return "", e
-		}
-		return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
+		return s.assistantRequireConfirmation(rid, name, input)
 	}
-	if s.confirmationStore == nil || strings.TrimSpace(in.ConfirmationToken) == "" {
-		return "", fmt.Errorf("confirmation_token requerido")
-	}
-	if e := s.confirmationStore.Consume(in.ConfirmationToken, "", fmt.Sprint(rid), name, "", ""); e != nil {
-		return "", e
+	if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, input); err != nil {
+		return "", err
 	}
 	uid := 0
 	if a, ok := boAuthFromContext(ctx); ok {

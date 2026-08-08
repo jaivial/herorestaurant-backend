@@ -117,7 +117,7 @@ func TestResolveMarginBandsInheritance(t *testing.T) {
 	global := []stockMarginBand{{Zone: "GREEN", Min: ptr(20), Max: ptr(30), IsActive: true}}
 	catScope := []stockMarginBand{{Zone: "RED", Min: ptr(50), IsActive: true}}
 	scopes := map[string][]stockMarginBand{
-		"GLOBAL:*":       global,
+		"GLOBAL:*":                 global,
 		"COMIDA_CATEGORY:platos:3": catScope,
 	}
 

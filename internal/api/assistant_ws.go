@@ -340,16 +340,20 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": callErr.Error()})
 			return
 		}
-		if result.Text != "" {
-			final.WriteString(result.Text)
-			_ = c.writeJSON(map[string]any{"type": "delta", "text": result.Text})
+		// MiniMax occasionally wraps the whole reply in base64 (an encoding quirk
+		// that persists to the DB). Recover the readable text before streaming it to
+		// the client and before persisting, so the chat never shows a raw blob.
+		turnText := assistantRecoverEncodedReply(result.Text)
+		if turnText != "" {
+			final.WriteString(turnText)
+			_ = c.writeJSON(map[string]any{"type": "delta", "text": turnText})
 		}
 		if len(result.ToolUses) == 0 {
 			break
 		}
 		blocks := make([]map[string]any, 0, len(result.ToolUses)+1)
-		if result.Text != "" {
-			blocks = append(blocks, map[string]any{"type": "text", "text": result.Text})
+		if turnText != "" {
+			blocks = append(blocks, map[string]any{"type": "text", "text": turnText})
 		}
 		for _, use := range result.ToolUses {
 			blocks = append(blocks, map[string]any{"type": "tool_use", "id": use.ID, "name": use.Name, "input": json.RawMessage(use.Input)})

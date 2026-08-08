@@ -5,32 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 )
-
-// assistantCatalogToolDefs exposes the safe, common CRUD surface used by
-// Forky. All names resolve through allowlisted resources; no SQL is accepted.
-func assistantCatalogToolDefs() []assistantToolDef {
-	return []assistantToolDef{
-		{Name: "catalog_list", Description: "Lista recursos del restaurante activo: comida, bebidas, cafés, vinos, menús, productos POS, stock o miembros.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string","enum":["comida","bebidas","cafes","vinos","menus","pos_products","stock_items","members"]},"search":{"type":"string"},"limit":{"type":"integer"}},"required":["resource"]}`)},
-		{Name: "catalog_get", Description: "Obtiene recurso por ID dentro del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string"},"id":{"type":"integer"}},"required":["resource","id"]}`)},
-		{Name: "catalog_create", Description: "Crea recurso del restaurante activo. Requiere confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string"},"name":{"type":"string"},"description":{"type":"string"},"price":{"type":"number"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["resource","name","confirmed"]}`)},
-		{Name: "catalog_update", Description: "Actualiza recurso del restaurante activo. Requiere confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string"},"id":{"type":"integer"},"name":{"type":"string"},"description":{"type":"string"},"price":{"type":"number"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["resource","id","confirmed"]}`)},
-		{Name: "catalog_delete", Description: "Elimina/desactiva recurso del restaurante activo. Requiere confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string"},"id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["resource","id","confirmed"]}`)},
-		{Name: "analytics_report", Description: "Devuelve métricas y series del restaurante activo para gráficos.", InputSchema: json.RawMessage(`{"type":"object","properties":{"metric":{"type":"string","enum":["bookings","revenue","products","stock"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["metric"]}`)},
-		{Name: "schedules_list", Description: "Lista horarios laborales del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"limit":{"type":"integer"}}}`)},
-		{Name: "customers_list", Description: "Lista clientes y fuentes del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"search":{"type":"string"},"limit":{"type":"integer"}}}`)},
-		{Name: "stock_items_list", Description: "Lista artículos de stock del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"search":{"type":"string"},"limit":{"type":"integer"}}}`)},
-		{Name: "pos_visits_list", Description: "Lista visitas POS del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"status":{"type":"string"},"limit":{"type":"integer"}}}`)},
-		{Name: "invoices_list", Description: "Lista facturas del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)},
-		{Name: "recipes_list", Description: "Lista recetas del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)},
-		{Name: "production_list", Description: "Lista producción del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)},
-		{Name: "waste_costs_list", Description: "Lista mermas y costes del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"}}}`)},
-		{Name: "restaurant_settings_get", Description: "Lee configuración del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
-		{Name: "whatsapp_bot_config_get", Description: "Lee configuración del bot WhatsApp del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
-		{Name: "site_published_content_get", Description: "Lee contenido publicado del sitio del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
-	}
-}
 
 func assistantCatalogResources() map[string]struct{ table, name, desc, price, softDelete string } {
 	return map[string]struct{ table, name, desc, price, softDelete string }{
@@ -103,19 +78,10 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		return botJSON(map[string]any{"id": id, "name": n, "description": d, "price": p}), nil
 	case "catalog_create":
 		if !in.Confirmed {
-			if s.confirmationStore == nil {
-				return botJSON(map[string]any{"requires_confirmation": true}), nil
-			}
-			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, confirmationArguments(raw), "", 2*time.Minute)
-			if e != nil {
-				return "", e
-			}
-			return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
+			return s.assistantRequireConfirmation(rid, name, raw)
 		}
-		if s.confirmationStore != nil {
-			if e := s.confirmationStore.Consume(in.ConfirmationToken, "", fmt.Sprint(rid), name, "", ""); e != nil {
-				return "", e
-			}
+		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, raw); err != nil {
+			return "", err
 		}
 		res, e := s.db.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (restaurant_id,%s,%s,%s) VALUES (?,?,?,?)", spec.table, spec.name, spec.desc, spec.price), rid, in.Name, in.Description, in.Price)
 		if e != nil {
@@ -125,19 +91,10 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		return botJSON(map[string]any{"created": true, "id": id}), nil
 	case "catalog_update":
 		if !in.Confirmed {
-			if s.confirmationStore == nil {
-				return botJSON(map[string]any{"requires_confirmation": true}), nil
-			}
-			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, confirmationArguments(raw), "", 2*time.Minute)
-			if e != nil {
-				return "", e
-			}
-			return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
+			return s.assistantRequireConfirmation(rid, name, raw)
 		}
-		if s.confirmationStore != nil {
-			if e := s.confirmationStore.Consume(in.ConfirmationToken, "", fmt.Sprint(rid), name, "", ""); e != nil {
-				return "", e
-			}
+		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, raw); err != nil {
+			return "", err
 		}
 		res, e := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=COALESCE(NULLIF(?,''),%s),%s=COALESCE(NULLIF(?,''),%s),%s=? WHERE restaurant_id=? AND id=?", spec.table, spec.name, spec.name, spec.desc, spec.desc, spec.price), in.Name, in.Description, in.Price, rid, in.ID)
 		if e != nil {
@@ -147,19 +104,10 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		return botJSON(map[string]any{"updated": n == 1}), nil
 	case "catalog_delete":
 		if !in.Confirmed {
-			if s.confirmationStore == nil {
-				return botJSON(map[string]any{"requires_confirmation": true}), nil
-			}
-			tok, e := s.confirmationStore.Issue("", fmt.Sprint(rid), name, confirmationArguments(raw), "", 2*time.Minute)
-			if e != nil {
-				return "", e
-			}
-			return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
+			return s.assistantRequireConfirmation(rid, name, raw)
 		}
-		if s.confirmationStore != nil {
-			if e := s.confirmationStore.Consume(in.ConfirmationToken, "", fmt.Sprint(rid), name, "", ""); e != nil {
-				return "", e
-			}
+		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, raw); err != nil {
+			return "", err
 		}
 		res, e := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=? WHERE restaurant_id=? AND id=?", spec.table, spec.softDelete), 0, rid, in.ID)
 		if e != nil {
@@ -194,14 +142,14 @@ func (s *Server) assistantTypedDomainList(ctx context.Context, rid int, name str
 			args = append(args, in.Date)
 		}
 	case "customers_list":
-		q = `SELECT id,name,email,phone FROM analytics_customers WHERE restaurant_id=?`
+		q = `SELECT id, COALESCE(NULLIF(display_name, ''), email), email, phone, COALESCE(tax_id, '') FROM analytics_customers WHERE restaurant_id=?`
 		if in.Search != "" {
-			q += ` AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)`
+			q += ` AND (display_name LIKE ? OR email LIKE ? OR phone LIKE ?)`
 			v := "%" + in.Search + "%"
 			args = append(args, v, v, v)
 		}
 	case "stock_items_list":
-		q = `SELECT id,name,base_unit,kind,status FROM stock_items WHERE restaurant_id=?`
+		q = `SELECT id,name,base_unit,kind,is_active FROM stock_items WHERE restaurant_id=?`
 		if in.Search != "" {
 			q += ` AND name LIKE ?`
 			args = append(args, "%"+in.Search+"%")
@@ -217,13 +165,13 @@ func (s *Server) assistantTypedDomainList(ctx context.Context, rid int, name str
 			args = append(args, in.Status)
 		}
 	case "invoices_list":
-		q = `SELECT id,status,total,created_at FROM recurring_invoices WHERE restaurant_id=?`
+		q = `SELECT id, COALESCE(concept, ''), COALESCE(amount, 0), is_active, created_at FROM recurring_invoices WHERE restaurant_id=?`
 	case "recipes_list":
 		q = `SELECT id,name,portions,prep_time_min,waste_pct FROM stock_recipes WHERE restaurant_id=?`
 	case "production_list":
-		q = `SELECT id,output_item_id,output_qty_base,status,created_at FROM stock_productions WHERE restaurant_id=?`
+		q = `SELECT id, recipe_id, qty_produced_base, status, produced_at FROM stock_production_orders WHERE restaurant_id=?`
 	case "waste_costs_list":
-		q = `SELECT id,item_id,quantity,unit_cost,created_at FROM stock_waste WHERE restaurant_id=?`
+		q = `SELECT id, stock_item_id, entered_qty, unit_cost, occurred_at FROM stock_movements WHERE restaurant_id=? AND type='WASTE'`
 	default:
 		return "", fmt.Errorf("herramienta desconocida: %s", name)
 	}
@@ -240,7 +188,16 @@ func (s *Server) assistantTypedDomainList(ctx context.Context, rid int, name str
 		if e = rows.Scan(&id, &vals[0], &vals[1], &vals[2], &vals[3]); e != nil {
 			return "", e
 		}
-		out = append(out, map[string]any{"id": id, "value_1": vals[0], "value_2": vals[1], "value_3": vals[2], "value_4": vals[3]})
+		item := map[string]any{"id": id}
+		for i, v := range vals {
+			// Driver returns []byte for binary/binary-collation columns; keep
+			// them as readable strings so the model never sees base64.
+			if b, ok := v.([]byte); ok {
+				v = string(b)
+			}
+			item[fmt.Sprintf("value_%d", i+1)] = v
+		}
+		out = append(out, item)
 	}
 	return botJSON(map[string]any{"items": out, "tool": name}), rows.Err()
 }
@@ -249,7 +206,13 @@ func (s *Server) assistantSafeRead(ctx context.Context, rid int, name string) (s
 	var q string
 	switch name {
 	case "restaurant_settings_get":
-		q = `SELECT id, name, phone, email, address FROM restaurants WHERE id=? LIMIT 1`
+		cols := []string{"id", "name"}
+		for _, c := range []string{"slug", "contact_phone", "contact_email", "location", "website_url", "avatar", "cif", "menu_url"} {
+			if s.assistantColumnExists(ctx, "restaurants", c) {
+				cols = append(cols, c)
+			}
+		}
+		q = `SELECT ` + strings.Join(cols, ",") + ` FROM restaurants WHERE id=? LIMIT 1`
 	case "whatsapp_bot_config_get":
 		q = `SELECT restaurant_id, config_json FROM whatsapp_bot_config WHERE restaurant_id=? LIMIT 1`
 	case "site_published_content_get":

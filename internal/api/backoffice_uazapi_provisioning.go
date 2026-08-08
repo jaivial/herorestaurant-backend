@@ -421,8 +421,12 @@ func (s *Server) refreshRestaurantUAZAPIConnectionStatus(ctx context.Context, re
 	}
 	qr := st.QR
 	pairCode := st.PairCode
-	if pairCode == "" { pairCode = rec.PairCode }
-	if qr == "" { qr = rec.QRPayload }
+	if pairCode == "" {
+		pairCode = rec.PairCode
+	}
+	if qr == "" {
+		qr = rec.QRPayload
+	}
 	connectedPhone := st.ConnectedPhone
 	if connectedPhone == "" {
 		connectedPhone = rec.ConnectedPhone
@@ -434,8 +438,12 @@ func (s *Server) refreshRestaurantUAZAPIConnectionStatus(ctx context.Context, re
 	if strings.EqualFold(rec.Provider, "evolution") &&
 		!isUAZAPIConnected(status) && pairCode == "" && connectedPhone != "" {
 		if refreshed, connectErr := s.gatewayForInstance(rec).Connect(ctx, connectedPhone); connectErr == nil {
-			if refreshed.PairCode != "" { pairCode = refreshed.PairCode }
-			if refreshed.QR != "" { qr = refreshed.QR }
+			if refreshed.PairCode != "" {
+				pairCode = refreshed.PairCode
+			}
+			if refreshed.QR != "" {
+				qr = refreshed.QR
+			}
 		}
 	}
 

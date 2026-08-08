@@ -381,7 +381,7 @@ type wsResponseRecorder struct {
 	body   []byte
 }
 
-func (r *wsResponseRecorder) Header() http.Header { return r.header }
+func (r *wsResponseRecorder) Header() http.Header  { return r.header }
 func (r *wsResponseRecorder) WriteHeader(code int) { r.status = code }
 func (r *wsResponseRecorder) Write(b []byte) (int, error) {
 	if r.status == 0 {

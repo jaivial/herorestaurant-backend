@@ -25,7 +25,7 @@ func TestNormalizeAllergenAcceptsAliasesAndCasing(t *testing.T) {
 		{"Gluten", "Gluten"},
 		{"gluten", "Gluten"},
 		{"  GLUTEN  ", "Gluten"},
-		{"Crustáceos", "Crustaceos"},   // accented input
+		{"Crustáceos", "Crustaceos"}, // accented input
 		{"crustaceos", "Crustaceos"},
 		{"Frutos de cáscara", "Frutos de cascara"},
 		{"frutos secos", "Frutos de cascara"}, // common colloquial alias

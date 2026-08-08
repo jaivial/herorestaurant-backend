@@ -124,21 +124,21 @@ func validMarginScopeKind(k string) bool {
 }
 
 type stockMarginScopePutBody struct {
-	ScopeKind        string                      `json:"scopeKind"`
-	ScopeKey         string                      `json:"scopeKey"`
-	Label            string                      `json:"label"`
-	TargetFoodCostPct *float64                   `json:"targetFoodCostPct"`
-	Bands            []stockMarginScopeBandInput `json:"bands"`
+	ScopeKind         string                      `json:"scopeKind"`
+	ScopeKey          string                      `json:"scopeKey"`
+	Label             string                      `json:"label"`
+	TargetFoodCostPct *float64                    `json:"targetFoodCostPct"`
+	Bands             []stockMarginScopeBandInput `json:"bands"`
 }
 
 // marginScopeView is the JSON shape returned by GET endpoints.
 type marginScopeView struct {
-	ScopeID          int64                       `json:"scopeId"`
-	ScopeKind        string                      `json:"scopeKind"`
-	ScopeKey         string                      `json:"scopeKey"`
-	Label            string                      `json:"label"`
-	TargetFoodCostPct *float64                   `json:"targetFoodCostPct"`
-	Bands            []stockMarginBand           `json:"bands"`
+	ScopeID           int64             `json:"scopeId"`
+	ScopeKind         string            `json:"scopeKind"`
+	ScopeKey          string            `json:"scopeKey"`
+	Label             string            `json:"label"`
+	TargetFoodCostPct *float64          `json:"targetFoodCostPct"`
+	Bands             []stockMarginBand `json:"bands"`
 }
 
 // PUT /api/admin/stock/margin-scopes

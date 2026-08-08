@@ -308,16 +308,16 @@ func (s *Server) handlePlatformRestaurantActivate(w http.ResponseWriter, r *http
 // ---------- Platform users (bo_users) ----------
 
 type platformUser struct {
-	ID              int            `json:"id"`
-	Email           string         `json:"email"`
-	Username        sql.NullString `json:"-"`
-	UsernameStr     string         `json:"username"`
-	Name            string         `json:"name"`
-	IsSuperadmin    bool           `json:"isSuperadmin"`
-	MustChangePass  bool           `json:"mustChangePassword"`
-	CreatedAt       string         `json:"createdAt"`
-	Restaurants     []userRestaurantAssignment `json:"restaurants"`
-	ActiveSessionCount int         `json:"activeSessionCount"`
+	ID                 int                        `json:"id"`
+	Email              string                     `json:"email"`
+	Username           sql.NullString             `json:"-"`
+	UsernameStr        string                     `json:"username"`
+	Name               string                     `json:"name"`
+	IsSuperadmin       bool                       `json:"isSuperadmin"`
+	MustChangePass     bool                       `json:"mustChangePassword"`
+	CreatedAt          string                     `json:"createdAt"`
+	Restaurants        []userRestaurantAssignment `json:"restaurants"`
+	ActiveSessionCount int                        `json:"activeSessionCount"`
 }
 
 type userRestaurantAssignment struct {
@@ -349,14 +349,14 @@ func (s *Server) handlePlatformUsersList(w http.ResponseWriter, r *http.Request)
 	var orderedIDs []int
 	for rows.Next() {
 		var (
-			id              int
-			email           string
-			username        sql.NullString
-			name            string
-			isSuper         int
-			mustChange      int
-			createdAt       string
-			activeSessions  int
+			id             int
+			email          string
+			username       sql.NullString
+			name           string
+			isSuper        int
+			mustChange     int
+			createdAt      string
+			activeSessions int
 		)
 		if err := rows.Scan(&id, &email, &username, &name, &isSuper, &mustChange, &createdAt, &activeSessions); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo filas de usuarios")
@@ -414,12 +414,12 @@ func (s *Server) handlePlatformUsersList(w http.ResponseWriter, r *http.Request)
 }
 
 type platformUserCreateRequest struct {
-	Email          string  `json:"email"`
-	Name           string  `json:"name"`
-	Password       string  `json:"password"`
-	IsSuperadmin   bool    `json:"isSuperadmin"`
-	RestaurantID   *int    `json:"restaurantId"`
-	Role           *string `json:"role"`
+	Email        string  `json:"email"`
+	Name         string  `json:"name"`
+	Password     string  `json:"password"`
+	IsSuperadmin bool    `json:"isSuperadmin"`
+	RestaurantID *int    `json:"restaurantId"`
+	Role         *string `json:"role"`
 }
 
 func (s *Server) handlePlatformUserCreate(w http.ResponseWriter, r *http.Request) {
@@ -477,9 +477,9 @@ func (s *Server) handlePlatformUserCreate(w http.ResponseWriter, r *http.Request
 }
 
 type platformUserPatchRequest struct {
-	Name         *string `json:"name"`
-	IsSuperadmin *bool   `json:"isSuperadmin"`
-	MustChangePass *bool `json:"mustChangePassword"`
+	Name           *string `json:"name"`
+	IsSuperadmin   *bool   `json:"isSuperadmin"`
+	MustChangePass *bool   `json:"mustChangePassword"`
 }
 
 func (s *Server) handlePlatformUserPatch(w http.ResponseWriter, r *http.Request) {
@@ -656,17 +656,17 @@ func (s *Server) handlePlatformUserUnassign(w http.ResponseWriter, r *http.Reque
 // ---------- Subscriptions / recurring features ----------
 
 type platformSubscription struct {
-	ID           int     `json:"id"`
-	RestaurantID int     `json:"restaurantId"`
-	RestaurantName string `json:"restaurantName"`
-	FeatureKey   string  `json:"featureKey"`
-	Concept      string  `json:"concept"`
-	Amount       float64 `json:"amount"`
-	Currency     string  `json:"currency"`
-	Frequency    string  `json:"frequency"`
-	IsActive     bool    `json:"isActive"`
-	StartDate    string  `json:"startDate"`
-	NextRunAt    string  `json:"nextRunAt"`
+	ID             int     `json:"id"`
+	RestaurantID   int     `json:"restaurantId"`
+	RestaurantName string  `json:"restaurantName"`
+	FeatureKey     string  `json:"featureKey"`
+	Concept        string  `json:"concept"`
+	Amount         float64 `json:"amount"`
+	Currency       string  `json:"currency"`
+	Frequency      string  `json:"frequency"`
+	IsActive       bool    `json:"isActive"`
+	StartDate      string  `json:"startDate"`
+	NextRunAt      string  `json:"nextRunAt"`
 }
 
 func (s *Server) handlePlatformSubscriptionsList(w http.ResponseWriter, r *http.Request) {
@@ -711,8 +711,8 @@ func (s *Server) handlePlatformSubscriptionsList(w http.ResponseWriter, r *http.
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":        true,
-		"subscriptions":  out,
+		"success":       true,
+		"subscriptions": out,
 	})
 }
 
@@ -748,17 +748,17 @@ func (s *Server) handlePlatformSubscriptionToggle(w http.ResponseWriter, r *http
 // ---------- Platform WhatsApp instances ----------
 
 type platformWhatsAppInstance struct {
-	ID              int64  `json:"id"`
-	RestaurantID    int    `json:"restaurantId"`
-	RestaurantName  string `json:"restaurantName"`
-	ServerID        int64  `json:"serverId"`
-	InstanceName    string `json:"instanceName"`
-	ConnectedPhone  string `json:"connectedPhone"`
-	Status          string `json:"status"`
-	PairCode        string `json:"pairCode"`
-	IsActive        bool   `json:"isActive"`
-	ConnectedAt     string `json:"connectedAt"`
-	UpdatedAt       string `json:"updatedAt"`
+	ID             int64  `json:"id"`
+	RestaurantID   int    `json:"restaurantId"`
+	RestaurantName string `json:"restaurantName"`
+	ServerID       int64  `json:"serverId"`
+	InstanceName   string `json:"instanceName"`
+	ConnectedPhone string `json:"connectedPhone"`
+	Status         string `json:"status"`
+	PairCode       string `json:"pairCode"`
+	IsActive       bool   `json:"isActive"`
+	ConnectedAt    string `json:"connectedAt"`
+	UpdatedAt      string `json:"updatedAt"`
 }
 
 func (s *Server) handlePlatformWhatsAppList(w http.ResponseWriter, r *http.Request) {
@@ -925,14 +925,14 @@ func (s *Server) handlePlatformDomainsList(w http.ResponseWriter, r *http.Reques
 // ---------- Stripe payments + refunds ----------
 
 type platformStripePayment struct {
-	EventID    string `json:"eventId"`
-	Type       string `json:"type"`
-	Amount     int64  `json:"amount"`
-	Currency   string `json:"currency"`
-	Domain     string `json:"domain"`
-	RestaurantID int  `json:"restaurantId"`
+	EventID        string `json:"eventId"`
+	Type           string `json:"type"`
+	Amount         int64  `json:"amount"`
+	Currency       string `json:"currency"`
+	Domain         string `json:"domain"`
+	RestaurantID   int    `json:"restaurantId"`
 	RestaurantName string `json:"restaurantName"`
-	PaidAt     string `json:"paidAt"`
+	PaidAt         string `json:"paidAt"`
 }
 
 func (s *Server) handlePlatformStripePaymentsList(w http.ResponseWriter, r *http.Request) {
@@ -990,9 +990,9 @@ func (s *Server) handlePlatformStripePaymentsList(w http.ResponseWriter, r *http
 
 type platformStripeRefundRequest struct {
 	PaymentIntentID string `json:"paymentIntentId"`
-	ChargeID         string `json:"chargeId"`
-	Amount           int64  `json:"amount"` // cents, 0 = full
-	Reason           string `json:"reason"`
+	ChargeID        string `json:"chargeId"`
+	Amount          int64  `json:"amount"` // cents, 0 = full
+	Reason          string `json:"reason"`
 }
 
 func (s *Server) handlePlatformStripeRefund(w http.ResponseWriter, r *http.Request) {
@@ -1066,14 +1066,14 @@ func (s *Server) handlePlatformDashboard(w http.ResponseWriter, r *http.Request)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"metrics": map[string]any{
-			"restaurants":          restaurantCount,
-			"users":                userCount,
-			"superadmins":          superadminCount,
-			"activeSessions":       activeSessionCount,
-			"subscriptions":        subCount,
-			"activeSubscriptions":  activeSubCount,
-			"domains":              domainCount,
-			"whatsappInstances":    waCount,
+			"restaurants":             restaurantCount,
+			"users":                   userCount,
+			"superadmins":             superadminCount,
+			"activeSessions":          activeSessionCount,
+			"subscriptions":           subCount,
+			"activeSubscriptions":     activeSubCount,
+			"domains":                 domainCount,
+			"whatsappInstances":       waCount,
 			"monthlyRecurringRevenue": monthlyRecurringRevenue,
 		},
 	})

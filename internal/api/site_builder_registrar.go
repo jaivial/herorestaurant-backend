@@ -170,4 +170,3 @@ func (s *Server) provisionDomainSite(ctx context.Context, restaurantID int, doma
 		}
 	}
 }
-

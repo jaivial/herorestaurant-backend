@@ -30,7 +30,27 @@ func TestAssistantBookingMutationRequiresConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != `{"requires_confirmation":true}` {
-		t.Fatalf("got %s", got)
+	var v map[string]any
+	if err := json.Unmarshal([]byte(got), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v["confirmation_token"] == nil {
+		t.Fatalf("missing confirmation token: %s", got)
+	}
+}
+
+func TestAssistantBookingListToolRegistered(t *testing.T) {
+	defs := assistantToolDefs()
+	names := map[string]bool{}
+	for _, d := range defs {
+		names[d.Name] = true
+	}
+	for _, want := range []string{"bookings_list", "bookings_summary", "restaurant_query"} {
+		if !names[want] {
+			t.Errorf("missing tool %s", want)
+		}
+	}
+	if assistantToolWrites("bookings_list") {
+		t.Error("bookings_list must be a read-only tool")
 	}
 }

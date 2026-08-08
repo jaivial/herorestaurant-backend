@@ -2,27 +2,12 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 )
-
-func assistantToolDefs() []assistantToolDef {
-	defs := []assistantToolDef{
-		{Name: "restaurant_info", Description: "Lee datos básicos del restaurante activo.", InputSchema: json.RawMessage(`{"type":"object","properties":{}}`)},
-		{Name: "bookings_summary", Description: "Devuelve resumen de reservas del restaurante activo para una fecha o rango opcional.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"}}}`)},
-		{Name: "restaurant_query", Description: "Consulta datos agregados seguros del restaurante activo. resource: bookings, menus o wines.", InputSchema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string","enum":["bookings","menus","wines"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["resource"]}`)},
-		{Name: "create_booking", Description: "Crea reserva solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","time","people","name","confirmed"]}`)},
-		{Name: "update_booking", Description: "Actualiza reserva del restaurante activo solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}`)},
-		{Name: "pos_visit_create", Description: "Abre una visita POS en el restaurante activo. Requiere confirmación.", InputSchema: json.RawMessage(`{"type":"object","properties":{"channel":{"type":"string"},"covers":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["channel","covers","confirmed"]}`)},
-		{Name: "pos_ticket_create", Description: "Crea un ticket POS para una visita propia. Requiere confirmación.", InputSchema: json.RawMessage(`{"type":"object","properties":{"visit_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["visit_id","confirmed"]}`)},
-		{Name: "pos_payment_create", Description: "Registra un pago POS en ticket del restaurante activo. Requiere confirmación.", InputSchema: json.RawMessage(`{"type":"object","properties":{"ticket_id":{"type":"integer"},"method":{"type":"string","enum":["CASH","CARD","BANK","OTHER"]},"amount_cents":{"type":"integer"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","method","amount_cents","idempotency_key","confirmed"]}`)},
-		{Name: "pos_refund_create", Description: "Reembolsa un ticket POS. Requiere confirmación.", InputSchema: json.RawMessage(`{"type":"object","properties":{"ticket_id":{"type":"integer"},"amount_cents":{"type":"integer"},"reason":{"type":"string"},"payment_method":{"type":"string","enum":["CASH","CARD","BANK","OTHER"]},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","amount_cents","reason","payment_method","idempotency_key","confirmed"]}`)},
-		{Name: "delete_booking", Description: "Cancela reserva solo con confirmed=true.", InputSchema: json.RawMessage(`{"type":"object","properties":{"booking_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}`)},
-	}
-	return append(defs, assistantCatalogToolDefs()...)
-}
 
 func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, name string, input json.RawMessage) (string, error) {
 	if len(input) > 64*1024 {
@@ -34,9 +19,13 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 		if !assistantToolAllowed(auth, name) {
 			return "", fmt.Errorf("permiso insuficiente para %s", name)
 		}
-	} else if assistantToolWrites(name) {
-		// Anonymous/public assistant sessions may read public-safe data, never mutate.
-		return "", fmt.Errorf("autenticación requerida para %s", name)
+	} else {
+		t, _ := assistantToolLookup(name)
+		// Anonymous/public assistant sessions may only read public-safe data
+		// (e.g. restaurant_info); everything else is denied before touching DB.
+		if t.Write || t.BackofficeOnly {
+			return "", fmt.Errorf("autenticación requerida para %s", name)
+		}
 	}
 	started := time.Now()
 	out, err := s.assistantExecuteToolUnsafe(ctx, restaurantID, name, input)
@@ -71,66 +60,108 @@ func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID in
 	if restaurantID <= 0 {
 		return "", fmt.Errorf("restaurante activo no disponible")
 	}
+	t, ok := assistantToolLookup(name)
+	if !ok || t.Handler == nil {
+		return "", fmt.Errorf("herramienta desconocida: %s", name)
+	}
+	return t.Handler(s, ctx, restaurantID, input)
+}
+
+// assistantRestaurantInfo returns the active restaurant's basic profile.
+// Contact fields are read only when their columns exist in the schema (the
+// legacy PHP install stores them as contact_phone/contact_email/location, not
+// phone/email/address).
+func (s *Server) assistantRestaurantInfo(ctx context.Context, rid int) (string, error) {
+	var name string
+	if err := s.db.QueryRowContext(ctx, "SELECT name FROM restaurants WHERE id=?", rid).Scan(&name); err != nil {
+		return "", err
+	}
+	out := map[string]any{"restaurant_id": rid, "name": name}
+	for col, key := range map[string]string{"contact_phone": "phone", "contact_email": "email", "location": "address", "website_url": "website_url"} {
+		if !s.assistantColumnExists(ctx, "restaurants", col) {
+			continue
+		}
+		var v sql.NullString
+		if err := s.db.QueryRowContext(ctx, "SELECT "+col+" FROM restaurants WHERE id=?", rid).Scan(&v); err == nil && v.Valid {
+			out[key] = v.String
+		}
+	}
+	return botJSON(out), nil
+}
+
+// assistantColumnExists reports whether a column exists on a table in the
+// current schema (used to read optional fields defensively across schemas).
+func (s *Server) assistantColumnExists(ctx context.Context, table, column string) bool {
+	if s.db == nil {
+		return false
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?`, table, column).Scan(&n)
+	return err == nil && n > 0
+}
+
+// assistantBookingsSummary aggregates the active restaurant's bookings for a
+// date or optional range (totals and people).
+func (s *Server) assistantBookingsSummary(ctx context.Context, rid int, input json.RawMessage) (string, error) {
 	var in struct {
-		Resource string `json:"resource"`
 		Date     string `json:"date"`
 		DateFrom string `json:"date_from"`
 		DateTo   string `json:"date_to"`
 	}
 	_ = json.Unmarshal(input, &in)
-	switch name {
-	case "catalog_list", "catalog_get", "catalog_create", "catalog_update", "catalog_delete":
-		return s.assistantCatalogTool(ctx, restaurantID, name, input)
-	case "schedules_list", "customers_list", "stock_items_list", "pos_visits_list",
-		"invoices_list", "recipes_list", "production_list", "waste_costs_list",
-		"restaurant_settings_get", "whatsapp_bot_config_get", "site_published_content_get":
-		return s.assistantCatalogTool(ctx, restaurantID, name, input)
-	case "analytics_report":
-		return s.assistantAnalyticsTool(ctx, restaurantID, input)
-	case "restaurant_info":
-		var name, phone string
-		err := s.db.QueryRowContext(ctx, "SELECT name, phone FROM restaurants WHERE id=?", restaurantID).Scan(&name, &phone)
-		if err != nil {
-			return "", err
+	var total, people int
+	q := "SELECT COUNT(*), COALESCE(SUM(party_size),0) FROM bookings WHERE restaurant_id=? AND status NOT IN ('cancelled','canceled')"
+	args := []any{rid}
+	if strings.TrimSpace(in.Date) != "" {
+		q += " AND reservation_date=?"
+		args = append(args, in.Date)
+	} else {
+		if strings.TrimSpace(in.DateFrom) != "" {
+			q += " AND reservation_date>=?"
+			args = append(args, in.DateFrom)
 		}
-		return botJSON(map[string]any{"restaurant_id": restaurantID, "name": name, "phone": phone}), nil
-	case "bookings_summary":
-		var total, people int
-		q := "SELECT COUNT(*), COALESCE(SUM(party_size),0) FROM bookings WHERE restaurant_id=? AND status NOT IN ('cancelled','canceled')"
-		args := []any{restaurantID}
-		if strings.TrimSpace(in.Date) != "" {
-			q += " AND reservation_date=?"
-			args = append(args, in.Date)
-		} else {
-			if strings.TrimSpace(in.DateFrom) != "" {
-				q += " AND reservation_date>=?"
-				args = append(args, in.DateFrom)
-			}
-			if strings.TrimSpace(in.DateTo) != "" {
-				q += " AND reservation_date<=?"
-				args = append(args, in.DateTo)
-			}
-		}
-		err := s.db.QueryRowContext(ctx, q, args...).Scan(&total, &people)
-		if err != nil {
-			return "", err
-		}
-		return botJSON(map[string]any{"total": total, "people": people, "date": in.Date, "date_from": in.DateFrom, "date_to": in.DateTo}), nil
-	case "create_booking", "update_booking", "delete_booking":
-		return s.assistantBookingMutation(ctx, restaurantID, name, input)
-	case "pos_visit_create", "pos_ticket_create", "pos_payment_create", "pos_refund_create":
-		return s.assistantPOSMutation(ctx, restaurantID, name, input)
-	case "restaurant_query":
-		switch in.Resource {
-		case "bookings":
-			return s.assistantBookingSeries(ctx, restaurantID, in.DateFrom, in.DateTo)
-		case "menus":
-			return s.assistantCount(ctx, restaurantID, "group_menus", "menus")
-		case "wines":
-			return s.assistantCount(ctx, restaurantID, "wines", "wines")
+		if strings.TrimSpace(in.DateTo) != "" {
+			q += " AND reservation_date<=?"
+			args = append(args, in.DateTo)
 		}
 	}
-	return "", fmt.Errorf("herramienta desconocida: %s", name)
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&total, &people); err != nil {
+		return "", err
+	}
+	return botJSON(map[string]any{"total": total, "people": people, "date": in.Date, "date_from": in.DateFrom, "date_to": in.DateTo}), nil
+}
+
+// assistantBookingsListHandler parses the bookings_list input and returns the
+// per-reservation rows for table rendering.
+func (s *Server) assistantBookingsListHandler(ctx context.Context, rid int, input json.RawMessage) (string, error) {
+	var in struct {
+		Date     string `json:"date"`
+		DateFrom string `json:"date_from"`
+		DateTo   string `json:"date_to"`
+		Limit    int    `json:"limit"`
+	}
+	_ = json.Unmarshal(input, &in)
+	return s.assistantBookingList(ctx, rid, in.Date, in.DateFrom, in.DateTo, in.Limit)
+}
+
+// assistantRestaurantQuery returns safe aggregated data for the active
+// restaurant: bookings series, or counts of menus / wines.
+func (s *Server) assistantRestaurantQuery(ctx context.Context, rid int, input json.RawMessage) (string, error) {
+	var in struct {
+		Resource string `json:"resource"`
+		DateFrom string `json:"date_from"`
+		DateTo   string `json:"date_to"`
+	}
+	_ = json.Unmarshal(input, &in)
+	switch in.Resource {
+	case "bookings":
+		return s.assistantBookingSeries(ctx, rid, in.DateFrom, in.DateTo)
+	case "menus":
+		return s.assistantCount(ctx, rid, "group_menus", "menus")
+	case "wines":
+		return s.assistantCount(ctx, rid, "wines", "wines")
+	}
+	return "", fmt.Errorf("resource no permitido: %s", in.Resource)
 }
 func (s *Server) assistantCount(ctx context.Context, rid int, table, key string) (string, error) {
 	var n int
@@ -168,6 +199,56 @@ func (s *Server) assistantBookingSeries(ctx context.Context, rid int, from, to s
 	return botJSON(map[string]any{"series": out}), rows.Err()
 }
 
+// assistantBookingList returns the individual reservation rows (client, date,
+// time, party size, status) for the active restaurant, so the model can render a
+// per-reservation table. Optional single date / range / limit are applied.
+func (s *Server) assistantBookingList(ctx context.Context, rid int, date, dateFrom, dateTo string, limit int) (string, error) {
+	if limit < 1 || limit > 500 {
+		limit = 100
+	}
+	q := "SELECT id, customer_name, reservation_date, reservation_time, party_size, status FROM bookings WHERE restaurant_id=?"
+	args := []any{rid}
+	if strings.TrimSpace(date) != "" {
+		q += " AND reservation_date=?"
+		args = append(args, date)
+	} else {
+		if strings.TrimSpace(dateFrom) != "" {
+			q += " AND reservation_date>=?"
+			args = append(args, dateFrom)
+		}
+		if strings.TrimSpace(dateTo) != "" {
+			q += " AND reservation_date<=?"
+			args = append(args, dateTo)
+		}
+	}
+	q += " AND status NOT IN ('cancelled','canceled') ORDER BY reservation_date, reservation_time LIMIT ?"
+	args = append(args, limit)
+	rows, e := s.db.QueryContext(ctx, q, args...)
+	if e != nil {
+		return "", e
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, people int
+		var name, status string
+		var dateVal time.Time // DATE column -> time.Time
+		var timeStr string    // TIME column -> []byte (e.g. "14:30:00")
+		if e = rows.Scan(&id, &name, &dateVal, &timeStr, &people, &status); e != nil {
+			return "", e
+		}
+		out = append(out, map[string]any{
+			"id":            id,
+			"customer_name": name,
+			"date":          dateVal.Format("2006-01-02"),
+			"time":          timeStr,
+			"people":        people,
+			"status":        status,
+		})
+	}
+	return botJSON(map[string]any{"bookings": out}), rows.Err()
+}
+
 func (s *Server) assistantAudit(ctx context.Context, restaurantID int, action, entity string, entityID int, after any) {
 	// Auditing must never make a successful assistant operation fail. The table is
 	// installed by the base migration, but this also keeps older installations
@@ -195,23 +276,9 @@ func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name str
 		return "", err
 	}
 	if !in.Confirmed {
-		lightweight := s.confirmationStore == nil
-		if s.confirmationStore == nil {
-			s.confirmationStore = newConfirmationStore()
-		}
-		tok, err := s.confirmationStore.Issue("", fmt.Sprint(rid), name, confirmationArguments(input), "", 2*time.Minute)
-		if err != nil {
-			return "", err
-		}
-		if lightweight {
-			return botJSON(map[string]any{"requires_confirmation": true}), nil
-		}
-		return botJSON(map[string]any{"requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": 120}), nil
+		return s.assistantRequireConfirmation(rid, name, input)
 	}
-	if strings.TrimSpace(in.ConfirmationToken) == "" {
-		return "", fmt.Errorf("confirmation_token requerido")
-	}
-	if err := s.confirmationStore.Consume(in.ConfirmationToken, "", fmt.Sprint(rid), name, "", ""); err != nil {
+	if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, input); err != nil {
 		return "", err
 	}
 	switch name {
@@ -259,44 +326,16 @@ func (s *Server) assistantBookingMutation(ctx context.Context, rid int, name str
 	return "", fmt.Errorf("mutation inválida")
 }
 
-func assistantToolWrites(name string) bool {
-	switch name {
-	case "create_booking", "update_booking", "delete_booking", "catalog_create", "catalog_update", "catalog_delete":
-	case "pos_visit_create", "pos_ticket_create", "pos_payment_create", "pos_refund_create":
-		return true
-	}
-	return false
-}
-
 // assistantToolAllowed maps Forky tools to the same section permissions exposed
-// by boAuth. Explicit SectionAccess is authoritative; otherwise role defaults
-// are used. Writes additionally require the section's write capability.
+// by boAuth, derived from the tool registry. Explicit SectionAccess is
+// authoritative; otherwise role defaults are used. Writes additionally require
+// the section's write capability.
 func assistantToolAllowed(a boAuth, tool string) bool {
-	section, write := "", assistantToolWrites(tool)
-	switch tool {
-	case "restaurant_info", "bookings_summary", "restaurant_query", "create_booking", "update_booking", "delete_booking":
-		section = "reservas"
-	case "catalog_list", "catalog_get":
-		section = "comida"
-	case "catalog_create", "catalog_update", "catalog_delete":
-		section = "comida"
-	case "analytics_report":
-		section = "estadisticas"
-	case "schedules_list":
-		section = "horarios"
-	case "customers_list":
-		section = "reservas"
-	case "stock_items_list", "recipes_list", "production_list", "waste_costs_list":
-		section = "stock"
-	case "pos_visits_list", "pos_visit_create", "pos_ticket_create", "pos_payment_create", "pos_refund_create":
-		section = "pos"
-	case "invoices_list":
-		section = "facturas"
-	case "restaurant_settings_get", "whatsapp_bot_config_get", "site_published_content_get":
-		section = "plataforma"
-	default:
+	t, ok := assistantToolLookup(tool)
+	if !ok {
 		return false
 	}
+	section, write := t.Section, t.Write
 	role := strings.ToLower(strings.TrimSpace(a.Role))
 	if role == "" {
 		role = strings.ToLower(strings.TrimSpace(a.User.Role))

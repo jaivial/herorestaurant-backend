@@ -165,18 +165,18 @@ func (c *CloudflareClient) DeleteDNSRecord(ctx context.Context, zoneID, recordID
 
 // RegistrarDomain is the domain-check result for one domain.
 type RegistrarDomain struct {
-	Name         string `json:"name"`
-	Registrable  bool   `json:"registrable"`
-	Tier         string `json:"tier"`
-	Reason       string `json:"reason"`
-	PriceEUR     string `json:"price_eur,omitempty"`
-	Pricing      struct {
-		Currency        string `json:"currency"`
+	Name        string `json:"name"`
+	Registrable bool   `json:"registrable"`
+	Tier        string `json:"tier"`
+	Reason      string `json:"reason"`
+	PriceEUR    string `json:"price_eur,omitempty"`
+	Pricing     struct {
+		Currency         string `json:"currency"`
 		RegistrationCost string `json:"registration_cost"`
-		RenewalCost     string `json:"renewal_cost"`
+		RenewalCost      string `json:"renewal_cost"`
 	} `json:"pricing"`
-	Available  *bool  `json:"available"` // set only for owned/registrar-managed
-	CanRegister bool  `json:"can_register"`
+	Available   *bool  `json:"available"` // set only for owned/registrar-managed
+	CanRegister bool   `json:"can_register"`
 	PremiumType string `json:"premium_type"`
 }
 
@@ -242,4 +242,3 @@ func (c *CloudflareClient) RegisterDomain(ctx context.Context, body string) ([]b
 func (c *CloudflareClient) RegistrationStatus(ctx context.Context, name string) ([]byte, error) {
 	return c.Do(ctx, http.MethodGet, "/accounts/"+c.Account+"/registrar/registrations/"+name+"/registration-status", nil)
 }
-

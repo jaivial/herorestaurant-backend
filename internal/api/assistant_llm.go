@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -213,6 +214,245 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 	return result, nil
 }
 
+// assistantLikelyBase64 reports whether s looks like a base64/base64url payload
+// (strong signal: only the base64 alphabet plus optional trailing `=`, no
+// spaces). Alignment is NOT required: MiniMax sometimes emits truncated/
+// misaligned base64 (length % 4 != 0); decode pads/strips the tail. A normal
+// Spanish reply never matches because it always contains spaces/accents/
+// markdown/emoji.
+func assistantLikelyBase64(s string) bool {
+	t := strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' || r == ' ' {
+			return -1
+		}
+		return r
+	}, s)
+	t = strings.TrimRight(t, "=")
+	if len(t) < 16 {
+		return false
+	}
+	for _, r := range t {
+		switch {
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '+' || r == '/' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// assistantDecodeBase64 best-effort decodes a base64 or base64url string to
+// UTF-8. Returns (decoded, ok). ok is false when the payload is not cleanly
+// decodable as UTF-8, so callers keep the original text when the guess fails.
+func assistantDecodeBase64(s string) (string, bool) {
+	t := strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' || r == ' ' {
+			return -1
+		}
+		return r
+	}, s)
+	// Try the exact string first (tolerating a wrong but harmless pad count).
+	if out, ok := assistantTryDecodeBase64(t, 0); ok {
+		return assistantCleanDecodedText(out), true
+	}
+	// MiniMax sometimes truncates the base64 mid-stream (e.g. a large reply gets
+	// cut at an awkward byte, leaving len%4==1, which Go's decoder rejects with
+	// "cannot be 1 more than a multiple of 4"). When the exact decode fails, drop
+	// data characters one by one from the END and keep the longest chunk that
+	// decodes to valid, mostly-readable UTF-8.
+	for drop := 1; drop <= 8; drop++ {
+		cut := t[:len(t)-drop]
+		if out, ok := assistantTryDecodeBase64(cut, 0); ok {
+			return assistantCleanDecodedText(out), true
+		}
+	}
+	// Last resort: decode the longest prefix aligned to 4. This still recovers
+	// the readable head of the message even when the tail is garbage.
+	if len(t) >= 4 {
+		aligned := t[:len(t)-(len(t)%4)]
+		if out, ok := assistantTryDecodeBase64(aligned, 2); ok {
+			return assistantCleanDecodedText(out), true
+		}
+	}
+	return s, false
+}
+
+// assistantTryDecodeBase64 decodes a cleaned base64/base64url payload and reports
+// "ok" only when the result is non-empty, valid UTF-8 and mostly printable/readable.
+// extraPad forces extra '=' padding for up to extraPad units when useful (used by
+// the aligned-prefix recovery after a truncated tail).
+func assistantTryDecodeBase64(t string, extraPad int) (string, bool) {
+	if len(t) == 0 {
+		return "", false
+	}
+	for alts := 0; alts < 2; alts++ {
+		tt := t
+		if len(tt)%4 == 1 {
+			// A single dangling datum byte is never valid; skip a full 4-unit pad.
+			continue
+		}
+		pad := (4 - len(tt)%4) % 4
+		for p := 0; p <= extraPad; p++ {
+			cand := tt + strings.Repeat("=", pad+p*4)
+			dec, err := base64.StdEncoding.DecodeString(cand)
+			if err != nil {
+				dec, err = base64.URLEncoding.DecodeString(cand)
+			}
+			if err != nil {
+				continue
+			}
+			deco := bytes.ToValidUTF8(dec, []byte(""))
+			decStr := string(deco)
+			if len(decStr) == 0 {
+				return "", false
+			}
+			printable := 0
+			for _, r := range decStr {
+				// U+FFFD (replacement char a truncated tail leaves behind) counts
+				// as NON-printable: a cut-off reply keeps its readable head while
+				// binary garbage fails the ratio.
+				if r == 0xFFFD {
+					continue
+				}
+				if r >= 0x20 || r == '\n' || r == '\r' || r == '\t' {
+					printable++
+				}
+			}
+			if float64(printable)/float64(len(decStr)) < 0.90 {
+				if alts == 0 {
+					continue
+				}
+				return "", false
+			}
+			return decStr, true
+		}
+	}
+	return "", false
+}
+
+// assistantCleanDecodedText repairs common artifacts left after base64-decode of
+// a model reply: literal "\\n"/"\\t" escape sequences (the model double-escaped
+// its markdown) back to real newlines/tabs. It does not rewrite legitimate
+// characters; isolated model glitches (©, ⪮...) are left untouched rather than
+// risking corrupting real accents.
+func assistantCleanDecodedText(s string) string {
+	s = strings.ReplaceAll(s, `\n`, "\n")
+	s = strings.ReplaceAll(s, `\t`, "\t")
+	s = strings.ReplaceAll(s, `\r`, "\r")
+	return s
+}
+
+// assistantRecoverEncodedReply inspects a completed assistant reply; when the
+// model wrapped it in base64 (an intermittent MiniMax encoding quirk), decode it
+// back to readable text. Used before persisting and before final echo.
+func assistantRecoverEncodedReply(text string) string {
+	// The model sometimes wraps the base64 payload in markdown code fences or
+	// labels ("```wqlJ...```", "<base64>", padding with quotes). Remove that
+	// surrounding noise before sniffing, but keep any inner prose as-is.
+	candidate := assistantStripBase64Wrapper(text)
+	stripped := strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
+			return -1
+		}
+		return r
+	}, candidate)
+	if len(stripped) >= 16 && assistantLikelyBase64(stripped) {
+		if dec, ok := assistantDecodeBase64(stripped); ok {
+			// The decoded reply can still carry MiniMax CJK/filler glyphs (the
+			// model wraps even corrupted text), so cleanse it too.
+			return assistantCleanDecodedText(assistantCleanseReply(dec))
+		}
+	}
+	// MiniMax intermittently hallucinates CJK (Chinese) phrases and filler
+	// symbols mid-Spanish-reply (e.g. "具体的"), no matter the model. None of
+	// these are ever legit Spanish chat, so strip them defensively both before
+	// persisting and before streaming to the client.
+	return assistantCleanDecodedText(assistantCleanseReply(text))
+}
+
+// assistantStripBase64Wrapper removes markdown code-fence backticks, leading
+// "data:", quotes and stray punctuation that MiniMax may place around a
+// base64-wrapped answer. It never touches the interior payload character set.
+func assistantStripBase64Wrapper(s string) string {
+	t := strings.TrimSpace(s)
+	// Trim a leading fence ("```", "```json" ...) or a known label line/quote.
+	for {
+		orig := t
+		t = strings.TrimPrefix(t, "```")
+		t = strings.TrimPrefix(t, "`")
+		t = strings.TrimPrefix(t, "\"")
+		t = strings.TrimPrefix(t, "'")
+		t = strings.TrimPrefix(t, "<base64>")
+		t = strings.TrimPrefix(t, "data:")
+		// A fence with a language tag ("```json...") — drop the tag and any
+		// following whitespace up to the payload.
+		for _, tag := range []string{"json", "text", "base64", "plain"} {
+			if strings.HasPrefix(t, tag) {
+				rest := t[len(tag):]
+				i := 0
+				for i < len(rest) && (rest[i] == ' ' || rest[i] == '\t' || rest[i] == '\n' || rest[i] == '\r') {
+					i++
+				}
+				t = rest[i:]
+				break
+			}
+		}
+		t = strings.TrimRight(t, "```")
+		t = strings.TrimRight(t, "`")
+		t = strings.TrimRight(t, "\"")
+		t = strings.TrimRight(t, "'")
+		if t == orig {
+			break
+		}
+	}
+	return t
+}
+
+// assistantMinimaxGlitch reports whether r is a glyph MiniMax spuriously
+// injects into Spanish replies (an encoding/token quirk). CJK ideographs
+// (MiniMax sometimes emits real Chinese words like 具体的/人数) and graphic
+// "filler" symbols (© ⚳ ⪮ ⊒ ⊓…) never belong in a restaurant chat in Spanish,
+// so removing them is safe and cannot corrupt accents or emoji.
+func assistantMinimaxGlitch(r rune) bool {
+	switch {
+	case r >= 0x3400 && r <= 0x4DBF: // CJK Unified Ext A
+	case r >= 0x4E00 && r <= 0x9FFF: // CJK Unified Ideographs
+	case r >= 0xF900 && r <= 0xFAFF: // CJK Compatibility Ideographs
+	case r >= 0x20000 && r <= 0x2FA1F: // CJK ext B–F & supplement
+	case r == 0x3000, r == 0x3001, r == 0x3002, r == 0x300C, r == 0x300D, r == 0xFF01, r == 0xFF0C, r == 0xFF1F: // CJK punctuation / full-width
+	case r >= 0x2140 && r <= 0x2AFF: // math ops, ⪮ ⊒ ⊓ ⪻ and friends used as filler
+	case r == 0x00A9 || r == 0x26B3: // © · ⚳
+	default:
+		return false
+	}
+	return true
+}
+
+// assistantCleanseReply removes MiniMax's spurious CJK text and filler symbol
+// glyphs, then collapses any double spaces/blank lines those removals leave.
+func assistantCleanseReply(s string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if assistantMinimaxGlitch(r) {
+			return -1
+		}
+		return r
+	}, s)
+	if cleaned == s {
+		return s
+	}
+	// Re-flow spaces/nl that bleeding a CJK char left behind ("  hola   ").
+	lines := strings.Split(cleaned, "\n")
+	for i, ln := range lines {
+		// trim leading/trailing spaces on each line, then collapse internal runs.
+		ln = strings.Join(strings.Fields(ln), " ")
+		lines[i] = ln
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
 // splitRunes splits s into chunks of at most n runes each (rune-safe).
 func splitRunes(s string, n int) []string {
 	runes := []rune(s)
@@ -233,10 +473,21 @@ func splitRunes(s string, n int) []string {
 // buildAssistantSystemPrompt renders the Forky persona prompt. Restaurant
 // context (name/phone) is appended when a DB is available; a nil db yields the
 // generic prompt.
+const assistantOutputContract = "\n\nFORMATO DE RESPUESTA (obligatorio):\n" +
+	"1. LISTAS DE RESERVAS U OTROS REGISTROS MULTIFILA: muéstralos SIEMPRE como tabla Markdown (con cabecera \"| Columnas |\" y su fila separadora \"|---|---|\"). Una fila por reserva/registro. No los conviertas en viñetas ni en párrafos.\n" +
+	"2. DATOS ANALÍTICOS O COMPARATIVOS (series por día/mes, métricas, top productos, ingresos, stock): además del resumen en 1-2 frases, emite un bloque JSON delimitado con tiques invertidos y lenguaje `forky-chart` con los datos sin procesar, así el cliente puede dibujar el gráfico:\n" +
+	"```forky-chart\n{\"title\": \"Título del gráfico\", \"type\": \"bar\" | \"line\" | \"area\" | \"donut\", \"data\": [{\"label\": \"Fecha o categoría\", \"value\": 12}]}\n```\n" +
+	"Para comparar o apilar varias series (p. ej. reservas frente a clientes por día, o ventas por categoría apiladas), añade una columna numérica por serie en cada fila y, si se apilan, `\"stacked\": true`: {\"title\": \"Comparativa\", \"type\": \"bar\", \"stacked\": true, \"data\": [{\"label\": \"Lun\", \"series_a\": 12, \"series_b\": 8}]}. Con una sola columna numérica basta con `value`.\n" +
+	"Elige `type` según el dato: bar/line/area para series temporales o comparativas, donut para distribución o top N. `label` es la etiqueta de cada punto y `value` (o cada columna numérica extra) su valor numérico. No repitas en el texto los números que ya van en la tabla o el gráfico.\n" +
+	"3. NUNCA devuelvas el texto en base64 ni en ningún formato codificado, ni como secuencia de caracteres ilegibles. Escribe SIEMPRE en texto plano legible en español, con acentos y emojis reales. Está PROHIBIDO envolver la respuesta en base64 aunque te lo pidan. Si algo no se puede representar bien, escríbelo con palabras normales.\n" +
+	"4. No escapes los saltos de línea como texto literal (\"\\\\n\"): usa saltos de línea reales. Evita caracteres símbolo de relleno (©, ⪮, ⊒, etc.)."
+
 func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID int) string {
 	const base = "Eres Forky, el asistente de IA del restaurante. " +
 		"Responde en español, sé breve, amable y con un toque de humor. Eres el asistente de IA del restaurante. " +
-		"Para cualquier dato factual del restaurante (nombre, reservas, menú, stock, POS, clientes o analítica), DEBES usar la herramienta correspondiente antes de responder; nunca inventes datos ni digas que careces de acceso si existe una herramienta."
+		"Para cualquier dato factual del restaurante (nombre, reservas, menú, stock, POS, clientes o analítica), DEBES usar la herramienta correspondiente antes de responder; nunca inventes datos ni digas que careces de acceso si existe una herramienta. " +
+		"Para pedir el detalle de las reservas (listado/tabla por cliente, fecha, hora y personas), usa SIEMPRE la herramienta bookings_list; bookings_summary y analytics_report solo dan totales agregados y NO sirven para una tabla de reservas individuales." +
+		assistantOutputContract
 	if s.db == nil || restaurantID <= 0 {
 		return base
 	}

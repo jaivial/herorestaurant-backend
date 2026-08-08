@@ -104,8 +104,8 @@ func TestPatchBOPremiumTableLayout_StripsTemplateOnlyFields(t *testing.T) {
 
 func TestMergeBOPremiumLayoutWithTemplate_PrefersDayScope(t *testing.T) {
 	layout := map[string]any{
-		"booking_states":              map[string]any{"1": map[string]any{"seated": true}},
-		"_template_scope":             "day",
+		"booking_states":                       map[string]any{"1": map[string]any{"seated": true}},
+		"_template_scope":                      "day",
 		"_limit_area_template_points_override": []any{map[string]any{"x": 1, "y": 1}},
 	}
 	tpl := map[string]any{

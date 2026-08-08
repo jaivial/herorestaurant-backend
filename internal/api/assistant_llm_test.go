@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -222,5 +223,155 @@ func TestAssistantSystemPrompt_ContainsPersona(t *testing.T) {
 	want := "Responde en español, sé breve, amable y con un toque de humor. Eres el asistente de IA del restaurante."
 	if !strings.Contains(prompt, want) {
 		t.Errorf("prompt missing required directive.\nprompt=%q", prompt)
+	}
+}
+
+func TestAssistantRecoverEncodedReply(t *testing.T) {
+	// Clean base64 of a Spanish reply → decoded.
+	b64 := "wqFIb2xhISDwn5iEIFBhcmEgbGEgc2VtYW5hIHF1ZSB2aWVuZSAoMTcgYWwgMjMgZGUgYWdvc3RvIGRlIDIwMjYpLCB0ZW5lcyAqKmRvcyByZXNlcnZhcyoq"
+	got := assistantRecoverEncodedReply(b64)
+	if !strings.Contains(got, "dos reservas") && !strings.Contains(got, "reservas") {
+		t.Errorf("expected decoded Spanish, got %q", got)
+	}
+	if got == b64 {
+		t.Errorf("base64 reply was not decoded")
+	}
+
+	// Plain readable prose is left untouched.
+	plain := "¡Hola! Hoy tienes 2 reservas confirmadas 😊\n"
+	if got := assistantRecoverEncodedReply(plain); got != plain {
+		t.Errorf("plain prose was modified: %q", got)
+	}
+
+	// Markdown table is left untouched (not sniffed as base64).
+	table := "| Fecha | Hora |\n|---|---|\n| 10 | 20:30 |"
+	if got := assistantRecoverEncodedReply(table); got != table {
+		t.Errorf("markdown table was modified")
+	}
+
+	// Base64 that decodes to binary garbage is kept as-is (avoid mangling).
+	garbage := "wodobGEbm8gaGF5IHJlc2VydmFzIHBhcmEgaG95ICEgwr9BcsOtIHVuIGRpYSBt"
+	if got := assistantRecoverEncodedReply(garbage); got != garbage {
+		t.Errorf("binary garbage should be kept unchanged, got %q", got)
+	}
+
+	// Literal "\\n" escapes in a decoded base64 payload are repaired to newlines.
+	escaped := base64.StdEncoding.EncodeToString([]byte("hola\\nlinea2"))
+	if got := assistantRecoverEncodedReply(escaped); !strings.Contains(got, "\n") || strings.Contains(got, `\n`) {
+		t.Errorf("literal newline escape not repaired: %q", got)
+	}
+}
+
+// Misaligned (length % 4 != 0) base64 that MiniMax sometimes emits.
+func TestRecoverMisalignedBase64(t *testing.T) {
+	// base64 of "Información de reservas de la semana proxima."
+	raw := base64.StdEncoding.EncodeToString([]byte("Información de reservas de la semana proxima."))
+	got := assistantRecoverEncodedReply(raw)
+	if !strings.Contains(got, "reservas de la semana") {
+		t.Errorf("aligned base64 not decoded: %q", got)
+	}
+	// Trim 1 char to force length % 4 == 3 (misaligned) and still decode.
+	mis := raw[:len(raw)-1]
+	got = assistantRecoverEncodedReply(mis)
+	if !strings.Contains(got, "reservas de la semana") || got == mis {
+		t.Errorf("misaligned base64 (len%%4==3) not decoded: %q", got)
+	}
+}
+
+func TestAssistantSystemPrompt_OutputContract(t *testing.T) {
+	s := &Server{cfg: config.Config{}} // nil db -> generic prompt
+	prompt := s.buildAssistantSystemPrompt(context.Background(), 0)
+	for _, substr := range []string{
+		"FORMATO DE RESPUESTA",
+		"tabla Markdown",
+		"```forky-chart",
+		"\"type\": \"bar\"",
+		"\"data\":",
+		"stacked",
+		"series",
+		"NUNCA devuelvas el texto en base64",
+		"PROHIBIDO envolver la respuesta en base64",
+	} {
+		if !strings.Contains(prompt, substr) {
+			t.Errorf("prompt missing %q substrings.\nprompt=%q", substr, prompt)
+		}
+	}
+}
+
+func TestAssistantCleanseReply_StripsCJKAndFiller(t *testing.T) {
+	cases := []struct {
+		in, wantSub, notWant string
+	}{
+		{"©Hhoye, tienes 7 reservas con 具体的 y 人数.", "", "具体"},
+		{"3Cléspero! 😄 ⚳ 共pó de suiernos! 😊", "Cléspero", "共"},
+		{"Detalle: ⚳ 共 ⪮ ⊒ ⊓ © 劲爆", "", "劲爆"},
+	}
+	for _, c := range cases {
+		got := assistantCleanseReply(c.in)
+		if c.notWant != "" && strings.Contains(got, c.notWant) {
+			t.Errorf("assistantCleanseReply(%q) still contains %q: got %q", c.in, c.notWant, got)
+		}
+		if c.wantSub != "" && !strings.Contains(got, c.wantSub) {
+			t.Errorf("assistantCleanseReply(%q) missing %q: got %q", c.in, c.wantSub, got)
+		}
+	}
+}
+
+func TestAssistantCleanseReply_LeavesSpanishUntouched(t *testing.T) {
+	clean := "¡Hola! 👋 Hoy tienes 7 reservas para 49 comensales: García y López 😊"
+	if got := assistantCleanseReply(clean); got != clean {
+		t.Errorf("clean Spanish was modified: %q", got)
+	}
+}
+
+func TestAssistantCleanseReply_PreservesMarkdownTable(t *testing.T) {
+	table := "| Fecha | Cliente | Personas |\n" +
+		"|---|---|---|\n" +
+		"| 19/07 | García | 具体的 6 |"
+	got := assistantCleanseReply(table)
+	if strings.Contains(got, "具体") {
+		t.Errorf("CJK not stripped: %q", got)
+	}
+	for _, keep := range []string{"---|---|---|", "García"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("table marker lost %q: %q", keep, got)
+		}
+	}
+}
+
+func TestAssistantRecoverEncodedReply_WrappedVariants(t *testing.T) {
+	msg := "Hola! Hoy tienes 1 reserva confirmada para el 2026-09-26."
+	b64 := base64.StdEncoding.EncodeToString([]byte(msg))
+	cases := map[string]string{
+		"plain":  b64,
+		"fence":  "```\n" + b64 + "\n```",
+		"json":   "```json\n" + b64 + "\n```",
+		"quoted": "\"" + b64 + "\"",
+	}
+	for name, in := range cases {
+		out := assistantRecoverEncodedReply(in)
+		if !strings.Contains(out, "reserva") {
+			t.Errorf("%s: not recovered: %q", name, out)
+		}
+		if strings.ContainsAny(out, "`\uFFFD") {
+			t.Errorf("%s: still has fence/replacement: %q", name, out)
+		}
+	}
+}
+
+func TestAssistantRecoverEncodedReply_Truncated(t *testing.T) {
+	// len%4 == 1 truncation must still recover the readable head.
+	msg := "Información de la semana próxima para el lunes con detalle."
+	b64 := base64.StdEncoding.EncodeToString([]byte(msg))
+	// ensure at least one truncation form works: trim until len%4==1
+	for i := 0; i < 8; i++ {
+		cut := b64[:len(b64)-i]
+		if len(cut)%4 == 1 {
+			out := assistantRecoverEncodedReply(cut)
+			if !strings.Contains(out, "semana") {
+				t.Errorf("truncated(pad+%d) not recovered: %q", i, out)
+			}
+			break
+		}
 	}
 }
