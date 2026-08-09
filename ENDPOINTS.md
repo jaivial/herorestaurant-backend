@@ -764,6 +764,138 @@ Response create:
 - `{ success: true, category: Category }`
 - alias legacy: `categoria`.
 
+#### Catálogo unificado de categorías
+
+Auth: sesión backoffice + sección `menus`. Siempre acotado a `ActiveRestaurantID`.
+
+Cubre los tipos que nunca tuvieron catálogo (`vinos`, `cafes`, `postres`) y añade
+categorías **globales**, compartidas por todos los tipos. Las tablas legacy
+(`comida_plato_categories`, `comida_bebida_categories`) y la FK
+`comida_items.category_id` no se tocan.
+
+Modelo: `comida_categories(restaurant_id, food_type, name, slug, active)` con
+`UNIQUE (restaurant_id, food_type, slug)`. `food_type = ''` es el centinela de
+"global"; no se usa `NULL` porque en MySQL los `NULL` no colisionan en un índice
+único y permitirían globales duplicadas.
+
+`Category`:
+```
+{ id, key, name, slug, foodType, scope, isGlobal, origin, editable, active }
+```
+- `key`: identificador estable **para el cliente**, con formato `{origin}:{id}`.
+  Los `id` legacy y los nuevos son secuencias `AUTO_INCREMENT` independientes, así
+  que el `id` **por sí solo no identifica una categoría**: usa siempre `key` para
+  claves de React, selección y comparación.
+- `id`: PK en `comida_categories`. Vale `0` cuando `origin` es `legacy`, porque el
+  `id` de la tabla legacy no es direccionable por estos endpoints.
+- `origin`: `"unified"` (fila en `comida_categories`) o `"legacy"` (fila en
+  `comida_plato_categories` / `comida_bebida_categories`).
+- `editable`: `true` solo si `origin == "unified"`. Las legacy se listan pero no
+  se pueden editar ni borrar aquí; se siguen gestionando desde la carta antigua.
+- `scope`: `"global"` o el tipo (`platos|bebidas|vinos|cafes|postres`).
+
+**Unicidad de nombre entre scopes solapados.** El índice único solo cubre
+`(restaurant_id, food_type, slug)`, así que por sí solo aceptaría una global
+"Tapas" junto a una de `platos` "Tapas". Las dos se muestran juntas en el mismo
+selector y los productos referencian la categoría **por nombre**, así que después
+no habría forma de saber de cuál de las dos vino un producto: renombrar una
+reescribiría los productos de la otra. Por eso los endpoints de escritura rechazan
+el solape: una global choca con cualquier tipo, y un tipo choca con las globales y
+con su propia tabla legacy.
+
+##### `GET /api/admin/comida/categorias?foodType={tipo}`
+Con `foodType`: devuelve las del tipo + las globales + (solo para `platos` y
+`bebidas`) las legacy de su tabla. Solo las activas: es la vista de selector.
+Sin `foodType`: el catálogo completo, **inactivas incluidas**, para la pantalla de
+config. Incluye también las legacy de `platos` y `bebidas`, para que quien gestiona
+vea exactamente lo mismo que ofrecen los selectores.
+
+`foodType` acepta el mismo vocabulario que el resto de `/comida` (singulares y
+acentos: `plato`, `vino`, `café`). `""` y `global` limitan a las globales; `all`
+**no** es un valor válido.
+
+Las categorías con el mismo nombre se colapsan en una sola entrada. Gana la
+`editable`, y entre dos editables gana la de scope específico sobre la global, para
+que el cliente reciba la que puede gestionar y no una copia inerte.
+
+- `200` → `{ success: true, categories: Category[] }` (ordenadas por nombre)
+- `400` → `foodType` inválido
+
+##### `POST /api/admin/comida/categorias`
+Body: `{ name: string, foodType?: string|null, global?: boolean }`.
+`global: true` tiene prioridad sobre `foodType`. `global: false` **exige** un
+`foodType` real: sin él la petición se rechaza en vez de crear una global, que es
+justo lo contrario de lo pedido. Los campos desconocidos se rechazan, para que un
+`"globl": true` mal escrito no se ignore en silencio y acabe dando el scope opuesto.
+
+- `200` → `{ success: true, category: Category }`
+- `400` → nombre vacío, nombre de más de 120 caracteres, scope contradictorio o
+  campo desconocido
+- `409` → el nombre ya existe en alguno de los scopes solapados o en la tabla legacy
+
+##### `PATCH /api/admin/comida/categorias/{id}`
+Body: `{ name?, foodType?, global?, active? }`. Permite renombrar, mover de scope
+y activar/desactivar. Solo acepta `id` de categorías con `origin: "unified"`.
+
+Renombrar propaga el nuevo nombre en la **misma transacción** a todo lo que
+referencia la categoría por nombre:
+- `comida_items.categoria`, restringido a los `source_type` que el scope alcanza.
+- `VINOS.tipo`, si el scope alcanza a vinos.
+- La fila gemela en la tabla legacy, si existe. Guardar un plato resuelve su
+  categoría contra `comida_plato_categories` y crea la fila si falta, así que una
+  categoría creada aquí genera una gemela legacy en cuanto un producto la usa, y
+  `comida_items.category_id` apunta a esa gemela. Sin renombrarla, volvería a
+  aparecer como una entrada legacy con el nombre viejo.
+
+La fila se bloquea con `SELECT ... FOR UPDATE` antes de escribir, para que dos
+renombrados simultáneos no dejen productos repartidos entre el nombre viejo y el nuevo.
+
+**Mover de scope y desactivar se rechazan mientras la categoría esté en uso.** El
+scope nuevo no arrastra a los productos, que se emparejan por nombre dentro del
+scope viejo; y desactivar la esconde de todos los selectores mientras los productos
+siguen llevando su nombre. Renombrar sí está permitido, porque cascadea.
+
+- `200` → `{ success: true, category: Category }`
+- `400` → nombre inválido, scope contradictorio o campo desconocido
+- `404` → no encontrada, de otro restaurante, o `legacy` (las legacy se serializan
+  con `id: 0`, que no es direccionable aquí)
+- `409` → el nombre ya existe en un scope solapado, o se intenta mover/desactivar
+  una categoría en uso
+
+##### `DELETE /api/admin/comida/categorias/{id}`
+Solo categorías `unified`.
+
+- `200` → `{ success: true }`
+- `404` → no encontrada, de otro restaurante, o `legacy`
+- `409` → `La categoria esta en uso`
+
+El uso se comprueba **solo en los scopes que la categoría alcanza**: una categoría
+de `cafes` no se considera en uso porque un plato distinto comparta su nombre.
+`comida_items.categoria` es un `VARCHAR` compartido por platos/bebidas/cafés, los
+vinos se categorizan por `VINOS.tipo`, y `POSTRES` no tiene columna de categoría
+(una categoría de `postres` nunca está en uso).
+
+#### `PATCH /api/admin/comida/items/{id}/production-type`
+
+Auth: sesión backoffice + permiso de stock. Marca un producto como `RAW` (se compra
+y se vende tal cual) o `MANUFACTURED` (se produce desde una ficha técnica).
+
+Body: `{ productionType: "RAW"|"MANUFACTURED", stockRecipeId?: number|null, source?: "comida"|"vinos"|"postres" }`
+
+`source` selecciona la tabla del catálogo, porque los tres catálogos tienen claves
+primarias independientes: `comida_items.id`, `VINOS.num`, `POSTRES.NUM`. Omitirlo
+equivale a `"comida"`, así que un producto de `postres` **debe** enviarlo o el
+`UPDATE` buscará su `NUM` dentro de `comida_items.id`.
+
+- `200` → `{ success: true }`
+- `400` → tipo de producción o ficha técnica inválidos
+- `404` → el producto no existe en el catálogo indicado
+
+Nota: el `404` se decide comprobando la existencia de la fila, no por
+`RowsAffected() == 0`. El DSN no activa `clientFoundRows`, así que MySQL informa de
+filas *modificadas* y no *coincidentes*; reenviar los mismos valores es un update
+sin cambios y devolvía un `404` espurio sobre la fila correcta.
+
 #### Aliases legacy backoffice (`/api/admin/*`)
 Para compatibilidad con pantalla anterior de carta:
 - `GET/POST/PATCH/DELETE /api/admin/platos` (+ `POST /api/admin/platos/{id}/toggle`)

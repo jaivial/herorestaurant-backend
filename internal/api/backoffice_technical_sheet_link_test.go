@@ -56,6 +56,47 @@ func TestProductionTypeRejectsUnknownValue(t *testing.T) {
 	}
 }
 
+// Sending the value a product already holds is a no-op update. The DSN does not
+// set clientFoundRows, so MySQL reports rows *changed* rather than *matched* and
+// the second call used to be answered with a 404 about a row that was right there.
+func TestRepeatingAProductionTypeIsNotA404(t *testing.T) {
+	s := sheetsTestServer(t)
+	itemID := seedComidaItem(t, s, "Paella")
+
+	if rec := patchProduct(t, s, itemID, `{"productionType":"MANUFACTURED"}`); rec.Code != 200 {
+		t.Fatalf("first patch: status %d body %s", rec.Code, rec.Body.String())
+	}
+	if rec := patchProduct(t, s, itemID, `{"productionType":"MANUFACTURED"}`); rec.Code != 200 {
+		t.Fatalf("repeating the same value: status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The 404 still has to fire for a product that genuinely is not there, in the
+// caller's own catalogue and in the one it named.
+func TestProductionTypeStill404sForAProductThatDoesNotExist(t *testing.T) {
+	s := sheetsTestServer(t)
+
+	if rec := patchProduct(t, s, 987654321, `{"productionType":"RAW"}`); rec.Code != 404 {
+		t.Fatalf("absent id: status %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// A comida id is not a postres id: the three catalogues have independent
+	// primary keys, so naming the wrong source must not silently patch a row.
+	itemID := seedComidaItem(t, s, "Paella")
+	rec := httptest.NewRecorder()
+	s.handleBOComidaProductionTypePatch(rec, sheetReq("PATCH", "/x",
+		`{"productionType":"MANUFACTURED","source":"postres"}`,
+		map[string]string{"id": strconv.FormatInt(itemID, 10)}))
+	if rec.Code != 404 {
+		t.Fatalf("a comida id read as a postre: status %d body %s", rec.Code, rec.Body.String())
+	}
+	var productionType string
+	s.db.QueryRow(`SELECT production_type FROM comida_items WHERE restaurant_id=1 AND id=?`, itemID).Scan(&productionType)
+	if productionType != "RAW" {
+		t.Fatalf("the comida row was patched through the postres source: %q", productionType)
+	}
+}
+
 // A manufactured product is linked to exactly one sheet; the link is what makes
 // POS deduct the right semi-finished item.
 func TestLinkingASheetSetsBothTheRecipeAndTheStockItem(t *testing.T) {
