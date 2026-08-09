@@ -2763,6 +2763,9 @@ Manual `CARD` rows require an external terminal reference; PAN/CVV are never acc
 | GET | `/api/admin/pos/shifts/current` | `pos.view` |
 | POST | `/api/admin/pos/shifts/open` | `pos.shift.manage` |
 | POST | `/api/admin/pos/shifts/{id}/close` | `pos.shift.manage` |
+| GET | `/api/admin/pos/cash-days/current` | `pos.view`; optional `date=YYYY-MM-DD`, defaults to the cutoff business date |
+| POST | `/api/admin/pos/cash-days` | `pos.shift.manage`; `force` skips the unclosed-previous-days guard |
+| POST | `/api/admin/pos/cash-days/{id}/close` | `pos.shift.manage`; Z closure, requires `countedCashCents` |
 | GET | `/api/admin/pos/covers` | `pos.reports.view` |
 | POST | `/api/admin/pos/covers/adjustments` | `pos.covers.adjust` |
 | GET | `/api/admin/pos/covers/reconciliation` | `pos.reports.view` |
@@ -2775,6 +2778,8 @@ Manual `CARD` rows require an external terminal reference; PAN/CVV are never acc
 | GET | `/api/admin/pos/health` | `pos.settings.manage` |
 | POST | `/api/admin/pos/stock-anomalies/{id}/resolve` | `pos.stock_mapping.manage` |
 | GET/PUT | `/api/admin/pos/roles/{slug}/permissions` | `pos.settings.manage` | Fine-grained tenant role permissions |
+
+A cash day (`pos_cash_days`) is the restaurant-wide till session for one business date, unique per `(restaurant_id, business_date)`; a shift is per terminal and now belongs to a cash day. `GET /pos/cash-days/current` returns the day for `date` (or the cutoff-derived business date) plus `unclosedPrevious`, the earlier days still `OPEN` with their takings and covers. Opening returns `409 UNCLOSED_PREVIOUS_DAYS` with that list unless `force=true` is sent, which records `forcedOpen`, and `409 CASH_DAY_ALREADY_OPEN` when another terminal wins the unique-key race. Closing is a Z closure that reuses the shift-closure accounting over a day-wide scope and writes the same `pos_cash_closures` snapshot: it rejects `409 OPEN_POS_ITEMS` while any visit or ticket is open, `400 COUNTED_CASH_REQUIRED` without a count, and `400 DISCREPANCY_REASON_REQUIRED` when counted cash differs from expected; on success it also closes any shift still open under that day.
 
 ### Kitchen display and LIVE activation
 

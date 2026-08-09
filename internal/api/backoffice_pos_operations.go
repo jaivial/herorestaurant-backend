@@ -395,7 +395,15 @@ func (s *Server) handleBOPOSShiftOpen(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(in.TerminalKey) == "" {
 		in.TerminalKey = "main"
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_shifts (restaurant_id,terminal_key,opened_by,opening_cash_cents,notes) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, strings.TrimSpace(in.TerminalKey), a.User.ID, in.OpeningCashCents, stockNullableString(in.Notes))
+	// A shift belongs to the cash day that is open when the drawer is claimed.
+	// Without this link the day close cannot see the shift's cash movements and
+	// would compute an expected cash figure that ignores every payout and drop.
+	cashDayID, err := s.currentPOSCashDayID(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, 500, "Error resolving cash day")
+		return
+	}
+	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_shifts (restaurant_id,cash_day_id,terminal_key,opened_by,opening_cash_cents,notes) VALUES (?,?,?,?,?,?)`, a.ActiveRestaurantID, cashDayID, strings.TrimSpace(in.TerminalKey), a.User.ID, in.OpeningCashCents, stockNullableString(in.Notes))
 	if err != nil {
 		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "Terminal already has an open shift", "code": "SHIFT_ALREADY_OPEN"})
 		return
