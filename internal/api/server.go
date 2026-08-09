@@ -251,6 +251,14 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Get("/comida/bebidas/categorias", s.handleBOComidaBebidaCategoriesList)
 		r.With(s.requireBOSession, menusGate).Post("/comida/bebidas/categorias", s.handleBOComidaBebidaCategoriesCreate)
 		r.With(s.requireBOSession, menusGate).Get("/comida/bebidas/categorias/check", s.handleBOComidaBebidaCategoriesCheck)
+
+		// Unified category catalogue (per food type + global). Declared before the
+		// /comida/{tipo} wildcard so the static "categorias" segment wins.
+		r.With(s.requireBOSession, menusGate).Get("/comida/categorias", s.handleBOComidaCategoriesList)
+		r.With(s.requireBOSession, menusGate).Post("/comida/categorias", s.handleBOComidaCategoryCreate)
+		r.With(s.requireBOSession, menusGate).Patch("/comida/categorias/{id}", s.handleBOComidaCategoryPatch)
+		r.With(s.requireBOSession, menusGate).Delete("/comida/categorias/{id}", s.handleBOComidaCategoryDelete)
+
 		r.With(s.requireBOSession, menusGate).Get("/comida/{tipo}", s.handleBOComidaList)
 		r.With(s.requireBOSession, menusGate).Get("/comida/{tipo}/{id}", s.handleBOComidaGet)
 		r.With(s.requireBOSession, menusGate).Post("/comida/{tipo}", s.handleBOComidaCreate)

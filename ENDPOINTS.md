@@ -764,6 +764,79 @@ Response create:
 - `{ success: true, category: Category }`
 - alias legacy: `categoria`.
 
+#### Catálogo unificado de categorías
+
+Auth: sesión backoffice + sección `menus`. Siempre acotado a `ActiveRestaurantID`.
+
+Cubre los tipos que nunca tuvieron catálogo (`vinos`, `cafes`, `postres`) y añade
+categorías **globales**, compartidas por todos los tipos. Las tablas legacy
+(`comida_plato_categories`, `comida_bebida_categories`) y la FK
+`comida_items.category_id` no se tocan.
+
+Modelo: `comida_categories(restaurant_id, food_type, name, slug, active)` con
+`UNIQUE (restaurant_id, food_type, slug)`. `food_type = ''` es el centinela de
+"global"; no se usa `NULL` porque en MySQL los `NULL` no colisionan en un índice
+único y permitirían globales duplicadas.
+
+`Category`:
+```
+{ id, name, slug, foodType, scope, isGlobal, origin, active }
+```
+- `scope`: `"global"` o el tipo (`platos|bebidas|vinos|cafes|postres`).
+- `origin`: tabla de la fila (`comida_categories`, `comida_plato_categories`,
+  `comida_bebida_categories`). Necesario porque los `id` legacy y los nuevos son
+  secuencias `AUTO_INCREMENT` independientes y **pueden colisionar**.
+
+##### `GET /api/admin/comida/categorias?foodType={tipo}`
+Con `foodType`: devuelve las del tipo + las globales + (solo para `platos` y
+`bebidas`) las legacy de su tabla, para no romper lo existente.
+Sin `foodType`: devuelve el catálogo completo del restaurante (pantalla de config).
+
+- `200` → `{ success: true, categories: Category[] }`
+- Tipo inválido → `200` `{ success: false, message }` (validación legacy comida)
+
+##### `POST /api/admin/comida/categorias`
+Body: `{ name: string, foodType?: string|null, global?: boolean }`.
+`global: true` tiene prioridad sobre `foodType`. Upsert: si el slug ya existe en
+ese scope se renombra y se reactiva.
+
+- `200` → `{ success: true, category: Category }`
+- Nombre vacío / tipo inválido → `200` `{ success: false, message }`
+
+##### `PATCH /api/admin/comida/categorias/{id}`
+Body: `{ name?, foodType?, global?, active? }`. Permite renombrar, mover de scope
+y activar/desactivar.
+
+- `200` → `{ success: true, category: Category }`
+- `404` → categoría no encontrada en el restaurante
+
+##### `DELETE /api/admin/comida/categorias/{id}`
+- `200` → `{ success: true }`
+- `404` → no encontrada
+- `409` → `La categoria esta en uso` (algún `comida_items.categoria` coincide por
+  nombre; esa columna es un `VARCHAR` compartido por platos/bebidas/cafés)
+
+#### `PATCH /api/admin/comida/items/{id}/production-type`
+
+Auth: sesión backoffice + permiso de stock. Marca un producto como `RAW` (se compra
+y se vende tal cual) o `MANUFACTURED` (se produce desde una ficha técnica).
+
+Body: `{ productionType: "RAW"|"MANUFACTURED", stockRecipeId?: number|null, source?: "comida"|"vinos"|"postres" }`
+
+`source` selecciona la tabla del catálogo, porque los tres catálogos tienen claves
+primarias independientes: `comida_items.id`, `VINOS.num`, `POSTRES.NUM`. Omitirlo
+equivale a `"comida"`, así que un producto de `postres` **debe** enviarlo o el
+`UPDATE` buscará su `NUM` dentro de `comida_items.id`.
+
+- `200` → `{ success: true }`
+- `400` → tipo de producción o ficha técnica inválidos
+- `404` → el producto no existe en el catálogo indicado
+
+Nota: el `404` se decide comprobando la existencia de la fila, no por
+`RowsAffected() == 0`. El DSN no activa `clientFoundRows`, así que MySQL informa de
+filas *modificadas* y no *coincidentes*; reenviar los mismos valores es un update
+sin cambios y devolvía un `404` espurio sobre la fila correcta.
+
 #### Aliases legacy backoffice (`/api/admin/*`)
 Para compatibilidad con pantalla anterior de carta:
 - `GET/POST/PATCH/DELETE /api/admin/platos` (+ `POST /api/admin/platos/{id}/toggle`)

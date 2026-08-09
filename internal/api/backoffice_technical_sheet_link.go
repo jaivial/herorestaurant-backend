@@ -127,8 +127,18 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		httpx.WriteError(w, http.StatusNotFound, "Producto no encontrado")
-		return
+		// The DSN does not set clientFoundRows, so MySQL reports rows *changed*,
+		// not rows *matched*. Re-sending the values a product already holds is a
+		// no-op update and yields 0 here even though the row exists, which used
+		// to surface as a spurious 404. Existence is checked before answering.
+		var exists int
+		if err := s.db.QueryRowContext(r.Context(),
+			fmt.Sprintf(`SELECT 1 FROM %s WHERE restaurant_id=? AND %s=? LIMIT 1`,
+				sourceTable, sourceIDColumn),
+			a.ActiveRestaurantID, itemID).Scan(&exists); err != nil {
+			httpx.WriteError(w, http.StatusNotFound, "Producto no encontrado")
+			return
+		}
 	}
 	if abandoned > 0 {
 		s.discardUntouchedDraftSheet(r, a.ActiveRestaurantID, abandoned)
