@@ -199,6 +199,40 @@ func TestPOSCashDayOpenBlocksOnUnclosedPreviousDays(t *testing.T) {
 
 // Two terminals opening the same day must not both win: the unique key on
 // (restaurant_id, business_date) is the arbiter and the loser gets a 409.
+// A terminal that claimed its drawer before the day was opened would otherwise
+// keep a NULL cash_day_id forever, hiding its movements from the close.
+func TestPOSCashDayOpenAdoptsOrphanShifts(t *testing.T) {
+	db, s := posCashDayTestDB(t)
+
+	recorder := httptest.NewRecorder()
+	s.handleBOPOSShiftOpen(recorder, posCashDayRequest(http.MethodPost, "/admin/pos/shifts/open", `{"terminalKey":"caja-1","openingCashCents":0}`, nil))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("shift open: got %d %s", recorder.Code, recorder.Body.String())
+	}
+	shiftID := int64(decodeCashDayBody(t, recorder)["id"].(float64))
+	var linked sql.NullInt64
+	if err := db.QueryRow(`SELECT cash_day_id FROM pos_shifts WHERE id=?`, shiftID).Scan(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if linked.Valid {
+		t.Fatalf("no cash day exists yet, got %v", linked)
+	}
+
+	recorder = httptest.NewRecorder()
+	s.handleBOPOSCashDayOpen(recorder, posCashDayRequest(http.MethodPost, "/admin/pos/cash-days", `{"openingCashCents":0}`, nil))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("open: got %d %s", recorder.Code, recorder.Body.String())
+	}
+	day, _ := decodeCashDayBody(t, recorder)["cashDay"].(map[string]any)
+	dayID := int64(day["id"].(float64))
+	if err := db.QueryRow(`SELECT cash_day_id FROM pos_shifts WHERE id=?`, shiftID).Scan(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if !linked.Valid || linked.Int64 != dayID {
+		t.Fatalf("orphan shift must be adopted by the new day, got %v want %d", linked, dayID)
+	}
+}
+
 func TestPOSCashDayOpenIsRaceSafe(t *testing.T) {
 	db, s := posCashDayTestDB(t)
 

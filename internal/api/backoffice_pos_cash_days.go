@@ -349,6 +349,13 @@ func (s *Server) handleBOPOSCashDayOpen(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id, _ := res.LastInsertId()
+	// A terminal that claimed its drawer before anyone opened the day has a shift
+	// with no cash day, and its movements would be invisible to the close. Adopt
+	// those orphans now, otherwise the link can never be established.
+	if _, err = s.db.ExecContext(r.Context(), `UPDATE pos_shifts SET cash_day_id=? WHERE restaurant_id=? AND cash_day_id IS NULL AND status='OPEN'`, id, a.ActiveRestaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error linking open shifts to the cash day")
+		return
+	}
 	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',?,'OPEN',JSON_OBJECT('date',?,'openingCashCents',?,'forced',?),?)`, a.ActiveRestaurantID, id, date, in.OpeningCashCents, forced, a.User.ID)
 	day, err := s.loadPOSCashDayByID(r.Context(), s.db, a.ActiveRestaurantID, id)
 	if err != nil {
