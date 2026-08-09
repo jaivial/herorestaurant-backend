@@ -106,6 +106,12 @@ func TestPOSCashDaysRangeAggregates(t *testing.T) {
 	if second["totalGrossCents"].(float64) != 7000 || second["covers"].(float64) != 5 {
 		t.Fatalf("unexpected totals for the un-opened day: %v", second)
 	}
+	// Both shapes carry the same keys so the calendar never branches on them.
+	for key := range first {
+		if _, ok := second[key]; !ok {
+			t.Fatalf("un-opened day is missing key %q present on a real cash day", key)
+		}
+	}
 }
 
 func TestPOSCashDaysRangeRejectsBadInput(t *testing.T) {

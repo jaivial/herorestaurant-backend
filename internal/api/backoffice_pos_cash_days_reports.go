@@ -89,14 +89,28 @@ func (s *Server) handleBOPOSCashDaysRange(w http.ResponseWriter, r *http.Request
 		if !hasDay && !posCashDayHasActivity(dayTotals) {
 			continue
 		}
-		entry := map[string]any{"date": date, "status": nil, "openedAt": nil, "closedAt": nil,
-			"openedByName": "", "closedByName": "", "openingCashCents": int64(0), "forcedOpen": false}
+		// A day with activity but no cash day gets the same key set as a real
+		// one, so the calendar never has to branch on two response shapes; the
+		// null status is what marks it as never opened.
+		entry := posEmptyCashDayMap(date)
 		if hasDay {
 			entry = day.asMap()
 		}
 		data = append(data, withPOSCashDayTotals(entry, dayTotals))
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "data": data})
+}
+
+// posEmptyCashDayMap mirrors posCashDay.asMap for a date that was never opened.
+func posEmptyCashDayMap(date string) map[string]any {
+	return map[string]any{
+		"id": nil, "date": date, "status": nil,
+		"openedBy": nil, "openedByName": "",
+		"closedBy": nil, "closedByName": "",
+		"openingCashCents": int64(0),
+		"openedAt":         nil, "closedAt": nil,
+		"forcedOpen": false, "notes": nil,
+	}
 }
 
 func posCashDayHasActivity(totals map[string]any) bool {
