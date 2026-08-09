@@ -831,7 +831,8 @@ justo lo contrario de lo pedido. Los campos desconocidos se rechazan, para que u
 - `200` → `{ success: true, category: Category }`
 - `400` → nombre vacío, nombre de más de 120 caracteres, scope contradictorio o
   campo desconocido
-- `409` → el nombre ya existe en alguno de los scopes solapados o en la tabla legacy
+- `409` → el nombre ya existe en alguno de los scopes solapados o en la tabla legacy,
+  o choca con un nombre base reservado
 
 Los nombres base de platos (entrantes, principal, arroz, postre) y de bebidas
 (refrescos, aguas, zumos, cervezas, copas, licores, cocktails) están **reservados**

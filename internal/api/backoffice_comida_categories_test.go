@@ -865,10 +865,34 @@ func TestWritesLeaveALegacyRowThatIsNotTheirTwinAlone(t *testing.T) {
 
 		t.Run(tc.name+"/delete", func(t *testing.T) {
 			s, cat := setup(t)
+
+			// The row survives the delete, so its margin target has to survive too,
+			// or the next category to reuse that id inherits it.
+			var rowID int64
+			if err := s.db.QueryRow(
+				`SELECT id FROM comida_plato_categories WHERE restaurant_id=1 AND slug='fuera-de-carta'`).Scan(&rowID); err != nil {
+				t.Fatal(err)
+			}
+			scopeKey := marginScopeKeyForCategory("platos", rowID)
+			if _, err := s.db.Exec(
+				`INSERT INTO stock_margin_scopes (restaurant_id, scope_kind, scope_key, label, target_food_cost_pct) VALUES (1, 'COMIDA_CATEGORY', ?, 'Ajena', 28.00)`,
+				scopeKey); err != nil {
+				t.Fatal(err)
+			}
+
 			if code, body := deleteCategory(t, s, 1, cat.ID); code != http.StatusOK {
 				t.Fatalf("delete: status=%d body=%s", code, body)
 			}
 			assertUntouched(t, s)
+
+			var scopes int
+			if err := s.db.QueryRow(
+				`SELECT COUNT(*) FROM stock_margin_scopes WHERE restaurant_id=1 AND scope_key=?`, scopeKey).Scan(&scopes); err != nil {
+				t.Fatal(err)
+			}
+			if scopes != 1 {
+				t.Fatal("the delete took the margin target of a legacy row it left alone")
+			}
 		})
 	}
 }
