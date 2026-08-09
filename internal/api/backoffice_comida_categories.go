@@ -143,6 +143,13 @@ func isDuplicateKeyErr(err error) bool {
 	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
 
+// isForeignKeyErr reports whether err is a MySQL foreign-key violation (1451: the
+// row is still referenced by a child).
+func isForeignKeyErr(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1451
+}
+
 // validateComidaCategoryName trims and bounds a category name, returning the name and
 // its slug.
 func validateComidaCategoryName(raw string) (string, string, error) {
@@ -508,10 +515,13 @@ func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurant
 		if !ok {
 			continue
 		}
+		// Only active rows: the listings never show an inactive legacy category, so
+		// blocking on one would refuse a name with a duplicate the operator cannot
+		// find anywhere in the app.
 		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
 		if err := tx.QueryRowContext(r.Context(), `
 			SELECT COUNT(*) FROM `+table+`
-			WHERE restaurant_id = ? AND slug = ?
+			WHERE restaurant_id = ? AND slug = ? AND active = 1
 		`, restaurantID, slug).Scan(&n); err != nil {
 			return false, err
 		}
@@ -732,11 +742,11 @@ func (s *Server) handleBOComidaCategoryDelete(w http.ResponseWriter, r *http.Req
 	// recreates, not a corrupt row.
 	var current comidaUnifiedCategoryResponse
 	err = tx.QueryRowContext(r.Context(), `
-		SELECT id, COALESCE(name, ''), COALESCE(food_type, '')
+		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(food_type, '')
 		FROM comida_categories
 		WHERE restaurant_id = ? AND id = ?
 		FOR UPDATE
-	`, restaurantID, id).Scan(&current.ID, &current.Name, &current.FoodType)
+	`, restaurantID, id).Scan(&current.ID, &current.Name, &current.Slug, &current.FoodType)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, http.StatusNotFound, "Categoria no encontrada")
 		return
@@ -763,12 +773,54 @@ func (s *Server) handleBOComidaCategoryDelete(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if err := s.deleteComidaCategoryLegacyTwins(r, tx, restaurantID, current); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando categoria")
+		return
+	}
+
 	if err := tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando categoria")
 		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// deleteComidaCategoryLegacyTwins removes the legacy row a unified category grew when
+// a product was saved against it, mirroring what renameComidaCategoryUsages does for a
+// rename. Without this the twin survives the delete and comes back in the listing as a
+// legacy entry, which is reported with id 0 and editable false and is therefore
+// unreachable by every endpoint here: the category could never be removed again.
+//
+// Seeded 'base' rows are left alone: they are not twins, they predate the catalogue and
+// ensureBase*Categories would recreate them on the next listing anyway.
+func (s *Server) deleteComidaCategoryLegacyTwins(r *http.Request, tx *sql.Tx, restaurantID int, category comidaUnifiedCategoryResponse) error {
+	if category.Slug == "" {
+		return nil
+	}
+	for _, scope := range comidaCategoryOverlappingScopes(category.FoodType) {
+		table, ok := comidaCategoryLegacyTables[scope]
+		if !ok {
+			continue
+		}
+		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
+		_, err := tx.ExecContext(r.Context(), `
+			DELETE FROM `+table+`
+			WHERE restaurant_id = ? AND slug = ? AND COALESCE(source, 'custom') <> 'base'
+		`, restaurantID, category.Slug)
+		if err == nil {
+			continue
+		}
+		// comida_items.category_id has a FK into the platos table. A product can hold
+		// that id while carrying a different name, so the usage check above cannot see
+		// it. Keeping the twin is the safe outcome: the alternative is failing a delete
+		// the operator already got confirmed, or cascading into products.
+		if isForeignKeyErr(err) {
+			continue
+		}
+		return err
+	}
+	return nil
 }
 
 // comidaCategoryItemSourceTypes lists the comida_items.source_type values a category of

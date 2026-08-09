@@ -485,6 +485,60 @@ func TestDeleteRefusesWhileProductsStillReferenceTheCategory(t *testing.T) {
 	}
 }
 
+func TestDeletingACategoryAlsoRemovesItsLegacyTwin(t *testing.T) {
+	s := sheetsTestServer(t)
+	cat := createCategory(t, s, 1, `{"name":"Arroces","foodType":"platos"}`)
+	// Saving a plato materialises the twin, exactly as in the rename test.
+	if _, err := s.db.Exec(
+		`INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active) VALUES (1, 'Arroces', 'arroces', 'custom', 1)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := deleteCategory(t, s, 1, cat.ID); code != http.StatusOK {
+		t.Fatalf("delete: status=%d body=%s", code, body)
+	}
+
+	// The twin is reported with id 0 and editable false, so a survivor would be a
+	// catalogue entry no endpoint can ever remove.
+	if got, ok := categoryNamed(listCategories(t, s, 1, "?foodType=platos"), "Arroces"); ok {
+		t.Fatalf("the legacy twin outlived the delete: %+v", got)
+	}
+}
+
+func TestDeletingACategoryLeavesSeededBaseCategoriesAlone(t *testing.T) {
+	s := sheetsTestServer(t)
+	// ensureBasePlatoCategories seeds the base rows on the first listing.
+	base := listCategories(t, s, 1, "?foodType=platos")
+	if len(base) == 0 {
+		t.Skip("no seeded base plato categories in this schema")
+	}
+	seeded := base[0]
+
+	cat := createCategory(t, s, 1, `{"name":"Arroces","foodType":"platos"}`)
+	if code, body := deleteCategory(t, s, 1, cat.ID); code != http.StatusOK {
+		t.Fatalf("delete: status=%d body=%s", code, body)
+	}
+	if _, ok := categoryNamed(listCategories(t, s, 1, "?foodType=platos"), seeded.Name); !ok {
+		t.Fatalf("deleting a category took the seeded %q with it", seeded.Name)
+	}
+}
+
+func TestAnInactiveLegacyCategoryDoesNotBlockTheNameItDoesNotShow(t *testing.T) {
+	s := sheetsTestServer(t)
+	// Nothing in the app lists an inactive legacy row, so refusing the name would
+	// point the operator at a duplicate they cannot find.
+	if _, err := s.db.Exec(
+		`INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active) VALUES (1, 'Fuera de carta', 'fuera-de-carta', 'custom', 0)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := createCategoryStatus(t, s, 1, `{"name":"Fuera de carta","foodType":"platos"}`); code != http.StatusOK {
+		t.Fatalf("an inactive legacy row blocked the name: status=%d body=%s", code, body)
+	}
+}
+
 func TestDeleteIgnoresAProductOfAnotherTypeWithTheSameName(t *testing.T) {
 	s := sheetsTestServer(t)
 	cat := createCategory(t, s, 1, `{"name":"Especiales","foodType":"cafes"}`)
