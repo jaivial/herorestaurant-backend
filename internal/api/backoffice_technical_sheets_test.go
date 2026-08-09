@@ -30,12 +30,14 @@ func sheetsTestServer(t *testing.T) *Server {
 	t.Cleanup(func() {
 		for _, statement := range []string{
 			`DELETE FROM comida_bulk_link_batches WHERE restaurant_id=1`,
-			`DELETE FROM VINOS WHERE restaurant_id=1`,
+			`DELETE FROM VINOS WHERE restaurant_id IN (1,2)`,
 			`DELETE FROM POSTRES WHERE restaurant_id=1`,
-			`DELETE FROM comida_items WHERE restaurant_id=1`,
+			`DELETE FROM comida_items WHERE restaurant_id IN (1,2)`,
 			`DELETE FROM stock_margin_scope_bands WHERE restaurant_id=1`,
 			`DELETE FROM stock_margin_scopes WHERE restaurant_id=1`,
-			`DELETE FROM comida_plato_categories WHERE restaurant_id=1`,
+			`DELETE FROM comida_categories WHERE restaurant_id IN (1,2)`,
+			`DELETE FROM comida_plato_categories WHERE restaurant_id IN (1,2)`,
+			`DELETE FROM comida_bebida_categories WHERE restaurant_id IN (1,2)`,
 			`DELETE FROM stock_recipe_steps WHERE restaurant_id=1`,
 			`DELETE FROM stock_recipe_components WHERE restaurant_id=1`,
 			`DELETE FROM stock_recipes WHERE restaurant_id=1`,
@@ -49,7 +51,7 @@ func sheetsTestServer(t *testing.T) *Server {
 		}
 		db.Close()
 	})
-	if _, err := db.Exec(`INSERT IGNORE INTO restaurants(id) VALUES(1)`); err != nil {
+	if _, err := db.Exec(`INSERT IGNORE INTO restaurants(id) VALUES(1),(2)`); err != nil {
 		t.Fatal(err)
 	}
 	return NewServer(db, config.Config{})

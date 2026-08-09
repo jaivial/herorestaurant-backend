@@ -794,10 +794,21 @@ Modelo: `comida_categories(restaurant_id, food_type, name, slug, active)` con
   se pueden editar ni borrar aquí; se siguen gestionando desde la carta antigua.
 - `scope`: `"global"` o el tipo (`platos|bebidas|vinos|cafes|postres`).
 
+**Unicidad de nombre entre scopes solapados.** El índice único solo cubre
+`(restaurant_id, food_type, slug)`, así que por sí solo aceptaría una global
+"Tapas" junto a una de `platos` "Tapas". Las dos se muestran juntas en el mismo
+selector y los productos referencian la categoría **por nombre**, así que después
+no habría forma de saber de cuál de las dos vino un producto: renombrar una
+reescribiría los productos de la otra. Por eso los endpoints de escritura rechazan
+el solape: una global choca con cualquier tipo, y un tipo choca con las globales y
+con su propia tabla legacy.
+
 ##### `GET /api/admin/comida/categorias?foodType={tipo}`
 Con `foodType`: devuelve las del tipo + las globales + (solo para `platos` y
-`bebidas`) las legacy de su tabla, para no romper lo existente.
-Sin `foodType`: devuelve el catálogo completo del restaurante (pantalla de config).
+`bebidas`) las legacy de su tabla. Solo las activas: es la vista de selector.
+Sin `foodType`: el catálogo completo, **inactivas incluidas**, para la pantalla de
+config. Incluye también las legacy de `platos` y `bebidas`, para que quien gestiona
+vea exactamente lo mismo que ofrecen los selectores.
 
 `foodType` acepta el mismo vocabulario que el resto de `/comida` (singulares y
 acentos: `plato`, `vino`, `café`). `""` y `global` limitan a las globales; `all`
@@ -808,40 +819,54 @@ Las categorías con el mismo nombre se colapsan en una sola entrada. Gana la
 que el cliente reciba la que puede gestionar y no una copia inerte.
 
 - `200` → `{ success: true, categories: Category[] }` (ordenadas por nombre)
-- Tipo inválido → `200` `{ success: false, message }` (validación legacy comida)
+- `400` → `foodType` inválido
 
 ##### `POST /api/admin/comida/categorias`
 Body: `{ name: string, foodType?: string|null, global?: boolean }`.
 `global: true` tiene prioridad sobre `foodType`. `global: false` **exige** un
 `foodType` real: sin él la petición se rechaza en vez de crear una global, que es
-justo lo contrario de lo pedido.
+justo lo contrario de lo pedido. Los campos desconocidos se rechazan, para que un
+`"globl": true` mal escrito no se ignore en silencio y acabe dando el scope opuesto.
 
 - `200` → `{ success: true, category: Category }`
-- `400` → nombre vacío, nombre de más de 120 caracteres, o scope contradictorio
-- `409` → ya existe una categoría con ese slug en ese scope
+- `400` → nombre vacío, nombre de más de 120 caracteres, scope contradictorio o
+  campo desconocido
+- `409` → el nombre ya existe en alguno de los scopes solapados o en la tabla legacy
 
 ##### `PATCH /api/admin/comida/categorias/{id}`
 Body: `{ name?, foodType?, global?, active? }`. Permite renombrar, mover de scope
 y activar/desactivar. Solo acepta `id` de categorías con `origin: "unified"`.
 
-Renombrar propaga el nuevo nombre a los productos que la usaban: `comida_items.categoria`
-(y `VINOS.tipo` si el scope alcanza a vinos) se actualizan en la **misma transacción**.
-Esas columnas son `VARCHAR` con el nombre copiado, no una FK, así que sin la cascada
-el renombrado dejaría todos los productos apuntando a una categoría inexistente.
+Renombrar propaga el nuevo nombre en la **misma transacción** a todo lo que
+referencia la categoría por nombre:
+- `comida_items.categoria`, restringido a los `source_type` que el scope alcanza.
+- `VINOS.tipo`, si el scope alcanza a vinos.
+- La fila gemela en la tabla legacy, si existe. Guardar un plato resuelve su
+  categoría contra `comida_plato_categories` y crea la fila si falta, así que una
+  categoría creada aquí genera una gemela legacy en cuanto un producto la usa, y
+  `comida_items.category_id` apunta a esa gemela. Sin renombrarla, volvería a
+  aparecer como una entrada legacy con el nombre viejo.
 
 La fila se bloquea con `SELECT ... FOR UPDATE` antes de escribir, para que dos
 renombrados simultáneos no dejen productos repartidos entre el nombre viejo y el nuevo.
 
+**Mover de scope y desactivar se rechazan mientras la categoría esté en uso.** El
+scope nuevo no arrastra a los productos, que se emparejan por nombre dentro del
+scope viejo; y desactivar la esconde de todos los selectores mientras los productos
+siguen llevando su nombre. Renombrar sí está permitido, porque cascadea.
+
 - `200` → `{ success: true, category: Category }`
-- `400` → nombre inválido o scope contradictorio
-- `404` → no encontrada, o es `legacy` (no editable desde aquí)
-- `409` → el nuevo nombre ya existe en el scope destino
+- `400` → nombre inválido, scope contradictorio o campo desconocido
+- `404` → no encontrada, de otro restaurante, o `legacy` (las legacy se serializan
+  con `id: 0`, que no es direccionable aquí)
+- `409` → el nombre ya existe en un scope solapado, o se intenta mover/desactivar
+  una categoría en uso
 
 ##### `DELETE /api/admin/comida/categorias/{id}`
 Solo categorías `unified`.
 
 - `200` → `{ success: true }`
-- `404` → no encontrada o `legacy`
+- `404` → no encontrada, de otro restaurante, o `legacy`
 - `409` → `La categoria esta en uso`
 
 El uso se comprueba **solo en los scopes que la categoría alcanza**: una categoría

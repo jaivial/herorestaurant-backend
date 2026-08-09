@@ -112,6 +112,22 @@ func comidaCategoryScope(foodType string) string {
 	return foodType
 }
 
+// comidaCategoryOverlappingScopes lists the scopes whose categories are visible
+// alongside a category of this scope. A type-scoped listing also returns the globals,
+// and a global category shows up in every type's listing.
+//
+// The UNIQUE index cannot express this: it spans (restaurant_id, food_type, slug), so
+// it happily accepts a global "Tapas" next to a platos "Tapas". Those two are
+// indistinguishable in the picker, and since products reference a category by name
+// there is no way to tell afterwards which one a product was assigned from — renaming
+// either would rewrite the other's products. The overlap is rejected up front instead.
+func comidaCategoryOverlappingScopes(foodType string) []string {
+	if foodType == comidaCategoryGlobalType {
+		return append([]string{comidaCategoryGlobalType}, comidaCategoryFoodTypes...)
+	}
+	return []string{comidaCategoryGlobalType, foodType}
+}
+
 // comidaCategoryKey identifies a catalogue entry across the three tables it can come
 // from. Legacy ids collide with unified ids, so the table has to be part of the key.
 func comidaCategoryKey(origin string, foodType string, id int) string {
@@ -137,19 +153,22 @@ func validateComidaCategoryName(raw string) (string, string, error) {
 	if len([]rune(name)) > comidaCategoryNameMaxLen {
 		return "", "", fmt.Errorf("El nombre no puede superar %d caracteres", comidaCategoryNameMaxLen)
 	}
-	slug := slugifyCategoryName(name)
-	if len(slug) > comidaCategorySlugMaxLen {
-		slug = slug[:comidaCategorySlugMaxLen]
-	}
-	return name, slug, nil
+	// slugifyCategoryName emits only [a-z0-9-], so a name bounded at 120 runes cannot
+	// produce a slug past the column's 160.
+	return name, slugifyCategoryName(name), nil
 }
 
 func readComidaCategoryBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, comidaCategoryMaxBodyBytes))
+	// A typo'd "globl": true would otherwise be dropped in silence and the caller
+	// would get the opposite scope to the one it meant.
+	dec.DisallowUnknownFields()
 	return dec.Decode(dst)
 }
 
-// comidaCategoryIDFromRoute parses the {id} path parameter.
+// comidaCategoryIDFromRoute parses the {id} path parameter. Legacy entries are
+// serialised with id 0, so a client that tries to write to one lands here; that is a
+// category these endpoints cannot address, which is a 404, not a malformed request.
 func comidaCategoryIDFromRoute(r *http.Request) (int, bool) {
 	id, err := strconv.Atoi(strings.TrimSpace(chi.URLParam(r, "id")))
 	if err != nil || id <= 0 {
@@ -158,8 +177,8 @@ func comidaCategoryIDFromRoute(r *http.Request) (int, bool) {
 	return id, true
 }
 
-// scanComidaUnifiedCategories reads rows shaped as (id, name, slug, active) and stamps
-// them with the scope and origin the caller already knows.
+// scanComidaUnifiedCategories reads rows shaped as (id, name, slug, food_type, active)
+// and stamps them with the scope and origin the caller already knows.
 func scanComidaUnifiedCategories(rows *sql.Rows, origin, foodType string) ([]comidaUnifiedCategoryResponse, error) {
 	defer rows.Close()
 	out := make([]comidaUnifiedCategoryResponse, 0, 8)
@@ -195,11 +214,11 @@ func scanComidaUnifiedCategories(rows *sql.Rows, origin, foodType string) ([]com
 // dedupeComidaCategories collapses entries that would render as the same option and
 // sorts the result by name.
 //
-// The same name can legitimately arrive three times for platos: the seeded legacy row,
-// a type-scoped row and a global one. The UNIQUE index cannot prevent that, it spans
-// neither tables nor the global sentinel. Editable entries win so the config screen can
-// still manage what it owns; between two editable entries the type-scoped one wins,
-// being the more specific.
+// The write endpoints refuse to create a name that already exists in an overlapping
+// scope, but that rule cannot reach backwards: the legacy tables predate it, and rows
+// written straight to the database or by the older carta screen do not go through it.
+// Editable entries win so the config screen can still manage what it owns; between two
+// editable entries the type-scoped one wins, being the more specific.
 func dedupeComidaCategories(in []comidaUnifiedCategoryResponse) []comidaUnifiedCategoryResponse {
 	best := make(map[string]comidaUnifiedCategoryResponse, len(in))
 	order := make([]string, 0, len(in))
@@ -256,14 +275,24 @@ func (s *Server) handleBOComidaCategoriesList(w http.ResponseWriter, r *http.Req
 	scoped := rawType != ""
 	foodType, valid := normalizeComidaCategoryFoodType(rawType)
 	if !valid {
-		writeComidaValidationError(w, "Tipo de comida invalido")
+		httpx.WriteError(w, http.StatusBadRequest, "Tipo de comida invalido")
 		return
 	}
 
 	out := make([]comidaUnifiedCategoryResponse, 0, 16)
 
-	if scoped && foodType != comidaCategoryGlobalType {
-		legacy, err := s.listLegacyComidaCategories(r, restaurantID, foodType)
+	// The unscoped listing is the config screen, which must see the same catalogue the
+	// pickers do or an operator would be managing a set that does not match what the
+	// rest of the app offers. Both listings therefore merge the legacy tables.
+	legacyTypes := []string{"platos", "bebidas"}
+	if scoped {
+		legacyTypes = nil
+		if foodType != comidaCategoryGlobalType {
+			legacyTypes = []string{foodType}
+		}
+	}
+	for _, legacyType := range legacyTypes {
+		legacy, err := s.listLegacyComidaCategories(r, restaurantID, legacyType)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error cargando categorias")
 			return
@@ -361,7 +390,7 @@ func (s *Server) handleBOComidaCategoryCreate(w http.ResponseWriter, r *http.Req
 
 	var req comidaUnifiedCategoryWriteRequest
 	if err := readComidaCategoryBody(w, r, &req); err != nil {
-		writeComidaValidationError(w, "Invalid JSON")
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid JSON")
 		return
 	}
 
@@ -371,45 +400,127 @@ func (s *Server) handleBOComidaCategoryCreate(w http.ResponseWriter, r *http.Req
 	}
 	name, slug, err := validateComidaCategoryName(raw)
 	if err != nil {
-		writeComidaValidationError(w, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	foodType, ok := resolveComidaCategoryScope(req)
 	if !ok {
-		writeComidaValidationError(w, "Tipo de comida invalido")
+		httpx.WriteError(w, http.StatusBadRequest, "Tipo de comida invalido")
 		return
 	}
 
-	// Only `active` is touched on conflict. Rewriting `name` here would silently
-	// rename an existing category — comida_items.categoria links products by name, so
-	// every product using the old spelling would be orphaned.
-	if _, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO comida_categories (restaurant_id, food_type, name, slug, active)
-		VALUES (?, ?, ?, ?, 1)
-		ON DUPLICATE KEY UPDATE active = 1
-	`, restaurantID, foodType, name, slug); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
-		return
-	}
-
-	// LAST_INSERT_ID() is documented as not meaningful when ON DUPLICATE KEY UPDATE
-	// updates instead of inserting, and the id is what the client will PATCH and
-	// DELETE with, so it is always read back rather than inferred.
-	category, found, err := s.findComidaUnifiedCategoryBySlug(r, restaurantID, foodType, slug)
+	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 		return
 	}
-	if !found {
+	defer func() { _ = tx.Rollback() }()
+
+	// The UNIQUE index only covers this exact scope, so it would let a global "Tapas"
+	// sit next to a platos "Tapas". Both scopes are checked, including the legacy
+	// tables, because the picker shows them together and products reference the name.
+	taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, foodType, slug, 0)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+	if taken {
+		httpx.WriteError(w, http.StatusConflict, "Ya existe una categoria con ese nombre")
+		return
+	}
+
+	// A plain INSERT, so a slug that is already taken is reported instead of silently
+	// resolving to the existing row: an ON DUPLICATE KEY UPDATE here would answer 200
+	// with a different category's name and would reactivate one an operator had
+	// deliberately switched off.
+	res, err := tx.ExecContext(r.Context(), `
+		INSERT INTO comida_categories (restaurant_id, food_type, name, slug, active)
+		VALUES (?, ?, ?, ?, 1)
+	`, restaurantID, foodType, name, slug)
+	if err != nil {
+		if isDuplicateKeyErr(err) {
+			httpx.WriteError(w, http.StatusConflict, "Ya existe una categoria con ese nombre")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+	id64, err := res.LastInsertId()
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
-		"category": category,
+		"category": newComidaUnifiedCategory(int(id64), name, slug, foodType, true),
 	})
+}
+
+// newComidaUnifiedCategory builds the wire shape of a row in comida_categories.
+func newComidaUnifiedCategory(id int, name, slug, foodType string, active bool) comidaUnifiedCategoryResponse {
+	return comidaUnifiedCategoryResponse{
+		ID:       id,
+		Key:      comidaCategoryKey(comidaCategoryOriginUnified, foodType, id),
+		Name:     name,
+		Slug:     slug,
+		FoodType: foodType,
+		Scope:    comidaCategoryScope(foodType),
+		IsGlobal: foodType == comidaCategoryGlobalType,
+		Origin:   comidaCategoryOriginUnified,
+		Editable: true,
+		Active:   active,
+	}
+}
+
+// comidaCategorySlugTaken reports whether the slug is already used by a category the
+// caller would see next to this one: the same scope, the scopes that overlap it, and
+// the legacy tables those scopes read from. excludeID skips the row being renamed.
+func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurantID int, foodType, slug string, excludeID int) (bool, error) {
+	scopes := comidaCategoryOverlappingScopes(foodType)
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(scopes)), ",")
+	args := []any{restaurantID, slug, excludeID}
+	for _, scope := range scopes {
+		args = append(args, scope)
+	}
+	var n int
+	// #nosec G202 -- placeholders is a generated list of "?", never input.
+	if err := tx.QueryRowContext(r.Context(), `
+		SELECT COUNT(*)
+		FROM comida_categories
+		WHERE restaurant_id = ? AND slug = ? AND id <> ?
+		  AND COALESCE(food_type, '') IN (`+placeholders+`)
+	`, args...).Scan(&n); err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return true, nil
+	}
+
+	for _, scope := range scopes {
+		table, ok := comidaCategoryLegacyTables[scope]
+		if !ok {
+			continue
+		}
+		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
+		if err := tx.QueryRowContext(r.Context(), `
+			SELECT COUNT(*) FROM `+table+`
+			WHERE restaurant_id = ? AND slug = ?
+		`, restaurantID, slug).Scan(&n); err != nil {
+			return false, err
+		}
+		if n > 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // resolveComidaCategoryScope decides the scope of a write request.
@@ -451,13 +562,13 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 
 	id, ok := comidaCategoryIDFromRoute(r)
 	if !ok {
-		httpx.WriteError(w, http.StatusBadRequest, "Identificador de categoria invalido")
+		httpx.WriteError(w, http.StatusNotFound, "Categoria no encontrada")
 		return
 	}
 
 	var req comidaUnifiedCategoryWriteRequest
 	if err := readComidaCategoryBody(w, r, &req); err != nil {
-		writeComidaValidationError(w, "Invalid JSON")
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid JSON")
 		return
 	}
 
@@ -494,7 +605,7 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 	if req.Name != nil {
 		name, slug, err := validateComidaCategoryName(*req.Name)
 		if err != nil {
-			writeComidaValidationError(w, err.Error())
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		next.Name = name
@@ -509,13 +620,43 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 		}
 		foodType, ok := resolveComidaCategoryScope(scoped)
 		if !ok {
-			writeComidaValidationError(w, "Tipo de comida invalido")
+			httpx.WriteError(w, http.StatusBadRequest, "Tipo de comida invalido")
 			return
 		}
 		next.FoodType = foodType
 	}
 	if req.Active != nil {
 		next.Active = *req.Active
+	}
+
+	// Moving a category to another scope leaves its products behind: they are matched
+	// by name within the old scope, and the usage check that guards DELETE would then
+	// look in the new scope, find nothing, and let an in-use category be removed.
+	// Renaming is the supported edit; re-scoping an in-use category is refused.
+	// Deactivating is refused for the same reason: the picker filters on active, so
+	// the category would vanish while its products still carry its name.
+	if next.FoodType != current.FoodType || (current.Active && !next.Active) {
+		inUse, err := s.countComidaCategoryUsages(r, tx, restaurantID, current)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error verificando categoria")
+			return
+		}
+		if inUse > 0 {
+			httpx.WriteError(w, http.StatusConflict, "La categoria esta en uso")
+			return
+		}
+	}
+
+	if next.Slug != current.Slug || next.FoodType != current.FoodType {
+		taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, next.FoodType, next.Slug, id)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando categoria")
+			return
+		}
+		if taken {
+			httpx.WriteError(w, http.StatusConflict, "Ya existe una categoria con ese nombre")
+			return
+		}
 	}
 
 	nextActiveInt := 0
@@ -528,7 +669,7 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 		WHERE restaurant_id = ? AND id = ?
 	`, next.Name, next.Slug, next.FoodType, nextActiveInt, restaurantID, id); err != nil {
 		if isDuplicateKeyErr(err) {
-			httpx.WriteError(w, http.StatusConflict, "Ya existe una categoria con ese nombre en ese ambito")
+			httpx.WriteError(w, http.StatusConflict, "Ya existe una categoria con ese nombre")
 			return
 		}
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando categoria")
@@ -539,7 +680,11 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 	// at this table would orphan every product using the old spelling and would then
 	// let the category be deleted as if it were unused.
 	if next.Name != current.Name {
-		if err := s.renameComidaCategoryUsages(r, tx, restaurantID, current, next.Name); err != nil {
+		if err := s.renameComidaCategoryUsages(r, tx, restaurantID, current, next.Name, next.Slug); err != nil {
+			if isDuplicateKeyErr(err) {
+				httpx.WriteError(w, http.StatusConflict, "Ya existe una categoria con ese nombre")
+				return
+			}
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando productos de la categoria")
 			return
 		}
@@ -550,15 +695,9 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	next.Scope = comidaCategoryScope(next.FoodType)
-	next.IsGlobal = next.FoodType == comidaCategoryGlobalType
-	next.Origin = comidaCategoryOriginUnified
-	next.Editable = true
-	next.Key = comidaCategoryKey(comidaCategoryOriginUnified, next.FoodType, next.ID)
-
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
-		"category": next,
+		"category": newComidaUnifiedCategory(id, next.Name, next.Slug, next.FoodType, next.Active),
 	})
 }
 
@@ -575,7 +714,7 @@ func (s *Server) handleBOComidaCategoryDelete(w http.ResponseWriter, r *http.Req
 
 	id, ok := comidaCategoryIDFromRoute(r)
 	if !ok {
-		httpx.WriteError(w, http.StatusBadRequest, "Identificador de categoria invalido")
+		httpx.WriteError(w, http.StatusNotFound, "Categoria no encontrada")
 		return
 	}
 
@@ -586,8 +725,11 @@ func (s *Server) handleBOComidaCategoryDelete(w http.ResponseWriter, r *http.Req
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Locked so a product cannot be assigned to the category between the usage check
-	// and the delete.
+	// Locked so two concurrent writers cannot both read the row and act on it. The
+	// usage counts below are ordinary consistent reads, so a product assigned to the
+	// category by a concurrent transaction can still slip past the check; that leaves
+	// products pointing at a name with no catalogue entry, which the next save
+	// recreates, not a corrupt row.
 	var current comidaUnifiedCategoryResponse
 	err = tx.QueryRowContext(r.Context(), `
 		SELECT id, COALESCE(name, ''), COALESCE(food_type, '')
@@ -674,7 +816,7 @@ func (s *Server) countComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaura
 			SELECT COUNT(*)
 			FROM comida_items
 			WHERE restaurant_id = ?
-			  AND LOWER(COALESCE(categoria, '')) = LOWER(?)
+			  AND COALESCE(categoria, '') = ?
 			  AND COALESCE(source_type, '') IN (`+placeholders+`)
 		`, args...).Scan(&n); err != nil {
 			return 0, err
@@ -687,7 +829,7 @@ func (s *Server) countComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaura
 		if err := tx.QueryRowContext(r.Context(), `
 			SELECT COUNT(*)
 			FROM VINOS
-			WHERE restaurant_id = ? AND LOWER(COALESCE(tipo, '')) = LOWER(?)
+			WHERE restaurant_id = ? AND COALESCE(tipo, '') = ?
 		`, restaurantID, category.Name).Scan(&n); err != nil {
 			return 0, err
 		}
@@ -697,9 +839,14 @@ func (s *Server) countComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaura
 	return total, nil
 }
 
-// renameComidaCategoryUsages carries a rename through to the products that reference
-// the category by name, in the same transaction as the rename itself.
-func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaurantID int, current comidaUnifiedCategoryResponse, newName string) error {
+// renameComidaCategoryUsages carries a rename through to everything that references the
+// category by name, in the same transaction as the rename itself.
+//
+// The name columns all collate case-insensitively, so the comparisons are written
+// against the stored value rather than wrapped in LOWER(): wrapping the column makes
+// the predicate non-sargable, which turns every rename into a tenant-wide scan that
+// holds its locks until commit.
+func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaurantID int, current comidaUnifiedCategoryResponse, newName, newSlug string) error {
 	if sources := comidaCategoryItemSourceTypes(current.FoodType); len(sources) > 0 {
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(sources)), ",")
 		args := []any{newName, restaurantID, current.Name}
@@ -711,7 +858,7 @@ func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaur
 			UPDATE comida_items
 			SET categoria = ?
 			WHERE restaurant_id = ?
-			  AND LOWER(COALESCE(categoria, '')) = LOWER(?)
+			  AND COALESCE(categoria, '') = ?
 			  AND COALESCE(source_type, '') IN (`+placeholders+`)
 		`, args...); err != nil {
 			return err
@@ -722,37 +869,31 @@ func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaur
 		if _, err := tx.ExecContext(r.Context(), `
 			UPDATE VINOS
 			SET tipo = ?
-			WHERE restaurant_id = ? AND LOWER(COALESCE(tipo, '')) = LOWER(?)
+			WHERE restaurant_id = ? AND COALESCE(tipo, '') = ?
 		`, newName, restaurantID, current.Name); err != nil {
 			return err
 		}
 	}
 
-	return nil
-}
+	// Saving a plato resolves its category against comida_plato_categories and creates
+	// the row there if it is missing, so a category created here materialises a legacy
+	// twin as soon as a product uses it, and comida_items.category_id points at that
+	// twin. Renaming only this table would leave the twin under the old name, where it
+	// would come back as a separate legacy entry in the next listing.
+	for _, scope := range comidaCategoryOverlappingScopes(current.FoodType) {
+		table, ok := comidaCategoryLegacyTables[scope]
+		if !ok {
+			continue
+		}
+		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
+		if _, err := tx.ExecContext(r.Context(), `
+			UPDATE `+table+`
+			SET name = ?, slug = ?
+			WHERE restaurant_id = ? AND slug = ?
+		`, newName, newSlug, restaurantID, current.Slug); err != nil {
+			return err
+		}
+	}
 
-func (s *Server) findComidaUnifiedCategoryBySlug(r *http.Request, restaurantID int, foodType, slug string) (comidaUnifiedCategoryResponse, bool, error) {
-	var (
-		c         comidaUnifiedCategoryResponse
-		activeInt int
-	)
-	err := s.db.QueryRowContext(r.Context(), `
-		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(food_type, ''), active
-		FROM comida_categories
-		WHERE restaurant_id = ? AND food_type = ? AND slug = ?
-		LIMIT 1
-	`, restaurantID, foodType, slug).Scan(&c.ID, &c.Name, &c.Slug, &c.FoodType, &activeInt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return comidaUnifiedCategoryResponse{}, false, nil
-	}
-	if err != nil {
-		return comidaUnifiedCategoryResponse{}, false, err
-	}
-	c.Active = activeInt != 0
-	c.Origin = comidaCategoryOriginUnified
-	c.Editable = true
-	c.IsGlobal = c.FoodType == comidaCategoryGlobalType
-	c.Scope = comidaCategoryScope(c.FoodType)
-	c.Key = comidaCategoryKey(comidaCategoryOriginUnified, c.FoodType, c.ID)
-	return c, true, nil
+	return nil
 }
