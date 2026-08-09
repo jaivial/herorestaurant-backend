@@ -188,6 +188,11 @@ type posKitchenLineSnapshot struct {
 func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
+		return
+	}
 	var in struct {
 		IdempotencyKey string `json:"idempotencyKey"`
 	}

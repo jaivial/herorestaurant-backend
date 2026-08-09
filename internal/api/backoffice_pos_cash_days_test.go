@@ -56,8 +56,11 @@ func posCashDayTestDB(t *testing.T) (*sql.DB, *Server) {
 	statements := []string{
 		`SET FOREIGN_KEY_CHECKS=0`,
 		`DELETE FROM pos_cash_closures`, `DELETE FROM pos_cash_movements`, `DELETE FROM pos_cash_days`,
-		`DELETE FROM pos_cover_adjustments`, `DELETE FROM pos_refund_lines`, `DELETE FROM pos_refunds`,
-		`DELETE FROM pos_payments`, `DELETE FROM pos_ticket_lines`,
+		`DELETE FROM stock_affluence_daily`, `DELETE FROM pos_cover_adjustments`, `DELETE FROM pos_refund_lines`, `DELETE FROM pos_refunds`,
+		`DELETE FROM pos_payments`, `DELETE FROM pos_ticket_line_tags`, `DELETE FROM pos_ticket_tags`,
+		`DELETE FROM pos_tags`, `DELETE FROM pos_kitchen_dispatch_lines`, `DELETE FROM pos_kitchen_dispatches`,
+		`DELETE FROM pos_kitchen_routes`, `DELETE FROM pos_kitchen_stations`,
+		`DELETE FROM pos_ticket_line_stock`, `DELETE FROM pos_ticket_adjustments`, `DELETE FROM pos_ticket_lines`,
 		`DELETE FROM pos_tickets`, `DELETE FROM pos_visits`, `DELETE FROM pos_shifts`,
 		`DELETE FROM pos_products`, `DELETE FROM pos_settings`,
 		`DELETE FROM restaurant_tables`, `DELETE FROM restaurants`, `DELETE FROM bo_users`,

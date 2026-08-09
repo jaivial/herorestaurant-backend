@@ -2059,6 +2059,15 @@ Response:
 WebSocket events:
 - `hello`, `snapshot`, `table_created`, `table_updated`, `area_created`, `area_updated`.
 - Para eventos de mesa, payload incluye `table` normalizada (incluyendo campos de estilo/texture cuando existan).
+- Eventos POS de día de caja: `pos_cash_day_opened` y `pos_cash_day_closed` llevan
+  `data.cashDay` con el día completo, para que un cliente recién conectado no
+  tenga que volver a pedirlo; `pos_cash_day_totals` lleva `data` con `date`,
+  `totalGrossCents`, `covers` y `ticketCount`, y se emite tras cada cobro,
+  devolución, cierre de visita y ajuste de comensales. Los totales salen del
+  mismo agregado que `GET /pos/cash-days`, así que la cifra del socket y la del
+  endpoint no pueden divergir. El broadcast ocurre después de confirmar la
+  operación y nunca la revierte: una venta cobrada no se deshace porque el hub
+  falle.
 
 `GET /api/admin/website/menu-templates` response:
 - `default_theme_id`: plantilla fallback para la web premium.
@@ -2809,6 +2818,15 @@ corrections cannot be attributed to a table, so they are returned apart as
 covers in the range endpoint. The response sets `readOnly`, which is `false` only
 when that date has an `OPEN` cash day: a `CLOSED` day and a date that was never
 opened are both history.
+
+Mientras un día de caja está `CLOSED`, los 23 puntos de mutación del TPV
+responden `409 { code: "CASH_DAY_CLOSED" }`: crear visita, crear/editar/anular
+línea, descuento, ajuste de ticket, invitar línea, mover línea, anular ticket,
+crear ticket, editar/cancelar/aparcar/fusionar visita, cliente de la visita,
+operario del ticket, etiquetas de ticket y de línea, cobro, devolución, cierre
+de visita, ajuste de comensales y comanda de cocina. Una fecha **sin** día de
+caja no se considera cerrada, para no bloquear a los restaurantes que todavía no
+usan la caja diaria. El propio cierre de día no está sujeto al guard.
 
 ### Kitchen display and LIVE activation
 

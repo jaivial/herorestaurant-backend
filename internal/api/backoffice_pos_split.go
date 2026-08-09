@@ -97,6 +97,11 @@ func (s *Server) handleBOPOSLineMove(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	sourceTicketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	lineID, _ := strconv.ParseInt(chi.URLParam(r, "lineId"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, sourceTicketID)) {
+		return
+	}
 	var in struct {
 		TargetTicketID int64   `json:"targetTicketId"`
 		Quantity       float64 `json:"quantity"`
@@ -220,6 +225,11 @@ func (s *Server) handleBOPOSLineMove(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBOPOSTicketVoid(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
+		return
+	}
 	var in struct {
 		Reason string `json:"reason"`
 	}

@@ -83,6 +83,11 @@ func (s *Server) loadPOSVisit(ctx context.Context, restaurantID int, visitID int
 func (s *Server) handleBOPOSVisitPark(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	visitID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForVisit(r.Context(), a.ActiveRestaurantID, visitID)) {
+		return
+	}
 	var in struct {
 		Parked bool   `json:"parked"`
 		Note   string `json:"note"`
@@ -143,6 +148,18 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 	if targetID <= 0 || !posDecodeBody(w, r, &in) || len(in.SourceVisitIDs) == 0 || strings.TrimSpace(in.IdempotencyKey) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid merge request")
 		return
+	}
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	// A merge moves lines between visits, so every visit involved must be on an
+	// open day: a sealed source would have its lines pulled out of a closed Z.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForVisit(r.Context(), a.ActiveRestaurantID, targetID)) {
+		return
+	}
+	for _, sourceID := range in.SourceVisitIDs {
+		if posWriteCashDayGuard(w, s.requireOpenCashDayForVisit(r.Context(), a.ActiveRestaurantID, sourceID)) {
+			return
+		}
 	}
 	uniqueSources := make([]int64, 0, len(in.SourceVisitIDs))
 	seenSources := make(map[int64]struct{}, len(in.SourceVisitIDs))
@@ -286,6 +303,11 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBOPOSVisitCustomer(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	visitID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForVisit(r.Context(), a.ActiveRestaurantID, visitID)) {
+		return
+	}
 	var in struct {
 		CustomerName    string `json:"customerName"`
 		CustomerTaxID   string `json:"customerTaxId"`
@@ -386,6 +408,11 @@ func (s *Server) handleBOPOSDrawerOpen(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBOPOSTicketAdjustment(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
+		return
+	}
 	var in struct {
 		Type            string  `json:"type"`
 		Mode            string  `json:"mode"`
@@ -508,6 +535,11 @@ func (s *Server) handleBOPOSLineComp(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	lineID, _ := strconv.ParseInt(chi.URLParam(r, "lineId"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
+		return
+	}
 	var in struct {
 		Comped          bool   `json:"comped"`
 		Reason          string `json:"reason"`
@@ -582,6 +614,11 @@ func (s *Server) handleBOPOSLineComp(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBOPOSTicketOperator(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
+		return
+	}
 	var in struct {
 		OperatorMemberID int64 `json:"operatorMemberId"`
 		ExpectedVersion  int   `json:"expectedVersion"`
@@ -704,6 +741,11 @@ func (s *Server) attachPOSTag(w http.ResponseWriter, r *http.Request, target str
 	}
 	if ticketID <= 0 || entityID <= 0 || !posDecodeBody(w, r, &in) || in.TagID <= 0 {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid tag request")
+		return
+	}
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
 		return
 	}
 	attach := in.Attach == nil || *in.Attach
