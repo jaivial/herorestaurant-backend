@@ -105,6 +105,26 @@ func (s *Server) posResolveBusinessDate(ctx context.Context, restaurantID int, r
 	return normalizePOSDate(moment.ServiceDate), nil
 }
 
+// currentPOSCashDayID returns the id of the OPEN cash day for the current
+// business date, or NULL when none exists. It never fails the caller for a
+// missing day: opening a shift before a cash day is legal today and the guard
+// that changes that belongs to the request gate, not here.
+func (s *Server) currentPOSCashDayID(ctx context.Context, restaurantID int) (any, error) {
+	date, err := s.posResolveBusinessDate(ctx, restaurantID, "")
+	if err != nil {
+		return nil, err
+	}
+	var id int64
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM pos_cash_days WHERE restaurant_id=? AND business_date=? AND status='OPEN'`, restaurantID, date).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return id, nil
+}
+
 func (s *Server) loadPOSCashDayByDate(ctx context.Context, q posCashQueryer, restaurantID int, date string) (posCashDay, error) {
 	return scanPOSCashDay(q.QueryRowContext(ctx, posCashDaySelect+` WHERE d.restaurant_id=? AND d.business_date=?`, restaurantID, date).Scan)
 }
@@ -133,55 +153,110 @@ func (s *Server) loadPOSUnclosedPreviousDays(ctx context.Context, restaurantID i
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
+	dates := make([]string, 0, len(days))
+	for _, day := range days {
+		dates = append(dates, day.BusinessDate)
+	}
+	totals, err := s.loadPOSCashDayTotals(ctx, restaurantID, dates)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]map[string]any, 0, len(days))
 	for _, day := range days {
-		totals, totalsErr := s.loadPOSCashDayTotals(ctx, restaurantID, day.BusinessDate)
-		if totalsErr != nil {
-			return nil, totalsErr
-		}
-		item := day.asMap()
-		for key, value := range totals {
-			item[key] = value
-		}
-		items = append(items, item)
+		items = append(items, withPOSCashDayTotals(day.asMap(), totals[day.BusinessDate]))
 	}
 	return items, nil
+}
+
+// withPOSCashDayTotals merges a day's headline figures into its serialized form,
+// defaulting to zeros for a day that has no activity at all.
+func withPOSCashDayTotals(day map[string]any, totals map[string]any) map[string]any {
+	if totals == nil {
+		totals = map[string]any{"totalGrossCents": int64(0), "ticketCount": int64(0), "covers": int64(0)}
+	}
+	for key, value := range totals {
+		day[key] = value
+	}
+	return day
 }
 
 // loadPOSCashDayTotals is the single source of truth for a day's headline
 // figures: net takings across every table and the guest count. It mirrors the
 // sales report (net = gross - refunded) and rebuildPOSAffluenceKey (closed
 // dine-in covers plus signed adjustments) so the numbers agree everywhere.
-func (s *Server) loadPOSCashDayTotals(ctx context.Context, restaurantID int, date string) (map[string]any, error) {
-	var totalGross, ticketCount int64
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(t.total_gross_cents-t.refunded_cents),0),COUNT(*)
+// It resolves every requested date in three grouped queries rather than three
+// per date, because the unclosed-days alert can ask for weeks at once and this
+// runs on the sell screen's polling path.
+func (s *Server) loadPOSCashDayTotals(ctx context.Context, restaurantID int, dates []string) (map[string]map[string]any, error) {
+	out := map[string]map[string]any{}
+	if len(dates) == 0 {
+		return out, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(dates)), ",")
+	args := make([]any, 0, 1+len(dates))
+	args = append(args, restaurantID)
+	for _, date := range dates {
+		args = append(args, date)
+		out[date] = map[string]any{"totalGrossCents": int64(0), "ticketCount": int64(0), "covers": int64(0)}
+	}
+	covers := map[string]int64{}
+
+	collect := func(query string, apply func(date string, a, b int64)) error {
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var day time.Time
+			var first, second int64
+			if err = rows.Scan(&day, &first, &second); err != nil {
+				return err
+			}
+			apply(day.Format("2006-01-02"), first, second)
+		}
+		return rows.Err()
+	}
+
+	if err := collect(`
+		SELECT v.service_date,COALESCE(SUM(t.total_gross_cents-t.refunded_cents),0),COUNT(*)
 		FROM pos_tickets t
 		JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id
-		WHERE t.restaurant_id=? AND v.service_date=? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')`,
-		restaurantID, date).Scan(&totalGross, &ticketCount); err != nil {
+		WHERE t.restaurant_id=? AND v.service_date IN (`+placeholders+`) AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')
+		GROUP BY v.service_date`, func(date string, gross, count int64) {
+		if entry, ok := out[date]; ok {
+			entry["totalGrossCents"], entry["ticketCount"] = gross, count
+		}
+	}); err != nil {
 		return nil, err
 	}
-	var covers int64
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(v.covers),0)
+	if err := collect(`
+		SELECT v.service_date,COALESCE(SUM(v.covers),0),0
 		FROM pos_visits v
-		WHERE v.restaurant_id=? AND v.service_date=? AND v.status='CLOSED' AND v.channel='DINE_IN'`,
-		restaurantID, date).Scan(&covers); err != nil {
+		WHERE v.restaurant_id=? AND v.service_date IN (`+placeholders+`) AND v.status='CLOSED' AND v.channel='DINE_IN'
+		GROUP BY v.service_date`, func(date string, seated, _ int64) {
+		covers[date] += seated
+	}); err != nil {
 		return nil, err
 	}
-	var adjustments int64
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(delta_covers),0)
+	if err := collect(`
+		SELECT service_date,COALESCE(SUM(delta_covers),0),0
 		FROM pos_cover_adjustments
-		WHERE restaurant_id=? AND service_date=?`, restaurantID, date).Scan(&adjustments); err != nil {
+		WHERE restaurant_id=? AND service_date IN (`+placeholders+`)
+		GROUP BY service_date`, func(date string, delta, _ int64) {
+		covers[date] += delta
+	}); err != nil {
 		return nil, err
 	}
-	total := covers + adjustments
-	if total < 0 {
-		total = 0
+	for date, total := range covers {
+		if total < 0 {
+			total = 0
+		}
+		if entry, ok := out[date]; ok {
+			entry["covers"] = total
+		}
 	}
-	return map[string]any{"totalGrossCents": totalGross, "ticketCount": ticketCount, "covers": total}, nil
+	return out, nil
 }
 
 func (s *Server) handleBOPOSCashDayCurrent(w http.ResponseWriter, r *http.Request) {
@@ -194,16 +269,12 @@ func (s *Server) handleBOPOSCashDayCurrent(w http.ResponseWriter, r *http.Reques
 	payload := map[string]any{"success": true, "date": date, "cashDay": nil}
 	day, err := s.loadPOSCashDayByDate(r.Context(), s.db, a.ActiveRestaurantID, date)
 	if err == nil {
-		totals, totalsErr := s.loadPOSCashDayTotals(r.Context(), a.ActiveRestaurantID, date)
+		totals, totalsErr := s.loadPOSCashDayTotals(r.Context(), a.ActiveRestaurantID, []string{date})
 		if totalsErr != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day totals")
 			return
 		}
-		entry := day.asMap()
-		for key, value := range totals {
-			entry[key] = value
-		}
-		payload["cashDay"] = entry
+		payload["cashDay"] = withPOSCashDayTotals(day.asMap(), totals[date])
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day")
 		return
@@ -237,6 +308,18 @@ func (s *Server) handleBOPOSCashDayOpen(w http.ResponseWriter, r *http.Request) 
 	date, err := s.posResolveBusinessDate(r.Context(), a.ActiveRestaurantID, in.Date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid date")
+		return
+	}
+	// A day ahead of the current business date can never be traded, and once
+	// created it would sit there blocking every later open as an "unclosed
+	// previous day". A mistyped year must not be able to wedge the till.
+	current, err := s.posResolveBusinessDate(r.Context(), a.ActiveRestaurantID, "")
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error resolving business date")
+		return
+	}
+	if date > current {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "code": "FUTURE_CASH_DAY", "message": "A cash day cannot be opened in the future"})
 		return
 	}
 	if !in.Force {

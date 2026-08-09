@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -135,6 +136,25 @@ func TestPOSCashDayCurrentRejectsMalformedDate(t *testing.T) {
 	s.handleBOPOSCashDayCurrent(recorder, posCashDayRequest(http.MethodGet, "/admin/pos/cash-days/current?date=not-a-date", "", nil))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// A mistyped year must not create a day that then blocks every later open as an
+// "unclosed previous day".
+func TestPOSCashDayOpenRejectsFutureDate(t *testing.T) {
+	db, s := posCashDayTestDB(t)
+
+	recorder := httptest.NewRecorder()
+	s.handleBOPOSCashDayOpen(recorder, posCashDayRequest(http.MethodPost, "/admin/pos/cash-days", `{"date":"2999-01-01","openingCashCents":0,"force":true}`, nil))
+	if recorder.Code != http.StatusBadRequest || decodeCashDayBody(t, recorder)["code"] != "FUTURE_CASH_DAY" {
+		t.Fatalf("expected FUTURE_CASH_DAY, got %d %s", recorder.Code, recorder.Body.String())
+	}
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pos_cash_days`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("no cash day may be created, got %d", rows)
 	}
 }
 
@@ -285,28 +305,64 @@ func TestPOSCashDayCloseIgnoresOpenVisitsFromOtherDays(t *testing.T) {
 
 func TestPOSCashDayCloseWritesZClosureAndClosesShifts(t *testing.T) {
 	db, s := posCashDayTestDB(t)
+
+	// The day is opened through the real handler so its business date comes from
+	// the cutoff settings rather than the database server's clock.
+	recorder := httptest.NewRecorder()
+	s.handleBOPOSCashDayOpen(recorder, posCashDayRequest(http.MethodPost, "/admin/pos/cash-days", `{"openingCashCents":10000}`, nil))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("open: got %d %s", recorder.Code, recorder.Body.String())
+	}
+	opened, _ := decodeCashDayBody(t, recorder)["cashDay"].(map[string]any)
+	dayID := int64(opened["id"].(float64))
+	date := opened["date"].(string)
+	closePath := "/admin/pos/cash-days/" + strconv.FormatInt(dayID, 10) + "/close"
+	closeParams := map[string]string{"id": strconv.FormatInt(dayID, 10)}
+
 	setup := []string{
-		`INSERT INTO pos_cash_days(id,restaurant_id,business_date,status,opened_by,opening_cash_cents) VALUES(900,1,'2024-03-07','OPEN',7,10000)`,
-		`INSERT INTO pos_shifts(id,restaurant_id,cash_day_id,terminal_key,status,opened_by,opening_cash_cents) VALUES(800,1,900,'caja-1','OPEN',7,10000)`,
-		`INSERT INTO pos_visits(id,restaurant_id,cash_day_id,channel,table_id,service_date,service_type,covers,status,opened_by,open_idempotency_key) VALUES(40,1,900,'DINE_IN',5,'2024-03-07','LUNCH',2,'CLOSED',7,'visit-a')`,
+		`INSERT INTO pos_visits(id,restaurant_id,cash_day_id,channel,table_id,service_date,service_type,covers,status,opened_by,open_idempotency_key) VALUES(40,1,?,'DINE_IN',5,?,'LUNCH',2,'CLOSED',7,'visit-a')`,
 		`INSERT INTO pos_tickets(id,restaurant_id,visit_id,ticket_number,creation_idempotency_key,subtotal_gross_cents,total_gross_cents,status,opened_by) VALUES(50,1,40,'TPV-1','ticket-a',5000,5000,'PAID',7)`,
 		`INSERT INTO pos_payments(id,restaurant_id,ticket_id,method,amount_cents,tip_cents,status,idempotency_key,received_by) VALUES(70,1,50,'CASH',5000,0,'CAPTURED','pay-a',7)`,
 	}
-	for _, statement := range setup {
+	if _, err := db.Exec(setup[0], dayID, date); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range setup[1:] {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatalf("%s: %v", statement, err)
 		}
 	}
 
-	// Expected cash is opening 10000 + cash sales 5000; an off count needs a reason.
-	recorder := httptest.NewRecorder()
-	s.handleBOPOSCashDayClose(recorder, posCashDayRequest(http.MethodPost, "/admin/pos/cash-days/900/close", `{"countedCashCents":14000}`, map[string]string{"id": "900"}))
+	// The shift is opened through the real handler, not hand-seeded, so this
+	// test fails if the application ever stops linking a shift to its cash day.
+	recorder = httptest.NewRecorder()
+	s.handleBOPOSShiftOpen(recorder, posCashDayRequest(http.MethodPost, "/admin/pos/shifts/open", `{"terminalKey":"caja-1","openingCashCents":0}`, nil))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("shift open: got %d %s", recorder.Code, recorder.Body.String())
+	}
+	shiftID := int64(decodeCashDayBody(t, recorder)["id"].(float64))
+	var linkedDay sql.NullInt64
+	if err := db.QueryRow(`SELECT cash_day_id FROM pos_shifts WHERE id=?`, shiftID).Scan(&linkedDay); err != nil {
+		t.Fatal(err)
+	}
+	if !linkedDay.Valid || linkedDay.Int64 != dayID {
+		t.Fatalf("shift must be linked to the open cash day, got %v", linkedDay)
+	}
+
+	// A payout only reaches the day close through that link.
+	if _, err := db.Exec(`INSERT INTO pos_cash_movements(restaurant_id,shift_id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by) VALUES(1,?,'caja-1','OUT',2000,'Proveedor','mov-a',7)`, shiftID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Expected cash is opening 10000 + cash sales 5000 - payout 2000 = 13000.
+	recorder = httptest.NewRecorder()
+	s.handleBOPOSCashDayClose(recorder, posCashDayRequest(http.MethodPost, closePath, `{"countedCashCents":14000}`, closeParams))
 	if recorder.Code != http.StatusBadRequest || decodeCashDayBody(t, recorder)["code"] != "DISCREPANCY_REASON_REQUIRED" {
 		t.Fatalf("expected DISCREPANCY_REASON_REQUIRED, got %d %s", recorder.Code, recorder.Body.String())
 	}
 
 	recorder = httptest.NewRecorder()
-	s.handleBOPOSCashDayClose(recorder, posCashDayRequest(http.MethodPost, "/admin/pos/cash-days/900/close", `{"countedCashCents":15000}`, map[string]string{"id": "900"}))
+	s.handleBOPOSCashDayClose(recorder, posCashDayRequest(http.MethodPost, closePath, `{"countedCashCents":13000}`, closeParams))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("close: got %d %s", recorder.Code, recorder.Body.String())
 	}
@@ -317,24 +373,27 @@ func TestPOSCashDayCloseWritesZClosureAndClosesShifts(t *testing.T) {
 
 	var status, closureType string
 	var cashDayID sql.NullInt64
-	var shiftID sql.NullInt64
-	var expected, counted int64
-	if err := db.QueryRow(`SELECT status FROM pos_cash_days WHERE id=900`).Scan(&status); err != nil {
+	var closureShiftID sql.NullInt64
+	var expected, counted, cashOut int64
+	if err := db.QueryRow(`SELECT status FROM pos_cash_days WHERE id=?`, dayID).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "CLOSED" {
 		t.Fatalf("expected CLOSED day, got %s", status)
 	}
-	if err := db.QueryRow(`SELECT closure_type,cash_day_id,shift_id,expected_cash_cents,counted_cash_cents FROM pos_cash_closures WHERE restaurant_id=1`).Scan(&closureType, &cashDayID, &shiftID, &expected, &counted); err != nil {
+	if err := db.QueryRow(`SELECT closure_type,cash_day_id,shift_id,expected_cash_cents,counted_cash_cents,cash_out_cents FROM pos_cash_closures WHERE restaurant_id=1`).Scan(&closureType, &cashDayID, &closureShiftID, &expected, &counted, &cashOut); err != nil {
 		t.Fatal(err)
 	}
-	if closureType != "Z" || !cashDayID.Valid || cashDayID.Int64 != 900 || shiftID.Valid {
-		t.Fatalf("expected day-scoped Z closure, got %s day=%v shift=%v", closureType, cashDayID, shiftID)
+	if closureType != "Z" || !cashDayID.Valid || cashDayID.Int64 != dayID || closureShiftID.Valid {
+		t.Fatalf("expected day-scoped Z closure, got %s day=%v shift=%v", closureType, cashDayID, closureShiftID)
 	}
-	if expected != 15000 || counted != 15000 {
-		t.Fatalf("expected 15000/15000, got %d/%d", expected, counted)
+	if cashOut != 2000 {
+		t.Fatalf("payout must reach the day close through the shift link, got %d", cashOut)
 	}
-	if err := db.QueryRow(`SELECT status FROM pos_shifts WHERE id=800`).Scan(&status); err != nil {
+	if expected != 13000 || counted != 13000 {
+		t.Fatalf("expected 13000/13000, got %d/%d", expected, counted)
+	}
+	if err := db.QueryRow(`SELECT status FROM pos_shifts WHERE id=?`, shiftID).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "CLOSED" {
@@ -343,7 +402,7 @@ func TestPOSCashDayCloseWritesZClosureAndClosesShifts(t *testing.T) {
 
 	// Re-closing is refused rather than writing a second Z.
 	recorder = httptest.NewRecorder()
-	s.handleBOPOSCashDayClose(recorder, posCashDayRequest(http.MethodPost, "/admin/pos/cash-days/900/close", `{"countedCashCents":15000}`, map[string]string{"id": "900"}))
+	s.handleBOPOSCashDayClose(recorder, posCashDayRequest(http.MethodPost, closePath, `{"countedCashCents":13000}`, closeParams))
 	if recorder.Code != http.StatusConflict || decodeCashDayBody(t, recorder)["code"] != "CASH_DAY_ALREADY_CLOSED" {
 		t.Fatalf("expected CASH_DAY_ALREADY_CLOSED, got %d %s", recorder.Code, recorder.Body.String())
 	}

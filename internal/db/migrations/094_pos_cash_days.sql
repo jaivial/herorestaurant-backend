@@ -167,8 +167,34 @@ SELECT
 FROM pos_visits v
 GROUP BY v.restaurant_id, v.service_date;
 
+-- Backfilled days marked CLOSED deliberately have no pos_cash_closures Z row and
+-- no closed_by: they predate cash days and were never cashed up through this
+-- flow. Marked in the row itself so a report joining closures to closed days can
+-- tell "missing Z" from "historical, never cashed up".
+UPDATE pos_cash_days
+SET notes = 'Backfill 094: closed without Z closure'
+WHERE notes = 'Backfill 094' AND status = 'CLOSED';
+
 UPDATE pos_visits v
 JOIN pos_cash_days d
   ON d.restaurant_id = v.restaurant_id AND d.business_date = v.service_date
 SET v.cash_day_id = d.id
 WHERE v.cash_day_id IS NULL;
+
+-- Shifts have no service_date of their own, so they are attached by the calendar
+-- date they were opened on. Without this link a day close reads cash movements
+-- through pos_shifts.cash_day_id and finds none, silently dropping every payout
+-- and cash drop from the expected-cash figure.
+UPDATE pos_shifts sh
+JOIN pos_cash_days d
+  ON d.restaurant_id = sh.restaurant_id AND d.business_date = DATE(sh.opened_at)
+SET sh.cash_day_id = d.id
+WHERE sh.cash_day_id IS NULL;
+
+-- Existing terminal closures are attributed through their shift, so day-scoped
+-- reports can reach historical Z rows.
+UPDATE pos_cash_closures c
+JOIN pos_shifts sh
+  ON sh.restaurant_id = c.restaurant_id AND sh.id = c.shift_id
+SET c.cash_day_id = sh.cash_day_id
+WHERE c.cash_day_id IS NULL AND sh.cash_day_id IS NOT NULL;
