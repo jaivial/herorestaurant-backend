@@ -15,11 +15,20 @@ import (
 func (s *Server) handleBOPOSTicketsList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	status := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status")))
+	date, _, valid := posQueryDate(r)
+	if !valid {
+		httpx.WriteError(w, 400, "Invalid date")
+		return
+	}
 	where := "t.restaurant_id=?"
 	args := []any{a.ActiveRestaurantID}
 	if status != "" {
 		where += " AND t.status=?"
 		args = append(args, status)
+	}
+	if date != "" {
+		where += " AND v.service_date=?"
+		args = append(args, date)
 	}
 	rows, err := s.db.QueryContext(r.Context(), `SELECT t.id,t.ticket_number,t.status,t.total_gross_cents,t.refunded_cents,t.stock_status,t.paid_at,v.id,v.table_id,COALESCE(rt.name,''),v.covers,v.service_date,v.service_type FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE `+where+` ORDER BY COALESCE(t.paid_at,t.opened_at) DESC LIMIT 500`, args...)
 	if err != nil {

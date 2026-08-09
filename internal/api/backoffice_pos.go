@@ -452,6 +452,14 @@ func (s *Server) loadPOSBusinessMoment(ctx context.Context, restaurantID int, se
 
 func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
+	// Without ?date= the POS shows live service: open visits, regardless of the
+	// day they started on. With a date it shows that business day in full,
+	// including its already-closed visits, so a past day can be reviewed.
+	date, scoped, valid := posQueryDate(r)
+	if !valid {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid date")
+		return
+	}
 	settings, err := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS")
@@ -467,7 +475,16 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS products")
 		return
 	}
-	tableRows, err := s.db.QueryContext(r.Context(), `SELECT t.id,t.name,t.capacity,EXISTS(SELECT 1 FROM pos_visits v WHERE v.restaurant_id=t.restaurant_id AND v.table_id=t.id AND v.status='OPEN'),COALESCE(t.area_id,0),COALESCE(ra.name,'') FROM restaurant_tables t LEFT JOIN restaurant_areas ra ON ra.id=t.area_id AND ra.restaurant_id=t.restaurant_id WHERE t.restaurant_id=? AND t.is_active=1 ORDER BY ra.display_order,t.display_order,t.id`, a.ActiveRestaurantID)
+	// Occupancy follows the same scope as the visit list, so a past day never
+	// shows tables as occupied by today's service.
+	occupiedWhere := "v.status='OPEN'"
+	tableArgs := []any{}
+	if scoped {
+		occupiedWhere = "v.status='OPEN' AND v.service_date=?"
+		tableArgs = append(tableArgs, date)
+	}
+	tableArgs = append(tableArgs, a.ActiveRestaurantID)
+	tableRows, err := s.db.QueryContext(r.Context(), `SELECT t.id,t.name,t.capacity,EXISTS(SELECT 1 FROM pos_visits v WHERE v.restaurant_id=t.restaurant_id AND v.table_id=t.id AND `+occupiedWhere+`),COALESCE(t.area_id,0),COALESCE(ra.name,'') FROM restaurant_tables t LEFT JOIN restaurant_areas ra ON ra.id=t.area_id AND ra.restaurant_id=t.restaurant_id WHERE t.restaurant_id=? AND t.is_active=1 ORDER BY ra.display_order,t.display_order,t.id`, tableArgs...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading tables")
 		return
@@ -500,7 +517,11 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 		areas = append(areas, map[string]any{"id": areaID, "name": name})
 	}
-	visits, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, "OPEN")
+	visitStatus := "OPEN"
+	if scoped {
+		visitStatus = ""
+	}
+	visits, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, visitStatus, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading visits")
 		return
@@ -534,7 +555,23 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS shift")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift})
+	// The cash day of the viewed date travels with the bootstrap so the sell
+	// screen knows on first paint whether the till is open and whether it should
+	// render read-only, without a second round trip.
+	businessDate, err := s.posResolveBusinessDate(r.Context(), a.ActiveRestaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error resolving business date")
+		return
+	}
+	var cashDay any
+	day, cashDayErr := s.loadPOSCashDayByDate(r.Context(), s.db, a.ActiveRestaurantID, businessDate)
+	if cashDayErr == nil {
+		cashDay = day.asMap()
+	} else if !errors.Is(cashDayErr, sql.ErrNoRows) {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift, "date": businessDate, "cashDay": cashDay})
 }
 
 func nextPOSTicketNumber(ctx context.Context, tx *sql.Tx, restaurantID int, businessDate, prefix string) (string, error) {
@@ -549,12 +586,19 @@ func nextPOSTicketNumber(ctx context.Context, tx *sql.Tx, restaurantID int, busi
 	return fmt.Sprintf("%s-%s-%04d", prefix, strings.ReplaceAll(businessDate, "-", ""), next), nil
 }
 
-func (s *Server) loadPOSVisits(ctx context.Context, restaurantID int, status string) ([]map[string]any, error) {
+// loadPOSVisits lists visits for a restaurant. An empty date keeps the previous
+// restaurant-wide behaviour; a date narrows the result to that business day so
+// the POS can be viewed on a past date.
+func (s *Server) loadPOSVisits(ctx context.Context, restaurantID int, status, date string) ([]map[string]any, error) {
 	where := "v.restaurant_id=?"
 	args := []any{restaurantID}
 	if status != "" {
 		where += " AND v.status=?"
 		args = append(args, status)
+	}
+	if date != "" {
+		where += " AND v.service_date=?"
+		args = append(args, date)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT v.id,v.channel,v.table_id,COALESCE(t.name,''),v.service_date,v.service_type,v.covers,v.status,v.opened_at,v.version,COALESCE((SELECT SUM(total_gross_cents-refunded_cents) FROM pos_tickets p WHERE p.restaurant_id=v.restaurant_id AND p.visit_id=v.id AND p.status<>'VOIDED'),0),v.parked_at,COALESCE(v.parked_note,''),COALESCE(v.customer_name,''),COALESCE(v.customer_tax_id,''),COALESCE(v.customer_address,'') FROM pos_visits v LEFT JOIN restaurant_tables t ON t.id=v.table_id AND t.restaurant_id=v.restaurant_id WHERE `+where+` ORDER BY v.opened_at DESC LIMIT 200`, args...)
 	if err != nil {
@@ -582,7 +626,12 @@ func (s *Server) loadPOSVisits(ctx context.Context, restaurantID int, status str
 func (s *Server) handleBOPOSVisitsList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	status := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status")))
-	visits, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, status)
+	date, _, valid := posQueryDate(r)
+	if !valid {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid date")
+		return
+	}
+	visits, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, status, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS visits")
 		return

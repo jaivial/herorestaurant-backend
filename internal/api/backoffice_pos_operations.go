@@ -104,7 +104,7 @@ func (s *Server) handleBOPOSVisitGet(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	visitID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var visit map[string]any
-	rows, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, "")
+	rows, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, "", "")
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading visit")
 		return

@@ -71,7 +71,7 @@ func (s *Server) handleBOPOSReservationVisit(w http.ResponseWriter, r *http.Requ
 		httpx.WriteError(w, 500, "Error loading reservation visit")
 		return
 	}
-	rows, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, "")
+	rows, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, "", "")
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading reservation visit")
 		return
