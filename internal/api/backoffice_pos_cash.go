@@ -21,6 +21,51 @@ type posCashQueryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
+// posCashScope selects which tickets a cash summary covers. A terminal X/Y/Z
+// closure scopes by shift; a cash-day close scopes by business date. Both go
+// through loadPOSCashSummaryScoped so the accounting rules cannot drift apart.
+type posCashScope struct {
+	// ticketWhere is a predicate over the aliases t (pos_tickets) and v (pos_visits).
+	ticketWhere string
+	ticketArgs  []any
+	// movementWhere is a predicate over the aliases m (pos_cash_movements) and
+	// sh (pos_shifts). Cash movements always hang off a shift, so a day scope
+	// reaches them through pos_shifts.cash_day_id.
+	movementWhere string
+	movementArgs  []any
+	// visitWhere narrows the open-visit count over the alias v (pos_visits). A
+	// shift closure counts every open visit in the restaurant, because a drawer
+	// must not be handed over while any table is live. A day close only cares
+	// about its own date, so an operator can still settle Saturday's takings on
+	// Monday while Monday's tables are open.
+	visitWhere string
+	visitArgs  []any
+}
+
+func posCashShiftScope(shiftID int64) posCashScope {
+	return posCashScope{
+		ticketWhere: "t.shift_id=?", ticketArgs: []any{shiftID},
+		movementWhere: "m.shift_id=?", movementArgs: []any{shiftID},
+	}
+}
+
+func posCashDayScope(cashDayID int64, businessDate string) posCashScope {
+	return posCashScope{
+		ticketWhere: "v.service_date=?", ticketArgs: []any{businessDate},
+		movementWhere: "sh.cash_day_id=?", movementArgs: []any{cashDayID},
+		visitWhere: "v.service_date=?", visitArgs: []any{businessDate},
+	}
+}
+
+// ticketQueryArgs prefixes the tenant id, matching the
+// "WHERE t.restaurant_id=? AND <ticketWhere>" shape used below.
+func (c posCashScope) ticketQueryArgs(restaurantID int, extra ...any) []any {
+	out := make([]any, 0, 1+len(c.ticketArgs)+len(extra))
+	out = append(out, restaurantID)
+	out = append(out, c.ticketArgs...)
+	return append(out, extra...)
+}
+
 type posCashSummary struct {
 	ShiftID           int64
 	TerminalKey       string
@@ -79,20 +124,34 @@ func (s *Server) loadPOSCashSummary(ctx context.Context, q posCashQueryer, resta
 	if err := q.QueryRowContext(ctx, `SELECT terminal_key,status,opening_cash_cents,opened_at,closed_at FROM pos_shifts WHERE restaurant_id=? AND id=?`, restaurantID, shiftID).Scan(&out.TerminalKey, &out.Status, &out.OpeningCash, &out.OpenedAt, &out.ClosedAt); err != nil {
 		return out, err
 	}
+	return s.loadPOSCashSummaryScoped(ctx, q, restaurantID, posCashShiftScope(shiftID), out)
+}
+
+// loadPOSCashSummaryScoped fills the money side of a summary for the given
+// scope. The caller supplies the header fields (terminal, status, opened_at and
+// the opening float) because those come from the shift or the cash day row.
+func (s *Server) loadPOSCashSummaryScoped(ctx context.Context, q posCashQueryer, restaurantID int, scope posCashScope, out posCashSummary) (posCashSummary, error) {
+	// Every ticket belongs to a visit (pos_tickets.visit_id is NOT NULL), so the
+	// join is lossless and lets a scope filter on either side.
+	ticketFrom := `FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND ` + scope.ticketWhere
 	if err := q.QueryRowContext(ctx, `
 		SELECT
-			COUNT(CASE WHEN status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN 1 END),
-			COALESCE(SUM(CASE WHEN status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN total_gross_cents ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN refunded_cents ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN discount_cents ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN surcharge_cents ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN tip_cents ELSE 0 END),0),
-			COUNT(CASE WHEN status='VOIDED' THEN 1 END)
-		FROM pos_tickets WHERE restaurant_id=? AND shift_id=?`, restaurantID, shiftID).
+			COUNT(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN 1 END),
+			COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.total_gross_cents ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.refunded_cents ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.discount_cents ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.surcharge_cents ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.tip_cents ELSE 0 END),0),
+			COUNT(CASE WHEN t.status='VOIDED' THEN 1 END)
+		`+ticketFrom, scope.ticketQueryArgs(restaurantID)...).
 		Scan(&out.TicketCount, &out.SalesGross, &out.Refunds, &out.Discounts, &out.Surcharges, &out.Tips, &out.VoidedTicketCount); err != nil {
 		return out, err
 	}
-	rows, err := q.QueryContext(ctx, `SELECT method,COALESCE(SUM(amount_cents),0),COALESCE(SUM(tip_cents),0) FROM pos_payments WHERE restaurant_id=? AND status='CAPTURED' AND ticket_id IN (SELECT id FROM pos_tickets WHERE restaurant_id=? AND shift_id=?) GROUP BY method`, restaurantID, restaurantID, shiftID)
+	// The outer restaurant_id binds first, then the subquery's own tenant id and
+	// scope arguments.
+	scopedTicketIDs := `SELECT t.id ` + ticketFrom
+	subqueryArgs := append([]any{restaurantID}, scope.ticketQueryArgs(restaurantID)...)
+	rows, err := q.QueryContext(ctx, `SELECT method,COALESCE(SUM(amount_cents),0),COALESCE(SUM(tip_cents),0) FROM pos_payments WHERE restaurant_id=? AND status='CAPTURED' AND ticket_id IN (`+scopedTicketIDs+`) GROUP BY method`, subqueryArgs...)
 	if err != nil {
 		return out, err
 	}
@@ -119,19 +178,25 @@ func (s *Server) loadPOSCashSummary(ctx context.Context, q posCashQueryer, resta
 		return out, err
 	}
 	rows.Close()
-	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN payment_method='CASH' THEN amount_cents ELSE 0 END),0),COALESCE(SUM(amount_cents),0) FROM pos_refunds WHERE restaurant_id=? AND status='COMPLETED' AND ticket_id IN (SELECT id FROM pos_tickets WHERE restaurant_id=? AND shift_id=?)`, restaurantID, restaurantID, shiftID).Scan(&out.CashRefunds, new(int64)); err != nil {
+	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN payment_method='CASH' THEN amount_cents ELSE 0 END),0),COALESCE(SUM(amount_cents),0) FROM pos_refunds WHERE restaurant_id=? AND status='COMPLETED' AND ticket_id IN (`+scopedTicketIDs+`)`, subqueryArgs...).Scan(&out.CashRefunds, new(int64)); err != nil {
 		return out, err
 	}
-	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN movement_type='IN' THEN amount_cents ELSE 0 END),0),COALESCE(SUM(CASE WHEN movement_type='OUT' THEN amount_cents ELSE 0 END),0) FROM pos_cash_movements WHERE restaurant_id=? AND shift_id=?`, restaurantID, shiftID).Scan(&out.CashIn, &out.CashOut); err != nil {
+	movementArgs := append([]any{restaurantID}, scope.movementArgs...)
+	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN m.movement_type='IN' THEN m.amount_cents ELSE 0 END),0),COALESCE(SUM(CASE WHEN m.movement_type='OUT' THEN m.amount_cents ELSE 0 END),0) FROM pos_cash_movements m JOIN pos_shifts sh ON sh.restaurant_id=m.restaurant_id AND sh.id=m.shift_id WHERE m.restaurant_id=? AND `+scope.movementWhere, movementArgs...).Scan(&out.CashIn, &out.CashOut); err != nil {
 		return out, err
 	}
-	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(v.covers),0) FROM pos_visits v WHERE v.restaurant_id=? AND EXISTS (SELECT 1 FROM pos_tickets t WHERE t.restaurant_id=v.restaurant_id AND t.visit_id=v.id AND t.shift_id=? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED'))`, restaurantID, shiftID).Scan(&out.Covers); err != nil {
+	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(x.covers),0) FROM (SELECT DISTINCT v.id,v.covers `+ticketFrom+` AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')) x`, scope.ticketQueryArgs(restaurantID)...).Scan(&out.Covers); err != nil {
 		return out, err
 	}
-	if err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pos_visits WHERE restaurant_id=? AND status='OPEN'`, restaurantID).Scan(&out.OpenVisitCount); err != nil {
+	visitWhere, visitArgs := "", []any{restaurantID}
+	if scope.visitWhere != "" {
+		visitWhere = " AND " + scope.visitWhere
+		visitArgs = append(visitArgs, scope.visitArgs...)
+	}
+	if err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pos_visits v WHERE v.restaurant_id=? AND v.status='OPEN'`+visitWhere, visitArgs...).Scan(&out.OpenVisitCount); err != nil {
 		return out, err
 	}
-	if err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND shift_id=? AND status='OPEN'`, restaurantID, shiftID).Scan(&out.OpenTicketCount); err != nil {
+	if err = q.QueryRowContext(ctx, `SELECT COUNT(*) `+ticketFrom+` AND t.status='OPEN'`, scope.ticketQueryArgs(restaurantID)...).Scan(&out.OpenTicketCount); err != nil {
 		return out, err
 	}
 	// Tips are collected on top of the sale. Cash tips therefore remain in the
