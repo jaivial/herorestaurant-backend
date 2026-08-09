@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -223,42 +222,19 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 		brandName = "Restaurante"
 	}
 
-	uazURL, uazToken := s.uazapiBaseAndToken(r.Context(), restaurantID)
-	if uazURL == "" || uazToken == "" {
-		results["error"] = "UAZAPI not configured"
-		appendReminderLog(ts + " - ERROR: UAZAPI not configured\n")
+	gw, gwOK := s.botGatewayFor(r.Context(), restaurantID)
+	if !gwOK {
+		results["error"] = "WhatsApp not configured"
+		appendReminderLog(ts + " - ERROR: WhatsApp not configured\n")
 		httpx.WriteJSON(w, http.StatusOK, results)
 		return
 	}
 
-	sendMenuURL := uazURL + "/send/menu"
-	if uazToken != "" {
-		sendMenuURL += "?token=" + url.QueryEscape(uazToken)
-	}
-	client := &http.Client{Timeout: 30 * time.Second}
-
 	sendMenu := func(ctx context.Context, phone string, text string, choices []string) (bool, string) {
-		payload, _ := json.Marshal(map[string]any{
-			"number":  phone,
-			"type":    "button",
-			"text":    text,
-			"choices": choices,
-		})
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, sendMenuURL, bytes.NewReader(payload))
-		if err != nil {
+		if err := gw.SendMenu(ctx, phone, text, choices); err != nil {
 			return false, err.Error()
 		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(req)
-		if err != nil {
-			return false, err.Error()
-		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == 200 || resp.StatusCode == 201 {
-			return true, ""
-		}
-		return false, "HTTP " + strconv.Itoa(resp.StatusCode) + ": " + string(body)
+		return true, ""
 	}
 
 	for _, booking := range bookings {

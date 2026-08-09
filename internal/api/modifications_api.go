@@ -940,25 +940,19 @@ func (s *Server) handleNotifyRestaurantModification(w http.ResponseWriter, r *ht
 	}
 
 	// 2) WhatsApp to restaurant recipients (best-effort if configured).
-	sendURL, restaurantNumbers := s.uazapiSendTextURL(r.Context(), restaurantID)
+	gw, restaurantNumbers := s.restaurantWhatsAppRecipients(r.Context(), restaurantID)
 	whatsappResults := []map[string]any{}
 	whatsSentAny := false
-	if sendURL != "" && len(restaurantNumbers) > 0 {
+	if gw != nil {
 		for _, n := range restaurantNumbers {
-			body, code, err := sendUazAPI(r.Context(), sendURL, map[string]any{
-				"number": n,
-				"text":   message,
-			})
-			sent := err == nil && (code == 200 || code == 201)
-			if sent {
+			err := gw.SendText(r.Context(), n, message)
+			if err == nil {
 				whatsSentAny = true
 			}
 			whatsappResults = append(whatsappResults, map[string]any{
 				"number": n,
-				"sent":   sent,
+				"sent":   err == nil,
 				"error":  errString(err),
-				"http":   code,
-				"body":   body,
 			})
 		}
 	} else {

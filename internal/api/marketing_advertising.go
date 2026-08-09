@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"net/http"
 	"net/mail"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -177,16 +176,9 @@ func (s *Server) handleSendEmailAndWhatsappAd(w http.ResponseWriter, r *http.Req
 	if campaignType == "all" || campaignType == "whatsapp" {
 		logs = append(logs, "Comenzando envío de WhatsApp...")
 
-		uazURL, uazToken := s.uazapiBaseAndToken(r.Context(), restaurantID)
-		sendURL := ""
-		if uazURL != "" {
-			sendURL = uazURL + "/send/text"
-			if uazToken != "" {
-				sendURL += "?token=" + url.QueryEscape(uazToken)
-			}
-		}
+		gw, gwOK := s.botGatewayFor(r.Context(), restaurantID)
 
-		if sendURL == "" {
+		if !gwOK {
 			for _, p := range phoneList {
 				results["whatsapp_failed"] = results["whatsapp_failed"].(int) + 1
 				details = append(details, map[string]any{
@@ -194,17 +186,14 @@ func (s *Server) handleSendEmailAndWhatsappAd(w http.ResponseWriter, r *http.Req
 					"contact": p,
 					"name":    "Estimado cliente",
 					"success": false,
-					"error":   "UAZAPI_URL/UAZAPI_TOKEN not configured",
+					"error":   "WhatsApp no configurado para este restaurante",
 				})
 			}
-			logs = append(logs, "✗ WhatsApp NO enviados: UAZAPI_URL/UAZAPI_TOKEN no configurados")
+			logs = append(logs, "✗ WhatsApp NO enviados: instancia de WhatsApp no configurada")
 		} else {
 			for _, p := range phoneList {
-				body, code, err := sendUazAPI(r.Context(), sendURL, map[string]any{
-					"number": p,
-					"text":   advertisingMessage,
-				})
-				sent := err == nil && (code == 200 || code == 201)
+				err := gw.SendText(r.Context(), p, advertisingMessage)
+				sent := err == nil
 				if sent {
 					results["whatsapp_sent"] = results["whatsapp_sent"].(int) + 1
 					logs = append(logs, "✓ WhatsApp enviado a: +"+p)
@@ -219,11 +208,7 @@ func (s *Server) handleSendEmailAndWhatsappAd(w http.ResponseWriter, r *http.Req
 					"success": sent,
 				}
 				if !sent {
-					if err != nil {
-						detail["error"] = err.Error()
-					} else {
-						detail["error"] = "HTTP " + strconv.Itoa(code) + ": " + body
-					}
+					detail["error"] = err.Error()
 				}
 				details = append(details, detail)
 			}

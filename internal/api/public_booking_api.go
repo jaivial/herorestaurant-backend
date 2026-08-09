@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -395,7 +396,9 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 		cancelledByText,
 		time.Now().Format("15:04 02/01/2006"),
 	)
-	s.sendRestaurantWhatsAppText(context.Background(), restaurantID, msg)
+	if err := s.sendRestaurantWhatsAppText(context.Background(), restaurantID, msg); err != nil {
+		log.Printf("restaurant whatsapp notification failed (restaurant %d): %v", restaurantID, err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -504,7 +507,9 @@ func (s *Server) handlePublicBookingRice(w http.ResponseWriter, r *http.Request)
 		newRiceFormatted,
 		time.Now().Format("15:04 02/01/2006"),
 	)
-	s.sendRestaurantWhatsAppText(context.Background(), restaurantID, msg)
+	if err := s.sendRestaurantWhatsAppText(context.Background(), restaurantID, msg); err != nil {
+		log.Printf("restaurant whatsapp notification failed (restaurant %d): %v", restaurantID, err)
+	}
 }
 
 // ---------------------------------------------------------------------------
