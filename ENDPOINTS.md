@@ -2662,9 +2662,19 @@ All routes require `bo_session`, active `pos_pack`, tenant scope and exact POS p
 
 | Method | Route | Permission | Purpose |
 |---|---|---|---|
-| GET | `/api/admin/pos/bootstrap` | `pos.view` | Settings, active products, open visits and table occupancy |
+| GET | `/api/admin/pos/bootstrap` | `pos.view` | Settings, active products, visits, table occupancy and the cash day |
 | GET/PATCH | `/api/admin/pos/settings` | `pos.view` / `pos.settings.manage` | Enable POS; stock/covers modes; timezone and cutoff |
 | GET/POST/PATCH/DELETE | `/api/admin/pos/service-periods[/{id}]` | `pos.view` / `pos.settings.manage` | `LUNCH`, `DINNER`, `OTHER` periods including cross-midnight ranges |
+
+`/pos/bootstrap`, `/pos/visits` and `/pos/tickets` accept an optional
+`date=YYYY-MM-DD` to browse a past business date; a malformed value is a `400`.
+Omitting it preserves the live behaviour exactly, so `bootstrap` keeps returning
+only `OPEN` visits and the unfiltered lists stay unfiltered. With a date,
+`bootstrap` returns that day's `OPEN` and `CLOSED` visits, computes table
+occupancy from that day alone instead of live service, and echoes `date` alongside
+the `cashDay`. `CANCELLED` and `MERGED` visits are excluded, since a merged source
+visit is already counted on the visit it was merged into. `/pos/visits` stays
+unopinionated and returns every status, filtered by `status` when given.
 
 ### Catalogue and stock mappings
 
@@ -2766,6 +2776,8 @@ Manual `CARD` rows require an external terminal reference; PAN/CVV are never acc
 | GET | `/api/admin/pos/cash-days/current` | `pos.view`; optional `date=YYYY-MM-DD`, defaults to the cutoff business date |
 | POST | `/api/admin/pos/cash-days` | `pos.shift.manage`; `force` skips the unclosed-previous-days guard |
 | POST | `/api/admin/pos/cash-days/{id}/close` | `pos.shift.manage`; Z closure, requires `countedCashCents` |
+| GET | `/api/admin/pos/cash-days` | `pos.view`; required `from`/`to` `YYYY-MM-DD`, 92 days max; one row per day with a cash day or activity |
+| GET | `/api/admin/pos/cash-days/{date}/tables` | `pos.view`; that day's takings broken down by table, visit and ticket |
 | GET | `/api/admin/pos/covers` | `pos.reports.view` |
 | POST | `/api/admin/pos/covers/adjustments` | `pos.covers.adjust` |
 | GET | `/api/admin/pos/covers/reconciliation` | `pos.reports.view` |
@@ -2780,6 +2792,23 @@ Manual `CARD` rows require an external terminal reference; PAN/CVV are never acc
 | GET/PUT | `/api/admin/pos/roles/{slug}/permissions` | `pos.settings.manage` | Fine-grained tenant role permissions |
 
 A cash day (`pos_cash_days`) is the restaurant-wide till session for one business date, unique per `(restaurant_id, business_date)`; a shift is per terminal and now belongs to a cash day. `GET /pos/cash-days/current` returns the day for `date` (or the cutoff-derived business date) plus `unclosedPrevious`, the earlier days still `OPEN` with their takings and covers. Opening returns `409 UNCLOSED_PREVIOUS_DAYS` with that list unless `force=true` is sent, which records `forcedOpen`, and `409 CASH_DAY_ALREADY_OPEN` when another terminal wins the unique-key race. Closing is a Z closure that reuses the shift-closure accounting over a day-wide scope and writes the same `pos_cash_closures` snapshot: it rejects `409 OPEN_POS_ITEMS` while any visit or ticket is open, `400 COUNTED_CASH_REQUIRED` without a count, and `400 DISCREPANCY_REASON_REQUIRED` when counted cash differs from expected; on success it also closes any shift still open under that day.
+
+`GET /pos/cash-days?from&to` powers the calendar. The range is inclusive and capped
+at 92 days; a missing, malformed or reversed range is a `400`. Days with neither a
+cash day nor any activity are omitted, and a day with activity but no cash day is
+returned with a `null` status so the caller can flag it as never opened. Each row
+carries `totalGrossCents` net of refunds, `ticketCount`, `covers` including manual
+adjustments, and the resolved `openedByName`/`closedByName`. Voided tickets are
+excluded from both the money and the count.
+
+`GET /pos/cash-days/{date}/tables` returns that day's sales grouped table → visit →
+ticket, with the same net-of-refunds money at every level. Voided tickets are still
+listed so the operator can see they happened, but contribute nothing. Manual cover
+corrections cannot be attributed to a table, so they are returned apart as
+`adjustedCovers`; the tables' covers plus that delta reconcile with the day's
+covers in the range endpoint. The response sets `readOnly`, which is `false` only
+when that date has an `OPEN` cash day: a `CLOSED` day and a date that was never
+opened are both history.
 
 ### Kitchen display and LIVE activation
 

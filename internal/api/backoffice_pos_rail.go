@@ -64,7 +64,7 @@ func normalizeSpanishCustomerTaxID(value string) (string, bool) {
 }
 
 func (s *Server) loadPOSVisit(ctx context.Context, restaurantID int, visitID int64) (map[string]any, error) {
-	visits, err := s.loadPOSVisits(ctx, restaurantID, "")
+	visits, err := s.loadPOSVisits(ctx, restaurantID, nil, "")
 	if err != nil {
 		return nil, err
 	}
