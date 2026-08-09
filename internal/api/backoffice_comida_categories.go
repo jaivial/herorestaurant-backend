@@ -420,7 +420,7 @@ func (s *Server) handleBOComidaCategoryCreate(w http.ResponseWriter, r *http.Req
 	// The UNIQUE index only covers this exact scope, so it would let a global "Tapas"
 	// sit next to a platos "Tapas". Both scopes are checked, including the legacy
 	// tables, because the picker shows them together and products reference the name.
-	taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, foodType, slug, 0, false)
+	taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, foodType, slug, 0)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 		return
@@ -506,10 +506,8 @@ func comidaCategoryBaseSlugs(foodType string) []string {
 
 // comidaCategorySlugTaken reports whether the slug is already used by a category the
 // caller would see next to this one: the same scope, the scopes that overlap it, and
-// the legacy tables those scopes read from. excludeID skips the row being renamed, and
-// ownsSlug says that row already carries this slug, which only a scope or active change
-// can be true for.
-func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurantID int, foodType, slug string, excludeID int, ownsSlug bool) (bool, error) {
+// the legacy tables those scopes read from. excludeID skips the row being renamed.
+func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurantID int, foodType, slug string, excludeID int) (bool, error) {
 	scopes := comidaCategoryOverlappingScopes(foodType)
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(scopes)), ",")
 	args := []any{restaurantID, slug, excludeID}
@@ -535,14 +533,17 @@ func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurant
 
 	for _, scope := range scopes {
 		// The seeded base names count as taken even before the rows exist, because
-		// the next listing creates them. Not for a category that already carries the
-		// slug, though: rows predating this reservation would otherwise be frozen,
-		// answering 409 against their own name on every reactivation or move.
-		if !ownsSlug {
-			for _, baseSlug := range comidaCategoryBaseSlugs(scope) {
-				if baseSlug == slug {
-					return true, nil
-				}
+		// the next listing creates them.
+		//
+		// This holds even for a category that already carries the name, which is how
+		// rows created before this reservation existed look. Exempting them would be
+		// no kindness: once the listing seeds the base row the duplicate is real and
+		// visible, so the refusal is the right answer and renaming is the way out.
+		// It would also open a two-step bypass, since a category could be created in
+		// a scope the reservation does not cover and then moved into one it does.
+		for _, baseSlug := range comidaCategoryBaseSlugs(scope) {
+			if baseSlug == slug {
+				return true, nil
 			}
 		}
 
@@ -695,7 +696,7 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 	// Reactivating is checked too: while the category was switched off another one
 	// could take its name, and turning it back on would put both in the same picker.
 	if next.Slug != current.Slug || next.FoodType != current.FoodType || (!current.Active && next.Active) {
-		taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, next.FoodType, next.Slug, id, next.Slug == current.Slug)
+		taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, next.FoodType, next.Slug, id)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando categoria")
 			return
@@ -856,9 +857,13 @@ func (s *Server) deleteComidaCategoryLegacyTwins(r *http.Request, tx *sql.Tx, re
 		if !ok {
 			continue
 		}
-		// The margin scope has to go first, while the id is still readable.
+		// FOR UPDATE, because the margin scopes are found by id in a separate
+		// statement from the delete below. Without the lock the old carta screen
+		// could insert a matching row in between, which the delete would take and
+		// whose margin scope this pass never saw, leaving exactly the orphan the
+		// margin cleanup exists to prevent.
 		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
-		rows, err := tx.QueryContext(r.Context(), `SELECT id FROM `+table+` WHERE `+where, args...)
+		rows, err := tx.QueryContext(r.Context(), `SELECT id FROM `+table+` WHERE `+where+` FOR UPDATE`, args...)
 		if err != nil {
 			return err
 		}

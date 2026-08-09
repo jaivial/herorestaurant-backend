@@ -661,12 +661,25 @@ func TestWritesNeverTouchASeededBaseCategory(t *testing.T) {
 		t.Fatalf("the rename hijacked the seeded row: name=%q source=%q", name, source)
 	}
 
+	// Deleted through a second row still carrying the base name: the rename above
+	// moved the first one off the slug, so a delete would not even look at the seed.
+	res, err = s.db.Exec(
+		`INSERT INTO comida_categories (restaurant_id, food_type, name, slug, active) VALUES (1, 'platos', ?, ?, 1)`,
+		seed.Name, seed.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err = res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if code, body := deleteCategory(t, s, 1, int(id)); code != http.StatusOK {
 		t.Fatalf("delete: status=%d body=%s", code, body)
 	}
 	var survivors int
 	if err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM comida_plato_categories WHERE restaurant_id=1 AND slug=? AND COALESCE(source,'custom')='base'`, seed.Slug).Scan(&survivors); err != nil {
+		`SELECT COUNT(*) FROM comida_plato_categories WHERE restaurant_id=1 AND slug=? AND name=? AND COALESCE(source,'custom')='base'`,
+		seed.Slug, seed.Name).Scan(&survivors); err != nil {
 		t.Fatal(err)
 	}
 	if survivors != 1 {
@@ -674,11 +687,11 @@ func TestWritesNeverTouchASeededBaseCategory(t *testing.T) {
 	}
 }
 
-// The base names are reserved, but a category that already carries one predates the
-// reservation: it exists in restaurants running the version that let it through.
-// Reserving its own name against it would freeze the row, answering 409 to every
-// reactivation and every move for good.
-func TestACategoryAlreadyHoldingABaseNameIsNotFrozenByTheReservation(t *testing.T) {
+// The reservation covers a category that already carries a base name, which is how
+// rows created before it existed look. That row cannot be reactivated or moved while
+// it keeps the name — the base category is real and the duplicate would be visible —
+// so renaming it is the way out, and that stays open.
+func TestACategoryAlreadyHoldingABaseNameMustBeRenamedToBeFreed(t *testing.T) {
 	s := sheetsTestServer(t)
 	seed := basePlatoCategories[0]
 
@@ -696,20 +709,42 @@ func TestACategoryAlreadyHoldingABaseNameIsNotFrozenByTheReservation(t *testing.
 	}
 	id := int(id64)
 
-	if code, body := patchCategory(t, s, 1, id, `{"active":true}`); code != http.StatusOK {
-		t.Fatalf("reactivating a category that holds a base name: status=%d body=%s", code, body)
+	if code, body := patchCategory(t, s, 1, id, `{"active":true}`); code != http.StatusConflict {
+		t.Fatalf("reactivating onto a base name: status=%d body=%s", code, body)
 	}
-	if code, body := patchCategory(t, s, 1, id, `{"global":true}`); code != http.StatusOK {
+	if code, body := patchCategory(t, s, 1, id, `{"global":true}`); code != http.StatusConflict {
 		t.Fatalf("moving a category that holds a base name: status=%d body=%s", code, body)
 	}
 
-	// Renaming away from the base name is allowed, and afterwards the name is
-	// reserved again: the exemption is only for the row that already carries it.
-	if code, body := patchCategory(t, s, 1, id, `{"name":"Otra","foodType":"platos"}`); code != http.StatusOK {
+	// Renaming is checked against the new name, so it is not blocked, and once the
+	// row is off the base name it behaves like any other.
+	if code, body := patchCategory(t, s, 1, id, `{"name":"De la casa"}`); code != http.StatusOK {
 		t.Fatalf("renaming away from a base name: status=%d body=%s", code, body)
 	}
-	if code, body := patchCategory(t, s, 1, id, `{"name":"`+seed.Name+`"}`); code != http.StatusConflict {
-		t.Fatalf("renaming back onto a base name: status=%d body=%s", code, body)
+	if code, body := patchCategory(t, s, 1, id, `{"active":true}`); code != http.StatusOK {
+		t.Fatalf("reactivating after the rename: status=%d body=%s", code, body)
+	}
+}
+
+// The reservation is checked against the destination scope, so a category cannot be
+// created in a scope it does not cover and then moved into one it does.
+func TestABaseNameCannotBeSmuggledInByMovingScope(t *testing.T) {
+	s := sheetsTestServer(t)
+
+	// cafes has no legacy table of its own, so a base plato name is free there.
+	cat := createCategory(t, s, 1, `{"name":"`+basePlatoCategories[0].Name+`","foodType":"cafes"}`)
+	if code, body := patchCategory(t, s, 1, cat.ID, `{"foodType":"platos"}`); code != http.StatusConflict {
+		t.Fatalf("moving a base plato name into platos: status=%d body=%s", code, body)
+	}
+	// Global overlaps every type, so it is refused too.
+	if code, body := patchCategory(t, s, 1, cat.ID, `{"global":true}`); code != http.StatusConflict {
+		t.Fatalf("moving a base plato name into global: status=%d body=%s", code, body)
+	}
+
+	// And the same for a base bebida name reached from a type that does not cover it.
+	bebida := createCategory(t, s, 1, `{"name":"`+baseBebidaCategories[0].Name+`","foodType":"cafes"}`)
+	if code, body := patchCategory(t, s, 1, bebida.ID, `{"global":true}`); code != http.StatusConflict {
+		t.Fatalf("moving a base bebida name into global: status=%d body=%s", code, body)
 	}
 }
 
