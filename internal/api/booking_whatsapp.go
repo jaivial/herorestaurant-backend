@@ -118,11 +118,22 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 		log.Printf("WhatsApp button send failed for booking #%d (%v), falling back to text", bookingID, err)
 	}
 
-	if err := gw.SendText(ctx, msg.To, msg.Text); err != nil {
-		return fmt.Errorf("error enviando WhatsApp: %w", err)
+	sendErr := gw.SendText(ctx, msg.To, msg.Text)
+	if sendErr == nil {
+		log.Printf("WhatsApp text confirmation sent for booking #%d", bookingID)
+		return nil
 	}
-	log.Printf("WhatsApp text confirmation sent for booking #%d", bookingID)
-	return nil
+
+	// A confirmation the customer never receives is worse than a late one, so
+	// hand it to the outbox before reporting the failure upstream.
+	if qErr := s.enqueueWhatsAppDelivery(
+		ctx, restaurantID, "booking_confirmation",
+		fmt.Sprintf("booking_confirmation:%d:%d", restaurantID, bookingID),
+		msg.To, whatsappOutboxPayload{Text: msg.Text, Choices: msg.Choices}, sendErr,
+	); qErr != nil {
+		log.Printf("WhatsApp outbox enqueue failed for booking #%d: %v", bookingID, qErr)
+	}
+	return fmt.Errorf("error enviando WhatsApp: %w", sendErr)
 }
 
 // publicBaseURLFromContext resolves the public base URL for generating links.
