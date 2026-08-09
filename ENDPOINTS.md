@@ -831,7 +831,21 @@ justo lo contrario de lo pedido. Los campos desconocidos se rechazan, para que u
 - `200` → `{ success: true, category: Category }`
 - `400` → nombre vacío, nombre de más de 120 caracteres, scope contradictorio o
   campo desconocido
-- `409` → el nombre ya existe en alguno de los scopes solapados o en la tabla legacy
+- `409` → el nombre ya existe en alguno de los scopes solapados o en la tabla legacy,
+  o choca con un nombre base reservado
+
+Los nombres base de platos (entrantes, principal, arroz, postre) y de bebidas
+(refrescos, aguas, zumos, cervezas, copas, licores, cocktails) están **reservados**
+en su tipo y en `global`, aunque la tabla legacy aún no los tenga: se siembran de
+forma diferida, al abrir el listado por primera vez, así que en un restaurante nuevo
+parecen libres. Tomar uno daría una categoría unified a la que el siguiente listado
+le sembraría una gemela legacy al lado.
+
+La reserva es **uniforme**: cubre también a una categoría que ya lleva ese nombre, que
+es como quedaron las creadas antes de que existiera. Esa fila no puede reactivarse ni
+moverse de scope mientras conserve el nombre, porque en cuanto el listado siembra la
+fila base el duplicado es real y visible. La salida es **renombrarla**, que nunca está
+bloqueado: el `PATCH` valida contra el nombre nuevo, no contra el actual.
 
 ##### `PATCH /api/admin/comida/categorias/{id}`
 Body: `{ name?, foodType?, global?, active? }`. Permite renombrar, mover de scope
@@ -847,6 +861,18 @@ referencia la categoría por nombre:
   `comida_items.category_id` apunta a esa gemela. Sin renombrarla, volvería a
   aparecer como una entrada legacy con el nombre viejo.
 
+Se considera gemela la fila legacy que coincide en **slug y nombre**, está activa y
+no es `source: 'base'`. El slug por sí solo no basta: las tablas legacy son
+anteriores a este catálogo y la carta antigua sigue escribiendo en ellas, así que
+una fila ajena puede compartirlo. Lo mismo aplica al `DELETE`, que borra la gemela
+para que no reaparezca como entrada legacy irreactivable.
+
+Como contrapartida, `POST /api/admin/comida/platos/categorias` acepta un `slug` del
+cliente desacoplado del `name`, así que la carta antigua puede renombrar la gemela y
+romper el enlace de forma permanente: a partir de ahí el renombrado unificado ya no
+cascadea y la fila legacy vuelve a aparecer en el listado con el nombre viejo. Es el
+precio de no tocar filas que no son nuestras.
+
 La fila se bloquea con `SELECT ... FOR UPDATE` antes de escribir, para que dos
 renombrados simultáneos no dejen productos repartidos entre el nombre viejo y el nuevo.
 
@@ -859,8 +885,16 @@ siguen llevando su nombre. Renombrar sí está permitido, porque cascadea.
 - `400` → nombre inválido, scope contradictorio o campo desconocido
 - `404` → no encontrada, de otro restaurante, o `legacy` (las legacy se serializan
   con `id: 0`, que no es direccionable aquí)
-- `409` → el nombre ya existe en un scope solapado, o se intenta mover/desactivar
-  una categoría en uso
+- `409` → el nombre ya existe en un scope solapado, choca con un nombre base
+  reservado, o se intenta mover/desactivar una categoría en uso
+
+Reactivar revalida el nombre: mientras la categoría estaba apagada, la carta antigua
+pudo escribir ese nombre en la tabla legacy, y volver a encenderla dejaría las dos
+entradas en el mismo selector.
+
+La reserva de nombres base se comprueba contra el scope de **destino**, así que cubre
+por igual el renombrado, la reactivación y el cambio de scope: una categoría creada en
+un tipo que la reserva no alcanza no puede colarse moviéndola a uno que sí.
 
 ##### `DELETE /api/admin/comida/categorias/{id}`
 Solo categorías `unified`.
@@ -868,6 +902,12 @@ Solo categorías `unified`.
 - `200` → `{ success: true }`
 - `404` → no encontrada, de otro restaurante, o `legacy`
 - `409` → `La categoria esta en uso`
+
+Borrar arrastra, en la misma transacción, el `stock_margin_scopes` con
+`scope_kind: 'COMIDA_CATEGORY'` y `scope_key: '{tipo}:{id de la gemela}'`, y sus bandas
+por cascada. Ese `scope_key` es texto plano sin FK, así que nada en la base de datos lo
+limpiaría, y como los ids se reutilizan la siguiente categoría en caer en ese id
+heredaría en silencio un objetivo de margen ajeno.
 
 El uso se comprueba **solo en los scopes que la categoría alcanza**: una categoría
 de `cafes` no se considera en uso porque un plato distinto comparta su nombre.

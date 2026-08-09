@@ -316,24 +316,67 @@ func TestCreateRejectsANameAlreadyVisibleInTheSameScope(t *testing.T) {
 	createCategory(t, s, 1, `{"name":"Entrantes","foodType":"vinos"}`)
 }
 
-func TestCreateRejectsANameTheLegacyTableAlreadyOwns(t *testing.T) {
+// A refused create must leave the existing category exactly as it was, which for a
+// deactivated one means staying off: an operator who switched a category off does not
+// expect someone else's failed create to switch it back on.
+//
+// What guarantees this is comidaCategorySlugTaken counting inactive rows, so the
+// refusal happens before the INSERT. The INSERT's own duplicate handling is not
+// reachable from here; the only path that reaches it is the concurrent create tracked
+// in the cross-scope race issue.
+func TestARefusedCreateDoesNotDisturbTheCategoryItCollidedWith(t *testing.T) {
 	s := sheetsTestServer(t)
-	// Reading the platos listing seeds the base legacy categories.
-	legacy := listCategories(t, s, 1, "?foodType=platos")
-	var seeded string
-	for _, c := range legacy {
-		if c.Origin == comidaCategoryOriginLegacy {
-			seeded = c.Name
-			break
-		}
-	}
-	if seeded == "" {
-		t.Skip("no legacy platos categories are seeded in this schema")
+	existing := createCategory(t, s, 1, `{"name":"Vermuts","foodType":"vinos"}`)
+	if code, body := patchCategory(t, s, 1, existing.ID, `{"active":false}`); code != http.StatusOK {
+		t.Fatalf("deactivate: status=%d body=%s", code, body)
 	}
 
-	if code, body := createCategoryStatus(t, s, 1, `{"name":"`+seeded+`","foodType":"platos"}`); code != http.StatusConflict {
+	// Same slug, different spelling: an upsert would have rewritten the name.
+	if code, body := createCategoryStatus(t, s, 1, `{"name":"VERMUTS","foodType":"vinos"}`); code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", code, body)
+	}
+
+	var name string
+	var active int
+	var rows int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM comida_categories WHERE restaurant_id=1 AND slug='vermuts'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("%d rows carry the slug, want 1", rows)
+	}
+	if err := s.db.QueryRow(
+		`SELECT name, active FROM comida_categories WHERE restaurant_id=1 AND id=?`, existing.ID).Scan(&name, &active); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Vermuts" {
+		t.Fatalf("the refused create renamed the existing category to %q", name)
+	}
+	if active != 0 {
+		t.Fatal("the refused create switched a deactivated category back on")
+	}
+}
+
+func TestCreateRejectsANameTheLegacyTableAlreadyOwns(t *testing.T) {
+	s := sheetsTestServer(t)
+	// A custom row, not a seeded one: the seeds are covered separately and are
+	// refused even before they exist.
+	if _, err := s.db.Exec(
+		`INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active) VALUES (1, 'De la huerta', 'de-la-huerta', 'custom', 1)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := createCategoryStatus(t, s, 1, `{"name":"De la huerta","foodType":"platos"}`); code != http.StatusConflict {
 		t.Fatalf("a name the legacy table owns: status=%d body=%s", code, body)
 	}
+	// A global category is offered next to the platos ones, so it collides too.
+	if code, body := createCategoryStatus(t, s, 1, `{"name":"De la huerta","global":true}`); code != http.StatusConflict {
+		t.Fatalf("a global colliding with a legacy platos row: status=%d body=%s", code, body)
+	}
+	// Cafes has no legacy table and does not read the platos one.
+	createCategory(t, s, 1, `{"name":"De la huerta","foodType":"cafes"}`)
 }
 
 func TestCreateRejectsAnInvalidBody(t *testing.T) {
@@ -416,6 +459,47 @@ func TestRenamingRejectsANameAlreadyVisibleInTheScope(t *testing.T) {
 	// The failed rename must not have leaked into the products or the row.
 	if _, ok := categoryNamed(listCategories(t, s, 1, "?foodType=vinos"), "Tintos"); !ok {
 		t.Fatal("the category lost its name to a rename that was rejected")
+	}
+}
+
+// The unique index only spans one scope, so this collision is caught by the
+// handler's own overlap check and by nothing else.
+func TestRenamingRejectsANameHeldInAnOverlappingScope(t *testing.T) {
+	s := sheetsTestServer(t)
+	createCategory(t, s, 1, `{"name":"Temporada","global":true}`)
+	espumosos := createCategory(t, s, 1, `{"name":"Espumosos","foodType":"vinos"}`)
+
+	// A vinos category renamed onto a global name: both would show in the vinos
+	// picker, and renaming either afterwards would rewrite the other's products.
+	if code, body := patchCategory(t, s, 1, espumosos.ID, `{"name":"Temporada"}`); code != http.StatusConflict {
+		t.Fatalf("renaming onto a global name: status=%d body=%s", code, body)
+	}
+
+	// And the same collision in the other direction.
+	global, ok := categoryNamed(listCategories(t, s, 1, ""), "Temporada")
+	if !ok {
+		t.Fatal("the global category is missing from the management listing")
+	}
+	if code, body := patchCategory(t, s, 1, global.ID, `{"name":"Espumosos"}`); code != http.StatusConflict {
+		t.Fatalf("renaming a global onto a type-scoped name: status=%d body=%s", code, body)
+	}
+	if _, ok := categoryNamed(listCategories(t, s, 1, "?foodType=vinos"), "Espumosos"); !ok {
+		t.Fatal("the type-scoped category lost its name to a rejected rename")
+	}
+}
+
+// Re-scoping is what turns a harmless pair of same-named categories into an
+// ambiguous one, so it is checked on the destination scope, not the current one.
+func TestRescopingRejectsANameHeldInTheDestinationScope(t *testing.T) {
+	s := sheetsTestServer(t)
+	createCategory(t, s, 1, `{"name":"Especiales","foodType":"vinos"}`)
+	cafes := createCategory(t, s, 1, `{"name":"Especiales","foodType":"cafes"}`)
+
+	if code, body := patchCategory(t, s, 1, cafes.ID, `{"foodType":"vinos"}`); code != http.StatusConflict {
+		t.Fatalf("moving onto an occupied name: status=%d body=%s", code, body)
+	}
+	if _, ok := categoryNamed(listCategories(t, s, 1, "?foodType=cafes"), "Especiales"); !ok {
+		t.Fatal("the category left its scope on a rejected move")
 	}
 }
 
@@ -506,21 +590,369 @@ func TestDeletingACategoryAlsoRemovesItsLegacyTwin(t *testing.T) {
 	}
 }
 
-func TestDeletingACategoryLeavesSeededBaseCategoriesAlone(t *testing.T) {
+// The base names are seeded lazily, on the first listing, so on a fresh restaurant
+// they are absent from the table and a lookup would report them free. Taking one
+// would hand the operator a unified category that the next listing seeds a legacy
+// row alongside, and renaming it afterwards would hijack the seed.
+func TestCreateRejectsASeededBaseNameBeforeItHasBeenSeeded(t *testing.T) {
 	s := sheetsTestServer(t)
-	// ensureBasePlatoCategories seeds the base rows on the first listing.
-	base := listCategories(t, s, 1, "?foodType=platos")
-	if len(base) == 0 {
-		t.Skip("no seeded base plato categories in this schema")
-	}
-	seeded := base[0]
 
-	cat := createCategory(t, s, 1, `{"name":"Arroces","foodType":"platos"}`)
+	var seeded int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM comida_plato_categories WHERE restaurant_id=1`).Scan(&seeded); err != nil {
+		t.Fatal(err)
+	}
+	if seeded != 0 {
+		t.Fatalf("the base categories are already seeded (%d rows); this test needs a fresh tenant", seeded)
+	}
+
+	for _, base := range basePlatoCategories {
+		if code, body := createCategoryStatus(t, s, 1, `{"name":"`+base.Name+`","foodType":"platos"}`); code != http.StatusConflict {
+			t.Fatalf("base plato name %q: status=%d body=%s", base.Name, code, body)
+		}
+	}
+	for _, base := range baseBebidaCategories {
+		if code, body := createCategoryStatus(t, s, 1, `{"name":"`+base.Name+`","foodType":"bebidas"}`); code != http.StatusConflict {
+			t.Fatalf("base bebida name %q: status=%d body=%s", base.Name, code, body)
+		}
+	}
+	// A global category collides with every type, so the base names are out too.
+	if code, body := createCategoryStatus(t, s, 1, `{"name":"`+basePlatoCategories[0].Name+`","global":true}`); code != http.StatusConflict {
+		t.Fatalf("a global taking a base plato name: status=%d body=%s", code, body)
+	}
+	// A type with no legacy table of its own is unaffected.
+	createCategory(t, s, 1, `{"name":"`+basePlatoCategories[0].Name+`","foodType":"vinos"}`)
+}
+
+// The seeded rows belong to the old carta screen, and ensureBase*Categories puts them
+// back on the next listing. Renaming one would let the seed return and leave the
+// renamed row behind as a second, uneditable entry; deleting one would take a base
+// category out of the carta.
+//
+// Creating such a category is refused now, so the row is inserted the way one that
+// predates that check would look.
+func TestWritesNeverTouchASeededBaseCategory(t *testing.T) {
+	s := sheetsTestServer(t)
+	// Reading the listing seeds the base rows with source 'base'.
+	listCategories(t, s, 1, "?foodType=platos")
+	seed := basePlatoCategories[0]
+
+	res, err := s.db.Exec(
+		`INSERT INTO comida_categories (restaurant_id, food_type, name, slug, active) VALUES (1, 'platos', ?, ?, 1)`,
+		seed.Name, seed.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := patchCategory(t, s, 1, int(id), `{"name":"Renombrada"}`); code != http.StatusOK {
+		t.Fatalf("rename: status=%d body=%s", code, body)
+	}
+	var name string
+	var source string
+	if err := s.db.QueryRow(
+		`SELECT name, COALESCE(source,'custom') FROM comida_plato_categories WHERE restaurant_id=1 AND slug=?`, seed.Slug).Scan(&name, &source); err != nil {
+		t.Fatalf("the seeded row is gone: %v", err)
+	}
+	if name != seed.Name || source != "base" {
+		t.Fatalf("the rename hijacked the seeded row: name=%q source=%q", name, source)
+	}
+
+	// Deleted through a second row still carrying the base name: the rename above
+	// moved the first one off the slug, so a delete would not even look at the seed.
+	res, err = s.db.Exec(
+		`INSERT INTO comida_categories (restaurant_id, food_type, name, slug, active) VALUES (1, 'platos', ?, ?, 1)`,
+		seed.Name, seed.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err = res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The seeded row's margin target must survive too: it belongs to a category that
+	// is still alive, so taking it would hand the next category to reuse that id
+	// somebody else's target.
+	var seedTwinID int64
+	if err := s.db.QueryRow(
+		`SELECT id FROM comida_plato_categories WHERE restaurant_id=1 AND slug=?`, seed.Slug).Scan(&seedTwinID); err != nil {
+		t.Fatal(err)
+	}
+	seedScopeKey := marginScopeKeyForCategory("platos", seedTwinID)
+	if _, err := s.db.Exec(
+		`INSERT INTO stock_margin_scopes (restaurant_id, scope_kind, scope_key, label, target_food_cost_pct) VALUES (1, 'COMIDA_CATEGORY', ?, ?, 30.00)`,
+		seedScopeKey, seed.Name); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := deleteCategory(t, s, 1, int(id)); code != http.StatusOK {
+		t.Fatalf("delete: status=%d body=%s", code, body)
+	}
+
+	var seedScopes int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM stock_margin_scopes WHERE restaurant_id=1 AND scope_key=?`, seedScopeKey).Scan(&seedScopes); err != nil {
+		t.Fatal(err)
+	}
+	if seedScopes != 1 {
+		t.Fatal("the delete took the margin target of the seeded category, which is still alive")
+	}
+	var survivors int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM comida_plato_categories WHERE restaurant_id=1 AND slug=? AND name=? AND COALESCE(source,'custom')='base'`,
+		seed.Slug, seed.Name).Scan(&survivors); err != nil {
+		t.Fatal(err)
+	}
+	if survivors != 1 {
+		t.Fatalf("deleting a category took the seeded %q with it", seed.Name)
+	}
+}
+
+// The reservation covers a category that already carries a base name, which is how
+// rows created before it existed look. That row cannot be reactivated or moved while
+// it keeps the name — the base category is real and the duplicate would be visible —
+// so renaming it is the way out, and that stays open.
+func TestACategoryAlreadyHoldingABaseNameMustBeRenamedToBeFreed(t *testing.T) {
+	s := sheetsTestServer(t)
+	seed := basePlatoCategories[0]
+
+	// Inserted in platos, the scope the reservation covers, and the way a row created
+	// before the reservation existed would look.
+	res, err := s.db.Exec(
+		`INSERT INTO comida_categories (restaurant_id, food_type, name, slug, active) VALUES (1, 'platos', ?, ?, 0)`,
+		seed.Name, seed.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id64, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := int(id64)
+
+	if code, body := patchCategory(t, s, 1, id, `{"active":true}`); code != http.StatusConflict {
+		t.Fatalf("reactivating onto a base name: status=%d body=%s", code, body)
+	}
+	if code, body := patchCategory(t, s, 1, id, `{"global":true}`); code != http.StatusConflict {
+		t.Fatalf("moving a category that holds a base name: status=%d body=%s", code, body)
+	}
+
+	// Renaming is checked against the new name, so it is not blocked, and once the
+	// row is off the base name it behaves like any other.
+	if code, body := patchCategory(t, s, 1, id, `{"name":"De la casa"}`); code != http.StatusOK {
+		t.Fatalf("renaming away from a base name: status=%d body=%s", code, body)
+	}
+	if code, body := patchCategory(t, s, 1, id, `{"active":true}`); code != http.StatusOK {
+		t.Fatalf("reactivating after the rename: status=%d body=%s", code, body)
+	}
+}
+
+// The reservation is checked against the destination scope, so a category cannot be
+// created in a scope it does not cover and then moved into one it does.
+func TestABaseNameCannotBeSmuggledInByMovingScope(t *testing.T) {
+	s := sheetsTestServer(t)
+
+	// cafes has no legacy table of its own, so a base plato name is free there.
+	cat := createCategory(t, s, 1, `{"name":"`+basePlatoCategories[0].Name+`","foodType":"cafes"}`)
+	if code, body := patchCategory(t, s, 1, cat.ID, `{"foodType":"platos"}`); code != http.StatusConflict {
+		t.Fatalf("moving a base plato name into platos: status=%d body=%s", code, body)
+	}
+	// Global overlaps every type, so it is refused too.
+	if code, body := patchCategory(t, s, 1, cat.ID, `{"global":true}`); code != http.StatusConflict {
+		t.Fatalf("moving a base plato name into global: status=%d body=%s", code, body)
+	}
+
+	// And the same for a base bebida name reached from a type that does not cover it.
+	bebida := createCategory(t, s, 1, `{"name":"`+baseBebidaCategories[0].Name+`","foodType":"cafes"}`)
+	if code, body := patchCategory(t, s, 1, bebida.ID, `{"global":true}`); code != http.StatusConflict {
+		t.Fatalf("moving a base bebida name into global: status=%d body=%s", code, body)
+	}
+}
+
+// A deactivated category keeps its row, so nothing in this catalogue can take its
+// name while it is off. The old carta screen can, though, writing straight to the
+// legacy table — and turning the category back on would then put two entries with
+// the same name in the same picker.
+func TestReactivatingRevalidatesTheNameAgainstTheLegacyTable(t *testing.T) {
+	s := sheetsTestServer(t)
+	cat := createCategory(t, s, 1, `{"name":"Sugerencias","foodType":"platos"}`)
+	if code, body := patchCategory(t, s, 1, cat.ID, `{"active":false}`); code != http.StatusOK {
+		t.Fatalf("deactivate: status=%d body=%s", code, body)
+	}
+
+	// The old carta screen claims the name while the category is switched off.
+	if _, err := s.db.Exec(
+		`INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active) VALUES (1, 'Sugerencias', 'sugerencias', 'custom', 1)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := patchCategory(t, s, 1, cat.ID, `{"active":true}`); code != http.StatusConflict {
+		t.Fatalf("reactivating onto a name the legacy table took: status=%d body=%s", code, body)
+	}
+	got := listCategories(t, s, 1, "?foodType=platos")
+	if c, ok := categoryNamed(got, "Sugerencias"); !ok || c.Origin != comidaCategoryOriginLegacy {
+		t.Fatal("the rejected reactivation still switched the category back on")
+	}
+}
+
+// A legacy row is only this category's twin if it carries the same name as well as
+// the same slug and is active. Anything else belongs to the old carta screen, and
+// rewriting or deleting it would be collateral damage on data this endpoint does not
+// own.
+//
+// Each discriminator gets its own case, because a row that fails two of them at once
+// proves nothing about either.
+func TestWritesLeaveALegacyRowThatIsNotTheirTwinAlone(t *testing.T) {
+	// The legacy row is written after the category, because an active row sharing the
+	// slug is exactly what the create pre-check refuses. That ordering is the real
+	// one anyway: the old carta screen is what makes a row diverge.
+	for _, tc := range []struct {
+		name      string
+		legacyRow string
+	}{
+		{
+			// handleComidaPlatoCategoriesCreate takes a client-supplied slug that
+			// need not match its own name, so the carta can land on this slug.
+			name:      "the name diverged",
+			legacyRow: `('De la casa', 'fuera-de-carta', 'custom', 1)`,
+		},
+		{
+			name:      "the row is inactive",
+			legacyRow: `('Fuera de carta', 'fuera-de-carta', 'custom', 0)`,
+		},
+	} {
+		// setup leaves a category and, sharing its slug, a legacy row that is not its
+		// twin. Each write gets a fresh one: a rename moves the category off the
+		// shared slug, after which a delete would not even look at the row.
+		setup := func(t *testing.T) (*Server, comidaUnifiedCategoryResponse) {
+			t.Helper()
+			s := sheetsTestServer(t)
+			cat := createCategory(t, s, 1, `{"name":"Fuera de carta","foodType":"platos"}`)
+			if _, err := s.db.Exec(
+				`INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active) VALUES (1, ` + tc.legacyRow[1:],
+			); err != nil {
+				t.Fatal(err)
+			}
+			return s, cat
+		}
+		// assertUntouched re-reads the legacy row and fails if anything moved.
+		assertUntouched := func(t *testing.T, s *Server) {
+			t.Helper()
+			var name, source string
+			var active int
+			if err := s.db.QueryRow(
+				`SELECT name, active, COALESCE(source,'custom') FROM comida_plato_categories WHERE restaurant_id=1 AND slug='fuera-de-carta'`,
+			).Scan(&name, &active, &source); err != nil {
+				t.Fatalf("the unrelated legacy row is gone: %v", err)
+			}
+			if got := `('` + name + `', 'fuera-de-carta', '` + source + `', ` + strconv.Itoa(active) + `)`; got != tc.legacyRow {
+				t.Fatalf("the unrelated legacy row was rewritten: %s, want %s", got, tc.legacyRow)
+			}
+		}
+
+		t.Run(tc.name+"/rename", func(t *testing.T) {
+			s, cat := setup(t)
+			if code, body := patchCategory(t, s, 1, cat.ID, `{"name":"En carta"}`); code != http.StatusOK {
+				t.Fatalf("rename: status=%d body=%s", code, body)
+			}
+			assertUntouched(t, s)
+		})
+
+		t.Run(tc.name+"/delete", func(t *testing.T) {
+			s, cat := setup(t)
+
+			// The row survives the delete, so its margin target has to survive too,
+			// or the next category to reuse that id inherits it.
+			var rowID int64
+			if err := s.db.QueryRow(
+				`SELECT id FROM comida_plato_categories WHERE restaurant_id=1 AND slug='fuera-de-carta'`).Scan(&rowID); err != nil {
+				t.Fatal(err)
+			}
+			scopeKey := marginScopeKeyForCategory("platos", rowID)
+			if _, err := s.db.Exec(
+				`INSERT INTO stock_margin_scopes (restaurant_id, scope_kind, scope_key, label, target_food_cost_pct) VALUES (1, 'COMIDA_CATEGORY', ?, 'Ajena', 28.00)`,
+				scopeKey); err != nil {
+				t.Fatal(err)
+			}
+
+			if code, body := deleteCategory(t, s, 1, cat.ID); code != http.StatusOK {
+				t.Fatalf("delete: status=%d body=%s", code, body)
+			}
+			assertUntouched(t, s)
+
+			var scopes int
+			if err := s.db.QueryRow(
+				`SELECT COUNT(*) FROM stock_margin_scopes WHERE restaurant_id=1 AND scope_key=?`, scopeKey).Scan(&scopes); err != nil {
+				t.Fatal(err)
+			}
+			if scopes != 1 {
+				t.Fatal("the delete took the margin target of a legacy row it left alone")
+			}
+		})
+	}
+}
+
+// stock_margin_scopes.scope_key names the legacy category as plain text, with no
+// foreign key, so deleting the twin leaves a target nothing will ever clean up — and
+// ids are reused, so the next category to land on that id inherits it.
+func TestDeletingACategoryTakesItsMarginScopeWithIt(t *testing.T) {
+	s := sheetsTestServer(t)
+	cat := createCategory(t, s, 1, `{"name":"Guisos","foodType":"platos"}`)
+
+	// Saving a product against the category is what materialises the legacy twin.
+	if _, err := s.db.Exec(
+		`INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active) VALUES (1, 'Guisos', 'guisos', 'custom', 1)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var twinID int64
+	if err := s.db.QueryRow(
+		`SELECT id FROM comida_plato_categories WHERE restaurant_id=1 AND slug='guisos'`).Scan(&twinID); err != nil {
+		t.Fatal(err)
+	}
+
+	scopeKey := marginScopeKeyForCategory("platos", twinID)
+	res, err := s.db.Exec(
+		`INSERT INTO stock_margin_scopes (restaurant_id, scope_kind, scope_key, label, target_food_cost_pct) VALUES (1, 'COMIDA_CATEGORY', ?, 'Guisos', 32.00)`,
+		scopeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO stock_margin_scope_bands (restaurant_id, scope_id, zone, min_food_cost_pct, max_food_cost_pct) VALUES (1, ?, 'GREEN', 20.00, 35.00)`,
+		scopeID); err != nil {
+		t.Fatal(err)
+	}
+
 	if code, body := deleteCategory(t, s, 1, cat.ID); code != http.StatusOK {
 		t.Fatalf("delete: status=%d body=%s", code, body)
 	}
-	if _, ok := categoryNamed(listCategories(t, s, 1, "?foodType=platos"), seeded.Name); !ok {
-		t.Fatalf("deleting a category took the seeded %q with it", seeded.Name)
+
+	var scopes int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM stock_margin_scopes WHERE restaurant_id=1 AND scope_key=?`, scopeKey).Scan(&scopes); err != nil {
+		t.Fatal(err)
+	}
+	if scopes != 0 {
+		t.Fatal("the margin scope outlived the category it was configured for")
+	}
+	// The bands cascade from the scope row.
+	var bands int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM stock_margin_scope_bands WHERE restaurant_id=1 AND scope_id=?`, scopeID).Scan(&bands); err != nil {
+		t.Fatal(err)
+	}
+	if bands != 0 {
+		t.Fatalf("%d bands outlived their scope", bands)
 	}
 }
 
