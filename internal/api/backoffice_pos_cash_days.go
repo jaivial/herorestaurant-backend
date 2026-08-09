@@ -362,7 +362,9 @@ func (s *Server) handleBOPOSCashDayOpen(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "cashDay": day.asMap()})
+	payload := day.asMap()
+	s.broadcastPOSCashDay(a.ActiveRestaurantID, "pos_cash_day_opened", payload)
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "cashDay": payload})
 }
 
 func (s *Server) handleBOPOSCashDayClose(w http.ResponseWriter, r *http.Request) {
@@ -456,5 +458,146 @@ func (s *Server) handleBOPOSCashDayClose(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "cashDay": day.asMap(), "closureId": closureID, "summary": summary.asMap(), "countedCashCents": *in.CountedCashCents, "differenceCents": difference})
+	payload := day.asMap()
+	s.broadcastPOSCashDay(a.ActiveRestaurantID, "pos_cash_day_closed", payload)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "cashDay": payload, "closureId": closureID, "summary": summary.asMap(), "countedCashCents": *in.CountedCashCents, "differenceCents": difference})
+}
+
+// errPOSCashDayClosed marks an attempt to mutate a day whose till is already
+// closed. A closed day is a signed Z closure, so letting a ticket change
+// afterwards would silently invalidate an accounting document that has already
+// been reported.
+var errPOSCashDayClosed = errors.New("cash day closed")
+
+// posCashDayIsClosed reports whether the given business date is sealed. A date
+// with no cash day row is not closed: those are days the restaurant simply
+// never opened a till for, and blocking them would break every deployment that
+// has not started using cash days yet.
+//
+// This read is deliberately outside the caller's transaction, so a day closed
+// between this check and the caller's commit would still let that write
+// through. Closing the window would mean taking SELECT ... FOR UPDATE on the
+// cash day inside all 23 mutations, and the exposure is small: the window is
+// milliseconds wide and a close already refuses to run while any ticket or
+// visit is still open.
+func (s *Server) posCashDayIsClosed(ctx context.Context, restaurantID int, date string) (bool, error) {
+	var status string
+	err := s.db.QueryRowContext(ctx, `SELECT status FROM pos_cash_days WHERE restaurant_id=? AND business_date=?`, restaurantID, date).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return status == "CLOSED", nil
+}
+
+// requireOpenCashDayForDate returns errPOSCashDayClosed when the date is sealed.
+func (s *Server) requireOpenCashDayForDate(ctx context.Context, restaurantID int, date string) error {
+	closed, err := s.posCashDayIsClosed(ctx, restaurantID, date)
+	if err != nil {
+		return err
+	}
+	if closed {
+		return errPOSCashDayClosed
+	}
+	return nil
+}
+
+// requireOpenCashDayForVisit guards a mutation addressed by visit id.
+func (s *Server) requireOpenCashDayForVisit(ctx context.Context, restaurantID int, visitID int64) error {
+	var date time.Time
+	err := s.db.QueryRowContext(ctx, `SELECT service_date FROM pos_visits WHERE restaurant_id=? AND id=?`, restaurantID, visitID).Scan(&date)
+	if errors.Is(err, sql.ErrNoRows) {
+		// A missing visit is not this guard's business; the handler's own lookup
+		// reports the 404 with its proper message.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.requireOpenCashDayForDate(ctx, restaurantID, date.Format("2006-01-02"))
+}
+
+// requireOpenCashDayForTicket guards a mutation addressed by ticket id.
+func (s *Server) requireOpenCashDayForTicket(ctx context.Context, restaurantID int, ticketID int64) error {
+	var date time.Time
+	err := s.db.QueryRowContext(ctx, `SELECT v.service_date FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND t.id=?`, restaurantID, ticketID).Scan(&date)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.requireOpenCashDayForDate(ctx, restaurantID, date.Format("2006-01-02"))
+}
+
+// posWriteCashDayGuard turns a guard error into its HTTP response and reports
+// whether the handler must stop. Kept as one helper so all 22 mutation points
+// answer with the exact same code and message.
+func posWriteCashDayGuard(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errPOSCashDayClosed) {
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "code": "CASH_DAY_CLOSED", "message": "El día de caja está cerrado"})
+		return true
+	}
+	httpx.WriteError(w, http.StatusInternalServerError, "Error checking cash day")
+	return true
+}
+
+// broadcastPOSCashDay emits the open/close transition of a cash day. The payload
+// carries the whole day so a client that just connected does not need a refetch.
+func (s *Server) broadcastPOSCashDay(restaurantID int, eventType string, day map[string]any) {
+	s.broadcastBOTablesEvent(restaurantID, eventType, map[string]any{"cashDay": day})
+}
+
+// broadcastPOSCashDayTotals pushes the running takings of a business date. It
+// reuses loadPOSCashDayTotals so the figure arriving over the socket is byte for
+// byte the one GET /pos/cash-days would return, instead of a second accounting
+// rule that can drift from the reports.
+//
+// It is called after the business operation has already committed, so a failure
+// here must never surface: the sale happened, and a stale widget is a far better
+// outcome than a rolled-back payment.
+func (s *Server) broadcastPOSCashDayTotals(restaurantID int, date string) {
+	if s == nil || s.tablesHub == nil || restaurantID <= 0 || date == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	totals, err := s.loadPOSCashDayTotals(ctx, restaurantID, []string{date})
+	if err != nil {
+		return
+	}
+	entry := totals[date]
+	if entry == nil {
+		return
+	}
+	s.broadcastBOTablesEvent(restaurantID, "pos_cash_day_totals", map[string]any{
+		"date":            date,
+		"totalGrossCents": entry["totalGrossCents"],
+		"covers":          entry["covers"],
+		"ticketCount":     entry["ticketCount"],
+	})
+}
+
+// posTicketServiceDate resolves the business date a ticket belongs to.
+func (s *Server) posTicketServiceDate(ctx context.Context, restaurantID int, ticketID int64) string {
+	var date time.Time
+	if err := s.db.QueryRowContext(ctx, `SELECT v.service_date FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND t.id=?`, restaurantID, ticketID).Scan(&date); err != nil {
+		return ""
+	}
+	return date.Format("2006-01-02")
+}
+
+// posVisitServiceDate resolves the business date a visit belongs to, for the
+// broadcast that follows a mutation on it.
+func (s *Server) posVisitServiceDate(ctx context.Context, restaurantID int, visitID int64) string {
+	var date time.Time
+	if err := s.db.QueryRowContext(ctx, `SELECT service_date FROM pos_visits WHERE restaurant_id=? AND id=?`, restaurantID, visitID).Scan(&date); err != nil {
+		return ""
+	}
+	return date.Format("2006-01-02")
 }

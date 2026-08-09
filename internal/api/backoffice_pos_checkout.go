@@ -247,6 +247,11 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
+		return
+	}
 	var in posCheckoutInput
 	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" || len(in.Payments) > 10 {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid checkout")
@@ -410,6 +415,9 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "pos_ticket_paid", map[string]any{"ticketId": ticketID, "visitId": visitID, "visitClosed": visitClosed, "tableId": stockNullableDBInt(tableID)})
 	s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
+	// The totals belong to the visit's business date, which after the cutoff is
+	// not the calendar day the sale is being rung up on.
+	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, s.posVisitServiceDate(r.Context(), a.ActiveRestaurantID, visitID))
 	ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket, "stockStatus": stockStatus, "visitClosed": visitClosed})
 }
@@ -429,6 +437,11 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
+		return
+	}
 	var in struct {
 		AmountCents    int64                `json:"amountCents"`
 		Reason         string               `json:"reason"`
@@ -579,12 +592,18 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
+	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, s.posTicketServiceDate(r.Context(), a.ActiveRestaurantID, ticketID))
 	httpx.WriteJSON(w, 201, map[string]any{"success": true, "id": refundID, "ticket": ticket})
 }
 
 func (s *Server) handleBOPOSVisitClose(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	visitID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForVisit(r.Context(), a.ActiveRestaurantID, visitID)) {
+		return
+	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error closing visit")
@@ -621,6 +640,7 @@ func (s *Server) handleBOPOSVisitClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "pos_visit_closed", map[string]any{"visitId": visitID, "tableId": stockNullableDBInt(tableID)})
+	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, s.posVisitServiceDate(r.Context(), a.ActiveRestaurantID, visitID))
 	httpx.WriteJSON(w, 200, map[string]any{"success": true})
 }
 
@@ -640,6 +660,12 @@ func (s *Server) handleBOPOSCoverAdjustment(w http.ResponseWriter, r *http.Reque
 	}
 	if _, err := time.Parse("2006-01-02", in.Date); err != nil || !validPOSMode(in.ServiceType, "LUNCH", "DINNER", "OTHER") {
 		httpx.WriteError(w, 400, "Invalid cover key")
+		return
+	}
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported. The
+	// adjustment names its own date, so that is what gets checked.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForDate(r.Context(), a.ActiveRestaurantID, in.Date)) {
 		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -668,6 +694,7 @@ func (s *Server) handleBOPOSCoverAdjustment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	id, _ := res.LastInsertId()
+	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, in.Date)
 	httpx.WriteJSON(w, 201, map[string]any{"success": true, "id": id, "covers": covers})
 }
 

@@ -147,6 +147,11 @@ func (s *Server) handleBOPOSVisitGet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBOPOSVisitPatch(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	visitID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForVisit(r.Context(), a.ActiveRestaurantID, visitID)) {
+		return
+	}
 	var in struct {
 		TableID         *int64 `json:"tableId"`
 		Covers          int    `json:"covers"`
@@ -198,6 +203,11 @@ func (s *Server) handleBOPOSVisitPatch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBOPOSVisitCancel(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	visitID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForVisit(r.Context(), a.ActiveRestaurantID, visitID)) {
+		return
+	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error cancelling visit")
@@ -237,6 +247,11 @@ func (s *Server) handleBOPOSVisitCancel(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleBOPOSVisitTicketCreate(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	visitID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForVisit(r.Context(), a.ActiveRestaurantID, visitID)) {
+		return
+	}
 	var in struct {
 		IdempotencyKey string `json:"idempotencyKey"`
 	}
@@ -289,6 +304,11 @@ func (s *Server) handleBOPOSLinePatch(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	lineID, _ := strconv.ParseInt(chi.URLParam(r, "lineId"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
+		return
+	}
 	var in struct {
 		Quantity float64 `json:"quantity"`
 		// Notes is a pointer so omitting it preserves an existing Comentario;
