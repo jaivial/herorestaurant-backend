@@ -840,9 +840,11 @@ forma diferida, al abrir el listado por primera vez, así que en un restaurante 
 parecen libres. Tomar uno daría una categoría unified a la que el siguiente listado
 le sembraría una gemela legacy al lado.
 
-La reserva no aplica a una categoría que **ya** lleva ese nombre, que es como quedaron
-las creadas antes de existir la reserva: si no, el `PATCH` respondería 409 contra su
-propio nombre y la fila no podría reactivarse ni moverse de scope nunca más.
+La reserva es **uniforme**: cubre también a una categoría que ya lleva ese nombre, que
+es como quedaron las creadas antes de que existiera. Esa fila no puede reactivarse ni
+moverse de scope mientras conserve el nombre, porque en cuanto el listado siembra la
+fila base el duplicado es real y visible. La salida es **renombrarla**, que nunca está
+bloqueado: el `PATCH` valida contra el nombre nuevo, no contra el actual.
 
 ##### `PATCH /api/admin/comida/categorias/{id}`
 Body: `{ name?, foodType?, global?, active? }`. Permite renombrar, mover de scope
@@ -882,12 +884,16 @@ siguen llevando su nombre. Renombrar sí está permitido, porque cascadea.
 - `400` → nombre inválido, scope contradictorio o campo desconocido
 - `404` → no encontrada, de otro restaurante, o `legacy` (las legacy se serializan
   con `id: 0`, que no es direccionable aquí)
-- `409` → el nombre ya existe en un scope solapado, o se intenta mover/desactivar
-  una categoría en uso
+- `409` → el nombre ya existe en un scope solapado, choca con un nombre base
+  reservado, o se intenta mover/desactivar una categoría en uso
 
 Reactivar revalida el nombre: mientras la categoría estaba apagada, la carta antigua
 pudo escribir ese nombre en la tabla legacy, y volver a encenderla dejaría las dos
 entradas en el mismo selector.
+
+La reserva de nombres base se comprueba contra el scope de **destino**, así que cubre
+por igual el renombrado, la reactivación y el cambio de scope: una categoría creada en
+un tipo que la reserva no alcanza no puede colarse moviéndola a uno que sí.
 
 ##### `DELETE /api/admin/comida/categorias/{id}`
 Solo categorías `unified`.

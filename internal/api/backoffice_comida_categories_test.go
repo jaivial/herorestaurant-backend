@@ -673,8 +673,33 @@ func TestWritesNeverTouchASeededBaseCategory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// The seeded row's margin target must survive too: it belongs to a category that
+	// is still alive, so taking it would hand the next category to reuse that id
+	// somebody else's target.
+	var seedTwinID int64
+	if err := s.db.QueryRow(
+		`SELECT id FROM comida_plato_categories WHERE restaurant_id=1 AND slug=?`, seed.Slug).Scan(&seedTwinID); err != nil {
+		t.Fatal(err)
+	}
+	seedScopeKey := marginScopeKeyForCategory("platos", seedTwinID)
+	if _, err := s.db.Exec(
+		`INSERT INTO stock_margin_scopes (restaurant_id, scope_kind, scope_key, label, target_food_cost_pct) VALUES (1, 'COMIDA_CATEGORY', ?, ?, 30.00)`,
+		seedScopeKey, seed.Name); err != nil {
+		t.Fatal(err)
+	}
+
 	if code, body := deleteCategory(t, s, 1, int(id)); code != http.StatusOK {
 		t.Fatalf("delete: status=%d body=%s", code, body)
+	}
+
+	var seedScopes int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM stock_margin_scopes WHERE restaurant_id=1 AND scope_key=?`, seedScopeKey).Scan(&seedScopes); err != nil {
+		t.Fatal(err)
+	}
+	if seedScopes != 1 {
+		t.Fatal("the delete took the margin target of the seeded category, which is still alive")
 	}
 	var survivors int
 	if err := s.db.QueryRow(
