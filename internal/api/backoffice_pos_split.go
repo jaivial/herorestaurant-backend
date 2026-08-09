@@ -111,6 +111,12 @@ func (s *Server) handleBOPOSLineMove(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 400, "Invalid line move")
 		return
 	}
+	// The move lands the line inside the target ticket, so a sealed target would
+	// gain money after its Z closure. Checked here because the target id only
+	// exists once the body is decoded.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, in.TargetTicketID)) {
+		return
+	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error moving line")

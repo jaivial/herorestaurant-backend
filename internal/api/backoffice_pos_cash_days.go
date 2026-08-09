@@ -473,6 +473,13 @@ var errPOSCashDayClosed = errors.New("cash day closed")
 // with no cash day row is not closed: those are days the restaurant simply
 // never opened a till for, and blocking them would break every deployment that
 // has not started using cash days yet.
+//
+// This read is deliberately outside the caller's transaction, so a day closed
+// between this check and the caller's commit would still let that write
+// through. Closing the window would mean taking SELECT ... FOR UPDATE on the
+// cash day inside all 23 mutations, and the exposure is small: the window is
+// milliseconds wide and a close already refuses to run while any ticket or
+// visit is still open.
 func (s *Server) posCashDayIsClosed(ctx context.Context, restaurantID int, date string) (bool, error) {
 	var status string
 	err := s.db.QueryRowContext(ctx, `SELECT status FROM pos_cash_days WHERE restaurant_id=? AND business_date=?`, restaurantID, date).Scan(&status)
@@ -516,19 +523,6 @@ func (s *Server) requireOpenCashDayForVisit(ctx context.Context, restaurantID in
 func (s *Server) requireOpenCashDayForTicket(ctx context.Context, restaurantID int, ticketID int64) error {
 	var date time.Time
 	err := s.db.QueryRowContext(ctx, `SELECT v.service_date FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND t.id=?`, restaurantID, ticketID).Scan(&date)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return s.requireOpenCashDayForDate(ctx, restaurantID, date.Format("2006-01-02"))
-}
-
-// requireOpenCashDayForLine guards a mutation addressed by ticket line id.
-func (s *Server) requireOpenCashDayForLine(ctx context.Context, restaurantID int, lineID int64) error {
-	var date time.Time
-	err := s.db.QueryRowContext(ctx, `SELECT v.service_date FROM pos_ticket_lines l JOIN pos_tickets t ON t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE l.restaurant_id=? AND l.id=?`, restaurantID, lineID).Scan(&date)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

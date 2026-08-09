@@ -42,13 +42,12 @@ func posGuardSeed(t *testing.T, db *sql.DB, status string) {
 
 // posGuardCase is one mutation endpoint, addressed the way its route does.
 type posGuardCase struct {
-	name    string
-	call    func(s *Server, w http.ResponseWriter, r *http.Request)
-	method  string
-	target  string
-	body    string
-	params  map[string]string
-	openMin int // status the handler is allowed to answer on an open day
+	name   string
+	call   func(s *Server, w http.ResponseWriter, r *http.Request)
+	method string
+	target string
+	body   string
+	params map[string]string
 }
 
 func posGuardCases() []posGuardCase {
@@ -56,29 +55,29 @@ func posGuardCases() []posGuardCase {
 	ticketLine := map[string]string{"id": "50", "lineId": "60"}
 	visit := map[string]string{"id": "40"}
 	return []posGuardCase{
-		{"VisitCreate", (*Server).handleBOPOSVisitCreate, http.MethodPost, "/admin/pos/visits", `{"channel":"DINE_IN","tableId":7,"covers":2,"idempotencyKey":"g1"}`, nil, 0},
-		{"LineCreate", (*Server).handleBOPOSLineCreate, http.MethodPost, "/admin/pos/tickets/50/lines", `{"productId":30,"quantity":1,"idempotencyKey":"g2"}`, ticket, 0},
-		{"LineVoid", (*Server).handleBOPOSLineVoid, http.MethodPost, "/admin/pos/tickets/50/lines/60/void", `{"reason":"x"}`, ticketLine, 0},
-		{"Discount", (*Server).handleBOPOSDiscount, http.MethodPost, "/admin/pos/tickets/50/discount", `{"amountCents":100,"reason":"x"}`, ticket, 0},
-		{"VisitPatch", (*Server).handleBOPOSVisitPatch, http.MethodPatch, "/admin/pos/visits/40", `{"covers":3,"expectedVersion":1}`, visit, 0},
-		{"VisitCancel", (*Server).handleBOPOSVisitCancel, http.MethodPost, "/admin/pos/visits/40/cancel", `{}`, visit, 0},
-		{"VisitTicketCreate", (*Server).handleBOPOSVisitTicketCreate, http.MethodPost, "/admin/pos/visits/40/tickets", `{"idempotencyKey":"g3"}`, visit, 0},
-		{"LinePatch", (*Server).handleBOPOSLinePatch, http.MethodPatch, "/admin/pos/tickets/50/lines/60", `{"quantity":2,"expectedVersion":1}`, ticketLine, 0},
-		{"Checkout", (*Server).handleBOPOSCheckout, http.MethodPost, "/admin/pos/tickets/50/checkout", `{"idempotencyKey":"g4","payments":[{"method":"CASH","amountCents":250,"idempotencyKey":"p1"}]}`, ticket, 0},
-		{"Refund", (*Server).handleBOPOSRefund, http.MethodPost, "/admin/pos/tickets/50/refunds", `{"idempotencyKey":"g5","amountCents":100,"reason":"x"}`, ticket, 0},
-		{"VisitClose", (*Server).handleBOPOSVisitClose, http.MethodPost, "/admin/pos/visits/40/close", `{}`, visit, 0},
-		{"CoverAdjustment", (*Server).handleBOPOSCoverAdjustment, http.MethodPost, "/admin/pos/covers/adjustments", `{"date":"2024-03-07","serviceType":"DINNER","delta":2,"reason":"x","idempotencyKey":"g6"}`, nil, 0},
-		{"VisitPark", (*Server).handleBOPOSVisitPark, http.MethodPost, "/admin/pos/visits/40/park", `{"parked":true}`, visit, 0},
-		{"VisitMerge", (*Server).handleBOPOSVisitMerge, http.MethodPost, "/admin/pos/visits/40/merge", `{"sourceVisitIds":[41],"idempotencyKey":"g7"}`, visit, 0},
-		{"VisitCustomer", (*Server).handleBOPOSVisitCustomer, http.MethodPatch, "/admin/pos/visits/40/customer", `{"customerName":"X"}`, visit, 0},
-		{"TicketAdjustment", (*Server).handleBOPOSTicketAdjustment, http.MethodPost, "/admin/pos/tickets/50/adjustments", `{"type":"DISCOUNT","mode":"AMOUNT","amountCents":100,"reason":"x","idempotencyKey":"g8"}`, ticket, 0},
-		{"LineComp", (*Server).handleBOPOSLineComp, http.MethodPost, "/admin/pos/tickets/50/lines/60/comp", `{"comped":true,"reason":"x"}`, ticketLine, 0},
-		{"TicketOperator", (*Server).handleBOPOSTicketOperator, http.MethodPatch, "/admin/pos/tickets/50/operator", `{"operatorMemberId":1,"expectedVersion":1}`, ticket, 0},
-		{"TicketTagAttach", (*Server).handleBOPOSTicketTagAttach, http.MethodPost, "/admin/pos/tickets/50/tags", `{"tagId":1}`, ticket, 0},
-		{"LineTagAttach", (*Server).handleBOPOSLineTagAttach, http.MethodPost, "/admin/pos/tickets/50/lines/60/tags", `{"tagId":1}`, ticketLine, 0},
-		{"LineMove", (*Server).handleBOPOSLineMove, http.MethodPost, "/admin/pos/tickets/50/lines/60/move", `{"targetTicketId":51,"idempotencyKey":"g9"}`, ticketLine, 0},
-		{"TicketVoid", (*Server).handleBOPOSTicketVoid, http.MethodPost, "/admin/pos/tickets/50/void", `{"reason":"x"}`, ticket, 0},
-		{"KitchenDispatchCreate", (*Server).handleBOPOSKitchenDispatchCreate, http.MethodPost, "/admin/pos/tickets/50/kitchen/dispatches", `{"idempotencyKey":"g10"}`, ticket, 0},
+		{"VisitCreate", (*Server).handleBOPOSVisitCreate, http.MethodPost, "/admin/pos/visits", `{"channel":"DINE_IN","tableId":7,"covers":2,"idempotencyKey":"g1"}`, nil},
+		{"LineCreate", (*Server).handleBOPOSLineCreate, http.MethodPost, "/admin/pos/tickets/50/lines", `{"productId":30,"quantity":1,"idempotencyKey":"g2"}`, ticket},
+		{"LineVoid", (*Server).handleBOPOSLineVoid, http.MethodPost, "/admin/pos/tickets/50/lines/60/void", `{"reason":"x"}`, ticketLine},
+		{"Discount", (*Server).handleBOPOSDiscount, http.MethodPost, "/admin/pos/tickets/50/discount", `{"amountCents":100,"reason":"x"}`, ticket},
+		{"VisitPatch", (*Server).handleBOPOSVisitPatch, http.MethodPatch, "/admin/pos/visits/40", `{"covers":3,"expectedVersion":1}`, visit},
+		{"VisitCancel", (*Server).handleBOPOSVisitCancel, http.MethodPost, "/admin/pos/visits/40/cancel", `{}`, visit},
+		{"VisitTicketCreate", (*Server).handleBOPOSVisitTicketCreate, http.MethodPost, "/admin/pos/visits/40/tickets", `{"idempotencyKey":"g3"}`, visit},
+		{"LinePatch", (*Server).handleBOPOSLinePatch, http.MethodPatch, "/admin/pos/tickets/50/lines/60", `{"quantity":2,"expectedVersion":1}`, ticketLine},
+		{"Checkout", (*Server).handleBOPOSCheckout, http.MethodPost, "/admin/pos/tickets/50/checkout", `{"idempotencyKey":"g4","payments":[{"method":"CASH","amountCents":250,"idempotencyKey":"p1"}]}`, ticket},
+		{"Refund", (*Server).handleBOPOSRefund, http.MethodPost, "/admin/pos/tickets/50/refunds", `{"idempotencyKey":"g5","amountCents":100,"reason":"x"}`, ticket},
+		{"VisitClose", (*Server).handleBOPOSVisitClose, http.MethodPost, "/admin/pos/visits/40/close", `{}`, visit},
+		{"CoverAdjustment", (*Server).handleBOPOSCoverAdjustment, http.MethodPost, "/admin/pos/covers/adjustments", `{"date":"2024-03-07","serviceType":"DINNER","delta":2,"reason":"x","idempotencyKey":"g6"}`, nil},
+		{"VisitPark", (*Server).handleBOPOSVisitPark, http.MethodPost, "/admin/pos/visits/40/park", `{"parked":true}`, visit},
+		{"VisitMerge", (*Server).handleBOPOSVisitMerge, http.MethodPost, "/admin/pos/visits/40/merge", `{"sourceVisitIds":[41],"idempotencyKey":"g7"}`, visit},
+		{"VisitCustomer", (*Server).handleBOPOSVisitCustomer, http.MethodPatch, "/admin/pos/visits/40/customer", `{"customerName":"X"}`, visit},
+		{"TicketAdjustment", (*Server).handleBOPOSTicketAdjustment, http.MethodPost, "/admin/pos/tickets/50/adjustments", `{"type":"DISCOUNT","mode":"AMOUNT","amountCents":100,"reason":"x","idempotencyKey":"g8"}`, ticket},
+		{"LineComp", (*Server).handleBOPOSLineComp, http.MethodPost, "/admin/pos/tickets/50/lines/60/comp", `{"comped":true,"reason":"x"}`, ticketLine},
+		{"TicketOperator", (*Server).handleBOPOSTicketOperator, http.MethodPatch, "/admin/pos/tickets/50/operator", `{"operatorMemberId":1,"expectedVersion":1}`, ticket},
+		{"TicketTagAttach", (*Server).handleBOPOSTicketTagAttach, http.MethodPost, "/admin/pos/tickets/50/tags", `{"tagId":1}`, ticket},
+		{"LineTagAttach", (*Server).handleBOPOSLineTagAttach, http.MethodPost, "/admin/pos/tickets/50/lines/60/tags", `{"tagId":1}`, ticketLine},
+		{"LineMove", (*Server).handleBOPOSLineMove, http.MethodPost, "/admin/pos/tickets/50/lines/60/move", `{"targetTicketId":51,"idempotencyKey":"g9"}`, ticketLine},
+		{"TicketVoid", (*Server).handleBOPOSTicketVoid, http.MethodPost, "/admin/pos/tickets/50/void", `{"reason":"x"}`, ticket},
+		{"KitchenDispatchCreate", (*Server).handleBOPOSKitchenDispatchCreate, http.MethodPost, "/admin/pos/tickets/50/kitchen/dispatches", `{"idempotencyKey":"g10"}`, ticket},
 	}
 }
 
@@ -165,5 +164,42 @@ func TestPOSCashDayCloseIsNotBlockedByItsOwnGuard(t *testing.T) {
 	s.handleBOPOSCashDayClose(recorder, posCashDayRequest(http.MethodPost, "/admin/pos/cash-days/900/close", `{"countedCashCents":0}`, map[string]string{"id": "900"}))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("closing the day must work, got %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// Moving a line writes into the target ticket as much as it writes out of the
+// source, so a sealed target would gain money after its Z closure. The table
+// above only exercises the source, which is the half that is easy to remember.
+func TestPOSLineMoveRejectsClosedTargetTicket(t *testing.T) {
+	db, s := posCashDayTestDB(t)
+	posGuardSeed(t, db, "OPEN")
+	for _, statement := range []string{
+		`INSERT INTO pos_cash_days(id,restaurant_id,business_date,status,opened_by,closed_by,opening_cash_cents,closed_at) VALUES(903,1,'2024-03-06','CLOSED',7,7,0,'2024-03-06 23:00:00')`,
+		`INSERT INTO pos_visits(id,restaurant_id,cash_day_id,channel,table_id,service_date,service_type,covers,status,opened_by,open_idempotency_key,opened_at) VALUES(42,1,903,'DINE_IN',7,'2024-03-06','DINNER',2,'OPEN',7,'v42','2024-03-06 21:00:00')`,
+		`INSERT INTO pos_tickets(id,restaurant_id,visit_id,ticket_number,creation_idempotency_key,subtotal_gross_cents,total_gross_cents,status,opened_by) VALUES(51,1,42,'TPV-2','t51',0,0,'OPEN',7)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	s.handleBOPOSLineMove(recorder, posCashDayRequest(
+		http.MethodPost,
+		"/admin/pos/tickets/50/lines/60/move",
+		`{"targetTicketId":51,"quantity":1,"idempotencyKey":"move-into-sealed"}`,
+		map[string]string{"id": "50", "lineId": "60"},
+	))
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for a sealed target ticket, got %d %s", recorder.Code, recorder.Body.String())
+	}
+	if body := decodeCashDayBody(t, recorder); body["code"] != "CASH_DAY_CLOSED" {
+		t.Fatalf("expected CASH_DAY_CLOSED, got %s", recorder.Body.String())
+	}
+	var moved int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pos_ticket_lines WHERE ticket_id=51`).Scan(&moved); err != nil {
+		t.Fatal(err)
+	}
+	if moved != 0 {
+		t.Fatalf("the line must not have landed in the sealed ticket, found %d", moved)
 	}
 }
