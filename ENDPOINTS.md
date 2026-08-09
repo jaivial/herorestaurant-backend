@@ -780,41 +780,75 @@ Modelo: `comida_categories(restaurant_id, food_type, name, slug, active)` con
 
 `Category`:
 ```
-{ id, name, slug, foodType, scope, isGlobal, origin, active }
+{ id, key, name, slug, foodType, scope, isGlobal, origin, editable, active }
 ```
+- `key`: identificador estable **para el cliente**, con formato `{origin}:{id}`.
+  Los `id` legacy y los nuevos son secuencias `AUTO_INCREMENT` independientes, así
+  que el `id` **por sí solo no identifica una categoría**: usa siempre `key` para
+  claves de React, selección y comparación.
+- `id`: PK en `comida_categories`. Vale `0` cuando `origin` es `legacy`, porque el
+  `id` de la tabla legacy no es direccionable por estos endpoints.
+- `origin`: `"unified"` (fila en `comida_categories`) o `"legacy"` (fila en
+  `comida_plato_categories` / `comida_bebida_categories`).
+- `editable`: `true` solo si `origin == "unified"`. Las legacy se listan pero no
+  se pueden editar ni borrar aquí; se siguen gestionando desde la carta antigua.
 - `scope`: `"global"` o el tipo (`platos|bebidas|vinos|cafes|postres`).
-- `origin`: tabla de la fila (`comida_categories`, `comida_plato_categories`,
-  `comida_bebida_categories`). Necesario porque los `id` legacy y los nuevos son
-  secuencias `AUTO_INCREMENT` independientes y **pueden colisionar**.
 
 ##### `GET /api/admin/comida/categorias?foodType={tipo}`
 Con `foodType`: devuelve las del tipo + las globales + (solo para `platos` y
 `bebidas`) las legacy de su tabla, para no romper lo existente.
 Sin `foodType`: devuelve el catálogo completo del restaurante (pantalla de config).
 
-- `200` → `{ success: true, categories: Category[] }`
+`foodType` acepta el mismo vocabulario que el resto de `/comida` (singulares y
+acentos: `plato`, `vino`, `café`). `""` y `global` limitan a las globales; `all`
+**no** es un valor válido.
+
+Las categorías con el mismo nombre se colapsan en una sola entrada. Gana la
+`editable`, y entre dos editables gana la de scope específico sobre la global, para
+que el cliente reciba la que puede gestionar y no una copia inerte.
+
+- `200` → `{ success: true, categories: Category[] }` (ordenadas por nombre)
 - Tipo inválido → `200` `{ success: false, message }` (validación legacy comida)
 
 ##### `POST /api/admin/comida/categorias`
 Body: `{ name: string, foodType?: string|null, global?: boolean }`.
-`global: true` tiene prioridad sobre `foodType`. Upsert: si el slug ya existe en
-ese scope se renombra y se reactiva.
+`global: true` tiene prioridad sobre `foodType`. `global: false` **exige** un
+`foodType` real: sin él la petición se rechaza en vez de crear una global, que es
+justo lo contrario de lo pedido.
 
 - `200` → `{ success: true, category: Category }`
-- Nombre vacío / tipo inválido → `200` `{ success: false, message }`
+- `400` → nombre vacío, nombre de más de 120 caracteres, o scope contradictorio
+- `409` → ya existe una categoría con ese slug en ese scope
 
 ##### `PATCH /api/admin/comida/categorias/{id}`
 Body: `{ name?, foodType?, global?, active? }`. Permite renombrar, mover de scope
-y activar/desactivar.
+y activar/desactivar. Solo acepta `id` de categorías con `origin: "unified"`.
+
+Renombrar propaga el nuevo nombre a los productos que la usaban: `comida_items.categoria`
+(y `VINOS.tipo` si el scope alcanza a vinos) se actualizan en la **misma transacción**.
+Esas columnas son `VARCHAR` con el nombre copiado, no una FK, así que sin la cascada
+el renombrado dejaría todos los productos apuntando a una categoría inexistente.
+
+La fila se bloquea con `SELECT ... FOR UPDATE` antes de escribir, para que dos
+renombrados simultáneos no dejen productos repartidos entre el nombre viejo y el nuevo.
 
 - `200` → `{ success: true, category: Category }`
-- `404` → categoría no encontrada en el restaurante
+- `400` → nombre inválido o scope contradictorio
+- `404` → no encontrada, o es `legacy` (no editable desde aquí)
+- `409` → el nuevo nombre ya existe en el scope destino
 
 ##### `DELETE /api/admin/comida/categorias/{id}`
+Solo categorías `unified`.
+
 - `200` → `{ success: true }`
-- `404` → no encontrada
-- `409` → `La categoria esta en uso` (algún `comida_items.categoria` coincide por
-  nombre; esa columna es un `VARCHAR` compartido por platos/bebidas/cafés)
+- `404` → no encontrada o `legacy`
+- `409` → `La categoria esta en uso`
+
+El uso se comprueba **solo en los scopes que la categoría alcanza**: una categoría
+de `cafes` no se considera en uso porque un plato distinto comparta su nombre.
+`comida_items.categoria` es un `VARCHAR` compartido por platos/bebidas/cafés, los
+vinos se categorizan por `VINOS.tipo`, y `POSTRES` no tiene columna de categoría
+(una categoría de `postres` nunca está en uso).
 
 #### `PATCH /api/admin/comida/items/{id}/production-type`
 
