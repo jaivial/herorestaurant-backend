@@ -143,13 +143,6 @@ func isDuplicateKeyErr(err error) bool {
 	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
 
-// isForeignKeyErr reports whether err is a MySQL foreign-key violation (1451: the
-// row is still referenced by a child).
-func isForeignKeyErr(err error) bool {
-	var mysqlErr *mysql.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1451
-}
-
 // validateComidaCategoryName trims and bounds a category name, returning the name and
 // its slug.
 func validateComidaCategoryName(raw string) (string, string, error) {
@@ -486,6 +479,31 @@ func newComidaUnifiedCategory(id int, name, slug, foodType string, active bool) 
 	}
 }
 
+// comidaCategoryBaseSlugs lists the slugs ensureBasePlatoCategories and
+// ensureBaseBebidaCategories seed into the legacy tables.
+//
+// The seeding is lazy — it happens the first time someone opens the platos or bebidas
+// listing — so on a fresh restaurant those names are absent from the tables and a
+// lookup would report them free. Taking one would then hand an operator a unified
+// category that the next listing seeds a legacy row alongside.
+func comidaCategoryBaseSlugs(foodType string) []string {
+	switch foodType {
+	case "platos":
+		out := make([]string, 0, len(basePlatoCategories))
+		for _, c := range basePlatoCategories {
+			out = append(out, c.Slug)
+		}
+		return out
+	case "bebidas":
+		out := make([]string, 0, len(baseBebidaCategories))
+		for _, c := range baseBebidaCategories {
+			out = append(out, c.Slug)
+		}
+		return out
+	}
+	return nil
+}
+
 // comidaCategorySlugTaken reports whether the slug is already used by a category the
 // caller would see next to this one: the same scope, the scopes that overlap it, and
 // the legacy tables those scopes read from. excludeID skips the row being renamed.
@@ -497,6 +515,9 @@ func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurant
 		args = append(args, scope)
 	}
 	var n int
+	// Inactive rows count here, unlike in the legacy tables below: the management
+	// listing shows them and they can be switched back on, so the name is still spoken
+	// for. An inactive legacy row is shown nowhere and can be reactivated from nowhere.
 	// #nosec G202 -- placeholders is a generated list of "?", never input.
 	if err := tx.QueryRowContext(r.Context(), `
 		SELECT COUNT(*)
@@ -511,6 +532,14 @@ func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurant
 	}
 
 	for _, scope := range scopes {
+		// The seeded base names count as taken even before the rows exist, because
+		// the next listing creates them.
+		for _, baseSlug := range comidaCategoryBaseSlugs(scope) {
+			if baseSlug == slug {
+				return true, nil
+			}
+		}
+
 		table, ok := comidaCategoryLegacyTables[scope]
 		if !ok {
 			continue
@@ -657,7 +686,9 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	if next.Slug != current.Slug || next.FoodType != current.FoodType {
+	// Reactivating is checked too: while the category was switched off another one
+	// could take its name, and turning it back on would put both in the same picker.
+	if next.Slug != current.Slug || next.FoodType != current.FoodType || (!current.Active && next.Active) {
 		taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, next.FoodType, next.Slug, id)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando categoria")
@@ -786,39 +817,47 @@ func (s *Server) handleBOComidaCategoryDelete(w http.ResponseWriter, r *http.Req
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+// comidaCategoryLegacyTwinPredicate is the WHERE clause, and its arguments, that
+// identifies the legacy row a unified category materialised.
+//
+// createCustomCategory copies the unified category's name and slug verbatim and writes
+// source 'custom' with active 1, so a twin matches on all four. Matching on the slug
+// alone is not enough: legacy rows predate this catalogue and the old carta screen still
+// writes to them, so an unrelated row — an inactive one, or one whose name has since
+// diverged — can share a slug, and rewriting or deleting it would be collateral damage
+// on data this endpoint does not own. Seeded 'base' rows are excluded for the same
+// reason, with the added twist that ensureBase*Categories recreates them on the next
+// listing: renaming one would let the seed come back and leave the renamed row behind
+// as an uneditable duplicate.
+func comidaCategoryLegacyTwinPredicate(restaurantID int, name, slug string) (string, []any) {
+	return `restaurant_id = ? AND slug = ? AND name = ? AND active = 1
+		  AND COALESCE(source, 'custom') <> 'base'`,
+		[]any{restaurantID, slug, name}
+}
+
 // deleteComidaCategoryLegacyTwins removes the legacy row a unified category grew when
 // a product was saved against it, mirroring what renameComidaCategoryUsages does for a
 // rename. Without this the twin survives the delete and comes back in the listing as a
 // legacy entry, which is reported with id 0 and editable false and is therefore
 // unreachable by every endpoint here: the category could never be removed again.
-//
-// Seeded 'base' rows are left alone: they are not twins, they predate the catalogue and
-// ensureBase*Categories would recreate them on the next listing anyway.
 func (s *Server) deleteComidaCategoryLegacyTwins(r *http.Request, tx *sql.Tx, restaurantID int, category comidaUnifiedCategoryResponse) error {
 	if category.Slug == "" {
 		return nil
 	}
+	where, args := comidaCategoryLegacyTwinPredicate(restaurantID, category.Name, category.Slug)
 	for _, scope := range comidaCategoryOverlappingScopes(category.FoodType) {
 		table, ok := comidaCategoryLegacyTables[scope]
 		if !ok {
 			continue
 		}
+		// comida_items.category_id references the platos table with ON DELETE SET NULL,
+		// so deleting a twin a product still points at nulls that product's category_id
+		// rather than failing. The product keeps its categoria name, and saving it again
+		// re-resolves the id, so there is nothing to repair.
 		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
-		_, err := tx.ExecContext(r.Context(), `
-			DELETE FROM `+table+`
-			WHERE restaurant_id = ? AND slug = ? AND COALESCE(source, 'custom') <> 'base'
-		`, restaurantID, category.Slug)
-		if err == nil {
-			continue
+		if _, err := tx.ExecContext(r.Context(), `DELETE FROM `+table+` WHERE `+where, args...); err != nil {
+			return err
 		}
-		// comida_items.category_id has a FK into the platos table. A product can hold
-		// that id while carrying a different name, so the usage check above cannot see
-		// it. Keeping the twin is the safe outcome: the alternative is failing a delete
-		// the operator already got confirmed, or cascading into products.
-		if isForeignKeyErr(err) {
-			continue
-		}
-		return err
 	}
 	return nil
 }
@@ -932,6 +971,8 @@ func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaur
 	// twin as soon as a product uses it, and comida_items.category_id points at that
 	// twin. Renaming only this table would leave the twin under the old name, where it
 	// would come back as a separate legacy entry in the next listing.
+	where, whereArgs := comidaCategoryLegacyTwinPredicate(restaurantID, current.Name, current.Slug)
+	args := append([]any{newName, newSlug}, whereArgs...)
 	for _, scope := range comidaCategoryOverlappingScopes(current.FoodType) {
 		table, ok := comidaCategoryLegacyTables[scope]
 		if !ok {
@@ -939,10 +980,7 @@ func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaur
 		}
 		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
 		if _, err := tx.ExecContext(r.Context(), `
-			UPDATE `+table+`
-			SET name = ?, slug = ?
-			WHERE restaurant_id = ? AND slug = ?
-		`, newName, newSlug, restaurantID, current.Slug); err != nil {
+			UPDATE `+table+` SET name = ?, slug = ? WHERE `+where, args...); err != nil {
 			return err
 		}
 	}

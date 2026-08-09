@@ -833,6 +833,13 @@ justo lo contrario de lo pedido. Los campos desconocidos se rechazan, para que u
   campo desconocido
 - `409` → el nombre ya existe en alguno de los scopes solapados o en la tabla legacy
 
+Los nombres base de platos (entrantes, principal, arroz, postre) y de bebidas
+(refrescos, aguas, zumos, cervezas, copas, licores, cocktails) están **reservados**
+en su tipo y en `global`, aunque la tabla legacy aún no los tenga: se siembran de
+forma diferida, al abrir el listado por primera vez, así que en un restaurante nuevo
+parecen libres. Tomar uno daría una categoría unified a la que el siguiente listado
+le sembraría una gemela legacy al lado.
+
 ##### `PATCH /api/admin/comida/categorias/{id}`
 Body: `{ name?, foodType?, global?, active? }`. Permite renombrar, mover de scope
 y activar/desactivar. Solo acepta `id` de categorías con `origin: "unified"`.
@@ -846,6 +853,12 @@ referencia la categoría por nombre:
   categoría creada aquí genera una gemela legacy en cuanto un producto la usa, y
   `comida_items.category_id` apunta a esa gemela. Sin renombrarla, volvería a
   aparecer como una entrada legacy con el nombre viejo.
+
+Se considera gemela la fila legacy que coincide en **slug y nombre**, está activa y
+no es `source: 'base'`. El slug por sí solo no basta: las tablas legacy son
+anteriores a este catálogo y la carta antigua sigue escribiendo en ellas, así que
+una fila ajena puede compartirlo. Lo mismo aplica al `DELETE`, que borra la gemela
+para que no reaparezca como entrada legacy irreactivable.
 
 La fila se bloquea con `SELECT ... FOR UPDATE` antes de escribir, para que dos
 renombrados simultáneos no dejen productos repartidos entre el nombre viejo y el nuevo.
@@ -861,6 +874,10 @@ siguen llevando su nombre. Renombrar sí está permitido, porque cascadea.
   con `id: 0`, que no es direccionable aquí)
 - `409` → el nombre ya existe en un scope solapado, o se intenta mover/desactivar
   una categoría en uso
+
+Reactivar revalida el nombre: mientras la categoría estaba apagada, la carta antigua
+pudo escribir ese nombre en la tabla legacy, y volver a encenderla dejaría las dos
+entradas en el mismo selector.
 
 ##### `DELETE /api/admin/comida/categorias/{id}`
 Solo categorías `unified`.
