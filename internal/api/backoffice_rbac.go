@@ -401,3 +401,28 @@ func (s *Server) requireBOSection(section string) func(http.Handler) http.Handle
 		})
 	}
 }
+
+// requireBOPOSViewOrFichajeAdmin grants access when the user has POS view
+// permission OR is a fichaje admin (roleImportance >= 90). Used by read-only
+// POS revenue endpoints consumed from the fichaje admin panel, where a
+// fichaje-only admin must be able to see income data without full POS access.
+func (s *Server) requireBOPOSViewOrFichajeAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a, ok := boAuthFromContext(r.Context())
+		if !ok {
+			httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+			return
+		}
+		posAllowed, err := s.boPOSPermissionAllowed(r.Context(), a, posPermissionView)
+		if err == nil && posAllowed {
+			next.ServeHTTP(w, r)
+			return
+		}
+		importance, err := s.roleImportance(r.Context(), a.Role)
+		if err == nil && importance >= 90 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		httpx.WriteError(w, http.StatusForbidden, "Forbidden")
+	})
+}
