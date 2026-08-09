@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -182,12 +183,10 @@ func (s *Server) handleBOPOSCashDayTables(w http.ResponseWriter, r *http.Request
 		}
 		table, seen := tables[key]
 		if !seen {
-			name := tableName
-			if name == "" {
-				name = "Sin mesa"
-			}
+			// A null tableId is signal enough for the UI to label the tableless
+			// group itself, so no user-facing string is invented here.
 			table = &tableAcc{
-				payload: map[string]any{"tableId": stockNullableDBInt(tableID), "tableName": name},
+				payload: map[string]any{"tableId": stockNullableDBInt(tableID), "tableName": tableName},
 				byVisit: map[int64]*visitAcc{},
 			}
 			tables[key] = table
@@ -241,7 +240,23 @@ func (s *Server) handleBOPOSCashDayTables(w http.ResponseWriter, r *http.Request
 		table.payload["covers"] = table.covers
 		out = append(out, table.payload)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "date": date, "readOnly": readOnly, "tables": out})
+	// Manual cover adjustments belong to the day, not to any single table, so
+	// they are reported apart. Without this the sum of the tables would silently
+	// disagree with the covers shown for the same day in the calendar.
+	adjustedCovers, err := s.loadPOSCoverAdjustmentTotal(r.Context(), a.ActiveRestaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cover adjustments")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "date": date, "readOnly": readOnly,
+		"tables": out, "adjustedCovers": adjustedCovers})
+}
+
+// loadPOSCoverAdjustmentTotal sums the manual cover corrections of a day.
+func (s *Server) loadPOSCoverAdjustmentTotal(ctx context.Context, restaurantID int, date string) (int64, error) {
+	var total int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(delta_covers),0) FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date=?`, restaurantID, date).Scan(&total)
+	return total, err
 }
 
 func posNullableTime(value sql.NullTime) any {

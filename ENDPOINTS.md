@@ -2670,8 +2670,11 @@ All routes require `bo_session`, active `pos_pack`, tenant scope and exact POS p
 `date=YYYY-MM-DD` to browse a past business date; a malformed value is a `400`.
 Omitting it preserves the live behaviour exactly, so `bootstrap` keeps returning
 only `OPEN` visits and the unfiltered lists stay unfiltered. With a date,
-`bootstrap` returns every visit of that day, computes table occupancy from that
-day alone instead of live service, and echoes `date` alongside the `cashDay`.
+`bootstrap` returns that day's `OPEN` and `CLOSED` visits, computes table
+occupancy from that day alone instead of live service, and echoes `date` alongside
+the `cashDay`. `CANCELLED` and `MERGED` visits are excluded, since a merged source
+visit is already counted on the visit it was merged into. `/pos/visits` stays
+unopinionated and returns every status, filtered by `status` when given.
 
 ### Catalogue and stock mappings
 
@@ -2800,9 +2803,12 @@ excluded from both the money and the count.
 
 `GET /pos/cash-days/{date}/tables` returns that day's sales grouped table → visit →
 ticket, with the same net-of-refunds money at every level. Voided tickets are still
-listed so the operator can see they happened, but contribute nothing. The response
-sets `readOnly`, which is `false` only when that date has an `OPEN` cash day: a
-`CLOSED` day and a date that was never opened are both history.
+listed so the operator can see they happened, but contribute nothing. Manual cover
+corrections cannot be attributed to a table, so they are returned apart as
+`adjustedCovers`; the tables' covers plus that delta reconcile with the day's
+covers in the range endpoint. The response sets `readOnly`, which is `false` only
+when that date has an `OPEN` cash day: a `CLOSED` day and a date that was never
+opened are both history.
 
 ### Kitchen display and LIVE activation
 

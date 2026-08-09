@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -173,6 +174,36 @@ func TestPOSCashDayTablesBreakdown(t *testing.T) {
 	mesa2Tickets, _ := mesa2Visit["tickets"].([]any)
 	if len(mesa2Tickets) != 2 {
 		t.Fatalf("the voided ticket must still be listed, got %d", len(mesa2Tickets))
+	}
+
+	// The manual adjustment cannot belong to a table, so it is reported apart
+	// and the tables plus this delta reconcile with the day's covers.
+	if body["adjustedCovers"].(float64) != 2 {
+		t.Fatalf("expected the manual adjustment reported apart, got %v", body["adjustedCovers"])
+	}
+	tableCovers := mesa1["covers"].(float64) + mesa2["covers"].(float64)
+	if tableCovers+body["adjustedCovers"].(float64) != 11 {
+		t.Fatalf("tables plus adjustments must match the day covers, got %v", tableCovers)
+	}
+}
+
+// A busy day can hold more visits than the restaurant-wide row cap, which must
+// not silently truncate a day that is already bounded by its own date.
+func TestPOSVisitsListDateScopeIsNotTruncated(t *testing.T) {
+	db, s := posCashDayTestDB(t)
+	for i := 0; i < 205; i++ {
+		if _, err := db.Exec(`INSERT INTO pos_visits(restaurant_id,channel,table_id,service_date,service_type,covers,status,opened_by,open_idempotency_key,opened_at,closed_at) VALUES(1,'DINE_IN',5,'2024-03-07','LUNCH',2,'CLOSED',7,?,?,?)`,
+			fmt.Sprintf("bulk-%d", i),
+			fmt.Sprintf("2024-03-07 %02d:%02d:00", 9+i/60, i%60),
+			fmt.Sprintf("2024-03-07 %02d:%02d:00", 10+i/60, i%60)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	s.handleBOPOSVisitsList(recorder, posCashDayRequest(http.MethodGet, "/admin/pos/visits?date=2024-03-07", "", nil))
+	visits, _ := decodeCashDayBody(t, recorder)["visits"].([]any)
+	if len(visits) != 205 {
+		t.Fatalf("a scoped day must not be capped, got %d", len(visits))
 	}
 }
 

@@ -17,6 +17,10 @@ func posDateScopeSeed(t *testing.T, db *sql.DB) {
 		`INSERT INTO pos_tickets(id,restaurant_id,visit_id,ticket_number,creation_idempotency_key,subtotal_gross_cents,total_gross_cents,status,opened_by) VALUES(50,1,40,'TPV-1','t50',3000,3000,'PAID',7)`,
 		`INSERT INTO pos_visits(id,restaurant_id,channel,table_id,service_date,service_type,covers,status,opened_by,open_idempotency_key) VALUES(41,1,'DINE_IN',5,CURDATE(),'LUNCH',2,'OPEN',7,'v41')`,
 		`INSERT INTO pos_tickets(id,restaurant_id,visit_id,ticket_number,creation_idempotency_key,subtotal_gross_cents,total_gross_cents,status,opened_by) VALUES(51,1,41,'TPV-2','t51',1000,1000,'OPEN',7)`,
+		// Neither of these is real service: a cancelled visit and a visit whose
+		// lines were merged onto another one.
+		`INSERT INTO pos_visits(id,restaurant_id,cash_day_id,channel,table_id,service_date,service_type,covers,status,opened_by,open_idempotency_key,opened_at) VALUES(42,1,900,'DINE_IN',5,'2024-03-07','LUNCH',2,'CANCELLED',7,'v42','2024-03-07 13:10:00')`,
+		`INSERT INTO pos_visits(id,restaurant_id,cash_day_id,channel,table_id,service_date,service_type,covers,status,opened_by,open_idempotency_key,opened_at,merged_into_visit_id) VALUES(43,1,900,'DINE_IN',5,'2024-03-07','LUNCH',2,'MERGED',7,'v43','2024-03-07 13:20:00',40)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -36,17 +40,19 @@ func TestPOSVisitsListDateScope(t *testing.T) {
 		t.Fatalf("unfiltered: got %d %s", recorder.Code, recorder.Body.String())
 	}
 	visits, _ := decodeCashDayBody(t, recorder)["visits"].([]any)
-	if len(visits) != 2 {
-		t.Fatalf("unfiltered must return both visits, got %d", len(visits))
+	if len(visits) != 4 {
+		t.Fatalf("unfiltered must return every visit, got %d", len(visits))
 	}
 
 	recorder = httptest.NewRecorder()
 	s.handleBOPOSVisitsList(recorder, posCashDayRequest(http.MethodGet, "/admin/pos/visits?date=2024-03-07", "", nil))
 	visits, _ = decodeCashDayBody(t, recorder)["visits"].([]any)
-	if len(visits) != 1 {
-		t.Fatalf("date filter must return one visit, got %d", len(visits))
+	// The raw list is unopinionated: it returns every visit of that date,
+	// cancelled and merged included, because callers filter by status.
+	if len(visits) != 3 {
+		t.Fatalf("date filter must return that day's visits, got %d", len(visits))
 	}
-	if visit, _ := visits[0].(map[string]any); visit["serviceDate"] != "2024-03-07" {
+	if visit, _ := visits[len(visits)-1].(map[string]any); visit["serviceDate"] != "2024-03-07" {
 		t.Fatalf("wrong visit returned: %v", visits[0])
 	}
 
@@ -128,8 +134,10 @@ func TestPOSBootstrapDateScope(t *testing.T) {
 		t.Fatalf("expected the scoped date echoed, got %v", body["date"])
 	}
 	visits, _ = body["visits"].([]any)
+	// CANCELLED and MERGED are not service: a merged source visit would be a
+	// phantom card duplicating a service already counted on its target.
 	if len(visits) != 1 {
-		t.Fatalf("scoped bootstrap must show that day's visits, got %d", len(visits))
+		t.Fatalf("scoped bootstrap must drop cancelled and merged visits, got %d", len(visits))
 	}
 	if visit, _ := visits[0].(map[string]any); visit["status"] != "CLOSED" {
 		t.Fatalf("expected the closed visit, got %v", visits[0])

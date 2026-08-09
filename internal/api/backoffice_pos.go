@@ -477,6 +477,9 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	// Occupancy follows the same scope as the visit list, so a past day never
 	// shows tables as occupied by today's service.
+	// The date placeholder belongs to the EXISTS subquery, which precedes the
+	// outer WHERE in the statement, so it must be bound first. Keep this order
+	// in sync if the query is ever reshaped.
 	occupiedWhere := "v.status='OPEN'"
 	tableArgs := []any{}
 	if scoped {
@@ -517,11 +520,15 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 		areas = append(areas, map[string]any{"id": areaID, "name": name})
 	}
-	visitStatus := "OPEN"
+	// Live service is only what is open. A past day also shows what was served,
+	// but never CANCELLED or MERGED visits: a merged source visit has already
+	// had its lines moved onto another visit, so it would be a phantom card on
+	// the table grid duplicating a service that is counted elsewhere.
+	visitStatuses := []string{"OPEN"}
 	if scoped {
-		visitStatus = ""
+		visitStatuses = []string{"OPEN", "CLOSED"}
 	}
-	visits, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, visitStatus, date)
+	visits, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, visitStatuses, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading visits")
 		return
@@ -586,21 +593,28 @@ func nextPOSTicketNumber(ctx context.Context, tx *sql.Tx, restaurantID int, busi
 	return fmt.Sprintf("%s-%s-%04d", prefix, strings.ReplaceAll(businessDate, "-", ""), next), nil
 }
 
-// loadPOSVisits lists visits for a restaurant. An empty date keeps the previous
-// restaurant-wide behaviour; a date narrows the result to that business day so
-// the POS can be viewed on a past date.
-func (s *Server) loadPOSVisits(ctx context.Context, restaurantID int, status, date string) ([]map[string]any, error) {
+// loadPOSVisits lists visits for a restaurant. An empty statuses list and an
+// empty date keep the previous restaurant-wide behaviour; a date narrows the
+// result to that business day so the POS can be viewed on a past date.
+func (s *Server) loadPOSVisits(ctx context.Context, restaurantID int, statuses []string, date string) ([]map[string]any, error) {
 	where := "v.restaurant_id=?"
 	args := []any{restaurantID}
-	if status != "" {
-		where += " AND v.status=?"
-		args = append(args, status)
+	if len(statuses) > 0 {
+		where += " AND v.status IN (" + strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",") + ")"
+		for _, status := range statuses {
+			args = append(args, status)
+		}
 	}
+	// The row cap only guards the unbounded restaurant-wide query. A day is
+	// already bounded by its own date, and truncating it would silently drop the
+	// oldest service of that day and make the totals disagree with the reports.
+	limit := " LIMIT 200"
 	if date != "" {
 		where += " AND v.service_date=?"
 		args = append(args, date)
+		limit = ""
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT v.id,v.channel,v.table_id,COALESCE(t.name,''),v.service_date,v.service_type,v.covers,v.status,v.opened_at,v.version,COALESCE((SELECT SUM(total_gross_cents-refunded_cents) FROM pos_tickets p WHERE p.restaurant_id=v.restaurant_id AND p.visit_id=v.id AND p.status<>'VOIDED'),0),v.parked_at,COALESCE(v.parked_note,''),COALESCE(v.customer_name,''),COALESCE(v.customer_tax_id,''),COALESCE(v.customer_address,'') FROM pos_visits v LEFT JOIN restaurant_tables t ON t.id=v.table_id AND t.restaurant_id=v.restaurant_id WHERE `+where+` ORDER BY v.opened_at DESC LIMIT 200`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT v.id,v.channel,v.table_id,COALESCE(t.name,''),v.service_date,v.service_type,v.covers,v.status,v.opened_at,v.version,COALESCE((SELECT SUM(total_gross_cents-refunded_cents) FROM pos_tickets p WHERE p.restaurant_id=v.restaurant_id AND p.visit_id=v.id AND p.status<>'VOIDED'),0),v.parked_at,COALESCE(v.parked_note,''),COALESCE(v.customer_name,''),COALESCE(v.customer_tax_id,''),COALESCE(v.customer_address,'') FROM pos_visits v LEFT JOIN restaurant_tables t ON t.id=v.table_id AND t.restaurant_id=v.restaurant_id WHERE `+where+` ORDER BY v.opened_at DESC`+limit, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -631,7 +645,11 @@ func (s *Server) handleBOPOSVisitsList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid date")
 		return
 	}
-	visits, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, status, date)
+	statuses := []string{}
+	if status != "" {
+		statuses = append(statuses, status)
+	}
+	visits, err := s.loadPOSVisits(r.Context(), a.ActiveRestaurantID, statuses, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS visits")
 		return
