@@ -420,7 +420,7 @@ func (s *Server) handleBOComidaCategoryCreate(w http.ResponseWriter, r *http.Req
 	// The UNIQUE index only covers this exact scope, so it would let a global "Tapas"
 	// sit next to a platos "Tapas". Both scopes are checked, including the legacy
 	// tables, because the picker shows them together and products reference the name.
-	taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, foodType, slug, 0)
+	taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, foodType, slug, 0, false)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 		return
@@ -506,8 +506,10 @@ func comidaCategoryBaseSlugs(foodType string) []string {
 
 // comidaCategorySlugTaken reports whether the slug is already used by a category the
 // caller would see next to this one: the same scope, the scopes that overlap it, and
-// the legacy tables those scopes read from. excludeID skips the row being renamed.
-func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurantID int, foodType, slug string, excludeID int) (bool, error) {
+// the legacy tables those scopes read from. excludeID skips the row being renamed, and
+// ownsSlug says that row already carries this slug, which only a scope or active change
+// can be true for.
+func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurantID int, foodType, slug string, excludeID int, ownsSlug bool) (bool, error) {
 	scopes := comidaCategoryOverlappingScopes(foodType)
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(scopes)), ",")
 	args := []any{restaurantID, slug, excludeID}
@@ -533,10 +535,14 @@ func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurant
 
 	for _, scope := range scopes {
 		// The seeded base names count as taken even before the rows exist, because
-		// the next listing creates them.
-		for _, baseSlug := range comidaCategoryBaseSlugs(scope) {
-			if baseSlug == slug {
-				return true, nil
+		// the next listing creates them. Not for a category that already carries the
+		// slug, though: rows predating this reservation would otherwise be frozen,
+		// answering 409 against their own name on every reactivation or move.
+		if !ownsSlug {
+			for _, baseSlug := range comidaCategoryBaseSlugs(scope) {
+				if baseSlug == slug {
+					return true, nil
+				}
 			}
 		}
 
@@ -689,7 +695,7 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 	// Reactivating is checked too: while the category was switched off another one
 	// could take its name, and turning it back on would put both in the same picker.
 	if next.Slug != current.Slug || next.FoodType != current.FoodType || (!current.Active && next.Active) {
-		taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, next.FoodType, next.Slug, id)
+		taken, err := s.comidaCategorySlugTaken(r, tx, restaurantID, next.FoodType, next.Slug, id, next.Slug == current.Slug)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando categoria")
 			return
@@ -850,6 +856,33 @@ func (s *Server) deleteComidaCategoryLegacyTwins(r *http.Request, tx *sql.Tx, re
 		if !ok {
 			continue
 		}
+		// The margin scope has to go first, while the id is still readable.
+		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
+		rows, err := tx.QueryContext(r.Context(), `SELECT id FROM `+table+` WHERE `+where, args...)
+		if err != nil {
+			return err
+		}
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+
+		for _, id := range ids {
+			if err := s.deleteComidaCategoryMarginScope(r, tx, restaurantID, scope, id); err != nil {
+				return err
+			}
+		}
+
 		// comida_items.category_id references the platos table with ON DELETE SET NULL,
 		// so deleting a twin a product still points at nulls that product's category_id
 		// rather than failing. The product keeps its categoria name, and saving it again
@@ -860,6 +893,22 @@ func (s *Server) deleteComidaCategoryLegacyTwins(r *http.Request, tx *sql.Tx, re
 		}
 	}
 	return nil
+}
+
+// deleteComidaCategoryMarginScope removes the margin target configured for a legacy
+// category about to be deleted.
+//
+// stock_margin_scopes.scope_key holds 'platos:12' as plain text, with no foreign key to
+// point it at the row it names, so nothing in the database would clean it up. Left
+// behind, it keeps matching by id: the next category to reuse that auto-increment value
+// would silently inherit a target somebody set for a different category. The bands
+// cascade from the scope row.
+func (s *Server) deleteComidaCategoryMarginScope(r *http.Request, tx *sql.Tx, restaurantID int, foodType string, categoryID int64) error {
+	_, err := tx.ExecContext(r.Context(), `
+		DELETE FROM stock_margin_scopes
+		WHERE restaurant_id = ? AND scope_kind = 'COMIDA_CATEGORY' AND scope_key = ?
+	`, restaurantID, marginScopeKeyForCategory(foodType, categoryID))
+	return err
 }
 
 // comidaCategoryItemSourceTypes lists the comida_items.source_type values a category of

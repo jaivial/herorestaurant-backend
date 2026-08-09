@@ -840,6 +840,10 @@ forma diferida, al abrir el listado por primera vez, así que en un restaurante 
 parecen libres. Tomar uno daría una categoría unified a la que el siguiente listado
 le sembraría una gemela legacy al lado.
 
+La reserva no aplica a una categoría que **ya** lleva ese nombre, que es como quedaron
+las creadas antes de existir la reserva: si no, el `PATCH` respondería 409 contra su
+propio nombre y la fila no podría reactivarse ni moverse de scope nunca más.
+
 ##### `PATCH /api/admin/comida/categorias/{id}`
 Body: `{ name?, foodType?, global?, active? }`. Permite renombrar, mover de scope
 y activar/desactivar. Solo acepta `id` de categorías con `origin: "unified"`.
@@ -859,6 +863,12 @@ no es `source: 'base'`. El slug por sí solo no basta: las tablas legacy son
 anteriores a este catálogo y la carta antigua sigue escribiendo en ellas, así que
 una fila ajena puede compartirlo. Lo mismo aplica al `DELETE`, que borra la gemela
 para que no reaparezca como entrada legacy irreactivable.
+
+Como contrapartida, `POST /api/admin/comida/platos/categorias` acepta un `slug` del
+cliente desacoplado del `name`, así que la carta antigua puede renombrar la gemela y
+romper el enlace de forma permanente: a partir de ahí el renombrado unificado ya no
+cascadea y la fila legacy vuelve a aparecer en el listado con el nombre viejo. Es el
+precio de no tocar filas que no son nuestras.
 
 La fila se bloquea con `SELECT ... FOR UPDATE` antes de escribir, para que dos
 renombrados simultáneos no dejen productos repartidos entre el nombre viejo y el nuevo.
@@ -885,6 +895,12 @@ Solo categorías `unified`.
 - `200` → `{ success: true }`
 - `404` → no encontrada, de otro restaurante, o `legacy`
 - `409` → `La categoria esta en uso`
+
+Borrar arrastra, en la misma transacción, el `stock_margin_scopes` con
+`scope_kind: 'COMIDA_CATEGORY'` y `scope_key: '{tipo}:{id de la gemela}'`, y sus bandas
+por cascada. Ese `scope_key` es texto plano sin FK, así que nada en la base de datos lo
+limpiaría, y como los ids se reutilizan la siguiente categoría en caer en ese id
+heredaría en silencio un objetivo de margen ajeno.
 
 El uso se comprueba **solo en los scopes que la categoría alcanza**: una categoría
 de `cafes` no se considera en uso porque un plato distinto comparta su nombre.
