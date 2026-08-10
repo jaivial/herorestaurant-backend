@@ -167,7 +167,7 @@ func (s *Server) requireBOSession(next http.Handler) http.Handler {
 			ActiveRestaurantID: activeRestaurantID,
 			MemberID:           memberID,
 		}
-		next.ServeHTTP(w, r.WithContext(withBOAuth(r.Context(), a)))
+		next.ServeHTTP(w, r.WithContext(withRestaurantID(withBOAuth(r.Context(), a), a.ActiveRestaurantID)))
 	})
 }
 
