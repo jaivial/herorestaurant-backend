@@ -115,6 +115,45 @@ func TestEvo_MenuUsesReplyButtons(t *testing.T) {
 	}
 }
 
+// Evolution renders the interactive body as "*<title>*\n\n<description>".
+// The booking confirmation previously set title AND description to the full
+// text, so the customer received the message content twice in one bubble.
+func TestEvo_MenuTitleAndDescriptionDoNotDuplicate(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, nil)
+	defer srv.Close()
+	text := "*Confirmación de Reserva - Alqueria Villa Carmen*\n\n" +
+		"Hola jaime,\n\nGracias por elegirnos. Su reserva ha sido confirmada."
+	if err := newEvoGW(srv.URL).SendMenu(context.Background(), "34600111222", text, []string{"CONDICIONES|https://example.com/policies"}); err != nil {
+		t.Fatal(err)
+	}
+	title, _ := reqs[0].body["title"].(string)
+	desc, _ := reqs[0].body["description"].(string)
+	if title != "Confirmación de Reserva - Alqueria Villa Carmen" {
+		t.Errorf("title=%q, want header without markdown", title)
+	}
+	if desc != "Hola jaime,\n\nGracias por elegirnos. Su reserva ha sido confirmada." {
+		t.Errorf("description=%q, want the body without the header line", desc)
+	}
+	if title == desc {
+		t.Error("title and description are identical, the message will be shown twice")
+	}
+}
+
+func TestEvo_MenuSingleLinePutsTextInTitle(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, nil)
+	defer srv.Close()
+	if err := newEvoGW(srv.URL).SendMenu(context.Background(), "34600111222", "Elige una opción", []string{"Si", "No"}); err != nil {
+		t.Fatal(err)
+	}
+	title, _ := reqs[0].body["title"].(string)
+	desc, _ := reqs[0].body["description"].(string)
+	if title != "Elige una opción" || desc != "" {
+		t.Errorf("title=%q description=%q", title, desc)
+	}
+}
+
 // Booking confirmations pass choices as "label|url"; dropping the URL would
 // leave the customer without the policies/cancel links.
 func TestEvo_MenuMapsPipeChoicesToURLButtons(t *testing.T) {

@@ -60,6 +60,11 @@ func (g *evolutionGateway) SendText(ctx context.Context, to, text string) error 
 // SendMenu renders choices as native buttons. Evolution 2.3.7's Baileys
 // sendList route fails at runtime; sendButtons works for both connectors.
 //
+// Evolution builds the interactive body as "*<title>*\n\n<description>", so
+// title and description must not both carry the full text or the recipient
+// sees it twice. We split the message at the first line break: the first line
+// becomes the bolded header, the rest the body.
+//
 // Choices follow the UAZAPI convention: a plain string is a reply button, while
 // "label|https://..." is a call-to-action URL button. Mapping the latter to a
 // reply button would silently drop the link, which is the whole point of the
@@ -79,9 +84,27 @@ func (g *evolutionGateway) SendMenu(ctx context.Context, to, text string, choice
 		}
 		buttons = append(buttons, map[string]any{"type": "reply", "displayText": label, "id": fmt.Sprintf("opt_%d", i)})
 	}
+	title, description := splitMenuTitleAndDescription(text)
 	return g.post(ctx, g.msgPath("sendButtons"), map[string]any{
-		"number": to, "title": text, "description": text, "buttons": buttons,
+		"number": to, "title": title, "description": description, "buttons": buttons,
 	})
+}
+
+// splitMenuTitleAndDescription splits a menu message into the short bolded
+// header (first line) and the body (the rest). Callers commonly wrap the header
+// in *...* markdown, which Evolution would otherwise double-nest, so it is
+// stripped here.
+func splitMenuTitleAndDescription(text string) (title, description string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", ""
+	}
+	title = text
+	if idx := strings.IndexByte(text, '\n'); idx >= 0 {
+		title = strings.TrimSpace(text[:idx])
+		description = strings.TrimSpace(text[idx+1:])
+	}
+	return strings.Trim(title, "*"), description
 }
 
 func isHTTPURL(v string) bool {
