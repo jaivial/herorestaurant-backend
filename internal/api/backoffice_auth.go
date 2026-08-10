@@ -196,7 +196,11 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBOLogout(w http.ResponseWriter, r *http.Request) {
 	// Idempotent: always clear cookie.
 	if c, err := r.Cookie(boSessionCookieName); err == nil && strings.TrimSpace(c.Value) != "" {
-		_, _ = s.db.ExecContext(r.Context(), "DELETE FROM bo_sessions WHERE token_sha256 = ?", sha256Hex(c.Value))
+		token := strings.TrimSpace(c.Value)
+		_, _ = s.db.ExecContext(r.Context(), "DELETE FROM bo_sessions WHERE token_sha256 = ?", sha256Hex(token))
+		if s.sessionCache != nil {
+			s.sessionCache.invalidate(sha256Hex(token))
+		}
 	}
 
 	secure := boSessionCookieSecure(r)
@@ -403,6 +407,11 @@ func (s *Server) handleBOSetActiveRestaurant(w http.ResponseWriter, r *http.Requ
 	if _, err := s.db.ExecContext(r.Context(), "UPDATE bo_sessions SET active_restaurant_id = ? WHERE id = ?", req.RestaurantID, a.SessionID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando sesion")
 		return
+	}
+	// Active restaurant changed: the cached auth (role, sections, restaurant id)
+	// is stale. Drop it so the next request reloads from DB.
+	if s.sessionCache != nil {
+		s.sessionCache.invalidate(a.TokenSHA256)
 	}
 	roleSlug, err := s.getBOUserRoleForRestaurant(r.Context(), a.User.ID, req.RestaurantID, a.User.isSuperadmin)
 	if err != nil {

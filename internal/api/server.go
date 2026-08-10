@@ -13,8 +13,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 
 	"preactvillacarmen/internal/config"
 	"preactvillacarmen/internal/httpx"
@@ -51,6 +53,7 @@ type Server struct {
 	assistantRateMu      sync.Mutex
 	assistantRateBuckets map[string]*assistantRateBucket
 	confirmationStore    *confirmationStore
+	sessionCache         *boSessionCache
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
@@ -72,6 +75,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		rateLimit:             make(map[string]*rateLimitState),
 		botSem:                make(chan struct{}, botMaxConcurrentTurns),
 		confirmationStore:     newConfirmationStore(db),
+		sessionCache:          newBOSessionCache(30 * time.Second),
 	}
 	s.instatic = newInstaticManager(db, cfg)
 	s.instatic.StartSupervisor()
@@ -84,6 +88,9 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
+	// Compress JSON/text responses. SSE (text/event-stream) and websocket
+	// upgrades are skipped by chi's default compressible-content-type list.
+	r.Use(middleware.Compress(5))
 	websiteBuilder := newWebsiteBuilder(s)
 
 	// Restaurant website virtual host: `<slug>.<app_base_url>` → instatic.
