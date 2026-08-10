@@ -128,7 +128,6 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 		isClosed := legacyClosed[hour]
 		pct := percentages[hour]
 
-		var status, completion string
 		var statusVal string
 		var completionVal float64
 		var capacity int
@@ -138,42 +137,33 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 			completionVal = 0
 			capacity = 0
 			totalCapacity = 0
-		} else if !hourSplitEnabled {
-			// No per-hour cap: the whole daily limit is available across every open hour.
-			available := dailyLimit - totalPeople
-			if available < 0 {
-				available = 0
-			}
-			capacity = available
-			totalCapacity = 0 // omitted (decision #4)
-			completionVal = 0
-			if dailyLimit > 0 {
-				completionVal = (float64(totalPeople) / float64(dailyLimit)) * 100.0
-			}
-			statusVal = "available"
-			if completionVal > 90 {
-				statusVal = "full"
-			} else if completionVal > 70 {
-				statusVal = "limited"
-			}
 		} else {
-			totalCapacity = hourlyCapacities[hour]
-			if totalCapacity == 0 && pct > 0 {
-				totalCapacity = int(math.Ceil((pct / 100.0) * float64(dailyLimit)))
+			if !hourSplitEnabled {
+				// No per-hour cap: the whole daily limit is available across every open hour.
+				available := dailyLimit - totalPeople
+				if available < 0 {
+					available = 0
+				}
+				capacity = available
+				totalCapacity = 0 // omitted (decision #4)
+				if dailyLimit > 0 {
+					completionVal = (float64(totalPeople) / float64(dailyLimit)) * 100.0
+				}
+			} else {
+				totalCapacity = hourlyCapacities[hour]
+				if totalCapacity == 0 && pct > 0 {
+					totalCapacity = int(math.Ceil((pct / 100.0) * float64(dailyLimit)))
+				}
+				capacity = totalCapacity - bookings
+				if capacity < 0 {
+					capacity = 0
+				}
+				if totalCapacity > 0 {
+					completionVal = (float64(bookings) / float64(totalCapacity)) * 100.0
+				}
 			}
-			capacity = totalCapacity - bookings
-			if totalCapacity > 0 {
-				completionVal = (float64(bookings) / float64(totalCapacity)) * 100.0
-			}
-			statusVal = "available"
-			if completionVal > 90 {
-				statusVal = "full"
-			} else if completionVal > 70 {
-				statusVal = "limited"
-			}
+			statusVal = statusForCompletion(completionVal)
 		}
-		_ = status
-		_ = completion
 
 		slot := HourSlot{
 			Status:     statusVal,
@@ -399,4 +389,16 @@ func sortedHourKeys(m map[string]HourSlot) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// statusForCompletion maps a completion percentage to the available/limited/full
+// bucket used by the reservation hour-data status field.
+func statusForCompletion(completion float64) string {
+	if completion > 90 {
+		return "full"
+	}
+	if completion > 70 {
+		return "limited"
+	}
+	return "available"
 }
