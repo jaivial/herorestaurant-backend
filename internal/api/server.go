@@ -560,6 +560,11 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/config/mandatory-menus", s.handleBOMandatoryMenusGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/mandatory-menus", s.handleBOMandatoryMenusSave)
 
+		// By-hour client split configuration (toggle + per-hour percentages).
+		r.With(s.requireBOSession, reservasGate).Get("/config/hour-split", s.handleBOConfigHourSplitGet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/hour-split", s.handleBOConfigHourSplitSet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/hour-split-percentages", s.handleBOConfigHourSplitPercentagesSet)
+
 		// Widget settings (booking manager embed).
 		r.With(s.requireBOSession, reservasGate).Get("/widget/settings", s.handleBOWidgetSettingsGet)
 		r.With(s.requireBOSession, reservasGate).Put("/widget/settings", s.handleBOWidgetSettingsPut)

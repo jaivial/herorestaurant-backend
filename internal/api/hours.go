@@ -75,113 +75,138 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err == sql.ErrNoRows || !hourDataRaw.Valid || strings.TrimSpace(hourDataRaw.String) == "" {
-		activeHours, err := s.getOpeningHoursForDate(r, date)
-		if err != nil {
-			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
-				"success": false,
-				"message": "Error al obtener la configuración de horas",
-				"debug":   err.Error(),
-			})
-			return
-		}
-
-		equalPercentage := 100.0 / float64(len(activeHours))
-		hourData := map[string]HourSlot{}
-		for _, hour := range activeHours {
-			bookings := bookingsByHour[hour]
-			totalCapacity := int(math.Ceil((equalPercentage / 100.0) * float64(dailyLimit)))
-			availableCapacity := totalCapacity - bookings
-			completion := 0.0
-			if totalCapacity > 0 {
-				completion = (float64(bookings) / float64(totalCapacity)) * 100.0
-			}
-			status := "available"
-			if completion > 90 {
-				status = "full"
-			} else if completion > 70 {
-				status = "limited"
-			}
-
-			hourData[hour] = HourSlot{
-				Status:        status,
-				Capacity:      availableCapacity,
-				TotalCapacity: totalCapacity,
-				Bookings:      bookings,
-				Percentage:    equalPercentage,
-				Completion:    completion,
-				IsClosed:      false,
-			}
-		}
-
-		sortServiceHours(activeHours)
-
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success":       true,
-			"hourData":      hourData,
-			"activeHours":   activeHours,
-			"isDefaultData": true,
-			"dailyLimit":    dailyLimit,
-			"totalPeople":   totalPeople,
-			"date":          date,
-			"salonState":    salonState,
-		})
-		return
-	}
-
-	// Existing configuration path.
-	var hourData map[string]HourSlot
-	if err := json.Unmarshal([]byte(hourDataRaw.String), &hourData); err != nil {
+	activeHours, err := s.getOpeningHoursForDate(r, date)
+	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Error al obtener la configuración de horas",
-			"debug":   "Invalid hourData JSON in database",
+			"debug":   err.Error(),
 		})
 		return
 	}
 
-	for hour, data := range hourData {
-		bookings := bookingsByHour[hour]
-		data.Bookings = bookings
+	// Canonical percentage source: hours_percentage (decision #3). hour_configuration is
+	// only consulted for per-slot closed/status flags.
+	percentages, _, err := s.loadHourPercentages(r.Context(), restaurantID, date, activeHours)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error al obtener la configuración de horas",
+			"debug":   err.Error(),
+		})
+		return
+	}
 
-		totalCapacity := int(math.Ceil((data.Percentage / 100.0) * float64(dailyLimit)))
-		data.TotalCapacity = totalCapacity
-		data.Capacity = totalCapacity - bookings
-		if totalCapacity > 0 {
-			data.Completion = (float64(bookings) / float64(totalCapacity)) * 100.0
-		} else {
-			data.Completion = 0
-		}
-
-		if !data.IsClosed && data.Status != "closed" {
-			if data.Completion > 90 {
-				data.Status = "full"
-			} else if data.Completion > 70 {
-				data.Status = "limited"
-			} else {
-				data.Status = "available"
+	// Legacy per-slot closed flags (best-effort).
+	legacyClosed := map[string]bool{}
+	if hourDataRaw.Valid && strings.TrimSpace(hourDataRaw.String) != "" {
+		var legacy map[string]HourSlot
+		if uerr := json.Unmarshal([]byte(hourDataRaw.String), &legacy); uerr == nil {
+			for h, slot := range legacy {
+				if slot.IsClosed || slot.Status == "closed" {
+					legacyClosed[h] = true
+				}
 			}
 		}
-
-		hourData[hour] = data
 	}
 
-	activeHours := make([]string, 0, len(hourData))
-	for h := range hourData {
-		activeHours = append(activeHours, h)
+	hourSplitEnabled, _, err := s.resolveHourSplitEnabled(r.Context(), restaurantID, date)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error al obtener la configuración de horas",
+			"debug":   err.Error(),
+		})
+		return
 	}
+
+	hourlyCapacities := percentagesToPeople(percentages, dailyLimit)
+	isDefaultData := len(hourDataRaw.String) == 0 || strings.TrimSpace(hourDataRaw.String) == ""
+	hourData := map[string]HourSlot{}
+	for _, hour := range activeHours {
+		bookings := bookingsByHour[hour]
+		isClosed := legacyClosed[hour]
+		pct := percentages[hour]
+
+		var status, completion string
+		var statusVal string
+		var completionVal float64
+		var capacity int
+		var totalCapacity int
+		if isClosed {
+			statusVal = "closed"
+			completionVal = 0
+			capacity = 0
+			totalCapacity = 0
+		} else if !hourSplitEnabled {
+			// No per-hour cap: the whole daily limit is available across every open hour.
+			available := dailyLimit - totalPeople
+			if available < 0 {
+				available = 0
+			}
+			capacity = available
+			totalCapacity = 0 // omitted (decision #4)
+			completionVal = 0
+			if dailyLimit > 0 {
+				completionVal = (float64(totalPeople) / float64(dailyLimit)) * 100.0
+			}
+			statusVal = "available"
+			if completionVal > 90 {
+				statusVal = "full"
+			} else if completionVal > 70 {
+				statusVal = "limited"
+			}
+		} else {
+			totalCapacity = hourlyCapacities[hour]
+			if totalCapacity == 0 && pct > 0 {
+				totalCapacity = int(math.Ceil((pct / 100.0) * float64(dailyLimit)))
+			}
+			capacity = totalCapacity - bookings
+			if totalCapacity > 0 {
+				completionVal = (float64(bookings) / float64(totalCapacity)) * 100.0
+			}
+			statusVal = "available"
+			if completionVal > 90 {
+				statusVal = "full"
+			} else if completionVal > 70 {
+				statusVal = "limited"
+			}
+		}
+		_ = status
+		_ = completion
+
+		slot := HourSlot{
+			Status:     statusVal,
+			Capacity:   capacity,
+			Bookings:   bookings,
+			Percentage: pct,
+			Completion: completionVal,
+			IsClosed:   isClosed,
+		}
+		if hourSplitEnabled && !isClosed {
+			slot.TotalCapacity = totalCapacity
+		}
+		hourData[hour] = slot
+	}
+
 	sortServiceHours(activeHours)
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":       true,
-		"hourData":      hourData,
-		"activeHours":   activeHours,
-		"isDefaultData": false,
-		"dailyLimit":    dailyLimit,
-		"totalPeople":   totalPeople,
-		"date":          date,
-		"salonState":    salonState,
-	})
+	resp := map[string]any{
+		"success":          true,
+		"hourData":         hourData,
+		"activeHours":      activeHours,
+		"isDefaultData":    isDefaultData,
+		"dailyLimit":       dailyLimit,
+		"totalPeople":      totalPeople,
+		"date":             date,
+		"salonState":       salonState,
+		"hourSplitEnabled": hourSplitEnabled,
+		"percentages":      percentages,
+	}
+	if hourSplitEnabled {
+		resp["hourlyCapacities"] = hourlyCapacities
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleSaveHourData(w http.ResponseWriter, r *http.Request) {
