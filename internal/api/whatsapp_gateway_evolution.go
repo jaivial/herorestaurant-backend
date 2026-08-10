@@ -57,16 +57,36 @@ func (g *evolutionGateway) SendText(ctx context.Context, to, text string) error 
 	return g.post(ctx, g.msgPath("sendText"), map[string]any{"number": to, "text": text})
 }
 
-// SendMenu renders choices as native reply buttons. Evolution 2.3.7's Baileys
+// SendMenu renders choices as native buttons. Evolution 2.3.7's Baileys
 // sendList route fails at runtime; sendButtons works for both connectors.
+//
+// Choices follow the UAZAPI convention: a plain string is a reply button, while
+// "label|https://..." is a call-to-action URL button. Mapping the latter to a
+// reply button would silently drop the link, which is the whole point of the
+// booking confirmation buttons.
 func (g *evolutionGateway) SendMenu(ctx context.Context, to, text string, choices []string) error {
 	buttons := make([]map[string]any, 0, len(choices))
 	for i, c := range choices {
-		buttons = append(buttons, map[string]any{"type": "reply", "displayText": c, "id": fmt.Sprintf("opt_%d", i)})
+		label, target, hasTarget := strings.Cut(c, "|")
+		label = strings.TrimSpace(label)
+		target = strings.TrimSpace(target)
+		if hasTarget && isHTTPURL(target) {
+			buttons = append(buttons, map[string]any{"type": "url", "displayText": label, "url": target})
+			continue
+		}
+		if label == "" {
+			label = strings.TrimSpace(c)
+		}
+		buttons = append(buttons, map[string]any{"type": "reply", "displayText": label, "id": fmt.Sprintf("opt_%d", i)})
 	}
 	return g.post(ctx, g.msgPath("sendButtons"), map[string]any{
 		"number": to, "title": text, "description": text, "buttons": buttons,
 	})
+}
+
+func isHTTPURL(v string) bool {
+	parsed, err := url.Parse(v)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
 func (g *evolutionGateway) SendMedia(ctx context.Context, to string, m waMedia) error {

@@ -105,7 +105,66 @@ func TestEvo_MenuUsesReplyButtons(t *testing.T) {
 	}
 	buttons, _ := r.body["buttons"].([]any)
 	if len(buttons) != 2 {
-		t.Errorf("buttons=%v", buttons)
+		t.Fatalf("buttons=%v", buttons)
+	}
+	for i, raw := range buttons {
+		b, _ := raw.(map[string]any)
+		if b["type"] != "reply" {
+			t.Errorf("button %d type=%v, want reply", i, b["type"])
+		}
+	}
+}
+
+// Booking confirmations pass choices as "label|url"; dropping the URL would
+// leave the customer without the policies/cancel links.
+func TestEvo_MenuMapsPipeChoicesToURLButtons(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, nil)
+	defer srv.Close()
+	choices := []string{
+		"CONDICIONES|https://example.com/booking-policies",
+		"Cancelar Reserva|https://example.com/cancel?id=123",
+		"Responder",
+	}
+	if err := newEvoGW(srv.URL).SendMenu(context.Background(), "34600111222", "Reserva", choices); err != nil {
+		t.Fatal(err)
+	}
+	buttons, _ := reqs[0].body["buttons"].([]any)
+	if len(buttons) != 3 {
+		t.Fatalf("buttons=%v", buttons)
+	}
+	want := []struct{ typ, text, url string }{
+		{"url", "CONDICIONES", "https://example.com/booking-policies"},
+		{"url", "Cancelar Reserva", "https://example.com/cancel?id=123"},
+		{"reply", "Responder", ""},
+	}
+	for i, w := range want {
+		b, _ := buttons[i].(map[string]any)
+		if b["type"] != w.typ || b["displayText"] != w.text {
+			t.Errorf("button %d = %+v, want type=%q displayText=%q", i, b, w.typ, w.text)
+		}
+		if w.url != "" && b["url"] != w.url {
+			t.Errorf("button %d url=%v, want %q", i, b["url"], w.url)
+		}
+	}
+}
+
+// A pipe with a non-HTTP payload is not a link; it must not become a url
+// button pointing nowhere.
+func TestEvo_MenuKeepsNonURLPipeChoicesAsReply(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, nil)
+	defer srv.Close()
+	if err := newEvoGW(srv.URL).SendMenu(context.Background(), "34600111222", "Elige", []string{"Mesa|interior"}); err != nil {
+		t.Fatal(err)
+	}
+	buttons, _ := reqs[0].body["buttons"].([]any)
+	if len(buttons) != 1 {
+		t.Fatalf("buttons=%v", buttons)
+	}
+	b, _ := buttons[0].(map[string]any)
+	if b["type"] != "reply" {
+		t.Errorf("button=%+v, want type=reply", b)
 	}
 }
 

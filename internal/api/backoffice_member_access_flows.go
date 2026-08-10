@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/mail"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -731,25 +730,11 @@ func (s *Server) sendWhatsAppMessage(ctx context.Context, restaurantID int, phon
 	if num == "" {
 		return errors.New("telefono invalido")
 	}
-	uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-	if uazURL == "" {
-		return errors.New("uazapi no configurado")
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return errors.New("whatsapp no configurado")
 	}
-	sendURL := strings.TrimRight(uazURL, "/") + "/send/text"
-	if uazToken != "" {
-		sendURL += "?token=" + url.QueryEscape(uazToken)
-	}
-	body, code, err := sendUazAPI(ctx, sendURL, map[string]any{
-		"number": num,
-		"text":   text,
-	})
-	if err != nil {
-		return err
-	}
-	if code != http.StatusOK && code != http.StatusCreated {
-		return fmt.Errorf("uazapi http %d: %s", code, body)
-	}
-	return nil
+	return gw.SendText(ctx, num, text)
 }
 
 func normalizeWhatsAppNumber(raw string) string {

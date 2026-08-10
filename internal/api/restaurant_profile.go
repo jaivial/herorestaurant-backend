@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/url"
 	"os"
 	"strings"
 )
@@ -78,23 +77,35 @@ type restaurantIntegrationsCfg struct {
 	RestaurantWhatsappNumbers []string
 }
 
+// loadProvisionedUAZAPICredentials returns the provisioned base URL/token only
+// when the restaurant's active instance actually lives on a UAZAPI server.
+//
+// The credential columns are reused across providers (see migration 059), so a
+// provider-blind lookup happily hands Evolution credentials to callers that go
+// on to build UAZAPI-shaped URLs (`/send/text?token=`), which Evolution answers
+// with 404. Filtering on the provider here makes those callers fail closed.
 func (s *Server) loadProvisionedUAZAPICredentials(ctx context.Context, restaurantID int) (uazURL string, uazToken string, err error) {
 	var (
-		baseURL sql.NullString
-		token   sql.NullString
+		baseURL  sql.NullString
+		token    sql.NullString
+		provider sql.NullString
 	)
 	err = s.db.QueryRowContext(ctx, `
-		SELECT s.base_url, i.instance_token
+		SELECT s.base_url, i.instance_token, s.provider
 		FROM restaurant_uazapi_instances i
 		JOIN uazapi_servers s ON s.id = i.server_id
 		WHERE i.restaurant_id = ? AND i.is_active = 1
 		LIMIT 1
-	`, restaurantID).Scan(&baseURL, &token)
+	`, restaurantID).Scan(&baseURL, &token, &provider)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || isSQLSchemaError(err) {
 			return "", "", nil
 		}
 		return "", "", err
+	}
+
+	if p := strings.TrimSpace(provider.String); p != "" && !strings.EqualFold(p, "uazapi") {
+		return "", "", nil
 	}
 
 	uazURL = strings.TrimRight(strings.TrimSpace(baseURL.String), "/")
@@ -199,35 +210,41 @@ func (s *Server) uazapiBaseAndToken(ctx context.Context, restaurantID int) (uazU
 	return uazURL, uazToken
 }
 
-func (s *Server) uazapiSendTextURL(ctx context.Context, restaurantID int) (sendURL string, recipients []string) {
-	uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-	if uazURL == "" {
-		return "", nil
-	}
-
-	sendURL = uazURL + "/send/text"
-	if uazToken != "" {
-		sendURL += "?token=" + url.QueryEscape(uazToken)
-	}
-
+// restaurantWhatsAppRecipients returns the restaurant's own staff numbers in
+// normalized E.164-ish form, plus a gateway to reach them with.
+func (s *Server) restaurantWhatsAppRecipients(ctx context.Context, restaurantID int) (WhatsAppGateway, []string) {
 	cfg, err := s.loadRestaurantIntegrations(ctx, restaurantID)
 	if err != nil {
-		return sendURL, nil
+		return nil, nil
 	}
-	recipients = normalizeWhatsappRecipients(cfg.RestaurantWhatsappNumbers)
-	return sendURL, recipients
+	recipients := normalizeWhatsappRecipients(cfg.RestaurantWhatsappNumbers)
+	if len(recipients) == 0 {
+		return nil, nil
+	}
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return nil, nil
+	}
+	return gw, recipients
 }
 
-func (s *Server) sendRestaurantWhatsAppText(ctx context.Context, restaurantID int, text string) {
-	sendURL, recipients := s.uazapiSendTextURL(ctx, restaurantID)
-	if sendURL == "" || len(recipients) == 0 || strings.TrimSpace(text) == "" {
-		return
+// sendRestaurantWhatsAppText notifies the restaurant's own staff numbers. It
+// reports the first failure so callers can log or retry instead of silently
+// dropping the notification.
+func (s *Server) sendRestaurantWhatsAppText(ctx context.Context, restaurantID int, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	gw, recipients := s.restaurantWhatsAppRecipients(ctx, restaurantID)
+	if gw == nil {
+		return nil
 	}
 
+	var firstErr error
 	for _, n := range recipients {
-		_, _, _ = sendUazAPI(ctx, sendURL, map[string]any{
-			"number": n,
-			"text":   text,
-		})
+		if err := gw.SendText(ctx, n, text); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
+	return firstErr
 }

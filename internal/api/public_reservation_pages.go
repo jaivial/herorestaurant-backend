@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -855,7 +856,9 @@ func (s *Server) handleCancelReservationPage(w http.ResponseWriter, r *http.Requ
 	msg += "━━━━━━━━━━━━━━━━━━━━\n"
 	msg += "*Cancelada por:* " + cancelledByText + "\n"
 	msg += "🕐 *Hora cancelación:* " + time.Now().Format("15:04 02/01/2006")
-	s.sendRestaurantWhatsAppText(context.Background(), restaurantID, msg)
+	if err := s.sendRestaurantWhatsAppText(context.Background(), restaurantID, msg); err != nil {
+		log.Printf("restaurant whatsapp notification failed (restaurant %d): %v", restaurantID, err)
+	}
 }
 
 var bookRiceTmpl = template.Must(template.New("book_rice").Parse(`<!DOCTYPE html>
@@ -1168,7 +1171,9 @@ func (s *Server) handleBookRicePage(w http.ResponseWriter, r *http.Request) {
 	msg += "✅ *Arroz nuevo:* " + newRiceFormatted + "\n"
 	msg += "━━━━━━━━━━━━━━━━━━━━\n"
 	msg += "🕐 *Hora modificación:* " + time.Now().Format("15:04 02/01/2006")
-	s.sendRestaurantWhatsAppText(context.Background(), restaurantID, msg)
+	if err := s.sendRestaurantWhatsAppText(context.Background(), restaurantID, msg); err != nil {
+		log.Printf("restaurant whatsapp notification failed (restaurant %d): %v", restaurantID, err)
+	}
 }
 
 func writeHTMLTemplate(w http.ResponseWriter, tmpl *template.Template, data any) {

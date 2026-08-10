@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -191,8 +190,8 @@ func (s *Server) handleNavidadBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uazURL, uazToken := s.uazapiBaseAndToken(r.Context(), restaurantID)
-	if uazURL == "" || uazToken == "" {
+	gw, gwOK := s.botGatewayFor(r.Context(), restaurantID)
+	if !gwOK {
 		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"success":    false,
 			"message":    "El servicio de notificaciones no está disponible.",
@@ -246,23 +245,12 @@ func (s *Server) handleNavidadBooking(w http.ResponseWriter, r *http.Request) {
 	clientMessage += brandName + " les desea felices fiestas.\n\n"
 	clientMessage += "Puede consultar nuestros menús de grupos en el siguiente enlace."
 
-	clientPayload := map[string]any{
-		"number":  cleanPhone,
-		"type":    "button",
-		"text":    clientMessage,
-		"choices": []string{"Ver Menús de Grupos|" + strings.TrimRight(baseURL, "/") + "/menudegrupos.php"},
-	}
-	clientEndpoint := uazURL + "/send/menu?token=" + url.QueryEscape(uazToken)
-
-	clientRespBody, clientHTTP, clientErr := sendUazAPI(r.Context(), clientEndpoint, clientPayload)
-	clientSent := clientErr == nil && (clientHTTP == 200 || clientHTTP == 201)
+	clientChoices := []string{"Ver Menús de Grupos|" + strings.TrimRight(baseURL, "/") + "/menudegrupos.php"}
+	clientErr := gw.SendMenu(r.Context(), cleanPhone, clientMessage, clientChoices)
 	notifications["client_whatsapp"] = map[string]any{
-		"sent":      clientSent,
-		"to":        cleanPhone,
-		"response":  clientRespBody,
-		"http_code": clientHTTP,
-		"error":     errString(clientErr),
-		"data_sent": clientPayload,
+		"sent":  clientErr == nil,
+		"to":    cleanPhone,
+		"error": errString(clientErr),
 	}
 
 	// 2) WhatsApp to restaurant numbers.
@@ -276,22 +264,18 @@ func (s *Server) handleNavidadBooking(w http.ResponseWriter, r *http.Request) {
 	restaurantMessage += "🍽️ Tipo: " + typeDisplay + "\n\n"
 	restaurantMessage += "Fecha de consulta: " + time.Now().Format("02/01/2006 15:04")
 
-	restaurantEndpoint, restaurantNumbers := s.uazapiSendTextURL(r.Context(), restaurantID)
+	_, restaurantNumbers := s.restaurantWhatsAppRecipients(r.Context(), restaurantID)
 	results := []map[string]any{}
 	sentAny := false
 	for _, n := range restaurantNumbers {
-		payload := map[string]any{"number": n, "text": restaurantMessage}
-		body, code, err := sendUazAPI(r.Context(), restaurantEndpoint, payload)
-		sent := err == nil && (code == 200 || code == 201)
-		if sent {
+		err := gw.SendText(r.Context(), n, restaurantMessage)
+		if err == nil {
 			sentAny = true
 		}
 		results = append(results, map[string]any{
-			"number":    n,
-			"sent":      sent,
-			"response":  body,
-			"http_code": code,
-			"error":     errString(err),
+			"number": n,
+			"sent":   err == nil,
+			"error":  errString(err),
 		})
 	}
 	notifications["restaurant_whatsapp"] = map[string]any{

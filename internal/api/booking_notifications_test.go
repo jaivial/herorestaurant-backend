@@ -87,30 +87,28 @@ func TestBuildWhatsAppButtonPayload(t *testing.T) {
 		"baby_strollers":             0,
 	}
 
-	payload := buildBookingWhatsAppButtonPayload(
+	msg, err := buildBookingWhatsAppButtonPayload(
 		"Alquería Villa Carmen",
 		booking,
 		123,
 		"https://example.com",
 	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-	if payload["type"] != "button" {
-		t.Error("payload type should be 'button'")
+	if msg.To == "" {
+		t.Error("message should have a non-empty recipient")
 	}
-	number, ok := payload["number"].(string)
-	if !ok || number == "" {
-		t.Error("payload should have a non-empty 'number' field")
+	if !strings.HasPrefix(msg.To, "34") {
+		t.Errorf("number should include country code, got %q", msg.To)
 	}
-	if !strings.HasPrefix(number, "34") {
-		t.Errorf("number should include country code, got %q", number)
+	if msg.Text == "" {
+		t.Error("message should have non-empty text")
 	}
-	text, _ := payload["text"].(string)
-	if text == "" {
-		t.Error("payload should have non-empty 'text'")
-	}
-	choices, ok := payload["choices"].([]string)
-	if !ok || len(choices) < 2 {
-		t.Fatalf("payload should have at least 2 choices, got %v", payload["choices"])
+	choices := msg.Choices
+	if len(choices) < 2 {
+		t.Fatalf("message should have at least 2 choices, got %v", choices)
 	}
 	// First choice should be policies button.
 	if !strings.Contains(choices[0], "CONDICIONES") {
@@ -139,16 +137,17 @@ func TestBuildWhatsAppButtonPayloadWrongCountryCode(t *testing.T) {
 		"special_menu":               0,
 	}
 
-	payload := buildBookingWhatsAppButtonPayload("Test", booking, 2386, "https://example.com")
-
-	number, ok := payload["number"].(string)
-	if !ok || number == "" {
-		t.Fatal("payload should have a non-empty 'number' field")
+	msg, err := buildBookingWhatsAppButtonPayload("Test", booking, 2386, "https://example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.To == "" {
+		t.Fatal("message should have a non-empty recipient")
 	}
 	// The number should be the full E.164: cc+phone = "351692747052"
 	// (the user chose Portugal as country code — that's what gets sent)
-	if len(number) < 10 {
-		t.Errorf("number should be a valid E.164 number, got %q (too short)", number)
+	if len(msg.To) < 10 {
+		t.Errorf("number should be a valid E.164 number, got %q (too short)", msg.To)
 	}
 }
 
@@ -164,15 +163,16 @@ func TestBuildWhatsAppButtonPayloadPhoneWithCountryCode(t *testing.T) {
 		"special_menu":               0,
 	}
 
-	payload := buildBookingWhatsAppButtonPayload("Test", booking, 999, "https://example.com")
-
-	number, ok := payload["number"].(string)
-	if !ok || number == "" {
-		t.Fatal("payload should have a non-empty 'number' field")
+	msg, err := buildBookingWhatsAppButtonPayload("Test", booking, 999, "https://example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.To == "" {
+		t.Fatal("message should have a non-empty recipient")
 	}
 	// Should NOT double-prefix: "3434612345678" would be wrong.
-	if number == "3434612345678" {
-		t.Errorf("number should not be double-prefixed, got %q", number)
+	if msg.To == "3434612345678" {
+		t.Errorf("number should not be double-prefixed, got %q", msg.To)
 	}
 }
 

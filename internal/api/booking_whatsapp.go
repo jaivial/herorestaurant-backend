@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -63,34 +62,41 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 	return msg
 }
 
-// buildBookingWhatsAppButtonPayload creates the full UAZAPI button payload.
-func buildBookingWhatsAppButtonPayload(brandName string, booking map[string]any, bookingID int64, baseURL string) map[string]any {
-	cc := anyToString(booking["contact_phone_country_code"])
-	phone := anyToString(booking["contact_phone"])
-	_, _, cleanPhone, _ := normalizePhoneParts(cc, phone)
-
-	text := buildBookingWhatsAppMessage(brandName, booking, bookingID, baseURL)
-
-	base := strings.TrimRight(baseURL, "/")
-	choices := []string{
-		"CONDICIONES|" + base + "/booking-policies",
-		fmt.Sprintf("Cancelar Reserva|%s/cancel?id=%d", base, bookingID),
-	}
-
-	return map[string]any{
-		"number":  cleanPhone,
-		"type":    "button",
-		"text":    text,
-		"choices": choices,
-	}
+// bookingWhatsAppMessage is the provider-neutral confirmation to deliver.
+type bookingWhatsAppMessage struct {
+	To      string
+	Text    string
+	Choices []string
 }
 
-// sendBookingWhatsAppToCustomer sends a WhatsApp confirmation to the customer.
-// It tries button message first, falls back to plain text. Returns error on failure.
+// buildBookingWhatsAppButtonPayload builds the confirmation message. Choices use
+// the shared "label|url" convention understood by every gateway.
+func buildBookingWhatsAppButtonPayload(brandName string, booking map[string]any, bookingID int64, baseURL string) (bookingWhatsAppMessage, error) {
+	cc := anyToString(booking["contact_phone_country_code"])
+	phone := anyToString(booking["contact_phone"])
+	_, _, cleanPhone, ok := normalizePhoneParts(cc, phone)
+	if !ok || cleanPhone == "" {
+		return bookingWhatsAppMessage{}, fmt.Errorf("teléfono de contacto inválido")
+	}
+
+	base := strings.TrimRight(baseURL, "/")
+	return bookingWhatsAppMessage{
+		To:   cleanPhone,
+		Text: buildBookingWhatsAppMessage(brandName, booking, bookingID, baseURL),
+		Choices: []string{
+			"CONDICIONES|" + base + "/booking-policies",
+			fmt.Sprintf("Cancelar Reserva|%s/cancel?id=%d", base, bookingID),
+		},
+	}, nil
+}
+
+// sendBookingWhatsAppToCustomer sends a WhatsApp confirmation to the customer
+// through the restaurant's provisioned gateway (UAZAPI or Evolution).
+// It tries the button message first and falls back to plain text.
 func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID int, booking map[string]any, bookingID int64) error {
-	uazURL, uazToken := s.uazapiBaseAndToken(ctx, restaurantID)
-	if uazURL == "" || uazToken == "" {
-		return fmt.Errorf("WhatsApp (UAZAPI) no configurado")
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return fmt.Errorf("WhatsApp no configurado")
 	}
 
 	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
@@ -100,33 +106,34 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 	}
 	baseURL := publicBaseURLFromContext(ctx, s, restaurantID)
 
-	payload := buildBookingWhatsAppButtonPayload(brandName, booking, bookingID, baseURL)
+	msg, err := buildBookingWhatsAppButtonPayload(brandName, booking, bookingID, baseURL)
+	if err != nil {
+		return err
+	}
 
-	// Try button message first.
-	buttonEndpoint := uazURL + "/send/menu?token=" + url.QueryEscape(uazToken)
-	body, status, err := sendUazAPI(ctx, buttonEndpoint, payload)
-	if err == nil && (status == 200 || status == 201) {
+	if err := gw.SendMenu(ctx, msg.To, msg.Text, msg.Choices); err == nil {
 		log.Printf("WhatsApp button confirmation sent for booking #%d", bookingID)
 		return nil
-	}
-	log.Printf("WhatsApp button send failed (HTTP %d: %s), falling back to text", status, body)
-
-	// Fallback: plain text.
-	textEndpoint := uazURL + "/send/text?token=" + url.QueryEscape(uazToken)
-	textPayload := map[string]any{
-		"number": payload["number"],
-		"text":   payload["text"],
-	}
-	body, status, err = sendUazAPI(ctx, textEndpoint, textPayload)
-	if err != nil {
-		return fmt.Errorf("error enviando WhatsApp: %v", err)
-	}
-	if status != 200 && status != 201 {
-		return fmt.Errorf("WhatsApp respondió HTTP %d: %s", status, truncate(body, 200))
+	} else {
+		log.Printf("WhatsApp button send failed for booking #%d (%v), falling back to text", bookingID, err)
 	}
 
-	log.Printf("WhatsApp text confirmation sent for booking #%d", bookingID)
-	return nil
+	sendErr := gw.SendText(ctx, msg.To, msg.Text)
+	if sendErr == nil {
+		log.Printf("WhatsApp text confirmation sent for booking #%d", bookingID)
+		return nil
+	}
+
+	// A confirmation the customer never receives is worse than a late one, so
+	// hand it to the outbox before reporting the failure upstream.
+	if qErr := s.enqueueWhatsAppDelivery(
+		ctx, restaurantID, "booking_confirmation",
+		fmt.Sprintf("booking_confirmation:%d:%d", restaurantID, bookingID),
+		msg.To, whatsappOutboxPayload{Text: msg.Text, Choices: msg.Choices}, sendErr,
+	); qErr != nil {
+		log.Printf("WhatsApp outbox enqueue failed for booking #%d: %v", bookingID, qErr)
+	}
+	return fmt.Errorf("error enviando WhatsApp: %w", sendErr)
 }
 
 // publicBaseURLFromContext resolves the public base URL for generating links.
