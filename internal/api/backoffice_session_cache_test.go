@@ -205,4 +205,30 @@ func TestRequireBOSessionCacheInvalidatedOnLogout(t *testing.T) {
 	}
 }
 
+// A session whose DB expiry passes must not keep serving from the cache: the
+// cache get() must respect the stored expiresAt even when the TTL hasn't lapsed.
+func TestRequireBOSessionCacheRespectsExpiry(t *testing.T) {
+	db, _ := openCountingDB(t)
+	srv := &Server{db: db, cfg: testConfig()}
+	mux := sessionAuthMux(srv)
+
+	token := "sess-short-expiry-token"
+	seedAuthRow(t, db, token, "short-expiry@example.com")
+	// Shorten the expiry so the natural (no-refresh) path crosses it within the test.
+	if _, err := db.ExecContext(context.Background(),
+		"UPDATE bo_sessions SET expires_at = ? WHERE token_sha256 = ?",
+		time.Now().Add(2*time.Second), sha256Hex(token)); err != nil {
+		t.Fatalf("shorten expiry: %v", err)
+	}
+
+	if rr := authedRequest(mux, token, http.MethodGet); rr.Code != http.StatusOK {
+		t.Fatalf("pre-expiry auth status %d", rr.Code)
+	}
+
+	time.Sleep(2500 * time.Millisecond)
+	if rr := authedRequest(mux, token, http.MethodGet); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("after expiry expected 401, got %d (cache served an expired session)", rr.Code)
+	}
+}
+
 func testConfig() config.Config { return config.Config{} }

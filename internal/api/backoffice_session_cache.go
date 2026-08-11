@@ -44,7 +44,7 @@ func (c *boSessionCache) get(tokenSHA string, now time.Time) (boSessionCacheEntr
 	if !ok {
 		return boSessionCacheEntry{}, false
 	}
-	if now.Sub(e.cachedAt) > c.ttl {
+	if now.Sub(e.cachedAt) > c.ttl || !now.Before(e.expiresAt) {
 		delete(c.items, tokenSHA)
 		return boSessionCacheEntry{}, false
 	}

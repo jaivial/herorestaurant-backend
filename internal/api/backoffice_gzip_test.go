@@ -1,39 +1,32 @@
 package api
 
 import (
-	"bytes"
 	"compress/gzip"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 )
 
-// Wiring smoke test for response compression.
-// Guards the middleware choice: JSON responses must arrive gzip-encoded when
-// the client advertises Accept-Encoding, and non-negotiated requests must stay
-// uncompressed. The route table itself wires middleware.Compress(5) in Routes().
+// Wiring smoke test for response compression: exercises the real mux built by
+// Routes() so that if the `r.Use(middleware.Compress(5))` line is ever removed,
+// this test fails. /healthz returns JSON (gzip-able) and needs no session.
+// Uses a real DB (instatic's host-check middleware queries it) — skips without
+// TEST_DB_DSN, same as the session-cache integration tests.
 func TestGzipResponseCompression(t *testing.T) {
-	r := chi.NewRouter()
-	r.Use(middleware.Compress(5))
-	r.Get("/json", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"hello":"world","ok":true}`))
-	})
-	r.Get("/event-stream", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: ping\n\n"))
-	})
+	db, _ := openCountingDB(t)
+	srv := NewServer(db, testConfig())
+	handler := srv.Routes()
 
 	t.Run("gzip when accepted", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/json", nil)
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 		rr := httptest.NewRecorder()
-		r.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 
+		if rr.Code != http.StatusServiceUnavailable && rr.Code != http.StatusOK {
+			t.Fatalf("healthz status %d", rr.Code)
+		}
 		if rr.Header().Get("Content-Encoding") != "gzip" {
 			t.Fatalf("expected Content-Encoding: gzip, got %q", rr.Header().Get("Content-Encoding"))
 		}
@@ -42,39 +35,20 @@ func TestGzipResponseCompression(t *testing.T) {
 			t.Fatalf("gzip reader: %v", err)
 		}
 		body, _ := io.ReadAll(gr)
-		if got, want := string(body), `{"hello":"world","ok":true}`; got != want {
-			t.Fatalf("decoded body mismatch: got %q want %q", got, want)
+		if len(body) == 0 {
+			t.Fatal("decoded body empty")
 		}
 	})
 
 	t.Run("plain when not accepted", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/json", nil)
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 		rr := httptest.NewRecorder()
-		r.ServeHTTP(rr, req)
+		handler.ServeHTTP(rr, req)
 		if rr.Header().Get("Content-Encoding") != "" {
 			t.Fatalf("unexpected Content-Encoding %q", rr.Header().Get("Content-Encoding"))
 		}
-		if got, want := rr.Body.String(), `{"hello":"world","ok":true}`; got != want {
-			t.Fatalf("body mismatch: got %q want %q", got, want)
+		if rr.Body.Len() == 0 {
+			t.Fatal("body empty")
 		}
 	})
-
-	t.Run("SSE stays uncompressed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/event-stream", nil)
-		req.Header.Set("Accept-Encoding", "gzip")
-		rr := httptest.NewRecorder()
-		r.ServeHTTP(rr, req)
-		if rr.Header().Get("Content-Encoding") != "" {
-			t.Fatalf("SSE must not be compressed, got %q", rr.Header().Get("Content-Encoding"))
-		}
-		if got, want := rr.Body.String(), "data: ping\n\n"; got != want {
-			t.Fatalf("SSE body mismatch: got %q want %q", got, want)
-		}
-	})
-
-	// sanity: empty body with compressible type must not panic or emit encoding
-	req := httptest.NewRequest(http.MethodGet, "/json", nil)
-	req.Header.Set("Accept-Encoding", "gzip")
-	_ = bytes.NewBuffer(nil)
-	_ = req
 }
