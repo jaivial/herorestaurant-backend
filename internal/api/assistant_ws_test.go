@@ -120,6 +120,41 @@ func TestAssistantWS_RejectsWithoutSession(t *testing.T) {
 	}
 }
 
+// An idle connection must survive past the silence deadline: the server pings,
+// the client's transport pongs, and the deadline is pushed forward. Before the
+// pong handler existed the socket was closed mid-chat and the UI, which never
+// saw a done/error frame, stayed "thinking" forever.
+func TestAssistantWS_IdleConnectionSurvivesReadTimeout(t *testing.T) {
+	prevTimeout, prevPing := assistantReadTimeout, assistantPingInterval
+	assistantReadTimeout, assistantPingInterval = 300*time.Millisecond, 100*time.Millisecond
+	defer func() { assistantReadTimeout, assistantPingInterval = prevTimeout, prevPing }()
+
+	s := &Server{}
+	a := boAuth{User: boUser{ID: 918274}, ActiveRestaurantID: 1}
+	srv := assistantWSTestServer(s, &a)
+	defer srv.Close()
+
+	conn := dialAssistantWS(t, srv)
+	defer conn.Close()
+
+	// Stay silent for several deadlines. gorilla answers pings from within
+	// ReadMessage, so a blocking read both keeps the socket alive and observes
+	// a close if the server gives up.
+	done := make(chan error, 1)
+	go func() {
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_, _, err := conn.ReadMessage()
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("connection closed while idle: %v", err)
+	case <-time.After(time.Second):
+		// Survived >3x the silence deadline: keepalive is working.
+	}
+}
+
 func TestAssistantWS_HelloCreatesAndReusesSession_DB(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()

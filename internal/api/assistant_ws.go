@@ -42,8 +42,17 @@ func (c *assistantClient) writeJSON(v any) error {
 	return c.conn.WriteJSON(v)
 }
 
+// assistantReadTimeout bounds how long a connection may stay silent. Pongs to
+// our own pings refresh it, so a healthy socket survives long generations and
+// idle gaps between questions; a dead peer is still reaped. assistantPingInterval
+// must stay well below it. Both are variables so tests can shorten them.
+var (
+	assistantReadTimeout  = 90 * time.Second
+	assistantPingInterval = 25 * time.Second
+)
+
 func (c *assistantClient) pingLoop() {
-	t := time.NewTicker(25 * time.Second)
+	t := time.NewTicker(assistantPingInterval)
 	defer t.Stop()
 	for range t.C {
 		c.mu.Lock()
@@ -54,6 +63,11 @@ func (c *assistantClient) pingLoop() {
 			return
 		}
 	}
+}
+
+// extendReadDeadline pushes the silence deadline forward.
+func (c *assistantClient) extendReadDeadline() {
+	_ = c.conn.SetReadDeadline(time.Now().Add(assistantReadTimeout))
 }
 
 // handleBOAssistantWS serves GET /api/admin/assistant/ws (session auth).
@@ -106,13 +120,20 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 
 	go c.pingLoop()
 
-	_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+	// Keep the connection alive while the peer is responsive: every pong (and
+	// every client frame) refreshes the deadline. Without this the socket died
+	// mid-answer on slow tool turns and while the chat sat idle.
+	conn.SetPongHandler(func(string) error {
+		c.extendReadDeadline()
+		return nil
+	})
+	c.extendReadDeadline()
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			return
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		c.extendReadDeadline()
 
 		var frame struct {
 			Type         string `json:"type"`
