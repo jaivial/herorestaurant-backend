@@ -359,6 +359,122 @@ func TestAssistantRecoverEncodedReply_WrappedVariants(t *testing.T) {
 	}
 }
 
+// Unaccented Spanish prose must survive the base64 sniffer. Every word here is
+// spelled with characters that also belong to the base64 alphabet, so once the
+// sniffer stripped spaces the whole sentence looked like a payload and was
+// "decoded" into garbage — silently corrupting good replies in the live chat.
+func TestAssistantRecoverEncodedReply_PlainProseIsNotDecoded(t *testing.T) {
+	cases := []string{
+		"Si es posible Revisalo y te cuento el menu de comida disponible",
+		"Estos son los horarios que tenemos fijados en el sistema",
+		"Aqui tienes el resumen de stock con todas las categorias",
+		"Hola Soy Forky el asistente de tu restaurante",
+		"Hoy no tenemos reservas registradas en el sistema",
+	}
+	for _, c := range cases {
+		if got := assistantRecoverEncodedReply(c); got != c {
+			t.Errorf("plain prose was corrupted\n in : %q\n out: %q", c, got)
+		}
+	}
+}
+
+// Emoji from the Dingbats / Miscellaneous Symbols blocks are ordinary output,
+// not MiniMax filler glyphs. The filler range used to swallow them, silently
+// deleting ✨/✅/➡ from otherwise perfect replies.
+func TestAssistantCleanseReply_KeepsCommonEmoji(t *testing.T) {
+	cases := []string{
+		"Listo ✅ la reserva quedo confirmada",
+		"Mesa lista ➡ pasa por caja ⚡",
+		"¡Todo correcto! ✔ Buen servicio ✨",
+		"¡Hola! 😊 Aqui tienes los horarios 🍽️ y la carta 🍴✨",
+	}
+	for _, c := range cases {
+		if got := assistantCleanseReply(c); got != c {
+			t.Errorf("emoji were stripped\n in : %q\n out: %q", c, got)
+		}
+	}
+}
+
+// A tool-using turn concatenates the text of every model round, so a wrapped
+// answer can arrive as several base64 blobs separated by blank lines (the model
+// repeats itself once per round). The whole string is not valid base64, so the
+// single-payload path cannot decode it and users saw a raw blob in the chat.
+func TestAssistantRecoverEncodedReply_MultipleBlocks(t *testing.T) {
+	blob := base64.StdEncoding.EncodeToString([]byte("¡Hola! Aqui el resumen de stock: 222 articulos."))
+	prose := "Resultado: **222 articulos** sin existencias."
+	chart := "```forky-chart\n{\"title\":\"Stock\"}\n```"
+
+	// The same blob repeated per round, then real prose and a chart block.
+	in := blob + "\n\n" + blob + "\n\n" + prose + "\n\n" + chart
+	got := assistantRecoverEncodedReply(in)
+
+	if strings.Contains(got, blob) {
+		t.Errorf("base64 block was not decoded: %q", got)
+	}
+	if !strings.Contains(got, "resumen de stock") {
+		t.Errorf("decoded text missing: %q", got)
+	}
+	if strings.Count(got, "resumen de stock") != 1 {
+		t.Errorf("repeated identical blob should be collapsed once: %q", got)
+	}
+	if !strings.Contains(got, prose) {
+		t.Errorf("plain prose block was lost: %q", got)
+	}
+	if !strings.Contains(got, "forky-chart") {
+		t.Errorf("chart block was lost: %q", got)
+	}
+	// The closing fence must survive: the UI parser requires ```forky-chart ...
+	// ``` and silently renders nothing without it.
+	if !strings.HasSuffix(strings.TrimSpace(got), "```") {
+		t.Errorf("chart closing fence was stripped: %q", got)
+	}
+}
+
+// Blocks may be separated by CRLF or by more than one blank line.
+func TestAssistantRecoverEncodedReply_MultipleBlocksCRLF(t *testing.T) {
+	blob := base64.StdEncoding.EncodeToString([]byte("Resumen de stock disponible."))
+	for _, sep := range []string{"\r\n\r\n", "\n\n\n"} {
+		in := blob + sep + "Texto normal de cierre."
+		got := assistantRecoverEncodedReply(in)
+		if strings.Contains(got, blob) {
+			t.Errorf("sep %q: base64 not decoded: %q", sep, got)
+		}
+		if !strings.Contains(got, "Texto normal de cierre.") {
+			t.Errorf("sep %q: trailing prose lost: %q", sep, got)
+		}
+	}
+}
+
+// Two payloads glued by a stray separator ("blobA|blobB") make the string as a
+// whole fail the base64 alphabet check, so nothing was decoded and the raw blob
+// reached the chat. Observed live on "cuantas reservas hay hoy".
+func TestAssistantRecoverEncodedReply_PayloadsJoinedBySeparator(t *testing.T) {
+	a := base64.StdEncoding.EncodeToString([]byte("¡Hola! Estas son las reservas de hoy."))
+	b := base64.StdEncoding.EncodeToString([]byte("Mesa 4 confirmada para 2 personas."))
+	got := assistantRecoverEncodedReply(a + "|" + b)
+	if !strings.Contains(got, "reservas de hoy") || !strings.Contains(got, "Mesa 4 confirmada") {
+		t.Errorf("both payloads should be decoded, got %q", got)
+	}
+	if strings.Contains(got, a) || strings.Contains(got, b) {
+		t.Errorf("raw base64 still present: %q", got)
+	}
+}
+
+// The printable-ratio gate compared a RUNE count against a BYTE length, so
+// accented Spanish and emoji (2–4 bytes per rune) dragged the ratio under the
+// threshold and legitimate payloads were rejected and shown as raw base64.
+func TestAssistantDecodeBase64_AccentedAndEmojiPayload(t *testing.T) {
+	msg := "¡Hola! 😊 Aquí están las reservas de mañana: García, Pérez y Muñoz. 🍽️✨"
+	enc := base64.StdEncoding.EncodeToString([]byte(msg))
+	got, ok := assistantDecodeBase64(enc)
+	if !ok {
+		t.Fatalf("accented/emoji payload rejected: %q", got)
+	}
+	if got != msg {
+		t.Errorf("decode mismatch\n want: %q\n got : %q", msg, got)
+	}
+}
+
 func TestAssistantRecoverEncodedReply_Truncated(t *testing.T) {
 	// len%4 == 1 truncation must still recover the readable head.
 	msg := "Información de la semana próxima para el lunes con detalle."

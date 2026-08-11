@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -222,7 +223,7 @@ func (s *Server) assistantCall(ctx context.Context, system string, msgs []assist
 // markdown/emoji.
 func assistantLikelyBase64(s string) bool {
 	t := strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == '\t' || r == ' ' {
+		if r == '\n' || r == '\r' {
 			return -1
 		}
 		return r
@@ -249,7 +250,7 @@ func assistantLikelyBase64(s string) bool {
 // decodable as UTF-8, so callers keep the original text when the guess fails.
 func assistantDecodeBase64(s string) (string, bool) {
 	t := strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == '\t' || r == ' ' {
+		if r == '\n' || r == '\r' {
 			return -1
 		}
 		return r
@@ -309,8 +310,20 @@ func assistantTryDecodeBase64(t string, extraPad int) (string, bool) {
 			if len(decStr) == 0 {
 				return "", false
 			}
+			// ToValidUTF8 *drops* invalid bytes, so a mostly-binary decode would
+			// otherwise score a perfect printable ratio on the few bytes that
+			// survived. Require the decode to have been valid UTF-8 nearly in
+			// full: real base64-wrapped Spanish is, binary garbage never is.
+			if float64(len(deco))/float64(len(dec)) < 0.90 {
+				if alts == 0 {
+					continue
+				}
+				return "", false
+			}
 			printable := 0
+			total := 0
 			for _, r := range decStr {
+				total++
 				// U+FFFD (replacement char a truncated tail leaves behind) counts
 				// as NON-printable: a cut-off reply keeps its readable head while
 				// binary garbage fails the ratio.
@@ -321,7 +334,10 @@ func assistantTryDecodeBase64(t string, extraPad int) (string, bool) {
 					printable++
 				}
 			}
-			if float64(printable)/float64(len(decStr)) < 0.90 {
+			// Compare runes with runes: len(decStr) is a BYTE count, so accented
+			// Spanish and emoji (2–4 bytes each) used to drag the ratio below the
+			// threshold and a perfectly good reply was rejected as garbage.
+			if total == 0 || float64(printable)/float64(total) < 0.90 {
 				if alts == 0 {
 					continue
 				}
@@ -353,8 +369,13 @@ func assistantRecoverEncodedReply(text string) string {
 	// labels ("```wqlJ...```", "<base64>", padding with quotes). Remove that
 	// surrounding noise before sniffing, but keep any inner prose as-is.
 	candidate := assistantStripBase64Wrapper(text)
+	// Only newlines are removed before sniffing: a real base64 blob may be hard
+	// wrapped across lines, but it never contains spaces or tabs. Stripping
+	// those too made ordinary Spanish prose look like base64 — "Si es posible
+	// Revisalo y te cuento..." collapses to a pure-alphabet string and decoded
+	// to garbage, corrupting perfectly good replies.
 	stripped := strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
+		if r == '\n' || r == '\r' {
 			return -1
 		}
 		return r
@@ -366,12 +387,85 @@ func assistantRecoverEncodedReply(text string) string {
 			return assistantCleanDecodedText(assistantCleanseReply(dec))
 		}
 	}
+	// A tool-using turn concatenates the text of each model round, so the same
+	// wrapped answer can arrive as several base64 blobs separated by blank
+	// lines. The concatenation is not valid base64 as a whole, so decode each
+	// blank-line-separated block on its own and keep the non-base64 ones as-is.
+	// Note this works on the ORIGINAL text: assistantStripBase64Wrapper trims
+	// trailing backticks globally, which would eat the closing fence of a
+	// ```forky-chart block and stop the UI from rendering the chart.
+	if decoded, ok := assistantRecoverEncodedBlocks(text); ok {
+		return decoded
+	}
 	// MiniMax intermittently hallucinates CJK (Chinese) phrases and filler
 	// symbols mid-Spanish-reply (e.g. "具体的"), no matter the model. None of
 	// these are ever legit Spanish chat, so strip them defensively both before
 	// persisting and before streaming to the client.
 	return assistantCleanDecodedText(assistantCleanseReply(text))
 }
+
+// assistantRecoverEncodedBlocks decodes a reply built from several base64
+// blocks. A tool-using turn appends the text of every model round, so a wrapped
+// answer can land as N blobs joined by blank lines; the whole string is then not
+// valid base64 and the single-payload path above cannot help. Blocks that are
+// not base64 are preserved verbatim. Reports ok only when at least one block was
+// actually decoded, so plain replies fall through untouched.
+// assistantRecoverEncodedBlocks decodes a reply that carries one or more base64
+// payloads embedded in it. A tool-using turn appends the text of every model
+// round, so a wrapped answer can land as several blobs joined by blank lines or
+// by a stray separator ("blobA|blobB"); the string as a whole is then not valid
+// base64 and the single-payload path above cannot help. Every sufficiently long
+// base64 run is decoded in place, the surrounding text is preserved verbatim and
+// identical repeats are collapsed. Reports ok only when something was decoded,
+// so plain replies fall through untouched.
+func assistantRecoverEncodedBlocks(text string) (string, bool) {
+	runs := assistantBase64Run.FindAllStringIndex(text, -1)
+	if len(runs) == 0 {
+		return "", false
+	}
+	var sb strings.Builder
+	seen := make(map[string]bool, len(runs))
+	decodedAny := false
+	last := 0
+	for _, loc := range runs {
+		start, end := loc[0], loc[1]
+		candidate := text[start:end]
+		// Newlines inside the run are legal (hard-wrapped payload); everything
+		// else was already excluded by the pattern.
+		trimmed := strings.TrimSpace(candidate)
+		if len(trimmed) < 32 || !assistantLikelyBase64(trimmed) {
+			continue
+		}
+		dec, ok := assistantDecodeBase64(trimmed)
+		if !ok {
+			continue
+		}
+		clean := assistantCleanDecodedText(assistantCleanseReply(dec))
+		if strings.TrimSpace(clean) == "" {
+			continue
+		}
+		decodedAny = true
+		sb.WriteString(text[last:start])
+		// The model often repeats the identical blob once per tool round; showing
+		// it several times is noise, so keep only the first copy.
+		if !seen[clean] {
+			seen[clean] = true
+			sb.WriteString(clean)
+		}
+		last = end
+	}
+	if !decodedAny {
+		return "", false
+	}
+	sb.WriteString(text[last:])
+	return strings.TrimSpace(sb.String()), true
+}
+
+// assistantBase64Run matches a long run of base64 characters (optionally hard
+// wrapped across lines). 32+ chars keeps ordinary long words — and the
+// unaccented Spanish that the old sniffer mistook for base64 — out of scope,
+// since those always carry spaces or punctuation that break the run.
+var assistantBase64Run = regexp.MustCompile(`[A-Za-z0-9+/=_-]{32,}(?:\r?\n[A-Za-z0-9+/=_-]+)*`)
 
 // assistantStripBase64Wrapper removes markdown code-fence backticks, leading
 // "data:", quotes and stray punctuation that MiniMax may place around a
@@ -413,9 +507,14 @@ func assistantStripBase64Wrapper(s string) string {
 
 // assistantMinimaxGlitch reports whether r is a glyph MiniMax spuriously
 // injects into Spanish replies (an encoding/token quirk). CJK ideographs
-// (MiniMax sometimes emits real Chinese words like 具体的/人数) and graphic
-// "filler" symbols (© ⚳ ⪮ ⊒ ⊓…) never belong in a restaurant chat in Spanish,
-// so removing them is safe and cannot corrupt accents or emoji.
+// (MiniMax sometimes emits real Chinese words like 具体的/人数) and the maths /
+// technical symbol blocks used as filler (⪮ ⊒ ⊓…) never belong in a restaurant
+// chat in Spanish, so removing them is safe.
+//
+// The filler range deliberately stops short of the Dingbats block (U+2700–27BF)
+// and skips Miscellaneous Symbols (U+2600–26FF) except the handful actually
+// observed: those blocks hold everyday emoji (✨ ✅ ❌ ✔ ➡ ⚡) that the model
+// legitimately uses, and blanket-stripping them mangled normal replies.
 func assistantMinimaxGlitch(r rune) bool {
 	switch {
 	case r >= 0x3400 && r <= 0x4DBF: // CJK Unified Ext A
@@ -423,7 +522,9 @@ func assistantMinimaxGlitch(r rune) bool {
 	case r >= 0xF900 && r <= 0xFAFF: // CJK Compatibility Ideographs
 	case r >= 0x20000 && r <= 0x2FA1F: // CJK ext B–F & supplement
 	case r == 0x3000, r == 0x3001, r == 0x3002, r == 0x300C, r == 0x300D, r == 0xFF01, r == 0xFF0C, r == 0xFF1F: // CJK punctuation / full-width
-	case r >= 0x2140 && r <= 0x2AFF: // math ops, ⪮ ⊒ ⊓ ⪻ and friends used as filler
+	case r >= 0x2190 && r <= 0x21FF: // arrows used as filler
+	case r >= 0x2200 && r <= 0x22FF: // mathematical operators (⊒ ⊓ …)
+	case r >= 0x2A00 && r <= 0x2AFF: // supplemental math operators (⪮ ⪻ …)
 	case r == 0x00A9 || r == 0x26B3: // © · ⚳
 	default:
 		return false
