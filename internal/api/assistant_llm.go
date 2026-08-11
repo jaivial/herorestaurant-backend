@@ -321,7 +321,9 @@ func assistantTryDecodeBase64(t string, extraPad int) (string, bool) {
 				return "", false
 			}
 			printable := 0
+			total := 0
 			for _, r := range decStr {
+				total++
 				// U+FFFD (replacement char a truncated tail leaves behind) counts
 				// as NON-printable: a cut-off reply keeps its readable head while
 				// binary garbage fails the ratio.
@@ -332,7 +334,10 @@ func assistantTryDecodeBase64(t string, extraPad int) (string, bool) {
 					printable++
 				}
 			}
-			if float64(printable)/float64(len(decStr)) < 0.90 {
+			// Compare runes with runes: len(decStr) is a BYTE count, so accented
+			// Spanish and emoji (2–4 bytes each) used to drag the ratio below the
+			// threshold and a perfectly good reply was rejected as garbage.
+			if total == 0 || float64(printable)/float64(total) < 0.90 {
 				if alts == 0 {
 					continue
 				}
@@ -405,44 +410,62 @@ func assistantRecoverEncodedReply(text string) string {
 // valid base64 and the single-payload path above cannot help. Blocks that are
 // not base64 are preserved verbatim. Reports ok only when at least one block was
 // actually decoded, so plain replies fall through untouched.
+// assistantRecoverEncodedBlocks decodes a reply that carries one or more base64
+// payloads embedded in it. A tool-using turn appends the text of every model
+// round, so a wrapped answer can land as several blobs joined by blank lines or
+// by a stray separator ("blobA|blobB"); the string as a whole is then not valid
+// base64 and the single-payload path above cannot help. Every sufficiently long
+// base64 run is decoded in place, the surrounding text is preserved verbatim and
+// identical repeats are collapsed. Reports ok only when something was decoded,
+// so plain replies fall through untouched.
 func assistantRecoverEncodedBlocks(text string) (string, bool) {
-	// Split on blank lines, tolerating CRLF and runs of more than two newlines.
-	blocks := assistantBlankLineSplit.Split(text, -1)
-	if len(blocks) < 2 {
+	runs := assistantBase64Run.FindAllStringIndex(text, -1)
+	if len(runs) == 0 {
 		return "", false
 	}
-	out := make([]string, 0, len(blocks))
+	var sb strings.Builder
+	seen := make(map[string]bool, len(runs))
 	decodedAny := false
-	seen := make(map[string]bool, len(blocks))
-	for _, block := range blocks {
-		trimmed := strings.TrimSpace(block)
-		if trimmed == "" {
+	last := 0
+	for _, loc := range runs {
+		start, end := loc[0], loc[1]
+		candidate := text[start:end]
+		// Newlines inside the run are legal (hard-wrapped payload); everything
+		// else was already excluded by the pattern.
+		trimmed := strings.TrimSpace(candidate)
+		if len(trimmed) < 32 || !assistantLikelyBase64(trimmed) {
 			continue
 		}
-		if len(trimmed) >= 16 && assistantLikelyBase64(trimmed) {
-			if dec, ok := assistantDecodeBase64(trimmed); ok {
-				decodedAny = true
-				clean := assistantCleanDecodedText(assistantCleanseReply(dec))
-				// The model often repeats the identical blob once per tool round;
-				// showing it several times is noise, so keep the first copy.
-				if seen[clean] {
-					continue
-				}
-				seen[clean] = true
-				out = append(out, clean)
-				continue
-			}
+		dec, ok := assistantDecodeBase64(trimmed)
+		if !ok {
+			continue
 		}
-		out = append(out, block)
+		clean := assistantCleanDecodedText(assistantCleanseReply(dec))
+		if strings.TrimSpace(clean) == "" {
+			continue
+		}
+		decodedAny = true
+		sb.WriteString(text[last:start])
+		// The model often repeats the identical blob once per tool round; showing
+		// it several times is noise, so keep only the first copy.
+		if !seen[clean] {
+			seen[clean] = true
+			sb.WriteString(clean)
+		}
+		last = end
 	}
 	if !decodedAny {
 		return "", false
 	}
-	return strings.Join(out, "\n\n"), true
+	sb.WriteString(text[last:])
+	return strings.TrimSpace(sb.String()), true
 }
 
-// assistantBlankLineSplit matches a blank-line separator (CRLF tolerant).
-var assistantBlankLineSplit = regexp.MustCompile(`(?:\r?\n){2,}`)
+// assistantBase64Run matches a long run of base64 characters (optionally hard
+// wrapped across lines). 32+ chars keeps ordinary long words — and the
+// unaccented Spanish that the old sniffer mistook for base64 — out of scope,
+// since those always carry spaces or punctuation that break the run.
+var assistantBase64Run = regexp.MustCompile(`[A-Za-z0-9+/=_-]{32,}(?:\r?\n[A-Za-z0-9+/=_-]+)*`)
 
 // assistantStripBase64Wrapper removes markdown code-fence backticks, leading
 // "data:", quotes and stray punctuation that MiniMax may place around a
