@@ -487,8 +487,11 @@ func (s *Server) handleBOPOSCashDayBulkCheckout(w http.ResponseWriter, r *http.R
 		return
 	}
 	method := strings.ToUpper(strings.TrimSpace(in.PaymentMethod))
-	if method == "" || !validPOSPaymentMethod(method) || strings.TrimSpace(in.IdempotencyKey) == "" || len(in.IdempotencyKey) > 120 {
-		httpx.WriteError(w, http.StatusBadRequest, "Invalid bulk checkout")
+	// Bulk can only tender cash: card payments need a per-ticket terminal
+	// reference (checked in checkoutTicketInTx), which a date-wide sweep cannot
+	// supply, so any non-CASH method would 409 the batch at the first card ticket.
+	if method != "CASH" || strings.TrimSpace(in.IdempotencyKey) == "" || len(in.IdempotencyKey) > 120 {
+		httpx.WriteError(w, http.StatusBadRequest, "Bulk checkout only supports cash")
 		return
 	}
 	closeVisits := true
@@ -551,6 +554,11 @@ func (s *Server) handleBOPOSCashDayBulkCheckout(w http.ResponseWriter, r *http.R
 	closedTickets, skippedTickets, closedVisits := 0, 0, 0
 	var totalGross int64
 	byMethod := map[string]int64{"CASH": 0, "CARD": 0, "BANK": 0, "OTHER": 0}
+	type closedVisit struct {
+		visitID int64
+		tableID sql.NullInt64
+	}
+	var closed []closedVisit
 	for _, p := range batch {
 		// A zero-value open ticket cannot take a pos_payments row (the column is
 		// strictly positive); skip it. It stays OPEN and the day-close guard will
@@ -572,6 +580,7 @@ func (s *Server) handleBOPOSCashDayBulkCheckout(w http.ResponseWriter, r *http.R
 		closedTickets++
 		if result.VisitClosed {
 			closedVisits++
+			closed = append(closed, closedVisit{visitID: result.VisitID, tableID: result.TableID})
 		}
 		totalGross += result.TotalCents
 		byMethod[method] += result.TotalCents
@@ -583,6 +592,11 @@ func (s *Server) handleBOPOSCashDayBulkCheckout(w http.ResponseWriter, r *http.R
 	}
 	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, date)
 	s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
+	// Mirror single-ticket checkout: tell other terminals which tables just
+	// freed up, otherwise they stay stale until a manual refresh.
+	for _, cv := range closed {
+		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "pos_visit_closed", map[string]any{"visitId": cv.visitID, "tableId": stockNullableDBInt(cv.tableID)})
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "date": date, "paymentMethod": method, "closedTickets": closedTickets, "skippedTickets": skippedTickets, "closedVisits": closedVisits, "totalGrossCents": totalGross, "byMethod": byMethod})
 }
 
