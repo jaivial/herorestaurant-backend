@@ -51,13 +51,15 @@ var defaultWeekdayOpen = map[string]bool{
 }
 
 type reservationDefaults struct {
-	OpeningMode      string
-	MorningHours     []string
-	NightHours       []string
-	WeekdayOpen      map[string]bool
-	DailyLimit       int
-	MesasDeDosLimit  string
-	MesasDeTresLimit string
+	OpeningMode            string
+	MorningHours           []string
+	NightHours             []string
+	WeekdayOpen            map[string]bool
+	DailyLimit             int
+	MesasDeDosLimit        string
+	MesasDeTresLimit       string
+	HourSplitEnabled       bool
+	DefaultHourPercentages map[string]float64
 }
 
 type boConfigFloor struct {
@@ -344,30 +346,34 @@ func countActiveFloors(floors []boConfigFloor) int {
 
 func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) (reservationDefaults, error) {
 	out := reservationDefaults{
-		OpeningMode:      defaultOpeningMode,
-		MorningHours:     cloneStrings(defaultMorningHours),
-		NightHours:       cloneStrings(defaultNightHours),
-		WeekdayOpen:      cloneWeekdayOpen(defaultWeekdayOpen),
-		DailyLimit:       defaultDailyLimit,
-		MesasDeDosLimit:  defaultMesasLimit,
-		MesasDeTresLimit: defaultMesasLimit,
+		OpeningMode:            defaultOpeningMode,
+		MorningHours:           cloneStrings(defaultMorningHours),
+		NightHours:             cloneStrings(defaultNightHours),
+		WeekdayOpen:            cloneWeekdayOpen(defaultWeekdayOpen),
+		DailyLimit:             defaultDailyLimit,
+		MesasDeDosLimit:        defaultMesasLimit,
+		MesasDeTresLimit:       defaultMesasLimit,
+		HourSplitEnabled:       true,
+		DefaultHourPercentages: map[string]float64{},
 	}
 
 	var (
-		modeRaw       sql.NullString
-		morningRaw    sql.NullString
-		nightRaw      sql.NullString
-		weekdayRaw    sql.NullString
-		dailyLimitRaw sql.NullInt64
-		mesas2Raw     sql.NullString
-		mesas3Raw     sql.NullString
+		modeRaw            sql.NullString
+		morningRaw         sql.NullString
+		nightRaw           sql.NullString
+		weekdayRaw         sql.NullString
+		dailyLimitRaw      sql.NullInt64
+		mesas2Raw          sql.NullString
+		mesas3Raw          sql.NullString
+		hourSplitRaw       sql.NullInt64
+		defaultPercentRaw  sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit
+		SELECT opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit, hour_split_enabled, default_hour_percentages_json
 		FROM restaurant_reservation_defaults
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&modeRaw, &morningRaw, &nightRaw, &weekdayRaw, &dailyLimitRaw, &mesas2Raw, &mesas3Raw)
+	`, restaurantID).Scan(&modeRaw, &morningRaw, &nightRaw, &weekdayRaw, &dailyLimitRaw, &mesas2Raw, &mesas3Raw, &hourSplitRaw, &defaultPercentRaw)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return out, nil
@@ -396,6 +402,15 @@ func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) 
 	if mesas3Raw.Valid {
 		out.MesasDeTresLimit = normalizeLimitOrFallback(mesas3Raw.String, defaultMesasLimit)
 	}
+	if hourSplitRaw.Valid {
+		out.HourSplitEnabled = hourSplitRaw.Int64 != 0
+	}
+	if defaultPercentRaw.Valid && strings.TrimSpace(defaultPercentRaw.String) != "" {
+		var pcts map[string]float64
+		if err := json.Unmarshal([]byte(defaultPercentRaw.String), &pcts); err == nil {
+			out.DefaultHourPercentages = pcts
+		}
+	}
 	return out, nil
 }
 
@@ -415,11 +430,21 @@ func (s *Server) upsertReservationDefaults(ctx context.Context, restaurantID int
 	nightJSON, _ := json.Marshal(night)
 	weekdayJSON, _ := json.Marshal(weekdayOpen)
 
+	var defaultPercentJSON any = nil
+	if len(next.DefaultHourPercentages) > 0 {
+		b, _ := json.Marshal(next.DefaultHourPercentages)
+		defaultPercentJSON = string(b)
+	}
+	hourSplitFlag := 0
+	if next.HourSplitEnabled {
+		hourSplitFlag = 1
+	}
+
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO restaurant_reservation_defaults (
-			restaurant_id, opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit
+			restaurant_id, opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit, hour_split_enabled, default_hour_percentages_json
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			opening_mode = VALUES(opening_mode),
 			morning_hours_json = VALUES(morning_hours_json),
@@ -427,8 +452,10 @@ func (s *Server) upsertReservationDefaults(ctx context.Context, restaurantID int
 			weekday_open_json = VALUES(weekday_open_json),
 			daily_limit = VALUES(daily_limit),
 			mesas_de_dos_limit = VALUES(mesas_de_dos_limit),
-			mesas_de_tres_limit = VALUES(mesas_de_tres_limit)
-	`, restaurantID, mode, string(morningJSON), string(nightJSON), string(weekdayJSON), dailyLimit, mesas2, mesas3)
+			mesas_de_tres_limit = VALUES(mesas_de_tres_limit),
+			hour_split_enabled = VALUES(hour_split_enabled),
+			default_hour_percentages_json = VALUES(default_hour_percentages_json)
+	`, restaurantID, mode, string(morningJSON), string(nightJSON), string(weekdayJSON), dailyLimit, mesas2, mesas3, hourSplitFlag, defaultPercentJSON)
 	return err
 }
 
@@ -1291,13 +1318,15 @@ func (s *Server) handleBOConfigDailyLimitSet(w http.ResponseWriter, r *http.Requ
 }
 
 type boConfigDefaultsSetRequest struct {
-	OpeningMode      *string          `json:"openingMode,omitempty"`
-	MorningHours     *[]string        `json:"morningHours,omitempty"`
-	NightHours       *[]string        `json:"nightHours,omitempty"`
-	WeekdayOpen      *map[string]bool `json:"weekdayOpen,omitempty"`
-	DailyLimit       *int             `json:"dailyLimit,omitempty"`
-	MesasDeDosLimit  *string          `json:"mesasDeDosLimit,omitempty"`
-	MesasDeTresLimit *string          `json:"mesasDeTresLimit,omitempty"`
+	OpeningMode            *string             `json:"openingMode,omitempty"`
+	MorningHours           *[]string           `json:"morningHours,omitempty"`
+	NightHours             *[]string           `json:"nightHours,omitempty"`
+	WeekdayOpen            *map[string]bool    `json:"weekdayOpen,omitempty"`
+	DailyLimit             *int                `json:"dailyLimit,omitempty"`
+	MesasDeDosLimit        *string             `json:"mesasDeDosLimit,omitempty"`
+	MesasDeTresLimit       *string             `json:"mesasDeTresLimit,omitempty"`
+	HourSplitEnabled       *bool               `json:"hourSplitEnabled,omitempty"`
+	DefaultHourPercentages *map[string]float64 `json:"defaultHourPercentages,omitempty"`
 }
 
 func (s *Server) handleBOConfigDefaultsGet(w http.ResponseWriter, r *http.Request) {
@@ -1315,15 +1344,17 @@ func (s *Server) handleBOConfigDefaultsGet(w http.ResponseWriter, r *http.Reques
 	hours := mergeHoursByMode(defaults.OpeningMode, defaults.MorningHours, defaults.NightHours)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":          true,
-		"openingMode":      defaults.OpeningMode,
-		"morningHours":     defaults.MorningHours,
-		"nightHours":       defaults.NightHours,
-		"weekdayOpen":      defaults.WeekdayOpen,
-		"hours":            hours,
-		"dailyLimit":       defaults.DailyLimit,
-		"mesasDeDosLimit":  defaults.MesasDeDosLimit,
-		"mesasDeTresLimit": defaults.MesasDeTresLimit,
+		"success":                true,
+		"openingMode":            defaults.OpeningMode,
+		"morningHours":           defaults.MorningHours,
+		"nightHours":             defaults.NightHours,
+		"weekdayOpen":            defaults.WeekdayOpen,
+		"hours":                  hours,
+		"dailyLimit":             defaults.DailyLimit,
+		"mesasDeDosLimit":        defaults.MesasDeDosLimit,
+		"mesasDeTresLimit":       defaults.MesasDeTresLimit,
+		"hourSplitEnabled":       defaults.HourSplitEnabled,
+		"defaultHourPercentages": defaults.DefaultHourPercentages,
 	})
 }
 
@@ -1393,6 +1424,16 @@ func (s *Server) handleBOConfigDefaultsSet(w http.ResponseWriter, r *http.Reques
 		}
 		current.MesasDeTresLimit = limit
 	}
+	if req.HourSplitEnabled != nil {
+		current.HourSplitEnabled = *req.HourSplitEnabled
+	}
+	if req.DefaultHourPercentages != nil {
+		cleaned := make(map[string]float64, len(*req.DefaultHourPercentages))
+		for k, v := range *req.DefaultHourPercentages {
+			cleaned[k] = roundPct(v)
+		}
+		current.DefaultHourPercentages = cleaned
+	}
 
 	if err := s.upsertReservationDefaults(r.Context(), a.ActiveRestaurantID, current); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando defaults")
@@ -1401,15 +1442,17 @@ func (s *Server) handleBOConfigDefaultsSet(w http.ResponseWriter, r *http.Reques
 
 	hours := mergeHoursByMode(current.OpeningMode, current.MorningHours, current.NightHours)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":          true,
-		"openingMode":      current.OpeningMode,
-		"morningHours":     current.MorningHours,
-		"nightHours":       current.NightHours,
-		"weekdayOpen":      current.WeekdayOpen,
-		"hours":            hours,
-		"dailyLimit":       current.DailyLimit,
-		"mesasDeDosLimit":  current.MesasDeDosLimit,
-		"mesasDeTresLimit": current.MesasDeTresLimit,
+		"success":                true,
+		"openingMode":            current.OpeningMode,
+		"morningHours":           current.MorningHours,
+		"nightHours":             current.NightHours,
+		"weekdayOpen":            current.WeekdayOpen,
+		"hours":                  hours,
+		"dailyLimit":             current.DailyLimit,
+		"mesasDeDosLimit":        current.MesasDeDosLimit,
+		"mesasDeTresLimit":       current.MesasDeTresLimit,
+		"hourSplitEnabled":       current.HourSplitEnabled,
+		"defaultHourPercentages": current.DefaultHourPercentages,
 	})
 }
 
