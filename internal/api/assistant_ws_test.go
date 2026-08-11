@@ -125,11 +125,10 @@ func TestAssistantWS_RejectsWithoutSession(t *testing.T) {
 // pong handler existed the socket was closed mid-chat and the UI, which never
 // saw a done/error frame, stayed "thinking" forever.
 func TestAssistantWS_IdleConnectionSurvivesReadTimeout(t *testing.T) {
-	prevTimeout, prevPing := assistantReadTimeout, assistantPingInterval
-	assistantReadTimeout, assistantPingInterval = 300*time.Millisecond, 100*time.Millisecond
-	defer func() { assistantReadTimeout, assistantPingInterval = prevTimeout, prevPing }()
-
-	s := &Server{}
+	s := &Server{assistantKeepalive: assistantKeepaliveConfig{
+		readTimeout:  300 * time.Millisecond,
+		pingInterval: 100 * time.Millisecond,
+	}}
 	a := boAuth{User: boUser{ID: 918274}, ActiveRestaurantID: 1}
 	srv := assistantWSTestServer(s, &a)
 	defer srv.Close()

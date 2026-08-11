@@ -52,8 +52,17 @@ type Server struct {
 	siteBuilderHub       *siteBuilderWSHub
 	assistantRateMu      sync.Mutex
 	assistantRateBuckets map[string]*assistantRateBucket
-	confirmationStore    *confirmationStore
-	sessionCache         *boSessionCache
+	// assistantKeepalive overrides the WebSocket keepalive timings; zero means
+	// production defaults. Set once at construction, read-only afterwards.
+	assistantKeepalive assistantKeepaliveConfig
+	confirmationStore  *confirmationStore
+	sessionCache       *boSessionCache
+}
+
+// assistantKeepaliveConfig lets tests shorten the assistant WebSocket timings.
+type assistantKeepaliveConfig struct {
+	readTimeout  time.Duration
+	pingInterval time.Duration
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {

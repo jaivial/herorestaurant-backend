@@ -24,6 +24,10 @@ type assistantClient struct {
 	sessionID    int64
 	sessionInit  bool
 	restaurantID int
+	// Keepalive timings, per connection so tests can shorten them without
+	// mutating shared state.
+	readTimeout  time.Duration
+	pingInterval time.Duration
 }
 
 // assistantClientIP extracts the caller IP for anonymous rate limiting.
@@ -44,15 +48,15 @@ func (c *assistantClient) writeJSON(v any) error {
 
 // assistantReadTimeout bounds how long a connection may stay silent. Pongs to
 // our own pings refresh it, so a healthy socket survives long generations and
-// idle gaps between questions; a dead peer is still reaped. assistantPingInterval
-// must stay well below it. Both are variables so tests can shorten them.
-var (
+// idle gaps between questions; a dead peer is still reaped.
+// assistantPingInterval must stay well below it.
+const (
 	assistantReadTimeout  = 90 * time.Second
 	assistantPingInterval = 25 * time.Second
 )
 
 func (c *assistantClient) pingLoop() {
-	t := time.NewTicker(assistantPingInterval)
+	t := time.NewTicker(c.pingInterval)
 	defer t.Stop()
 	for range t.C {
 		c.mu.Lock()
@@ -67,7 +71,7 @@ func (c *assistantClient) pingLoop() {
 
 // extendReadDeadline pushes the silence deadline forward.
 func (c *assistantClient) extendReadDeadline() {
-	_ = c.conn.SetReadDeadline(time.Now().Add(assistantReadTimeout))
+	_ = c.conn.SetReadDeadline(time.Now().Add(c.readTimeout))
 }
 
 // handleBOAssistantWS serves GET /api/admin/assistant/ws (session auth).
@@ -115,7 +119,18 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 	if err != nil {
 		return
 	}
-	c := &assistantClient{s: s, auth: auth, conn: conn, ip: assistantClientIP(r)}
+	c := &assistantClient{
+		s:            s,
+		auth:         auth,
+		conn:         conn,
+		ip:           assistantClientIP(r),
+		readTimeout:  assistantReadTimeout,
+		pingInterval: assistantPingInterval,
+	}
+	if s.assistantKeepalive.readTimeout > 0 {
+		c.readTimeout = s.assistantKeepalive.readTimeout
+		c.pingInterval = s.assistantKeepalive.pingInterval
+	}
 	defer conn.Close()
 
 	go c.pingLoop()
