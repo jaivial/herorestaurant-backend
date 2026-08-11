@@ -85,6 +85,12 @@ func (g *evolutionGateway) SendMenu(ctx context.Context, to, text string, choice
 		buttons = append(buttons, map[string]any{"type": "reply", "displayText": label, "id": fmt.Sprintf("opt_%d", i)})
 	}
 	title, description := splitMenuTitleAndDescription(text)
+	// Single-line input leaves the body empty; WhatsApp interactive messages
+	// require a non-empty body, so fall back to the header text. This keeps the
+	// short prompt visible (as both bold header and body) and the send valid.
+	if description == "" {
+		description = title
+	}
 	return g.post(ctx, g.msgPath("sendButtons"), map[string]any{
 		"number": to, "title": title, "description": description, "buttons": buttons,
 	})
@@ -92,8 +98,8 @@ func (g *evolutionGateway) SendMenu(ctx context.Context, to, text string, choice
 
 // splitMenuTitleAndDescription splits a menu message into the short bolded
 // header (first line) and the body (the rest). Callers commonly wrap the header
-// in *...* markdown, which Evolution would otherwise double-nest, so it is
-// stripped here.
+// in a single *...* markdown pair, which Evolution would otherwise double-nest,
+// so one wrapping pair is stripped here. Interior '*' (e.g. "10*") is preserved.
 func splitMenuTitleAndDescription(text string) (title, description string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -104,7 +110,16 @@ func splitMenuTitleAndDescription(text string) (title, description string) {
 		title = strings.TrimSpace(text[:idx])
 		description = strings.TrimSpace(text[idx+1:])
 	}
-	return strings.Trim(title, "*"), description
+	return trimOneStarPair(title), description
+}
+
+// trimOneStarPair removes a single leading and trailing '*' from s, if both are
+// present. Unlike strings.Trim, it does not strip interior or repeated '*'.
+func trimOneStarPair(s string) string {
+	if len(s) >= 2 && s[0] == '*' && s[len(s)-1] == '*' {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 func isHTTPURL(v string) bool {

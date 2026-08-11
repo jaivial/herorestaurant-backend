@@ -140,17 +140,37 @@ func TestEvo_MenuTitleAndDescriptionDoNotDuplicate(t *testing.T) {
 	}
 }
 
-func TestEvo_MenuSingleLinePutsTextInTitle(t *testing.T) {
+func TestEvo_MenuSingleLineKeepsBodyNonEmpty(t *testing.T) {
 	var reqs []evoReq
 	srv := fakeEvolution(t, &reqs, nil)
 	defer srv.Close()
+	// Single-line input must still send a non-empty body: WhatsApp interactive
+	// messages reject an empty description, so it falls back to the header text.
 	if err := newEvoGW(srv.URL).SendMenu(context.Background(), "34600111222", "Elige una opción", []string{"Si", "No"}); err != nil {
 		t.Fatal(err)
 	}
 	title, _ := reqs[0].body["title"].(string)
 	desc, _ := reqs[0].body["description"].(string)
-	if title != "Elige una opción" || desc != "" {
-		t.Errorf("title=%q description=%q", title, desc)
+	if title != "Elige una opción" {
+		t.Errorf("title=%q, want header text", title)
+	}
+	if desc == "" {
+		t.Error("description is empty; WhatsApp would reject the interactive message")
+	}
+}
+
+func TestEvo_MenuPreservesInteriorStars(t *testing.T) {
+	var reqs []evoReq
+	srv := fakeEvolution(t, &reqs, nil)
+	defer srv.Close()
+	// Only a wrapping pair of '*' is stripped; a trailing '*' that is not part of
+	// a wrapping pair (no leading '*') is kept.
+	if err := newEvoGW(srv.URL).SendMenu(context.Background(), "34600111222", "Oferta 10*\nSolo hoy", []string{"Si"}); err != nil {
+		t.Fatal(err)
+	}
+	title, _ := reqs[0].body["title"].(string)
+	if title != "Oferta 10*" {
+		t.Errorf("title=%q, want trailing star preserved", title)
 	}
 }
 
