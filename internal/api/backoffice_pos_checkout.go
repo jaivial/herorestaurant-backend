@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"math"
 	"net/http"
@@ -240,6 +241,155 @@ func (s *Server) applyPOSTicketStock(ctx context.Context, tx *sql.Tx, restaurant
 	return nil
 }
 
+// posCheckoutTxError carries the HTTP status (and optional machine code) that
+// both checkout entry points surface, so the shared money path returns plain
+// errors instead of writing to a ResponseWriter.
+type posCheckoutTxError struct {
+	status int
+	code   string
+	msg    string
+}
+
+func (e *posCheckoutTxError) Error() string {
+	if e.msg != "" {
+		return e.msg
+	}
+	return http.StatusText(e.status)
+}
+
+// writeCheckoutTxError maps a posCheckoutTxError back to its HTTP response.
+// Plain errors become a generic 500 so an internal detail never leaks as 200.
+func writeCheckoutTxError(w http.ResponseWriter, err error) {
+	var ce *posCheckoutTxError
+	if errors.As(err, &ce) {
+		if ce.code != "" {
+			httpx.WriteJSON(w, ce.status, map[string]any{"success": false, "message": ce.msg, "code": ce.code})
+			return
+		}
+		httpx.WriteError(w, ce.status, ce.msg)
+		return
+	}
+	httpx.WriteError(w, http.StatusInternalServerError, err.Error())
+}
+
+type posCheckoutTxResult struct {
+	TotalCents  int64
+	StockStatus string
+	VisitClosed bool
+	VisitID     int64
+	TableID     sql.NullInt64
+	Duplicate   bool
+}
+
+// checkoutTicketInTx pays one open ticket inside the caller's transaction.
+// handleBOPOSCheckout and the bulk day-close checkout share it so the payment,
+// stock and visit-close rules cannot drift between the two. The caller owns the
+// tx (begin/commit/rollback) and resolves settings + shift once.
+func (s *Server) checkoutTicketInTx(ctx context.Context, tx *sql.Tx, restaurantID int, ticketID int64, payments []posCheckoutPayment, idempotencyKey string, expectedVersion int, closeVisit bool, settings posSettings, shiftID *int64, userID int) (posCheckoutTxResult, error) {
+	var status string
+	var visitID int64
+	var total, ticketDiscount int64
+	var version int
+	var checkoutKey sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT status,visit_id,total_gross_cents,ticket_discount_cents,version,checkout_idempotency_key FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, restaurantID, ticketID).Scan(&status, &visitID, &total, &ticketDiscount, &version, &checkoutKey); err != nil {
+		return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusNotFound, msg: "Ticket not found"}
+	}
+	if checkoutKey.Valid && checkoutKey.String == idempotencyKey && status != "OPEN" {
+		return posCheckoutTxResult{Duplicate: true, VisitID: visitID}, nil
+	}
+	if status != "OPEN" {
+		return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusConflict, msg: "Ticket is not open"}
+	}
+	if expectedVersion > 0 && version != expectedVersion {
+		return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusConflict, code: "STALE_TICKET", msg: "Ticket changed"}
+	}
+	totals, totalErr := s.recalculatePOSTicket(ctx, tx, restaurantID, ticketID, ticketDiscount)
+	if totalErr != nil {
+		return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusBadRequest, msg: totalErr.Error()}
+	}
+	total = totals.TotalGrossCents
+	paymentTotal := int64(0)
+	for _, payment := range payments {
+		paymentTotal += payment.AmountCents
+	}
+	// Fully comped tickets still close and deduct stock without inventing a
+	// zero-value tender, which pos_payments intentionally forbids.
+	if total < 0 || paymentTotal != total || (total > 0 && len(payments) == 0) {
+		return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusConflict, code: "PAYMENT_MISMATCH", msg: "Payment total does not match ticket"}
+	}
+	var tipTotal int64
+	for _, payment := range payments {
+		if payment.Method == "CARD" {
+			if strings.TrimSpace(payment.ProviderReference) == "" {
+				return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusConflict, code: "CARD_REFERENCE_REQUIRED", msg: "Card terminal reference required"}
+			}
+			if payment.Provider == "" {
+				payment.Provider = "STANDALONE"
+			}
+		}
+		if payment.TipCents < 0 {
+			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusBadRequest, msg: "Tip cannot be negative"}
+		}
+		tipTotal += payment.TipCents
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_payments (restaurant_id,ticket_id,method,amount_cents,tip_cents,provider,provider_reference,card_last4,idempotency_key,received_by) VALUES (?,?,?,?,?,?,?,?,?,?)`, restaurantID, ticketID, payment.Method, payment.AmountCents, payment.TipCents, stockNullableString(payment.Provider), stockNullableString(payment.ProviderReference), stockNullableString(payment.CardLast4), payment.IdempotencyKey, userID); err != nil {
+			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusBadRequest, msg: "Payment could not be recorded"}
+		}
+	}
+	if tipTotal > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE pos_tickets SET tip_cents=? WHERE restaurant_id=? AND id=?`, tipTotal, restaurantID, ticketID); err != nil {
+			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error recording tip"}
+		}
+	}
+	stockStatus := "NOT_APPLICABLE"
+	if settings.StockMode != "OFF" {
+		snapshots, partial, stockErr := s.preparePOSTicketStock(ctx, tx, restaurantID, ticketID, settings.StockMode)
+		if stockErr != nil {
+			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error preparing stock deduction"}
+		}
+		if settings.StockMode == "LIVE" {
+			if stockErr = s.applyPOSTicketStock(ctx, tx, restaurantID, userID, ticketID, snapshots); stockErr != nil {
+				return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error applying stock deduction"}
+			}
+			stockStatus = "COMPLETE"
+			if partial {
+				stockStatus = "PARTIAL"
+			}
+		} else {
+			stockStatus = "SHADOW"
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE pos_tickets SET status='PAID',paid_cents=?,stock_status=?,checkout_idempotency_key=?,shift_id=?,closed_by=?,paid_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=?`, total, stockStatus, idempotencyKey, shiftID, userID, restaurantID, ticketID); err != nil {
+		return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error closing ticket"}
+	}
+	visitClosed := false
+	var tableID sql.NullInt64
+	if closeVisit || settings.AutoCloseVisit {
+		var openTickets int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND id<>? AND status='OPEN'`, restaurantID, visitID, ticketID).Scan(&openTickets); err != nil {
+			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error closing visit"}
+		}
+		if openTickets == 0 {
+			var serviceDate, serviceType, channel string
+			if err := tx.QueryRowContext(ctx, `SELECT service_date,service_type,channel,table_id FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, restaurantID, visitID).Scan(&serviceDate, &serviceType, &channel, &tableID); err != nil {
+				return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error closing visit"}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE pos_visits SET status='CLOSED',closed_by=?,closed_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, userID, restaurantID, visitID); err != nil {
+				return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error closing visit"}
+			}
+			serviceDate = normalizePOSDate(serviceDate)
+			visitClosed = true
+			if channel == "DINE_IN" && settings.CoversMode == "LIVE" {
+				if _, err := s.rebuildPOSAffluenceKey(ctx, tx, restaurantID, serviceDate, serviceType); err != nil {
+					log.Printf("[pos checkout] covers update failed restaurant=%d ticket=%d visit=%d date=%s service=%s: %v", restaurantID, ticketID, visitID, serviceDate, serviceType, err)
+					return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusInternalServerError, msg: "Error updating covers"}
+				}
+			}
+		}
+	}
+	_, _ = tx.ExecContext(ctx, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'CHECKOUT',JSON_OBJECT('stockStatus',?,'totalCents',?),?)`, restaurantID, ticketID, stockStatus, total, userID)
+	return posCheckoutTxResult{TotalCents: total, StockStatus: stockStatus, VisitClosed: visitClosed, VisitID: visitID, TableID: tableID}, nil
+}
+
 func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	if !s.checkPOSRateLimit("checkout", a.ActiveRestaurantID, a.User.ID, 120) {
@@ -270,52 +420,19 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 		}
 		paymentTotal += in.Payments[index].AmountCents
 	}
+	settings, err := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, 500, "Error loading POS settings")
+		return
+	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error checking out ticket")
 		return
 	}
 	defer tx.Rollback()
-	var status string
-	var visitID int64
-	var total, ticketDiscount int64
-	var version int
-	var checkoutKey sql.NullString
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,visit_id,total_gross_cents,ticket_discount_cents,version,checkout_idempotency_key FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &visitID, &total, &ticketDiscount, &version, &checkoutKey); err != nil {
-		httpx.WriteError(w, http.StatusNotFound, "Ticket not found")
-		return
-	}
-	if checkoutKey.Valid && checkoutKey.String == in.IdempotencyKey && status != "OPEN" {
-		tx.Rollback()
-		ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "ticket": ticket})
-		return
-	}
-	if status != "OPEN" {
-		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
-		return
-	}
-	if in.ExpectedVersion > 0 && version != in.ExpectedVersion {
-		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Ticket changed", "code": "STALE_TICKET"})
-		return
-	}
-	totals, totalErr := s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, ticketDiscount)
-	if totalErr != nil {
-		httpx.WriteError(w, http.StatusBadRequest, totalErr.Error())
-		return
-	}
-	total = totals.TotalGrossCents
-	// Fully comped tickets still close and deduct stock without inventing a
-	// zero-value tender, which pos_payments intentionally forbids.
-	if total < 0 || paymentTotal != total || total > 0 && len(in.Payments) == 0 {
-		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Payment total does not match ticket", "code": "PAYMENT_MISMATCH"})
-		return
-	}
-	settings, err := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
-	if err != nil {
-		httpx.WriteError(w, 500, "Error loading POS settings")
-		return
-	}
+	// The open shift is locked once for this ticket; the bulk day-close checkout
+	// resolves it a single time for the whole batch.
 	var shiftID *int64
 	if settings.RequireOpenShift {
 		var currentShift int64
@@ -325,101 +442,162 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 		}
 		shiftID = &currentShift
 	}
-	var tipTotal int64
-	for _, payment := range in.Payments {
-		if payment.Method == "CARD" {
-			if strings.TrimSpace(payment.ProviderReference) == "" {
-				httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Card terminal reference required", "code": "CARD_REFERENCE_REQUIRED"})
-				return
-			}
-			if payment.Provider == "" {
-				payment.Provider = "STANDALONE"
-			}
-		}
-		if payment.TipCents < 0 {
-			httpx.WriteError(w, http.StatusBadRequest, "Tip cannot be negative")
-			return
-		}
-		tipTotal += payment.TipCents
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO pos_payments (restaurant_id,ticket_id,method,amount_cents,tip_cents,provider,provider_reference,card_last4,idempotency_key,received_by) VALUES (?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, payment.Method, payment.AmountCents, payment.TipCents, stockNullableString(payment.Provider), stockNullableString(payment.ProviderReference), stockNullableString(payment.CardLast4), payment.IdempotencyKey, a.User.ID)
-		if err != nil {
-			httpx.WriteError(w, http.StatusBadRequest, "Payment could not be recorded")
-			return
-		}
-	}
-	if tipTotal > 0 {
-		if _, err = tx.ExecContext(r.Context(), `UPDATE pos_tickets SET tip_cents=? WHERE restaurant_id=? AND id=?`, tipTotal, a.ActiveRestaurantID, ticketID); err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error recording tip")
-			return
-		}
-	}
-	stockStatus := "NOT_APPLICABLE"
-	if settings.StockMode != "OFF" {
-		snapshots, partial, stockErr := s.preparePOSTicketStock(r.Context(), tx, a.ActiveRestaurantID, ticketID, settings.StockMode)
-		if stockErr != nil {
-			httpx.WriteError(w, 500, "Error preparing stock deduction")
-			return
-		}
-		if settings.StockMode == "LIVE" {
-			if stockErr = s.applyPOSTicketStock(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, snapshots); stockErr != nil {
-				httpx.WriteError(w, 500, "Error applying stock deduction")
-				return
-			}
-			stockStatus = "COMPLETE"
-			if partial {
-				stockStatus = "PARTIAL"
-			}
-		} else {
-			stockStatus = "SHADOW"
-		}
-	}
-	_, err = tx.ExecContext(r.Context(), `UPDATE pos_tickets SET status='PAID',paid_cents=?,stock_status=?,checkout_idempotency_key=?,shift_id=?,closed_by=?,paid_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=?`, total, stockStatus, in.IdempotencyKey, shiftID, a.User.ID, a.ActiveRestaurantID, ticketID)
-	if err != nil {
-		httpx.WriteError(w, 500, "Error closing ticket")
+	result, cerr := s.checkoutTicketInTx(r.Context(), tx, a.ActiveRestaurantID, ticketID, in.Payments, in.IdempotencyKey, in.ExpectedVersion, in.CloseVisit, settings, shiftID, a.User.ID)
+	if cerr != nil {
+		writeCheckoutTxError(w, cerr)
 		return
 	}
-	visitClosed := false
-	var serviceDate, serviceType, channel string
-	var tableID sql.NullInt64
-	if in.CloseVisit || settings.AutoCloseVisit {
-		var openTickets int
-		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND id<>? AND status='OPEN'`, a.ActiveRestaurantID, visitID, ticketID).Scan(&openTickets); err != nil {
-			httpx.WriteError(w, 500, "Error closing visit")
-			return
-		}
-		if openTickets == 0 {
-			if err = tx.QueryRowContext(r.Context(), `SELECT service_date,service_type,channel,table_id FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, visitID).Scan(&serviceDate, &serviceType, &channel, &tableID); err != nil {
-				httpx.WriteError(w, 500, "Error closing visit")
-				return
-			}
-			_, err = tx.ExecContext(r.Context(), `UPDATE pos_visits SET status='CLOSED',closed_by=?,closed_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, a.User.ID, a.ActiveRestaurantID, visitID)
-			if err != nil {
-				httpx.WriteError(w, 500, "Error closing visit")
-				return
-			}
-			serviceDate = normalizePOSDate(serviceDate)
-			visitClosed = true
-			if channel == "DINE_IN" && settings.CoversMode == "LIVE" {
-				if _, err = s.rebuildPOSAffluenceKey(r.Context(), tx, a.ActiveRestaurantID, serviceDate, serviceType); err != nil {
-					log.Printf("[pos checkout] covers update failed restaurant=%d ticket=%d visit=%d date=%s service=%s: %v", a.ActiveRestaurantID, ticketID, visitID, serviceDate, serviceType, err)
-					httpx.WriteError(w, 500, "Error updating covers")
-					return
-				}
-			}
-		}
+	if result.Duplicate {
+		ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "ticket": ticket})
+		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'CHECKOUT',JSON_OBJECT('stockStatus',?,'totalCents',?),?)`, a.ActiveRestaurantID, ticketID, stockStatus, total, a.User.ID)
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, 500, "Error checking out ticket")
 		return
 	}
-	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "pos_ticket_paid", map[string]any{"ticketId": ticketID, "visitId": visitID, "visitClosed": visitClosed, "tableId": stockNullableDBInt(tableID)})
+	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "pos_ticket_paid", map[string]any{"ticketId": ticketID, "visitId": result.VisitID, "visitClosed": result.VisitClosed, "tableId": stockNullableDBInt(result.TableID)})
 	s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
 	// The totals belong to the visit's business date, which after the cutoff is
 	// not the calendar day the sale is being rung up on.
-	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, s.posVisitServiceDate(r.Context(), a.ActiveRestaurantID, visitID))
+	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, s.posVisitServiceDate(r.Context(), a.ActiveRestaurantID, result.VisitID))
 	ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket, "stockStatus": stockStatus, "visitClosed": visitClosed})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket, "stockStatus": result.StockStatus, "visitClosed": result.VisitClosed})
+}
+
+// handleBOPOSCashDayBulkCheckout checks out every still-open ticket on a
+// business date with one payment method, then closes each ticket's visit. It is
+// the "close all open tables" sweep that unblocks the end-of-day Z close, which
+// refuses while any visit is open. One transaction makes the whole batch atomic
+// and idempotent: a replay finds no OPEN tickets and closes zero.
+func (s *Server) handleBOPOSCashDayBulkCheckout(w http.ResponseWriter, r *http.Request) {
+	a, _ := boAuthFromContext(r.Context())
+	date := strings.TrimSpace(chi.URLParam(r, "date"))
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid date")
+		return
+	}
+	var in struct {
+		PaymentMethod  string `json:"paymentMethod"`
+		IdempotencyKey string `json:"idempotencyKey"`
+		CloseVisits    *bool  `json:"closeVisits"`
+	}
+	if !posDecodeBody(w, r, &in) {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid bulk checkout")
+		return
+	}
+	method := strings.ToUpper(strings.TrimSpace(in.PaymentMethod))
+	// Bulk can only tender cash: card payments need a per-ticket terminal
+	// reference (checked in checkoutTicketInTx), which a date-wide sweep cannot
+	// supply, so any non-CASH method would 409 the batch at the first card ticket.
+	if method != "CASH" || strings.TrimSpace(in.IdempotencyKey) == "" || len(in.IdempotencyKey) > 120 {
+		httpx.WriteError(w, http.StatusBadRequest, "Bulk checkout only supports cash")
+		return
+	}
+	closeVisits := true
+	if in.CloseVisits != nil {
+		closeVisits = *in.CloseVisits
+	}
+	// A closed cash day is a signed Z closure; checking tickets out into it
+	// would mutate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForDate(r.Context(), a.ActiveRestaurantID, date)) {
+		return
+	}
+	if !s.checkPOSRateLimit("checkout", a.ActiveRestaurantID, a.User.ID, 120) {
+		httpx.WriteError(w, http.StatusTooManyRequests, "Too many checkout requests")
+		return
+	}
+	settings, err := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS settings")
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error starting bulk checkout")
+		return
+	}
+	defer tx.Rollback()
+	var shiftID *int64
+	if settings.RequireOpenShift {
+		var currentShift int64
+		if err = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1 FOR UPDATE`, a.ActiveRestaurantID).Scan(&currentShift); err != nil {
+			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Open POS shift required", "code": "SHIFT_REQUIRED"})
+			return
+		}
+		shiftID = &currentShift
+	}
+	rows, err := tx.QueryContext(r.Context(), `SELECT t.id, t.total_gross_cents FROM pos_tickets t JOIN pos_visits v ON v.id=t.visit_id WHERE v.restaurant_id=? AND v.service_date=? AND v.status='OPEN' AND t.status='OPEN' ORDER BY t.id FOR UPDATE`, a.ActiveRestaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading open tickets")
+		return
+	}
+	type pendingTicket struct {
+		ticketID int64
+		total    int64
+	}
+	var batch []pendingTicket
+	for rows.Next() {
+		var p pendingTicket
+		if err = rows.Scan(&p.ticketID, &p.total); err != nil {
+			rows.Close()
+			httpx.WriteError(w, http.StatusInternalServerError, "Error loading open tickets")
+			return
+		}
+		batch = append(batch, p)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading open tickets")
+		return
+	}
+	closedTickets, skippedTickets, closedVisits := 0, 0, 0
+	var totalGross int64
+	byMethod := map[string]int64{"CASH": 0, "CARD": 0, "BANK": 0, "OTHER": 0}
+	type closedVisit struct {
+		visitID int64
+		tableID sql.NullInt64
+	}
+	var closed []closedVisit
+	for _, p := range batch {
+		// A zero-value open ticket cannot take a pos_payments row (the column is
+		// strictly positive); skip it. It stays OPEN and the day-close guard will
+		// still block until it is handled individually.
+		if p.total <= 0 {
+			skippedTickets++
+			continue
+		}
+		ticketKey := in.IdempotencyKey + ":t:" + strconv.FormatInt(p.ticketID, 10)
+		payments := []posCheckoutPayment{{Method: method, AmountCents: p.total, IdempotencyKey: ticketKey}}
+		result, cerr := s.checkoutTicketInTx(r.Context(), tx, a.ActiveRestaurantID, p.ticketID, payments, ticketKey, 0, closeVisits, settings, shiftID, a.User.ID)
+		if cerr != nil {
+			writeCheckoutTxError(w, cerr)
+			return
+		}
+		if result.Duplicate {
+			continue
+		}
+		closedTickets++
+		if result.VisitClosed {
+			closedVisits++
+			closed = append(closed, closedVisit{visitID: result.VisitID, tableID: result.TableID})
+		}
+		totalGross += result.TotalCents
+		byMethod[method] += result.TotalCents
+	}
+	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',0,'BULK_CHECKOUT',JSON_OBJECT('date',?,'paymentMethod',?,'closedTickets',?,'closedVisits',?,'skippedTickets',?,'totalGrossCents',?),?)`, a.ActiveRestaurantID, date, method, closedTickets, closedVisits, skippedTickets, totalGross, a.User.ID)
+	if err = tx.Commit(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error committing bulk checkout")
+		return
+	}
+	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, date)
+	s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
+	// Mirror single-ticket checkout: tell other terminals which tables just
+	// freed up, otherwise they stay stale until a manual refresh.
+	for _, cv := range closed {
+		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "pos_visit_closed", map[string]any{"visitId": cv.visitID, "tableId": stockNullableDBInt(cv.tableID)})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "date": date, "paymentMethod": method, "closedTickets": closedTickets, "skippedTickets": skippedTickets, "closedVisits": closedVisits, "totalGrossCents": totalGross, "byMethod": byMethod})
 }
 
 type posRefundLineInput struct {
