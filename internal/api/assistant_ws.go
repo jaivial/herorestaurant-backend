@@ -250,7 +250,10 @@ func (c *assistantClient) loadHistory(ctx context.Context, sessionID int64) ([]a
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	// Contaminated rows already in the database keep poisoning their session on
+	// every replay, so filter them out of the context we send to the model.
+	// The hello frame reuses this, so the UI stops replaying them too.
+	return assistantFilterHistory(out), rows.Err()
 }
 
 func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, sessionToken string) {
@@ -409,9 +412,16 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		}
 		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "user", Content: results})
 	}
-	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, final.String()); err != nil {
-		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist reply"})
-		return
+	// Never persist an unusable reply: it would come back as history on the next
+	// turn and prime the model to produce more of the same. Dropping it keeps
+	// the session clean, and the user simply sees the (already streamed) text
+	// without it contaminating future context.
+	reply := assistantSanitizeForHistory(final.String())
+	if strings.TrimSpace(reply) != "" {
+		if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, reply); err != nil {
+			_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist reply"})
+			return
+		}
 	}
 	_ = c.writeJSON(map[string]any{"type": "done"})
 }
