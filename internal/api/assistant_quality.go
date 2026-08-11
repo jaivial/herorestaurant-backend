@@ -83,7 +83,7 @@ func assistantReplyIsGarbled(text string) bool {
 		return false
 	}
 
-	var letters, spanish, foreign, symbols, replacement, vowels, total int
+	var letters, spanish, foreign, symbols, replacement, vowels, digits, total int
 	for _, r := range prose {
 		if unicode.IsSpace(r) {
 			continue
@@ -102,8 +102,10 @@ func assistantReplyIsGarbled(text string) bool {
 			} else if r > 0x7F {
 				spanish++
 			}
-		case unicode.IsDigit(r), unicode.IsPunct(r):
-			// digits and punctuation are normal in prices, dates and prose
+		case unicode.IsDigit(r):
+			digits++
+		case unicode.IsPunct(r):
+			// punctuation is normal in prices, dates and prose
 		case assistantAllowedSymbol(r):
 			// emoji and currency the model legitimately uses
 		default:
@@ -127,8 +129,10 @@ func assistantReplyIsGarbled(text string) bool {
 		return true
 	}
 	// Letter salad: real prose is mostly letters. "ido=HHwhHHwh=1HHwh-cDD/DD"
-	// is dominated by digits/punctuation with almost no words.
-	if float64(letters)/float64(total) < 0.45 {
+	// is dominated by digits/punctuation with almost no words. Digits are
+	// excluded from the denominator because invoice/date/price replies are
+	// legitimately digit-dense ("Factura 2026-000123456 por 1.234.567,89 €").
+	if nonDigits := total - digits; nonDigits >= 12 && float64(letters)/float64(nonDigits) < 0.55 {
 		return true
 	}
 	// Accent density far above natural Spanish indicates byte-level corruption.
@@ -166,6 +170,10 @@ func assistantForeignScript(r rune) bool {
 	case r >= 0xF900 && r <= 0xFAFF: // CJK compatibility
 	case r >= 0xAC00 && r <= 0xD7AF: // Hangul
 	case r >= 0x0370 && r <= 0x03FF: // Greek
+	case r >= 0x0E00 && r <= 0x0E7F: // Thai
+	case r >= 0x0900 && r <= 0x097F: // Devanagari
+	case r >= 0x0530 && r <= 0x058F: // Armenian
+	case r >= 0x10A0 && r <= 0x10FF: // Georgian
 	default:
 		return false
 	}

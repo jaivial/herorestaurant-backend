@@ -102,6 +102,48 @@ func TestAssistantFilterHistory(t *testing.T) {
 	}
 }
 
+// Replies that could plausibly trip the heuristics but are perfectly valid.
+// A false positive silences a good answer, so these matter more than misses.
+func TestAssistantReplyIsGarbled_NoFalsePositives(t *testing.T) {
+	cases := []struct{ name, text string }{
+		{"english loanwords", "El sistema de POS y el software de delivery estan online. Check-in y check-out OK."},
+		{"code snippet", "Usa el endpoint `/api/admin/bookings?date=2026-08-12` con el header X-Auth."},
+		{"invoice and money", "Factura 2026-000123456 por 1.234.567,89 € emitida el 12/08/2026 a las 20:30."},
+		{"all caps warning", "ATENCION: STOCK AGOTADO EN TODOS LOS ALMACENES. REVISAR URGENTE."},
+		{"wine names", "Tenemos Chardonnay, Riesling, Gewurztraminer, Cabernet Sauvignon y Tempranillo."},
+		{"valencian", "Bon dia! Hui tenim paella valenciana i fideua. Molt bo!"},
+		{"urls", "Mira https://villacarmen.com/menu/dia y https://villacarmen.com/reservas/nueva"},
+		{"emoji heavy", "🍽️🎉✨🥂🍷🍰📊✅⭐🔥 ¡Todo listo para hoy!"},
+		{"chart only", "```forky-chart\n{\"title\":\"Stock\",\"type\":\"donut\",\"data\":[{\"label\":\"Agotados\",\"value\":222}]}\n```"},
+		{"table only", "| Cliente | Hora |\n|---|---|\n| García | 20:30 |\n| Pérez | 21:00 |"},
+		{"long table rule", "| Fecha | Reservas | Comensales |\n|-------|----------|------------|\n| 27 dic | 5 | 20 |"},
+		{"accent heavy", "Cañón, mañana, señor, árbol, océano, más, día, café, sofá, jamón, limón."},
+		{"numbered list", "1. Reserva 12:00\n2. Reserva 13:30\n3. Reserva 21:00"},
+		{"bare json tool echo", `{"date":"","people":12391,"total":2159}`},
+	}
+	for _, c := range cases {
+		if assistantReplyIsGarbled(c.text) {
+			t.Errorf("false positive [%s]: %q", c.name, c.text)
+		}
+	}
+}
+
+// Corruption the model actually produced in this project.
+func TestAssistantReplyIsGarbled_RealWorldCorruption(t *testing.T) {
+	cases := []struct{ name, text string }{
+		{"cjk injection", "Aquí tienes el resumen 做准备 para la semana 精彩的 completa del restaurante hoy"},
+		{"thai injection", "Detalles de la reserva ฎ⸍ para la semana que viene con todos los datos"},
+		{"arabic injection", "El botillín destacado ﻯ con los articulos trackeados del almacen"},
+		{"long dash run", "Reserva confirmada -----------------------------------------------------------------------------------"},
+		{"consonant salad", "ido=HHwhHHwh=1HHwh-cDD/DD/DDDD=DD/DD/DDDD"},
+	}
+	for _, c := range cases {
+		if !assistantReplyIsGarbled(c.text) {
+			t.Errorf("missed corruption [%s]: %q", c.name, c.text)
+		}
+	}
+}
+
 // Non-string content (tool_use / tool_result blocks) must pass through
 // untouched: the filter only judges plain text replies.
 func TestAssistantFilterHistory_KeepsStructuredContent(t *testing.T) {
