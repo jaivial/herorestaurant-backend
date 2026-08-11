@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -385,7 +386,10 @@ func assistantRecoverEncodedReply(text string) string {
 	// wrapped answer can arrive as several base64 blobs separated by blank
 	// lines. The concatenation is not valid base64 as a whole, so decode each
 	// blank-line-separated block on its own and keep the non-base64 ones as-is.
-	if decoded, ok := assistantRecoverEncodedBlocks(candidate); ok {
+	// Note this works on the ORIGINAL text: assistantStripBase64Wrapper trims
+	// trailing backticks globally, which would eat the closing fence of a
+	// ```forky-chart block and stop the UI from rendering the chart.
+	if decoded, ok := assistantRecoverEncodedBlocks(text); ok {
 		return decoded
 	}
 	// MiniMax intermittently hallucinates CJK (Chinese) phrases and filler
@@ -402,7 +406,8 @@ func assistantRecoverEncodedReply(text string) string {
 // not base64 are preserved verbatim. Reports ok only when at least one block was
 // actually decoded, so plain replies fall through untouched.
 func assistantRecoverEncodedBlocks(text string) (string, bool) {
-	blocks := strings.Split(text, "\n\n")
+	// Split on blank lines, tolerating CRLF and runs of more than two newlines.
+	blocks := assistantBlankLineSplit.Split(text, -1)
 	if len(blocks) < 2 {
 		return "", false
 	}
@@ -435,6 +440,9 @@ func assistantRecoverEncodedBlocks(text string) (string, bool) {
 	}
 	return strings.Join(out, "\n\n"), true
 }
+
+// assistantBlankLineSplit matches a blank-line separator (CRLF tolerant).
+var assistantBlankLineSplit = regexp.MustCompile(`(?:\r?\n){2,}`)
 
 // assistantStripBase64Wrapper removes markdown code-fence backticks, leading
 // "data:", quotes and stray punctuation that MiniMax may place around a

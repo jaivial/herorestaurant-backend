@@ -423,6 +423,26 @@ func TestAssistantRecoverEncodedReply_MultipleBlocks(t *testing.T) {
 	if !strings.Contains(got, "forky-chart") {
 		t.Errorf("chart block was lost: %q", got)
 	}
+	// The closing fence must survive: the UI parser requires ```forky-chart ...
+	// ``` and silently renders nothing without it.
+	if !strings.HasSuffix(strings.TrimSpace(got), "```") {
+		t.Errorf("chart closing fence was stripped: %q", got)
+	}
+}
+
+// Blocks may be separated by CRLF or by more than one blank line.
+func TestAssistantRecoverEncodedReply_MultipleBlocksCRLF(t *testing.T) {
+	blob := base64.StdEncoding.EncodeToString([]byte("Resumen de stock disponible."))
+	for _, sep := range []string{"\r\n\r\n", "\n\n\n"} {
+		in := blob + sep + "Texto normal de cierre."
+		got := assistantRecoverEncodedReply(in)
+		if strings.Contains(got, blob) {
+			t.Errorf("sep %q: base64 not decoded: %q", sep, got)
+		}
+		if !strings.Contains(got, "Texto normal de cierre.") {
+			t.Errorf("sep %q: trailing prose lost: %q", sep, got)
+		}
+	}
 }
 
 func TestAssistantRecoverEncodedReply_Truncated(t *testing.T) {
