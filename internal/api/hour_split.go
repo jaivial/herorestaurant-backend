@@ -96,7 +96,7 @@ func rebalancePercentages(percentages map[string]float64, changedHour string, ne
 	if drift != 0 {
 		// Assign drift (in 0.01 steps) to hours with the largest fractional remainder.
 		type rem struct {
-			k   string
+			k    string
 			frac float64
 		}
 		rems := make([]rem, 0, len(others))

@@ -358,15 +358,15 @@ func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) 
 	}
 
 	var (
-		modeRaw            sql.NullString
-		morningRaw         sql.NullString
-		nightRaw           sql.NullString
-		weekdayRaw         sql.NullString
-		dailyLimitRaw      sql.NullInt64
-		mesas2Raw          sql.NullString
-		mesas3Raw          sql.NullString
-		hourSplitRaw       sql.NullInt64
-		defaultPercentRaw  sql.NullString
+		modeRaw           sql.NullString
+		morningRaw        sql.NullString
+		nightRaw          sql.NullString
+		weekdayRaw        sql.NullString
+		dailyLimitRaw     sql.NullInt64
+		mesas2Raw         sql.NullString
+		mesas3Raw         sql.NullString
+		hourSplitRaw      sql.NullInt64
+		defaultPercentRaw sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit, hour_split_enabled, default_hour_percentages_json
