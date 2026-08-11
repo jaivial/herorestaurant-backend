@@ -359,6 +359,72 @@ func TestAssistantRecoverEncodedReply_WrappedVariants(t *testing.T) {
 	}
 }
 
+// Unaccented Spanish prose must survive the base64 sniffer. Every word here is
+// spelled with characters that also belong to the base64 alphabet, so once the
+// sniffer stripped spaces the whole sentence looked like a payload and was
+// "decoded" into garbage — silently corrupting good replies in the live chat.
+func TestAssistantRecoverEncodedReply_PlainProseIsNotDecoded(t *testing.T) {
+	cases := []string{
+		"Si es posible Revisalo y te cuento el menu de comida disponible",
+		"Estos son los horarios que tenemos fijados en el sistema",
+		"Aqui tienes el resumen de stock con todas las categorias",
+		"Hola Soy Forky el asistente de tu restaurante",
+		"Hoy no tenemos reservas registradas en el sistema",
+	}
+	for _, c := range cases {
+		if got := assistantRecoverEncodedReply(c); got != c {
+			t.Errorf("plain prose was corrupted\n in : %q\n out: %q", c, got)
+		}
+	}
+}
+
+// Emoji from the Dingbats / Miscellaneous Symbols blocks are ordinary output,
+// not MiniMax filler glyphs. The filler range used to swallow them, silently
+// deleting ✨/✅/➡ from otherwise perfect replies.
+func TestAssistantCleanseReply_KeepsCommonEmoji(t *testing.T) {
+	cases := []string{
+		"Listo ✅ la reserva quedo confirmada",
+		"Mesa lista ➡ pasa por caja ⚡",
+		"¡Todo correcto! ✔ Buen servicio ✨",
+		"¡Hola! 😊 Aqui tienes los horarios 🍽️ y la carta 🍴✨",
+	}
+	for _, c := range cases {
+		if got := assistantCleanseReply(c); got != c {
+			t.Errorf("emoji were stripped\n in : %q\n out: %q", c, got)
+		}
+	}
+}
+
+// A tool-using turn concatenates the text of every model round, so a wrapped
+// answer can arrive as several base64 blobs separated by blank lines (the model
+// repeats itself once per round). The whole string is not valid base64, so the
+// single-payload path cannot decode it and users saw a raw blob in the chat.
+func TestAssistantRecoverEncodedReply_MultipleBlocks(t *testing.T) {
+	blob := base64.StdEncoding.EncodeToString([]byte("¡Hola! Aqui el resumen de stock: 222 articulos."))
+	prose := "Resultado: **222 articulos** sin existencias."
+	chart := "```forky-chart\n{\"title\":\"Stock\"}\n```"
+
+	// The same blob repeated per round, then real prose and a chart block.
+	in := blob + "\n\n" + blob + "\n\n" + prose + "\n\n" + chart
+	got := assistantRecoverEncodedReply(in)
+
+	if strings.Contains(got, blob) {
+		t.Errorf("base64 block was not decoded: %q", got)
+	}
+	if !strings.Contains(got, "resumen de stock") {
+		t.Errorf("decoded text missing: %q", got)
+	}
+	if strings.Count(got, "resumen de stock") != 1 {
+		t.Errorf("repeated identical blob should be collapsed once: %q", got)
+	}
+	if !strings.Contains(got, prose) {
+		t.Errorf("plain prose block was lost: %q", got)
+	}
+	if !strings.Contains(got, "forky-chart") {
+		t.Errorf("chart block was lost: %q", got)
+	}
+}
+
 func TestAssistantRecoverEncodedReply_Truncated(t *testing.T) {
 	// len%4 == 1 truncation must still recover the readable head.
 	msg := "Información de la semana próxima para el lunes con detalle."
