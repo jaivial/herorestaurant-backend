@@ -77,3 +77,44 @@ Scope: todo lo que cuelga de `backend/`.
 2. Verificar formato y compilacion (`go fmt` en archivos tocados cuando aplique).
 3. Validar al menos un flujo real del endpoint cambiado.
 4. Confirmar que no se rompieron rutas legacy relacionadas.
+
+---
+
+## Workflow por tarea (obligatorio)
+
+Toda tarea nueva sigue este flujo completo, sin omitir pasos:
+
+1. **Plan en worktree nuevo**:
+   ```bash
+   git worktree add /home/jaime/wt/<repo>-<tarea> -b <tipo>/<tarea> main
+   cd /home/jaime/wt/<repo>-<tarea>
+   ```
+2. **Editar + test**: implementar cambios, correr tests/build del repo (Go: `go test ./...`, `go vet ./...`, `go build ./...`).
+3. **Commit + push** de todos los cambios al branch nuevo:
+   ```bash
+   git add -A && git commit -m "<conventional commit msg>"
+   git push -u origin <tipo>/<tarea>
+   ```
+4. **Abrir PR** contra `main` del repo base.
+5. **Loop de review** con el skill `pr-review`:
+   - Corregir todo blocker importante o medio encontrado.
+   - Re-correr `pr-review` tras cada fix.
+   - Repetir hasta que no queden blockers importantes ni medios.
+6. **Merge** del PR.
+7. **Refetch + pull** en el repo base:
+   ```bash
+   git fetch --all --prune
+   git checkout main && git pull --ff-only
+   ```
+8. **Limpiar worktree y branches** del PR ya mergeado:
+   ```bash
+   git worktree remove /home/jaime/wt/<repo>-<tarea>
+   git branch -D <tipo>/<tarea>
+   git push origin --delete <tipo>/<tarea>
+   ```
+
+Reglas del workflow:
+- Una tarea = un worktree = un branch = un PR.
+- Nunca editar directo sobre `main`.
+- Si una tarea afecta varios repos (`backend`, `preactvillacarmen`, `backoffice`), abrir un PR por repo con los cambios relacionados; coordinar merges.
+- El loop `pr-review` → fix → `pr-review` es obligatorio antes del merge.
