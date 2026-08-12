@@ -41,10 +41,10 @@ func seedBOPreferenceUser(t *testing.T, db *sql.DB) (int, func()) {
 
 func TestValidBOPreference(t *testing.T) {
 	cases := []struct {
-		name            string
-		key, value      string
-		wantValid       bool
-		wantNormalized  string
+		name           string
+		key, value     string
+		wantValid      bool
+		wantNormalized string
 	}{
 		{name: "tabla", key: "reservasDisplayMode", value: "tabla", wantValid: true, wantNormalized: "tabla"},
 		{name: "grid", key: "reservasDisplayMode", value: "grid", wantValid: true, wantNormalized: "grid"},
