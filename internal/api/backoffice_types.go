@@ -23,9 +23,10 @@ type boRestaurant struct {
 }
 
 type boSession struct {
-	User               boUser         `json:"user"`
-	Restaurants        []boRestaurant `json:"restaurants"`
-	ActiveRestaurantID int            `json:"activeRestaurantId"`
+	User               boUser            `json:"user"`
+	Restaurants        []boRestaurant    `json:"restaurants"`
+	ActiveRestaurantID int               `json:"activeRestaurantId"`
+	Preferences        map[string]string `json:"preferences"`
 }
 
 type boAuth struct {
