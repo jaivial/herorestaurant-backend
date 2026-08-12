@@ -125,13 +125,19 @@ Response:
 
 ### `GET /api/admin/me`
 Response:
-- `{ success: true, session: { user, restaurants, activeRestaurantId } }`
+- `{ success: true, session: { user, restaurants, activeRestaurantId, preferences } }`
 - `session.user` incluye `role`, `roleImportance`, `sectionAccess`, `username?` y `mustChangePassword`.
+- `session.preferences`: `map<string,string>` de preferencias UI del usuario en su restaurante activo (clave hoy: `reservasDisplayMode` = `tabla` | `grid`). Best-effort: `{}` si falla la lectura.
 - Also returns `moving_expiration_date` and refreshes `bo_session` cookie expiry.
 
 Session validation loads role importance and active member in the main session query. The moving
 expiration heartbeat is persisted at most once per minute; responses between heartbeats return the
 current `X-Moving-Expiration-Date` without rewriting the session row or cookie.
+
+### `PUT /api/admin/me/preferences`
+Requires backoffice session. Persiste una preferencia UI del usuario en su restaurante activo.
+Body (JSON): `key` (p. ej. `reservasDisplayMode`), `value` (p. ej. `tabla` | `grid`). Solo se aceptan claves/valores en lista blanca; los valores se normalizan a minúsculas.
+Response: `{ success: true, preferences: { ... } }` o `{ success: false, message }`.
 
 ### `GET /healthz`
 Unauthenticated readiness check. Uses a one-second DB ping timeout.

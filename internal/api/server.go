@@ -206,6 +206,7 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/password-resets/confirm", s.handleBOPasswordResetConfirm)
 
 		r.With(s.requireBOSession).Get("/me", s.handleBOMe)
+		r.With(s.requireBOSession).Put("/me/preferences", s.handleBOPreferencesSet)
 		r.With(s.requireBOSession).Post("/me/password", s.handleBOSetPassword)
 		r.With(s.requireBOSession).Post("/active-restaurant", s.handleBOSetActiveRestaurant)
 

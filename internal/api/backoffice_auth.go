@@ -264,6 +264,12 @@ func (s *Server) handleBOMe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	prefs, perr := s.getUserPreferences(r.Context(), a.User.ID, activeID)
+	if perr != nil {
+		// Best-effort: never fail the session handshake on a preference read.
+		prefs = map[string]string{}
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"session": boSession{
@@ -279,6 +285,7 @@ func (s *Server) handleBOMe(w http.ResponseWriter, r *http.Request) {
 			},
 			Restaurants:        restaurants,
 			ActiveRestaurantID: activeID,
+			Preferences:        prefs,
 		},
 	})
 }
