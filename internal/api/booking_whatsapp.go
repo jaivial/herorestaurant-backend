@@ -106,6 +106,16 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 	}
 	baseURL := publicBaseURLFromContext(ctx, s, restaurantID)
 
+	// Prefer the restaurant's configured website (ConfigContacto →
+	// restaurant_info.website) for public booking links, mirroring the email
+	// confirmation builder. Links must point to the restaurant's own domain,
+	// not the backend host or a hardcoded legacy domain.
+	if info, infoErr := s.loadRestaurantInfo(ctx, restaurantID); infoErr == nil && info.Website != "" {
+		if normalized, normalizeErr := normalizeRestaurantWebsiteURL(info.Website); normalizeErr == nil && normalized != "" {
+			baseURL = normalized
+		}
+	}
+
 	msg, err := buildBookingWhatsAppButtonPayload(brandName, booking, bookingID, baseURL)
 	if err != nil {
 		return err

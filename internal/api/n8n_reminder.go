@@ -203,7 +203,18 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 	results["total"] = len(bookings)
 	appendReminderLog(ts + " - Found " + strconv.Itoa(len(bookings)) + " bookings needing reminders\n")
 
-	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")), "/")
+	// Resolve the public base URL for booking links. Prefer the restaurant's
+	// configured website (ConfigContacto → restaurant_info.website) so links
+	// point to its own domain, then fall back to env var / request host.
+	baseURL := ""
+	if info, infoErr := s.loadRestaurantInfo(r.Context(), restaurantID); infoErr == nil && info.Website != "" {
+		if normalized, normalizeErr := normalizeRestaurantWebsiteURL(info.Website); normalizeErr == nil && normalized != "" {
+			baseURL = normalized
+		}
+	}
+	if baseURL == "" {
+		baseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")), "/")
+	}
 	if baseURL == "" {
 		if host := normalizedTenantHost(r); host != "" {
 			baseURL = "https://" + host
