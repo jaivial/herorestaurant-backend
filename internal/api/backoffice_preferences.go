@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"strings"
 
@@ -99,10 +98,4 @@ func (s *Server) handleBOPreferencesSet(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "preferences": prefs})
-}
-
-// errMissingUserPreferencesRows lets callers distinguish "table missing" from
-// "no rows" when tolerantly loading preferences on best-effort endpoints.
-func errMissingUserPreferencesRows(err error) bool {
-	return err != nil && err != sql.ErrNoRows
 }
