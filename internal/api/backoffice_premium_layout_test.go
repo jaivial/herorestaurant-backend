@@ -142,8 +142,10 @@ func TestTplScopeForLayout_DefaultsToTemplateWhenTemplateExists(t *testing.T) {
 	if got := tplScopeForLayout(map[string]any{}, map[string]any{"limit_area_template_points": []any{}}); got != "template" {
 		t.Fatalf("expected default scope=template when template exists, got %q", got)
 	}
-	if got := tplScopeForLayout(map[string]any{}, nil); got != "template" {
-		t.Fatalf("expected default scope=template with no template, got %q", got)
+	// Without a floor template there is nothing global to edit: the honest
+	// default is the per-day scope so the UI never pretends a template exists.
+	if got := tplScopeForLayout(map[string]any{}, nil); got != "day" {
+		t.Fatalf("expected default scope=day with no template, got %q", got)
 	}
 	if got := tplScopeForLayout(map[string]any{"_template_scope": "day"}, nil); got != "day" {
 		t.Fatalf("expected explicit day scope to win, got %q", got)

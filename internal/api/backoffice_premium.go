@@ -1372,13 +1372,17 @@ func (s *Server) handleBOPremiumTablesTemplateGet(w http.ResponseWriter, r *http
 		return
 	}
 	hasTemplate := tpl != nil && tplLen(tpl) > 0
+	scope := "template"
+	if !hasTemplate {
+		scope = "day"
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
 		"entity":       "template",
 		"floor_number": floorNumber,
 		"has_template": hasTemplate,
 		"template":     tpl,
-		"scope":        "template",
+		"scope":        scope,
 	})
 }
 
@@ -1800,7 +1804,7 @@ func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request)
 						if req.YPos != nil {
 							y = int64(math.Round(*req.YPos))
 						}
-						if _, saveErr := s.upsertBOPremiumTableLayoutPosition(r.Context(), a.ActiveRestaurantID, req.Date, msg.FloorNumber, req.ID, x, y); saveErr != nil {
+						if _, saveErr := s.upsertBOPremiumTablePositionScoped(r.Context(), a.ActiveRestaurantID, req.Date, msg.FloorNumber, req.ID, x, y, msg.Scope); saveErr != nil {
 							continue
 						}
 					}
@@ -2743,16 +2747,10 @@ func (s *Server) loadBOPremiumTableItem(ctx context.Context, restaurantID int, t
 		if lerr != nil {
 			return nil, lerr
 		}
-		if layoutPositions, ok := asStringAnyMap(layout["table_positions"]); ok {
-			if pos, exists := asStringAnyMap(layoutPositions[strconv.FormatInt(tableID, 10)]); exists {
-				if x, ok := anyToInt64OK(pos["x_pos"]); ok {
-					table["x_pos"] = x
-				}
-				if y, ok := anyToInt64OK(pos["y_pos"]); ok {
-					table["y_pos"] = y
-				}
-			}
+		if tpl, tplErr := s.loadBOPremiumTableLayoutTemplate(ctx, restaurantID, *floorNumber); tplErr == nil {
+			layout = mergeBOPremiumLayoutWithTemplate(layout, tpl)
 		}
+		applyBOPremiumTablePositions([]map[string]any{table}, layout)
 	}
 	return table, nil
 }
@@ -2782,11 +2780,6 @@ func (s *Server) loadBOPremiumTablesSnapshot(ctx context.Context, restaurantID i
 		}
 	}
 
-	layoutPositions := map[string]any{}
-	if raw, ok := asStringAnyMap(layout["table_positions"]); ok {
-		layoutPositions = raw
-	}
-
 	openPOSVisits := map[int64]map[string]any{}
 	posRows, posErr := s.db.QueryContext(ctx, `SELECT table_id,id,covers,opened_at FROM pos_visits WHERE restaurant_id=? AND channel='DINE_IN' AND status='OPEN' AND table_id IS NOT NULL`, restaurantID)
 	if posErr == nil {
@@ -2811,17 +2804,11 @@ func (s *Server) loadBOPremiumTablesSnapshot(ctx context.Context, restaurantID i
 				table["status"] = "occupied"
 				table["pos_visit"] = visit
 			}
-			if pos, exists := asStringAnyMap(layoutPositions[strconv.FormatInt(tableID, 10)]); exists {
-				if x, ok := anyToInt64OK(pos["x_pos"]); ok {
-					table["x_pos"] = x
-				}
-				if y, ok := anyToInt64OK(pos["y_pos"]); ok {
-					table["y_pos"] = y
-				}
-			}
 		}
 		tables = append(tables, table)
 	}
+
+	applyBOPremiumTablePositions(tables, layout)
 
 	areasOut := make([]map[string]any, 0, len(areas))
 	for _, area := range areas {
@@ -2902,6 +2889,29 @@ func (s *Server) upsertBOPremiumTableLayoutPosition(ctx context.Context, restaur
 	tablePositions[strconv.FormatInt(tableID, 10)] = map[string]any{"x_pos": xPos, "y_pos": yPos}
 	layout["table_positions"] = tablePositions
 	return s.upsertBOPremiumTableLayout(ctx, restaurantID, dateISO, floorNumber, layout)
+}
+
+// upsertBOPremiumTablePositionScoped writes a table position either to the
+// cross-day template (scope "template") or to the per-day layout (default).
+func (s *Server) upsertBOPremiumTablePositionScoped(ctx context.Context, restaurantID int, dateISO string, floorNumber int, tableID int64, xPos int64, yPos int64, scope string) (map[string]any, error) {
+	if scope == "template" {
+		tpl, err := s.loadBOPremiumTableLayoutTemplate(ctx, restaurantID, floorNumber)
+		if err != nil {
+			return nil, err
+		}
+		if tpl == nil {
+			tpl = map[string]any{}
+		}
+		positions := map[string]any{}
+		if raw, ok := asStringAnyMap(tpl["table_positions"]); ok {
+			positions = raw
+		}
+		positions[strconv.FormatInt(tableID, 10)] = map[string]any{"x_pos": xPos, "y_pos": yPos}
+		tpl["table_positions"] = positions
+		tpl["template_updated_at"] = time.Now().UTC().Format(time.RFC3339)
+		return s.upsertBOPremiumTableLayoutTemplate(ctx, restaurantID, floorNumber, tpl)
+	}
+	return s.upsertBOPremiumTableLayoutPosition(ctx, restaurantID, dateISO, floorNumber, tableID, xPos, yPos)
 }
 
 func (s *Server) patchBOPremiumTableLayout(ctx context.Context, restaurantID int, dateISO string, floorNumber int, patch map[string]any) (map[string]any, error) {
@@ -2998,6 +3008,32 @@ func (s *Server) deleteBOPremiumTableLayoutTemplate(ctx context.Context, restaur
 	return nil
 }
 
+// applyBOPremiumTablePositions mutates each table map in place, overriding
+// x_pos/y_pos from the layout table_positions map. Area table slices share
+// the same map pointers, so mutating the tables slice keeps areas in sync.
+func applyBOPremiumTablePositions(tables []map[string]any, layout map[string]any) {
+	layoutPositions := map[string]any{}
+	if raw, ok := asStringAnyMap(layout["table_positions"]); ok {
+		layoutPositions = raw
+	}
+	for _, table := range tables {
+		tableID, ok := anyToInt64OK(table["id"])
+		if !ok || tableID <= 0 {
+			continue
+		}
+		pos, exists := asStringAnyMap(layoutPositions[strconv.FormatInt(tableID, 10)])
+		if !exists {
+			continue
+		}
+		if x, ok := anyToInt64OK(pos["x_pos"]); ok {
+			table["x_pos"] = x
+		}
+		if y, ok := anyToInt64OK(pos["y_pos"]); ok {
+			table["y_pos"] = y
+		}
+	}
+}
+
 // loadBOPremiumTablesSnapshot now merges the per-day layout with the floor
 // template so the front-end always receives the resolved view. The original
 // per-day row is preserved untouched in the database; the template is the
@@ -3015,6 +3051,9 @@ func (s *Server) loadBOPremiumTablesSnapshotWithTemplate(ctx context.Context, re
 		return areas, tables, layout, nil
 	}
 	merged := mergeBOPremiumLayoutWithTemplate(layout, tpl)
+	// Re-apply positions from the merged layout: table_positions in the
+	// template win per id, the per-day layout fills the rest.
+	applyBOPremiumTablePositions(tables, merged)
 	// Also inject the template + scope flag at the snapshot level so the
 	// client can render the toggle correctly without a second round trip.
 	merged["template"] = tpl
@@ -3049,11 +3088,27 @@ func mergeBOPremiumLayoutWithTemplate(layout map[string]any, tpl map[string]any)
 		return layout
 	}
 	for _, key := range []string{"limit_area_template_points", "draw_elements_template"} {
-		if _, hasOverride := layout["_"+key+"_override"]; hasOverride {
+		// A null override marker (used by test/cleanup payloads to unset
+		// state) means "no override": only a non-nil marker blocks the merge.
+		if v, hasOverride := layout["_"+key+"_override"]; hasOverride && v != nil {
 			continue
 		}
 		if v, ok := tpl[key]; ok {
 			layout[key] = v
+		}
+	}
+	// table_positions merge per table id: the template wins for ids it owns
+	// and the per-day layout fills the remaining ids, so dates that were
+	// never positioned keep their own layout while template-scope moves
+	// propagate to every date without a day-scope marker.
+	if v, hasOverride := layout["_table_positions_override"]; !hasOverride || v == nil {
+		if tplPositions, ok := asStringAnyMap(tpl["table_positions"]); ok && len(tplPositions) > 0 {
+			dayPositions, _ := asStringAnyMap(layout["table_positions"])
+			merged := cloneStringAnyMap(dayPositions)
+			for id, pos := range tplPositions {
+				merged[id] = pos
+			}
+			layout["table_positions"] = merged
 		}
 	}
 	return layout
@@ -3068,6 +3123,12 @@ func tplScopeForLayout(layout map[string]any, tpl map[string]any) string {
 	}
 	if scope, _ := layout["_template_scope"].(string); scope == "template" {
 		return "template"
+	}
+	// Without a floor template there is nothing global to edit: the honest
+	// default is the per-day scope (the toggle only appears once a template
+	// exists, so an absent template must never report "template").
+	if tpl == nil || len(tpl) == 0 {
+		return "day"
 	}
 	return "template"
 }
