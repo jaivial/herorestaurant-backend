@@ -13,7 +13,7 @@ func posX(t *testing.T, pos map[string]any, tableID string) int64 {
 
 func TestMergeBOPremiumLayoutWithTemplateTablePositions(t *testing.T) {
 	layout := map[string]any{
-		"booking_states":  map[string]any{"1": map[string]any{"seated": true}},
+		"booking_states": map[string]any{"1": map[string]any{"seated": true}},
 		"table_positions": map[string]any{
 			"2": map[string]any{"x_pos": 20, "y_pos": 20},
 			"3": map[string]any{"x_pos": 30, "y_pos": 30},
@@ -57,7 +57,7 @@ func TestMergeBOPremiumLayoutWithTemplateDayScopeWinsWholesale(t *testing.T) {
 		"elements":        []any{},
 	}
 	tpl := map[string]any{
-		"table_positions":        map[string]any{"1": map[string]any{"x_pos": 999, "y_pos": 999}},
+		"table_positions":            map[string]any{"1": map[string]any{"x_pos": 999, "y_pos": 999}},
 		"limit_area_template_points": []map[string]any{{"x": 0.0, "y": 0.0}},
 	}
 	merged := mergeBOPremiumLayoutWithTemplate(layout, tpl)
