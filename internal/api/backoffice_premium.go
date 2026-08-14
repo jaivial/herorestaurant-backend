@@ -3105,10 +3105,8 @@ func (s *Server) loadBOPremiumTablesSnapshotWithTemplate(ctx context.Context, re
 	return areas, tables, merged, nil
 }
 
-// hasBOPremiumTemplateContent reports whether the template payload carries
-// real cross-day content (limit polygon, draw elements or table positions).
-// It mirrors the front-end `isNonEmptyTemplate` so both sides agree on when
-// the scope toggle must render.
+// nonEmptyAnySlice reports whether v is a non-empty slice/array. Used on
+// template fields that may arrive as []any (JSON) or typed slices (tests).
 func nonEmptyAnySlice(v any) bool {
 	if v == nil {
 		return false
@@ -3120,6 +3118,10 @@ func nonEmptyAnySlice(v any) bool {
 	return rv.Len() > 0
 }
 
+// hasBOPremiumTemplateContent reports whether the template payload carries
+// real cross-day content (limit polygon, draw elements or table positions).
+// It mirrors the front-end `isNonEmptyTemplate` so both sides agree on when
+// the scope toggle must render.
 func hasBOPremiumTemplateContent(tpl map[string]any) bool {
 	if len(tpl) == 0 {
 		return false
