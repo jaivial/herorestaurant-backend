@@ -107,3 +107,25 @@ func TestMergeBOPremiumLayoutWithTemplateEmptyInputs(t *testing.T) {
 		t.Fatal("nil template must leave the layout untouched")
 	}
 }
+
+func TestHasBOPremiumTemplateContent(t *testing.T) {
+	cases := []struct {
+		name string
+		tpl  map[string]any
+		want bool
+	}{
+		{"nil template", nil, false},
+		{"empty template", map[string]any{}, false},
+		{"only timestamp", map[string]any{"template_updated_at": "2024-01-01T00:00:00Z"}, false},
+		{"empty arrays", map[string]any{"limit_area_template_points": []any{}, "draw_elements_template": []any{}}, false},
+		{"limit points present", map[string]any{"limit_area_template_points": []map[string]any{{"x": 0.0, "y": 0.0}}}, true},
+		{"draw elements present", map[string]any{"draw_elements_template": []any{map[string]any{"id": "wall-1"}}}, true},
+		{"positions-only template", map[string]any{"table_positions": map[string]any{"7": map[string]any{"x_pos": 10, "y_pos": 20}}}, true},
+		{"empty positions", map[string]any{"table_positions": map[string]any{}}, false},
+	}
+	for _, tc := range cases {
+		if got := hasBOPremiumTemplateContent(tc.tpl); got != tc.want {
+			t.Fatalf("%s: expected %v, got %v", tc.name, tc.want, got)
+		}
+	}
+}

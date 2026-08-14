@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -1372,7 +1373,7 @@ func (s *Server) handleBOPremiumTablesTemplateGet(w http.ResponseWriter, r *http
 		writeBOPremiumError(w, http.StatusInternalServerError, "TEMPLATE_READ_FAILED", "No se pudo leer la plantilla")
 		return
 	}
-	hasTemplate := tpl != nil && tplLen(tpl) > 0
+	hasTemplate := tpl != nil && hasBOPremiumTemplateContent(tpl)
 	scope := "template"
 	if !hasTemplate {
 		scope = "day"
@@ -3090,7 +3091,7 @@ func (s *Server) loadBOPremiumTablesSnapshotWithTemplate(ctx context.Context, re
 		return areas, tables, layout, nil
 	}
 	tpl, tplErr := s.loadBOPremiumTableLayoutTemplate(ctx, restaurantID, *floorNumber)
-	if tplErr != nil || tplLen(tpl) == 0 {
+	if tplErr != nil || !hasBOPremiumTemplateContent(tpl) {
 		return areas, tables, layout, nil
 	}
 	merged := mergeBOPremiumLayoutWithTemplate(layout, tpl)
@@ -3104,15 +3105,37 @@ func (s *Server) loadBOPremiumTablesSnapshotWithTemplate(ctx context.Context, re
 	return areas, tables, merged, nil
 }
 
-func tplLen(tpl map[string]any) int {
-	if len(tpl) == 0 {
-		return 0
+// hasBOPremiumTemplateContent reports whether the template payload carries
+// real cross-day content (limit polygon, draw elements or table positions).
+// It mirrors the front-end `isNonEmptyTemplate` so both sides agree on when
+// the scope toggle must render.
+func nonEmptyAnySlice(v any) bool {
+	if v == nil {
+		return false
 	}
-	if v, ok := asStringAnyMap(tpl); ok {
-		return len(v)
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return false
 	}
-	return len(tpl)
+	return rv.Len() > 0
 }
+
+func hasBOPremiumTemplateContent(tpl map[string]any) bool {
+	if len(tpl) == 0 {
+		return false
+	}
+	if nonEmptyAnySlice(tpl["limit_area_template_points"]) {
+		return true
+	}
+	if nonEmptyAnySlice(tpl["draw_elements_template"]) {
+		return true
+	}
+	if positions, ok := asStringAnyMap(tpl["table_positions"]); ok && len(positions) > 0 {
+		return true
+	}
+	return false
+}
+
 
 // mergeBOPremiumLayoutWithTemplate layers the template fields into the per-day
 // layout unless the per-day layout has explicit overrides for those fields
@@ -3170,7 +3193,7 @@ func tplScopeForLayout(layout map[string]any, tpl map[string]any) string {
 	// Without a floor template there is nothing global to edit: the honest
 	// default is the per-day scope (the toggle only appears once a template
 	// exists, so an absent template must never report "template").
-	if tpl == nil || len(tpl) == 0 {
+	if !hasBOPremiumTemplateContent(tpl) {
 		return "day"
 	}
 	return "template"
