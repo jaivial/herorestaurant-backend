@@ -658,6 +658,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/tables", s.handleBOPremiumTablesList)
 		r.With(s.requireBOSession, reservasGate).Post("/tables", s.handleBOPremiumTablesCreate)
 		r.With(s.requireBOSession, reservasGate).Put("/tables", s.handleBOPremiumTablesUpdate)
+		r.With(s.requireBOSession, reservasGate).Delete("/tables/{id}", s.handleBOPremiumTablesDelete)
 		r.With(s.requireBOSession, reservasGate).Post("/tables/{id}/texture-image", s.handleBOPremiumTablesTextureImageUpload)
 		r.With(s.requireBOSession, reservasGate).Get("/tables/ws", s.handleBOPremiumTablesWS)
 		// Layout template (cross-day). Owns limit_area_template_points and

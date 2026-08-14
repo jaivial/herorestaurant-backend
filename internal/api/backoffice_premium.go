@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
 
 	"preactvillacarmen/internal/httpx"
@@ -1371,7 +1373,7 @@ func (s *Server) handleBOPremiumTablesTemplateGet(w http.ResponseWriter, r *http
 		writeBOPremiumError(w, http.StatusInternalServerError, "TEMPLATE_READ_FAILED", "No se pudo leer la plantilla")
 		return
 	}
-	hasTemplate := tpl != nil && tplLen(tpl) > 0
+	hasTemplate := tpl != nil && hasBOPremiumTemplateContent(tpl)
 	scope := "template"
 	if !hasTemplate {
 		scope = "day"
@@ -1705,6 +1707,48 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 	default:
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "entity inválida")
 	}
+}
+
+func (s *Server) handleBOPremiumTablesDelete(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	tableID, err := strconv.ParseInt(strings.TrimSpace(chi.URLParam(r, "id")), 10, 64)
+	if err != nil || tableID <= 0 {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "id invalido"})
+		return
+	}
+	if err := s.deleteBOPremiumTable(r.Context(), a.ActiveRestaurantID, tableID); err != nil {
+		var conflict *posTableConflictError
+		if errors.As(err, &conflict) {
+			writeBOPremiumError(w, http.StatusConflict, "TABLES_DELETE_CONFLICT", conflict.Error())
+			return
+		}
+		log.Printf("[ERROR] deleteBOPremiumTable failed: %v", err)
+		writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_DELETE_FAILED", "No se pudo eliminar la mesa")
+		return
+	}
+	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "table_deleted", map[string]any{"id": tableID})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "entity": "table", "id": tableID})
+}
+
+func (s *Server) deleteBOPremiumTable(ctx context.Context, restaurantID int, tableID int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM restaurant_tables WHERE restaurant_id = ? AND id = ?`, restaurantID, tableID)
+	if err != nil {
+		// FK RESTRICT from pos_visits (open DINE_IN visits reference the table).
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1451 {
+			return &posTableConflictError{msg: "La mesa tiene servicios abiertos en el TPV; ciérralos antes de eliminarla"}
+		}
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return &posTableConflictError{msg: "La mesa no existe"}
+	}
+	return nil
 }
 
 func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request) {
@@ -3047,7 +3091,7 @@ func (s *Server) loadBOPremiumTablesSnapshotWithTemplate(ctx context.Context, re
 		return areas, tables, layout, nil
 	}
 	tpl, tplErr := s.loadBOPremiumTableLayoutTemplate(ctx, restaurantID, *floorNumber)
-	if tplErr != nil || tplLen(tpl) == 0 {
+	if tplErr != nil || !hasBOPremiumTemplateContent(tpl) {
 		return areas, tables, layout, nil
 	}
 	merged := mergeBOPremiumLayoutWithTemplate(layout, tpl)
@@ -3061,14 +3105,37 @@ func (s *Server) loadBOPremiumTablesSnapshotWithTemplate(ctx context.Context, re
 	return areas, tables, merged, nil
 }
 
-func tplLen(tpl map[string]any) int {
+// nonEmptyAnySlice reports whether v is a non-empty slice/array. Used on
+// template fields that may arrive as []any (JSON) or typed slices (tests).
+func nonEmptyAnySlice(v any) bool {
+	if v == nil {
+		return false
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return false
+	}
+	return rv.Len() > 0
+}
+
+// hasBOPremiumTemplateContent reports whether the template payload carries
+// real cross-day content (limit polygon, draw elements or table positions).
+// It mirrors the front-end `isNonEmptyTemplate` so both sides agree on when
+// the scope toggle must render.
+func hasBOPremiumTemplateContent(tpl map[string]any) bool {
 	if len(tpl) == 0 {
-		return 0
+		return false
 	}
-	if v, ok := asStringAnyMap(tpl); ok {
-		return len(v)
+	if nonEmptyAnySlice(tpl["limit_area_template_points"]) {
+		return true
 	}
-	return len(tpl)
+	if nonEmptyAnySlice(tpl["draw_elements_template"]) {
+		return true
+	}
+	if positions, ok := asStringAnyMap(tpl["table_positions"]); ok && len(positions) > 0 {
+		return true
+	}
+	return false
 }
 
 // mergeBOPremiumLayoutWithTemplate layers the template fields into the per-day
@@ -3127,7 +3194,7 @@ func tplScopeForLayout(layout map[string]any, tpl map[string]any) string {
 	// Without a floor template there is nothing global to edit: the honest
 	// default is the per-day scope (the toggle only appears once a template
 	// exists, so an absent template must never report "template").
-	if tpl == nil || len(tpl) == 0 {
+	if !hasBOPremiumTemplateContent(tpl) {
 		return "day"
 	}
 	return "template"

@@ -139,8 +139,15 @@ func TestMergeBOPremiumLayoutWithTemplate_AppliesTemplateWhenGlobal(t *testing.T
 }
 
 func TestTplScopeForLayout_DefaultsToTemplateWhenTemplateExists(t *testing.T) {
-	if got := tplScopeForLayout(map[string]any{}, map[string]any{"limit_area_template_points": []any{}}); got != "template" {
-		t.Fatalf("expected default scope=template when template exists, got %q", got)
+	// A template row whose fields are all empty carries no real cross-day
+	// content: the scope must stay "day" so the front-end toggle stays hidden.
+	if got := tplScopeForLayout(map[string]any{}, map[string]any{"limit_area_template_points": []any{}}); got != "day" {
+		t.Fatalf("template without real content must default to day scope, got %q", got)
+	}
+	// Positions-only templates (created by template-scope table moves) are
+	// real cross-day content and must report "template".
+	if got := tplScopeForLayout(map[string]any{}, map[string]any{"table_positions": map[string]any{"3": map[string]any{"x_pos": 1, "y_pos": 2}}}); got != "template" {
+		t.Fatalf("positions-only template must default to template scope, got %q", got)
 	}
 	// Without a floor template there is nothing global to edit: the honest
 	// default is the per-day scope so the UI never pretends a template exists.
