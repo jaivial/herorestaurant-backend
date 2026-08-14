@@ -13,8 +13,8 @@ import (
 	"net"
 	"net/http"
 	"path"
-	"regexp"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -3135,7 +3135,6 @@ func hasBOPremiumTemplateContent(tpl map[string]any) bool {
 	}
 	return false
 }
-
 
 // mergeBOPremiumLayoutWithTemplate layers the template fields into the per-day
 // layout unless the per-day layout has explicit overrides for those fields
