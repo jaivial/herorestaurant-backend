@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
 
 	"preactvillacarmen/internal/httpx"
@@ -1705,6 +1706,48 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 	default:
 		writeBOPremiumError(w, http.StatusBadRequest, "BAD_REQUEST", "entity inválida")
 	}
+}
+
+func (s *Server) handleBOPremiumTablesDelete(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	tableID, err := strconv.ParseInt(strings.TrimSpace(chi.URLParam(r, "id")), 10, 64)
+	if err != nil || tableID <= 0 {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "id invalido"})
+		return
+	}
+	if err := s.deleteBOPremiumTable(r.Context(), a.ActiveRestaurantID, tableID); err != nil {
+		var conflict *posTableConflictError
+		if errors.As(err, &conflict) {
+			writeBOPremiumError(w, http.StatusConflict, "TABLES_DELETE_CONFLICT", conflict.Error())
+			return
+		}
+		log.Printf("[ERROR] deleteBOPremiumTable failed: %v", err)
+		writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_DELETE_FAILED", "No se pudo eliminar la mesa")
+		return
+	}
+	s.broadcastBOTablesEvent(a.ActiveRestaurantID, "table_deleted", map[string]any{"id": tableID})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "entity": "table", "id": tableID})
+}
+
+func (s *Server) deleteBOPremiumTable(ctx context.Context, restaurantID int, tableID int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM restaurant_tables WHERE restaurant_id = ? AND id = ?`, restaurantID, tableID)
+	if err != nil {
+		// FK RESTRICT from pos_visits (open DINE_IN visits reference the table).
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1451 {
+			return &posTableConflictError{msg: "La mesa tiene servicios abiertos en el TPV; ciérralos antes de eliminarla"}
+		}
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return &posTableConflictError{msg: "La mesa no existe"}
+	}
+	return nil
 }
 
 func (s *Server) handleBOPremiumTablesWS(w http.ResponseWriter, r *http.Request) {

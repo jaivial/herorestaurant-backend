@@ -2232,6 +2232,17 @@ Multipart form:
 Response:
 - `{ success: true, id, imageUrl }`
 
+### `DELETE /api/admin/tables/{id}`
+
+Elimina la mesa del restaurante activo.
+
+Response:
+- `{ success: true, entity: "table", id }`
+
+Errores:
+- `404/409` con `code: "TABLES_DELETE_CONFLICT"`: mesa inexistente, o con servicios abiertos en el TPV (`pos_visits` FK `ON DELETE RESTRICT`).
+- Broadcast WS: `table_deleted` con `{ id }`.
+
 ### `GET /api/admin/tables/ws`
 
 WebSocket events:
