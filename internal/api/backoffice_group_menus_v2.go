@@ -622,6 +622,38 @@ func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, me
 	return out, nil
 }
 
+// buildBOMenuV2AIImageTracker derives the AI image tracker from dishes already
+// loaded as part of the sections (each boV2Dish carries ai_requested_img,
+// ai_generating_img and ai_generated_img). It mirrors the shape returned by
+// loadBOMenuV2AIImageTracker so callers can skip a second scan of the dishes
+// table on menu loads.
+func buildBOMenuV2AIImageTracker(sections []boV2Section) boV2AIImagesTracker {
+	tracker := boV2AIImagesTracker{Items: make([]boV2AIImagesDishItem, 0, 16)}
+	seen := make(map[int64]struct{}, 16)
+	for _, sec := range sections {
+		for _, d := range sec.Dishes {
+			if _, ok := seen[d.ID]; ok {
+				continue
+			}
+			seen[d.ID] = struct{}{}
+			item := boV2AIImagesDishItem{
+				DishID:         d.ID,
+				AIRequested:    d.AIRequestedImg,
+				AIGenerating:   d.AIGeneratingImg,
+				AIGeneratedImg: d.AIGeneratedImg,
+			}
+			if item.AIRequested {
+				tracker.TotalRequested++
+			}
+			if item.AIGenerating {
+				tracker.TotalGenerating++
+			}
+			tracker.Items = append(tracker.Items, item)
+		}
+	}
+	return tracker
+}
+
 func (s *Server) loadBOMenuV2DishByID(r *http.Request, restaurantID int, menuID int64, sectionID int64, dishID int64) (boV2Dish, error) {
 	var (
 		d               boV2Dish
@@ -823,11 +855,11 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando secciones")
 		return
 	}
-	aiImages, err := s.loadBOMenuV2AIImageTracker(r.Context(), a.ActiveRestaurantID, menuID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando tracker AI")
-		return
-	}
+	// The AI tracker fields are already loaded as part of each dish above
+	// (ai_requested_img / ai_generating_img / ai_generated_img). Derive the
+	// tracker from those rows instead of re-scanning the dishes table, which
+	// otherwise doubles the dishes read on every menu load.
+	aiImages := buildBOMenuV2AIImageTracker(sections)
 	menuPreviewURL := s.publicMenuMediaURL(menuPreviewPathRaw.String)
 	menuPreviewAIRequested := menuPreviewAIRequestedInt != 0
 	menuPreviewAIGenerating := menuPreviewAIGeneratingInt != 0
