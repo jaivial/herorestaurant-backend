@@ -77,6 +77,7 @@ type waInbound struct {
 	MessageID  string
 	FromMe     bool
 	SessionRef string // instance token (uazapi) or instance name (evolution) for tenant routing
+	IsAudio    bool   // voice note; the bot cannot transcribe it
 }
 
 // waConnEvent is a normalized connection lifecycle event.

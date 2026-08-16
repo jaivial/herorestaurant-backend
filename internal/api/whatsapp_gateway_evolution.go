@@ -286,7 +286,7 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		} `json:"key"`
 		PushName string `json:"pushName"`
 		Message  struct {
-			Conversation    string `json:"conversation"`
+			Conversation    string          `json:"conversation"`
 			ExtendedTextMsg struct {
 				Text string `json:"text"`
 			} `json:"extendedTextMessage"`
@@ -296,6 +296,8 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 					SelectedRowID string `json:"selectedRowId"`
 				} `json:"singleSelectReply"`
 			} `json:"listResponseMessage"`
+			AudioMessage json.RawMessage `json:"audioMessage"`
+			PtvMessage   json.RawMessage `json:"ptvMessage"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(env.Data, &d); err != nil {
@@ -327,6 +329,7 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		MessageID:  d.Key.ID,
 		FromMe:     d.Key.FromMe,
 		SessionRef: strings.TrimSpace(env.Instance),
+		IsAudio:    d.Message.AudioMessage != nil || d.Message.PtvMessage != nil,
 	}, true
 }
 

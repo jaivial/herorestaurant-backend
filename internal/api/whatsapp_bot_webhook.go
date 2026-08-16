@@ -29,6 +29,7 @@ type botWebhookMessage struct {
 	FromMe        bool
 	InstanceToken string
 	Owner         string
+	IsAudio       bool // voice note (audioMessage/ptvMessage); the bot cannot transcribe it
 }
 
 // parseBotWebhookMessage extracts the message from a UAZAPI webhook body.
@@ -89,6 +90,7 @@ func parseBotWebhookMessage(body []byte) (botWebhookMessage, bool) {
 		PushName:  sanitizeBotPushName(pushName),
 		MessageID: messageID,
 		FromMe:    msg.FromMe,
+		IsAudio:   strings.Contains(strings.ToLower(msg.MessageType), "audio"),
 	}
 
 	var tokenField struct {
@@ -349,9 +351,14 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 	}
 
 	if msg.Text == "" {
-		// Unsupported media: polite fallback.
+		// Unsupported media: polite fallback. Voice notes get a specific reply:
+		// the bot is a reservation assistant and cannot listen to audio.
+		fallback := "Ahora mismo solo puedo gestionar mensajes de texto. ¿Me lo puedes escribir por aquí?"
+		if msg.IsAudio {
+			fallback = "¡Hola! Soy el robot de reservas. No tengo capacidad para escuchar audios ni atender llamadas. Escríbeme por texto, por favor."
+		}
 		if gw, ok := s.botGatewayFor(r.Context(), restaurantID); ok {
-			_ = gw.SendText(r.Context(), msg.Sender, "Ahora mismo solo puedo gestionar mensajes de texto. ¿Me lo puedes escribir por aquí?")
+			_ = gw.SendText(r.Context(), msg.Sender, fallback)
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "unsupportedContent": true})
 		return
