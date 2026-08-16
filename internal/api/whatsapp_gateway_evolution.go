@@ -286,7 +286,7 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		} `json:"key"`
 		PushName string `json:"pushName"`
 		Message  struct {
-			Conversation    string          `json:"conversation"`
+			Conversation    string `json:"conversation"`
 			ExtendedTextMsg struct {
 				Text string `json:"text"`
 			} `json:"extendedTextMessage"`
