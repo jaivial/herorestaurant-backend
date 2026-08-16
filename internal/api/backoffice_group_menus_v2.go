@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -626,7 +627,8 @@ func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, me
 // loaded as part of the sections (each boV2Dish carries ai_requested_img,
 // ai_generating_img and ai_generated_img). It mirrors the shape returned by
 // loadBOMenuV2AIImageTracker so callers can skip a second scan of the dishes
-// table on menu loads.
+// table on menu loads. Items are sorted by DishID to keep the JSON contract
+// byte-identical to the previous dedicated query (which ordered by id ASC).
 func buildBOMenuV2AIImageTracker(sections []boV2Section) boV2AIImagesTracker {
 	tracker := boV2AIImagesTracker{Items: make([]boV2AIImagesDishItem, 0, 16)}
 	seen := make(map[int64]struct{}, 16)
@@ -651,6 +653,9 @@ func buildBOMenuV2AIImageTracker(sections []boV2Section) boV2AIImagesTracker {
 			tracker.Items = append(tracker.Items, item)
 		}
 	}
+	sort.Slice(tracker.Items, func(i, j int) bool {
+		return tracker.Items[i].DishID < tracker.Items[j].DishID
+	})
 	return tracker
 }
 
