@@ -145,7 +145,8 @@ func (s *Server) saveBOStockDocumentExtractionWithFileModel(r *http.Request, res
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_document_scans (restaurant_id,document_type,source,file_path,storage_provider,storage_bucket,content_type,size_bytes,original_filename,retention_until,file_hash,raw_text,status,supplier_name,document_number,document_date,raw_extraction,model,confidence,uploaded_by) VALUES (?,?,?,IF(?='',NULL,?),IF(?='',NULL,'BUNNY_PRIVATE'),IF(?='',NULL,?),?,?,?,?,?,?,'NEEDS_REVIEW',?,?,NULLIF(?,''),?,?,?,?)`, restaurantID, documentType, source, objectPath, stockNullableString(objectPath), objectPath, objectPath, stockNullableString(s.cfg.BunnyPrivateStorageZone), stockNullableString(contentType), stockNullableInt64(size), stockNullableString(filename), retentionUntil, stockNullableString(fileHash), stockNullableString(rawText), stockNullableString(extraction.SupplierName), stockNullableString(extraction.DocumentNumber), extraction.DocumentDate, raw, model, extraction.Confidence, userID)
+	bunnyCfg, _ := s.loadBunnyCDNConfig(r.Context(), restaurantID)
+	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_document_scans (restaurant_id,document_type,source,file_path,storage_provider,storage_bucket,content_type,size_bytes,original_filename,retention_until,file_hash,raw_text,status,supplier_name,document_number,document_date,raw_extraction,model,confidence,uploaded_by) VALUES (?,?,?,IF(?='',NULL,?),IF(?='',NULL,'BUNNY_PRIVATE'),IF(?='',NULL,?),?,?,?,?,?,?,'NEEDS_REVIEW',?,?,NULLIF(?,''),?,?,?,?)`, restaurantID, documentType, source, objectPath, stockNullableString(objectPath), objectPath, objectPath, stockNullableString(bunnyCfg.PrivateStorageZone), stockNullableString(contentType), stockNullableInt64(size), stockNullableString(filename), retentionUntil, stockNullableString(fileHash), stockNullableString(rawText), stockNullableString(extraction.SupplierName), stockNullableString(extraction.DocumentNumber), extraction.DocumentDate, raw, model, extraction.Confidence, userID)
 	if err != nil {
 		return 0, err
 	}
@@ -238,7 +239,7 @@ func (s *Server) handleBOStockDocumentUpload(w http.ResponseWriter, r *http.Requ
 	objectPath := ""
 	filename := stockDocumentFilename(header.Filename)
 	var retentionUntil any
-	if s.bunnyPrivateConfigured() {
+	if s.bunnyPrivateConfiguredContext(r.Context()) {
 		objectPath = stockDocumentObjectPath(a.ActiveRestaurantID, filename, mediaType)
 		if err = s.bunnyPrivatePut(r.Context(), objectPath, payload, mediaType); err != nil {
 			httpx.WriteError(w, http.StatusBadGateway, "Private document storage failed")

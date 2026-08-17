@@ -781,10 +781,10 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 
 	// Best-effort: upload the PDF to the CDN and record its URL.
 	pdfURL := ""
-	if len(pdfBytes) > 0 && s.bunnyConfigured() {
+	if len(pdfBytes) > 0 && s.bunnyConfiguredContext(r.Context()) {
 		objectPath := fmt.Sprintf("%d/facturas/pdf/factura_%d.pdf", inv.RestaurantID, inv.ID)
 		if uerr := s.bunnyPut(r.Context(), objectPath, pdfBytes, "application/pdf"); uerr == nil {
-			pdfURL = s.bunnyPullURL(objectPath)
+			pdfURL = s.bunnyPullURL(r.Context(), objectPath)
 		} else {
 			log.Printf("[invoice-send] PDF upload failed for #%d: %v", inv.ID, uerr)
 		}
@@ -910,7 +910,7 @@ func (s *Server) handleBOInvoiceUploadImage(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Get the public URL
-	imageURL := s.bunnyPullURL(objectPath)
+	imageURL := s.bunnyPullURL(r.Context(), objectPath)
 
 	// Update invoice with image URL
 	_, err = s.db.ExecContext(r.Context(), `

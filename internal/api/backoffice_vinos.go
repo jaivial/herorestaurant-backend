@@ -160,7 +160,7 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 		v.Active = activeInt != 0
 		v.HasFoto = hasFotoInt != 0
 		if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" {
-			u := s.bunnyPullURL(fotoPath.String)
+			u := s.bunnyPullURL(r.Context(), fotoPath.String)
 			v.FotoURL = &u
 		}
 		v.AIRequestedImg = requestedInt != 0
@@ -597,7 +597,7 @@ func (s *Server) handleBOVinoImageUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(r.Context(), objectPath)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
 		"foto_url": fullURL,
@@ -672,7 +672,7 @@ func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
 	v.Active = activeInt != 0
 	v.HasFoto = hasFotoInt != 0
 	if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" {
-		u := s.bunnyPullURL(fotoPath.String)
+		u := s.bunnyPullURL(r.Context(), fotoPath.String)
 		v.FotoURL = &u
 	}
 	v.AIRequestedImg = requestedInt != 0

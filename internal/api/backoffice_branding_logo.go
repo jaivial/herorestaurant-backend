@@ -28,7 +28,7 @@ func (s *Server) handleBOBrandingLogoUpload(w http.ResponseWriter, r *http.Reque
 	}
 	restaurantID := a.ActiveRestaurantID
 
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfiguredContext(r.Context()) {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "Almacenamiento de imágenes no configurado")
 		return
 	}
@@ -89,7 +89,7 @@ func (s *Server) handleBOBrandingLogoUpload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(r.Context(), objectPath)
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO restaurant_branding (restaurant_id, logo_url) VALUES (?, ?)
@@ -123,7 +123,11 @@ func (s *Server) currentLogoObjectPath(ctx context.Context, restaurantID int) (s
 	}
 	// Stored URL is the pull URL: https://<pull-base>/<objectPath>. Extract the
 	// object path after the pull base.
-	base := strings.TrimRight(strings.TrimSpace(s.cfg.BunnyPullBaseURL), "/")
+	cfg, cfgErr := s.loadBunnyCDNConfig(ctx, restaurantID)
+	if cfgErr != nil {
+		return "", cfgErr
+	}
+	base := strings.TrimRight(cfg.PublicPullBaseURL, "/")
 	path := strings.TrimPrefix(u, base+"/")
 	if path == u || path == "" {
 		return "", nil
@@ -133,10 +137,11 @@ func (s *Server) currentLogoObjectPath(ctx context.Context, restaurantID int) (s
 
 // bunnyDelete removes an object from BunnyCDN storage.
 func (s *Server) bunnyDelete(ctx context.Context, objectPath string) error {
-	if !s.bunnyConfigured() {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	if !ok || !bunnyPublicConfigured(cfg) {
 		return errors.New("BunnyCDN storage not configured")
 	}
-	return bunnyDeleteWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyStorageZone), strings.TrimSpace(s.cfg.BunnyStorageKey), objectPath)
+	return bunnyDeleteWithCredentials(ctx, cfg.PublicStorageZone, cfg.PublicStorageAccessKey, objectPath)
 }
 
 // bunnyDeleteWithCredentials removes an object from BunnyCDN storage.

@@ -27,18 +27,24 @@ func main() {
 	apply := flag.Bool("apply", false, "actually delete orphaned objects (default: report only)")
 	graceHours := flag.Int("grace-hours", 48, "protect objects modified within this many hours")
 	maxRatio := flag.Float64("max-delete-ratio", 0.5, "abort if more than this share of eligible objects would be deleted")
+	restaurantID := flag.Int("restaurant-id", 0, "restaurant whose public BunnyCDN zone should be swept")
 	flag.Parse()
 
 	cfg := config.Load()
-	if cfg.BunnyStorageZone == "" || cfg.BunnyStorageKey == "" {
-		log.Fatal("cdn-sweep: public storage zone is not configured")
-	}
-
 	database, err := db.OpenMySQL(cfg.MySQL)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer database.Close()
+	if *restaurantID <= 0 {
+		log.Fatal("cdn-sweep: --restaurant-id is required")
+	}
+	if err := database.QueryRow(`SELECT public_storage_zone, public_storage_access_key FROM restaurant_bunnycdn_config WHERE restaurant_id=? LIMIT 1`, *restaurantID).Scan(&cfg.BunnyStorageZone, &cfg.BunnyStorageKey); err != nil {
+		log.Fatalf("cdn-sweep: public BunnyCDN configuration unavailable for restaurant %d: %v", *restaurantID, err)
+	}
+	if cfg.BunnyStorageZone == "" || cfg.BunnyStorageKey == "" {
+		log.Fatalf("cdn-sweep: public storage is not configured for restaurant %d", *restaurantID)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()

@@ -14,54 +14,77 @@ import (
 	"time"
 )
 
-func (s *Server) bunnyConfigured() bool {
-	return strings.TrimSpace(s.cfg.BunnyStorageKey) != "" && strings.TrimSpace(s.cfg.BunnyStorageZone) != "" && strings.TrimSpace(s.cfg.BunnyPullBaseURL) != ""
+func (s *Server) bunnyConfigForContext(ctx context.Context) (bunnyCDNConfig, bool) {
+	restaurantID, ok := restaurantIDFromContext(ctx)
+	if !ok {
+		return bunnyCDNConfig{}, false
+	}
+	cfg, err := s.loadBunnyCDNConfig(ctx, restaurantID)
+	return cfg, err == nil
 }
 
-func (s *Server) bunnyPrivateConfigured() bool {
-	return strings.TrimSpace(s.cfg.BunnyPrivateStorageKey) != "" && strings.TrimSpace(s.cfg.BunnyPrivateStorageZone) != ""
+func (s *Server) bunnyConfiguredContext(ctx context.Context) bool {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	return ok && bunnyPublicConfigured(cfg)
 }
 
-func (s *Server) bunnyMembersConfigured() bool {
-	return strings.TrimSpace(s.cfg.BunnyMemberStorageKey) != "" && strings.TrimSpace(s.cfg.BunnyMemberStorageZone) != "" && strings.TrimSpace(s.cfg.BunnyMemberPullBaseURL) != ""
+func (s *Server) bunnyPrivateConfiguredContext(ctx context.Context) bool {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	return ok && bunnyPrivateConfiguredForConfig(cfg)
 }
 
-func (s *Server) bunnyPullURL(objectPath string) string {
-	base := strings.TrimRight(strings.TrimSpace(s.cfg.BunnyPullBaseURL), "/")
+func (s *Server) bunnyMembersConfiguredContext(ctx context.Context) bool {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	return ok && bunnyMembersConfiguredForConfig(cfg)
+}
+
+func (s *Server) bunnyPullURL(ctx context.Context, objectPath string) string {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	if !ok {
+		return ""
+	}
+	base := strings.TrimRight(cfg.PublicPullBaseURL, "/")
 	p := strings.TrimLeft(objectPath, "/")
 	return base + "/" + p
 }
 
-func (s *Server) bunnyMembersPullURL(objectPath string) string {
-	base := strings.TrimRight(strings.TrimSpace(s.cfg.BunnyMemberPullBaseURL), "/")
+func (s *Server) bunnyMembersPullURL(ctx context.Context, objectPath string) string {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	if !ok {
+		return ""
+	}
+	base := strings.TrimRight(cfg.MemberPullBaseURL, "/")
 	p := strings.TrimLeft(objectPath, "/")
 	return base + "/" + p
 }
 
 func (s *Server) bunnyPut(ctx context.Context, objectPath string, payload []byte, contentType string) error {
-	if !s.bunnyConfigured() {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	if !ok || !bunnyPublicConfigured(cfg) {
 		return errors.New("BunnyCDN storage not configured")
 	}
-	return bunnyPutWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyStorageZone), strings.TrimSpace(s.cfg.BunnyStorageKey), objectPath, payload, contentType)
+	return bunnyPutWithCredentials(ctx, cfg.PublicStorageZone, cfg.PublicStorageAccessKey, objectPath, payload, contentType)
 }
 
 func (s *Server) bunnyPrivatePut(ctx context.Context, objectPath string, payload []byte, contentType string) error {
-	if !s.bunnyPrivateConfigured() {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	if !ok || !bunnyPrivateConfiguredForConfig(cfg) {
 		return errors.New("BunnyCDN private storage not configured")
 	}
-	return bunnyPutWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyPrivateStorageZone), strings.TrimSpace(s.cfg.BunnyPrivateStorageKey), objectPath, payload, contentType)
+	return bunnyPutWithCredentials(ctx, cfg.PrivateStorageZone, cfg.PrivateStorageAccessKey, objectPath, payload, contentType)
 }
 
 func (s *Server) bunnyPrivateGet(ctx context.Context, objectPath string) ([]byte, string, error) {
-	if !s.bunnyPrivateConfigured() {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	if !ok || !bunnyPrivateConfiguredForConfig(cfg) {
 		return nil, "", errors.New("BunnyCDN private storage not configured")
 	}
-	u := "https://storage.bunnycdn.com/" + url.PathEscape(strings.TrimSpace(s.cfg.BunnyPrivateStorageZone)) + "/" + bunnyEscapePath(objectPath)
+	u := "https://storage.bunnycdn.com/" + url.PathEscape(cfg.PrivateStorageZone) + "/" + bunnyEscapePath(objectPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("AccessKey", strings.TrimSpace(s.cfg.BunnyPrivateStorageKey))
+	req.Header.Set("AccessKey", cfg.PrivateStorageAccessKey)
 	res, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return nil, "", err
@@ -78,17 +101,19 @@ func (s *Server) bunnyPrivateGet(ctx context.Context, objectPath string) ([]byte
 }
 
 func (s *Server) bunnyPrivateDelete(ctx context.Context, objectPath string) error {
-	if !s.bunnyPrivateConfigured() {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	if !ok || !bunnyPrivateConfiguredForConfig(cfg) {
 		return errors.New("BunnyCDN private storage not configured")
 	}
-	return bunnyDeleteWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyPrivateStorageZone), strings.TrimSpace(s.cfg.BunnyPrivateStorageKey), objectPath)
+	return bunnyDeleteWithCredentials(ctx, cfg.PrivateStorageZone, cfg.PrivateStorageAccessKey, objectPath)
 }
 
 func (s *Server) bunnyMembersPut(ctx context.Context, objectPath string, payload []byte, contentType string) error {
-	if !s.bunnyMembersConfigured() {
+	cfg, ok := s.bunnyConfigForContext(ctx)
+	if !ok || !bunnyMembersConfiguredForConfig(cfg) {
 		return errors.New("BunnyCDN member storage not configured")
 	}
-	return bunnyPutWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyMemberStorageZone), strings.TrimSpace(s.cfg.BunnyMemberStorageKey), objectPath, payload, contentType)
+	return bunnyPutWithCredentials(ctx, cfg.MemberStorageZone, cfg.MemberStorageAccessKey, objectPath, payload, contentType)
 }
 
 func bunnyPutWithCredentials(ctx context.Context, zone, accessKey, objectPath string, payload []byte, contentType string) error {

@@ -2847,10 +2847,11 @@ positive; direction derives from type. `WASTE` requires `wasteReason`.
 | POST | `/api/admin/stock/documents/{id}/confirm-recipe` | Create reviewed OCR recipe |
 | POST | `/api/admin/stock/documents/{id}/reject` | Reject review draft |
 
-Original supplier files are never persisted in public Bunny storage. When
-`BUNNY_PRIVATE_STORAGE_ZONE` and `BUNNY_PRIVATE_STORAGE_ACCESS_KEY` are configured,
-private originals are retained under opaque tenant paths with access audit and
-`STOCK_DOCUMENT_RETENTION_DAYS`; otherwise extraction continues without retention.
+Original supplier files are never persisted in public Bunny storage. Private
+originals are retained under opaque tenant paths only when the active restaurant
+has a private BunnyCDN profile configured in `/api/admin/config/bunnycdn`, with
+access audit and `STOCK_DOCUMENT_RETENTION_DAYS`; otherwise extraction continues
+without retention.
 
 ## POS / TPV (`/api/admin/pos/*`)
 
@@ -3067,3 +3068,13 @@ Behavior:
 Env knobs (defaults): `ASSISTANT_MINIMAX_MODEL` (`MiniMax-M3`),
 `ASSISTANT_TIMEOUT_SECONDS` (60), `ASSISTANT_MAX_TOKENS` (1024),
 `ASSISTANT_HISTORY_LIMIT` (20).
+
+## BunnyCDN configuration
+
+### `GET /api/admin/config/bunnycdn`
+
+Requires an authenticated backoffice session with restaurant settings access. Resolves the active restaurant from the session and returns sanitized public, member-avatar, and private-document settings. Access keys are never returned; the response contains `has*AccessKey` and a short mask plus profile completeness flags.
+
+### `POST /api/admin/config/bunnycdn`
+
+Requires the same auth. Upserts the active restaurant's BunnyCDN settings. Payload fields are `publicPullBaseUrl`, `publicStorageZone`, `publicStorageAccessKey`, `memberPullBaseUrl`, `memberStorageZone`, `memberStorageAccessKey`, `privateStorageZone`, and `privateStorageAccessKey`. Pull URLs must be HTTP(S). Blank access-key fields preserve the stored secret. Responses use `{success:true,config:{...sanitized}}`; validation and storage failures use `{success:false,message}`.

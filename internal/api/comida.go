@@ -874,8 +874,8 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 		}
 		if fotoURL != "" {
 			item.FotoURL = fotoURL
-		} else if fotoPath != "" && s.bunnyConfigured() {
-			item.FotoURL = s.bunnyPullURL(fotoPath)
+		} else if fotoPath != "" && s.bunnyConfiguredContext(r.Context()) {
+			item.FotoURL = s.bunnyPullURL(r.Context(), fotoPath)
 		} else if len(fotoBlob) > 0 {
 			item.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 		}
@@ -1060,8 +1060,8 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 		}
 		v.Active = activeInt != 0
 		v.HasFoto = hasFotoInt != 0
-		if fotoPath != "" && s.bunnyConfigured() {
-			v.FotoURL = s.bunnyPullURL(fotoPath)
+		if fotoPath != "" && s.bunnyConfiguredContext(r.Context()) {
+			v.FotoURL = s.bunnyPullURL(r.Context(), fotoPath)
 		} else if len(fotoBlob) > 0 {
 			v.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 		}
@@ -1211,8 +1211,8 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 
 	if fotoURL != "" {
 		item.FotoURL = fotoURL
-	} else if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfigured() {
-		item.FotoURL = s.bunnyPullURL(fotoPath.String)
+	} else if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfiguredContext(r.Context()) {
+		item.FotoURL = s.bunnyPullURL(r.Context(), fotoPath.String)
 	} else if len(fotoBlob) > 0 {
 		item.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 	}
@@ -1323,8 +1323,8 @@ func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaV
 	}
 	v.Active = activeInt != 0
 	v.HasFoto = hasFotoInt != 0
-	if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfigured() {
-		v.FotoURL = s.bunnyPullURL(fotoPath.String)
+	if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfiguredContext(r.Context()) {
+		v.FotoURL = s.bunnyPullURL(r.Context(), fotoPath.String)
 	} else if len(fotoBlob) > 0 {
 		v.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 	}

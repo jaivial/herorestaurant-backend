@@ -23,6 +23,12 @@ func withRestaurantID(ctx context.Context, restaurantID int) context.Context {
 	return context.WithValue(ctx, restaurantIDKey, restaurantID)
 }
 
+// WithRestaurantID attaches the tenant used by standalone jobs that call
+// restaurant-scoped storage helpers outside an HTTP request.
+func WithRestaurantID(ctx context.Context, restaurantID int) context.Context {
+	return withRestaurantID(ctx, restaurantID)
+}
+
 func restaurantIDFromContext(ctx context.Context) (int, bool) {
 	v := ctx.Value(restaurantIDKey)
 	if v == nil {

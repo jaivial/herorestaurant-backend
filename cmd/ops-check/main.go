@@ -192,9 +192,7 @@ func notify(ctx context.Context, database *sql.DB, restaurantID int, item summar
 	return nil
 }
 func deleteExpiredDocuments(ctx context.Context, database *sql.DB, cfg config.Config) error {
-	if strings.TrimSpace(cfg.BunnyPrivateStorageZone) == "" || strings.TrimSpace(cfg.BunnyPrivateStorageKey) == "" {
-		return nil
-	}
+	_ = cfg
 	rows, err := database.QueryContext(ctx, `SELECT restaurant_id,id,file_path FROM stock_document_scans WHERE file_path IS NOT NULL AND original_deleted_at IS NULL AND retention_until<CURDATE() ORDER BY id LIMIT 500`)
 	if err != nil {
 		return err
@@ -215,7 +213,15 @@ func deleteExpiredDocuments(ctx context.Context, database *sql.DB, cfg config.Co
 	}
 	rows.Close()
 	for _, x := range items {
-		if err = deletePrivate(ctx, cfg, x.path); err != nil {
+		zone, accessKey, lookupErr := loadPrivateCredentials(ctx, database, x.restaurantID)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if zone == "" || accessKey == "" {
+			log.Printf("ops-check: skipping expired private document %d; BunnyCDN private storage is not configured for restaurant %d", x.id, x.restaurantID)
+			continue
+		}
+		if err = deletePrivate(ctx, zone, accessKey, x.path); err != nil {
 			return err
 		}
 		tx, err := database.BeginTx(ctx, nil)
@@ -235,17 +241,26 @@ func deleteExpiredDocuments(ctx context.Context, database *sql.DB, cfg config.Co
 	}
 	return nil
 }
-func deletePrivate(ctx context.Context, cfg config.Config, objectPath string) error {
+func loadPrivateCredentials(ctx context.Context, database *sql.DB, restaurantID int) (string, string, error) {
+	var zone, accessKey string
+	err := database.QueryRowContext(ctx, `SELECT private_storage_zone, private_storage_access_key FROM restaurant_bunnycdn_config WHERE restaurant_id=? LIMIT 1`, restaurantID).Scan(&zone, &accessKey)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	return strings.TrimSpace(zone), strings.TrimSpace(accessKey), err
+}
+
+func deletePrivate(ctx context.Context, zone, accessKey, objectPath string) error {
 	parts := strings.Split(strings.TrimLeft(objectPath, "/"), "/")
 	for i := range parts {
 		parts[i] = url.PathEscape(parts[i])
 	}
-	endpoint := "https://storage.bunnycdn.com/" + url.PathEscape(cfg.BunnyPrivateStorageZone) + "/" + strings.Join(parts, "/")
+	endpoint := "https://storage.bunnycdn.com/" + url.PathEscape(zone) + "/" + strings.Join(parts, "/")
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("AccessKey", cfg.BunnyPrivateStorageKey)
+	req.Header.Set("AccessKey", accessKey)
 	res, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return err

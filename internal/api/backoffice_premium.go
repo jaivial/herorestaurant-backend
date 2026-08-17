@@ -1943,7 +1943,7 @@ func (s *Server) handleBOPremiumTablesTextureImageUpload(w http.ResponseWriter, 
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfiguredContext(r.Context()) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "BunnyCDN no configurado"})
 		return
 	}
@@ -1992,7 +1992,7 @@ func (s *Server) handleBOPremiumTablesTextureImageUpload(w http.ResponseWriter, 
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error uploading file: " + err.Error()})
 		return
 	}
-	imageURL := s.bunnyPullURL(objectPath)
+	imageURL := s.bunnyPullURL(r.Context(), objectPath)
 
 	_, err = s.db.ExecContext(
 		r.Context(),

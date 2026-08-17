@@ -461,7 +461,7 @@ func (s *Server) loadBOMenuV2MenuPreviewTracker(ctx context.Context, restaurantI
 	if err != nil {
 		return boV2MenuPreviewTracker{}, err
 	}
-	previewURL := s.publicMenuMediaURL(pathRaw.String)
+	previewURL := s.publicMenuMediaURL(ctx, pathRaw.String)
 	var generatedImg *string
 	if v := strings.TrimSpace(previewURL); v != "" {
 		generatedImg = &v
@@ -490,7 +490,7 @@ func (s *Server) handleBOGroupMenusV2GenerateSectionDishAIImage(w http.ResponseW
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfiguredContext(r.Context()) {
 		s.logBOGroupMenuV2AITrace("generate reject bunny missing restaurant=%d", a.ActiveRestaurantID)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
@@ -642,7 +642,7 @@ func (s *Server) handleBOGroupMenusV2GenerateMenuPreviewAIImage(w http.ResponseW
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfiguredContext(r.Context()) {
 		s.logBOGroupMenuV2AITrace("preview generate reject bunny missing restaurant=%d", a.ActiveRestaurantID)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
@@ -752,7 +752,7 @@ func (s *Server) handleBOGroupMenusV2GenerateMenuPreviewAIImage(w http.ResponseW
 }
 
 func (s *Server) runBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuPreviewImageJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+	ctx, cancel := context.WithTimeout(withRestaurantID(context.Background(), job.RestaurantID), s.openAIRequestTimeout())
 	defer cancel()
 	s.logBOGroupMenuV2AITrace("preview job start restaurant=%d menu=%d inputBytes=%d inputType=%s", job.RestaurantID, job.MenuID, len(job.RawImage), job.ContentType)
 
@@ -805,7 +805,7 @@ func (s *Server) runBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuPr
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(ctx, objectPath)
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE menus
 		SET show_menu_preview_image = 1,
@@ -851,7 +851,7 @@ func (s *Server) failBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuP
 }
 
 func (s *Server) runBOGroupMenuV2AIImageJob(job boGroupMenuV2AIImageJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+	ctx, cancel := context.WithTimeout(withRestaurantID(context.Background(), job.RestaurantID), s.openAIRequestTimeout())
 	defer cancel()
 	s.logBOGroupMenuV2AITrace("job start %s inputBytes=%d inputType=%s", boGroupMenuV2AIJobLabel(job), len(job.RawImage), job.ContentType)
 
@@ -916,7 +916,7 @@ func (s *Server) runBOGroupMenuV2AIImageJob(job boGroupMenuV2AIImageJob) {
 	}
 	s.logBOGroupMenuV2AITrace("job bunny upload done %s objectPath=%s", boGroupMenuV2AIJobLabel(job), objectPath)
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(ctx, objectPath)
 	s.logBOGroupMenuV2AITrace("job db save start %s fullURL=%s", boGroupMenuV2AIJobLabel(job), fullURL)
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE group_menu_section_dishes_v2

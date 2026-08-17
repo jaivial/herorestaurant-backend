@@ -578,6 +578,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/config/mandatory-menus", s.handleBOMandatoryMenusGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/mandatory-menus", s.handleBOMandatoryMenusSave)
 
+		// Per-restaurant BunnyCDN storage configuration.
+		r.With(s.requireBOSession, ajustesGate).Get("/config/bunnycdn", s.handleBOBunnyCDNConfigGet)
+		r.With(s.requireBOSession, ajustesGate).Post("/config/bunnycdn", s.handleBOBunnyCDNConfigSet)
+
 		// By-hour client split configuration (toggle + per-hour percentages).
 		r.With(s.requireBOSession, reservasGate).Get("/config/hour-split", s.handleBOConfigHourSplitGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/hour-split", s.handleBOConfigHourSplitSet)
@@ -1313,7 +1317,7 @@ func (s *Server) handleVinos(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" {
-				u := s.bunnyPullURL(fotoPath.String)
+				u := s.bunnyPullURL(r.Context(), fotoPath.String)
 				v.FotoURL = &u
 			}
 		} else {

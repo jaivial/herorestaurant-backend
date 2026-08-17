@@ -132,11 +132,12 @@ func userFacingImageError(err error) string {
 }
 
 func (s *Server) runStepImageJob(ctx context.Context, restaurantID int, jobID, stepID int64, mode, prompt string) error {
+	ctx = withRestaurantID(ctx, restaurantID)
 	provider := s.resolveAIImageProvider(ctx, restaurantID)
 	if strings.TrimSpace(provider.APIKey) == "" {
 		return errors.New("la IA de imagenes no esta configurada")
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfiguredContext(withRestaurantID(ctx, restaurantID)) {
 		return errors.New("el almacenamiento de imagenes no esta configurado")
 	}
 
@@ -180,7 +181,7 @@ func (s *Server) runStepImageJob(ctx context.Context, restaurantID int, jobID, s
 
 	// completeStepImageJob refuses to publish if the job was cancelled while
 	// the provider was working.
-	applied, err := s.completeStepImageJob(ctx, restaurantID, jobID, stepID, objectPath, s.bunnyPullURL(objectPath))
+	applied, err := s.completeStepImageJob(ctx, restaurantID, jobID, stepID, objectPath, s.bunnyPullURL(withRestaurantID(ctx, restaurantID), objectPath))
 	if err != nil {
 		return err
 	}

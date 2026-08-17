@@ -49,7 +49,7 @@ func (s *Server) handleBOMemberAvatarUpload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if !s.bunnyMembersConfigured() {
+	if !s.bunnyMembersConfiguredContext(r.Context()) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "Storage de avatar no configurado en servidor",
@@ -126,7 +126,7 @@ func (s *Server) handleBOMemberAvatarUpload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	avatarURL := s.bunnyMembersPullURL(objectPath)
+	avatarURL := s.bunnyMembersPullURL(ctx, objectPath)
 	result, err := s.db.ExecContext(r.Context(), `
 		UPDATE restaurant_members
 		SET photo_url = ?

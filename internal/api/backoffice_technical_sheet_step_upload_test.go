@@ -77,7 +77,7 @@ func TestStepImageUploadStoresTheImageOrFailsLoudly(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.handleBOTechnicalSheetStepImageUpload(rec, req)
 
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfiguredContext(req.Context()) {
 		if rec.Code != 503 {
 			t.Fatalf("status %d want 503, body %s", rec.Code, rec.Body.String())
 		}

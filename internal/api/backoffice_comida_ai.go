@@ -261,7 +261,7 @@ func (s *Server) handleBOComidaImageAI(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfiguredContext(r.Context()) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
 	}
@@ -533,7 +533,7 @@ func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
 	if jobTimeout < 8*time.Minute {
 		jobTimeout = 8 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(base, jobTimeout)
+	ctx, cancel := context.WithTimeout(withRestaurantID(base, job.RestaurantID), jobTimeout)
 	defer cancel()
 	s.logBOComidaAITrace("job start restaurant=%d tipo=%s item=%d inputBytes=%d inputType=%s", job.RestaurantID, job.Tipo, job.ItemNum, len(job.RawImage), job.ContentType)
 
@@ -581,7 +581,7 @@ func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(ctx, objectPath)
 	// Store in foto_url (the column the list/detail endpoints read first) and clear
 	// foto_path/foto so the freshly generated image is what reloads show — mirrors
 	// the manual-upload path and keeps a single source of truth for the image.

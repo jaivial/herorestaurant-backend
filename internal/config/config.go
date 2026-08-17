@@ -83,23 +83,11 @@ type Config struct {
 
 func Load() Config {
 	port := getenv("PORT", "8080")
-	defaultPull := getenv("BUNNY_PULL_BASE_URL", "https://villacarmenmedia.b-cdn.net")
-	defaultMembersPull := getenv("BUNNY_MEMBERS_PULL_BASE_URL", "https://herorestaurantmedia.b-cdn.net")
-	defaultKey := os.Getenv("BUNNY_STORAGE_ACCESS_KEY")
-
 	return Config{
 		Addr:                        ":" + port,
 		StaticDir:                   os.Getenv("STATIC_DIR"),
 		CORSAllowOrigins:            os.Getenv("CORS_ALLOW_ORIGINS"),
 		AdminToken:                  os.Getenv("ADMIN_TOKEN"),
-		BunnyPullBaseURL:            defaultPull,
-		BunnyStorageZone:            getenv("BUNNY_STORAGE_ZONE", "villacarmen"),
-		BunnyStorageKey:             defaultKey,
-		BunnyMemberPullBaseURL:      defaultMembersPull,
-		BunnyMemberStorageZone:      getenv("BUNNY_MEMBERS_STORAGE_ZONE", "herorestaurant"),
-		BunnyMemberStorageKey:       getenv("BUNNY_MEMBERS_STORAGE_ACCESS_KEY", defaultKey),
-		BunnyPrivateStorageZone:     strings.TrimSpace(os.Getenv("BUNNY_PRIVATE_STORAGE_ZONE")),
-		BunnyPrivateStorageKey:      strings.TrimSpace(os.Getenv("BUNNY_PRIVATE_STORAGE_ACCESS_KEY")),
 		StockDocumentRetentionDays:  getenvInt("STOCK_DOCUMENT_RETENTION_DAYS", 365, 1, 3650),
 		CloudflareAPIToken:          os.Getenv("CLOUDFLARE_API_TOKEN"),
 		CloudflareAPIEmail:          os.Getenv("CLOUDFLARE_API_EMAIL"),

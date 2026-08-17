@@ -320,7 +320,7 @@ func (s *Server) handleBOVinoAIImageGenerate(w http.ResponseWriter, r *http.Requ
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "AI provider not configured"})
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfiguredContext(r.Context()) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
 	}
@@ -407,7 +407,7 @@ func (s *Server) handleBOVinoAIImageGenerate(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) runBOVinoAIImageJob(job boVinoAIImageJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+	ctx, cancel := context.WithTimeout(withRestaurantID(context.Background(), job.RestaurantID), s.openAIRequestTimeout())
 	defer cancel()
 	s.logBOVinoAITrace("job start restaurant=%d wine=%d inputBytes=%d inputType=%s", job.RestaurantID, job.WineNum, len(job.RawImage), job.ContentType)
 
@@ -448,7 +448,7 @@ func (s *Server) runBOVinoAIImageJob(job boVinoAIImageJob) {
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(withRestaurantID(ctx, job.RestaurantID), objectPath)
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE VINOS
 		SET ai_requested_img = 1,

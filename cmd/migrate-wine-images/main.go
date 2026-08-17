@@ -29,9 +29,6 @@ func main() {
 	_ = godotenv.Overload(".env")
 
 	cfg := config.Load()
-	if cfg.BunnyStorageKey == "" && *upload {
-		log.Fatalf("missing BUNNY_STORAGE_ACCESS_KEY")
-	}
 
 	sqlDB, err := db.OpenMySQL(cfg.MySQL)
 	if err != nil {
@@ -102,7 +99,8 @@ func main() {
 		if !*upload {
 			objectPath = fmt.Sprintf("images/vinos/<tipo>/%d.<ext>", r.num)
 		} else {
-			objectPath, uploadErr = s.UploadWineImage(ctx, r.tipo, r.num, r.foto)
+			rowCtx := api.WithRestaurantID(ctx, r.restaurantID)
+			objectPath, uploadErr = s.UploadWineImage(rowCtx, r.tipo, r.num, r.foto)
 		}
 
 		if uploadErr != nil {

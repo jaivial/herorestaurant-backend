@@ -129,7 +129,7 @@ func (s *Server) handleBOComidaImageUpload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(ctx, objectPath)
 
 	// Save foto_url (not foto_path — keeps AI workflow separate)
 	_, err = s.db.ExecContext(ctx, `

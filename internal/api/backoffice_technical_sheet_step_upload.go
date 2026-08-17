@@ -71,7 +71,7 @@ func (s *Server) handleBOTechnicalSheetStepImageUpload(w http.ResponseWriter, r 
 	// Checked before the conversion work: without storage the result has
 	// nowhere to live, and recording a URL that resolves to nothing would be
 	// worse than refusing.
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfiguredContext(r.Context()) {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "El almacenamiento de imagenes no esta configurado")
 		return
 	}
@@ -87,7 +87,7 @@ func (s *Server) handleBOTechnicalSheetStepImageUpload(w http.ResponseWriter, r 
 		httpx.WriteError(w, http.StatusBadGateway, "No se pudo subir la imagen")
 		return
 	}
-	imageURL := s.bunnyPullURL(objectPath)
+	imageURL := s.bunnyPullURL(r.Context(), objectPath)
 
 	// A manual upload supersedes any queued generation: leaving the step
 	// PENDING would show a spinner over an image that is already there.

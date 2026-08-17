@@ -1172,7 +1172,8 @@ func (wb *WebsiteBuilder) UploadAsset(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
 		return
 	}
-	if !wb.server.bunnyConfigured() {
+	r = r.WithContext(withRestaurantID(r.Context(), restaurantID))
+	if !wb.server.bunnyConfiguredContext(r.Context()) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "BunnyCDN storage is not configured"})
 		return
 	}
@@ -1226,7 +1227,7 @@ func (wb *WebsiteBuilder) UploadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	publicURL := wb.server.bunnyPullURL(objectPath)
+	publicURL := wb.server.bunnyPullURL(r.Context(), objectPath)
 	result, err := wb.db.ExecContext(ctx, `
 		INSERT INTO website_assets (website_id, asset_type, original_filename, storage_path, public_url, mime_type, file_size, width, height, alt_text)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
@@ -1301,7 +1302,7 @@ func (wb *WebsiteBuilder) PublishWebsite(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
 		return
 	}
-	if !wb.server.bunnyConfigured() {
+	if !wb.server.bunnyConfiguredContext(r.Context()) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "BunnyCDN storage is not configured"})
 		return
 	}
@@ -1341,7 +1342,7 @@ func (wb *WebsiteBuilder) PublishWebsite(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	publicURL := wb.server.bunnyPullURL(path.Join(storagePrefix, "index.html"))
+	publicURL := wb.server.bunnyPullURL(r.Context(), path.Join(storagePrefix, "index.html"))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
 		"storage_path": storagePrefix,
@@ -1357,7 +1358,7 @@ func (wb *WebsiteBuilder) PreviewWebsite(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
 		return
 	}
-	if !wb.server.bunnyConfigured() {
+	if !wb.server.bunnyConfiguredContext(r.Context()) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "BunnyCDN storage is not configured"})
 		return
 	}
@@ -1389,7 +1390,7 @@ func (wb *WebsiteBuilder) PreviewWebsite(w http.ResponseWriter, r *http.Request)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
-		"preview_url":  wb.server.bunnyPullURL(path.Join(previewPrefix, "index.html")),
+		"preview_url":  wb.server.bunnyPullURL(r.Context(), path.Join(previewPrefix, "index.html")),
 		"storage_path": previewPrefix,
 		"files":        files,
 	})
