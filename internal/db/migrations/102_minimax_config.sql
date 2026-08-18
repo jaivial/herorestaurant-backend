@@ -3,7 +3,7 @@
 -- token lives in backend env VAULT_TOKEN and is NOT stored here.
 
 CREATE TABLE IF NOT EXISTS restaurant_minimax_config (
-	restaurant_id BIGINT UNSIGNED NOT NULL,
+	restaurant_id INT NOT NULL,
 	api_key_encrypted TEXT NULL,
 	model VARCHAR(128) NULL,
 	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
