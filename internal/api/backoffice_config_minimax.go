@@ -207,6 +207,7 @@ func (s *Server) handleBOMiniMaxConfigSet(w http.ResponseWriter, r *http.Request
 	req.Model = strings.TrimSpace(req.Model)
 
 	var encrypted sql.NullString
+	keepExisting := false
 	if req.APIKey != "" {
 		if s.cfg.VaultToken == "" {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "VAULT_TOKEN no configurado"})
@@ -220,6 +221,7 @@ func (s *Server) handleBOMiniMaxConfigSet(w http.ResponseWriter, r *http.Request
 		encrypted = sql.NullString{String: enc, Valid: true}
 	} else {
 		// No key supplied: keep the existing one (model-only update).
+		keepExisting = true
 		existing, lerr := s.loadMiniMaxConfig(r.Context(), a.ActiveRestaurantID)
 		if lerr != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error cargando configuración"})
@@ -236,21 +238,34 @@ func (s *Server) handleBOMiniMaxConfigSet(w http.ResponseWriter, r *http.Request
 			encrypted = sql.NullString{}
 		}
 	}
-
-	var err error
-	if !encrypted.Valid && req.Model == "" {
-		_, err = s.db.ExecContext(r.Context(),
-			`DELETE FROM restaurant_minimax_config WHERE restaurant_id = ?`, a.ActiveRestaurantID)
+	// "Keep" semantics for blanks: empty model on a key-only update must not
+	// wipe the stored model — only an explicit non-empty model (or the
+	// absence of a row) may set/clear it.
+	if req.Model == "" && keepExisting && encrypted.Valid {
+		// Leave the stored model untouched.
+		_, err := s.db.ExecContext(r.Context(),
+			`UPDATE restaurant_minimax_config SET api_key_encrypted = ? WHERE restaurant_id = ?`,
+			encrypted, a.ActiveRestaurantID)
+		if err != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error guardando configuración"})
+			return
+		}
 	} else {
-		_, err = s.db.ExecContext(r.Context(),
-			`INSERT INTO restaurant_minimax_config (restaurant_id, api_key_encrypted, model)
-			 VALUES (?, ?, ?)
-			 ON DUPLICATE KEY UPDATE api_key_encrypted = VALUES(api_key_encrypted), model = VALUES(model)`,
-			a.ActiveRestaurantID, encrypted, req.Model)
-	}
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error guardando configuración"})
-		return
+		var err error
+		if !encrypted.Valid && req.Model == "" {
+			_, err = s.db.ExecContext(r.Context(),
+				`DELETE FROM restaurant_minimax_config WHERE restaurant_id = ?`, a.ActiveRestaurantID)
+		} else {
+			_, err = s.db.ExecContext(r.Context(),
+				`INSERT INTO restaurant_minimax_config (restaurant_id, api_key_encrypted, model)
+				 VALUES (?, ?, ?)
+				 ON DUPLICATE KEY UPDATE api_key_encrypted = VALUES(api_key_encrypted), model = VALUES(model)`,
+				a.ActiveRestaurantID, encrypted, req.Model)
+		}
+		if err != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error guardando configuración"})
+			return
+		}
 	}
 	// Prime the cache so subsequent resolver calls see the freshly-saved state
 	// without a DB round-trip (mirrors read-your-writes semantics).
@@ -261,7 +276,7 @@ func (s *Server) handleBOMiniMaxConfigSet(w http.ResponseWriter, r *http.Request
 		s.minimaxStoreCache.invalidate(a.ActiveRestaurantID)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "config": minimaxConfigDTO{
-		HasAPIKey: req.APIKey != "" || (encrypted.Valid && encrypted.String != ""),
-		Model:     req.Model,
+		HasAPIKey: savedSettings.HasAPIKey,
+		Model:     savedSettings.Model,
 	}})
 }

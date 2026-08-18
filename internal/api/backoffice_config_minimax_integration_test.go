@@ -109,6 +109,32 @@ func TestMiniMaxConfigEndpointsIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("key-only update preserves the stored model", func(t *testing.T) {
+		out := minimaxReq(t, s.handleBOMiniMaxConfigSet, http.MethodPost, `{"api_key":"sk-new-key-456"}`)
+		if out["success"] != true {
+			t.Fatalf("key-only update failed: %v", out)
+		}
+		cfg, _ := out["config"].(map[string]any)
+		if cfg["model"] != "MiniMax-M3" {
+			t.Fatalf("key-only update must keep stored model, got %v", out)
+		}
+		var enc string
+		var model string
+		if err := db.QueryRow(`SELECT api_key_encrypted, model FROM restaurant_minimax_config WHERE restaurant_id = 1`).Scan(&enc, &model); err != nil {
+			t.Fatalf("row missing: %v", err)
+		}
+		if strings.Contains(enc, "sk-new-key-456") {
+			t.Fatalf("new key stored in plaintext!")
+		}
+		if model != "MiniMax-M3" {
+			t.Fatalf("stored model was wiped by key-only update: %q", model)
+		}
+		got, _ := s.minimaxStoreCache.get(1)
+		if got.APIKey != "sk-new-key-456" || got.Model != "MiniMax-M3" {
+			t.Fatalf("cache mismatch after key-only update: %+v", got)
+		}
+	})
+
 	t.Run("decrypt resolves through resolver (restaurant=1)", func(t *testing.T) {
 		key := s.resolveMiniMaxKey(context.Background(), 1)
 		model := s.resolveMiniMaxModel(context.Background(), 1, "")
