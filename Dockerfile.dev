@@ -12,7 +12,7 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -trimpath -o /out/backend ./cmd/server
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata imagemagick
+RUN apk add --no-cache ca-certificates tzdata imagemagick imagemagick-jpeg imagemagick-webp
 WORKDIR /app
 COPY --from=build /out/backend /app/backend
 
