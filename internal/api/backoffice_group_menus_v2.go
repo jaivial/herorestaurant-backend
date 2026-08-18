@@ -2539,10 +2539,11 @@ type boV2MenuSliderImage struct {
 }
 
 type boV2MenuSlider struct {
-	ShowSlider bool                  `json:"show_slider"`
-	Mode       string                `json:"mode"`
-	AIEnabled  bool                  `json:"ai_enabled"`
-	Images     []boV2MenuSliderImage `json:"images"`
+	ShowSlider   bool                  `json:"show_slider"`
+	Mode         string                `json:"mode"`
+	AIEnabled    bool                  `json:"ai_enabled"`
+	AIGenerating int                   `json:"ai_generating"`
+	Images       []boV2MenuSliderImage `json:"images"`
 }
 
 // boAIImageFeatureKey gates the AI image advisor behind a recurring subscription
@@ -2588,9 +2589,10 @@ func (s *Server) handleBOGroupMenusV2GetSlider(w http.ResponseWriter, r *http.Re
 
 	var showSliderInt int
 	var sliderMode string
+	var sliderAIGenerating int
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT COALESCE(show_menu_slider, 0), COALESCE(slider_mode, 'default') FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1
-	`, menuID, a.ActiveRestaurantID).Scan(&showSliderInt, &sliderMode)
+		SELECT COALESCE(show_menu_slider, 0), COALESCE(slider_mode, 'default'), COALESCE(slider_ai_generating, 0) FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1
+	`, menuID, a.ActiveRestaurantID).Scan(&showSliderInt, &sliderMode, &sliderAIGenerating)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading slider state")
 		return
@@ -2631,10 +2633,11 @@ func (s *Server) handleBOGroupMenusV2GetSlider(w http.ResponseWriter, r *http.Re
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"slider": boV2MenuSlider{
-			ShowSlider: showSliderInt != 0,
-			Mode:       sliderMode,
-			AIEnabled:  aiEnabled,
-			Images:     images,
+			ShowSlider:   showSliderInt != 0,
+			Mode:         sliderMode,
+			AIEnabled:    aiEnabled,
+			AIGenerating: sliderAIGenerating,
+			Images:       images,
 		},
 	})
 }
@@ -3005,6 +3008,10 @@ func (s *Server) handleBOGroupMenusV2GenerateSliderAIImage(w http.ResponseWriter
 	if generationID == "" {
 		generationID = fmt.Sprintf("slider-ai-%d", time.Now().UTC().UnixMilli())
 	}
+	s.db.ExecContext(r.Context(), `
+		UPDATE menus SET slider_ai_generating = slider_ai_generating + 1
+		WHERE id = ? AND restaurant_id = ?
+	`, menuID, a.ActiveRestaurantID)
 	s.broadcastBOGroupMenuV2AIEvent(a.ActiveRestaurantID, menuID, "slider_image_started", map[string]any{
 		"generation_id": generationID,
 	})
@@ -3093,6 +3100,11 @@ func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AISliderImage
 		WHERE id = ? AND restaurant_id = ?
 	`, job.MenuID, job.RestaurantID)
 
+	s.db.ExecContext(ctx, `
+		UPDATE menus SET slider_ai_generating = GREATEST(slider_ai_generating - 1, 0)
+		WHERE id = ? AND restaurant_id = ?
+	`, job.MenuID, job.RestaurantID)
+
 	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "slider_image_completed", map[string]any{
 		"generation_id": job.GenerationID,
 		"image": boV2MenuSliderImage{
@@ -3107,6 +3119,14 @@ func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AISliderImage
 }
 
 func (s *Server) failBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AISliderImageJob, message string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	s.db.ExecContext(ctx, `
+		UPDATE menus SET slider_ai_generating = GREATEST(slider_ai_generating - 1, 0)
+		WHERE id = ? AND restaurant_id = ?
+	`, job.MenuID, job.RestaurantID)
+
 	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "slider_image_failed", map[string]any{
 		"generation_id": job.GenerationID,
 		"message":       message,
