@@ -1731,7 +1731,13 @@ func (s *Server) extractAIImageFromDownloadedJSON(ctx context.Context, root any,
 	if nestedURL := findOpenAIImageURL(root); nestedURL != "" {
 		if sameNormalizedURL(nestedURL, sourceURL) {
 			s.logBOGroupMenuV2AITrace("ai download json skip self-referential url=%s", nestedURL)
-		} else {
+		} else if altURL := findOpenAIImageURLOtherThan(root, sourceURL); altURL != "" {
+			// Prefer an alternative output URL (e.g. data.outputs[0]) when the
+			// first candidate is the self-referential result endpoint.
+			s.logBOGroupMenuV2AITrace("ai download json use alternate output url=%s", altURL)
+			nestedURL = altURL
+		}
+		if !sameNormalizedURL(nestedURL, sourceURL) {
 			if requestID := s.waveSpeedRequestIDFromURL(nestedURL); requestID != "" {
 				if sourceRequestID != "" && requestID == sourceRequestID {
 					s.logBOGroupMenuV2AITrace("ai download json skip recursive wavespeed poll id=%s source=%s nested=%s", requestID, sourceURL, nestedURL)
@@ -1916,7 +1922,7 @@ func findOpenAIImageURL(node any) string {
 				return raw
 			}
 		}
-		for _, key := range []string{"data", "output", "result", "results", "images", "image", "response"} {
+		for _, key := range []string{"outputs", "data", "output", "result", "results", "images", "image", "response"} {
 			if child, ok := v[key]; ok {
 				if url := findOpenAIImageURL(child); url != "" {
 					return url
@@ -1931,6 +1937,36 @@ func findOpenAIImageURL(node any) string {
 	case []any:
 		for _, child := range v {
 			if url := findOpenAIImageURL(child); url != "" {
+				return url
+			}
+		}
+	}
+	return ""
+}
+
+// findOpenAIImageURLOtherThan returns the first image URL in the payload that
+// differs from excludeURL, so callers can fall back to a real output URL when
+// the first candidate is a self-referential result endpoint.
+func findOpenAIImageURLOtherThan(node any, excludeURL string) string {
+	switch v := node.(type) {
+	case string:
+		raw := strings.TrimSpace(v)
+		if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+			if !sameNormalizedURL(raw, excludeURL) {
+				return raw
+			}
+		}
+	case map[string]any:
+		for _, key := range []string{"outputs", "url", "image_url", "output_url", "data", "output", "result", "results", "images", "image", "response"} {
+			if child, ok := v[key]; ok {
+				if url := findOpenAIImageURLOtherThan(child, excludeURL); url != "" {
+					return url
+				}
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if url := findOpenAIImageURLOtherThan(child, excludeURL); url != "" {
 				return url
 			}
 		}
