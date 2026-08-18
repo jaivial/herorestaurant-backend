@@ -57,11 +57,11 @@ func hashText(text string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) translationsEnabled(ctx context.Context) bool {
+func (s *Server) translationsEnabled(ctx context.Context, restaurantID int) bool {
 	// Root of truth is now the per-restaurant config; the global env key is the
-	// legacy fallback. This helper is called with a handler ctx when available.
-	if rid, ok := restaurantIDFromContext(ctx); ok && rid > 0 {
-		return s.hasMiniMaxConfig(ctx, rid)
+	// legacy fallback.
+	if restaurantID > 0 {
+		return s.hasMiniMaxConfig(ctx, restaurantID)
 	}
 	return strings.TrimSpace(s.cfg.MiniMaxAPIKey) != ""
 }
@@ -272,7 +272,7 @@ func (s *Server) upsertTranslation(ctx context.Context, restaurantID int, entity
 // (or already up to date), so callers can enrich their response immediately.
 func (s *Server) translateEntityFields(ctx context.Context, restaurantID int, entityType string, entityID int64, fields []translationField) map[string]string {
 	result := make(map[string]string, len(fields))
-	if !s.translationsEnabled(ctx) || entityID <= 0 {
+	if !s.translationsEnabled(ctx, restaurantID) || entityID <= 0 {
 		return result
 	}
 

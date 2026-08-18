@@ -100,25 +100,26 @@ func (s *Server) loadMiniMaxConfig(ctx context.Context, restaurantID int) (minim
 // resolvedMiniMax returns the MiniMax key+model for a restaurant, preferring
 // the per-restaurant DB config and falling back to global env vars (legacy).
 func (s *Server) resolvedMiniMax(ctx context.Context, restaurantID int) minimaxSettings {
-	if restaurantID > 0 {
-		if cached, ok := s.minimaxStoreCache.get(restaurantID); ok {
-			return cached
-		}
-		cfg, err := s.loadMiniMaxConfig(ctx, restaurantID)
-		if err == nil && cfg.HasAPIKey {
-			s.minimaxStoreCache.set(restaurantID, cfg)
-			return cfg
-		}
-		// No DB row or decrypt failure: fall back to env.
-		if err != nil {
-			log.Printf("[minimax-config] restaurant=%d load error: %v (falling back to env)", restaurantID, err)
-		}
-	}
-	return minimaxSettings{
+	env := minimaxSettings{
 		APIKey:    strings.TrimSpace(s.cfg.MiniMaxAPIKey),
 		Model:     strings.TrimSpace(s.cfg.MiniMaxModel),
 		HasAPIKey: strings.TrimSpace(s.cfg.MiniMaxAPIKey) != "",
 	}
+	if restaurantID <= 0 {
+		return env
+	}
+	if cached, ok := s.minimaxStoreCache.get(restaurantID); ok {
+		return cached
+	}
+	cfg, err := s.loadMiniMaxConfig(ctx, restaurantID)
+	if err == nil && cfg.HasAPIKey {
+		s.minimaxStoreCache.set(restaurantID, cfg)
+		return cfg
+	}
+	if err != nil {
+		log.Printf("[minimax-config] restaurant=%d load error: %v (falling back to env)", restaurantID, err)
+	}
+	return env
 }
 
 // resolveMiniMaxKey returns the API key for a restaurant (DB first, env fallback).
@@ -126,13 +127,21 @@ func (s *Server) resolveMiniMaxKey(ctx context.Context, restaurantID int) string
 	return s.resolvedMiniMax(ctx, restaurantID).APIKey
 }
 
-// resolveMiniMaxModel returns the model for a restaurant (DB first, env fallback).
+// resolveMiniMaxModel returns the model for a restaurant (DB first, then the
+// legacy feature-specific env override, then the shared MINIMAX_MODEL fallback).
 func (s *Server) resolveMiniMaxModel(ctx context.Context, restaurantID int) string {
 	m := s.resolvedMiniMax(ctx, restaurantID).Model
-	if m == "" {
-		m = "MiniMax-M3"
+	if m != "" {
+		return m
 	}
-	return m
+	// Legacy per-feature overrides (kept for parity with pre-DB behavior).
+	if strings.TrimSpace(s.cfg.AssistantModel) != "" {
+		return s.cfg.AssistantModel
+	}
+	if strings.TrimSpace(s.cfg.BotModel) != "" {
+		return s.cfg.BotModel
+	}
+	return "MiniMax-M3"
 }
 
 // hasMiniMaxConfig reports whether a restaurant has a DB-stored MiniMax API key.

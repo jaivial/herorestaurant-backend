@@ -70,7 +70,17 @@ func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride
 
 	model := strings.TrimSpace(modelOverride)
 	if model == "" {
-		model = s.resolveMiniMaxModel(ctx, restaurantID)
+		m := s.resolvedMiniMax(ctx, restaurantID).Model // DB config when present
+		if m == "" {
+			m = strings.TrimSpace(s.cfg.BotModel)
+		}
+		if m == "" {
+			m = strings.TrimSpace(s.cfg.MiniMaxModel)
+		}
+		if m == "" {
+			m = "MiniMax-M3"
+		}
+		model = m
 	}
 	maxTokens := s.cfg.BotMaxTokens
 	if maxTokens <= 0 {
