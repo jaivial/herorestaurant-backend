@@ -74,7 +74,7 @@ func TestAssistantStream_RequestShapeAndDeltas(t *testing.T) {
 		{Role: "user", Content: "que tal"},
 	}
 	var got strings.Builder
-	err := s.assistantStream(context.Background(), "SYS", msgs, func(chunk string) error {
+	err := s.assistantStream(context.Background(), 0, "SYS", msgs, func(chunk string) error {
 		got.WriteString(chunk)
 		return nil
 	})
@@ -131,7 +131,7 @@ func TestAssistantStream_ChunksLongDelta(t *testing.T) {
 
 	s := newAssistantTestServer(srv.URL)
 	var chunks []string
-	err := s.assistantStream(context.Background(), "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(chunk string) error {
+	err := s.assistantStream(context.Background(), 0, "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(chunk string) error {
 		chunks = append(chunks, chunk)
 		return nil
 	})
@@ -159,7 +159,7 @@ func TestAssistantStream_ChunksLongDelta(t *testing.T) {
 func TestAssistantStream_NoKey(t *testing.T) {
 	s := newAssistantTestServer("http://127.0.0.1:1")
 	s.cfg.MiniMaxAPIKey = ""
-	err := s.assistantStream(context.Background(), "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(string) error { return nil })
+	err := s.assistantStream(context.Background(), 0, "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(string) error { return nil })
 	if err == nil {
 		t.Fatal("expected error when api key is missing")
 	}
@@ -173,7 +173,7 @@ func TestAssistantStream_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	s := newAssistantTestServer(srv.URL)
-	err := s.assistantStream(context.Background(), "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(string) error { return nil })
+	err := s.assistantStream(context.Background(), 0, "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(string) error { return nil })
 	if err == nil {
 		t.Fatal("expected error on HTTP 500")
 	}
@@ -188,7 +188,7 @@ func TestAssistantStream_SSEError(t *testing.T) {
 	defer srv.Close()
 
 	s := newAssistantTestServer(srv.URL)
-	err := s.assistantStream(context.Background(), "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(string) error { return nil })
+	err := s.assistantStream(context.Background(), 0, "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(string) error { return nil })
 	if err == nil {
 		t.Fatal("expected error on SSE error event")
 	}
@@ -205,7 +205,7 @@ func TestAssistantStream_Timeout(t *testing.T) {
 	s := newAssistantTestServer(srv.URL)
 	s.cfg.AssistantTimeout = 150 * time.Millisecond
 	start := time.Now()
-	err := s.assistantStream(context.Background(), "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(string) error { return nil })
+	err := s.assistantStream(context.Background(), 0, "SYS", []assistantChatMessage{{Role: "user", Content: "hi"}}, func(string) error { return nil })
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}

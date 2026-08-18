@@ -55,7 +55,7 @@ func TestTranslateToEnglish_Success(t *testing.T) {
 	defer srv.Close()
 
 	s := newTranslateTestServer(t, srv.URL)
-	out, err := s.translateToEnglish(context.Background(), "Pan con tomate")
+	out, err := s.translateToEnglish(context.Background(), 0, "Pan con tomate")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestTranslateToEnglish_Success(t *testing.T) {
 
 func TestTranslateToEnglish_EmptyInput(t *testing.T) {
 	s := newTranslateTestServer(t, "http://127.0.0.1:1")
-	out, err := s.translateToEnglish(context.Background(), "   ")
+	out, err := s.translateToEnglish(context.Background(), 0, "   ")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -90,14 +90,14 @@ func TestTranslateToEnglish_HTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 	s := newTranslateTestServer(t, srv.URL)
-	if _, err := s.translateToEnglish(context.Background(), "hola"); err == nil {
+	if _, err := s.translateToEnglish(context.Background(), 0, "hola"); err == nil {
 		t.Fatal("expected error on HTTP 500")
 	}
 }
 
 func TestTranslateToEnglish_NoKey(t *testing.T) {
 	s := &Server{cfg: config.Config{}}
-	if _, err := s.translateToEnglish(context.Background(), "hola"); err == nil {
+	if _, err := s.translateToEnglish(context.Background(), 0, "hola"); err == nil {
 		t.Fatal("expected error when api key missing")
 	}
 }
@@ -124,7 +124,7 @@ func TestTranslateToEnglish_Concurrency(t *testing.T) {
 	defer srv.Close()
 	s := newTranslateTestServer(t, srv.URL)
 	for _, in := range []string{"uno", "dos", "tres"} {
-		out, err := s.translateToEnglish(context.Background(), in)
+		out, err := s.translateToEnglish(context.Background(), 0, in)
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}

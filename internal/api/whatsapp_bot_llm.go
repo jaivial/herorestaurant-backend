@@ -62,18 +62,15 @@ func botToolResult(toolUseID string, content string) botMessage {
 // botLLMCall performs one Messages API request with tools against MiniMax
 // using the same credentials as the translation system. modelOverride, when
 // non-empty, takes precedence over the configured BotModel (per-tenant knob).
-func (s *Server) botLLMCall(ctx context.Context, modelOverride string, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, error) {
-	apiKey := strings.TrimSpace(s.cfg.MiniMaxAPIKey)
+func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride string, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, error) {
+	apiKey := s.resolveMiniMaxKey(ctx, restaurantID)
 	if apiKey == "" {
 		return botLLMResponse{}, errors.New("minimax api key not configured")
 	}
 
 	model := strings.TrimSpace(modelOverride)
 	if model == "" {
-		model = strings.TrimSpace(s.cfg.BotModel)
-	}
-	if model == "" {
-		model = strings.TrimSpace(s.cfg.MiniMaxModel)
+		model = s.resolveMiniMaxModel(ctx, restaurantID)
 	}
 	maxTokens := s.cfg.BotMaxTokens
 	if maxTokens <= 0 {

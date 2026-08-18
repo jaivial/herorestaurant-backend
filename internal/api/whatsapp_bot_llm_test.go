@@ -48,7 +48,7 @@ func TestBotLLMCall_ParsesToolUse(t *testing.T) {
 
 	s := newBotTestServer(srv.URL)
 	msgs := []botMessage{botUserText("hola")}
-	resp, err := s.botLLMCall(context.Background(), "", "SYSTEM", msgs, botToolDefs(botTenantConfig{}))
+	resp, err := s.botLLMCall(context.Background(), 0, "", "SYSTEM", msgs, botToolDefs(botTenantConfig{}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestBotLLMCall_ParsesToolUse(t *testing.T) {
 
 func TestBotLLMCall_NoKey(t *testing.T) {
 	s := &Server{cfg: config.Config{}}
-	if _, err := s.botLLMCall(context.Background(), "", "sys", nil, nil); err == nil {
+	if _, err := s.botLLMCall(context.Background(), 0, "", "sys", nil, nil); err == nil {
 		t.Fatal("expected error when api key missing")
 	}
 }
@@ -104,7 +104,7 @@ func TestBotLLMCall_HTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 	s := newBotTestServer(srv.URL)
-	if _, err := s.botLLMCall(context.Background(), "", "sys", []botMessage{botUserText("x")}, nil); err == nil {
+	if _, err := s.botLLMCall(context.Background(), 0, "", "sys", []botMessage{botUserText("x")}, nil); err == nil {
 		t.Fatal("expected error on HTTP 502")
 	}
 }

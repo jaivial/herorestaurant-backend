@@ -177,7 +177,8 @@ func (s *Server) handleBOStockSeasonalityClassify(w http.ResponseWriter, r *http
 	var profile map[string]any
 	system := "Classify restaurant seasonality. Never invent exact dates or facts not provided. Return strict JSON only."
 	prompt := `Return {"venueType":"","servicePatterns":[],"peakMonths":[],"lowMonths":[],"weatherSensitive":false,"tourismSensitive":false,"terraceSensitive":false,"notes":[]}. Profile: ` + in.BusinessProfile
-	if err := s.minimaxJSON(stockAIFeatureContext(r.Context(), "seasonality"), system, prompt, &profile); err != nil {
+	a, _ := boAuthFromContext(r.Context())
+	if err := s.minimaxJSON(stockAIFeatureContext(r.Context(), "seasonality"), a.ActiveRestaurantID, system, prompt, &profile); err != nil {
 		httpx.WriteError(w, http.StatusBadGateway, "AI classification failed")
 		return
 	}
@@ -568,7 +569,7 @@ func (s *Server) handleBOStockAIRecommendations(w http.ResponseWriter, r *http.R
 	system := "You advise a restaurant using deterministic stock and cost metrics. Do not recalculate or change numbers. Give cautious, actionable advice. Protected/signature dishes may never receive REMOVE_DISH. Return strict JSON only."
 	prompt := `Return {"summary":"","recommendations":[{"type":"ORDER|REDUCE_ORDER|RAISE_PRICE|REDUCE_PORTION|RENEGOTIATE_SUPPLIER|REMOVE_DISH|MONITOR","priority":"HIGH|MEDIUM|LOW","item":"","reason":"","suggestedAction":""}]}. Maximum 10 recommendations. Context: ` + string(contextPayload)
 	var result map[string]any
-	if err := s.minimaxJSON(stockAIFeatureContext(r.Context(), "recommendations"), system, prompt, &result); err != nil {
+	if err := s.minimaxJSON(stockAIFeatureContext(r.Context(), "recommendations"), a.ActiveRestaurantID, system, prompt, &result); err != nil {
 		httpx.WriteError(w, http.StatusBadGateway, "AI recommendations failed")
 		return
 	}
@@ -576,10 +577,10 @@ func (s *Server) handleBOStockAIRecommendations(w http.ResponseWriter, r *http.R
 	reportRaw, _ := json.Marshal(result)
 	inputRaw, _ := json.Marshal(map[string]any{"scenario": in.Scenario, "forecast": in.Forecast, "costs": in.Costs, "seasonality": json.RawMessage(profileRaw)})
 	reportID := int64(0)
-	if res, saveErr := s.db.ExecContext(r.Context(), `INSERT INTO stock_ai_reports (restaurant_id,report_type,model,input_snapshot,report,created_by) VALUES (?,'COMBINED',?,?,?,?)`, a.ActiveRestaurantID, s.cfg.MiniMaxModel, inputRaw, reportRaw, a.User.ID); saveErr == nil {
+	if res, saveErr := s.db.ExecContext(r.Context(), `INSERT INTO stock_ai_reports (restaurant_id,report_type,model,input_snapshot,report,created_by) VALUES (?,'COMBINED',?,?,?,?)`, a.ActiveRestaurantID, s.resolveMiniMaxModel(r.Context(), a.ActiveRestaurantID), inputRaw, reportRaw, a.User.ID); saveErr == nil {
 		reportID, _ = res.LastInsertId()
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "id": reportID, "report": result, "model": s.cfg.MiniMaxModel})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "id": reportID, "report": result, "model": s.resolveMiniMaxModel(r.Context(), a.ActiveRestaurantID)})
 }
 
 func minimaxDocumentContent(mediaType string, payload []byte, prompt string) []map[string]any {
@@ -599,16 +600,16 @@ func stockAIFeatureContext(ctx context.Context, feature string) context.Context 
 
 type stockAIFeatureContextKey struct{}
 
-func (s *Server) minimaxJSON(ctx context.Context, system, user string, target any) error {
-	return s.minimaxJSONContent(ctx, system, user, target)
+func (s *Server) minimaxJSON(ctx context.Context, restaurantID int, system, user string, target any) error {
+	return s.minimaxJSONContent(ctx, restaurantID, system, user, target)
 }
 
-func (s *Server) minimaxJSONContent(ctx context.Context, system string, content any, target any) error {
-	apiKey := strings.TrimSpace(s.cfg.MiniMaxAPIKey)
+func (s *Server) minimaxJSONContent(ctx context.Context, restaurantID int, system string, content any, target any) error {
+	apiKey := s.resolveMiniMaxKey(ctx, restaurantID)
 	if apiKey == "" {
 		return fmt.Errorf("minimax not configured")
 	}
-	raw, _ := json.Marshal(map[string]any{"model": s.cfg.MiniMaxModel, "max_tokens": 4096, "system": system, "messages": []map[string]any{{"role": "user", "content": content}}})
+	raw, _ := json.Marshal(map[string]any{"model": s.resolveMiniMaxModel(ctx, restaurantID), "max_tokens": 4096, "system": system, "messages": []map[string]any{{"role": "user", "content": content}}})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/v1/messages", bytes.NewReader(raw))
 	if err != nil {
 		return err
@@ -638,7 +639,7 @@ func (s *Server) minimaxJSONContent(ctx context.Context, system string, content 
 		if feature == "" {
 			feature = "stock"
 		}
-		_, _ = s.db.ExecContext(ctx, `INSERT INTO stock_ai_usage (restaurant_id,feature,model,input_tokens,output_tokens) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, feature, s.cfg.MiniMaxModel, envelope.Usage.InputTokens, envelope.Usage.OutputTokens)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO stock_ai_usage (restaurant_id,feature,model,input_tokens,output_tokens) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, feature, s.resolveMiniMaxModel(ctx, a.ActiveRestaurantID), envelope.Usage.InputTokens, envelope.Usage.OutputTokens)
 	}
 	text := ""
 	for _, block := range envelope.Content {
@@ -679,7 +680,7 @@ func (s *Server) handleBOStockDocumentTextExtract(w http.ResponseWriter, r *http
 	}
 	system, prompt := stockDocumentPrompt(in.DocumentType)
 	var extraction stockDocumentExtraction
-	if err := s.minimaxJSON(stockAIFeatureContext(r.Context(), "ocr_text"), system, prompt+"\n\nDocument text:\n"+in.Text, &extraction); err != nil {
+	if err := s.minimaxJSON(stockAIFeatureContext(r.Context(), "ocr_text"), a.ActiveRestaurantID, system, prompt+"\n\nDocument text:\n"+in.Text, &extraction); err != nil {
 		httpx.WriteError(w, http.StatusBadGateway, "AI extraction failed")
 		return
 	}

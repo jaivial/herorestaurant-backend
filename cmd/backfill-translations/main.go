@@ -3,8 +3,8 @@
 // source_hash already matches are skipped. Never prints source text or the key.
 //
 //	cd backend
-//	MINIMAX_API_KEY=... go run ./cmd/backfill-translations --restaurant-id=1 --dry-run
-//	MINIMAX_API_KEY=... go run ./cmd/backfill-translations --restaurant-id=1
+//	VAULT_TOKEN=... go run ./cmd/backfill-translations --restaurant-id=1 --dry-run
+//	VAULT_TOKEN=... go run ./cmd/backfill-translations --restaurant-id=1
 package main
 
 import (
@@ -25,6 +25,8 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
+
+	"preactvillacarmen/internal/vault"
 )
 
 const systemPrompt = "You are translating a restaurant menu. Translate the user message to English. Return ONLY the translated text. Never add markdown, quotes, notes, or explanations."
@@ -58,13 +60,12 @@ func main() {
 	}
 
 	tr := &translator{
-		apiKey:  strings.TrimSpace(os.Getenv("MINIMAX_API_KEY")),
+		db:      db,
 		baseURL: strings.TrimRight(envDefault("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic"), "/"),
-		model:   envDefault("MINIMAX_MODEL", "MiniMax-M3"),
 		timeout: 20 * time.Second,
 	}
-	if !*dryRun && tr.apiKey == "" {
-		fmt.Println("MINIMAX_API_KEY is required unless --dry-run")
+	if !*dryRun && os.Getenv("VAULT_TOKEN") == "" && strings.TrimSpace(os.Getenv("MINIMAX_API_KEY")) == "" {
+		fmt.Println("VAULT_TOKEN (or MINIMAX_API_KEY fallback) is required unless --dry-run")
 		os.Exit(1)
 	}
 
@@ -333,7 +334,7 @@ func processEntity(ctx context.Context, db *sql.DB, tr *translator, restaurantID
 			n++
 			continue
 		}
-		translated, err := tr.translate(ctx, text)
+		translated, err := tr.translate(ctx, restaurantID, text)
 		if err != nil {
 			fmt.Printf("[err] %s#%d %s: %v\n", entityType, entityID, name, err)
 			continue
@@ -377,15 +378,43 @@ func loadHashes(ctx context.Context, db *sql.DB, restaurantID int, entityType st
 // ---- MiniMax client ----
 
 type translator struct {
-	apiKey  string
+	db      *sql.DB
 	baseURL string
-	model   string
 	timeout time.Duration
 }
 
-func (t *translator) translate(ctx context.Context, text string) (string, error) {
+// translate resolves the per-restaurant MiniMax key from the DB (encrypted at
+// rest, decrypted with VAULT_TOKEN) and falls back to the legacy env vars.
+func (t *translator) translate(ctx context.Context, restaurantID int, text string) (string, error) {
+	apiKey := strings.TrimSpace(os.Getenv("MINIMAX_API_KEY"))
+	model := envDefault("MINIMAX_MODEL", "MiniMax-M3")
+
+	if restaurantID > 0 && os.Getenv("VAULT_TOKEN") != "" {
+		var encrypted sql.NullString
+		var dbModel sql.NullString
+		err := t.db.QueryRowContext(ctx,
+			`SELECT api_key_encrypted, model FROM restaurant_minimax_config WHERE restaurant_id = ?`,
+			restaurantID,
+		).Scan(&encrypted, &dbModel)
+		if err == nil && encrypted.Valid && encrypted.String != "" {
+			if plain, derr := vault.Decrypt(os.Getenv("VAULT_TOKEN"), encrypted.String); derr == nil {
+				if plain = strings.TrimSpace(plain); plain != "" {
+					apiKey = plain
+				}
+			} else {
+				fmt.Printf("minimax decrypt error restaurant=%d: %v (falling back to env)\n", restaurantID, derr)
+			}
+		}
+		if err == nil && dbModel.Valid && strings.TrimSpace(dbModel.String) != "" {
+			model = strings.TrimSpace(dbModel.String)
+		}
+	}
+
+	if apiKey == "" {
+		return "", errors.New("minimax api key not configured")
+	}
 	body, _ := json.Marshal(map[string]any{
-		"model":      t.model,
+		"model":      model,
 		"max_tokens": 1024,
 		"system":     systemPrompt,
 		"messages":   []map[string]any{{"role": "user", "content": text}},
@@ -397,8 +426,8 @@ func (t *translator) translate(ctx context.Context, text string) (string, error)
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+t.apiKey)
-	req.Header.Set("x-api-key", t.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := (&http.Client{Timeout: t.timeout}).Do(req)
