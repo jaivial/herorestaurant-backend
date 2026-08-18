@@ -881,7 +881,9 @@ func (s *Server) failBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuP
 
 	_, _ = s.db.ExecContext(ctx, `
 		UPDATE menus
-		SET menu_preview_ai_generating = 0
+		SET menu_preview_ai_generating = 0,
+		    menu_preview_ai_requested = CASE WHEN menu_preview_image_path IS NULL THEN 0 ELSE menu_preview_ai_requested END,
+		    show_menu_preview_image = CASE WHEN menu_preview_image_path IS NULL THEN 0 ELSE show_menu_preview_image END
 		WHERE id = ? AND restaurant_id = ?
 	`, job.MenuID, job.RestaurantID)
 
