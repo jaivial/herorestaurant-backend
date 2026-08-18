@@ -138,7 +138,7 @@ func TestMiniMaxConfigEndpointsIntegration(t *testing.T) {
 	t.Run("decrypt resolves through resolver (restaurant=1)", func(t *testing.T) {
 		key := s.resolveMiniMaxKey(context.Background(), 1)
 		model := s.resolveMiniMaxModel(context.Background(), 1, "")
-		if key != "sk-super-secret-999" {
+		if key != "sk-new-key-456" {
 			t.Fatalf("resolver returned wrong key: %q", key)
 		}
 		if model != "MiniMax-M3" {
