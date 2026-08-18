@@ -89,6 +89,8 @@ type boGroupMenuV2AIImageJob struct {
 	DishID       int64
 	RawImage     []byte
 	ContentType  string
+	APIKey       string
+	EditURL      string
 }
 
 type boGroupMenuV2AIMenuPreviewImageJob struct {
@@ -96,6 +98,8 @@ type boGroupMenuV2AIMenuPreviewImageJob struct {
 	MenuID       int64
 	RawImage     []byte
 	ContentType  string
+	APIKey       string
+	EditURL      string
 }
 
 type boGroupMenuV2AISliderImageJob struct {
@@ -485,7 +489,13 @@ func (s *Server) handleBOGroupMenusV2GenerateSectionDishAIImage(w http.ResponseW
 		return
 	}
 	s.logBOGroupMenuV2AITrace("generate request received restaurant=%d path=%s remote=%s", a.ActiveRestaurantID, r.URL.Path, r.RemoteAddr)
-	if strings.TrimSpace(s.cfg.OpenAIAPIKey) == "" {
+	if !s.aiImageConfigValid(r.Context(), a.ActiveRestaurantID) {
+		s.logBOGroupMenuV2AITrace("generate reject ai config incomplete restaurant=%d", a.ActiveRestaurantID)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI configuration incomplete"})
+		return
+	}
+	dishResolvedAI := s.resolveAIImageProvider(r.Context(), a.ActiveRestaurantID)
+	if strings.TrimSpace(dishResolvedAI.APIKey) == "" {
 		s.logBOGroupMenuV2AITrace("generate reject ai provider key missing restaurant=%d", a.ActiveRestaurantID)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
 		return
@@ -619,6 +629,8 @@ func (s *Server) handleBOGroupMenusV2GenerateSectionDishAIImage(w http.ResponseW
 		DishID:       dishID,
 		RawImage:     raw,
 		ContentType:  contentType,
+		APIKey:       dishResolvedAI.APIKey,
+		EditURL:      aiImageEditURLForModel(dishResolvedAI.BaseURL, dishResolvedAI.I2IModelSlug),
 	})
 	s.logBOGroupMenuV2AITrace("generate job dispatched restaurant=%d menu=%d section=%d dish=%d", a.ActiveRestaurantID, menuID, sectionID, dishID)
 
@@ -637,7 +649,13 @@ func (s *Server) handleBOGroupMenusV2GenerateMenuPreviewAIImage(w http.ResponseW
 		return
 	}
 	s.logBOGroupMenuV2AITrace("preview generate request received restaurant=%d path=%s remote=%s", a.ActiveRestaurantID, r.URL.Path, r.RemoteAddr)
-	if strings.TrimSpace(s.cfg.OpenAIAPIKey) == "" {
+	if !s.aiImageConfigValid(r.Context(), a.ActiveRestaurantID) {
+		s.logBOGroupMenuV2AITrace("preview generate reject ai config incomplete restaurant=%d", a.ActiveRestaurantID)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI configuration incomplete"})
+		return
+	}
+	resolvedAI := s.resolveAIImageProvider(r.Context(), a.ActiveRestaurantID)
+	if strings.TrimSpace(resolvedAI.APIKey) == "" {
 		s.logBOGroupMenuV2AITrace("preview generate reject ai provider key missing restaurant=%d", a.ActiveRestaurantID)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
 		return
@@ -742,6 +760,8 @@ func (s *Server) handleBOGroupMenusV2GenerateMenuPreviewAIImage(w http.ResponseW
 		MenuID:       menuID,
 		RawImage:     raw,
 		ContentType:  contentType,
+		APIKey:       resolvedAI.APIKey,
+		EditURL:      aiImageEditURLForModel(resolvedAI.BaseURL, resolvedAI.I2IModelSlug),
 	})
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -752,7 +772,11 @@ func (s *Server) handleBOGroupMenusV2GenerateMenuPreviewAIImage(w http.ResponseW
 }
 
 func (s *Server) runBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuPreviewImageJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+	base := context.Background()
+	if strings.TrimSpace(job.APIKey) != "" || strings.TrimSpace(job.EditURL) != "" {
+		base = withAIProviderOverride(base, aiProviderOverride{APIKey: job.APIKey, EditURL: job.EditURL})
+	}
+	ctx, cancel := context.WithTimeout(base, s.openAIRequestTimeout())
 	defer cancel()
 	s.logBOGroupMenuV2AITrace("preview job start restaurant=%d menu=%d inputBytes=%d inputType=%s", job.RestaurantID, job.MenuID, len(job.RawImage), job.ContentType)
 
@@ -851,7 +875,11 @@ func (s *Server) failBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuP
 }
 
 func (s *Server) runBOGroupMenuV2AIImageJob(job boGroupMenuV2AIImageJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+	base := context.Background()
+	if strings.TrimSpace(job.APIKey) != "" || strings.TrimSpace(job.EditURL) != "" {
+		base = withAIProviderOverride(base, aiProviderOverride{APIKey: job.APIKey, EditURL: job.EditURL})
+	}
+	ctx, cancel := context.WithTimeout(base, s.openAIRequestTimeout())
 	defer cancel()
 	s.logBOGroupMenuV2AITrace("job start %s inputBytes=%d inputType=%s", boGroupMenuV2AIJobLabel(job), len(job.RawImage), job.ContentType)
 
