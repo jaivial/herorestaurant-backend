@@ -298,6 +298,9 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 		if menuPreview, previewErr := s.loadBOMenuV2MenuPreviewTracker(r.Context(), a.ActiveRestaurantID, menuID); previewErr == nil {
 			helloPayload["menu_preview"] = menuPreview
 		}
+		if menuSlider, sliderErr := s.loadBOMenuV2SliderTracker(r.Context(), a.ActiveRestaurantID, menuID); sliderErr == nil {
+			helloPayload["menu_slider"] = menuSlider
+		}
 		_ = client.writeJSON(helloPayload)
 		s.logBOGroupMenuV2AITrace(
 			"ws hello snapshot sent restaurant=%d menu=%d requested=%d generating=%d",
@@ -359,6 +362,9 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 			}
 			if menuPreview, previewErr := s.loadBOMenuV2MenuPreviewTracker(r.Context(), a.ActiveRestaurantID, menuID); previewErr == nil {
 				snapshotPayload["menu_preview"] = menuPreview
+			}
+			if menuSlider, sliderErr := s.loadBOMenuV2SliderTracker(r.Context(), a.ActiveRestaurantID, menuID); sliderErr == nil {
+				snapshotPayload["menu_slider"] = menuSlider
 			}
 			_ = client.writeJSON(snapshotPayload)
 			s.logBOGroupMenuV2AITrace(
@@ -439,6 +445,20 @@ func (s *Server) loadBOMenuV2AIImageTracker(ctx context.Context, restaurantID in
 		tracker.TotalGenerating,
 	)
 	return tracker, nil
+}
+
+func (s *Server) loadBOMenuV2SliderTracker(ctx context.Context, restaurantID int, menuID int64) (map[string]any, error) {
+	var generating int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(slider_ai_generating, 0) FROM menus WHERE restaurant_id = ? AND id = ? LIMIT 1
+	`, restaurantID, menuID).Scan(&generating)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"slider_ai_generating": generating,
+		"ai_generating":        generating,
+	}, nil
 }
 
 func (s *Server) loadBOMenuV2MenuPreviewTracker(ctx context.Context, restaurantID int, menuID int64) (boV2MenuPreviewTracker, error) {
