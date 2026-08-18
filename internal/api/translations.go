@@ -57,7 +57,12 @@ func hashText(text string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) translationsEnabled() bool {
+func (s *Server) translationsEnabled(ctx context.Context, restaurantID int) bool {
+	// Root of truth is now the per-restaurant config; the global env key is the
+	// legacy fallback.
+	if restaurantID > 0 {
+		return s.hasMiniMaxConfig(ctx, restaurantID)
+	}
 	return strings.TrimSpace(s.cfg.MiniMaxAPIKey) != ""
 }
 
@@ -71,8 +76,8 @@ func (s *Server) minimaxTranslateConcurrency() int {
 
 // translateToEnglish sends a single field of text to MiniMax and returns the
 // English translation. It never logs the API key or the source/target text.
-func (s *Server) translateToEnglish(ctx context.Context, text string) (string, error) {
-	apiKey := strings.TrimSpace(s.cfg.MiniMaxAPIKey)
+func (s *Server) translateToEnglish(ctx context.Context, restaurantID int, text string) (string, error) {
+	apiKey := s.resolveMiniMaxKey(ctx, restaurantID)
 	if apiKey == "" {
 		return "", errors.New("minimax api key not configured")
 	}
@@ -82,7 +87,7 @@ func (s *Server) translateToEnglish(ctx context.Context, text string) (string, e
 	}
 
 	reqBody := map[string]any{
-		"model":      strings.TrimSpace(s.cfg.MiniMaxModel),
+		"model":      s.resolveMiniMaxModel(ctx, restaurantID, ""),
 		"max_tokens": 1024,
 		"system":     translationSystemPrompt,
 		"messages": []map[string]any{
@@ -267,7 +272,7 @@ func (s *Server) upsertTranslation(ctx context.Context, restaurantID int, entity
 // (or already up to date), so callers can enrich their response immediately.
 func (s *Server) translateEntityFields(ctx context.Context, restaurantID int, entityType string, entityID int64, fields []translationField) map[string]string {
 	result := make(map[string]string, len(fields))
-	if !s.translationsEnabled() || entityID <= 0 {
+	if !s.translationsEnabled(ctx, restaurantID) || entityID <= 0 {
 		return result
 	}
 
@@ -307,7 +312,7 @@ func (s *Server) translateEntityFields(ctx context.Context, restaurantID int, en
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			translated, err := s.translateToEnglish(ctx, f.Text)
+			translated, err := s.translateToEnglish(ctx, restaurantID, f.Text)
 			if err != nil {
 				log.Printf("[translations] entity=%s id=%d field=%s status=error err=%v", entityType, entityID, f.Name, err)
 				return

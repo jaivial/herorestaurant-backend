@@ -48,23 +48,20 @@ type assistantLLMResult struct {
 }
 
 // assistantStream calls the Messages API through the official Anthropic SDK.
-func (s *Server) assistantStream(ctx context.Context, system string, msgs []assistantChatMessage, emit func(chunk string) error) error {
-	_, err := s.assistantCall(ctx, system, msgs, nil, emit)
+func (s *Server) assistantStream(ctx context.Context, restaurantID int, system string, msgs []assistantChatMessage, emit func(chunk string) error) error {
+	_, err := s.assistantCall(ctx, restaurantID, system, msgs, nil, emit)
 	return err
 }
 
 // assistantCall uses the SDK for request construction, authentication,
 // streaming, tool blocks, and response decoding. The configured MiniMax
 // endpoint is Anthropic-compatible, so it is supplied as the SDK base URL.
-func (s *Server) assistantCall(ctx context.Context, system string, msgs []assistantChatMessage, tools []assistantToolDef, emit func(string) error) (result assistantLLMResult, err error) {
-	apiKey := strings.TrimSpace(s.cfg.MiniMaxAPIKey)
+func (s *Server) assistantCall(ctx context.Context, restaurantID int, system string, msgs []assistantChatMessage, tools []assistantToolDef, emit func(string) error) (result assistantLLMResult, err error) {
+	apiKey := s.resolveMiniMaxKey(ctx, restaurantID)
 	if apiKey == "" {
 		return result, errors.New("minimax api key not configured")
 	}
-	model := strings.TrimSpace(s.cfg.AssistantModel)
-	if model == "" {
-		model = strings.TrimSpace(s.cfg.MiniMaxModel)
-	}
+	model := s.resolveMiniMaxModel(ctx, restaurantID, "assistant")
 	maxTokens := s.cfg.AssistantMaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 1024

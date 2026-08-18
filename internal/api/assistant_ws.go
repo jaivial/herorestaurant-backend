@@ -374,7 +374,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 	toolMsgs := append([]assistantChatMessage{}, hist...)
 	var final strings.Builder
 	for turn := 0; turn < 6; turn++ {
-		result, callErr := c.s.assistantCall(ctx, prompt, toolMsgs, toolDefs, nil)
+		result, callErr := c.s.assistantCall(ctx, restaurantID, prompt, toolMsgs, toolDefs, nil)
 		if callErr != nil {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": callErr.Error()})
 			return

@@ -26,7 +26,7 @@ func TestBotLLMCall_ModelOverride(t *testing.T) {
 	defer srv.Close()
 
 	s := newBotTestServer(srv.URL)
-	if _, err := s.botLLMCall(context.Background(), "MiniMax-M2", "sys", []botMessage{botUserText("x")}, nil); err != nil {
+	if _, err := s.botLLMCall(context.Background(), 0, "MiniMax-M2", "sys", []botMessage{botUserText("x")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if gotReq["model"] != "MiniMax-M2" {
@@ -34,7 +34,7 @@ func TestBotLLMCall_ModelOverride(t *testing.T) {
 	}
 
 	// Empty override falls back to BotModel.
-	if _, err := s.botLLMCall(context.Background(), "", "sys", []botMessage{botUserText("x")}, nil); err != nil {
+	if _, err := s.botLLMCall(context.Background(), 0, "", "sys", []botMessage{botUserText("x")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if gotReq["model"] != "MiniMax-M3" {

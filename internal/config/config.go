@@ -55,6 +55,7 @@ type Config struct {
 	MiniMaxAPIKey               string
 	MiniMaxBaseURL              string
 	MiniMaxModel                string
+	VaultToken                  string
 	MiniMaxTranslateTimeout     time.Duration
 	MiniMaxTranslateConcurrency int
 	StockOCRProvider            string
@@ -127,6 +128,7 @@ func Load() Config {
 		MiniMaxAPIKey:               strings.TrimSpace(os.Getenv("MINIMAX_API_KEY")),
 		MiniMaxBaseURL:              strings.TrimRight(getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic"), "/"),
 		MiniMaxModel:                getenv("MINIMAX_MODEL", "MiniMax-M3"),
+		VaultToken:                  strings.TrimSpace(os.Getenv("VAULT_TOKEN")),
 		MiniMaxTranslateTimeout:     time.Duration(getenvInt("MINIMAX_TRANSLATE_TIMEOUT_SECONDS", 20, 5, 120)) * time.Second,
 		MiniMaxTranslateConcurrency: getenvInt("MINIMAX_TRANSLATE_CONCURRENCY", 4, 1, 32),
 		StockOCRProvider:            strings.ToLower(strings.TrimSpace(getenv("STOCK_OCR_PROVIDER", "minimax"))),

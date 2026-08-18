@@ -461,7 +461,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	tools := botToolDefs(tenant)
 	exec := s.botToolExecutorFor(restaurantID, msg, tenant)
 
-	result, err := s.botRunAgentLoop(ctx, tenant.Model, system, messages, tools, exec)
+	result, err := s.botRunAgentLoop(ctx, restaurantID, tenant.Model, system, messages, tools, exec)
 	if err != nil {
 		// Never ghost the customer: send a graceful fallback on any LLM failure.
 		s.botSendFallback(ctx, restaurantID, msg.Sender)

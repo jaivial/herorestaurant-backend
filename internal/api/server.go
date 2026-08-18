@@ -58,6 +58,7 @@ type Server struct {
 	confirmationStore  *confirmationStore
 	sessionCache       *boSessionCache
 	bunnyCredsCache    *bunnyCredentialsCache
+	minimaxStoreCache  *minimaxStoreCache
 }
 
 // assistantKeepaliveConfig lets tests shorten the assistant WebSocket timings.
@@ -87,6 +88,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		confirmationStore:     newConfirmationStore(db),
 		sessionCache:          newBOSessionCache(30 * time.Second),
 		bunnyCredsCache:       newBunnyCredentialsCache(),
+		minimaxStoreCache:     newMiniMaxStoreCache(),
 	}
 	s.instatic = newInstaticManager(db, cfg)
 	s.instatic.StartSupervisor()
@@ -601,6 +603,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/ai-image", s.handleBOAIImageConfigSet)
 		r.With(s.requireBOSession, rootOnlyGate).Get("/config/bunny-storage", s.handleBOBunnyStorageConfigGet)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/bunny-storage", s.handleBOBunnyStorageConfigSet)
+
+		// MiniMax AI config (api key + model) — root only.
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/minimax", s.handleBOMiniMaxConfigGet)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/minimax", s.handleBOMiniMaxConfigSet)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
 		r.With(s.requireBOSession, ajustesGate).Get("/legal-pages", s.handleAdminLegalPageList)
