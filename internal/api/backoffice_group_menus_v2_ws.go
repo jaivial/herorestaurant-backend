@@ -1923,6 +1923,25 @@ func findOpenAIImageURL(node any) string {
 			}
 		}
 		for _, key := range []string{"outputs", "data", "output", "result", "results", "images", "image", "response"} {
+			if key == "data" {
+				// Skip the request envelope's input echo: data.input.images holds
+				// WaveSpeed's hosted copy of the uploaded image, not the result.
+				if data, ok := v[key].(map[string]any); ok {
+					if _, isInput := data["input"]; isInput {
+						if len(data) > 0 {
+							rest := make(map[string]any, len(data))
+							for k, val := range data {
+								if k != "input" {
+									rest[k] = val
+								}
+							}
+							if url := findOpenAIImageURL(rest); url != "" {
+								return url
+							}
+						}
+					}
+				}
+			}
 			if child, ok := v[key]; ok {
 				if url := findOpenAIImageURL(child); url != "" {
 					return url
