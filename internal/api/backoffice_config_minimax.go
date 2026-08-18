@@ -127,19 +127,27 @@ func (s *Server) resolveMiniMaxKey(ctx context.Context, restaurantID int) string
 	return s.resolvedMiniMax(ctx, restaurantID).APIKey
 }
 
-// resolveMiniMaxModel returns the model for a restaurant (DB first, then the
-// legacy feature-specific env override, then the shared MINIMAX_MODEL fallback).
-func (s *Server) resolveMiniMaxModel(ctx context.Context, restaurantID int) string {
+// resolveMiniMaxModel returns the model for a restaurant. Precedence (highest
+// first) mirrors the legacy behavior before DB-backed config. feature is one of
+// "assistant", "bot", or "" (generic: translations/stock features). It allows
+// per-feature env overrides (ASSISTANT_MINIMAX_MODEL / BOT_MINIMAX_MODEL) to
+// keep behavior identical to the pre-DB code without cross-contaminating
+// models between features:
+//
+//	DB-stored model (via config page) > feature env override > MINIMAX_MODEL > default
+func (s *Server) resolveMiniMaxModel(ctx context.Context, restaurantID int, feature string) string {
 	m := s.resolvedMiniMax(ctx, restaurantID).Model
 	if m != "" {
 		return m
 	}
-	// Legacy per-feature overrides (kept for parity with pre-DB behavior).
-	if strings.TrimSpace(s.cfg.AssistantModel) != "" {
+	if feature == "assistant" && strings.TrimSpace(s.cfg.AssistantModel) != "" {
 		return s.cfg.AssistantModel
 	}
-	if strings.TrimSpace(s.cfg.BotModel) != "" {
+	if feature == "bot" && strings.TrimSpace(s.cfg.BotModel) != "" {
 		return s.cfg.BotModel
+	}
+	if strings.TrimSpace(s.cfg.MiniMaxModel) != "" {
+		return s.cfg.MiniMaxModel
 	}
 	return "MiniMax-M3"
 }

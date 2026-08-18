@@ -61,7 +61,7 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 	if apiKey == "" {
 		return result, errors.New("minimax api key not configured")
 	}
-	model := s.resolveMiniMaxModel(ctx, restaurantID)
+	model := s.resolveMiniMaxModel(ctx, restaurantID, "assistant")
 	maxTokens := s.cfg.AssistantMaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 1024

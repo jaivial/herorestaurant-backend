@@ -87,7 +87,7 @@ func (s *Server) translateToEnglish(ctx context.Context, restaurantID int, text 
 	}
 
 	reqBody := map[string]any{
-		"model":      s.resolveMiniMaxModel(ctx, restaurantID),
+		"model":      s.resolveMiniMaxModel(ctx, restaurantID, ""),
 		"max_tokens": 1024,
 		"system":     translationSystemPrompt,
 		"messages": []map[string]any{

@@ -121,7 +121,7 @@ func (s *Server) saveBOStockDocumentExtraction(r *http.Request, restaurantID, us
 }
 
 func (s *Server) saveBOStockDocumentExtractionWithFile(r *http.Request, restaurantID, userID int, documentType, source, fileHash, rawText string, extraction stockDocumentExtraction, objectPath, contentType string, size int64, filename string, retentionUntil any) (int64, error) {
-	return s.saveBOStockDocumentExtractionWithFileModel(r, restaurantID, userID, documentType, source, fileHash, rawText, extraction, s.resolveMiniMaxModel(r.Context(), restaurantID), objectPath, contentType, size, filename, retentionUntil)
+	return s.saveBOStockDocumentExtractionWithFileModel(r, restaurantID, userID, documentType, source, fileHash, rawText, extraction, s.resolveMiniMaxModel(r.Context(), restaurantID, ""), objectPath, contentType, size, filename, retentionUntil)
 }
 
 func (s *Server) saveBOStockDocumentExtractionWithFileModel(r *http.Request, restaurantID, userID int, documentType, source, fileHash, rawText string, extraction stockDocumentExtraction, model, objectPath, contentType string, size int64, filename string, retentionUntil any) (int64, error) {
@@ -249,7 +249,7 @@ func (s *Server) handleBOStockDocumentUpload(w http.ResponseWriter, r *http.Requ
 	system, prompt := stockDocumentPrompt(documentType)
 	var extraction stockDocumentExtraction
 	rawText := ""
-	model := s.resolveMiniMaxModel(r.Context(), a.ActiveRestaurantID)
+	model := s.resolveMiniMaxModel(r.Context(), a.ActiveRestaurantID, "")
 	provider := stockOCRProviderName(s.cfg.StockOCRProvider)
 	if provider == "paddleocr" {
 		result, extractErr := newPaddleOCRExtractor(s.cfg).Extract(r.Context(), documentType, mediaType, filename, payload)

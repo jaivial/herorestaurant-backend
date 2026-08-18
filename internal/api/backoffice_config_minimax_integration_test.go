@@ -111,7 +111,7 @@ func TestMiniMaxConfigEndpointsIntegration(t *testing.T) {
 
 	t.Run("decrypt resolves through resolver (restaurant=1)", func(t *testing.T) {
 		key := s.resolveMiniMaxKey(context.Background(), 1)
-		model := s.resolveMiniMaxModel(context.Background(), 1)
+		model := s.resolveMiniMaxModel(context.Background(), 1, "")
 		if key != "sk-super-secret-999" {
 			t.Fatalf("resolver returned wrong key: %q", key)
 		}
@@ -122,7 +122,7 @@ func TestMiniMaxConfigEndpointsIntegration(t *testing.T) {
 
 	t.Run("resolver falls back to env for unknown restaurant", func(t *testing.T) {
 		key := s.resolveMiniMaxKey(context.Background(), 999999)
-		model := s.resolveMiniMaxModel(context.Background(), 999999)
+		model := s.resolveMiniMaxModel(context.Background(), 999999, "")
 		if key != "env-fallback-key" {
 			t.Fatalf("expected env fallback key, got %q", key)
 		}
