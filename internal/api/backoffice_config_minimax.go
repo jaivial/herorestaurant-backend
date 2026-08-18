@@ -244,7 +244,14 @@ func (s *Server) handleBOMiniMaxConfigSet(w http.ResponseWriter, r *http.Request
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error guardando configuración"})
 		return
 	}
-	s.minimaxStoreCache.invalidate(a.ActiveRestaurantID)
+	// Prime the cache so subsequent resolver calls see the freshly-saved state
+	// without a DB round-trip (mirrors read-your-writes semantics).
+	savedSettings, _ := s.loadMiniMaxConfig(r.Context(), a.ActiveRestaurantID)
+	if savedSettings.HasAPIKey {
+		s.minimaxStoreCache.set(a.ActiveRestaurantID, savedSettings)
+	} else {
+		s.minimaxStoreCache.invalidate(a.ActiveRestaurantID)
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "config": minimaxConfigDTO{
 		HasAPIKey: req.APIKey != "" || (encrypted.Valid && encrypted.String != ""),
 		Model:     req.Model,
