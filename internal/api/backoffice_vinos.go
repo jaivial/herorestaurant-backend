@@ -160,7 +160,7 @@ func (s *Server) handleBOVinosList(w http.ResponseWriter, r *http.Request) {
 		v.Active = activeInt != 0
 		v.HasFoto = hasFotoInt != 0
 		if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" {
-			u := s.bunnyPullURL(fotoPath.String)
+			u := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, fotoPath.String)
 			v.FotoURL = &u
 		}
 		v.AIRequestedImg = requestedInt != 0
@@ -282,7 +282,7 @@ func (s *Server) handleBOVinoCreate(w http.ResponseWriter, r *http.Request) {
 	newID, _ := res.LastInsertId()
 
 	if len(img) > 0 {
-		objectPath, err := s.UploadWineImage(r.Context(), tipo, int(newID), img)
+		objectPath, err := s.UploadWineImage(r.Context(), a.ActiveRestaurantID, tipo, int(newID), img)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": true,
@@ -435,7 +435,7 @@ func (s *Server) handleBOVinoPatch(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			objectPath, err := s.UploadWineImage(r.Context(), wineTipo, id, b)
+			objectPath, err := s.UploadWineImage(r.Context(), a.ActiveRestaurantID, wineTipo, id, b)
 			if err != nil {
 				imageWarning = "Vino actualizado, pero la imagen no se pudo subir"
 			} else {
@@ -586,7 +586,7 @@ func (s *Server) handleBOVinoImageUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	objectPath, err := s.UploadWineImage(r.Context(), wineTipo, wineNum, raw)
+	objectPath, err := s.UploadWineImage(r.Context(), a.ActiveRestaurantID, wineTipo, wineNum, raw)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image"})
 		return
@@ -597,7 +597,7 @@ func (s *Server) handleBOVinoImageUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
 		"foto_url": fullURL,
@@ -672,7 +672,7 @@ func (s *Server) handleBOVinoGet(w http.ResponseWriter, r *http.Request) {
 	v.Active = activeInt != 0
 	v.HasFoto = hasFotoInt != 0
 	if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" {
-		u := s.bunnyPullURL(fotoPath.String)
+		u := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, fotoPath.String)
 		v.FotoURL = &u
 	}
 	v.AIRequestedImg = requestedInt != 0

@@ -14,54 +14,63 @@ import (
 	"time"
 )
 
-func (s *Server) bunnyConfigured() bool {
-	return strings.TrimSpace(s.cfg.BunnyStorageKey) != "" && strings.TrimSpace(s.cfg.BunnyStorageZone) != "" && strings.TrimSpace(s.cfg.BunnyPullBaseURL) != ""
+// All Bunny helpers resolve credentials per restaurant (bunny_storage_config,
+// falling back to the BUNNY_* env values), so every zone below is tenant-scoped.
+
+func (s *Server) bunnyConfigured(ctx context.Context, restaurantID int) bool {
+	c := s.bunnyCreds(ctx, restaurantID)
+	return c.StorageKey != "" && c.StorageZone != "" && c.PullBaseURL != ""
 }
 
-func (s *Server) bunnyPrivateConfigured() bool {
-	return strings.TrimSpace(s.cfg.BunnyPrivateStorageKey) != "" && strings.TrimSpace(s.cfg.BunnyPrivateStorageZone) != ""
+func (s *Server) bunnyPrivateConfigured(ctx context.Context, restaurantID int) bool {
+	c := s.bunnyCreds(ctx, restaurantID)
+	return c.PrivateStorageKey != "" && c.PrivateStorageZone != ""
 }
 
-func (s *Server) bunnyMembersConfigured() bool {
-	return strings.TrimSpace(s.cfg.BunnyMemberStorageKey) != "" && strings.TrimSpace(s.cfg.BunnyMemberStorageZone) != "" && strings.TrimSpace(s.cfg.BunnyMemberPullBaseURL) != ""
+func (s *Server) bunnyMembersConfigured(ctx context.Context, restaurantID int) bool {
+	c := s.bunnyCreds(ctx, restaurantID)
+	return c.MemberStorageKey != "" && c.MemberStorageZone != "" && c.MemberPullBaseURL != ""
 }
 
-func (s *Server) bunnyPullURL(objectPath string) string {
-	base := strings.TrimRight(strings.TrimSpace(s.cfg.BunnyPullBaseURL), "/")
+func (s *Server) bunnyPullURL(ctx context.Context, restaurantID int, objectPath string) string {
+	base := strings.TrimRight(s.bunnyCreds(ctx, restaurantID).PullBaseURL, "/")
 	p := strings.TrimLeft(objectPath, "/")
 	return base + "/" + p
 }
 
-func (s *Server) bunnyMembersPullURL(objectPath string) string {
-	base := strings.TrimRight(strings.TrimSpace(s.cfg.BunnyMemberPullBaseURL), "/")
+func (s *Server) bunnyMembersPullURL(ctx context.Context, restaurantID int, objectPath string) string {
+	base := strings.TrimRight(s.bunnyCreds(ctx, restaurantID).MemberPullBaseURL, "/")
 	p := strings.TrimLeft(objectPath, "/")
 	return base + "/" + p
 }
 
-func (s *Server) bunnyPut(ctx context.Context, objectPath string, payload []byte, contentType string) error {
-	if !s.bunnyConfigured() {
+func (s *Server) bunnyPut(ctx context.Context, restaurantID int, objectPath string, payload []byte, contentType string) error {
+	c := s.bunnyCreds(ctx, restaurantID)
+	if c.StorageKey == "" || c.StorageZone == "" || c.PullBaseURL == "" {
 		return errors.New("BunnyCDN storage not configured")
 	}
-	return bunnyPutWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyStorageZone), strings.TrimSpace(s.cfg.BunnyStorageKey), objectPath, payload, contentType)
+	return bunnyPutWithCredentials(ctx, c.StorageZone, c.StorageKey, objectPath, payload, contentType)
 }
 
-func (s *Server) bunnyPrivatePut(ctx context.Context, objectPath string, payload []byte, contentType string) error {
-	if !s.bunnyPrivateConfigured() {
+func (s *Server) bunnyPrivatePut(ctx context.Context, restaurantID int, objectPath string, payload []byte, contentType string) error {
+	c := s.bunnyCreds(ctx, restaurantID)
+	if c.PrivateStorageKey == "" || c.PrivateStorageZone == "" {
 		return errors.New("BunnyCDN private storage not configured")
 	}
-	return bunnyPutWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyPrivateStorageZone), strings.TrimSpace(s.cfg.BunnyPrivateStorageKey), objectPath, payload, contentType)
+	return bunnyPutWithCredentials(ctx, c.PrivateStorageZone, c.PrivateStorageKey, objectPath, payload, contentType)
 }
 
-func (s *Server) bunnyPrivateGet(ctx context.Context, objectPath string) ([]byte, string, error) {
-	if !s.bunnyPrivateConfigured() {
+func (s *Server) bunnyPrivateGet(ctx context.Context, restaurantID int, objectPath string) ([]byte, string, error) {
+	c := s.bunnyCreds(ctx, restaurantID)
+	if c.PrivateStorageKey == "" || c.PrivateStorageZone == "" {
 		return nil, "", errors.New("BunnyCDN private storage not configured")
 	}
-	u := "https://storage.bunnycdn.com/" + url.PathEscape(strings.TrimSpace(s.cfg.BunnyPrivateStorageZone)) + "/" + bunnyEscapePath(objectPath)
+	u := "https://storage.bunnycdn.com/" + url.PathEscape(c.PrivateStorageZone) + "/" + bunnyEscapePath(objectPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, "", err
 	}
-	req.Header.Set("AccessKey", strings.TrimSpace(s.cfg.BunnyPrivateStorageKey))
+	req.Header.Set("AccessKey", c.PrivateStorageKey)
 	res, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return nil, "", err
@@ -77,18 +86,20 @@ func (s *Server) bunnyPrivateGet(ctx context.Context, objectPath string) ([]byte
 	return payload, res.Header.Get("Content-Type"), nil
 }
 
-func (s *Server) bunnyPrivateDelete(ctx context.Context, objectPath string) error {
-	if !s.bunnyPrivateConfigured() {
+func (s *Server) bunnyPrivateDelete(ctx context.Context, restaurantID int, objectPath string) error {
+	c := s.bunnyCreds(ctx, restaurantID)
+	if c.PrivateStorageKey == "" || c.PrivateStorageZone == "" {
 		return errors.New("BunnyCDN private storage not configured")
 	}
-	return bunnyDeleteWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyPrivateStorageZone), strings.TrimSpace(s.cfg.BunnyPrivateStorageKey), objectPath)
+	return bunnyDeleteWithCredentials(ctx, c.PrivateStorageZone, c.PrivateStorageKey, objectPath)
 }
 
-func (s *Server) bunnyMembersPut(ctx context.Context, objectPath string, payload []byte, contentType string) error {
-	if !s.bunnyMembersConfigured() {
+func (s *Server) bunnyMembersPut(ctx context.Context, restaurantID int, objectPath string, payload []byte, contentType string) error {
+	c := s.bunnyCreds(ctx, restaurantID)
+	if c.MemberStorageKey == "" || c.MemberStorageZone == "" || c.MemberPullBaseURL == "" {
 		return errors.New("BunnyCDN member storage not configured")
 	}
-	return bunnyPutWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyMemberStorageZone), strings.TrimSpace(s.cfg.BunnyMemberStorageKey), objectPath, payload, contentType)
+	return bunnyPutWithCredentials(ctx, c.MemberStorageZone, c.MemberStorageKey, objectPath, payload, contentType)
 }
 
 func bunnyPutWithCredentials(ctx context.Context, zone, accessKey, objectPath string, payload []byte, contentType string) error {
@@ -194,7 +205,7 @@ func fileExtForContentType(contentType string) string {
 	return ".jpg"
 }
 
-func (s *Server) UploadWineImageV2(ctx context.Context, tipo string, num int, img []byte, contentType string) (string, error) {
+func (s *Server) UploadWineImageV2(ctx context.Context, restaurantID int, tipo string, num int, img []byte, contentType string) (string, error) {
 	if num <= 0 {
 		return "", errors.New("invalid wine num")
 	}
@@ -205,13 +216,13 @@ func (s *Server) UploadWineImageV2(ctx context.Context, tipo string, num int, im
 	generationVersion := strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)
 	fileName := strconv.Itoa(num) + "-" + generationVersion + ".webp"
 	objectPath := path.Join("images", "vinos", slug, fileName)
-	if err := s.bunnyPut(ctx, objectPath, img, contentType); err != nil {
+	if err := s.bunnyPut(ctx, restaurantID, objectPath, img, contentType); err != nil {
 		return "", err
 	}
 	return objectPath, nil
 }
 
-func (s *Server) UploadWineImage(ctx context.Context, tipo string, num int, img []byte) (string, error) {
+func (s *Server) UploadWineImage(ctx context.Context, restaurantID int, tipo string, num int, img []byte) (string, error) {
 	if num <= 0 {
 		return "", errors.New("invalid wine num")
 	}
@@ -224,7 +235,7 @@ func (s *Server) UploadWineImage(ctx context.Context, tipo string, num int, img 
 	slug := wineTypeSlug(tipo)
 
 	objectPath := path.Join("images", "vinos", slug, strconv.Itoa(num)+ext)
-	if err := s.bunnyPut(ctx, objectPath, img, contentType); err != nil {
+	if err := s.bunnyPut(ctx, restaurantID, objectPath, img, contentType); err != nil {
 		return "", err
 	}
 	return objectPath, nil

@@ -261,7 +261,7 @@ func (s *Server) handleBOComidaImageAI(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
 	}
@@ -574,14 +574,14 @@ func (s *Server) runBOComidaAIImageJob(job boComidaAIImageJob) {
 		return
 	}
 
-	objectPath, err := s.UploadComidaAIImage(ctx, job.Tipo, job.ItemNum, normalizedWebP, "image/webp")
+	objectPath, err := s.UploadComidaAIImage(ctx, job.RestaurantID, job.Tipo, job.ItemNum, normalizedWebP, "image/webp")
 	if err != nil {
 		s.logBOComidaAITrace("job bunny upload error restaurant=%d tipo=%s item=%d err=%v", job.RestaurantID, job.Tipo, job.ItemNum, err)
 		s.failBOComidaAIImageJob(job, "Failed uploading generated image")
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(ctx, job.RestaurantID, objectPath)
 	// Store in foto_url (the column the list/detail endpoints read first) and clear
 	// foto_path/foto so the freshly generated image is what reloads show — mirrors
 	// the manual-upload path and keeps a single source of truth for the image.
@@ -626,7 +626,7 @@ func (s *Server) broadcastBOComidaAIEvent(restaurantID int, eventType string, pa
 }
 
 // UploadComidaAIImage uploads a comida AI-generated image to Bunny storage.
-func (s *Server) UploadComidaAIImage(ctx context.Context, tipo string, itemNum int, img []byte, contentType string) (string, error) {
+func (s *Server) UploadComidaAIImage(ctx context.Context, restaurantID int, tipo string, itemNum int, img []byte, contentType string) (string, error) {
 	if itemNum <= 0 {
 		return "", errors.New("invalid item id")
 	}
@@ -636,7 +636,7 @@ func (s *Server) UploadComidaAIImage(ctx context.Context, tipo string, itemNum i
 	generationVersion := strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)
 	fileName := strconv.Itoa(itemNum) + "-ai-" + generationVersion + ".webp"
 	objectPath := path.Join("images", "comida", tipo, fileName)
-	if err := s.bunnyPut(ctx, objectPath, img, contentType); err != nil {
+	if err := s.bunnyPut(ctx, restaurantID, objectPath, img, contentType); err != nil {
 		return "", err
 	}
 	return objectPath, nil

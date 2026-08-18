@@ -71,7 +71,7 @@ func (s *Server) handleBOTechnicalSheetStepImageUpload(w http.ResponseWriter, r 
 	// Checked before the conversion work: without storage the result has
 	// nowhere to live, and recording a URL that resolves to nothing would be
 	// worse than refusing.
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "El almacenamiento de imagenes no esta configurado")
 		return
 	}
@@ -83,11 +83,11 @@ func (s *Server) handleBOTechnicalSheetStepImageUpload(w http.ResponseWriter, r 
 	}
 
 	objectPath := fmt.Sprintf("recipes/steps/%d/%d-%d.webp", a.ActiveRestaurantID, stepID, time.Now().UnixNano())
-	if err := s.bunnyPut(r.Context(), objectPath, normalized, "image/webp"); err != nil {
+	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalized, "image/webp"); err != nil {
 		httpx.WriteError(w, http.StatusBadGateway, "No se pudo subir la imagen")
 		return
 	}
-	imageURL := s.bunnyPullURL(objectPath)
+	imageURL := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath)
 
 	// A manual upload supersedes any queued generation: leaving the step
 	// PENDING would show a spinner over an image that is already there.

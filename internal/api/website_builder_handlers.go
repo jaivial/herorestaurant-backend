@@ -1172,7 +1172,7 @@ func (wb *WebsiteBuilder) UploadAsset(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
 		return
 	}
-	if !wb.server.bunnyConfigured() {
+	if !wb.server.bunnyConfigured(r.Context(), restaurantID) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "BunnyCDN storage is not configured"})
 		return
 	}
@@ -1221,12 +1221,12 @@ func (wb *WebsiteBuilder) UploadAsset(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%d-%s", time.Now().UTC().UnixNano(), sanitizeWebsiteBuilderFileName(header.Filename)),
 	)
 
-	if err := wb.server.bunnyPut(ctx, objectPath, raw, contentType); err != nil {
+	if err := wb.server.bunnyPut(ctx, restaurantID, objectPath, raw, contentType); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to upload asset"})
 		return
 	}
 
-	publicURL := wb.server.bunnyPullURL(objectPath)
+	publicURL := wb.server.bunnyPullURL(ctx, restaurantID, objectPath)
 	result, err := wb.db.ExecContext(ctx, `
 		INSERT INTO website_assets (website_id, asset_type, original_filename, storage_path, public_url, mime_type, file_size, width, height, alt_text)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
@@ -1301,7 +1301,7 @@ func (wb *WebsiteBuilder) PublishWebsite(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
 		return
 	}
-	if !wb.server.bunnyConfigured() {
+	if !wb.server.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "BunnyCDN storage is not configured"})
 		return
 	}
@@ -1325,7 +1325,7 @@ func (wb *WebsiteBuilder) PublishWebsite(w http.ResponseWriter, r *http.Request)
 	storagePrefix := path.Join("websites", fmt.Sprintf("restaurant-%d", a.ActiveRestaurantID), "live")
 	for _, file := range files {
 		objectPath := path.Join(storagePrefix, file.Path)
-		if err := wb.server.bunnyPut(ctx, objectPath, []byte(file.Content), websiteBuilderContentType(objectPath)); err != nil {
+		if err := wb.server.bunnyPut(ctx, a.ActiveRestaurantID, objectPath, []byte(file.Content), websiteBuilderContentType(objectPath)); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to upload generated website"})
 			return
 		}
@@ -1341,7 +1341,7 @@ func (wb *WebsiteBuilder) PublishWebsite(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	publicURL := wb.server.bunnyPullURL(path.Join(storagePrefix, "index.html"))
+	publicURL := wb.server.bunnyPullURL(ctx, a.ActiveRestaurantID, path.Join(storagePrefix, "index.html"))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
 		"storage_path": storagePrefix,
@@ -1357,7 +1357,7 @@ func (wb *WebsiteBuilder) PreviewWebsite(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
 		return
 	}
-	if !wb.server.bunnyConfigured() {
+	if !wb.server.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "BunnyCDN storage is not configured"})
 		return
 	}
@@ -1381,7 +1381,7 @@ func (wb *WebsiteBuilder) PreviewWebsite(w http.ResponseWriter, r *http.Request)
 	previewPrefix := path.Join("websites", fmt.Sprintf("restaurant-%d", a.ActiveRestaurantID), "preview", strconv.FormatInt(time.Now().UTC().Unix(), 10))
 	for _, file := range files {
 		objectPath := path.Join(previewPrefix, file.Path)
-		if err := wb.server.bunnyPut(ctx, objectPath, []byte(file.Content), websiteBuilderContentType(objectPath)); err != nil {
+		if err := wb.server.bunnyPut(ctx, a.ActiveRestaurantID, objectPath, []byte(file.Content), websiteBuilderContentType(objectPath)); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to upload preview"})
 			return
 		}
@@ -1389,7 +1389,7 @@ func (wb *WebsiteBuilder) PreviewWebsite(w http.ResponseWriter, r *http.Request)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
-		"preview_url":  wb.server.bunnyPullURL(path.Join(previewPrefix, "index.html")),
+		"preview_url":  wb.server.bunnyPullURL(ctx, a.ActiveRestaurantID, path.Join(previewPrefix, "index.html")),
 		"storage_path": previewPrefix,
 		"files":        files,
 	})

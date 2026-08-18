@@ -30,7 +30,9 @@ func main() {
 
 	cfg := config.Load()
 	if cfg.BunnyStorageKey == "" && *upload {
-		log.Fatalf("missing BUNNY_STORAGE_ACCESS_KEY")
+		// Not fatal anymore: credentials are resolved per restaurant from
+		// bunny_storage_config, and env is only the fallback.
+		log.Printf("warning: BUNNY_STORAGE_ACCESS_KEY unset; restaurants without a stored config will fail to upload")
 	}
 
 	sqlDB, err := db.OpenMySQL(cfg.MySQL)
@@ -102,7 +104,7 @@ func main() {
 		if !*upload {
 			objectPath = fmt.Sprintf("images/vinos/<tipo>/%d.<ext>", r.num)
 		} else {
-			objectPath, uploadErr = s.UploadWineImage(ctx, r.tipo, r.num, r.foto)
+			objectPath, uploadErr = s.UploadWineImage(ctx, r.restaurantID, r.tipo, r.num, r.foto)
 		}
 
 		if uploadErr != nil {

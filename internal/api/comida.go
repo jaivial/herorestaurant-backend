@@ -874,8 +874,8 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 		}
 		if fotoURL != "" {
 			item.FotoURL = fotoURL
-		} else if fotoPath != "" && s.bunnyConfigured() {
-			item.FotoURL = s.bunnyPullURL(fotoPath)
+		} else if fotoPath != "" && s.bunnyConfigured(r.Context(), restaurantID) {
+			item.FotoURL = s.bunnyPullURL(r.Context(), restaurantID, fotoPath)
 		} else if len(fotoBlob) > 0 {
 			item.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 		}
@@ -1060,8 +1060,8 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 		}
 		v.Active = activeInt != 0
 		v.HasFoto = hasFotoInt != 0
-		if fotoPath != "" && s.bunnyConfigured() {
-			v.FotoURL = s.bunnyPullURL(fotoPath)
+		if fotoPath != "" && s.bunnyConfigured(r.Context(), restaurantID) {
+			v.FotoURL = s.bunnyPullURL(r.Context(), restaurantID, fotoPath)
 		} else if len(fotoBlob) > 0 {
 			v.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 		}
@@ -1211,8 +1211,8 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 
 	if fotoURL != "" {
 		item.FotoURL = fotoURL
-	} else if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfigured() {
-		item.FotoURL = s.bunnyPullURL(fotoPath.String)
+	} else if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfigured(r.Context(), restaurantID) {
+		item.FotoURL = s.bunnyPullURL(r.Context(), restaurantID, fotoPath.String)
 	} else if len(fotoBlob) > 0 {
 		item.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 	}
@@ -1323,8 +1323,8 @@ func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaV
 	}
 	v.Active = activeInt != 0
 	v.HasFoto = hasFotoInt != 0
-	if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfigured() {
-		v.FotoURL = s.bunnyPullURL(fotoPath.String)
+	if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfigured(r.Context(), restaurantID) {
+		v.FotoURL = s.bunnyPullURL(r.Context(), restaurantID, fotoPath.String)
 	} else if len(fotoBlob) > 0 {
 		v.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 	}
@@ -1558,7 +1558,7 @@ func (s *Server) createVino(w http.ResponseWriter, r *http.Request, restaurantID
 			writeComidaValidationError(w, "Imagen invalida")
 			return
 		}
-		objectPath, err := s.UploadWineImage(r.Context(), tipo, int(newID), img)
+		objectPath, err := s.UploadWineImage(r.Context(), restaurantID, tipo, int(newID), img)
 		if err != nil {
 			warning = "Vino creado, pero la imagen no se pudo subir"
 		} else {
@@ -1882,7 +1882,7 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 					wineTipo = "OTROS"
 				}
 			}
-			objectPath, err := s.UploadWineImage(r.Context(), wineTipo, id, img)
+			objectPath, err := s.UploadWineImage(r.Context(), restaurantID, wineTipo, id, img)
 			if err != nil {
 				imageWarning = "Vino actualizado, pero la imagen no se pudo subir"
 			} else {

@@ -781,10 +781,10 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 
 	// Best-effort: upload the PDF to the CDN and record its URL.
 	pdfURL := ""
-	if len(pdfBytes) > 0 && s.bunnyConfigured() {
+	if len(pdfBytes) > 0 && s.bunnyConfigured(r.Context(), inv.RestaurantID) {
 		objectPath := fmt.Sprintf("%d/facturas/pdf/factura_%d.pdf", inv.RestaurantID, inv.ID)
-		if uerr := s.bunnyPut(r.Context(), objectPath, pdfBytes, "application/pdf"); uerr == nil {
-			pdfURL = s.bunnyPullURL(objectPath)
+		if uerr := s.bunnyPut(r.Context(), inv.RestaurantID, objectPath, pdfBytes, "application/pdf"); uerr == nil {
+			pdfURL = s.bunnyPullURL(r.Context(), inv.RestaurantID, objectPath)
 		} else {
 			log.Printf("[invoice-send] PDF upload failed for #%d: %v", inv.ID, uerr)
 		}
@@ -904,13 +904,13 @@ func (s *Server) handleBOInvoiceUploadImage(w http.ResponseWriter, r *http.Reque
 
 	// Upload to BunnyCDN
 	objectPath := fmt.Sprintf("%d/facturas/images/image_%d.webp", a.ActiveRestaurantID, invoiceID)
-	if err := s.bunnyPut(r.Context(), objectPath, buffer, "image/webp"); err != nil {
+	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, buffer, "image/webp"); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error uploading image: "+err.Error())
 		return
 	}
 
 	// Get the public URL
-	imageURL := s.bunnyPullURL(objectPath)
+	imageURL := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath)
 
 	// Update invoice with image URL
 	_, err = s.db.ExecContext(r.Context(), `

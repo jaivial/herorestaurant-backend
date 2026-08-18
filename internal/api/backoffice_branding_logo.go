@@ -28,7 +28,7 @@ func (s *Server) handleBOBrandingLogoUpload(w http.ResponseWriter, r *http.Reque
 	}
 	restaurantID := a.ActiveRestaurantID
 
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfigured(r.Context(), restaurantID) {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "Almacenamiento de imágenes no configurado")
 		return
 	}
@@ -81,15 +81,15 @@ func (s *Server) handleBOBrandingLogoUpload(w http.ResponseWriter, r *http.Reque
 
 	// Best-effort: remove the previously stored object to avoid orphaned files.
 	if prev, perr := s.currentLogoObjectPath(ctx, restaurantID); perr == nil && prev != "" {
-		_ = s.bunnyDelete(ctx, prev)
+		_ = s.bunnyDelete(ctx, restaurantID, prev)
 	}
 
-	if err := s.bunnyPut(ctx, objectPath, normalizedWebP, "image/webp"); err != nil {
+	if err := s.bunnyPut(ctx, restaurantID, objectPath, normalizedWebP, "image/webp"); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Failed to upload logo to storage")
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(ctx, restaurantID, objectPath)
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO restaurant_branding (restaurant_id, logo_url) VALUES (?, ?)
@@ -123,7 +123,7 @@ func (s *Server) currentLogoObjectPath(ctx context.Context, restaurantID int) (s
 	}
 	// Stored URL is the pull URL: https://<pull-base>/<objectPath>. Extract the
 	// object path after the pull base.
-	base := strings.TrimRight(strings.TrimSpace(s.cfg.BunnyPullBaseURL), "/")
+	base := strings.TrimRight(s.bunnyCreds(ctx, restaurantID).PullBaseURL, "/")
 	path := strings.TrimPrefix(u, base+"/")
 	if path == u || path == "" {
 		return "", nil
@@ -132,11 +132,12 @@ func (s *Server) currentLogoObjectPath(ctx context.Context, restaurantID int) (s
 }
 
 // bunnyDelete removes an object from BunnyCDN storage.
-func (s *Server) bunnyDelete(ctx context.Context, objectPath string) error {
-	if !s.bunnyConfigured() {
+func (s *Server) bunnyDelete(ctx context.Context, restaurantID int, objectPath string) error {
+	c := s.bunnyCreds(ctx, restaurantID)
+	if c.StorageKey == "" || c.StorageZone == "" {
 		return errors.New("BunnyCDN storage not configured")
 	}
-	return bunnyDeleteWithCredentials(ctx, strings.TrimSpace(s.cfg.BunnyStorageZone), strings.TrimSpace(s.cfg.BunnyStorageKey), objectPath)
+	return bunnyDeleteWithCredentials(ctx, c.StorageZone, c.StorageKey, objectPath)
 }
 
 // bunnyDeleteWithCredentials removes an object from BunnyCDN storage.

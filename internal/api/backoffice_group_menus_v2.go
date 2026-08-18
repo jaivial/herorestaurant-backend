@@ -528,7 +528,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 			}
 		}
 		if p := strings.TrimSpace(fotoPath); p != "" {
-			url := s.bunnyPullURL(p)
+			url := s.bunnyPullURL(r.Context(), restaurantID, p)
 			d.FotoURL = &url
 			d.ImageURL = &url
 		}
@@ -614,7 +614,7 @@ func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, me
 			}
 		}
 		if p := strings.TrimSpace(fotoPath); p != "" {
-			url := s.bunnyPullURL(p)
+			url := s.bunnyPullURL(r.Context(), restaurantID, p)
 			d.FotoURL = &url
 			d.ImageURL = &url
 		}
@@ -723,7 +723,7 @@ func (s *Server) loadBOMenuV2DishByID(r *http.Request, restaurantID int, menuID 
 		}
 	}
 	if p := strings.TrimSpace(fotoPath); p != "" {
-		url := s.bunnyPullURL(p)
+		url := s.bunnyPullURL(r.Context(), restaurantID, p)
 		d.FotoURL = &url
 		d.ImageURL = &url
 	}
@@ -865,7 +865,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 	// tracker from those rows instead of re-scanning the dishes table, which
 	// otherwise doubles the dishes read on every menu load.
 	aiImages := buildBOMenuV2AIImageTracker(sections)
-	menuPreviewURL := s.publicMenuMediaURL(menuPreviewPathRaw.String)
+	menuPreviewURL := s.publicMenuMediaURL(r.Context(), a.ActiveRestaurantID, menuPreviewPathRaw.String)
 	menuPreviewAIRequested := menuPreviewAIRequestedInt != 0
 	menuPreviewAIGenerating := menuPreviewAIGeneratingInt != 0
 	showMenuPreviewImage := showMenuPreviewInt != 0
@@ -896,7 +896,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 			},
 			"sections":                   sections,
 			"ai_images":                  aiImages,
-			"special_menu_image_url":     s.publicMenuMediaURL(specialImageRaw.String),
+			"special_menu_image_url":     s.publicMenuMediaURL(r.Context(), a.ActiveRestaurantID, specialImageRaw.String),
 			"menu_preview_image_url":     menuPreviewURL,
 			"menu_preview_ai_requested":  menuPreviewAIRequested,
 			"menu_preview_ai_generating": menuPreviewAIGenerating,
@@ -1987,8 +1987,8 @@ func (s *Server) handleBODishesCatalogSearch(w http.ResponseWriter, r *http.Requ
 		}
 		if fotoURL != "" {
 			row["foto_url"] = fotoURL
-		} else if fotoPath != "" && s.bunnyConfigured() {
-			row["foto_url"] = s.bunnyPullURL(fotoPath)
+		} else if fotoPath != "" && s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
+			row["foto_url"] = s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, fotoPath)
 		}
 		items = append(items, row)
 	}
@@ -2199,7 +2199,7 @@ func (s *Server) handleBOGroupMenusV2UploadSectionDishImage(w http.ResponseWrite
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
 	}
@@ -2282,7 +2282,7 @@ func (s *Server) handleBOGroupMenusV2UploadSectionDishImage(w http.ResponseWrite
 		pictureID+ext,
 	)
 
-	if err := s.bunnyPut(r.Context(), objectPath, raw, contentType); err != nil {
+	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, raw, contentType); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image: " + err.Error()})
 		return
 	}
@@ -2314,7 +2314,7 @@ func (s *Server) handleBOGroupMenusV2UploadMenuPreviewImage(w http.ResponseWrite
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
 	}
@@ -2394,7 +2394,7 @@ func (s *Server) handleBOGroupMenusV2UploadMenuPreviewImage(w http.ResponseWrite
 		imageID+".webp",
 	)
 
-	if err := s.bunnyPut(r.Context(), objectPath, normalizedWebP, "image/webp"); err != nil {
+	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalizedWebP, "image/webp"); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image: " + err.Error()})
 		return
 	}
@@ -2414,7 +2414,7 @@ func (s *Server) handleBOGroupMenusV2UploadMenuPreviewImage(w http.ResponseWrite
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
-		"imageUrl": s.publicMenuMediaURL(objectPath),
+		"imageUrl": s.publicMenuMediaURL(r.Context(), a.ActiveRestaurantID, objectPath),
 	})
 }
 
@@ -2514,13 +2514,13 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 	)
 
 	// Upload normalized WEBP to BunnyCDN.
-	if err := s.bunnyPut(r.Context(), objectPath, normalizedWebP, "image/webp"); err != nil {
+	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalizedWebP, "image/webp"); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading file: " + err.Error()})
 		return
 	}
 
 	// Update menu record with image URL
-	imageURL := s.bunnyPullURL(objectPath)
+	imageURL := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath)
 	_, err = s.db.ExecContext(r.Context(), `UPDATE menus SET special_menu_image_url = ? WHERE id = ?`, imageURL, menuID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error saving image URL"})
@@ -2554,11 +2554,11 @@ var boValidSliderModes = map[string]bool{
 }
 
 // sliderImageURL prefixes bunny paths but leaves already-absolute (default) URLs.
-func (s *Server) sliderImageURL(path string) string {
+func (s *Server) sliderImageURL(ctx context.Context, restaurantID int, path string) string {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return path
 	}
-	return s.bunnyPullURL(path)
+	return s.bunnyPullURL(ctx, restaurantID, path)
 }
 
 const boGroupMenuV2SliderAIPrompt = "Create an elegant wide-angle restaurant ambiance or table setting photoshoot. Focus on the warm, inviting atmosphere, table arrangement, lighting, and overall dining experience. The dish or food should be visible but as part of the broader scene rather than the main subject. Frame in 16:9 aspect ratio with generous horizontal space to convey the venue's charm and character. Use high-end natural lighting, rich warm tones, sharp focus, and make the setting look sophisticated and welcoming for a restaurant menu."
@@ -2617,7 +2617,7 @@ func (s *Server) handleBOGroupMenusV2GetSlider(w http.ResponseWriter, r *http.Re
 			httpx.WriteError(w, http.StatusInternalServerError, "Error reading slider image")
 			return
 		}
-		img.ImageURL = s.sliderImageURL(img.ImageURL)
+		img.ImageURL = s.sliderImageURL(r.Context(), a.ActiveRestaurantID, img.ImageURL)
 		img.IsDefault = isDefaultInt != 0
 		if createdAt.Valid {
 			img.CreatedAt = createdAt.Time.Format(time.RFC3339)
@@ -2701,7 +2701,7 @@ func (s *Server) handleBOGroupMenusV2UploadSliderImage(w http.ResponseWriter, r 
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
 	}
@@ -2786,7 +2786,7 @@ func (s *Server) handleBOGroupMenusV2UploadSliderImage(w http.ResponseWriter, r 
 		imageID+".webp",
 	)
 
-	if err := s.bunnyPut(r.Context(), objectPath, normalizedWebP, "image/webp"); err != nil {
+	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalizedWebP, "image/webp"); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image: " + err.Error()})
 		return
 	}
@@ -2811,7 +2811,7 @@ func (s *Server) handleBOGroupMenusV2UploadSliderImage(w http.ResponseWriter, r 
 		"success": true,
 		"image": boV2MenuSliderImage{
 			ID:        imageIDDB,
-			ImageURL:  s.bunnyPullURL(objectPath),
+			ImageURL:  s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath),
 			Position:  maxPosition + 1,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		},
@@ -2942,7 +2942,7 @@ func (s *Server) handleBOGroupMenusV2GenerateSliderAIImage(w http.ResponseWriter
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "WaveSpeed AI not configured"})
 		return
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
 	}
@@ -3072,7 +3072,7 @@ func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AISliderImage
 		imageID+".webp",
 	)
 
-	if err := s.bunnyPut(ctx, objectPath, normalizedWebP, "image/webp"); err != nil {
+	if err := s.bunnyPut(ctx, job.RestaurantID, objectPath, normalizedWebP, "image/webp"); err != nil {
 		s.failBOGroupMenuV2AISliderImageJob(job, "Failed saving generated image")
 		return
 	}
@@ -3097,7 +3097,7 @@ func (s *Server) runBOGroupMenuV2AISliderImageJob(job boGroupMenuV2AISliderImage
 		"generation_id": job.GenerationID,
 		"image": boV2MenuSliderImage{
 			ID:        imageIDDB,
-			ImageURL:  s.bunnyPullURL(objectPath),
+			ImageURL:  s.bunnyPullURL(ctx, job.RestaurantID, objectPath),
 			Position:  maxPosition + 1,
 			IsDefault: false,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),

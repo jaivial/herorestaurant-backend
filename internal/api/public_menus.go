@@ -236,7 +236,7 @@ func buildPublicMenuSlug(title string, menuID int64) string {
 	return fmt.Sprintf("%s-%d", base, menuID)
 }
 
-func (s *Server) publicMenuMediaURL(raw string) string {
+func (s *Server) publicMenuMediaURL(ctx context.Context, restaurantID int, raw string) string {
 	value := strings.TrimSpace(raw)
 	if value == "" {
 		return ""
@@ -245,7 +245,7 @@ func (s *Server) publicMenuMediaURL(raw string) string {
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
 		return value
 	}
-	return s.bunnyPullURL(value)
+	return s.bunnyPullURL(ctx, restaurantID, value)
 }
 
 // loadPublicSliderImages returns the slider mode and the image URLs a public
@@ -283,7 +283,7 @@ func (s *Server) loadPublicSliderImages(ctx context.Context, restaurantID int, m
 		if err := rows.Scan(&path); err != nil {
 			continue
 		}
-		if url := s.publicMenuMediaURL(path); url != "" {
+		if url := s.publicMenuMediaURL(ctx, restaurantID, path); url != "" {
 			images = append(images, url)
 		}
 	}
@@ -454,8 +454,8 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				MenuSubtitle:         anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
 				ShowDishImages:       showDishImagesInt != 0,
 				ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
-				MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
-				SpecialMenuImageURL:  s.publicMenuMediaURL(specialImageURLRaw.String),
+				MenuPreviewImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, menuPreviewPathRaw.String),
+				SpecialMenuImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, specialImageURLRaw.String),
 			})
 		}
 
@@ -594,8 +594,8 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			},
 			Sections:             []publicMenuSection{},
 			ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
-			MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
-			SpecialMenuImageURL:  s.publicMenuMediaURL(specialImageURLRaw.String),
+			MenuPreviewImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, menuPreviewPathRaw.String),
+			SpecialMenuImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, specialImageURLRaw.String),
 			LegacySourceTable:    strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),
 			CreatedAt:            createdAtRaw.String,
 			ModifiedAt:           modifiedAtRaw.String,
@@ -741,7 +741,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				ID:                dishID,
 				Title:             strings.TrimSpace(title),
 				Description:       strings.TrimSpace(description),
-				FotoURL:           s.publicMenuMediaURL(fotoPath.String),
+				FotoURL:           s.publicMenuMediaURL(r.Context(), restaurantID, fotoPath.String),
 				Allergens:         anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
 				SupplementEnabled: supplementInt != 0,
 				SupplementPrice:   nil,
@@ -862,7 +862,7 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 				MenuTitle:           menuTitle,
 				MenuSubtitle:        anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
 				Comments:            anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
-				SpecialMenuImageURL: s.publicMenuMediaURL(specialImageURL.String),
+				SpecialMenuImageURL: s.publicMenuMediaURL(r.Context(), restaurantID, specialImageURL.String),
 			},
 		})
 		return
@@ -1011,8 +1011,8 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		},
 		Sections:             []publicMenuSection{},
 		ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
-		MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
-		SpecialMenuImageURL:  s.publicMenuMediaURL(specialImageURLRaw.String),
+		MenuPreviewImageURL:  s.publicMenuMediaURL(r.Context(), int(restaurantID), menuPreviewPathRaw.String),
+		SpecialMenuImageURL:  s.publicMenuMediaURL(r.Context(), int(restaurantID), specialImageURLRaw.String),
 		LegacySourceTable:    strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),
 		CreatedAt:            createdAtRaw.String,
 		ModifiedAt:           modifiedAtRaw.String,
@@ -1126,7 +1126,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 			ID:                dishID,
 			Title:             strings.TrimSpace(title),
 			Description:       strings.TrimSpace(description),
-			FotoURL:           s.publicMenuMediaURL(fotoPath.String),
+			FotoURL:           s.publicMenuMediaURL(r.Context(), int(restaurantID), fotoPath.String),
 			Allergens:         anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
 			SupplementEnabled: supplementInt != 0,
 			SupplementPrice:   nil,
@@ -1352,7 +1352,7 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 			Active:               activeInt != 0,
 			MenuSubtitle:         anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
 			ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
-			MenuPreviewImageURL:  s.publicMenuMediaURL(menuPreviewPathRaw.String),
+			MenuPreviewImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, menuPreviewPathRaw.String),
 		})
 	}
 

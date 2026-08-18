@@ -121,7 +121,7 @@ func (s *Server) handleBOComidaImageUpload(w http.ResponseWriter, r *http.Reques
 	// mirrors the AI path which uses {id}-ai-{ms}.webp).
 	version := strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)
 	objectPath := path.Join("images", "comida", string(ct), strconv.Itoa(id)+"-"+version+".webp")
-	if err := s.bunnyPut(ctx, objectPath, normalizedWebP, "image/webp"); err != nil {
+	if err := s.bunnyPut(ctx, a.ActiveRestaurantID, objectPath, normalizedWebP, "image/webp"); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "Failed to upload image to storage",
@@ -129,7 +129,7 @@ func (s *Server) handleBOComidaImageUpload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	fullURL := s.bunnyPullURL(objectPath)
+	fullURL := s.bunnyPullURL(ctx, a.ActiveRestaurantID, objectPath)
 
 	// Save foto_url (not foto_path — keeps AI workflow separate)
 	_, err = s.db.ExecContext(ctx, `

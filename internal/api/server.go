@@ -57,6 +57,7 @@ type Server struct {
 	assistantKeepalive assistantKeepaliveConfig
 	confirmationStore  *confirmationStore
 	sessionCache       *boSessionCache
+	bunnyCredsCache    *bunnyCredentialsCache
 }
 
 // assistantKeepaliveConfig lets tests shorten the assistant WebSocket timings.
@@ -85,6 +86,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		botSem:                make(chan struct{}, botMaxConcurrentTurns),
 		confirmationStore:     newConfirmationStore(db),
 		sessionCache:          newBOSessionCache(30 * time.Second),
+		bunnyCredsCache:       newBunnyCredentialsCache(),
 	}
 	s.instatic = newInstaticManager(db, cfg)
 	s.instatic.StartSupervisor()
@@ -597,6 +599,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Get("/config/ai-image/providers", s.handleBOAIImageProvidersGet)
 		r.With(s.requireBOSession, rootOnlyGate).Get("/config/ai-image", s.handleBOAIImageConfigGet)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/ai-image", s.handleBOAIImageConfigSet)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/bunny-storage", s.handleBOBunnyStorageConfigGet)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/bunny-storage", s.handleBOBunnyStorageConfigSet)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
 		r.With(s.requireBOSession, ajustesGate).Get("/legal-pages", s.handleAdminLegalPageList)
@@ -1313,7 +1317,7 @@ func (s *Server) handleVinos(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" {
-				u := s.bunnyPullURL(fotoPath.String)
+				u := s.bunnyPullURL(r.Context(), restaurantID, fotoPath.String)
 				v.FotoURL = &u
 			}
 		} else {

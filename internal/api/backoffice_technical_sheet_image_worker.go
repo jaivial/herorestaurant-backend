@@ -136,7 +136,7 @@ func (s *Server) runStepImageJob(ctx context.Context, restaurantID int, jobID, s
 	if strings.TrimSpace(provider.APIKey) == "" {
 		return errors.New("la IA de imagenes no esta configurada")
 	}
-	if !s.bunnyConfigured() {
+	if !s.bunnyConfigured(ctx, restaurantID) {
 		return errors.New("el almacenamiento de imagenes no esta configurado")
 	}
 
@@ -174,13 +174,13 @@ func (s *Server) runStepImageJob(ctx context.Context, restaurantID int, jobID, s
 	}
 
 	objectPath := fmt.Sprintf("recipes/steps/%d/%d-%d.webp", restaurantID, stepID, time.Now().UnixNano())
-	if err := s.bunnyPut(ctx, objectPath, normalized, "image/webp"); err != nil {
+	if err := s.bunnyPut(ctx, restaurantID, objectPath, normalized, "image/webp"); err != nil {
 		return err
 	}
 
 	// completeStepImageJob refuses to publish if the job was cancelled while
 	// the provider was working.
-	applied, err := s.completeStepImageJob(ctx, restaurantID, jobID, stepID, objectPath, s.bunnyPullURL(objectPath))
+	applied, err := s.completeStepImageJob(ctx, restaurantID, jobID, stepID, objectPath, s.bunnyPullURL(ctx, restaurantID, objectPath))
 	if err != nil {
 		return err
 	}

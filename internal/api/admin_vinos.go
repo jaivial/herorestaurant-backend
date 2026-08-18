@@ -171,7 +171,7 @@ func (s *Server) handleVinosUpdate(w http.ResponseWriter, r *http.Request) {
 			wineTipo = "OTROS"
 		}
 
-		objectPath, err := s.UploadWineImage(r.Context(), wineTipo, wineID, img)
+		objectPath, err := s.UploadWineImage(r.Context(), restaurantID, wineTipo, wineID, img)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": true,
@@ -266,7 +266,7 @@ func (s *Server) handleVinosAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if hasImg {
-		objectPath, err := s.UploadWineImage(r.Context(), tipo, uniqueNum, img)
+		objectPath, err := s.UploadWineImage(r.Context(), restaurantID, tipo, uniqueNum, img)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": true,
