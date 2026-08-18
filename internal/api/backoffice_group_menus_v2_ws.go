@@ -24,7 +24,7 @@ import (
 	"preactvillacarmen/internal/lib/specialmenuimage"
 )
 
-const boGroupMenuV2AIPrompt = "Create a premium restaurant food photoshoot version of this dish. Keep the same dish identity and plating realistic. Place the dish centered in a 1:1 frame with comfortable margins on all sides (avoid tight crop) so there is clear breathing space around the plate. Preserve the original background style and color palette, but refine it into an elegant, clean, matching restaurant scenario and remove distracting non-elegant objects. Maximize perceived image quality and make the food look highly appetizing and visually appealing for a restaurant menu, while staying realistic and natural. Use high-end natural studio lighting, sharp focus, and rich yet realistic food textures and colors."
+const boGroupMenuV2AIPrompt = "Create a premium restaurant food photoshoot version of this dish. Keep the exact same dish, its ingredients, plating and identity recognizable — only subtly improve its presentation (freshness, garnish arrangement, appetizing shine) for better marketing, without noticeably changing the dish. Place the dish centered in a 1:1 frame with comfortable margins on all sides (avoid tight crop) so there is clear breathing space around the plate. Replace the background with an elegant marble table surface lit by perfect natural sunlight (soft warm daylight with gentle highlights and realistic soft shadows). Remove distracting non-elegant objects. Make the food look highly appetizing and visually appealing for a restaurant menu, while staying realistic and natural. Use sharp focus and rich yet realistic food textures and colors."
 
 var waveSpeedKnownStatuses = map[string]bool{
 	"pending":     true,
