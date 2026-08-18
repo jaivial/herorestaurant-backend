@@ -26,6 +26,7 @@ type boConfigSalon struct {
 	CapacityLimit    int    `json:"capacityLimit"`
 	IsActive         bool   `json:"isActive"`
 	DisplayOrder     int    `json:"displayOrder"`
+	DateScoped       string `json:"dateScoped,omitempty"`
 }
 
 type boConfigSalonWriteRequest struct {
@@ -34,6 +35,7 @@ type boConfigSalonWriteRequest struct {
 	HasCapacityLimit bool   `json:"hasCapacityLimit"`
 	CapacityLimit    int    `json:"capacityLimit"`
 	IsActive         *bool  `json:"isActive,omitempty"`
+	Date             string `json:"date,omitempty"`
 }
 
 type boConfigSalonDayStatusRequest struct {
@@ -74,12 +76,14 @@ func (s *Server) loadSalons(ctx context.Context, restaurantID int, date string) 
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT sal.id, sal.floor_id, f.floor_number, f.floor_name,
-		       sal.name, sal.has_capacity_limit, sal.capacity_limit, sal.is_active, sal.display_order
+		       sal.name, sal.has_capacity_limit, sal.capacity_limit, sal.is_active, sal.display_order,
+		       DATE_FORMAT(sal.specific_date, '%Y-%m-%d')
 		FROM restaurant_salons sal
 		JOIN restaurant_floors f ON f.id = sal.floor_id AND f.restaurant_id = sal.restaurant_id
 		WHERE sal.restaurant_id = ?
+		  AND (sal.specific_date IS NULL OR sal.specific_date = NULLIF(?, ''))
 		ORDER BY f.floor_number ASC, sal.display_order ASC, sal.id ASC
-	`, restaurantID)
+	`, restaurantID, date)
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +93,12 @@ func (s *Server) loadSalons(ctx context.Context, restaurantID int, date string) 
 	for rows.Next() {
 		var row boConfigSalon
 		var hasLimitInt, activeInt int
-		if err := rows.Scan(&row.ID, &row.FloorID, &row.FloorNumber, &row.FloorName, &row.Name, &hasLimitInt, &row.CapacityLimit, &activeInt, &row.DisplayOrder); err != nil {
+		var dateScoped sql.NullString
+		if err := rows.Scan(&row.ID, &row.FloorID, &row.FloorNumber, &row.FloorName, &row.Name, &hasLimitInt, &row.CapacityLimit, &activeInt, &row.DisplayOrder, &dateScoped); err != nil {
 			return nil, err
+		}
+		if dateScoped.Valid {
+			row.DateScoped = dateScoped.String
 		}
 		row.HasCapacityLimit = hasLimitInt != 0
 		row.IsActive = activeInt != 0
@@ -99,7 +107,36 @@ func (s *Server) loadSalons(ctx context.Context, restaurantID int, date string) 
 		}
 		out = append(out, row)
 	}
+	// When viewing a specific date, a date-scoped salon shadows the global
+	// salon with the same name on the same floor.
+	if date != "" {
+		out = shadowGlobalSalons(out)
+	}
 	return out, rows.Err()
+}
+
+func dateToNull(date string) any {
+	if date == "" {
+		return nil
+	}
+	return date
+}
+
+func shadowGlobalSalons(salons []boConfigSalon) []boConfigSalon {
+	scoped := make(map[string]bool, len(salons))
+	for _, sal := range salons {
+		if sal.DateScoped != "" {
+			scoped[sal.Name] = true
+		}
+	}
+	out := salons[:0]
+	for _, sal := range salons {
+		if sal.DateScoped == "" && scoped[sal.Name] {
+			continue
+		}
+		out = append(out, sal)
+	}
+	return out
 }
 
 func normalizeSalonWrite(restaurantID int, req boConfigSalonWriteRequest) (boConfigSalonWriteRequest, error) {
@@ -186,9 +223,9 @@ func (s *Server) handleBOConfigSalonsCreate(w http.ResponseWriter, r *http.Reque
 		active = *req.IsActive
 	}
 	res, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO restaurant_salons (restaurant_id, floor_id, name, has_capacity_limit, capacity_limit, is_active)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, a.ActiveRestaurantID, req.FloorID, req.Name, boolToInt(req.HasCapacityLimit), req.CapacityLimit, boolToInt(active))
+		INSERT INTO restaurant_salons (restaurant_id, floor_id, name, has_capacity_limit, capacity_limit, is_active, specific_date)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, a.ActiveRestaurantID, req.FloorID, req.Name, boolToInt(req.HasCapacityLimit), req.CapacityLimit, boolToInt(active), dateToNull(req.Date))
 	if err != nil {
 		if strings.Contains(err.Error(), "Duplicate entry") {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "ya existe un salon con ese nombre en la planta"})
@@ -199,7 +236,7 @@ func (s *Server) handleBOConfigSalonsCreate(w http.ResponseWriter, r *http.Reque
 	}
 	id, _ := res.LastInsertId()
 
-	salons, err := s.loadSalons(r.Context(), a.ActiveRestaurantID, "")
+	salons, err := s.loadSalons(r.Context(), a.ActiveRestaurantID, req.Date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando salones")
 		return
@@ -270,7 +307,7 @@ func (s *Server) handleBOConfigSalonsUpdate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	salons, err := s.loadSalons(r.Context(), a.ActiveRestaurantID, "")
+	salons, err := s.loadSalons(r.Context(), a.ActiveRestaurantID, req.Date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando salones")
 		return
