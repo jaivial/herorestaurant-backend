@@ -1570,6 +1570,16 @@ func (s *Server) handleBOConfigFloorsDefaultsSet(w http.ResponseWriter, r *http.
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando planta")
 			return
 		}
+		// Disabling a floor disables its salons (global default); re-enabling
+		// restores them so the two states never drift apart.
+		if _, err := s.db.ExecContext(r.Context(), `
+			UPDATE restaurant_salons
+			SET is_active = ?
+			WHERE restaurant_id = ? AND floor_id = ?
+		`, boolToInt(nextActive), a.ActiveRestaurantID, target.ID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando salones de la planta")
+			return
+		}
 	}
 
 	floors, err := s.loadDefaultFloors(r.Context(), a.ActiveRestaurantID)
