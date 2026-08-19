@@ -77,6 +77,7 @@ func (s *Server) handleBOBookingsSearch(w http.ResponseWriter, r *http.Request) 
 			highChairs,
 			table_number,
 			preferred_floor_number,
+			preferred_salon_id,
 			DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
 			special_menu,
 			menu_de_grupo_id,

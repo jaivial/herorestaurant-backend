@@ -1367,8 +1367,9 @@ Body:
 Returns restaurant-level default config used as fallback in daily config.
 
 Response:
-- `{ success: true, openingMode, morningHours, nightHours, weekdayOpen, hours, dailyLimit, mesasDeDosLimit, mesasDeTresLimit }`
+- `{ success: true, openingMode, morningHours, nightHours, weekdayOpen, hours, dailyLimit, mesasDeDosLimit, mesasDeTresLimit, hourSplitEnabled, defaultHourPercentages, allowFloorReservation, allowSalonReservation }`
 - `weekdayOpen`: objeto por dia con claves `monday..sunday` y valor booleano `open/closed`.
+- `allowFloorReservation` / `allowSalonReservation`: toggles globales de reserva de planta/salón (por defecto `false`).
 
 ### `POST /api/admin/config/defaults`
 Partial update of defaults (patch semantics).
@@ -1381,9 +1382,28 @@ Body (JSON, any subset):
 - `dailyLimit`: number
 - `mesasDeDosLimit`: string (`0..999`, `sin_limite` supported)
 - `mesasDeTresLimit`: string (`0..999`, `sin_limite` supported)
+- `allowFloorReservation`: boolean (toggle global "Permitir reserva de planta")
+- `allowSalonReservation`: boolean (toggle global "Permitir reserva de salón")
 
 Response:
 - Same shape as `GET /api/admin/config/defaults`.
+
+### `GET /api/admin/config/location-booking?date=YYYY-MM-DD`
+Returns the location booking toggles for a date: global defaults, per-date override (null = inherit) and the effective values.
+
+Response:
+- `{ success: true, date, global: { allowFloorReservation, allowSalonReservation }, override: { allowFloorReservation: bool|null, allowSalonReservation: bool|null }, effective: { allowFloorReservation, allowSalonReservation } }`
+- `override` flags are `null` when the date inherits the global default.
+
+### `POST /api/admin/config/location-booking`
+Writes per-date overrides (tri-state per flag).
+
+Body (JSON):
+- `date`: `YYYY-MM-DD` (required)
+- `allowFloorReservation`: `true` | `false` | `null` (null/absent = inherit the global default)
+- `allowSalonReservation`: `true` | `false` | `null`
+
+Response: same shape as `GET /api/admin/config/location-booking`.
 
 ### `GET /api/admin/config/day?date=YYYY-MM-DD`
 Returns open/closed day state.
@@ -1926,6 +1946,20 @@ Alias of `GET /api/gethourdata.php` (`date` query param). Response shape identic
 ### `GET /api/reservations/day-context?date=<YYYY-MM-DD>`
 Alias of `GET /api/get_reservation_day_context.php` (`date` query param). Response shape identical to
 legacy handler (defaults, opening mode, morning/night hours, closed-day info).
+
+Additionally includes `locationBooking`:
+- `allowFloorReservation` / `allowSalonReservation`: effective toggles for the date (per-date override ?? global default).
+- `floors`: active floors for the date, each with nested active `salons` (`[{ id, name }]`).
+
+```json
+"locationBooking": {
+  "allowFloorReservation": true,
+  "allowSalonReservation": true,
+  "floors": [{ "id": 1, "floorNumber": 0, "name": "Planta baja", "isGround": true, "salons": [{ "id": 2, "name": "Salón principal" }] }]
+}
+```
+
+Front booking forms may also send `preferred_salon_id` (optional int) alongside `preferred_floor_number`; it is validated against the active salons for the date (and floor) and stored in `bookings.preferred_salon_id`. Booking list/search/detail responses include `preferred_salon_id` (null when unset).
 
 ### `POST /api/fetch_mesas_de_dos.php`
 Form:

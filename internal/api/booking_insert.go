@@ -170,6 +170,14 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
+	preferredSalonID, err := s.resolvePreferredSalonIDForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_salon_id")), preferredFloorNumber)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 
 	if specialMenu {
 		menuDeGrupoID = clampInt(r.FormValue("menu_de_grupo_id"), 1, 1_000_000_000, 0)
@@ -253,6 +261,7 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		MenuDeGrupoID:     nullIntOrNil(menuDeGrupoID),
 		PrincipalesJSON:   principalesJSON,
 		PreferredFloorNum: preferredFloorNumber,
+		PreferredSalonID:  preferredSalonID,
 	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -284,6 +293,7 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		"menu_de_grupo_id":           menuDeGrupoID,
 		"principales_json":           principalesJSON,
 		"preferred_floor_number":     preferredFloorNumber,
+		"preferred_salon_id":        preferredSalonID,
 	}
 
 	// Send WhatsApp confirmation to customer (best-effort).
@@ -404,6 +414,14 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
+	preferredSalonID, err := s.resolvePreferredSalonIDForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_salon_id")), preferredFloorNumber)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 
 	commentary := strings.TrimSpace(r.FormValue("commentary"))
 	babyStrollers := clampInt(r.FormValue("baby_strollers"), 0, 100, 0)
@@ -508,6 +526,7 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		MenuDeGrupoID:     nullIntOrNil(menuDeGrupoID),
 		PrincipalesJSON:   principalesJSON,
 		PreferredFloorNum: preferredFloorNumber,
+		PreferredSalonID:  preferredSalonID,
 	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -538,6 +557,7 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		"menu_de_grupo_id":           menuDeGrupoID,
 		"principales_json":           principalesJSON,
 		"preferred_floor_number":     preferredFloorNumber,
+		"preferred_salon_id":        preferredSalonID,
 	}
 
 	// Send WhatsApp confirmation to customer (best-effort).
@@ -616,6 +636,7 @@ type bookingInsertParams struct {
 	MenuDeGrupoID     any
 	PrincipalesJSON   any
 	PreferredFloorNum any
+	PreferredSalonID  any
 }
 
 func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, error) {
@@ -649,9 +670,10 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 			special_menu,
 			menu_de_grupo_id,
 			principales_json,
-			preferred_floor_number
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, p.PrincipalesJSON, p.PreferredFloorNum)
+			preferred_floor_number,
+			preferred_salon_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, p.PrincipalesJSON, p.PreferredFloorNum, p.PreferredSalonID)
 	if err != nil {
 		return 0, err
 	}
@@ -890,4 +912,45 @@ func nullIntOrNil(v int) any {
 		return nil
 	}
 	return v
+}
+
+// resolvePreferredSalonIDForFront validates the optional preferred salon form
+// value against the active salons for the date. Empty input stays nil (no
+// salon chosen). When both salon and floor are provided, the salon must
+// belong to that floor.
+func (s *Server) resolvePreferredSalonIDForFront(ctx context.Context, restaurantID int, date string, raw string, preferredFloor any) (any, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	salonID, err := strconv.Atoi(raw)
+	if err != nil || salonID <= 0 {
+		return nil, errors.New("Salón no válido")
+	}
+
+	salons, err := s.loadSalons(ctx, restaurantID, date)
+	if err != nil {
+		return nil, errors.New("No se pudo consultar los salones activos")
+	}
+	for _, salon := range salons {
+		if salon.ID != salonID {
+			continue
+		}
+		if !salon.IsActive {
+			return nil, errors.New("El salón seleccionado no está disponible")
+		}
+		if floorNum, ok := preferredFloor.(int); ok && floorNum > 0 {
+			floors, ferr := s.loadDateFloors(ctx, restaurantID, date)
+			if ferr != nil {
+				return nil, errors.New("No se pudo consultar las plantas activas")
+			}
+			for _, floor := range floors {
+				if floor.FloorNumber == floorNum && floor.ID != salon.FloorID {
+					return nil, errors.New("El salón no pertenece a la planta seleccionada")
+				}
+			}
+		}
+		return salonID, nil
+	}
+	return nil, errors.New("El salón seleccionado no está disponible")
 }

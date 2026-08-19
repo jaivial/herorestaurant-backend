@@ -593,6 +593,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Post("/config/hour-split", s.handleBOConfigHourSplitSet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/hour-split-percentages", s.handleBOConfigHourSplitPercentagesSet)
 
+		// Location booking toggles (floor/salon reservation, default + per-date override).
+		r.With(s.requireBOSession, reservasGate).Get("/config/location-booking", s.handleBOConfigLocationBookingGet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/location-booking", s.handleBOConfigLocationBookingSet)
+
 		// Widget settings (booking manager embed).
 		r.With(s.requireBOSession, reservasGate).Get("/widget/settings", s.handleBOWidgetSettingsGet)
 		r.With(s.requireBOSession, reservasGate).Put("/widget/settings", s.handleBOWidgetSettingsPut)
