@@ -1521,9 +1521,13 @@ Mutates default floor setup.
 Body (JSON):
 - Resize set: `{ count }` (min `1`, max `8`)
 - Toggle one floor: `{ floorNumber, active }`
+- Set floor aforo: `{ floorNumber, maxAforo }`
+  - `maxAforo`: number of guests the floor may hold; `0` = no limit (unbounded).
+  - **Invariant:** setting a cap below the sum of the floor's salons' capacities is rejected (`{ success: false, aforoCapped: true, remainingAforo, totalSalonAforo }`); `maxAforo: 0` (unbounded) is always accepted.
 
 Response:
 - `{ success: true, floors: Floor[] }`
+- On aforo-cap rejection: `{ success: false, message, aforoCapped: true, remainingAforo, totalSalonAforo }`
 
 ### `GET /api/admin/config/floors?date=YYYY-MM-DD`
 Returns floor activation for one date (default + per-date overrides merged).
@@ -1538,12 +1542,15 @@ Body (JSON):
 - `date` (`YYYY-MM-DD`)
 - `floorNumber` (number)
 - `active` (boolean)
+- `maxAforo` (number, optional) — per-date aforo cap; `0` = unbounded. Same invariant as above.
 
 Response:
 - `{ success: true, date, floors: Floor[] }`
 
 `Floor`:
-- `{ id, floorNumber, name, isGround, active }`
+- `{ id, floorNumber, name, isGround, active, maxAforo?, totalSalonAforo? }`
+- `maxAforo`: this floor's aforo cap (`0` = unbounded).
+- `totalSalonAforo`: backend-computed sum of the capacities of this floor's salons that have a capacity limit.
 
 ## Public Menu / Navigation
 
@@ -1963,17 +1970,34 @@ Alias of `GET /api/gethourdata.php` (`date` query param). Response shape identic
 Alias of `GET /api/get_reservation_day_context.php` (`date` query param). Response shape identical to
 legacy handler (defaults, opening mode, morning/night hours, closed-day info).
 
+Adds a `party_size` query param (positive int, optional): when present, floors and
+`locationBooking.floors` salons whose remaining aforo is below the party size are gated out
+(removed from `activeFloors` / the salon's `active` flag) so the booking form cannot offer a
+floor/salon that cannot physically seat the party.
+
 Additionally includes `locationBooking`:
 - `allowFloorReservation` / `allowSalonReservation`: effective toggles for the date (per-date override ?? global default).
-- `floors`: active floors for the date, each with nested active `salons` (`[{ id, name }]`).
+- `floors`: active floors for the date, each with nested active `salons`, plus aforo fields.
+
+Aforo (capacity) fields on floors and salons:
+- Floor (`floors`, `activeFloors`): `maxAforo` (0 = unbounded), `occupancy`, `remaining` (remaining = maxAforo − occupancy; 0 when maxAforo is 0/unbounded).
+- Salon (`locationBooking.floors[].salons`): `capacityLimit`, `occupancy`, `remaining`.
 
 ```json
 "locationBooking": {
   "allowFloorReservation": true,
   "allowSalonReservation": true,
-  "floors": [{ "id": 1, "floorNumber": 0, "name": "Planta baja", "isGround": true, "salons": [{ "id": 2, "name": "Salón principal" }] }]
+  "floors": [{
+    "id": 1, "floorNumber": 0, "name": "Planta baja", "isGround": true,
+    "maxAforo": 0, "occupancy": 0, "remaining": 0,
+    "salons": [{ "id": 2, "name": "Salón principal", "capacityLimit": 44, "occupancy": 0, "remaining": 44 }]
+  }]
 }
 ```
+
+Occupancy is tracked in the `reservation_location_occupancy` ledger (scope `salon`/`floor`,
+`target_id`, `count`) and is adjusted on booking insert, cancel, and modify paths so the aforo
+remaining reflects live confirmed bookings for the date.
 
 Front booking forms may also send `preferred_salon_id` (optional int) alongside `preferred_floor_number`; it is validated against the active salons for the date (and floor) and stored in `bookings.preferred_salon_id`. Booking list/search/detail responses include `preferred_salon_id` (null when unset).
 

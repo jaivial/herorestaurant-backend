@@ -854,13 +854,33 @@ func (s *Server) handleUpdateReservation(w http.ResponseWriter, r *http.Request)
 	}
 
 	query := "UPDATE bookings SET " + column + " = ? WHERE restaurant_id = ? AND id = ?"
-	_, err := s.db.ExecContext(r.Context(), query, value, restaurantID, input.BookingID)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"message": "Database update failed: " + err.Error(),
-		})
-		return
+
+	// Reconcile the occupancy ledger when the date or party_size changed.
+	if field == "party_size" || field == "reservation_date" {
+		oldDate, oldParty, oldFloor, oldSalon, rErr := s.bookingLocationSnapshot(r.Context(), restaurantID, input.BookingID)
+		_, err := s.db.ExecContext(r.Context(), query, value, restaurantID, input.BookingID)
+		if err != nil {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Database update failed: " + err.Error(),
+			})
+			return
+		}
+		if rErr == nil {
+			// The row now holds the new values: reread them and reconcile.
+			if nd, np, nf, ns, ok2 := s.bookingLocationSnapshot(r.Context(), restaurantID, input.BookingID); ok2 == nil {
+				_ = s.applyBookingLocationDelta(r.Context(), s.db, restaurantID, oldDate, oldFloor, oldSalon, oldParty, nd, nf, ns, np)
+			}
+		}
+	} else {
+		_, err := s.db.ExecContext(r.Context(), query, value, restaurantID, input.BookingID)
+		if err != nil {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Database update failed: " + err.Error(),
+			})
+			return
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

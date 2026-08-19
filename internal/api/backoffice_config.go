@@ -65,12 +65,14 @@ type reservationDefaults struct {
 }
 
 type boConfigFloor struct {
-	ID          int    `json:"id"`
-	FloorNumber int    `json:"floorNumber"`
-	Name        string `json:"name"`
-	IsGround    bool   `json:"isGround"`
-	Active      bool   `json:"active"`
-	DateScoped  string `json:"dateScoped,omitempty"`
+	ID               int    `json:"id"`
+	FloorNumber      int    `json:"floorNumber"`
+	Name             string `json:"name"`
+	IsGround         bool   `json:"isGround"`
+	Active           bool   `json:"active"`
+	DateScoped       string `json:"dateScoped,omitempty"`
+	MaxAforo         int    `json:"maxAforo"`
+	TotalSalonAforo  int    `json:"totalSalonAforo"`
 }
 
 func cloneStrings(in []string) []string {
@@ -487,7 +489,7 @@ func (s *Server) loadDefaultFloors(ctx context.Context, restaurantID int) ([]boC
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, floor_number, floor_name, is_ground, is_active
+		SELECT id, floor_number, floor_name, is_ground, is_active, max_aforo
 		FROM restaurant_floors
 		WHERE restaurant_id = ? AND specific_date IS NULL
 		ORDER BY floor_number ASC
@@ -502,11 +504,15 @@ func (s *Server) loadDefaultFloors(ctx context.Context, restaurantID int) ([]boC
 		var row boConfigFloor
 		var isGroundInt int
 		var activeInt int
-		if err := rows.Scan(&row.ID, &row.FloorNumber, &row.Name, &isGroundInt, &activeInt); err != nil {
+		var maxAforo sql.NullInt64
+		if err := rows.Scan(&row.ID, &row.FloorNumber, &row.Name, &isGroundInt, &activeInt, &maxAforo); err != nil {
 			return nil, err
 		}
 		row.IsGround = isGroundInt != 0
 		row.Active = activeInt != 0
+		if maxAforo.Valid {
+			row.MaxAforo = int(maxAforo.Int64)
+		}
 		if strings.TrimSpace(row.Name) == "" {
 			row.Name = floorNameForNumber(row.FloorNumber)
 		}
@@ -515,7 +521,41 @@ func (s *Server) loadDefaultFloors(ctx context.Context, restaurantID int) ([]boC
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	// Attach the sum of each floor's salon capacity limits for the UI.
+	aforo, err := s.floorSalonAforoSums(ctx, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].TotalSalonAforo = aforo[out[i].ID]
+	}
 	return out, nil
+}
+
+// floorSalonAforoSums returns floor_id -> SUM(capacity_limit) of that floor's
+// salons (global only, has_capacity_limit=1), used to validate a floor's
+// max_aforo against the salons it already owns.
+func (s *Server) floorSalonAforoSums(ctx context.Context, restaurantID int) (map[int]int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT floor_id, COALESCE(SUM(capacity_limit), 0)
+		FROM restaurant_salons
+		WHERE restaurant_id = ? AND specific_date IS NULL AND has_capacity_limit = 1
+		GROUP BY floor_id
+	`, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]int{}
+	for rows.Next() {
+		var floorID, total int
+		if err := rows.Scan(&floorID, &total); err != nil {
+			return nil, err
+		}
+		out[floorID] = total
+	}
+	return out, rows.Err()
 }
 
 func (s *Server) ensureFloorCount(ctx context.Context, restaurantID int, count int) error {
@@ -588,7 +628,7 @@ func (s *Server) loadDateFloors(ctx context.Context, restaurantID int, date stri
 	// Date-scoped floors exist only on `+"`date`"+`; a date-scoped floor with
 	// the same floor_number shadows the global one on that date.
 	dateRows, err := s.db.QueryContext(ctx, `
-		SELECT id, floor_number, floor_name, is_ground, is_active
+		SELECT id, floor_number, floor_name, is_ground, is_active, max_aforo
 		FROM restaurant_floors
 		WHERE restaurant_id = ? AND specific_date = ?
 		ORDER BY floor_number ASC
@@ -603,11 +643,15 @@ func (s *Server) loadDateFloors(ctx context.Context, restaurantID int, date stri
 		var row boConfigFloor
 		var isGroundInt int
 		var activeInt int
-		if err := dateRows.Scan(&row.ID, &row.FloorNumber, &row.Name, &isGroundInt, &activeInt); err != nil {
+		var maxAforo sql.NullInt64
+		if err := dateRows.Scan(&row.ID, &row.FloorNumber, &row.Name, &isGroundInt, &activeInt, &maxAforo); err != nil {
 			return nil, err
 		}
 		row.IsGround = isGroundInt != 0
 		row.Active = activeInt != 0
+		if maxAforo.Valid {
+			row.MaxAforo = int(maxAforo.Int64)
+		}
 		if strings.TrimSpace(row.Name) == "" {
 			row.Name = floorNameForNumber(row.FloorNumber)
 		}
@@ -663,6 +707,33 @@ func (s *Server) loadDateFloors(ctx context.Context, restaurantID int, date stri
 		if v, ok := override[floors[i].ID]; ok {
 			floors[i].Active = v
 		}
+	}
+
+	// Per-date max_aforo override (NULL column = inherit the floor's value).
+	aforoRows, err := s.db.QueryContext(ctx, `
+		SELECT floor_id, max_aforo
+		FROM restaurant_floor_aforo_overrides
+		WHERE restaurant_id = ? AND date = ?
+	`, restaurantID, date)
+	if err != nil {
+		return nil, err
+	}
+	defer aforoRows.Close()
+	for aforoRows.Next() {
+		var floorID int
+		var maxAforo sql.NullInt64
+		if err := aforoRows.Scan(&floorID, &maxAforo); err != nil {
+			return nil, err
+		}
+		for i := range floors {
+			if floors[i].ID == floorID && maxAforo.Valid {
+				floors[i].MaxAforo = int(maxAforo.Int64)
+				break
+			}
+		}
+	}
+	if err := aforoRows.Err(); err != nil {
+		return nil, err
 	}
 	return floors, nil
 }
@@ -1535,6 +1606,7 @@ type boConfigFloorsDefaultsSetRequest struct {
 	Count       *int  `json:"count,omitempty"`
 	FloorNumber *int  `json:"floorNumber,omitempty"`
 	Active      *bool `json:"active,omitempty"`
+	MaxAforo    *int  `json:"maxAforo,omitempty"`
 }
 
 func (s *Server) handleBOConfigFloorsDefaultsGet(w http.ResponseWriter, r *http.Request) {
@@ -1571,7 +1643,7 @@ func (s *Server) handleBOConfigFloorsDefaultsSet(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if req.Count == nil && (req.FloorNumber == nil || req.Active == nil) {
+	if req.Count == nil && (req.FloorNumber == nil || (req.Active == nil && req.MaxAforo == nil)) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "count o floorNumber/active requerido",
@@ -1589,7 +1661,7 @@ func (s *Server) handleBOConfigFloorsDefaultsSet(w http.ResponseWriter, r *http.
 		}
 	}
 
-	if req.FloorNumber != nil && req.Active != nil {
+	if req.FloorNumber != nil {
 		floorNumber := *req.FloorNumber
 		if floorNumber < 0 {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -1620,40 +1692,86 @@ func (s *Server) handleBOConfigFloorsDefaultsSet(w http.ResponseWriter, r *http.
 			return
 		}
 
-		nextActive := *req.Active
-		nextFloors := make([]boConfigFloor, len(floors))
-		copy(nextFloors, floors)
-		for i := range nextFloors {
-			if nextFloors[i].FloorNumber == floorNumber {
-				nextFloors[i].Active = nextActive
-				break
+		// max_aforo: reject a cap below the floor's current committed salon aforo.
+		if req.MaxAforo != nil {
+			if *req.MaxAforo < 0 {
+				httpx.WriteJSON(w, http.StatusOK, map[string]any{
+					"success": false,
+					"message": "aforo invalido",
+				})
+				return
+			}
+			if *req.MaxAforo > 0 && target.TotalSalonAforo > *req.MaxAforo {
+				httpx.WriteJSON(w, http.StatusOK, map[string]any{
+					"success":  false,
+					"message":  "El aforo de la planta no puede ser menor que la suma de los aforos de sus salones",
+					"totalSalonAforo": target.TotalSalonAforo,
+				})
+				return
+			}
+			// A capped floor obliges every salon to carry a capacity limit.
+			maxAforoVal := sql.NullInt64{}
+			if *req.MaxAforo > 0 {
+				maxAforoVal = sql.NullInt64{Int64: int64(*req.MaxAforo), Valid: true}
+			}
+			if _, err := s.db.ExecContext(r.Context(), `
+				UPDATE restaurant_floors
+				SET max_aforo = ?
+				WHERE restaurant_id = ? AND floor_number = ?
+			`, maxAforoVal, a.ActiveRestaurantID, floorNumber); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando aforo de planta")
+				return
+			}
+			if *req.MaxAforo > 0 {
+				// Obligar límite: los salones ya existentes pasan a tener límite
+				// (conservando su capacity_limit, que por defecto es 45).
+				if _, err := s.db.ExecContext(r.Context(), `
+					UPDATE restaurant_salons
+					SET has_capacity_limit = 1
+					WHERE restaurant_id = ? AND floor_id = ? AND has_capacity_limit = 0
+				`, a.ActiveRestaurantID, target.ID); err != nil {
+					httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando salones de la planta")
+					return
+				}
 			}
 		}
-		if countActiveFloors(nextFloors) == 0 {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success": false,
-				"message": "Debe haber al menos una planta activa",
-			})
-			return
-		}
-		_, err = s.db.ExecContext(r.Context(), `
-			UPDATE restaurant_floors
-			SET is_active = ?
-			WHERE restaurant_id = ? AND floor_number = ?
-		`, boolToInt(nextActive), a.ActiveRestaurantID, floorNumber)
-		if err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando planta")
-			return
-		}
-		// Disabling a floor disables its salons (global default); re-enabling
-		// restores them so the two states never drift apart.
-		if _, err := s.db.ExecContext(r.Context(), `
-			UPDATE restaurant_salons
-			SET is_active = ?
-			WHERE restaurant_id = ? AND floor_id = ?
-		`, boolToInt(nextActive), a.ActiveRestaurantID, target.ID); err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando salones de la planta")
-			return
+
+		if req.Active != nil {
+			nextActive := *req.Active
+			nextFloors := make([]boConfigFloor, len(floors))
+			copy(nextFloors, floors)
+			for i := range nextFloors {
+				if nextFloors[i].FloorNumber == floorNumber {
+					nextFloors[i].Active = nextActive
+					break
+				}
+			}
+			if countActiveFloors(nextFloors) == 0 {
+				httpx.WriteJSON(w, http.StatusOK, map[string]any{
+					"success": false,
+					"message": "Debe haber al menos una planta activa",
+				})
+				return
+			}
+			_, err = s.db.ExecContext(r.Context(), `
+				UPDATE restaurant_floors
+				SET is_active = ?
+				WHERE restaurant_id = ? AND floor_number = ?
+			`, boolToInt(nextActive), a.ActiveRestaurantID, floorNumber)
+			if err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando planta")
+				return
+			}
+			// Disabling a floor disables its salons (global default); re-enabling
+			// restores them so the two states never drift apart.
+			if _, err := s.db.ExecContext(r.Context(), `
+				UPDATE restaurant_salons
+				SET is_active = ?
+				WHERE restaurant_id = ? AND floor_id = ?
+			`, boolToInt(nextActive), a.ActiveRestaurantID, target.ID); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando salones de la planta")
+				return
+			}
 		}
 	}
 
@@ -1672,6 +1790,7 @@ type boConfigDayFloorSetRequest struct {
 	Date        string `json:"date"`
 	FloorNumber int    `json:"floorNumber"`
 	Active      bool   `json:"active"`
+	MaxAforo    *int   `json:"maxAforo,omitempty"`
 }
 
 func (s *Server) handleBOConfigFloorsGet(w http.ResponseWriter, r *http.Request) {
@@ -1790,6 +1909,46 @@ func (s *Server) handleBOConfigFloorsSet(w http.ResponseWriter, r *http.Request)
 		`, a.ActiveRestaurantID, date, target.ID, boolToInt(req.Active))
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando planta del dia")
+			return
+		}
+	}
+
+	// Per-date max_aforo override for this floor on this date.
+	if req.MaxAforo != nil {
+		if *req.MaxAforo < 0 {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "aforo invalido",
+			})
+			return
+		}
+		effSalonAforo := target.TotalSalonAforo
+		if *req.MaxAforo > 0 && effSalonAforo > *req.MaxAforo {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success":  false,
+				"message":  "El aforo de la planta no puede ser menor que la suma de los aforos de sus salones",
+				"totalSalonAforo": effSalonAforo,
+			})
+			return
+		}
+		var aforoVal sql.NullInt64
+		if *req.MaxAforo > 0 {
+			aforoVal = sql.NullInt64{Int64: int64(*req.MaxAforo), Valid: true}
+		}
+		if *req.MaxAforo > 0 {
+			_, err = s.db.ExecContext(r.Context(), `
+				INSERT INTO restaurant_floor_aforo_overrides (restaurant_id, date, floor_id, max_aforo)
+				VALUES (?, ?, ?, ?)
+				ON DUPLICATE KEY UPDATE max_aforo = VALUES(max_aforo)
+			`, a.ActiveRestaurantID, date, target.ID, aforoVal)
+		} else {
+			_, err = s.db.ExecContext(r.Context(), `
+				DELETE FROM restaurant_floor_aforo_overrides
+				WHERE restaurant_id = ? AND date = ? AND floor_id = ?
+			`, a.ActiveRestaurantID, date, target.ID)
+		}
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando aforo de planta del dia")
 			return
 		}
 	}

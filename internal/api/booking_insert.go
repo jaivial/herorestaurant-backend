@@ -682,6 +682,11 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 		return 0, err
 	}
 
+	// Track occupancy for the selected floor/salon on the reservation date.
+	if err := s.applyBookingLocationOccupancy(r.Context(), tx, restaurantID, p.ReservationDate, p.PreferredFloorNum, p.PreferredSalonID, p.PartySize, +1); err != nil {
+		return 0, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}

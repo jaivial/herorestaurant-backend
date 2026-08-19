@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
@@ -62,16 +63,83 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	// Optional party_size gates which floors/salons have enough aforo left.
+	// Omitting it keeps the previous (ungated) behaviour for backward compat.
+	partySize := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("party_size")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			partySize = n
+		}
+	}
+	occupancy, err := s.loadOccupancyForDate(r.Context(), restaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando ocupacion")
+		return
+	}
+
 	floors, err := s.loadDateFloors(r.Context(), restaurantID, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando plantas")
 		return
 	}
-	activeFloors := make([]boConfigFloor, 0, len(floors))
-	for _, floor := range floors {
-		if floor.Active {
-			activeFloors = append(activeFloors, floor)
+
+	floorAforo := func(f boConfigFloor) (capacity int, occ int, remaining int, capped bool) {
+		occ = occupancy["floor"][f.ID]
+		capacity = f.MaxAforo
+		if capacity <= 0 {
+			return 0, occ, 0, false
 		}
+		rem := capacity - occ
+		if rem < 0 {
+			rem = 0
+		}
+		return capacity, occ, rem, true
+	}
+	salonAforo := func(sl boConfigSalon) (capacity int, occ int, remaining int, capped bool) {
+		occ = occupancy["salon"][sl.ID]
+		if !sl.HasCapacityLimit {
+			return 0, occ, 0, false
+		}
+		cap := sl.CapacityLimit
+		rem := cap - occ
+		if rem < 0 {
+			rem = 0
+		}
+		return cap, occ, rem, true
+	}
+
+	salonMap := func(sl boConfigSalon) map[string]any {
+		capacity, occ, rem, _ := salonAforo(sl)
+		return map[string]any{
+			"id": sl.ID,
+			"name": sl.Name,
+			"capacityLimit": capacity,
+			"occupancy":     occ,
+			"remaining":     rem,
+		}
+	}
+
+	// Full floor list (config, active + inactive) with aforo fields attached.
+	floorsOut := make([]map[string]any, 0, len(floors))
+	activeFloors := make([]map[string]any, 0, len(floors))
+	for _, floor := range floors {
+		capacity, occ, rem, capped := floorAforo(floor)
+		if floor.Active {
+			// Gate active floors to those with enough aforo for the party.
+			if partySize > 0 && capped && rem < partySize {
+				continue
+			}
+			activeFloors = append(activeFloors, map[string]any{
+				"id": floor.ID, "floorNumber": floor.FloorNumber, "name": floor.Name,
+				"isGround": floor.IsGround, "active": true,
+				"maxAforo": capacity, "occupancy": occ, "remaining": rem,
+			})
+		}
+		floorsOut = append(floorsOut, map[string]any{
+			"id": floor.ID, "floorNumber": floor.FloorNumber, "name": floor.Name,
+			"isGround": floor.IsGround, "active": floor.Active,
+			"maxAforo": capacity, "occupancy": occ, "remaining": rem,
+		})
 	}
 
 	flags, err := s.resolveLocationBooking(r.Context(), restaurantID, date)
@@ -85,23 +153,29 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 		return
 	}
 	floorsWithSalons := make([]map[string]any, 0, len(activeFloors))
-	for _, floor := range activeFloors {
+	for _, floor := range floors {
+		if !floor.Active {
+			continue
+		}
+		capacity, occ, rem, capped := floorAforo(floor)
+		if partySize > 0 && capped && rem < partySize {
+			continue
+		}
 		salonList := make([]map[string]any, 0, 4)
 		for _, salon := range salons {
 			if salon.FloorID != floor.ID || !salon.IsActive {
 				continue
 			}
-			salonList = append(salonList, map[string]any{
-				"id":   salon.ID,
-				"name": salon.Name,
-			})
+			if _, _, srem, scapped := salonAforo(salon); partySize > 0 && scapped && srem < partySize {
+				continue
+			}
+			salonList = append(salonList, salonMap(salon))
 		}
 		floorsWithSalons = append(floorsWithSalons, map[string]any{
-			"id":          floor.ID,
-			"floorNumber": floor.FloorNumber,
-			"name":        floor.Name,
-			"isGround":    floor.IsGround,
-			"salons":      salonList,
+			"id": floor.ID, "floorNumber": floor.FloorNumber, "name": floor.Name,
+			"isGround": floor.IsGround,
+			"maxAforo": capacity, "occupancy": occ, "remaining": rem,
+			"salons": salonList,
 		})
 	}
 
@@ -111,7 +185,7 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 		"openingMode":  openingMode,
 		"morningHours": morningHours,
 		"nightHours":   nightHours,
-		"floors":       floors,
+		"floors":       floorsOut,
 		"activeFloors": activeFloors,
 		"locationBooking": map[string]any{
 			"allowFloorReservation": flags.Floor.Value,

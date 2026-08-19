@@ -344,6 +344,10 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
+		// Release the reserved floor/salon headcount for the reservation date.
+		if err := s.applyBookingLocationOccupancy(ctx, tx, restaurantID, b.ReservationDate, b.PreferredFloor, b.PreferredSalon, b.PartySize, -1); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, "DELETE FROM bookings WHERE restaurant_id = ? AND id = ?", restaurantID, b.ID)
 		return err
 	})

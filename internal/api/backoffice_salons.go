@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"github.com/go-chi/chi/v5"
 	"net/http"
 	"strconv"
@@ -173,6 +174,69 @@ func (s *Server) salonFloorBelongs(ctx context.Context, restaurantID, floorID in
 	return true, nil
 }
 
+// floorMaxAforoEffective returns the floor's effective max_aforo on `date`
+// (global or date-scoped row, plus any per-date override). date == "" means
+// the global/default context. Returns 0 when the floor is unbounded.
+func (s *Server) floorMaxAforoEffective(ctx context.Context, restaurantID, floorID int, date string) (int, error) {
+	var floors []boConfigFloor
+	var err error
+	if date == "" {
+		floors, err = s.loadDefaultFloors(ctx, restaurantID)
+	} else {
+		floors, err = s.loadDateFloors(ctx, restaurantID, date)
+	}
+	if err != nil {
+		return 0, err
+	}
+	for _, f := range floors {
+		if f.ID == floorID {
+			return f.MaxAforo, nil
+		}
+	}
+	return 0, nil
+}
+
+// floorSalonAforoSumExcluding returns the sum of capacity_limit on `date`
+// for the salons of floorID, excluding excludeSalonID (used when editing).
+func (s *Server) floorSalonAforoSumExcluding(ctx context.Context, restaurantID, floorID int, date string, excludeSalonID int) (int, error) {
+	salons, err := s.loadSalons(ctx, restaurantID, date)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, sal := range salons {
+		if sal.FloorID != floorID || !sal.HasCapacityLimit || sal.ID == excludeSalonID {
+			continue
+		}
+		total += sal.CapacityLimit
+	}
+	return total, nil
+}
+
+func (s *Server) validateSalonAgainstFloorAforo(ctx context.Context, restaurantID, floorID int, date string, hasLimit bool, capacity int, excludeSalonID int) (remaining int, capped bool, err error) {
+	maxAforo, err := s.floorMaxAforoEffective(ctx, restaurantID, floorID, date)
+	if err != nil {
+		return 0, false, err
+	}
+	if maxAforo <= 0 {
+		return 0, false, nil
+	}
+	// A capped floor obliges every salon to carry a capacity limit.
+	if !hasLimit {
+		return 0, true, errors.New("La planta tiene un aforo máximo: todos sus salones deben tener límite de aforo")
+	}
+	sumOthers, err := s.floorSalonAforoSumExcluding(ctx, restaurantID, floorID, date, excludeSalonID)
+	if err != nil {
+		return 0, true, err
+	}
+	if sumOthers+capacity > maxAforo {
+		return maxAforo - sumOthers, true, fmt.Errorf(
+			"El aforo del salón excede el aforo restante de la planta (%d de %d disponible; este salón aportaría %d)",
+			maxAforo-sumOthers, maxAforo, capacity)
+	}
+	return maxAforo - sumOthers, true, nil
+}
+
 func (s *Server) handleBOConfigSalonsList(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -215,6 +279,21 @@ func (s *Server) handleBOConfigSalonsCreate(w http.ResponseWriter, r *http.Reque
 	}
 	if !belongs {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "planta no encontrada"})
+		return
+	}
+
+	remaining, capped, err := s.validateSalonAgainstFloorAforo(r.Context(), a.ActiveRestaurantID, req.FloorID, req.Date, req.HasCapacityLimit, req.CapacityLimit, 0)
+	if err != nil {
+		if capped {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success":         false,
+				"message":         err.Error(),
+				"remainingAforo":  remaining,
+				"aforoCapped":     true,
+			})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error validando aforo")
 		return
 	}
 
@@ -279,6 +358,21 @@ func (s *Server) handleBOConfigSalonsUpdate(w http.ResponseWriter, r *http.Reque
 	}
 	if !belongs {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "planta no encontrada"})
+		return
+	}
+
+	remaining, capped, err := s.validateSalonAgainstFloorAforo(r.Context(), a.ActiveRestaurantID, req.FloorID, req.Date, req.HasCapacityLimit, req.CapacityLimit, salonID)
+	if err != nil {
+		if capped {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success":         false,
+				"message":         err.Error(),
+				"remainingAforo":  remaining,
+				"aforoCapped":     true,
+			})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error validando aforo")
 		return
 	}
 

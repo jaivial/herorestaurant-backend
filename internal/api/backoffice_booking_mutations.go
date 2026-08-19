@@ -407,6 +407,11 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reconcile the occupancy ledger when date / party_size / floor changed.
+	if err := s.reconcileBookingOccupancyAfterPatch(r.Context(), a.ActiveRestaurantID, id, current, next); err != nil {
+		log.Printf("occupancy reconcile failed (booking %d restaurant %d): %v", id, a.ActiveRestaurantID, err)
+	}
+
 	// Record tracked field modifications for Modificadas tab.
 	s.recordBookingModificationsAfterPatch(r.Context(), a.ActiveRestaurantID, id, current, next, a)
 
@@ -778,6 +783,10 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 	}
 	id64, err := res.LastInsertId()
 	if err != nil {
+		return 0, err
+	}
+	// Track occupancy for the selected floor on the reservation date.
+	if err := s.applyBookingLocationOccupancy(ctx, tx, restaurantID, b.ReservationDate, b.PreferredFloorNumber, nil, b.PartySize, +1); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {

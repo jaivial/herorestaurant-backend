@@ -654,6 +654,18 @@ func (s *Server) botToolCancelBooking(ctx context.Context, restaurantID int, pho
 		if err != nil {
 			return err
 		}
+		// Release the reserved floor/salon headcount before deleting.
+		var wDate sql.NullString
+		var wParty sql.NullInt64
+		var wFloor, wSalon sql.NullInt64
+		if qErr := tx.QueryRowContext(ctx, `
+			SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'), party_size, preferred_floor_number, preferred_salon_id
+			FROM bookings WHERE id = ? AND restaurant_id = ?
+		`, in.BookingID, restaurantID).Scan(&wDate, &wParty, &wFloor, &wSalon); qErr == nil && wDate.Valid && wParty.Valid {
+			if occErr := s.applyBookingLocationOccupancy(ctx, tx, restaurantID, wDate.String, wFloor, wSalon, int(wParty.Int64), -1); occErr != nil {
+				return occErr
+			}
+		}
 		res, err := tx.ExecContext(ctx, `DELETE FROM bookings WHERE id = ? AND restaurant_id = ?`, in.BookingID, restaurantID)
 		if err != nil {
 			return err

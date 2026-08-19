@@ -345,6 +345,18 @@ func (s *Server) assistantDeleteBooking(ctx context.Context, rid int, input json
 			return
 		}
 		n, _ := res.RowsAffected()
+		if n == 1 {
+			// Release the reserved floor/salon headcount for a soft-cancelled booking.
+			var date sql.NullString
+			var party sql.NullInt64
+			var floor, salon sql.NullInt64
+			if qErr := s.db.QueryRowContext(r.Context(), `
+				SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'), party_size, preferred_floor_number, preferred_salon_id
+				FROM bookings WHERE restaurant_id = ? AND id = ?
+			`, a.ActiveRestaurantID, in.BookingID).Scan(&date, &party, &floor, &salon); qErr == nil && date.Valid && party.Valid {
+				_ = s.applyBookingLocationOccupancy(r.Context(), s.db, a.ActiveRestaurantID, date.String, floor, salon, int(party.Int64), -1)
+			}
+		}
 		s.assistantAudit(r.Context(), a.ActiveRestaurantID, "DELETE", "booking", in.BookingID, map[string]any{"status": "cancelled"})
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": n == 1, "deleted": n == 1, "booking_id": in.BookingID})
 	}, input, assistantHandlerInput{Method: "POST", Body: map[string]any{}})

@@ -375,6 +375,8 @@ func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {
 		SpecialMenu     sql.NullInt64
 		MenuDeGrupoID   sql.NullInt64
 		PrincipalesJSON sql.NullString
+		PreferredFloor  sql.NullInt64
+		PreferredSalon  sql.NullInt64
 	}
 
 	var cancelled booking
@@ -396,7 +398,9 @@ func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {
 				highChairs,
 				special_menu,
 				menu_de_grupo_id,
-				principales_json
+				principales_json,
+				preferred_floor_number,
+				preferred_salon_id
 			FROM bookings
 			WHERE id = ? AND restaurant_id = ?
 		`, bookingID, restaurantID)
@@ -416,6 +420,8 @@ func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {
 			&b.SpecialMenu,
 			&b.MenuDeGrupoID,
 			&b.PrincipalesJSON,
+			&b.PreferredFloor,
+			&b.PreferredSalon,
 		); err != nil {
 			return err
 		}
@@ -452,6 +458,10 @@ func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {
 			nullStringOrNil(b.PrincipalesJSON),
 		)
 		if err != nil {
+			return err
+		}
+		// Release the reserved floor/salon headcount for the reservation date.
+		if err := s.applyBookingLocationOccupancy(ctx, tx, restaurantID, b.ReservationDate, b.PreferredFloor, b.PreferredSalon, b.PartySize, -1); err != nil {
 			return err
 		}
 
