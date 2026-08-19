@@ -52,6 +52,11 @@ func TestValidBOPreference(t *testing.T) {
 		{name: "unknown key", key: "theme", value: "dark", wantValid: false},
 		{name: "unknown value", key: "reservasDisplayMode", value: "cards", wantValid: false},
 		{name: "empty key", key: "", value: "grid", wantValid: false},
+		{name: "hour split day open", key: "hourSplitDetailsOpenDay", value: "1", wantValid: true, wantNormalized: "1"},
+		{name: "hour split day closed", key: "hourSplitDetailsOpenDay", value: "0", wantValid: true, wantNormalized: "0"},
+		{name: "hour split default open", key: "hourSplitDetailsOpenDefault", value: "1", wantValid: true, wantNormalized: "1"},
+		{name: "hour split default closed", key: "hourSplitDetailsOpenDefault", value: "0", wantValid: true, wantNormalized: "0"},
+		{name: "hour split bad value", key: "hourSplitDetailsOpenDay", value: "true", wantValid: false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
