@@ -73,7 +73,7 @@ Scope: todo lo que cuelga de `backend/`.
 - Evitar refactors masivos fuera de scope.
 
 ## Checklist rapido antes de cerrar
-1. `go test ./...` y/o compilacion de paquetes afectados.
+1. `go vet ./...` + `go build ./...` (compilacion de paquetes afectados). **Sin TDD ni tests obligatorios**: no escribir ni ejecutar tests salvo peticion expresa del usuario.
 2. Verificar formato y compilacion (`go fmt` en archivos tocados cuando aplique).
 3. Validar al menos un flujo real del endpoint cambiado.
 4. Confirmar que no se rompieron rutas legacy relacionadas.
@@ -89,7 +89,7 @@ Toda tarea nueva sigue este flujo completo, sin omitir pasos:
    git worktree add /home/jaime/wt/<repo>-<tarea> -b <tipo>/<tarea> main
    cd /home/jaime/wt/<repo>-<tarea>
    ```
-2. **Editar + test**: implementar cambios, correr tests/build del repo (Go: `go test ./...`, `go vet ./...`, `go build ./...`).
+2. **Editar + verificar**: implementar cambios y validar con `go vet ./...` + `go build ./...`. Sin tests ni TDD salvo peticion expresa.
 3. **Commit + push** de todos los cambios al branch nuevo:
    ```bash
    git add -A && git commit -m "<conventional commit msg>"
