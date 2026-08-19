@@ -13,6 +13,10 @@ import (
 // keeps the generic key/value store from becoming an arbitrary write surface.
 var allowedBOPreferences = map[string]map[string]struct{}{
 	"reservasDisplayMode": {"tabla": {}, "grid": {}},
+	// Collapsed/expanded state of the "Reparto por hora" details accordion.
+	// Separate keys: /app/reservas/config (per-day) and /app/config (defaults).
+	"hourSplitDetailsOpenDay":     {"0": {}, "1": {}},
+	"hourSplitDetailsOpenDefault": {"0": {}, "1": {}},
 }
 
 // normalizeBOPreference lower-cases the value and validates (key, value)
