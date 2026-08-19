@@ -568,6 +568,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Post("/config/floors/defaults", s.handleBOConfigFloorsDefaultsSet)
 		r.With(s.requireBOSession, reservasGate).Get("/config/floors", s.handleBOConfigFloorsGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/floors", s.handleBOConfigFloorsSet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/floors/date", s.handleBOConfigFloorsDateSet)
 
 		r.With(s.requireBOSession, reservasGate).Get("/config/salons", s.handleBOConfigSalonsList)
 		r.With(s.requireBOSession, reservasGate).Post("/config/salons", s.handleBOConfigSalonsCreate)

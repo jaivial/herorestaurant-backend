@@ -1408,6 +1408,19 @@ override (the date inherits the default again); a different value pins it.
 
 Response: same shape as `GET /api/admin/config/location-booking`.
 
+### `POST /api/admin/config/floors/date`
+Sets how many floors exist for one date, overriding the global default.
+
+Body (JSON):
+- `date`: `YYYY-MM-DD` (required)
+- `count`: 1..8 (required)
+
+Semantics:
+- Increasing beyond the global floors creates **date-scoped** floors (`restaurant_floors.specific_date = date`), visible only on that date (a date-scoped floor with the same `floor_number` shadows the global one).
+- Decreasing deactivates floors for that date via `restaurant_floor_overrides`; date-scoped rows created for that date are deleted outright. Global floors are never deleted.
+
+Response: `{ success: true, date, floors: [...] }` — same floor shape as `GET /api/admin/config/floors?date=`, with `dateScoped` set on date-scoped rows.
+
 ### `GET /api/admin/config/day?date=YYYY-MM-DD`
 Returns open/closed day state.
 - Fallback si no existe override en `restaurant_days`: se usa `weekdayOpen` de `restaurant_reservation_defaults`.

@@ -70,6 +70,7 @@ type boConfigFloor struct {
 	Name        string `json:"name"`
 	IsGround    bool   `json:"isGround"`
 	Active      bool   `json:"active"`
+	DateScoped  string `json:"dateScoped,omitempty"`
 }
 
 func cloneStrings(in []string) []string {
@@ -488,7 +489,7 @@ func (s *Server) loadDefaultFloors(ctx context.Context, restaurantID int) ([]boC
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, floor_number, floor_name, is_ground, is_active
 		FROM restaurant_floors
-		WHERE restaurant_id = ?
+		WHERE restaurant_id = ? AND specific_date IS NULL
 		ORDER BY floor_number ASC
 	`, restaurantID)
 	if err != nil {
@@ -543,7 +544,7 @@ func (s *Server) ensureFloorCount(ctx context.Context, restaurantID int, count i
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id
 		FROM restaurant_floors
-		WHERE restaurant_id = ? AND floor_number >= ?
+		WHERE restaurant_id = ? AND floor_number >= ? AND specific_date IS NULL
 	`, restaurantID, count)
 	if err != nil {
 		return err
@@ -573,7 +574,7 @@ func (s *Server) ensureFloorCount(ctx context.Context, restaurantID int, count i
 
 	_, err = s.db.ExecContext(ctx, `
 		DELETE FROM restaurant_floors
-		WHERE restaurant_id = ? AND floor_number >= ?
+		WHERE restaurant_id = ? AND floor_number >= ? AND specific_date IS NULL
 	`, restaurantID, count)
 	return err
 }
@@ -583,8 +584,56 @@ func (s *Server) loadDateFloors(ctx context.Context, restaurantID int, date stri
 	if err != nil {
 		return nil, err
 	}
-	if len(floors) == 0 {
-		return floors, nil
+
+	// Date-scoped floors exist only on `+"`date`"+`; a date-scoped floor with
+	// the same floor_number shadows the global one on that date.
+	dateRows, err := s.db.QueryContext(ctx, `
+		SELECT id, floor_number, floor_name, is_ground, is_active
+		FROM restaurant_floors
+		WHERE restaurant_id = ? AND specific_date = ?
+		ORDER BY floor_number ASC
+	`, restaurantID, date)
+	if err != nil {
+		return nil, err
+	}
+	defer dateRows.Close()
+
+	scoped := make([]boConfigFloor, 0, 2)
+	for dateRows.Next() {
+		var row boConfigFloor
+		var isGroundInt int
+		var activeInt int
+		if err := dateRows.Scan(&row.ID, &row.FloorNumber, &row.Name, &isGroundInt, &activeInt); err != nil {
+			return nil, err
+		}
+		row.IsGround = isGroundInt != 0
+		row.Active = activeInt != 0
+		if strings.TrimSpace(row.Name) == "" {
+			row.Name = floorNameForNumber(row.FloorNumber)
+		}
+		row.DateScoped = date
+		scoped = append(scoped, row)
+	}
+	if err := dateRows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(scoped) > 0 {
+		shadowed := make(map[int]bool, len(scoped))
+		for _, row := range scoped {
+			shadowed[row.FloorNumber] = true
+		}
+		merged := make([]boConfigFloor, 0, len(floors)+len(scoped))
+		for _, row := range floors {
+			if !shadowed[row.FloorNumber] {
+				merged = append(merged, row)
+			}
+		}
+		merged = append(merged, scoped...)
+		sort.SliceStable(merged, func(i, j int) bool {
+			return merged[i].FloorNumber < merged[j].FloorNumber
+		})
+		floors = merged
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
