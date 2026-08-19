@@ -150,7 +150,7 @@ func TestHandleLocationBookingSetGetRoundTrip(t *testing.T) {
 		t.Fatalf("override = %v; want nils", ovr)
 	}
 
-	// POST: pin salon=true for the date.
+	// POST: pin salon=true for the date (global salon is false).
 	body := `{"date":"` + date + `","allowSalonReservation":true}`
 	got = salonsReq(t, srv.handleBOConfigLocationBookingSet, http.MethodPost, "/admin/config/location-booking", body, nil)
 	if got["success"] != true {
@@ -171,8 +171,8 @@ func TestHandleLocationBookingSetGetRoundTrip(t *testing.T) {
 		t.Fatalf("override floor = %v; want nil (inherit)", ovr)
 	}
 
-	// POST: back to inherit (null) → override row removed.
-	body = `{"date":"` + date + `","allowSalonReservation":null}`
+	// POST: back to the global value (false) → override row removed (inherit).
+	body = `{"date":"` + date + `","allowSalonReservation":false}`
 	got = salonsReq(t, srv.handleBOConfigLocationBookingSet, http.MethodPost, "/admin/config/location-booking", body, nil)
 	if got["success"] != true {
 		t.Fatalf("clear = %v", got)

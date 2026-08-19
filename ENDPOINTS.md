@@ -1396,12 +1396,15 @@ Response:
 - `override` flags are `null` when the date inherits the global default.
 
 ### `POST /api/admin/config/location-booking`
-Writes per-date overrides (tri-state per flag).
+Writes per-date overrides from plain toggle switches.
 
-Body (JSON):
+Body (JSON, any subset):
 - `date`: `YYYY-MM-DD` (required)
-- `allowFloorReservation`: `true` | `false` | `null` (null/absent = inherit the global default)
-- `allowSalonReservation`: `true` | `false` | `null`
+- `allowFloorReservation`: boolean
+- `allowSalonReservation`: boolean
+
+Semantics: toggling a flag to the same value as the global default clears that
+override (the date inherits the default again); a different value pins it.
 
 Response: same shape as `GET /api/admin/config/location-booking`.
 
