@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -87,7 +86,7 @@ func (s *Server) loadLocationBookingOverrideRow(ctx context.Context, restaurantI
 	return row, nil
 }
 
-// locationOverrideUpdate expresses one flag write: Set=false leaves the
+// toggleOverrideUpdate expresses one flag write: Set=false leaves the
 // column untouched; Set=true with Inherit=true clears it to NULL (inherit);
 // Set=true with Inherit=false pins it to Value.
 type locationOverrideUpdate struct {
@@ -178,45 +177,28 @@ func (s *Server) handleBOConfigLocationBookingGet(w http.ResponseWriter, r *http
 	httpx.WriteJSON(w, http.StatusOK, locationBookingResponse(date, flags, override))
 }
 
-type boLocationBookingTriState struct {
-	// Present reports whether the key appeared in the JSON payload.
-	Present bool
-	// Value is nil for JSON null ("inherit the default") and non-nil for a
-	// pinned true/false override.
-	Value *bool
-}
-
-func (t *boLocationBookingTriState) UnmarshalJSON(raw []byte) error {
-	t.Present = true
-	if string(raw) == "null" {
-		t.Value = nil
-		return nil
-	}
-	var v bool
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return err
-	}
-	t.Value = &v
-	return nil
-}
-
 type boLocationBookingSetRequest struct {
-	Date                  string                    `json:"date"`
-	AllowFloorReservation boLocationBookingTriState `json:"allowFloorReservation"`
-	AllowSalonReservation boLocationBookingTriState `json:"allowSalonReservation"`
+	Date                  string `json:"date"`
+	AllowFloorReservation *bool  `json:"allowFloorReservation"`
+	AllowSalonReservation *bool  `json:"allowSalonReservation"`
 }
 
-// triToUpdate maps a payload tri-state onto a column update. Absent and null
-// both mean "inherit the default" (column NULL); true/false pin the override.
-func triToUpdate(t boLocationBookingTriState) locationOverrideUpdate {
-	if !t.Present || t.Value == nil {
+// valueToUpdate maps a plain toggle write onto a column update. When the
+// requested value matches the restaurant default the override is cleared so
+// the date inherits the default (same pattern as hour_split).
+func valueToUpdate(requested *bool, global bool) locationOverrideUpdate {
+	if requested == nil {
+		return locationOverrideUpdate{}
+	}
+	if *requested == global {
 		return locationOverrideUpdate{Set: true, Inherit: true}
 	}
-	return locationOverrideUpdate{Set: true, Value: *t.Value}
+	return locationOverrideUpdate{Set: true, Value: *requested}
 }
 
-// handleBOConfigLocationBookingSet writes per-date overrides. A nil flag means
-// "inherit the global default" (column NULL); true/false pins the override.
+// handleBOConfigLocationBookingSet writes per-date overrides from plain
+// toggle switches. Toggling to the same value as the global default clears
+// the override (the date inherits the default again).
 func (s *Server) handleBOConfigLocationBookingSet(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -234,12 +216,21 @@ func (s *Server) handleBOConfigLocationBookingSet(w http.ResponseWriter, r *http
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid date"})
 		return
 	}
-	if !req.AllowFloorReservation.Present && !req.AllowSalonReservation.Present {
+	if req.AllowFloorReservation == nil && req.AllowSalonReservation == nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Nada que actualizar"})
 		return
 	}
 
-	if err := s.applyLocationBookingOverride(r.Context(), a.ActiveRestaurantID, date, triToUpdate(req.AllowFloorReservation), triToUpdate(req.AllowSalonReservation)); err != nil {
+	// Resolve the global defaults so equal values can fall back to inherit.
+	globalFlags, err := s.resolveLocationBooking(r.Context(), a.ActiveRestaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando configuración de ubicación")
+		return
+	}
+	floorUpdate := valueToUpdate(req.AllowFloorReservation, globalFlags.Floor.Global)
+	salonUpdate := valueToUpdate(req.AllowSalonReservation, globalFlags.Salon.Global)
+
+	if err := s.applyLocationBookingOverride(r.Context(), a.ActiveRestaurantID, date, floorUpdate, salonUpdate); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando configuración de ubicación")
 		return
 	}
