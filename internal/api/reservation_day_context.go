@@ -74,6 +74,37 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	flags, err := s.resolveLocationBooking(r.Context(), restaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando configuración de ubicación")
+		return
+	}
+	salons, err := s.loadSalons(r.Context(), restaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando salones")
+		return
+	}
+	floorsWithSalons := make([]map[string]any, 0, len(activeFloors))
+	for _, floor := range activeFloors {
+		salonList := make([]map[string]any, 0, 4)
+		for _, salon := range salons {
+			if salon.FloorID != floor.ID || !salon.IsActive {
+				continue
+			}
+			salonList = append(salonList, map[string]any{
+				"id":   salon.ID,
+				"name": salon.Name,
+			})
+		}
+		floorsWithSalons = append(floorsWithSalons, map[string]any{
+			"id":          floor.ID,
+			"floorNumber": floor.FloorNumber,
+			"name":        floor.Name,
+			"isGround":    floor.IsGround,
+			"salons":      salonList,
+		})
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
 		"date":         date,
@@ -82,6 +113,11 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 		"nightHours":   nightHours,
 		"floors":       floors,
 		"activeFloors": activeFloors,
+		"locationBooking": map[string]any{
+			"allowFloorReservation": flags.Floor.Value,
+			"allowSalonReservation": flags.Salon.Value,
+			"floors":                floorsWithSalons,
+		},
 	})
 }
 

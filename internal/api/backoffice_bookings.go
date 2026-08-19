@@ -31,6 +31,7 @@ type bookingRow struct {
 	HighChairs      sql.NullInt64
 	TableNumber     sql.NullString
 	PreferredFloor  sql.NullInt64
+	PreferredSalon  sql.NullInt64
 	AddedDate       sql.NullString
 	SpecialMenu     sql.NullInt64
 	MenuDeGrupoID   sql.NullInt64
@@ -57,6 +58,7 @@ func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
 		&b.HighChairs,
 		&b.TableNumber,
 		&b.PreferredFloor,
+		&b.PreferredSalon,
 		&b.AddedDate,
 		&b.SpecialMenu,
 		&b.MenuDeGrupoID,
@@ -85,6 +87,7 @@ func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
 		"highChairs":                 nullInt64OrNil(b.HighChairs),
 		"table_number":               nullStringOrNil(b.TableNumber),
 		"preferred_floor_number":     nullInt64OrNil(b.PreferredFloor),
+		"preferred_salon_id":         nullInt64OrNil(b.PreferredSalon),
 		"added_date":                 nullStringOrNil(b.AddedDate),
 		"special_menu":               isSpecialMenu,
 		"menu_de_grupo_id":           nullInt64OrNil(b.MenuDeGrupoID),
@@ -230,6 +233,7 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 				highChairs,
 				table_number,
 				preferred_floor_number,
+				preferred_salon_id,
 				DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
 				special_menu,
 				menu_de_grupo_id,

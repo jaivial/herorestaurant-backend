@@ -853,6 +853,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			highChairs,
 			table_number,
 			preferred_floor_number,
+			preferred_salon_id,
 			DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
 			special_menu,
 			menu_de_grupo_id,
@@ -884,6 +885,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 		HighChairs      sql.NullInt64
 		TableNumber     sql.NullString
 		PreferredFloor  sql.NullInt64
+		PreferredSalon  sql.NullInt64
 		AddedDate       sql.NullString
 		SpecialMenu     sql.NullInt64
 		MenuDeGrupoID   sql.NullInt64
@@ -911,6 +913,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			&b.HighChairs,
 			&b.TableNumber,
 			&b.PreferredFloor,
+			&b.PreferredSalon,
 			&b.AddedDate,
 			&b.SpecialMenu,
 			&b.MenuDeGrupoID,
@@ -939,6 +942,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			"highChairs":                 nullInt64OrNil(b.HighChairs),
 			"table_number":               nullStringOrNil(b.TableNumber),
 			"preferred_floor_number":     nullInt64OrNil(b.PreferredFloor),
+			"preferred_salon_id":         nullInt64OrNil(b.PreferredSalon),
 			"added_date":                 nullStringOrNil(b.AddedDate),
 			"special_menu":               isSpecialMenu,
 			"menu_de_grupo_id":           nullInt64OrNil(b.MenuDeGrupoID),
@@ -968,6 +972,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 			highChairs,
 			table_number,
 			preferred_floor_number,
+			preferred_salon_id,
 			DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
 			special_menu,
 			menu_de_grupo_id,
@@ -995,6 +1000,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		highChairs      sql.NullInt64
 		tableNumber     sql.NullString
 		preferredFloor  sql.NullInt64
+		preferredSalon  sql.NullInt64
 		addedDate       sql.NullString
 		specialMenu     sql.NullInt64
 		menuDeGrupoID   sql.NullInt64
@@ -1018,6 +1024,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		&highChairs,
 		&tableNumber,
 		&preferredFloor,
+		&preferredSalon,
 		&addedDate,
 		&specialMenu,
 		&menuDeGrupoID,
@@ -1046,6 +1053,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		"highChairs":                 nullInt64OrNil(highChairs),
 		"table_number":               nullStringOrNil(tableNumber),
 		"preferred_floor_number":     nullInt64OrNil(preferredFloor),
+		"preferred_salon_id":         nullInt64OrNil(preferredSalon),
 		"added_date":                 nullStringOrNil(addedDate),
 		"special_menu":               isSpecialMenu,
 		"menu_de_grupo_id":           nullInt64OrNil(menuDeGrupoID),

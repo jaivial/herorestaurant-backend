@@ -31,6 +31,7 @@ type publicBooking struct {
 	BabyStrollers   sql.NullInt64
 	HighChairs      sql.NullInt64
 	PreferredFloor  sql.NullInt64
+	PreferredSalon  sql.NullInt64
 	TableNumber     sql.NullString
 	Status          sql.NullString
 	SpecialMenu     sql.NullInt64
@@ -61,6 +62,7 @@ func (s *Server) fetchPublicBooking(ctx context.Context, id int) (publicBooking,
 			babyStrollers,
 			highChairs,
 			preferred_floor_number,
+			preferred_salon_id,
 			table_number,
 			status,
 			special_menu,
@@ -85,6 +87,7 @@ func (s *Server) fetchPublicBooking(ctx context.Context, id int) (publicBooking,
 		&b.BabyStrollers,
 		&b.HighChairs,
 		&b.PreferredFloor,
+		&b.PreferredSalon,
 		&b.TableNumber,
 		&b.Status,
 		&b.SpecialMenu,
