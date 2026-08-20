@@ -1,0 +1,22 @@
+# BuildKit per-Dockerfile ignore for backend/Dockerfile.prod.
+# Build context is the multi-repo root, so whitelist ONLY what the image needs.
+# Rules are last-match-wins: `*` / `dir/*` prune, `!` re-includes.
+*
+!backend
+backend/*
+!backend/go.mod
+!backend/go.sum
+!backend/cmd
+!backend/cmd/**
+!backend/internal
+!backend/internal/**
+!preactvillacarmen
+preactvillacarmen/*
+!preactvillacarmen/frontend
+!preactvillacarmen/frontend/**
+# Re-exclusions inside the whitelisted trees (node_modules/dist must never
+# leak from the host into the build).
+preactvillacarmen/frontend/node_modules
+preactvillacarmen/frontend/node_modules/**
+preactvillacarmen/frontend/dist
+preactvillacarmen/frontend/dist/**
