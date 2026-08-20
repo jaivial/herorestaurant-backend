@@ -3141,3 +3141,31 @@ Behavior:
 Env knobs (defaults): `ASSISTANT_MINIMAX_MODEL` (`MiniMax-M3`),
 `ASSISTANT_TIMEOUT_SECONDS` (60), `ASSISTANT_MAX_TOKENS` (1024),
 `ASSISTANT_HISTORY_LIMIT` (20).
+
+---
+
+## POST /api/admin/stock/ocr-scan
+
+Camera OCR for the "Nuevo artículo" modal. Accepts a photographed document
+(albarán, etiqueta, ficha) and returns structured stock-article data extracted
+by MiniMax vision.
+
+- Auth: backoffice session cookie (`bo_session`) + permission `stock.ocr.upload` + AI entitlement.
+- Body (multipart `image`, or JSON `{ "image": "data:image/jpeg;base64,…", "mediaType": "image/jpeg" }`).
+- Resolution: MiniMax key + model come from `restaurant_minimax_config` (the model
+  the user picked, e.g. `MiniMax-M3`); falls back to `MINIMAX_MODEL` env.
+- Success: `{ "success": true, "model": "MiniMax-M3", "rawText": "...", "extraction": { "name": string|null, "quantity": number|null, "unit": string|null, "note": string|null } }`
+- Failure (no key / model error): `{ "success": false, "message": "…" }` (HTTP 200 so the modal can show the message inline).
+
+The backoffice modal pre-fills the manual "Nuevo artículo" form from `extraction.name`.
+
+## Data migration: stock seed from menu (20260820_seed_stock_from_menu.sql)
+
+One-time, manually-run (`mysql newvillacarmen < file.sql`) seed that turns the
+existing catalogue into stock articles + technical sheets:
+
+- Dishes (`comida_items`, `source_type='platos'`) → `SEMI_FINISHED` stock item + DRAFT `stock_recipes` (ficha técnica, empty), linked via `stock_item_id`/`stock_recipe_id` and `production_type='MANUFACTURED'`.
+- Desserts (`POSTRES`) → same as dishes.
+- Wines (`VINOS`) → `RAW` stock item (`deduction_source='SALE'`), linked via `stock_item_id`; no recipe.
+- Beverages (`BEBIDAS`) / Coffees (`CAFES`) → omitted (no `stock_item_id` column yet, no rows).
+- Idempotent: only rows with `stock_item_id IS NULL` are touched.
