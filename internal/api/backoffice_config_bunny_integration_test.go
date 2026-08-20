@@ -26,9 +26,108 @@ func TestBunnyStorageConfigEndpointsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	if _, err := db.Exec(`DELETE FROM bunny_storage_config`); err != nil {
-		t.Fatalf("cleanup: %v", err)
+
+	var databaseName string
+	if err := db.QueryRow(`SELECT DATABASE()`).Scan(&databaseName); err != nil {
+		db.Close()
+		t.Fatalf("read database name: %v", err)
+	}
+	name := strings.ToLower(databaseName)
+	isTestDatabase := strings.Contains(name, "test") || strings.Contains(name, "sandbox")
+	if !isTestDatabase && os.Getenv("BUNNY_TEST_ALLOW_NON_TEST_DB") != "1" {
+		db.Close()
+		t.Fatalf("refusing destructive test against database %q; use a test/sandbox database or set BUNNY_TEST_ALLOW_NON_TEST_DB=1", databaseName)
+	}
+
+	// The handler writes through Server.db, so the test cannot run inside a
+	// transaction. Use a dedicated restaurant and restore its original row on
+	// cleanup to keep an explicit non-test run reversible.
+	const testRestaurantID = 987654321
+	type storedConfigRow struct {
+		id               int
+		restaurantID     int
+		storageZone      sql.NullString
+		storageAccessKey sql.NullString
+		pullBaseURL      sql.NullString
+		isActive         int
+		updatedAt        sql.NullTime
+		updatedByUserID  sql.NullInt64
+	}
+	var previousRows []storedConfigRow
+	rows, err := db.Query(`
+		SELECT id, restaurant_id, storage_zone, storage_access_key,
+		       pull_base_url, is_active, updated_at, updated_by_user_id
+		FROM bunny_storage_config
+		WHERE restaurant_id = ?
+	`, testRestaurantID)
+	if err != nil {
+		db.Close()
+		t.Fatalf("snapshot existing config: %v", err)
+	}
+	for rows.Next() {
+		var row storedConfigRow
+		if err := rows.Scan(
+			&row.id,
+			&row.restaurantID,
+			&row.storageZone,
+			&row.storageAccessKey,
+			&row.pullBaseURL,
+			&row.isActive,
+			&row.updatedAt,
+			&row.updatedByUserID,
+		); err != nil {
+			rows.Close()
+			db.Close()
+			t.Fatalf("read existing config snapshot: %v", err)
+		}
+		previousRows = append(previousRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		db.Close()
+		t.Fatalf("iterate existing config snapshot: %v", err)
+	}
+	if err := rows.Close(); err != nil {
+		db.Close()
+		t.Fatalf("close existing config snapshot: %v", err)
+	}
+
+	t.Cleanup(func() {
+		tx, err := db.BeginTx(context.Background(), nil)
+		if err != nil {
+			t.Errorf("restore config cleanup: %v", err)
+			db.Close()
+			return
+		}
+		if _, err := tx.Exec(`DELETE FROM bunny_storage_config WHERE restaurant_id = ?`, testRestaurantID); err != nil {
+			tx.Rollback()
+			t.Errorf("delete test config: %v", err)
+			db.Close()
+			return
+		}
+		for _, row := range previousRows {
+			_, err := tx.Exec(`
+				INSERT INTO bunny_storage_config
+					(id, restaurant_id, storage_zone, storage_access_key,
+					 pull_base_url, is_active, updated_at, updated_by_user_id)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`, row.id, row.restaurantID, row.storageZone, row.storageAccessKey,
+				row.pullBaseURL, row.isActive, row.updatedAt, row.updatedByUserID)
+			if err != nil {
+				tx.Rollback()
+				t.Errorf("restore config row: %v", err)
+				db.Close()
+				return
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			t.Errorf("commit restored config: %v", err)
+		}
+		db.Close()
+	})
+
+	if _, err := db.Exec(`DELETE FROM bunny_storage_config WHERE restaurant_id = ?`, testRestaurantID); err != nil {
+		t.Fatalf("cleanup test restaurant: %v", err)
 	}
 
 	s := NewServer(db, config.Config{
@@ -40,7 +139,7 @@ func TestBunnyStorageConfigEndpointsIntegration(t *testing.T) {
 	post := func(t *testing.T, body string) map[string]any {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, "/admin/config/bunny-storage", strings.NewReader(body))
-		req = req.WithContext(withBOAuth(context.Background(), boAuth{ActiveRestaurantID: 1, Role: "root", User: boUser{ID: 7}}))
+		req = req.WithContext(withBOAuth(context.Background(), boAuth{ActiveRestaurantID: testRestaurantID, Role: "root", User: boUser{ID: 7}}))
 		rec := httptest.NewRecorder()
 		s.handleBOBunnyStorageConfigSet(rec, req)
 		var out map[string]any
@@ -90,7 +189,7 @@ func TestBunnyStorageConfigEndpointsIntegration(t *testing.T) {
 	})
 
 	t.Run("saved credentials take effect immediately", func(t *testing.T) {
-		got := s.bunnyCreds(context.Background(), 1)
+		got := s.bunnyCreds(context.Background(), testRestaurantID)
 		if got.StorageZone != "tenant-zone" || got.StorageKey != "super-secret-key" {
 			t.Fatalf("bunnyCreds did not pick up the save: %+v", got)
 		}
@@ -105,7 +204,7 @@ func TestBunnyStorageConfigEndpointsIntegration(t *testing.T) {
 		if out["success"] != true {
 			t.Fatalf("save failed: %v", out)
 		}
-		got := s.bunnyCreds(context.Background(), 1)
+		got := s.bunnyCreds(context.Background(), testRestaurantID)
 		if got.StorageKey != "super-secret-key" {
 			t.Fatalf("empty key should preserve the stored one, got %q", got.StorageKey)
 		}
@@ -118,7 +217,7 @@ func TestBunnyStorageConfigEndpointsIntegration(t *testing.T) {
 		if out := post(t, `{"isActive":false}`); out["success"] != true {
 			t.Fatalf("save failed: %v", out)
 		}
-		got := s.bunnyCreds(context.Background(), 1)
+		got := s.bunnyCreds(context.Background(), testRestaurantID)
 		if got.StorageZone != "env-zone" || got.StorageKey != "env-key" {
 			t.Fatalf("inactive row should fall back to env, got %+v", got)
 		}
@@ -133,7 +232,7 @@ func TestBunnyStorageConfigEndpointsIntegration(t *testing.T) {
 
 	t.Run("get masks the key", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/admin/config/bunny-storage", nil)
-		req = req.WithContext(withBOAuth(context.Background(), boAuth{ActiveRestaurantID: 1, Role: "root", User: boUser{ID: 7}}))
+		req = req.WithContext(withBOAuth(context.Background(), boAuth{ActiveRestaurantID: testRestaurantID, Role: "root", User: boUser{ID: 7}}))
 		rec := httptest.NewRecorder()
 		s.handleBOBunnyStorageConfigGet(rec, req)
 		if strings.Contains(rec.Body.String(), "super-secret-key") {
