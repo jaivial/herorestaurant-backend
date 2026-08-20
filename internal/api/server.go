@@ -981,6 +981,14 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireAdmin).Post("/fetch_occupancy.php", s.handleFetchOccupancy)
 	})
 
+	// Public SPA (preact dist) when STATIC_DIR is configured. Wired as the
+	// chi NotFound handler so every route registered above (API + legacy root
+	// endpoints) keeps precedence; unmatched paths fall through to static files
+	// with an index.html fallback for client-side routes.
+	if s.cfg.StaticDir != "" {
+		r.NotFound(SPAHandler(s.cfg.StaticDir).ServeHTTP)
+	}
+
 	return r
 }
 
