@@ -396,6 +396,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, stockOCRConfirmGate).Post("/stock/documents/{id}/confirm-invoice", s.handleBOStockInvoiceConfirm)
 		r.With(s.requireBOSession, stockOCRConfirmGate).Post("/stock/documents/{id}/confirm-recipe", s.handleBOStockRecipeDocumentConfirm)
 
+	// Camera OCR from the "Nuevo articulo" modal: photograph a document and let
+	// MiniMax vision turn it into structured stock-article data.
+	r.With(s.requireBOSession, stockOCRUploadGate, s.requireBOStockAI).Post("/stock/ocr-scan", s.handleBOStockOCRScan)
+
 		// POS. Paid checkout is authoritative boundary for stock deductions and covers.
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/bootstrap", s.handleBOPOSBootstrap)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/settings", s.handleBOPOSSettingsGet)
