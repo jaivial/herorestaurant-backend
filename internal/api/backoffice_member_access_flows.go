@@ -161,6 +161,17 @@ func (s *Server) createBOMemberAndBootstrapAccess(ctx context.Context, a boAuth,
 		return boMemberCreateResult{Success: false, Message: "Rol invalido"}, nil
 	}
 
+	// ACL: el rol asignado debe ser estrictamente inferior al del actor —
+	// nadie puede crear un miembro de su mismo rol o superior (p.ej. un admin
+	// no puede crear root ni otro admin; el fallback por omision es "admin").
+	targetImportance, err := s.roleImportance(ctx, roleSlug)
+	if err != nil {
+		return boMemberCreateResult{}, err
+	}
+	if targetImportance >= a.User.RoleImportance {
+		return boMemberCreateResult{Success: false, Message: "No puedes asignar un rol igual o superior al tuyo"}, nil
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return boMemberCreateResult{}, err
@@ -888,6 +899,21 @@ func (s *Server) handleBOMemberInvitationResend(w http.ResponseWriter, r *http.R
 
 	if strings.TrimSpace(rec.Email) == "" && strings.TrimSpace(rec.Phone) == "" {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "El miembro no tiene email ni telefono para reenviar invitacion"})
+		return
+	}
+
+	// ACL: no re-expedir invitaciones cuyo rol sea igual o superior al del
+	// actor (evita re-mintar roles altos creados antes de esta validacion).
+	resendImportance, err := s.roleImportance(r.Context(), rec.RoleSlug)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error validando jerarquia de roles")
+		return
+	}
+	if resendImportance >= a.User.RoleImportance {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": fmt.Sprintf("No puedes reenviar una invitacion de rol igual o superior al tuyo (%s)", rec.RoleSlug),
+		})
 		return
 	}
 
