@@ -78,7 +78,7 @@ type boMemberAccessRecord struct {
 type boInvitationRecord struct {
 	TokenID        int64
 	TokenSHA       string
-	OnboardingGUID string
+	OnboardingGUID sql.NullString
 	ExpiresAt      time.Time
 	boMemberAccessRecord
 }
@@ -1283,7 +1283,7 @@ func (s *Server) handleBOInvitationValidate(w http.ResponseWriter, r *http.Reque
 			"roleSlug":          rec.RoleSlug,
 			"roleLabel":         rec.RoleLabel,
 			"expiresAt":         rec.ExpiresAt.Format(time.RFC3339),
-			"hasOnboardingGuid": strings.TrimSpace(rec.OnboardingGUID) != "",
+			"hasOnboardingGuid": rec.OnboardingGUID.Valid && strings.TrimSpace(rec.OnboardingGUID.String) != "",
 		},
 	})
 }
@@ -1308,7 +1308,7 @@ func (s *Server) handleBOInvitationOnboardingStart(w http.ResponseWriter, r *htt
 		httpx.WriteError(w, http.StatusInternalServerError, "Error preparando onboarding")
 		return
 	}
-	guid, err := s.ensureInvitationGUID(r.Context(), rec.TokenID, rec.OnboardingGUID)
+	guid, err := s.ensureInvitationGUID(r.Context(), rec.TokenID, rec.OnboardingGUID.String)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando onboarding")
 		return
