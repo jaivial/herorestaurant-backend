@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"net/http"
 	"os"
 	"strconv"
@@ -148,6 +147,10 @@ func (s *Server) Routes() http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	})
+
+	// SPA pages that collide with root-level API routes: navigations get the
+	// shell, API calls fall through. Registered before routing.
+	r.Use(s.spaNavigationSplit)
 
 	r.Get("/healthz", s.handleHealthz)
 
@@ -1488,9 +1491,39 @@ func SPAHandler(staticDir string) http.Handler {
 			return
 		}
 
-		// Fallback to SPA entrypoint for client-side routes.
-		r.URL.Path = "/index.html"
-		_, _ = fs.Stat(fsys, "index.html")
-		http.FileServer(http.FS(fsys)).ServeHTTP(w, r)
+		// Fallback to the SPA entrypoint for client-side routes. ServeFileFS,
+		// not FileServer: FileServer answers a request whose path is
+		// /index.html with a 301 to ./, which would bounce every deep link
+		// back to the homepage.
+		http.ServeFileFS(w, r, fsys, "index.html")
+	})
+}
+
+// spaPagePaths are client-side routes that collide with root-level public API
+// endpoints (the /api prefix is stripped before routing, so /api/vinos and the
+// SPA page /vinos land on the same pattern). Browser navigations
+// (Accept: text/html) must receive the SPA shell; programmatic API calls
+// (fetch/curl send Accept: */* or application/json) keep hitting the JSON
+// handlers.
+var spaPagePaths = map[string]bool{
+	"/vinos":   true,
+	"/postres": true,
+}
+
+// spaNavigationSplit serves the SPA shell for navigation requests to
+// colliding page paths before they reach the API routes. No-op unless
+// StaticDir is configured.
+func (s *Server) spaNavigationSplit(next http.Handler) http.Handler {
+	if strings.TrimSpace(s.cfg.StaticDir) == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			spaPagePaths[r.URL.Path] &&
+			strings.Contains(r.Header.Get("Accept"), "text/html") {
+			SPAHandler(s.cfg.StaticDir).ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
