@@ -1,0 +1,36 @@
+# Neo4j for the code graph (graph engineering).
+# Bolt/HTTP are bound to 127.0.0.1 only: the rest of the stack uses
+# network_mode: host, so an unbound port here would be publicly reachable.
+name: newvillacarmen-graph
+
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: newvillacarmen-graph-neo4j
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7474:7474" # browser
+      - "127.0.0.1:7687:7687" # bolt
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in graph/.env}"
+      # Not NEO4J_-prefixed: that namespace is parsed as server config.
+      # Used only by the healthcheck below.
+      HEALTH_PW: "${NEO4J_PASSWORD}"
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 2G
+      NEO4J_server_memory_pagecache_size: 1G
+      # Read-only queries from the agent are capped server-side too.
+      NEO4J_db_transaction_timeout: 30s
+    volumes:
+      - graph_data:/data
+      - graph_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$HEALTH_PW\" 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  graph_data:
+  graph_logs:

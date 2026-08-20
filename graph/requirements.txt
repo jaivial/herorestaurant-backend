@@ -1,0 +1,9 @@
+dspy==3.3.0
+neo4j==6.2.0
+python-dotenv==1.2.3
+optuna==4.9.0
+# Pinned deliberately: litellm 1.97 breaks under pydantic 2.13 (unresolvable
+# forward reference in litellm.types.utils.Message). See _patch_litellm in
+# dspy_program/common.py for the companion workaround.
+litellm==1.97.0
+pydantic==2.11.9
