@@ -205,6 +205,23 @@ func (s *Server) createBOMemberAndBootstrapAccess(ctx context.Context, a boAuth,
 		return boMemberCreateResult{}, err
 	}
 
+	// The schema enforces one bo_user per member per restaurant
+	// (uniq_restaurant_members_restaurant_user). ensureBOUserForMemberTx can
+	// reuse an EXISTING bo_user matched by email; if that bo_user is already
+	// linked to another member in this restaurant, the UPDATE below would fail
+	// with a duplicate-key error that was previously swallowed as a generic
+	// message. Detect it early and return an actionable error instead.
+	var linkedToOther int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM restaurant_members
+		WHERE restaurant_id = ? AND bo_user_id = ? AND id != ?
+	`, a.ActiveRestaurantID, user.UserID, memberID).Scan(&linkedToOther); err != nil {
+		return boMemberCreateResult{}, err
+	}
+	if linkedToOther > 0 {
+		return boMemberCreateResult{Success: false, Message: "El email ya esta vinculado a otro miembro de este restaurante"}, nil
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE restaurant_members
 		SET bo_user_id = ?
