@@ -208,6 +208,7 @@ Body (JSON):
 Behavior:
 - Con `email` y/o `phone`: crea/vincula `bo_users`, asigna rol y genera invitación (token de un solo uso).
 - Sin `email` ni `phone`: exige `username` + `temporaryPassword`, crea usuario manual con `must_change_password=1`.
+- ACL: el `roleSlug` debe ser de importance estrictamente inferior a la del actor (un admin no puede crear admin/root; con omisión el fallback `admin` queda sujeto a la misma regla).
 
 Response:
 - `{ success: true, member: Member, user?, role?, invitation?, provisioning? }`
@@ -218,6 +219,7 @@ Regenera invitación para un miembro activo.
 Behavior:
 - Invalida tokens activos anteriores del mismo miembro.
 - Requiere que el miembro tenga al menos email o teléfono.
+- ACL: no permite reenviar invitaciones cuyo rol sea igual o superior al del actor.
 
 Response:
 - `{ success: true, member: { id, boUserId, username? }, invitation: { expiresAt, delivery[] } }`
@@ -243,8 +245,29 @@ Response:
 ### `PATCH /api/admin/members/{id}`
 Update member fields and/or contract weekly hours.
 
+ACL:
+- Solo se puede editar un miembro de rol estrictamente inferior al del actor (importance menor); el propio perfil siempre es editable.
+
 Response:
 - `{ success: true, member: Member }`
+
+### `DELETE /api/admin/members/{id}`
+Soft-delete de miembro (`is_active = 0`) y corte de acceso al restaurante activo.
+
+Behavior (transaccional):
+- `restaurant_members.is_active = 0`.
+- Elimina la fila `bo_user_restaurants` del usuario → su sesión activa deja de resolver rol para este restaurante (logout efectivo).
+- Invalida invitaciones pendientes (`invalidated_reason = 'member_deleted'`).
+- Invalida resets de contraseña pendientes (`invalidated_reason = 'member_deleted'`).
+
+ACL (jerarquía por `bo_roles.importance`, defaults root=100, admin=90, ...):
+- Gate de ruta: sesión + sección `miembros` + importance >= 90 (root/admin).
+- El actor debe superar ESTRICTAMENTE al rol del miembro: no se puede eliminar un igual ni un superior, solo roles inferiores.
+- No se puede eliminar el propio miembro.
+
+Response:
+- `{ success: true, message: "Miembro eliminado" }`
+- `{ success: false, message }` (200) si falla la jerarquía o el auto-borrado; 404 si no existe.
 
 ### `GET|POST /api/admin/members/{id}/compensations`
 Admin-only, tenant-scoped effective-dated compensation history.

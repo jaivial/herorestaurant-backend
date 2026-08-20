@@ -697,6 +697,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members", s.handleBOMemberCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}", s.handleBOMemberGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/members/{id}", s.handleBOMemberPatch)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Delete("/members/{id}", s.handleBOMemberDelete)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/{id}/compensations", s.handleBOMemberCompensationsList)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/{id}/compensations", s.handleBOMemberCompensationCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/members/{id}/compensations/{compensationId}", s.handleBOMemberCompensationPatch)

@@ -225,6 +225,23 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ACL: solo se puede editar un rol estrictamente inferior (el propio
+	// perfil queda permitido via memberID).
+	if !boIsSelfMember(a, current.ID) {
+		targetRole, targetImportance, err := s.memberRoleImportance(r.Context(), a.ActiveRestaurantID, current.ID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error validando jerarquia de roles")
+			return
+		}
+		if targetImportance >= a.User.RoleImportance {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": fmt.Sprintf("No puedes editar un miembro de rol igual o superior (%s)", boRoleLabelOrUnknown(targetRole)),
+			})
+			return
+		}
+	}
+
 	var req boMemberPatchRequest
 	if err := readJSONBody(r, &req); err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
@@ -354,6 +371,188 @@ func (s *Server) handleBOMemberPatch(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"member":  member,
+	})
+}
+
+// boIsSelfMember reports whether the authenticated actor's own member record
+// (in the active restaurant) is the given memberID.
+func boIsSelfMember(a boAuth, memberID int) bool {
+	return a.MemberID != nil && int(*a.MemberID) == memberID
+}
+
+func boRoleLabelOrUnknown(role string) string {
+	if role == "" {
+		return "rol desconocido"
+	}
+	return role
+}
+
+// memberRoleImportance resolves the effective role and importance of a member
+// in a restaurant: the accepted role from bo_user_restaurants when linked, or
+// the role of their latest invitation token otherwise (pending invitee). A
+// member with neither resolves to "" / 0.
+func (s *Server) memberRoleImportance(ctx context.Context, restaurantID, memberID int) (string, int, error) {
+	var role sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(
+			ur.role,
+			(
+				SELECT t.role_slug
+				FROM bo_member_invitation_tokens t
+				WHERE t.restaurant_id = m.restaurant_id AND t.member_id = m.id
+				ORDER BY t.id DESC
+				LIMIT 1
+			)
+		)
+		FROM restaurant_members m
+		LEFT JOIN bo_user_restaurants ur
+			ON ur.user_id = m.bo_user_id AND ur.restaurant_id = m.restaurant_id
+		WHERE m.id = ? AND m.restaurant_id = ?
+		LIMIT 1
+	`, memberID, restaurantID).Scan(&role)
+	if err != nil {
+		return "", 0, err
+	}
+
+	roleSlug := normalizeBORole(strings.TrimSpace(role.String))
+	if roleSlug == "" {
+		return "", 0, nil
+	}
+	importance, err := s.roleImportance(ctx, roleSlug)
+	if err != nil {
+		return "", 0, err
+	}
+	return roleSlug, importance, nil
+}
+
+// handleBOMemberDelete soft-deletes a member (is_active = 0) and cuts their
+// backoffice access to the active restaurant: the bo_user_restaurants link is
+// removed (so their session loses its role and stops resolving) and pending
+// invitation/password-reset tokens are invalidated.
+//
+// ACL: the route gate already restricts callers to importance >= 90 (root /
+// admin by default); here the actor must additionally outrank the target
+// STRICTLY — same role or higher cannot be deleted, only lower roles. Self
+// deletion is rejected.
+func (s *Server) handleBOMemberDelete(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	memberID, err := parseBOIDParam(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": "id invalido",
+		})
+		return
+	}
+
+	current, err := s.getBOMemberByID(r.Context(), a.ActiveRestaurantID, memberID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+				"success": false,
+				"message": "Miembro no encontrado",
+			})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo miembro")
+		return
+	}
+
+	if boIsSelfMember(a, current.ID) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "No puedes eliminar tu propio miembro",
+		})
+		return
+	}
+
+	targetRole, targetImportance, err := s.memberRoleImportance(r.Context(), a.ActiveRestaurantID, current.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error validando jerarquia de roles")
+		return
+	}
+	if targetImportance >= a.User.RoleImportance {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": fmt.Sprintf("No puedes eliminar un miembro de rol igual o superior (%s)", boRoleLabelOrUnknown(targetRole)),
+		})
+		return
+	}
+
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error iniciando transaccion")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(r.Context(), `
+		UPDATE restaurant_members
+		SET is_active = 0
+		WHERE id = ? AND restaurant_id = ? AND is_active = 1
+	`, memberID, a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando miembro")
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+			"success": false,
+			"message": "Miembro no encontrado",
+		})
+		return
+	}
+
+	// Cortar el acceso: sin fila en bo_user_restaurants la sesion activa deja
+	// de resolver rol para este restaurante (ver loadBOSessionAuth).
+	if current.BOUserID != nil {
+		if _, err := tx.ExecContext(r.Context(), `
+			DELETE FROM bo_user_restaurants
+			WHERE user_id = ? AND restaurant_id = ?
+		`, *current.BOUserID, a.ActiveRestaurantID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error retirando acceso del miembro")
+			return
+		}
+	}
+
+	// Invalidar invitaciones pendientes para que no recreen el acceso.
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE bo_member_invitation_tokens
+		SET invalidated_at = NOW(), invalidated_reason = 'member_deleted'
+		WHERE restaurant_id = ? AND member_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+	`, a.ActiveRestaurantID, memberID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error invalidando invitaciones")
+		return
+	}
+
+	// Invalidar resets de contrasena pendientes.
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE bo_password_reset_tokens
+		SET invalidated_at = NOW(), invalidated_reason = 'member_deleted'
+		WHERE restaurant_id = ? AND member_id = ?
+			AND used_at IS NULL
+			AND invalidated_at IS NULL
+	`, a.ActiveRestaurantID, memberID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error invalidando resets de contrasena")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error finalizando transaccion")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Miembro eliminado",
 	})
 }
 
