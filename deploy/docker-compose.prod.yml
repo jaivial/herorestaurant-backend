@@ -1,0 +1,39 @@
+# Production deployment for Villa Carmen (Docker).
+# Secrets live in env files outside git:
+#   backend/.env.prod      (repo: herorestaurant-backend, untracked)
+#   backoffice/.env.prod   (repo: backofficereact, untracked)
+# See deploy/DEPLOY-PROD.md for the full runbook.
+#
+# NOTE ON PATHS: relative paths resolve against this file's directory
+# (backend/deploy/), so context ../.. is the multi-repo root
+# (/var/www/newvillacarmen) where backend/ + preactvillacarmen/ live side
+# by side. Run from anywhere with:
+#   sudo docker compose -f /var/www/newvillacarmen/backend/deploy/docker-compose.prod.yml up -d --build
+name: newvillacarmen-prod
+
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile.prod
+    container_name: newvillacarmen-backend-prod
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ../.env.prod
+    environment:
+      PORT: "8080"
+      STATIC_DIR: /app/static
+    # Public frontend dist is baked into the image (no bind mounts in prod).
+
+  backoffice:
+    build:
+      context: ../../backoffice
+      dockerfile: Dockerfile.prod
+    container_name: newvillacarmen-backoffice-prod
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ../../backoffice/.env.prod
+    depends_on:
+      - backend
