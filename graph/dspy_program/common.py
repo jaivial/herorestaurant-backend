@@ -51,6 +51,10 @@ def configure_lm(max_tokens: int = 16000, temperature: float = 1.0):
         # so a small cap yields an empty completion rather than a short one.
         max_tokens=max_tokens,
         temperature=temperature,
+        # The gateway intermittently returns auth_unavailable / upstream errors.
+        # Without retries those score as 0 and silently depress every metric,
+        # which looks like a prompt regression rather than a flaky transport.
+        num_retries=4,
     )
     dspy.configure(lm=lm)
     return lm

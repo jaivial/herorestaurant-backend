@@ -12,7 +12,7 @@ REPO_ROOT := $(abspath $(GRAPH_DIR)/..)
 PY := $(GRAPH_DIR)/.venv/bin/python
 COMPOSE := sudo docker compose --env-file $(GRAPH_DIR)/.env -f $(GRAPH_DIR)/docker-compose.graph.yml
 
-.PHONY: up down logs setup schema extract load index ask optimize baseline status clean
+.PHONY: up down logs setup schema extract extract-go extract-ts load index ask optimize baseline status clean
 
 up:
 	$(COMPOSE) up -d
@@ -40,13 +40,35 @@ schema:
 	sudo docker exec -i newvillacarmen-graph-neo4j cypher-shell -u neo4j -p "$$NEO4J_PASSWORD" \
 		--format plain < $(GRAPH_DIR)/schema.cypher
 
-extract:
+# The three repos live side by side; the frontends are read from their working
+# copies since only the backend is checked out in this worktree.
+STACK_ROOT ?= /var/www/newvillacarmen
+PREACT_ROOT ?= $(STACK_ROOT)/preactvillacarmen
+BACKOFFICE_ROOT ?= $(STACK_ROOT)/backoffice
+NODE ?= node
+
+extract: extract-go extract-ts
+
+extract-go:
 	@mkdir -p $(GRAPH_DIR)/out
 	cd $(GRAPH_DIR)/extractors/gograph && go run . \
 		-root $(REPO_ROOT) -repo backend -out $(GRAPH_DIR)/out/triples.jsonl
 
+extract-ts: $(GRAPH_DIR)/extractors/tsgraph/node_modules
+	@mkdir -p $(GRAPH_DIR)/out
+	cd $(GRAPH_DIR)/extractors/tsgraph && $(NODE) extract.mjs \
+		--root $(PREACT_ROOT) --repo preact --out $(GRAPH_DIR)/out/triples.preact.jsonl
+	cd $(GRAPH_DIR)/extractors/tsgraph && $(NODE) --max-old-space-size=6144 extract.mjs \
+		--root $(BACKOFFICE_ROOT) --repo backoffice --out $(GRAPH_DIR)/out/triples.backoffice.jsonl
+
+$(GRAPH_DIR)/extractors/tsgraph/node_modules:
+	cd $(GRAPH_DIR)/extractors/tsgraph && npm install --no-audit --no-fund
+
 load:
-	$(PY) $(GRAPH_DIR)/loader/load.py --triples $(GRAPH_DIR)/out/triples.jsonl
+	$(PY) $(GRAPH_DIR)/loader/load.py --triples \
+		$(GRAPH_DIR)/out/triples.jsonl \
+		$(GRAPH_DIR)/out/triples.preact.jsonl \
+		$(GRAPH_DIR)/out/triples.backoffice.jsonl
 
 # Full refresh. MERGE semantics make this safe to run as often as you like.
 index: extract load

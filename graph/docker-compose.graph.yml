@@ -8,6 +8,9 @@ services:
     image: neo4j:5.26-community
     container_name: newvillacarmen-graph-neo4j
     restart: unless-stopped
+    # Keep the graph DB in the dev slice so it can never contend with
+    # production outside dev.slice (MemoryHigh=34G/MemoryMax=40G there).
+    cgroup_parent: dev.slice
     ports:
       - "127.0.0.1:7474:7474" # browser
       - "127.0.0.1:7687:7687" # bolt

@@ -33,6 +33,7 @@ BATCH = 5_000
 ALLOWED_EDGES = {
     "IN", "IMPORTS", "DECLARES", "CALLS", "HANDLED_BY",
     "READS", "WRITES", "USES_ENV", "RENDERS", "FETCHES", "MOUNTS",
+    "SERVED_BY",
 }
 ALLOWED_LABELS = {
     "Repo", "File", "Package", "Func", "Type", "Endpoint",
@@ -52,40 +53,45 @@ KEY_PROP = {
     "EnvVar": "name",
     "Doc": "key",
     "Component": "key",
-    "Route": "path",
+    "Route": "key",
 }
 
 
-def read_triples(path: pathlib.Path):
+def read_triples(paths: list[pathlib.Path]):
     nodes: dict[str, list[dict]] = defaultdict(list)
     edges: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     bad = 0
-    with path.open() as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except json.JSONDecodeError:
-                bad += 1
-                continue
-            if d.get("kind") == "node":
-                label = d["label"]
-                if label not in ALLOWED_LABELS:
+    for path in paths:
+        with path.open() as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
                     bad += 1
                     continue
-                props = dict(d.get("props") or {})
-                props[KEY_PROP[label]] = d["key"]
-                nodes[label].append(props)
-            elif d.get("kind") == "edge":
-                t, fl, tl = d["type"], d["fromLabel"], d["toLabel"]
-                if t not in ALLOWED_EDGES or fl not in ALLOWED_LABELS or tl not in ALLOWED_LABELS:
-                    bad += 1
-                    continue
-                edges[(t, fl, tl)].append(
-                    {"from": d["fromKey"], "to": d["toKey"], "props": d.get("props") or {}}
-                )
+                if d.get("kind") == "node":
+                    label = d["label"]
+                    if label not in ALLOWED_LABELS:
+                        bad += 1
+                        continue
+                    props = dict(d.get("props") or {})
+                    props[KEY_PROP[label]] = d["key"]
+                    nodes[label].append(props)
+                elif d.get("kind") == "edge":
+                    t, fl, tl = d["type"], d["fromLabel"], d["toLabel"]
+                    if (
+                        t not in ALLOWED_EDGES
+                        or fl not in ALLOWED_LABELS
+                        or tl not in ALLOWED_LABELS
+                    ):
+                        bad += 1
+                        continue
+                    edges[(t, fl, tl)].append(
+                        {"from": d["fromKey"], "to": d["toKey"], "props": d.get("props") or {}}
+                    )
     return nodes, edges, bad
 
 
@@ -129,15 +135,90 @@ def load(session, nodes, edges):
     return counts
 
 
+# Relationship types the loader is allowed to write. Cypher cannot parameterise
+# a relationship type, so it is interpolated -- the ALLOWED_EDGES allowlist is
+# what keeps that safe from injection via a malformed triples file.
+LINK_STEPS = [
+    # 1. Give every endpoint the parameter-name-insensitive form used to join
+    #    the two sides of the stack. The Go extractor emits `{id}`, the TS one
+    #    `{param}`; both collapse to `{}`.
+    (
+        "canonical paths",
+        """
+        MATCH (e:Endpoint) WHERE e.path IS NOT NULL
+        WITH e, '/' + reduce(acc = '', seg IN [
+                x IN split(e.path, '/') WHERE x <> ''
+            ] | acc + CASE WHEN acc = '' THEN '' ELSE '/' END +
+                CASE WHEN seg STARTS WITH '{' THEN '{}' ELSE seg END) AS c
+        SET e.canon = CASE WHEN c = '/' THEN '/' ELSE c END
+        """,
+    ),
+    # 2. Link a frontend call to the backend route that serves it. Frontend-only
+    #    endpoints (no CALLS_ENDPOINT edge) are exactly the dead or unimplemented
+    #    calls worth reporting.
+    (
+        "frontend -> backend endpoint links",
+        """
+        MATCH (fe:Endpoint) WHERE fe.calledFrom IS NOT NULL
+        MATCH (be:Endpoint)
+          WHERE be.calledFrom IS NULL AND be.method = fe.method AND be.canon = fe.canon
+        MERGE (fe)-[:SERVED_BY]->(be)
+        """,
+    ),
+    # 3. Same, but where the backend declares a wildcard segment the frontend
+    #    hardcodes: `/comida/{tipo}/{id}/image` serves the literal
+    #    `/comida/platos/{id}/image`. Matching segment-wise lets a `{}` on the
+    #    backend side absorb any literal, which plain equality cannot do.
+    (
+        "wildcard endpoint links",
+        """
+        MATCH (fe:Endpoint) WHERE fe.calledFrom IS NOT NULL
+          AND NOT exists((fe)-[:SERVED_BY]->()) AND NOT exists((fe)-[:HANDLED_BY]->())
+        WITH fe, [x IN split(fe.canon, '/') WHERE x <> ''] AS fseg
+        MATCH (be:Endpoint)
+          WHERE be.calledFrom IS NULL AND be.method = fe.method
+        WITH fe, fseg, be, [x IN split(be.canon, '/') WHERE x <> ''] AS bseg
+        WHERE size(fseg) = size(bseg)
+          AND all(i IN range(0, size(fseg) - 1)
+                  WHERE bseg[i] = '{}' OR bseg[i] = fseg[i])
+        MERGE (fe)-[:SERVED_BY {viaWildcard: true}]->(be)
+        """,
+    ),
+]
+
+
+def link(session) -> None:
+    """Derive cross-repo edges that no single extractor can see.
+
+    Each extractor knows only its own repo. The join between a frontend fetch
+    and the Go route that answers it has to happen here, once both sides are
+    present.
+    """
+    for label, q in LINK_STEPS:
+        res = session.run(q).consume()
+        print(
+            f"  {label:<38} +{res.counters.properties_set} props "
+            f"+{res.counters.relationships_created} rels",
+            file=sys.stderr,
+        )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--triples", default=str(GRAPH_DIR / "out" / "triples.jsonl"))
+    ap.add_argument(
+        "--triples",
+        nargs="+",
+        default=[str(GRAPH_DIR / "out" / "triples.jsonl")],
+        help="one or more triples.jsonl files (one per repo)",
+    )
     ap.add_argument("--reset", action="store_true", help="delete all graph data first")
     args = ap.parse_args()
 
-    path = pathlib.Path(args.triples)
-    if not path.exists():
-        print(f"load: {path} not found (run the extractor first)", file=sys.stderr)
+    paths = [pathlib.Path(p) for p in args.triples]
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        for p in missing:
+            print(f"load: {p} not found (run the extractor first)", file=sys.stderr)
         return 1
 
     uri = os.environ.get("NEO4J_URI", "bolt://127.0.0.1:7687")
@@ -147,7 +228,7 @@ def main() -> int:
         print("load: NEO4J_PASSWORD not set (copy graph/.env.example)", file=sys.stderr)
         return 1
 
-    nodes, edges, bad = read_triples(path)
+    nodes, edges, bad = read_triples(paths)
     total_n = sum(len(v) for v in nodes.values())
     total_e = sum(len(v) for v in edges.values())
     print(f"parsed {total_n} nodes / {total_e} edges (skipped {bad})", file=sys.stderr)
@@ -160,6 +241,8 @@ def main() -> int:
                 print("reset: deleting existing data", file=sys.stderr)
                 session.run("MATCH (n) CALL (n) { DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS")
             counts = load(session, nodes, edges)
+            print("linking:", file=sys.stderr)
+            link(session)
             stats = session.run(
                 "MATCH (n) WITH count(n) AS nodes "
                 "MATCH ()-[r]->() RETURN nodes, count(r) AS rels"

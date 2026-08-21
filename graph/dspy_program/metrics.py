@@ -120,6 +120,25 @@ def build_trainset(graph, n_per_kind: int = 12, seed: int = 7) -> list[dspy.Exam
         ]
         add(f"Which functions read the environment variable `{v}`?", gold)
 
+    # 6. Cross-stack: which frontend code calls an endpoint.
+    fe = [
+        r["k"]
+        for r in graph.run(
+            "MATCH (:Component)-[:FETCHES]->(e:Endpoint) "
+            "RETURN DISTINCT e.key AS k LIMIT 60"
+        )
+    ]
+    for e in rng.sample(fe, min(n_per_kind, len(fe))):
+        gold = [
+            r["n"]
+            for r in graph.run(
+                "MATCH (c:Component)-[:FETCHES]->(:Endpoint {key:$e}) "
+                "RETURN DISTINCT c.name AS n LIMIT 40",
+                {"e": e},
+            )
+        ]
+        add(f"Which frontend components call the endpoint `{e}`?", gold)
+
     rng.shuffle(examples)
     return examples
 

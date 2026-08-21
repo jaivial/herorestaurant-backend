@@ -187,7 +187,8 @@ export default function activate(pi: ExtensionAPI) {
 		promptSnippet: "Check the blast radius of a code change",
 		parameters: Type.Object({
 			target: Type.String({
-				description: "table name, function name, endpoint path, or file path",
+				description:
+					"table name, Go function, endpoint path, React component name, or file path",
 			}),
 			kind: Type.Optional(
 				Type.Union(
@@ -196,6 +197,7 @@ export default function activate(pi: ExtensionAPI) {
 						Type.Literal("table"),
 						Type.Literal("func"),
 						Type.Literal("endpoint"),
+						Type.Literal("component"),
 						Type.Literal("file"),
 					],
 					{ description: "defaults to auto-detect" },
@@ -216,7 +218,9 @@ export default function activate(pi: ExtensionAPI) {
 						? "endpoint"
 						: /\.(go|ts|tsx)$/.test(t)
 							? "file"
-							: null;
+							: /^[A-Z][A-Za-z0-9_]*$/.test(t)
+								? "component"
+								: null;
 
 			const add = (title: string, body: string) => {
 				const rows = body.trim().split("\n").length - 1;
@@ -231,6 +235,25 @@ export default function activate(pi: ExtensionAPI) {
 							"MATCH (tb)<-[acc:READS|WRITES]-(sink:Func)<-[:CALLS*0..3]-(h:Func)<-[:HANDLED_BY]-(e:Endpoint) " +
 							"RETURN DISTINCT e.method + ' ' + e.path AS endpoint, type(acc) AS access, " +
 							"sink.name AS accessor ORDER BY endpoint LIMIT 60",
+						params,
+						sig,
+					),
+				);
+				// The cross-stack join: which UI actually breaks if this table
+				// changes. A frontend call either merged into the same Endpoint
+				// node or points at it via SERVED_BY.
+				add(
+					"FRONTEND CODE AFFECTED (via the endpoints above)",
+					await cypher(
+						"MATCH (tb:Table) WHERE toLower(tb.name) = $tl " +
+							"MATCH (tb)<-[:READS|WRITES]-(:Func)<-[:HANDLED_BY]-(be:Endpoint) " +
+							"OPTIONAL MATCH (fe:Endpoint)-[:SERVED_BY]->(be) " +
+							"WITH be, coalesce(fe, be) AS entry " +
+							"MATCH (src)-[:FETCHES]->(entry) WHERE src:Component OR src:File " +
+							"RETURN DISTINCT coalesce(src.repo, 'n/a') AS repo, " +
+							"  labels(src)[0] AS kind, coalesce(src.name, src.path) AS caller, " +
+							"  count(DISTINCT be) AS endpoints " +
+							"ORDER BY endpoints DESC, caller LIMIT 40",
 						params,
 						sig,
 					),
@@ -270,6 +293,33 @@ export default function activate(pi: ExtensionAPI) {
 							"OPTIONAL MATCH (f)-[:CALLS*0..2]->(:Func)-[:READS|WRITES]->(tb:Table) " +
 							"RETURN DISTINCT e.key AS endpoint, f.key AS handler, f.file AS file, " +
 							"   collect(DISTINCT tb.name)[0..10] AS tables LIMIT 30",
+						params,
+						sig,
+					),
+				);
+			}
+			if (detected === "component" || detected === null) {
+				// Reverse direction: what data does this piece of UI depend on?
+				add(
+					"WHAT THIS COMPONENT DEPENDS ON (endpoints -> tables)",
+					await cypher(
+						"MATCH (c:Component) WHERE toLower(c.name) = $tl OR c.key = $t " +
+							"MATCH (c)-[:FETCHES]->(entry:Endpoint) " +
+							"OPTIONAL MATCH (entry)-[:SERVED_BY]->(be:Endpoint) " +
+							"WITH c, coalesce(be, entry) AS ep " +
+							"OPTIONAL MATCH (ep)-[:HANDLED_BY]->(:Func)-[:CALLS*0..2]->(:Func)-[:READS|WRITES]->(tb:Table) " +
+							"RETURN DISTINCT c.name AS component, ep.method + ' ' + ep.path AS endpoint, " +
+							"   collect(DISTINCT tb.name)[0..8] AS tables LIMIT 40",
+						params,
+						sig,
+					),
+				);
+				add(
+					"WHO RENDERS THIS COMPONENT",
+					await cypher(
+						"MATCH (c:Component) WHERE toLower(c.name) = $tl OR c.key = $t " +
+							"MATCH (parent:Component)-[:RENDERS]->(c) " +
+							"RETURN DISTINCT parent.name AS renderedBy, parent.file AS file LIMIT 30",
 						params,
 						sig,
 					),
@@ -353,6 +403,43 @@ export default function activate(pi: ExtensionAPI) {
 		},
 	});
 
+	// ---------------------------------------------------------- orphan calls
+	pi.registerTool({
+		name: "graph_orphan_calls",
+		label: "Unimplemented API calls",
+		description:
+			"List HTTP calls the frontends make that no Go route serves. These are " +
+			"dead calls or unimplemented features: the request 404s at runtime. " +
+			"Only findable by comparing both sides of the stack.",
+		promptSnippet: "Find frontend API calls with no backend route",
+		parameters: Type.Object({
+			repo: Type.Optional(
+				Type.Union([Type.Literal("all"), Type.Literal("preact"), Type.Literal("backoffice")], {
+					description: "defaults to all",
+				}),
+			),
+		}),
+		async execute(_id, { repo = "all" }, signal) {
+			if (!(await graphIsUp())) return text(NOT_RUNNING);
+			const out = await cypher(
+				"MATCH (fe:Endpoint) WHERE fe.calledFrom IS NOT NULL " +
+					"  AND NOT exists((fe)-[:HANDLED_BY]->()) AND NOT exists((fe)-[:SERVED_BY]->()) " +
+					"MATCH (src)-[r:FETCHES]->(fe) " +
+					"WHERE $repo = 'all' OR coalesce(src.repo, '') = $repo " +
+					"RETURN fe.key AS unservedCall, coalesce(src.name, src.path) AS calledFrom, " +
+					"  r.line AS line ORDER BY unservedCall LIMIT 80",
+				{ repo },
+				signal,
+			);
+			const rows = out.trim().split("\n").length - 1;
+			return text(
+				rows > 0
+					? `${out}\n\n${rows} frontend call site(s) have no matching backend route.`
+					: "Every frontend API call resolves to a backend route.",
+			);
+		},
+	});
+
 	// -------------------------------------------------- post-edit blast radius
 	//
 	// The value of the graph is knowing the consequences of a change. This
@@ -361,33 +448,50 @@ export default function activate(pi: ExtensionAPI) {
 		if (event.toolName !== "edit" && event.toolName !== "write") return;
 		if (event.isError) return;
 		const path = (event.input as { path?: string } | undefined)?.path;
-		if (!path || !path.endsWith(".go")) return;
+		if (!path || !/\.(go|ts|tsx)$/.test(path)) return;
 
 		const rel = path.replace(`${REPO_ROOT}/`, "");
 		try {
 			if (!(await graphIsUp())) return;
-			const out = await cypher(
-				"MATCH (fl:File) WHERE fl.path ENDS WITH $p " +
-					"MATCH (fl)-[:DECLARES]->(f:Func) " +
-					"OPTIONAL MATCH (f)<-[:HANDLED_BY]-(e:Endpoint) " +
-					"OPTIONAL MATCH (f)-[:READS|WRITES]->(tb:Table) " +
-					"OPTIONAL MATCH (f)<-[:CALLS]-(c:Func) WHERE NOT c.file = fl.path " +
-					"RETURN count(DISTINCT e) AS endpoints, count(DISTINCT c) AS externalCallers, " +
-					"  collect(DISTINCT tb.name)[0..8] AS tables LIMIT 1",
-				{ p: rel },
-			);
-			const values = out.split("\n")[1]?.trim();
-			// Header only, or a file with no dependents: nothing worth saying.
-			if (!values || /^0, 0, \[\]$/.test(values)) return;
 
+			const isGo = path.endsWith(".go");
+			const out = isGo
+				? await cypher(
+						"MATCH (fl:File) WHERE fl.path ENDS WITH $p " +
+							"MATCH (fl)-[:DECLARES]->(f:Func) " +
+							"OPTIONAL MATCH (f)<-[:HANDLED_BY]-(e:Endpoint) " +
+							"OPTIONAL MATCH (f)-[:READS|WRITES]->(tb:Table) " +
+							"OPTIONAL MATCH (f)<-[:CALLS]-(c:Func) WHERE NOT c.file = fl.path " +
+							"RETURN count(DISTINCT e) AS endpoints, count(DISTINCT c) AS externalCallers, " +
+							"  collect(DISTINCT tb.name)[0..8] AS tables LIMIT 1",
+						{ p: rel },
+					)
+				: // A frontend file matters through what it calls and who renders it.
+					await cypher(
+						"MATCH (fl:File) WHERE fl.path ENDS WITH $p " +
+							"OPTIONAL MATCH (fl)-[:DECLARES]->(c:Component)<-[:RENDERS]-(parent:Component) " +
+							"OPTIONAL MATCH (fl)-[:DECLARES]->(:Component)-[:FETCHES]->(e1:Endpoint) " +
+							"OPTIONAL MATCH (fl)-[:FETCHES]->(e2:Endpoint) " +
+							"RETURN count(DISTINCT parent) AS renderedBy, " +
+							"  count(DISTINCT e1) + count(DISTINCT e2) AS endpointsCalled LIMIT 1",
+						{ p: rel },
+					);
+
+			const values = out.split("\n")[1]?.trim();
+			// Header only, or a file nothing depends on: nothing worth saying.
+			if (!values || /^0, 0(, \[\])?$/.test(values)) return;
+
+			const shape = isGo
+				? "[endpoints, externalCallers, tables]"
+				: "[renderedBy, endpointsCalled]";
 			return {
 				content: [
 					...event.content,
 					{
 						type: "text" as const,
 						text:
-							`Code graph — ${rel} is reached by [endpoints, externalCallers, tables] = ${values}. ` +
-							"Run graph_impact on the changed function before assuming this edit is local. " +
+							`Code graph — ${rel} ${shape} = ${values}. ` +
+							"Run graph_impact on the changed symbol before assuming this edit is local. " +
 							"After finishing, /graph reindex to keep the graph current.",
 					},
 				],
