@@ -169,5 +169,24 @@ class Graph:
         for p in pattern:
             lines.append(f"  (:{p['from']})-[:{p['rel']}]->(:{p['to']})  -- {p['n']}")
         lines.append("\nAVAILABLE RELATIONSHIP TYPES: " + ", ".join(rels))
+
+        # Without these the model guesses at value shapes and writes
+        # `CONTAINS 'bookings'` against paths that read `/public/booking/...`,
+        # which parses, runs and silently returns a fraction of the answer.
+        lines.append("\nVALUE SAMPLES (exact strings as stored):")
+        for lab, prop in (
+            ("Endpoint", "path"),
+            ("Table", "name"),
+            ("Component", "key"),
+            ("Route", "path"),
+        ):
+            vals = self.run(
+                f"MATCH (n:`{lab}`) WHERE n.`{prop}` IS NOT NULL "
+                f"RETURN DISTINCT n.`{prop}` AS v ORDER BY v LIMIT 12"
+            )
+            if vals:
+                sample = ", ".join(repr(v["v"]) for v in vals)
+                lines.append(f"  (:{lab}.{prop}) e.g. {sample}")
+
         self._schema_cache = "\n".join(lines)
         return self._schema_cache

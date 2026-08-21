@@ -17,6 +17,48 @@ from .signatures import GroundedAnswer, RepairCypher, TranslateToCypher
 
 MAX_ROWS = 60
 PARAM_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
+WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+STOPWORDS = {
+    "which", "what", "where", "does", "handlers", "handler", "endpoint",
+    "endpoints", "component", "components", "function", "functions", "table",
+    "tables", "file", "files", "route", "routes", "read", "reads", "write",
+    "writes", "call", "calls", "fetch", "fetches", "from", "that", "this",
+    "with", "into", "when", "change", "changes", "breaks", "break", "using",
+    "uses", "have", "has", "are", "the", "and", "for",
+}
+
+
+def resolve_anchors(graph, question: str, limit: int = 8) -> str:
+    """Name the graph nodes a question mentions, before the model guesses.
+
+    Wording and storage rarely agree: "bookings endpoints" is a `bookings`
+    :Table, while the routes spell it `/public/booking/...`. Left alone the
+    model substring-matches on path, gets one row instead of three, and the
+    result is valid Cypher with a wrong answer -- the one failure the repair
+    loop cannot see, because a short result is not an error.
+    """
+    words = {w.lower() for w in WORD_RE.findall(question) if len(w) > 3}
+    terms = words - STOPWORDS
+    if not terms:
+        return ""
+    # Both spellings: questions say "bookings", the table may be either.
+    terms |= {t[:-1] for t in terms if t.endswith("s")}
+    rows = graph.run(
+        "UNWIND $terms AS term "
+        "MATCH (n) WHERE (n:Table OR n:Component OR n:Func OR n:EnvVar) "
+        "AND toLower(coalesce(n.name, n.key)) = term "
+        "RETURN DISTINCT labels(n)[0] AS label, coalesce(n.name, n.key) AS name "
+        "ORDER BY label, name LIMIT $limit",
+        {"terms": sorted(terms), "limit": limit},
+    )
+    if not rows:
+        return ""
+    found = ", ".join(f"(:{r['label']} {{name/key: '{r['name']}'}})" for r in rows)
+    return (
+        f"These nodes exist in the graph and match the question: {found}. "
+        "Anchor the pattern on them and traverse relationships from there; "
+        "do not substring-match a property instead."
+    )
 
 
 def missing_params(cypher: str, params: dict) -> list[str]:
@@ -59,6 +101,8 @@ class GraphRAG(dspy.Module):
     def forward(self, question: str, reasoning_hint: str = "") -> dspy.Prediction:
         schema = self.graph.schema_literal()
         attempts: list[dict] = []
+        if not reasoning_hint:
+            reasoning_hint = resolve_anchors(self.graph, question)
 
         pred = self.translate(graph_schema=schema, question=question, reasoning_hint=reasoning_hint)
         cypher, params = pred.cypher, pred.params or {}
