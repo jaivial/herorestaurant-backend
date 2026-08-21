@@ -293,7 +293,7 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		"menu_de_grupo_id":           menuDeGrupoID,
 		"principales_json":           principalesJSON,
 		"preferred_floor_number":     preferredFloorNumber,
-		"preferred_salon_id":        preferredSalonID,
+		"preferred_salon_id":         preferredSalonID,
 	}
 
 	// Send WhatsApp confirmation to customer (best-effort).
@@ -557,7 +557,7 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		"menu_de_grupo_id":           menuDeGrupoID,
 		"principales_json":           principalesJSON,
 		"preferred_floor_number":     preferredFloorNumber,
-		"preferred_salon_id":        preferredSalonID,
+		"preferred_salon_id":         preferredSalonID,
 	}
 
 	// Send WhatsApp confirmation to customer (best-effort).

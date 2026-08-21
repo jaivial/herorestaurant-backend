@@ -17,3 +17,4 @@ Session: 2026-08-21T14:53:58+00:00
 | 15:18 | graph/dspy_program/modules.py | edit | Resolve question nodes before translate. |
 | 15:18 | graph/dspy_program/common.py | edit | Schema shows value samples. |
 | 15:18 | graph/dspy_program/compiled/graphrag.json | edit | Rule 6 anchors, no substring match. |
+| 15:36 | internal/api/*.go (7 files) | edit | gofmt. Whitespace only. Unblock CI. |

@@ -286,10 +286,10 @@ func (s *Server) handleBOConfigSalonsCreate(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		if capped {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success":         false,
-				"message":         err.Error(),
-				"remainingAforo":  remaining,
-				"aforoCapped":     true,
+				"success":        false,
+				"message":        err.Error(),
+				"remainingAforo": remaining,
+				"aforoCapped":    true,
 			})
 			return
 		}
@@ -365,10 +365,10 @@ func (s *Server) handleBOConfigSalonsUpdate(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		if capped {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success":         false,
-				"message":         err.Error(),
-				"remainingAforo":  remaining,
-				"aforoCapped":     true,
+				"success":        false,
+				"message":        err.Error(),
+				"remainingAforo": remaining,
+				"aforoCapped":    true,
 			})
 			return
 		}

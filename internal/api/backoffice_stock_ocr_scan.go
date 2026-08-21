@@ -66,9 +66,9 @@ func (s *Server) handleBOStockOCRScan(w http.ResponseWriter, r *http.Request) {
 
 	extraction := parseStockOCRScanJSON(raw)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"model":     model,
-		"rawText":   raw,
+		"success":    true,
+		"model":      model,
+		"rawText":    raw,
 		"extraction": extraction,
 	})
 }
@@ -142,7 +142,7 @@ func (s *Server) minimaxVisionOCR(ctx context.Context, restaurantID int, model, 
 	}
 	// MiniMax's Anthropic-compatible endpoint expects Anthropic image blocks.
 	body := map[string]any{
-		"model":     model,
+		"model":      model,
 		"max_tokens": 1500,
 		"messages": []map[string]any{
 			{
