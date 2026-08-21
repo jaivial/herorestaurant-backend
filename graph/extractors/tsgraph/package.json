@@ -1,0 +1,10 @@
+{
+  "name": "tsgraph",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Extracts a code graph from the TypeScript/TSX frontends",
+  "type": "module",
+  "dependencies": {
+    "ts-morph": "^28.0.0"
+  }
+}

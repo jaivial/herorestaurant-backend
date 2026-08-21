@@ -16,3 +16,8 @@ server.v2
 /third_party/
 test-results/
 .toolchain/
+
+# graph engineering (code graph)
+!graph/.env.example
+graph/out/
+graph/.venv/
