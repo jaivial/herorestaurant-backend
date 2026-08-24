@@ -280,9 +280,10 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	}
 	var d struct {
 		Key struct {
-			RemoteJid string `json:"remoteJid"`
-			FromMe    bool   `json:"fromMe"`
-			ID        string `json:"id"`
+			RemoteJid    string `json:"remoteJid"`
+			RemoteJidAlt string `json:"remoteJidAlt"`
+			FromMe       bool   `json:"fromMe"`
+			ID           string `json:"id"`
 		} `json:"key"`
 		PushName string `json:"pushName"`
 		Message  struct {
@@ -304,7 +305,15 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		return waInbound{}, false
 	}
 	jid := strings.TrimSpace(d.Key.RemoteJid)
-	if jid == "" || !strings.HasSuffix(jid, "@s.whatsapp.net") { // drop groups (@g.us) / status
+	if !strings.HasSuffix(jid, "@s.whatsapp.net") {
+		// Recent Baileys versions address inbound 1:1 messages by WhatsApp's
+		// opaque LID and preserve the phone-number JID in remoteJidAlt. The bot
+		// needs the phone number both to identify the customer and to reply.
+		if strings.HasSuffix(jid, "@lid") {
+			jid = strings.TrimSpace(d.Key.RemoteJidAlt)
+		}
+	}
+	if jid == "" || !strings.HasSuffix(jid, "@s.whatsapp.net") { // drop groups (@g.us) / status / unresolved LIDs
 		return waInbound{}, false
 	}
 	text := d.Message.Conversation

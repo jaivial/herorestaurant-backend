@@ -340,6 +340,17 @@ func TestEvo_ParseInbound_MessagesUpsert(t *testing.T) {
 	}
 }
 
+func TestEvo_ParseInbound_LIDUsesPhoneNumberAltJID(t *testing.T) {
+	body := []byte(`{"event":"messages.upsert","instance":"nv_1","data":{"key":{"remoteJid":"242554100576489@lid","remoteJidAlt":"34692747052@s.whatsapp.net","addressingMode":"lid","fromMe":false,"id":"LID1"},"pushName":"Jaime","message":{"conversation":"hola"}}}`)
+	in, ok := (&evolutionGateway{}).ParseInboundMessage(body)
+	if !ok {
+		t.Fatal("expected LID message with phone-number alternate JID to parse")
+	}
+	if in.Sender != "34692747052" || in.Text != "hola" || in.MessageID != "LID1" {
+		t.Errorf("in=%+v", in)
+	}
+}
+
 func TestEvo_ParseInbound_ListReply(t *testing.T) {
 	body := []byte(`{"event":"messages.upsert","instance":"nv_1","data":{"key":{"remoteJid":"34600111222@s.whatsapp.net","id":"m2"},"message":{"listResponseMessage":{"title":"Reservar","singleSelectReply":{"selectedRowId":"opt_0"}}}}}`)
 	in, ok := (&evolutionGateway{}).ParseInboundMessage(body)

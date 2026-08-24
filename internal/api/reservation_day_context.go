@@ -111,8 +111,8 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 	salonMap := func(sl boConfigSalon) map[string]any {
 		capacity, occ, rem, _ := salonAforo(sl)
 		return map[string]any{
-			"id": sl.ID,
-			"name": sl.Name,
+			"id":            sl.ID,
+			"name":          sl.Name,
 			"capacityLimit": capacity,
 			"occupancy":     occ,
 			"remaining":     rem,
