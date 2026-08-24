@@ -187,3 +187,17 @@ func TestPublicBookingToResponseArroz(t *testing.T) {
 func nullSQLStr(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
 }
+
+func TestPublicBookingToResponseIncludesGroundFloor(t *testing.T) {
+	resp := publicBookingToResponse(&publicBooking{
+		ID:              789,
+		ReservationDate: "2026-09-10",
+		ReservationTime: "14:00:00",
+		PartySize:       2,
+		CustomerName:    "Ana",
+		PreferredFloor:  sql.NullInt64{Int64: 0, Valid: true},
+	})
+	if resp.FloorDisplay != "Planta 0" {
+		t.Fatalf("expected ground-floor display, got %q", resp.FloorDisplay)
+	}
+}

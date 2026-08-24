@@ -371,3 +371,22 @@ func TestBuildBookingReminderMessageIncludesReservedLocation(t *testing.T) {
 		}
 	}
 }
+
+func TestBookingNotificationsIncludeGroundFloor(t *testing.T) {
+	booking := map[string]any{
+		"customer_name":          "Ana",
+		"reservation_date":       "2026-09-10",
+		"reservation_time":       "14:00",
+		"party_size":             2,
+		"preferred_floor_number": 0,
+	}
+
+	wa := buildBookingWhatsAppMessage("Villa Carmen", booking, 42, "https://example.com")
+	if !strings.Contains(wa, "*Planta:* Planta 0") {
+		t.Fatalf("WhatsApp confirmation should include ground floor; got %s", wa)
+	}
+	html := buildBookingEmailHTML("Villa Carmen", "", "", "", "", booking, 42, "https://example.com")
+	if !strings.Contains(html, "Planta 0") {
+		t.Fatal("email confirmation should include ground floor")
+	}
+}

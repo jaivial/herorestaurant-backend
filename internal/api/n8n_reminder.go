@@ -309,7 +309,7 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 
 		confirmationURL := baseURL + "/confirm?id=" + strconv.Itoa(bookingID)
 		floorDisplay := ""
-		if booking.PreferredFloor.Valid && booking.PreferredFloor.Int64 > 0 {
+		if booking.PreferredFloor.Valid && booking.PreferredFloor.Int64 >= 0 {
 			floorDisplay = "Planta " + strconv.FormatInt(booking.PreferredFloor.Int64, 10)
 		}
 		confirmationMessage := buildBookingReminderMessage(customerName, brandName, bookingDateDisplay, bookingTimeDisplay, partySize, floorDisplay, strings.TrimSpace(booking.SalonName.String))

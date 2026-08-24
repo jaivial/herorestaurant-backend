@@ -73,7 +73,7 @@ func publicBookingToResponse(b *publicBooking) publicBookingResponse {
 		children = 0
 	}
 	floorDisplay := ""
-	if b.PreferredFloor.Valid && b.PreferredFloor.Int64 > 0 {
+	if b.PreferredFloor.Valid && b.PreferredFloor.Int64 >= 0 {
 		floorDisplay = fmt.Sprintf("Planta %d", b.PreferredFloor.Int64)
 	}
 

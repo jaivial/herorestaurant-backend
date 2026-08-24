@@ -12,6 +12,18 @@ import (
 
 // buildBookingWhatsAppMessage formats the WhatsApp confirmation text for a booking.
 // It mirrors the legacy PHP sendWhatsAppConfirmationWithButtonsUazApi message structure.
+func bookedFloorNumber(booking map[string]any) (int, bool) {
+	raw, exists := booking["preferred_floor_number"]
+	if !exists || raw == nil {
+		return 0, false
+	}
+	n, err := anyToInt(raw)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 func buildBookingWhatsAppMessage(brandName string, booking map[string]any, bookingID int64, baseURL string) string {
 	customerName := anyToString(booking["customer_name"])
 	resDate := anyToString(booking["reservation_date"])
@@ -36,7 +48,7 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 	msg += fmt.Sprintf("📅 *Fecha:* %s\n", dateDisplay)
 	msg += fmt.Sprintf("🕒 *Hora:* %s\n", timeDisplay)
 	msg += fmt.Sprintf("👥 *Personas:* %d\n", partySize)
-	if floorNumber, err := anyToInt(booking["preferred_floor_number"]); err == nil && floorNumber > 0 {
+	if floorNumber, ok := bookedFloorNumber(booking); ok {
 		msg += fmt.Sprintf("📍 *Planta:* Planta %d\n", floorNumber)
 	}
 	if salonName := strings.TrimSpace(anyToString(booking["preferred_salon_name"])); salonName != "" {
