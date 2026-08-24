@@ -38,6 +38,7 @@ type publicBookingResponse struct {
 	BabyStrollers   int                  `json:"babyStrollers"`
 	HighChairs      int                  `json:"highChairs"`
 	FloorDisplay    string               `json:"floorDisplay,omitempty"`
+	SalonDisplay    string               `json:"salonDisplay,omitempty"`
 	TableNumber     string               `json:"tableNumber,omitempty"`
 	Status          string               `json:"status,omitempty"`
 	IsSameDay       bool                 `json:"isSameDay"`
@@ -100,6 +101,7 @@ func publicBookingToResponse(b *publicBooking) publicBookingResponse {
 		BabyStrollers:   int(b.BabyStrollers.Int64),
 		HighChairs:      int(b.HighChairs.Int64),
 		FloorDisplay:    floorDisplay,
+		SalonDisplay:    nullStringValue(b.SalonName),
 		TableNumber:     nullStringValue(b.TableNumber),
 		Status:          status,
 		IsSameDay:       today == b.ReservationDate,

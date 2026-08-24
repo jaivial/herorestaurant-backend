@@ -36,6 +36,12 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 	msg += fmt.Sprintf("📅 *Fecha:* %s\n", dateDisplay)
 	msg += fmt.Sprintf("🕒 *Hora:* %s\n", timeDisplay)
 	msg += fmt.Sprintf("👥 *Personas:* %d\n", partySize)
+	if floorNumber, err := anyToInt(booking["preferred_floor_number"]); err == nil && floorNumber > 0 {
+		msg += fmt.Sprintf("📍 *Planta:* Planta %d\n", floorNumber)
+	}
+	if salonName := strings.TrimSpace(anyToString(booking["preferred_salon_name"])); salonName != "" {
+		msg += fmt.Sprintf("🚪 *Salón:* %s\n", salonName)
+	}
 
 	if specialMenu {
 		menuTitle := extractFirstJSONArrayItem(anyToString(booking["arroz_type"]))

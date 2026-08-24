@@ -95,6 +95,30 @@ func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
 	}, true
 }
 
+func (s *Server) attachBookingSalonNames(ctx context.Context, restaurantID int, bookings []map[string]any) {
+	byDate := make(map[string]map[int]string)
+	for _, booking := range bookings {
+		salonID, err := anyToInt(booking["preferred_salon_id"])
+		if err != nil || salonID <= 0 {
+			continue
+		}
+		date := strings.TrimSpace(anyToString(booking["reservation_date"]))
+		names, loaded := byDate[date]
+		if !loaded {
+			names = map[int]string{}
+			if salons, loadErr := s.loadSalons(ctx, restaurantID, date); loadErr == nil {
+				for _, salon := range salons {
+					names[salon.ID] = strings.TrimSpace(salon.Name)
+				}
+			}
+			byDate[date] = names
+		}
+		if name := names[salonID]; name != "" {
+			booking["preferred_salon_name"] = name
+		}
+	}
+}
+
 func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -270,6 +294,8 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando bookings")
 		return
 	}
+
+	s.attachBookingSalonNames(r.Context(), restaurantID, bookings)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":     true,

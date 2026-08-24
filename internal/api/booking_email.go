@@ -201,6 +201,7 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 	highChairs, _ := anyToInt(booking["high_chairs"])
 	babyStrollers, _ := anyToInt(booking["baby_strollers"])
 	floorNumber, _ := anyToInt(booking["preferred_floor_number"])
+	salonName := strings.TrimSpace(anyToString(booking["preferred_salon_name"]))
 	tableNumber := anyToString(booking["table_number"])
 	customerCountryCode := strings.TrimSpace(anyToString(booking["contact_phone_country_code"]))
 	if customerCountryCode != "" && !strings.HasPrefix(customerCountryCode, "+") {
@@ -284,7 +285,10 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 		detailsHTML += tableRow("Email", htmlEscape(customerEmail))
 	}
 	if floorNumber > 0 {
-		detailsHTML += tableRow("Salón", fmt.Sprintf("Planta %d", floorNumber))
+		detailsHTML += tableRow("Planta", fmt.Sprintf("Planta %d", floorNumber))
+	}
+	if salonName != "" {
+		detailsHTML += tableRow("Salón", htmlEscape(salonName))
 	}
 	if tableNumber != "" {
 		detailsHTML += tableRow("Mesa", htmlEscape(tableNumber))
