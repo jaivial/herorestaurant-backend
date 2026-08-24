@@ -101,6 +101,21 @@ func needsRiceReminder(arrozType sql.NullString) bool {
 	return strings.EqualFold(v, "null")
 }
 
+func buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDisplay string, partySize int, floorDisplay, salonDisplay string) string {
+	msg := "Hola " + customerName + ",\n\n" +
+		"Le recordamos su reserva en " + brandName + ":\n\n" +
+		"📅 Fecha: " + dateDisplay + "\n" +
+		"🕐 Hora: " + timeDisplay + "\n" +
+		"👥 Personas: " + strconv.Itoa(partySize) + "\n"
+	if floorDisplay != "" {
+		msg += "📍 Planta: " + floorDisplay + "\n"
+	}
+	if salonDisplay != "" {
+		msg += "🚪 Salón: " + salonDisplay + "\n"
+	}
+	return msg + "\nPor favor, confirme su asistencia haciendo clic en el botón de abajo:"
+}
+
 func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 	if !validateInternalAPIToken(r) {
 		log.Printf("UNAUTHORIZED: n8nReminder.php access attempt from %s", clientIP(r))
@@ -155,20 +170,21 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 	appendReminderLog(ts + " - Checking bookings from " + currentDate + " " + currentTime + " to " + endDate + " " + endTime + "\n")
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, customer_name, contact_phone_country_code, contact_phone,
-		       DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
-		       TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
-		       party_size, arroz_type
-		FROM bookings
-		WHERE restaurant_id = ?
-		  AND (reminder_sent = 0 OR reminder_sent IS NULL)
-		  AND (status = 'pending' OR status = 'confirmed' OR status IS NULL OR status = '')
+		SELECT b.id, b.customer_name, b.contact_phone_country_code, b.contact_phone,
+		       DATE_FORMAT(b.reservation_date, '%Y-%m-%d') AS reservation_date,
+		       TIME_FORMAT(b.reservation_time, '%H:%i:%s') AS reservation_time,
+		       b.party_size, b.arroz_type, b.preferred_floor_number, sal.name
+		FROM bookings b
+		LEFT JOIN restaurant_salons sal ON sal.id = b.preferred_salon_id AND sal.restaurant_id = b.restaurant_id
+		WHERE b.restaurant_id = ?
+		  AND (b.reminder_sent = 0 OR b.reminder_sent IS NULL)
+		  AND (b.status = 'pending' OR b.status = 'confirmed' OR b.status IS NULL OR b.status = '')
 		  AND (
-		    (reservation_date > ? AND reservation_date < ?)
-		    OR (reservation_date = ? AND reservation_time >= ?)
-		    OR (reservation_date = ? AND reservation_time <= ?)
+		    (b.reservation_date > ? AND b.reservation_date < ?)
+		    OR (b.reservation_date = ? AND b.reservation_time >= ?)
+		    OR (b.reservation_date = ? AND b.reservation_time <= ?)
 		  )
-		ORDER BY reservation_date, reservation_time
+		ORDER BY b.reservation_date, b.reservation_time
 	`, restaurantID, currentDate, endDate, currentDate, currentTime, endDate, endTime)
 	if err != nil {
 		results["error"] = err.Error()
@@ -187,12 +203,14 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 		ReservationTime string
 		PartySize       int
 		ArrozType       sql.NullString
+		PreferredFloor  sql.NullInt64
+		SalonName       sql.NullString
 	}
 
 	var bookings []rowBooking
 	for rows.Next() {
 		var b rowBooking
-		if err := rows.Scan(&b.ID, &b.CustomerName, &b.ContactPhoneCC, &b.ContactPhone, &b.ReservationDate, &b.ReservationTime, &b.PartySize, &b.ArrozType); err != nil {
+		if err := rows.Scan(&b.ID, &b.CustomerName, &b.ContactPhoneCC, &b.ContactPhone, &b.ReservationDate, &b.ReservationTime, &b.PartySize, &b.ArrozType, &b.PreferredFloor, &b.SalonName); err != nil {
 			results["error"] = err.Error()
 			appendReminderLog(ts + " - ERROR: " + err.Error() + "\n")
 			httpx.WriteJSON(w, http.StatusOK, results)
@@ -290,12 +308,11 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 		}
 
 		confirmationURL := baseURL + "/confirm?id=" + strconv.Itoa(bookingID)
-		confirmationMessage := "Hola " + customerName + ",\n\n" +
-			"Le recordamos su reserva en " + brandName + ":\n\n" +
-			"📅 Fecha: " + bookingDateDisplay + "\n" +
-			"🕐 Hora: " + bookingTimeDisplay + "\n" +
-			"👥 Personas: " + strconv.Itoa(partySize) + "\n\n" +
-			"Por favor, confirme su asistencia haciendo clic en el botón de abajo:"
+		floorDisplay := ""
+		if booking.PreferredFloor.Valid && booking.PreferredFloor.Int64 >= 0 {
+			floorDisplay = "Planta " + strconv.FormatInt(booking.PreferredFloor.Int64, 10)
+		}
+		confirmationMessage := buildBookingReminderMessage(customerName, brandName, bookingDateDisplay, bookingTimeDisplay, partySize, floorDisplay, strings.TrimSpace(booking.SalonName.String))
 		confirmationButtons := []string{
 			"✅ Confirmar Reserva|" + confirmationURL,
 		}

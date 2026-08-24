@@ -110,6 +110,8 @@ func (s *Server) handleBOBookingsSearch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.attachBookingSalonNames(r.Context(), restaurantID, bookings)
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
 		"bookings":    bookings,

@@ -137,6 +137,8 @@ func TestPublicBookingToResponse(t *testing.T) {
 		BabyStrollers:   sql.NullInt64{Int64: 1, Valid: true},
 		HighChairs:      sql.NullInt64{Int64: 2, Valid: true},
 		PreferredFloor:  sql.NullInt64{Int64: 2, Valid: true},
+		PreferredSalon:  sql.NullInt64{Int64: 7, Valid: true},
+		SalonName:       nullSQLStr("La Condesa"),
 		TableNumber:     nullSQLStr("12"),
 		Status:          nullSQLStr("confirmed"),
 	})
@@ -158,7 +160,7 @@ func TestPublicBookingToResponse(t *testing.T) {
 	if resp.Adults != 3 || resp.Children != 1 || resp.BabyStrollers != 1 || resp.HighChairs != 2 {
 		t.Errorf("unexpected party details: %+v", resp)
 	}
-	if resp.FloorDisplay != "Planta 2" || resp.TableNumber != "12" || resp.Commentary != "Mesa tranquila" {
+	if resp.FloorDisplay != "Planta 2" || resp.SalonDisplay != "La Condesa" || resp.TableNumber != "12" || resp.Commentary != "Mesa tranquila" {
 		t.Errorf("unexpected booking details: %+v", resp)
 	}
 	if !resp.IsConfirmed {
@@ -184,4 +186,18 @@ func TestPublicBookingToResponseArroz(t *testing.T) {
 // Helper to create sql.NullString for tests
 func nullSQLStr(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
+}
+
+func TestPublicBookingToResponseIncludesGroundFloor(t *testing.T) {
+	resp := publicBookingToResponse(&publicBooking{
+		ID:              789,
+		ReservationDate: "2026-09-10",
+		ReservationTime: "14:00:00",
+		PartySize:       2,
+		CustomerName:    "Ana",
+		PreferredFloor:  sql.NullInt64{Int64: 0, Valid: true},
+	})
+	if resp.FloorDisplay != "Planta 0" {
+		t.Fatalf("expected ground-floor display, got %q", resp.FloorDisplay)
+	}
 }

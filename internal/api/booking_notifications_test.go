@@ -337,3 +337,56 @@ func TestBuildBookingEmailHTMLMultipleArroz(t *testing.T) {
 		t.Error("HTML should contain third arroz type")
 	}
 }
+
+func TestBookingNotificationsIncludeReservedLocation(t *testing.T) {
+	booking := map[string]any{
+		"customer_name":          "Ana",
+		"reservation_date":       "2026-09-10",
+		"reservation_time":       "14:00",
+		"party_size":             2,
+		"preferred_floor_number": 1,
+		"preferred_salon_name":   "La Condesa",
+	}
+
+	wa := buildBookingWhatsAppMessage("Villa Carmen", booking, 42, "https://example.com")
+	for _, want := range []string{"*Planta:* Planta 1", "*Salón:* La Condesa"} {
+		if !strings.Contains(wa, want) {
+			t.Errorf("WhatsApp confirmation should contain %q; got %s", want, wa)
+		}
+	}
+
+	html := buildBookingEmailHTML("Villa Carmen", "", "", "", "", booking, 42, "https://example.com")
+	for _, want := range []string{"Planta", "Planta 1", "Salón", "La Condesa"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("email confirmation should contain %q", want)
+		}
+	}
+}
+
+func TestBuildBookingReminderMessageIncludesReservedLocation(t *testing.T) {
+	msg := buildBookingReminderMessage("Ana", "Villa Carmen", "10/09/2026", "14:00", 2, "Planta 1", "La Condesa")
+	for _, want := range []string{"📍 Planta: Planta 1", "🚪 Salón: La Condesa"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("reminder should contain %q; got %s", want, msg)
+		}
+	}
+}
+
+func TestBookingNotificationsIncludeGroundFloor(t *testing.T) {
+	booking := map[string]any{
+		"customer_name":          "Ana",
+		"reservation_date":       "2026-09-10",
+		"reservation_time":       "14:00",
+		"party_size":             2,
+		"preferred_floor_number": 0,
+	}
+
+	wa := buildBookingWhatsAppMessage("Villa Carmen", booking, 42, "https://example.com")
+	if !strings.Contains(wa, "*Planta:* Planta 0") {
+		t.Fatalf("WhatsApp confirmation should include ground floor; got %s", wa)
+	}
+	html := buildBookingEmailHTML("Villa Carmen", "", "", "", "", booking, 42, "https://example.com")
+	if !strings.Contains(html, "Planta 0") {
+		t.Fatal("email confirmation should include ground floor")
+	}
+}
