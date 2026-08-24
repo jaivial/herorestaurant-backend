@@ -32,6 +32,7 @@ type publicBooking struct {
 	HighChairs      sql.NullInt64
 	PreferredFloor  sql.NullInt64
 	PreferredSalon  sql.NullInt64
+	SalonName       sql.NullString
 	TableNumber     sql.NullString
 	Status          sql.NullString
 	SpecialMenu     sql.NullInt64
@@ -48,29 +49,31 @@ func (s *Server) fetchPublicBooking(ctx context.Context, id int) (publicBooking,
 	var b publicBooking
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
-			id,
-			DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
-			TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
-			party_size,
-			children,
-			customer_name,
-			contact_phone,
-			contact_email,
-			commentary,
-			arroz_type,
-			arroz_servings,
-			babyStrollers,
-			highChairs,
-			preferred_floor_number,
-			preferred_salon_id,
-			table_number,
-			status,
-			special_menu,
-			menu_de_grupo_id,
-			principales_json
-		FROM bookings
-		WHERE restaurant_id = ?
-		  AND id = ?
+			b.id,
+			DATE_FORMAT(b.reservation_date, '%Y-%m-%d') AS reservation_date,
+			TIME_FORMAT(b.reservation_time, '%H:%i:%s') AS reservation_time,
+			b.party_size,
+			b.children,
+			b.customer_name,
+			b.contact_phone,
+			b.contact_email,
+			b.commentary,
+			b.arroz_type,
+			b.arroz_servings,
+			b.babyStrollers,
+			b.highChairs,
+			b.preferred_floor_number,
+			b.preferred_salon_id,
+			sal.name,
+			b.table_number,
+			b.status,
+			b.special_menu,
+			b.menu_de_grupo_id,
+			b.principales_json
+		FROM bookings b
+		LEFT JOIN restaurant_salons sal ON sal.id = b.preferred_salon_id AND sal.restaurant_id = b.restaurant_id
+		WHERE b.restaurant_id = ?
+		  AND b.id = ?
 		LIMIT 1
 	`, restaurantID, id).Scan(
 		&b.ID,
@@ -88,6 +91,7 @@ func (s *Server) fetchPublicBooking(ctx context.Context, id int) (publicBooking,
 		&b.HighChairs,
 		&b.PreferredFloor,
 		&b.PreferredSalon,
+		&b.SalonName,
 		&b.TableNumber,
 		&b.Status,
 		&b.SpecialMenu,

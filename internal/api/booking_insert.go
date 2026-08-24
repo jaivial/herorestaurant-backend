@@ -295,6 +295,7 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		"preferred_floor_number":     preferredFloorNumber,
 		"preferred_salon_id":         preferredSalonID,
 	}
+	s.enrichBookingLocationForNotifications(r.Context(), restaurantID, bookingData)
 
 	// Send WhatsApp confirmation to customer (best-effort).
 	var whatsappSent bool
@@ -559,6 +560,7 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		"preferred_floor_number":     preferredFloorNumber,
 		"preferred_salon_id":         preferredSalonID,
 	}
+	s.enrichBookingLocationForNotifications(r.Context(), restaurantID, adminBookingData)
 
 	// Send WhatsApp confirmation to customer (best-effort).
 	var adminWhatsappSent bool
@@ -691,6 +693,19 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 		return 0, err
 	}
 	return id, nil
+}
+
+func (s *Server) enrichBookingLocationForNotifications(ctx context.Context, restaurantID int, booking map[string]any) {
+	salonID, err := anyToInt(booking["preferred_salon_id"])
+	if err != nil || salonID <= 0 || s.db == nil {
+		return
+	}
+	var salonName sql.NullString
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT name FROM restaurant_salons WHERE restaurant_id = ? AND id = ? LIMIT 1
+	`, restaurantID, salonID).Scan(&salonName); err == nil && salonName.Valid {
+		booking["preferred_salon_name"] = strings.TrimSpace(salonName.String)
+	}
 }
 
 func (s *Server) resolvePreferredFloorNumberForFront(ctx context.Context, restaurantID int, date string, raw string) (any, error) {
