@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/go-chi/chi/v5"
+	_ "github.com/go-sql-driver/mysql"
 
 	"preactvillacarmen/internal/config"
 )

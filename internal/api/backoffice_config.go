@@ -65,14 +65,14 @@ type reservationDefaults struct {
 }
 
 type boConfigFloor struct {
-	ID               int    `json:"id"`
-	FloorNumber      int    `json:"floorNumber"`
-	Name             string `json:"name"`
-	IsGround         bool   `json:"isGround"`
-	Active           bool   `json:"active"`
-	DateScoped       string `json:"dateScoped,omitempty"`
-	MaxAforo         int    `json:"maxAforo"`
-	TotalSalonAforo  int    `json:"totalSalonAforo"`
+	ID              int    `json:"id"`
+	FloorNumber     int    `json:"floorNumber"`
+	Name            string `json:"name"`
+	IsGround        bool   `json:"isGround"`
+	Active          bool   `json:"active"`
+	DateScoped      string `json:"dateScoped,omitempty"`
+	MaxAforo        int    `json:"maxAforo"`
+	TotalSalonAforo int    `json:"totalSalonAforo"`
 }
 
 func cloneStrings(in []string) []string {
@@ -1492,7 +1492,7 @@ func (s *Server) handleBOConfigDefaultsGet(w http.ResponseWriter, r *http.Reques
 		"hourSplitEnabled":       defaults.HourSplitEnabled,
 		"defaultHourPercentages": defaults.DefaultHourPercentages,
 		"allowFloorReservation":  defaults.AllowFloorReservation,
-		"allowSalonReservation": defaults.AllowSalonReservation,
+		"allowSalonReservation":  defaults.AllowSalonReservation,
 	})
 }
 
@@ -1598,7 +1598,7 @@ func (s *Server) handleBOConfigDefaultsSet(w http.ResponseWriter, r *http.Reques
 		"hourSplitEnabled":       current.HourSplitEnabled,
 		"defaultHourPercentages": current.DefaultHourPercentages,
 		"allowFloorReservation":  current.AllowFloorReservation,
-		"allowSalonReservation": current.AllowSalonReservation,
+		"allowSalonReservation":  current.AllowSalonReservation,
 	})
 }
 
@@ -1703,8 +1703,8 @@ func (s *Server) handleBOConfigFloorsDefaultsSet(w http.ResponseWriter, r *http.
 			}
 			if *req.MaxAforo > 0 && target.TotalSalonAforo > *req.MaxAforo {
 				httpx.WriteJSON(w, http.StatusOK, map[string]any{
-					"success":  false,
-					"message":  "El aforo de la planta no puede ser menor que la suma de los aforos de sus salones",
+					"success":         false,
+					"message":         "El aforo de la planta no puede ser menor que la suma de los aforos de sus salones",
 					"totalSalonAforo": target.TotalSalonAforo,
 				})
 				return
@@ -1925,8 +1925,8 @@ func (s *Server) handleBOConfigFloorsSet(w http.ResponseWriter, r *http.Request)
 		effSalonAforo := target.TotalSalonAforo
 		if *req.MaxAforo > 0 && effSalonAforo > *req.MaxAforo {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success":  false,
-				"message":  "El aforo de la planta no puede ser menor que la suma de los aforos de sus salones",
+				"success":         false,
+				"message":         "El aforo de la planta no puede ser menor que la suma de los aforos de sus salones",
 				"totalSalonAforo": effSalonAforo,
 			})
 			return
