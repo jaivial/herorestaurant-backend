@@ -244,7 +244,10 @@ func (s *Server) handleBOAdsCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 	input := boAdInput{Name: "Nuevo anuncio", Content: []boAdContentElement{}, CTAs: []boAdCTA{}}
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&input)
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid JSON body"})
+			return
+		}
 	}
 	normalized, err := validateBOAdInput(input)
 	if err != nil {
