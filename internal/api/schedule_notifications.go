@@ -65,7 +65,7 @@ func (s *Server) sendScheduleChangeNotification(ctx context.Context, restaurantI
 	if !ok {
 		return
 	}
-	if err := gateway.SendText(ctx, normalizeWhatsAppNumber(whatsapp), text); err != nil {
+	if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gateway, normalizeWhatsAppNumber(whatsapp), text, "schedule_notification"); err != nil {
 		log.Printf("schedule WhatsApp failed member=%d: %v", memberID, err)
 	}
 }

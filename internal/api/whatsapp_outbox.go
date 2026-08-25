@@ -35,6 +35,7 @@ type whatsappOutboxRow struct {
 	ID           int64
 	RestaurantID int
 	Recipient    string
+	Event        string
 	Attempts     int
 	Payload      whatsappOutboxPayload
 }
@@ -104,7 +105,7 @@ func (s *Server) claimWhatsAppDeliveries(ctx context.Context, lockToken string, 
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, restaurant_id, recipient, attempts, payload_json
+		SELECT id, restaurant_id, recipient, event, attempts, payload_json
 		FROM message_deliveries
 		WHERE locked_by = ? AND status = 'pending'
 		ORDER BY id
@@ -120,7 +121,7 @@ func (s *Server) claimWhatsAppDeliveries(ctx context.Context, lockToken string, 
 			row     whatsappOutboxRow
 			payload sql.NullString
 		)
-		if err := rows.Scan(&row.ID, &row.RestaurantID, &row.Recipient, &row.Attempts, &payload); err != nil {
+		if err := rows.Scan(&row.ID, &row.RestaurantID, &row.Recipient, &row.Event, &row.Attempts, &payload); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(payload.String), &row.Payload); err != nil {
@@ -176,11 +177,11 @@ func (s *Server) sendWhatsAppOutboxRow(ctx context.Context, row whatsappOutboxRo
 		return fmt.Errorf("WhatsApp no configurado para el restaurante %d", row.RestaurantID)
 	}
 	if len(row.Payload.Choices) > 0 {
-		if err := gw.SendMenu(ctx, row.Recipient, row.Payload.Text, row.Payload.Choices); err == nil {
+		if err := s.sendWhatsAppMenuTracked(ctx, row.RestaurantID, gw, row.Recipient, row.Payload.Text, row.Payload.Choices, row.Event); err == nil {
 			return nil
 		}
 	}
-	return gw.SendText(ctx, row.Recipient, row.Payload.Text)
+	return s.sendWhatsAppTextTracked(ctx, row.RestaurantID, gw, row.Recipient, row.Payload.Text, row.Event)
 }
 
 // runWhatsAppOutboxOnce drains one batch and returns how many were delivered.

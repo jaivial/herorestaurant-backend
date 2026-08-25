@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -63,12 +64,10 @@ func TestBotWebhook_EndToEnd_DB(t *testing.T) {
 	s.cfg.BotTimeout = 5 * time.Second
 	s.cfg.BotMaxTokens = 512
 	s.cfg.BotMaxIterations = 5
-	s.cfg.BotHistoryLimit = 20
 
 	rid, cleanup := seedRestaurant(t, db, "bot-e2e-"+time.Now().Format("150405.000"))
 	defer cleanup()
 	defer func() {
-		_, _ = db.Exec(`DELETE FROM whatsapp_bot_messages WHERE restaurant_id = ?`, rid)
 		_, _ = db.Exec(`DELETE FROM whatsapp_bot_sessions WHERE restaurant_id = ?`, rid)
 		_, _ = db.Exec(`DELETE FROM restaurant_uazapi_instances WHERE restaurant_id = ?`, rid)
 		_, _ = db.Exec(`DELETE FROM uazapi_servers WHERE base_url = ?`, uaz.URL)
@@ -145,20 +144,27 @@ func TestBotWebhook_EndToEnd_DB(t *testing.T) {
 	}
 
 	mu.Lock()
-	defer mu.Unlock()
 	if len(sentTexts) != 1 {
+		mu.Unlock()
 		t.Fatalf("sentTexts = %v", sentTexts)
 	}
-	if sentTexts[0]["number"] != "34612345678" || sentTexts[0]["text"] != "¡Hola Jaime! ¿En qué te ayudo?" {
-		t.Errorf("payload = %v", sentTexts[0])
+	payload := sentTexts[0]
+	mu.Unlock()
+	if payload["number"] != "34612345678" || payload["text"] != "¡Hola Jaime! ¿En qué te ayudo?" {
+		t.Errorf("payload = %v", payload)
 	}
 
-	// Transcript persisted: user + assistant rows.
-	var userRows, assistantRows int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM whatsapp_bot_messages WHERE restaurant_id = ? AND role = 'user'`, rid).Scan(&userRows)
-	_ = db.QueryRow(`SELECT COUNT(*) FROM whatsapp_bot_messages WHERE restaurant_id = ? AND role = 'assistant'`, rid).Scan(&assistantRows)
-	if userRows != 1 || assistantRows != 1 {
-		t.Errorf("transcript rows: user=%d assistant=%d", userRows, assistantRows)
+	// Transcript persisted in SQLite: user + assistant messages.
+	var history []botMessage
+	for time.Now().Before(deadline) {
+		history, _ = s.botConversation.History(context.Background(), rid, "34612345678")
+		if len(history) == 2 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if len(history) != 2 || history[0].Role != "user" || history[1].Role != "assistant" {
+		t.Errorf("SQLite transcript = %+v", history)
 	}
 
 	// 3. Unknown instance token → 401.

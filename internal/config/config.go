@@ -66,7 +66,7 @@ type Config struct {
 	BotTimeout                  time.Duration
 	BotMaxTokens                int
 	BotMaxIterations            int
-	BotHistoryLimit             int
+	BotContextSQLitePath        string
 	BotDailyTurnsCap            int
 	AssistantModel              string
 	AssistantTimeout            time.Duration
@@ -139,7 +139,7 @@ func Load() Config {
 		BotTimeout:                  time.Duration(getenvInt("BOT_MINIMAX_TIMEOUT_SECONDS", 45, 5, 300)) * time.Second,
 		BotMaxTokens:                getenvInt("BOT_MINIMAX_MAX_TOKENS", 1024, 128, 8192),
 		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 8, 1, 20),
-		BotHistoryLimit:             getenvInt("BOT_HISTORY_LIMIT", 20, 2, 100),
+		BotContextSQLitePath:        strings.TrimSpace(getenv("BOT_CONTEXT_SQLITE_PATH", "./data/whatsapp-bot-context.sqlite")),
 		BotDailyTurnsCap:            getenvInt("BOT_DAILY_TURNS_CAP", 2000, 1, 1000000),
 		AssistantModel:              getenv("ASSISTANT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3")),
 		AssistantTimeout:            time.Duration(getenvInt("ASSISTANT_TIMEOUT_SECONDS", 60, 5, 600)) * time.Second,

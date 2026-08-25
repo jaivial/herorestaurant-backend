@@ -24,6 +24,9 @@ services:
     environment:
       PORT: "8080"
       STATIC_DIR: /app/static
+      BOT_CONTEXT_SQLITE_PATH: /var/lib/herorestaurant/whatsapp-bot-context.sqlite
+    volumes:
+      - whatsapp-bot-context:/var/lib/herorestaurant
     # Public frontend dist is baked into the image (no bind mounts in prod).
 
   backoffice:
@@ -37,3 +40,6 @@ services:
       - ../../backoffice/.env.prod
     depends_on:
       - backend
+
+volumes:
+  whatsapp-bot-context:

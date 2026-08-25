@@ -260,7 +260,7 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendMenu := func(ctx context.Context, phone string, text string, choices []string) (bool, string) {
-		if err := gw.SendMenu(ctx, phone, text, choices); err != nil {
+		if err := s.sendWhatsAppMenuTracked(ctx, restaurantID, gw, phone, text, choices, "booking_reconfirmation"); err != nil {
 			return false, err.Error()
 		}
 		return true, ""

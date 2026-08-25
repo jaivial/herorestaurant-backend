@@ -61,7 +61,7 @@ func (x preShiftSender) Send(ctx context.Context, rid int, to, text string) erro
 	if !ok {
 		return fmt.Errorf("whatsapp not connected")
 	}
-	return g.SendText(ctx, to, text)
+	return x.s.sendWhatsAppTextTracked(ctx, rid, g, to, text, "pre_shift_reminder")
 }
 
 type preShiftGate struct{ s *Server }

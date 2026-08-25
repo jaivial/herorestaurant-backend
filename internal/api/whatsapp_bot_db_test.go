@@ -242,24 +242,22 @@ func TestBotToolModifyBooking_DB(t *testing.T) {
 	}
 }
 
-func TestBotHistoryRoundTrip_DB(t *testing.T) {
+func TestBotHistoryRoundTrip_SQLite(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 	s := newTestServer(t, db)
-	s.cfg.BotHistoryLimit = 20
 	rid, cleanup := seedBotRestaurant(t, s)
 	defer cleanup()
 	defer func() {
-		_, _ = db.Exec(`DELETE FROM whatsapp_bot_messages WHERE restaurant_id = ?`, rid)
 		_, _ = db.Exec(`DELETE FROM whatsapp_bot_sessions WHERE restaurant_id = ?`, rid)
 	}()
 
 	ctx := context.Background()
 	phone := "34600000042"
-	s.botSaveMessage(ctx, rid, phone, "user", "hola", "")
-	s.botSaveMessage(ctx, rid, phone, "assistant", "¡Hola! ¿En qué te ayudo?", "")
-	s.botSaveMessage(ctx, rid, phone, "user", "quiero reservar", "")
-	s.botSaveMessage(ctx, rid, phone, "assistant", "¿Para qué día?", "")
+	s.botRecordConversationMessage(ctx, rid, phone, "user", "hola", "", "test")
+	s.botRecordConversationMessage(ctx, rid, phone, "assistant", "¡Hola! ¿En qué te ayudo?", "", "test")
+	s.botRecordConversationMessage(ctx, rid, phone, "user", "quiero reservar", "", "test")
+	s.botRecordConversationMessage(ctx, rid, phone, "assistant", "¿Para qué día?", "", "test")
 	s.botTouchSession(ctx, rid, phone, "Jaime")
 
 	history := s.botLoadHistory(ctx, rid, phone)

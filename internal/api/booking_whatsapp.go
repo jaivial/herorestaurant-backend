@@ -139,14 +139,14 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 		return err
 	}
 
-	if err := gw.SendMenu(ctx, msg.To, msg.Text, msg.Choices); err == nil {
+	if err := s.sendWhatsAppMenuTracked(ctx, restaurantID, gw, msg.To, msg.Text, msg.Choices, "booking_confirmation"); err == nil {
 		log.Printf("WhatsApp button confirmation sent for booking #%d", bookingID)
 		return nil
 	} else {
 		log.Printf("WhatsApp button send failed for booking #%d (%v), falling back to text", bookingID, err)
 	}
 
-	sendErr := gw.SendText(ctx, msg.To, msg.Text)
+	sendErr := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.To, msg.Text, "booking_confirmation")
 	if sendErr == nil {
 		log.Printf("WhatsApp text confirmation sent for booking #%d", bookingID)
 		return nil
