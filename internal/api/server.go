@@ -600,6 +600,15 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Post("/config/restaurant-info", s.handleBORestaurantInfoSet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/check-website", s.handleBOWebsiteCheck)
 
+		// Restaurant website banners/popovers.
+		r.With(s.requireBOSession, reservasGate).Get("/config/ads", s.handleBOAdsList)
+		r.With(s.requireBOSession, reservasGate).Post("/config/ads", s.handleBOAdsCreate)
+		r.With(s.requireBOSession, reservasGate).Put("/config/ads/{adId}", s.handleBOAdsUpdate)
+		r.With(s.requireBOSession, reservasGate).Delete("/config/ads/{adId}", s.handleBOAdsDelete)
+		r.With(s.requireBOSession, reservasGate).Post("/config/ads/{adId}/image/upload", s.handleBOAdImageUpload)
+		r.With(s.requireBOSession, reservasGate).Post("/config/ads/{adId}/image/enhance", s.handleBOAdImageEnhance)
+		r.With(s.requireBOSession, reservasGate).Post("/config/ads/{adId}/image/generate", s.handleBOAdImageGenerate)
+
 		r.With(s.requireBOSession, reservasGate).Get("/config/mandatory-menus", s.handleBOMandatoryMenusGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/mandatory-menus", s.handleBOMandatoryMenusSave)
 
