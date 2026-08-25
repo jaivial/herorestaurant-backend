@@ -53,7 +53,7 @@ func (s *Server) sendVerifiedMemberWhatsApp(ctx context.Context, restaurantID in
 	if !ok {
 		return errors.New("whatsapp no conectado")
 	}
-	return gateway.SendText(ctx, normalizeWhatsAppNumber(phone), text)
+	return s.sendWhatsAppTextTracked(ctx, restaurantID, gateway, normalizeWhatsAppNumber(phone), text, "security_member_access")
 }
 func (s *Server) handleBOMemberWhatsAppVerificationSend(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
@@ -156,7 +156,7 @@ func (s *Server) handleBOMemberWhatsAppVerificationConfirm(w http.ResponseWriter
 	// after the number is verified and the paid WhatsApp feature is active.
 	if s.memberWhatsAppEnabled(r.Context(), a.ActiveRestaurantID, phone.String) {
 		if gateway, connected := s.botGatewayFor(r.Context(), a.ActiveRestaurantID); connected {
-			_ = gateway.SendText(r.Context(), normalizeWhatsAppNumber(phone.String), "Bienvenido/a. Tu WhatsApp ha sido verificado correctamente.")
+			_ = s.sendWhatsAppTextTracked(r.Context(), a.ActiveRestaurantID, gateway, normalizeWhatsAppNumber(phone.String), "Bienvenido/a. Tu WhatsApp ha sido verificado correctamente.", "whatsapp_verification_success")
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "verified": true})

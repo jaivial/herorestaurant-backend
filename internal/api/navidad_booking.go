@@ -246,7 +246,7 @@ func (s *Server) handleNavidadBooking(w http.ResponseWriter, r *http.Request) {
 	clientMessage += "Puede consultar nuestros menús de grupos en el siguiente enlace."
 
 	clientChoices := []string{"Ver Menús de Grupos|" + strings.TrimRight(baseURL, "/") + "/menudegrupos.php"}
-	clientErr := gw.SendMenu(r.Context(), cleanPhone, clientMessage, clientChoices)
+	clientErr := s.sendWhatsAppMenuTracked(r.Context(), restaurantID, gw, cleanPhone, clientMessage, clientChoices, "special_booking_inquiry")
 	notifications["client_whatsapp"] = map[string]any{
 		"sent":  clientErr == nil,
 		"to":    cleanPhone,
@@ -268,7 +268,7 @@ func (s *Server) handleNavidadBooking(w http.ResponseWriter, r *http.Request) {
 	results := []map[string]any{}
 	sentAny := false
 	for _, n := range restaurantNumbers {
-		err := gw.SendText(r.Context(), n, restaurantMessage)
+		err := s.sendWhatsAppTextTracked(r.Context(), restaurantID, gw, n, restaurantMessage, "special_booking_notification")
 		if err == nil {
 			sentAny = true
 		}

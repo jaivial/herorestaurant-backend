@@ -242,7 +242,7 @@ func (s *Server) sendRestaurantWhatsAppText(ctx context.Context, restaurantID in
 
 	var firstErr error
 	for _, n := range recipients {
-		if err := gw.SendText(ctx, n, text); err != nil && firstErr == nil {
+		if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, n, text, "restaurant_notification"); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

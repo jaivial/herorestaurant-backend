@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -46,7 +47,8 @@ type Server struct {
 	botCapDay            string
 	botCapCount          map[int]int
 	botSem               chan struct{} // bounds concurrent inbound agent turns
-	provisionMu          sync.Mutex    // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
+	botConversation      *botConversationStore
+	provisionMu          sync.Mutex // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
 	instatic             *instaticManager
 	siteBuilderHub       *siteBuilderWSHub
 	assistantRateMu      sync.Mutex
@@ -67,6 +69,10 @@ type assistantKeepaliveConfig struct {
 }
 
 func NewServer(db *sql.DB, cfg config.Config) *Server {
+	botConversation, err := newBotConversationStore(cfg.BotContextSQLitePath)
+	if err != nil {
+		panic(fmt.Sprintf("initialize WhatsApp bot context SQLite: %v", err))
+	}
 	aiConcurrency := cfg.OpenAIConcurrency
 	if aiConcurrency <= 0 {
 		aiConcurrency = 1
@@ -84,6 +90,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		whatsappConnectionHub: newBOWAConnectionHub(),
 		rateLimit:             make(map[string]*rateLimitState),
 		botSem:                make(chan struct{}, botMaxConcurrentTurns),
+		botConversation:       botConversation,
 		confirmationStore:     newConfirmationStore(db),
 		sessionCache:          newBOSessionCache(30 * time.Second),
 		bunnyCredsCache:       newBunnyCredentialsCache(),

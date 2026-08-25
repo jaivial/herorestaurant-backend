@@ -108,10 +108,9 @@ func (s *Server) botToolSendMessage(ctx context.Context, restaurantID int, msg b
 	if !ok {
 		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
 	}
-	if err := gw.SendText(ctx, msg.Sender, in.Message); err != nil {
+	if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, in.Message, "agent"); err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-	s.botSaveMessage(ctx, restaurantID, msg.Sender, "assistant", in.Message, "")
 	return botJSON(map[string]any{"sent": true}), nil
 }
 
@@ -130,10 +129,9 @@ func (s *Server) botToolSendButtons(ctx context.Context, restaurantID int, msg b
 	if !ok {
 		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
 	}
-	if err := gw.SendMenu(ctx, msg.Sender, in.Text, in.Choices); err != nil {
+	if err := s.sendWhatsAppMenuTracked(ctx, restaurantID, gw, msg.Sender, in.Text, in.Choices, "agent"); err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-	s.botSaveMessage(ctx, restaurantID, msg.Sender, "assistant", in.Text, "")
 	return botJSON(map[string]any{"sent": true}), nil
 }
 
@@ -163,6 +161,11 @@ func (s *Server) botToolSendMedia(ctx context.Context, restaurantID int, msg bot
 	}); err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
+	visible := strings.TrimSpace(in.Caption)
+	if visible == "" {
+		visible = "[" + mediaType + " enviado: " + in.URL + "]"
+	}
+	s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "assistant", visible, kind, "agent")
 	return botJSON(map[string]any{"sent": true}), nil
 }
 
@@ -180,9 +183,11 @@ func (s *Server) botToolSendLocation(ctx context.Context, restaurantID int, msg 
 	}
 	if err := gw.SendLocation(ctx, msg.Sender, waLocation{Address: address, Name: s.botBrandName(ctx, restaurantID)}); err != nil {
 		// Fallback: send as text.
-		if terr := gw.SendText(ctx, msg.Sender, "📍 "+address); terr != nil {
+		if terr := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, "📍 "+address, "agent_location"); terr != nil {
 			return botJSON(map[string]any{"error": terr.Error()}), nil
 		}
+	} else {
+		s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "assistant", "📍 "+address, "send_location", "agent")
 	}
 	return botJSON(map[string]any{"sent": true, "address": address}), nil
 }
@@ -206,6 +211,7 @@ func (s *Server) botToolSendContact(ctx context.Context, restaurantID int, msg b
 	if err := gw.SendContact(ctx, msg.Sender, waContact{FullName: brand, Phone: phone, Organization: brand}); err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
+	s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "assistant", "Contacto: "+brand+" "+phone, "send_contact", "agent")
 	return botJSON(map[string]any{"sent": true, "phone": phone}), nil
 }
 
@@ -1117,7 +1123,6 @@ func (s *Server) botHandleAttendanceCommand(ctx context.Context, restaurantID in
 }
 
 func (s *Server) botSendAttendanceReply(ctx context.Context, restaurantID int, sender, text string) {
-	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && gw.SendText(ctx, sender, text) == nil {
-		s.botSaveMessage(ctx, restaurantID, sender, "assistant", text, "attendance")
+	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && s.sendWhatsAppTextTracked(ctx, restaurantID, gw, sender, text, "attendance") == nil {
 	}
 }

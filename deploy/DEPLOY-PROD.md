@@ -107,6 +107,10 @@ sudo docker compose -f /var/www/newvillacarmen/backend/deploy/docker-compose.pro
 - Contenedores: `docker compose -f backend/deploy/docker-compose.prod.yml down`
   + re-levantar dev compose si hace falta.
 
+## Contexto persistente del bot WhatsApp
+
+El backend guarda el transcript conversacional del bot en SQLite mediante `BOT_CONTEXT_SQLITE_PATH`. En Docker producción el compose monta el volumen nombrado `whatsapp-bot-context` en `/var/lib/herorestaurant`, por lo que el contexto sobrevive a recreaciones y rebuilds del contenedor. Los mensajes OTP de verificación no se guardan en este transcript.
+
 ## Verificación post-deploy
 
 1. `docker compose -f backend/deploy/docker-compose.prod.yml config` OK.

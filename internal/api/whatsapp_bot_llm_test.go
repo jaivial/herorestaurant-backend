@@ -22,7 +22,6 @@ func newBotTestServer(baseURL string) *Server {
 			BotTimeout:       5 * time.Second,
 			BotMaxTokens:     512,
 			BotMaxIterations: 5,
-			BotHistoryLimit:  20,
 		},
 	}
 }
