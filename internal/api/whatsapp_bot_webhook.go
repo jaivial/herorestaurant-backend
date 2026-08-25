@@ -358,7 +358,7 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 			fallback = "¡Hola! Soy el robot de reservas. No tengo capacidad para escuchar audios ni atender llamadas. Escríbeme por texto, por favor."
 		}
 		if gw, ok := s.botGatewayFor(r.Context(), restaurantID); ok {
-			_ = gw.SendText(r.Context(), msg.Sender, fallback)
+			_ = s.sendWhatsAppTextTracked(r.Context(), restaurantID, gw, msg.Sender, fallback, "unsupported_content")
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "unsupportedContent": true})
 		return
@@ -453,11 +453,10 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	tenant := s.loadBotTenantConfig(ctx, restaurantID)
 	system := s.buildBotSystemPrompt(ctx, restaurantID, msg.PushName, msg.Sender, tenant)
 
-	history := s.botLoadHistory(ctx, restaurantID, msg.Sender)
-	s.botSaveMessage(ctx, restaurantID, msg.Sender, "user", msg.Text, "")
+	s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "user", msg.Text, "", "inbound")
 	s.botTouchSession(ctx, restaurantID, msg.Sender, msg.PushName)
 
-	messages := append(history, botUserText(msg.Text))
+	messages := s.botLoadHistory(ctx, restaurantID, msg.Sender)
 	tools := botToolDefs(tenant)
 	exec := s.botToolExecutorFor(restaurantID, msg, tenant)
 
@@ -472,8 +471,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// customer is never left in silence.
 	if !botDeliveredReply(result.ToolCalls) {
 		if text := botFinalAssistantText(result.Messages); text != "" {
-			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && gw.SendText(ctx, msg.Sender, text) == nil {
-				s.botSaveMessage(ctx, restaurantID, msg.Sender, "assistant", text, "")
+			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
 			}
 		} else {
 			s.botSendFallback(ctx, restaurantID, msg.Sender)
@@ -523,7 +521,6 @@ func (s *Server) botSendFallback(ctx context.Context, restaurantID int, sender s
 	if !ok {
 		return
 	}
-	if gw.SendText(ctx, sender, fallback) == nil {
-		s.botSaveMessage(ctx, restaurantID, sender, "assistant", fallback, "")
+	if s.sendWhatsAppTextTracked(ctx, restaurantID, gw, sender, fallback, "agent_fallback") == nil {
 	}
 }

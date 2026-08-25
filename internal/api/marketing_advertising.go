@@ -192,7 +192,7 @@ func (s *Server) handleSendEmailAndWhatsappAd(w http.ResponseWriter, r *http.Req
 			logs = append(logs, "✗ WhatsApp NO enviados: instancia de WhatsApp no configurada")
 		} else {
 			for _, p := range phoneList {
-				err := gw.SendText(r.Context(), p, advertisingMessage)
+				err := s.sendWhatsAppTextTracked(r.Context(), restaurantID, gw, p, advertisingMessage, "marketing_advertising")
 				sent := err == nil
 				if sent {
 					results["whatsapp_sent"] = results["whatsapp_sent"].(int) + 1

@@ -965,7 +965,7 @@ func (s *Server) handleNotifyRestaurantModification(w http.ResponseWriter, r *ht
 	whatsSentAny := false
 	if gw != nil {
 		for _, n := range restaurantNumbers {
-			err := gw.SendText(r.Context(), n, message)
+			err := s.sendWhatsAppTextTracked(r.Context(), restaurantID, gw, n, message, "booking_modification_notification")
 			if err == nil {
 				whatsSentAny = true
 			}

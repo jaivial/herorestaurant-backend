@@ -762,7 +762,7 @@ func (s *Server) sendWhatsAppMessage(ctx context.Context, restaurantID int, phon
 	if !ok {
 		return errors.New("whatsapp no configurado")
 	}
-	return gw.SendText(ctx, num, text)
+	return s.sendWhatsAppTextTracked(ctx, restaurantID, gw, num, text, "backoffice_member_message")
 }
 
 func normalizeWhatsAppNumber(raw string) string {
