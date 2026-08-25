@@ -241,6 +241,7 @@ func (s *Server) handleBOAdsCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 401, "Unauthorized")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 	input := boAdInput{Name: "Nuevo anuncio", Content: []boAdContentElement{}, CTAs: []boAdCTA{}}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&input)
@@ -277,6 +278,7 @@ func (s *Server) handleBOAdsUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid ad id"})
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 	var input boAdInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid JSON body"})
@@ -327,9 +329,8 @@ func (s *Server) handleBOAdsDelete(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, 200, map[string]any{"success": n > 0})
 }
 
-func (s *Server) ensureBOAd(ctx context.Context, restaurantID int, adID int64) (boAd, bool) {
-	ad, err := s.readBOAd(ctx, restaurantID, adID)
-	return ad, err == nil
+func (s *Server) ensureBOAd(ctx context.Context, restaurantID int, adID int64) (boAd, error) {
+	return s.readBOAd(ctx, restaurantID, adID)
 }
 
 func readBOAdMultipartImage(r *http.Request, maxInput int) ([]byte, string, string, error) {
@@ -374,8 +375,12 @@ func (s *Server) handleBOAdImageUpload(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid ad id"})
 		return
 	}
-	if _, ok := s.ensureBOAd(r.Context(), a.ActiveRestaurantID, adID); !ok {
-		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Ad not found"})
+	if _, err := s.ensureBOAd(r.Context(), a.ActiveRestaurantID, adID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Ad not found"})
+		} else {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error loading ad")
+		}
 		return
 	}
 	if !s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
@@ -406,8 +411,12 @@ func (s *Server) handleBOAdImageEnhance(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid ad id"})
 		return
 	}
-	if _, ok := s.ensureBOAd(r.Context(), a.ActiveRestaurantID, adID); !ok {
-		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Ad not found"})
+	if _, err := s.ensureBOAd(r.Context(), a.ActiveRestaurantID, adID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Ad not found"})
+		} else {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error loading ad")
+		}
 		return
 	}
 	provider := s.resolveAIImageProvider(r.Context(), a.ActiveRestaurantID)
@@ -504,9 +513,13 @@ func (s *Server) handleBOAdImageGenerate(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid ad id"})
 		return
 	}
-	ad, ok := s.ensureBOAd(r.Context(), a.ActiveRestaurantID, adID)
-	if !ok {
-		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Ad not found"})
+	ad, err := s.ensureBOAd(r.Context(), a.ActiveRestaurantID, adID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Ad not found"})
+		} else {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error loading ad")
+		}
 		return
 	}
 	provider := s.resolveAIImageProvider(r.Context(), a.ActiveRestaurantID)
