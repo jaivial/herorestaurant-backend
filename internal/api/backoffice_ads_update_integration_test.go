@@ -1,0 +1,165 @@
+package api
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+	_ "github.com/go-sql-driver/mysql"
+	"preactvillacarmen/internal/config"
+)
+
+func withChiURLParam(req *http.Request, key, value string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, value)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+}
+
+// PUT /api/admin/config/ads/{adId} should succeed even when the new payload
+// is byte-for-byte equal to what is already stored. The previous implementation
+// treated MySQL's "0 rows changed" as "ad not found", which made a save click
+// on an unchanged editor surface a misleading 404 to the backoffice.
+//
+// Live reproduction: edit ad 8 with the same name/active/content/ctas it
+// already has and expect 200, not 404.
+func TestHandleBOAdsUpdateSamePayloadReturnsOK(t *testing.T) {
+	dsn := os.Getenv("BO_ADS_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("BO_ADS_TEST_MYSQL_DSN not set")
+	}
+	if !strings.Contains(dsn, "parseTime=true") {
+		t.Fatalf("BO_ADS_TEST_MYSQL_DSN must include parseTime=true (got %q)", dsn)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var databaseName string
+	if err := db.QueryRow(`SELECT DATABASE()`).Scan(&databaseName); err != nil {
+		t.Fatalf("read database name: %v", err)
+	}
+	name := strings.ToLower(databaseName)
+	isTestDatabase := strings.Contains(name, "test") || strings.Contains(name, "sandbox")
+	if !isTestDatabase && os.Getenv("BO_ADS_TEST_ALLOW_NON_TEST_DB") != "1" {
+		t.Fatalf("refusing destructive test against database %q; use a test/sandbox database or set BO_ADS_TEST_ALLOW_NON_TEST_DB=1", databaseName)
+	}
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx,
+		`DELETE FROM restaurant_ads WHERE restaurant_id = 9991`,
+	); err != nil {
+		t.Fatalf("clear ads: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO restaurants (id, slug, name) VALUES (9991, 'bo-ads-update-test', 'BO Ads Update Test')
+		 ON DUPLICATE KEY UPDATE slug = VALUES(slug)`,
+	); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO restaurant_ads (id, restaurant_id, name, active, content_json, ctas_json, image_generation_status, created_at, updated_at)
+		 VALUES (900001, 9991, 'unchanged', 0, JSON_ARRAY(JSON_OBJECT('id','i1','type','image','value','https://cdn.example/a.webp')), JSON_ARRAY(), 'idle', NOW(), NOW())`,
+	); err != nil {
+		t.Fatalf("seed ad: %v", err)
+	}
+
+	s := NewServer(db, config.Config{})
+	auth := boAuth{ActiveRestaurantID: 9991, Role: "root"}
+
+	payload, err := json.Marshal(map[string]any{
+		"name":    "unchanged",
+		"active":  false,
+		"content": []map[string]any{{"id": "i1", "type": "image", "value": "https://cdn.example/a.webp"}},
+		"ctas":    []any{},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/config/ads/900001", strings.NewReader(string(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(withBOAuth(req.Context(), auth))
+	req = withChiURLParam(req, "adId", "900001")
+	rec := httptest.NewRecorder()
+	s.handleBOAdsUpdate(rec, req)
+
+	if rec.Code != http.StatusOK {
+		body, _ := io.ReadAll(rec.Body)
+		t.Fatalf("expected 200 OK for no-op PUT, got %d body=%s", rec.Code, string(body))
+	}
+
+	var resp struct {
+		Success bool  `json:"success"`
+		Ad      boAd  `json:"ad"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success=true, got %+v", resp)
+	}
+	if resp.Ad.ID != 900001 {
+		t.Fatalf("expected ad id 900001 in response, got %d", resp.Ad.ID)
+	}
+	if resp.Ad.Name != "unchanged" {
+		t.Fatalf("expected name unchanged, got %q", resp.Ad.Name)
+	}
+}
+
+// Same as above but the ad does not belong to the active restaurant — should
+// still return 404 (the row genuinely doesn't exist for that scope).
+func TestHandleBOAdsUpdateMissingAdReturns404(t *testing.T) {
+	dsn := os.Getenv("BO_ADS_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("BO_ADS_TEST_MYSQL_DSN not set")
+	}
+	if !strings.Contains(dsn, "parseTime=true") {
+		t.Fatalf("BO_ADS_TEST_MYSQL_DSN must include parseTime=true (got %q)", dsn)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var databaseName string
+	if err := db.QueryRow(`SELECT DATABASE()`).Scan(&databaseName); err != nil {
+		t.Fatalf("read database name: %v", err)
+	}
+	name := strings.ToLower(databaseName)
+	isTestDatabase := strings.Contains(name, "test") || strings.Contains(name, "sandbox")
+	if !isTestDatabase && os.Getenv("BO_ADS_TEST_ALLOW_NON_TEST_DB") != "1" {
+		t.Fatalf("refusing destructive test against database %q; use a test/sandbox database or set BO_ADS_TEST_ALLOW_NON_TEST_DB=1", databaseName)
+	}
+
+	s := NewServer(db, config.Config{})
+	auth := boAuth{ActiveRestaurantID: 9991, Role: "root"}
+
+	payload, _ := json.Marshal(map[string]any{
+		"name":    "ghost",
+		"active":  false,
+		"content": []any{},
+		"ctas":    []any{},
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/config/ads/777777", strings.NewReader(string(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(withBOAuth(req.Context(), auth))
+	req = withChiURLParam(req, "adId", "777777")
+	rec := httptest.NewRecorder()
+	s.handleBOAdsUpdate(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		body, _ := io.ReadAll(rec.Body)
+		t.Fatalf("expected 404 for missing ad, got %d body=%s", rec.Code, string(body))
+	}
+}

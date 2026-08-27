@@ -318,12 +318,17 @@ func (s *Server) handleBOAdsUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 500, "Error saving ad")
 		return
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	// MySQL returns 0 from RowsAffected when the new payload is byte-for-byte
+	// equal to the stored row (no actual change), so we cannot use it as a
+	// proxy for "ad does not exist". readBOAd enforces the same WHERE scope
+	// (id + restaurant_id) and returns sql.ErrNoRows when the row genuinely
+	// doesn't exist.
+	_ = res
+	ad, err := s.readBOAd(r.Context(), a.ActiveRestaurantID, adID)
+	if errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Ad not found"})
 		return
 	}
-	ad, err := s.readBOAd(r.Context(), a.ActiveRestaurantID, adID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading ad")
 		return
