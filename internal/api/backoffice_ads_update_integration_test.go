@@ -163,3 +163,146 @@ func TestHandleBOAdsUpdateMissingAdReturns404(t *testing.T) {
 		t.Fatalf("expected 404 for missing ad, got %d body=%s", rec.Code, string(body))
 	}
 }
+
+// persistBOAdImageURL must write the new URL into content_json atomically.
+// User-reported bug: after clicking 'Mejorar con IA' on an ad that already
+// had an image, a page reload while the AI was processing — or even just
+// after the handler returned and before the front-end's follow-up PUT
+// landed — showed the old image because the backend saved the new file
+// to storage but never wrote the URL back into content_json.
+func TestPersistBOAdImageURLReplacesExistingImageValue(t *testing.T) {
+	dsn := os.Getenv("BO_ADS_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("BO_ADS_TEST_MYSQL_DSN not set")
+	}
+	if !strings.Contains(dsn, "parseTime=true") {
+		t.Fatalf("BO_ADS_TEST_MYSQL_DSN must include parseTime=true (got %q)", dsn)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var databaseName string
+	if err := db.QueryRow(`SELECT DATABASE()`).Scan(&databaseName); err != nil {
+		t.Fatalf("read database name: %v", err)
+	}
+	name := strings.ToLower(databaseName)
+	isTestDatabase := strings.Contains(name, "test") || strings.Contains(name, "sandbox")
+	if !isTestDatabase && os.Getenv("BO_ADS_TEST_ALLOW_NON_TEST_DB") != "1" {
+		t.Fatalf("refusing destructive test against database %q; use a test/sandbox database or set BO_ADS_TEST_ALLOW_NON_TEST_DB=1", databaseName)
+	}
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `DELETE FROM restaurant_ads WHERE restaurant_id = 9992`); err != nil {
+		t.Fatalf("clear ads: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO restaurants (id, slug, name) VALUES (9992, 'bo-ads-persist-image-test', 'BO Ads Persist Image Test')
+		 ON DUPLICATE KEY UPDATE slug = VALUES(slug)`,
+	); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO restaurant_ads (id, restaurant_id, name, active, content_json, ctas_json, image_generation_status, created_at, updated_at)
+		 VALUES (900002, 9992, 'replace-me', 0,
+		         JSON_ARRAY(JSON_OBJECT('id','old-img','type','image','value','https://cdn.example/old.webp'),
+		                    JSON_OBJECT('id','k1','type','title','value','Cena')),
+		         JSON_ARRAY(), 'idle', NOW(), NOW())`,
+	); err != nil {
+		t.Fatalf("seed ad: %v", err)
+	}
+
+	s := NewServer(db, config.Config{})
+	const newURL = "https://cdn.example/new-enhanced.webp"
+	if err := s.persistBOAdImageURL(ctx, 9992, 900002, newURL); err != nil {
+		t.Fatalf("persistBOAdImageURL: %v", err)
+	}
+
+	ad, err := s.readBOAd(ctx, 9992, 900002)
+	if err != nil {
+		t.Fatalf("readBOAd: %v", err)
+	}
+
+	var imageValue string
+	titleFound := false
+	for _, item := range ad.Content {
+		if item.Type == "image" {
+			imageValue = item.Value
+		}
+		if item.Type == "title" && item.Value == "Cena" {
+			titleFound = true
+		}
+	}
+	if imageValue != newURL {
+		t.Fatalf("image value not replaced: got %q want %q", imageValue, newURL)
+	}
+	if !titleFound {
+		t.Fatalf("sibling content items were wiped: %+v", ad.Content)
+	}
+	if got := len(ad.Content); got != 2 {
+		t.Fatalf("expected 2 content items (image + title), got %d (%+v)", got, ad.Content)
+	}
+}
+
+// persistBOAdImageURL on an ad without any image element should append one
+// rather than failing.
+func TestPersistBOAdImageURLAppendsImageWhenMissing(t *testing.T) {
+	dsn := os.Getenv("BO_ADS_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("BO_ADS_TEST_MYSQL_DSN not set")
+	}
+	if !strings.Contains(dsn, "parseTime=true") {
+		t.Fatalf("BO_ADS_TEST_MYSQL_DSN must include parseTime=true (got %q)", dsn)
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var databaseName string
+	if err := db.QueryRow(`SELECT DATABASE()`).Scan(&databaseName); err != nil {
+		t.Fatalf("read database name: %v", err)
+	}
+	name := strings.ToLower(databaseName)
+	isTestDatabase := strings.Contains(name, "test") || strings.Contains(name, "sandbox")
+	if !isTestDatabase && os.Getenv("BO_ADS_TEST_ALLOW_NON_TEST_DB") != "1" {
+		t.Fatalf("refusing destructive test against database %q; use a test/sandbox database or set BO_ADS_TEST_ALLOW_NON_TEST_DB=1", databaseName)
+	}
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `DELETE FROM restaurant_ads WHERE restaurant_id = 9993`); err != nil {
+		t.Fatalf("clear ads: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO restaurants (id, slug, name) VALUES (9993, 'bo-ads-append-image-test', 'BO Ads Append Image Test')
+		 ON DUPLICATE KEY UPDATE slug = VALUES(slug)`,
+	); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO restaurant_ads (id, restaurant_id, name, active, content_json, ctas_json, image_generation_status, created_at, updated_at)
+		 VALUES (900003, 9993, 'no-image', 0, JSON_ARRAY(), JSON_ARRAY(), 'idle', NOW(), NOW())`,
+	); err != nil {
+		t.Fatalf("seed ad: %v", err)
+	}
+
+	s := NewServer(db, config.Config{})
+	const newURL = "https://cdn.example/first-image.webp"
+	if err := s.persistBOAdImageURL(ctx, 9993, 900003, newURL); err != nil {
+		t.Fatalf("persistBOAdImageURL: %v", err)
+	}
+
+	ad, err := s.readBOAd(ctx, 9993, 900003)
+	if err != nil {
+		t.Fatalf("readBOAd: %v", err)
+	}
+	if len(ad.Content) != 1 {
+		t.Fatalf("expected exactly 1 content item, got %+v", ad.Content)
+	}
+	if ad.Content[0].Type != "image" || ad.Content[0].Value != newURL {
+		t.Fatalf("expected appended image element with new url, got %+v", ad.Content[0])
+	}
+}

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/lib/specialmenuimage"
 )
@@ -380,6 +382,60 @@ func (s *Server) setBOAdImageGenerationStatus(ctx context.Context, restaurantID 
 	}
 }
 
+// persistBOAdImageURL atomically writes the new image URL into the ad's
+// content_json (creating an image element if the ad has none) and stamps
+// updated_at. The image_generation_status transition (pending -> ready) is
+// handled separately by setBOAdImageGenerationStatus; the two writes are
+// independent so a status-update failure does not silently leave a stale
+// URL on disk. The atomic part that matters here is: when the AI finishes
+// successfully, the new URL is committed to the DB before the handler
+// returns, so a mid-flight page reload shows the new image (or the pending
+// skeleton) instead of the old one.
+func (s *Server) persistBOAdImageURL(ctx context.Context, restaurantID int, adID int64, url string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var raw []byte
+	if err := tx.QueryRowContext(ctx,
+		`SELECT content_json FROM restaurant_ads WHERE id = ? AND restaurant_id = ? FOR UPDATE`,
+		adID, restaurantID,
+	).Scan(&raw); err != nil {
+		return err
+	}
+
+	var content []boAdContentElement
+	if err := json.Unmarshal(raw, &content); err != nil {
+		return err
+	}
+
+	updated := false
+	for i := range content {
+		if content[i].Type == "image" {
+			content[i].Value = url
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		content = append(content, boAdContentElement{ID: "image-" + uuid.NewString(), Type: "image", Value: url})
+	}
+
+	patched, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE restaurant_ads SET content_json = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?`,
+		patched, adID, restaurantID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func readBOAdMultipartImage(r *http.Request, maxInput int) ([]byte, string, string, error) {
 	if err := r.ParseMultipartForm(int64(maxInput)); err != nil {
 		return nil, "", "", err
@@ -444,6 +500,12 @@ func (s *Server) handleBOAdImageUpload(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
+	if err := s.persistBOAdImageURL(r.Context(), a.ActiveRestaurantID, adID, url); err != nil {
+		slog.Default().Warn("failed to persist uploaded ad image url", "ad_id", adID, "restaurant_id", a.ActiveRestaurantID, "err", err.Error())
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo guardar la imagen en el anuncio"})
+		return
+	}
 	s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationReady, false)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "url": url})
 }
@@ -501,6 +563,12 @@ func (s *Server) handleBOAdImageEnhance(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	if err := s.persistBOAdImageURL(r.Context(), a.ActiveRestaurantID, adID, url); err != nil {
+		slog.Default().Warn("failed to persist enhanced ad image url", "ad_id", adID, "restaurant_id", a.ActiveRestaurantID, "err", err.Error())
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo guardar la imagen mejorada en el anuncio"})
 		return
 	}
 	s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationReady, false)
