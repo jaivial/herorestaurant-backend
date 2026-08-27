@@ -367,7 +367,7 @@ func (s *Server) ensureBOAd(ctx context.Context, restaurantID int, adID int64) (
 // error from the caller, since callers wrap this around their primary work.
 func (s *Server) setBOAdImageGenerationStatus(ctx context.Context, restaurantID int, adID int64, status boAdImageGenerationStatus, setStartedAt bool) {
 	startedClause := ""
-	args := []any{string(status), restaurantID, adID}
+	args := []any{string(status), adID, restaurantID}
 	if setStartedAt {
 		startedClause = ", image_generation_started_at = NOW()"
 	}
