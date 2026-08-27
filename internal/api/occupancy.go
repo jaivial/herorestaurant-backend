@@ -38,6 +38,14 @@ func (s *Server) adjustOccupancy(ctx context.Context, ex execQueryer, restaurant
 // applyBookingLocationOccupancy records a booking's floor/salon headcount.
 // sign is +1 on insert / -1 on cancel. The floor target is the canonical
 // global floor row for the floor_number (mirrors migration backfill).
+//
+// When floorNum is nil (e.g. the location-booking toggle is off and the
+// customer never picked a floor), we deliberately do NOT pick a fallback
+// floor. Inferring one from the current active-floor set would make the
+// credit uncancellable later (config can change between insert and cancel),
+// and silently assigning floor0 — the previous behavior — inflated the
+// ground-floor ledger for bookings that never chose a floor. The booking
+// column itself stays NULL: no fake attribution in notifications.
 func (s *Server) applyBookingLocationOccupancy(ctx context.Context, ex execQueryer, restaurantID int, date string, floorNum any, salonID any, partySize int, sign int) error {
 	delta := partySize * sign
 	if raw, ok := anyIntValue(floorNum); ok && raw >= 0 {
