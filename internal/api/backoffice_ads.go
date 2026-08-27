@@ -256,6 +256,37 @@ func (s *Server) handleBOAdsList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ads": ads})
 }
 
+// boAdValidationError marks input-validation failures from updateBOAd so the
+// WebSocket path can answer with code "validation" without string matching.
+type boAdValidationError struct{ err error }
+
+func (e *boAdValidationError) Error() string { return e.err.Error() }
+func (e *boAdValidationError) Unwrap() error { return e.err }
+
+// updateBOAd validates and persists an ad (INSERT when adID<=0, UPDATE
+// otherwise) and returns the freshly-read row. Shared by the REST handler and
+// the ad_save WebSocket message so both paths enforce identical validation.
+func (s *Server) updateBOAd(ctx context.Context, restaurantID int, adID int64, input boAdInput) (boAd, error) {
+	normalized, err := validateBOAdInput(input)
+	if err != nil {
+		return boAd{}, &boAdValidationError{err}
+	}
+	contentRaw, _ := json.Marshal(normalized.Content)
+	ctasRaw, _ := json.Marshal(normalized.CTAs)
+	if adID <= 0 {
+		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, content_json, ctas_json) VALUES (?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), contentRaw, ctasRaw)
+		if err != nil {
+			return boAd{}, err
+		}
+		id, _ := res.LastInsertId()
+		return s.readBOAd(ctx, restaurantID, id)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET name = ?, active = ?, content_json = ?, ctas_json = ? WHERE id = ? AND restaurant_id = ?`, normalized.Name, boolToTinyint(normalized.Active), contentRaw, ctasRaw, adID, restaurantID); err != nil {
+		return boAd{}, err
+	}
+	return s.readBOAd(ctx, restaurantID, adID)
+}
+
 func (s *Server) handleBOAdsCreate(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -270,22 +301,9 @@ func (s *Server) handleBOAdsCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	normalized, err := validateBOAdInput(input)
+	ad, err := s.updateBOAd(r.Context(), a.ActiveRestaurantID, 0, input)
 	if err != nil {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": err.Error()})
-		return
-	}
-	contentRaw, _ := json.Marshal(normalized.Content)
-	ctasRaw, _ := json.Marshal(normalized.CTAs)
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO restaurant_ads (restaurant_id, name, active, content_json, ctas_json) VALUES (?, ?, ?, ?, ?)`, a.ActiveRestaurantID, normalized.Name, boolToTinyint(normalized.Active), contentRaw, ctasRaw)
-	if err != nil {
-		httpx.WriteError(w, 500, "Error creating ad")
-		return
-	}
-	id, _ := res.LastInsertId()
-	ad, err := s.readBOAd(r.Context(), a.ActiveRestaurantID, id)
-	if err != nil {
-		httpx.WriteError(w, 500, "Error loading ad")
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "ad": ad})
@@ -308,31 +326,13 @@ func (s *Server) handleBOAdsUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid JSON body"})
 		return
 	}
-	input, err = validateBOAdInput(input)
-	if err != nil {
-		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": err.Error()})
-		return
-	}
-	contentRaw, _ := json.Marshal(input.Content)
-	ctasRaw, _ := json.Marshal(input.CTAs)
-	res, err := s.db.ExecContext(r.Context(), `UPDATE restaurant_ads SET name = ?, active = ?, content_json = ?, ctas_json = ? WHERE id = ? AND restaurant_id = ?`, input.Name, boolToTinyint(input.Active), contentRaw, ctasRaw, adID, a.ActiveRestaurantID)
-	if err != nil {
-		httpx.WriteError(w, 500, "Error saving ad")
-		return
-	}
-	// MySQL returns 0 from RowsAffected when the new payload is byte-for-byte
-	// equal to the stored row (no actual change), so we cannot use it as a
-	// proxy for "ad does not exist". readBOAd enforces the same WHERE scope
-	// (id + restaurant_id) and returns sql.ErrNoRows when the row genuinely
-	// doesn't exist.
-	_ = res
-	ad, err := s.readBOAd(r.Context(), a.ActiveRestaurantID, adID)
+	ad, err := s.updateBOAd(r.Context(), a.ActiveRestaurantID, adID, input)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Ad not found"})
 		return
 	}
 	if err != nil {
-		httpx.WriteError(w, 500, "Error loading ad")
+		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "ad": ad})
