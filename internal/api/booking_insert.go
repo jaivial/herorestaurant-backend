@@ -724,11 +724,30 @@ func (s *Server) resolvePreferredFloorNumberForFront(ctx context.Context, restau
 	}
 
 	raw = strings.TrimSpace(raw)
+
+	// Respect the location-booking toggle: when floor reservation is disabled
+	// for the date, never auto-pick the only active floor. An empty form value
+	// stays nil so the column is left NULL (no implicit "planta 0").
+	flags, ferr := s.resolveLocationBooking(ctx, restaurantID, date)
+	if ferr != nil {
+		return nil, errors.New("No se pudo consultar la configuración de planta/salón")
+	}
+	floorToggleOn := flags.Floor.Value
+
 	if raw == "" {
+		if !floorToggleOn {
+			return nil, nil
+		}
 		if len(active) == 1 {
 			return active[0].FloorNumber, nil
 		}
 		return nil, errors.New("Debe seleccionar un salón")
+	}
+
+	// When the toggle is off we still reject an explicit value rather than
+	// silently accepting it; this matches the selectors being hidden in the UI.
+	if !floorToggleOn {
+		return nil, errors.New("La reserva por planta no está habilitada para la fecha seleccionada")
 	}
 
 	n, err := strconv.Atoi(raw)
