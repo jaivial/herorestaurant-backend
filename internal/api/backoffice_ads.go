@@ -555,6 +555,8 @@ func (s *Server) handleBOAdImageEnhance(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 	output, err := s.callComidaImageEdit(ctx, boAdEnhanceURL(provider.BaseURL), provider.APIKey, "Enhance this restaurant advertising image into a premium website campaign photo. Preserve the subject and composition, improve lighting, detail and polish, and do not add any text or logos.", compressed, "image/webp")
 	if err != nil {
+		code, detail := classifyBOAdAIError(err)
+		s.broadcastBOAdImageFailed(r.Context(), a.ActiveRestaurantID, adID, code, detail)
 		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
 		httpx.WriteJSON(w, 502, map[string]any{"success": false, "message": aiFailureMessage("AI image enhancement failed", err)})
 		return
@@ -663,6 +665,8 @@ func (s *Server) handleBOAdImageGenerate(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 	output, err := s.callBOAdTextToImage(ctx, boAdTextToImageURL(provider.BaseURL), provider.APIKey, prompt)
 	if err != nil {
+		code, detail := classifyBOAdAIError(err)
+		s.broadcastBOAdImageFailed(r.Context(), a.ActiveRestaurantID, adID, code, detail)
 		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
 		httpx.WriteJSON(w, 502, map[string]any{"success": false, "message": aiFailureMessage("AI image generation failed", err)})
 		return
