@@ -3192,3 +3192,15 @@ existing catalogue into stock articles + technical sheets:
 - Wines (`VINOS`) → `RAW` stock item (`deduction_source='SALE'`), linked via `stock_item_id`; no recipe.
 - Beverages (`BEBIDAS`) / Coffees (`CAFES`) → omitted (no `stock_item_id` column yet, no rows).
 - Idempotent: only rows with `stock_item_id IS NULL` are touched.
+
+## Restaurant ads (backoffice) (`/api/admin/config/ads`)
+
+Cookie-session auth. All write endpoints require `reservas` role.
+
+- `GET /api/admin/config/ads` — list the active restaurant's ads. Each ad includes `image_generation_status` (`idle` | `pending` | `ready` | `failed`) and `image_generation_started_at` (RFC3339) so the editor can rehydrate skeletons after page reloads. `image_generation_status` is server-managed; clients cannot set it.
+- `POST /api/admin/config/ads` — create an ad (initial `image_generation_status` = `idle`).
+- `PUT /api/admin/config/ads/{adId}` — update an ad. Status is preserved across unrelated saves.
+- `DELETE /api/admin/config/ads/{adId}` — delete the ad.
+- `POST /api/admin/config/ads/{adId}/image/upload` — raw upload to BunnyCDN. On success sets `image_generation_status='ready'` (clears any stale `pending`).
+- `POST /api/admin/config/ads/{adId}/image/enhance` — AI enhance (WaveSpeed / OpenAI edit). Sets `pending` + `image_generation_started_at` on entry, `ready` on success, `failed` on any error. The status persists across the call so the row stays as a skeleton even if the page is reloaded mid-flight.
+- `POST /api/admin/config/ads/{adId}/image/generate` — AI text-to-image (WaveSpeed z-image/turbo). Same status lifecycle as `/enhance`.
