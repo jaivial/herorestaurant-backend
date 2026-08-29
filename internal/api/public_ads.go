@@ -27,6 +27,7 @@ func publicAdVisibleOnDate(ad boAd, isoDate string) bool {
 // restaurant_id is optional when the request host already resolves a tenant.
 // date is optional; when present the response is filtered to ads visible that day.
 func (s *Server) handlePublicAdsList(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	restaurantID := 0
 	if raw := strings.TrimSpace(r.URL.Query().Get("restaurant_id")); raw != "" {
 		id, err := strconv.Atoi(raw)
@@ -84,6 +85,5 @@ func (s *Server) handlePublicAdsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Cache-Control", "public, max-age=60")
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "restaurant_id": restaurantID, "ads": ads})
 }

@@ -48,4 +48,7 @@ func TestPublicAdsRejectsInvalidDateBeforeDatabaseAccess(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected no-store cache policy, got %q", got)
+	}
 }
