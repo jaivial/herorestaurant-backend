@@ -426,6 +426,10 @@ func (s *Server) requireBOPOSViewOrFichajeAdmin(next http.Handler) http.Handler 
 			httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
+		if !appCapabilityAllowed(boCapabilityPOS, a.User.AppVersion) {
+			httpx.WriteError(w, http.StatusForbidden, "Forbidden")
+			return
+		}
 		posAllowed, err := s.boPOSPermissionAllowed(r.Context(), a, posPermissionView)
 		if err == nil && posAllowed {
 			next.ServeHTTP(w, r)
