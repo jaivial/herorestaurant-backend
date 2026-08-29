@@ -366,7 +366,12 @@ func (s *Server) handleBOAdsCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	ad, err := s.updateBOAd(r.Context(), a.ActiveRestaurantID, 0, input)
 	if err != nil {
-		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": err.Error()})
+		var validationErr *boAdValidationError
+		if errors.As(err, &validationErr) {
+			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": validationErr.Error()})
+			return
+		}
+		httpx.WriteError(w, 500, "Error creating ad")
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "ad": ad})
@@ -395,7 +400,12 @@ func (s *Server) handleBOAdsUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": err.Error()})
+		var validationErr *boAdValidationError
+		if errors.As(err, &validationErr) {
+			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": validationErr.Error()})
+			return
+		}
+		httpx.WriteError(w, 500, "Error saving ad")
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "ad": ad})
