@@ -10,6 +10,7 @@ type boUser struct {
 	Role           string   `json:"role"`
 	RoleImportance int      `json:"roleImportance"`
 	SectionAccess  []string `json:"sectionAccess"`
+	AppVersion     string   `json:"appVersion"`
 	MustChangePass bool     `json:"mustChangePassword"`
 
 	// Internal flags (not returned to clients).

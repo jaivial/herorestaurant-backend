@@ -1658,13 +1658,30 @@ func (s *Server) handleBOFichajeWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			var msg struct {
-				Type         string `json:"type"`
-				RestaurantID int    `json:"restaurantId"`
+				Type         string          `json:"type"`
+				RestaurantID int             `json:"restaurantId"`
+				ReqID        string          `json:"reqId"`
+				AdID         int64           `json:"adId"`
+				Payload      json.RawMessage `json:"payload"`
 			}
 			if err := json.Unmarshal(raw, &msg); err != nil {
 				continue
 			}
 			typ := strings.ToLower(strings.TrimSpace(msg.Type))
+			if typ == "ad_save" {
+				if !appCapabilityAllowed(boCapabilityAds, a.User.AppVersion) {
+					continue
+				}
+				s.handleWSAdSave(a, msg.ReqID, msg.AdID, msg.Payload)
+				continue
+			}
+			if typ == "ad_schedule_check" {
+				if !appCapabilityAllowed(boCapabilityAds, a.User.AppVersion) {
+					continue
+				}
+				s.handleWSAdScheduleCheck(a, msg.ReqID, msg.AdID, msg.Payload)
+				continue
+			}
 			if typ != "join_restaurant" && typ != "join_restaurante" {
 				continue
 			}
@@ -2114,4 +2131,85 @@ func normalizeBODNI(raw string) string {
 	v := strings.ToUpper(strings.TrimSpace(raw))
 	v = strings.ReplaceAll(v, " ", "")
 	return v
+}
+
+// handleWSAdSave persists an ad on behalf of an ad_save WebSocket message and
+// broadcasts the outcome to the restaurant room. Auth is already enforced at
+// upgrade time (requireBOSession) and the write is scoped with
+// a.ActiveRestaurantID, so a client can never touch another restaurant's ads.
+func (s *Server) handleWSAdScheduleCheck(a boAuth, reqID string, adID int64, payload json.RawMessage) {
+	var candidate struct {
+		StartsAt *string `json:"starts_at"`
+		EndsAt   *string `json:"ends_at"`
+	}
+	if err := json.Unmarshal(payload, &candidate); err != nil || candidate.StartsAt == nil || candidate.EndsAt == nil {
+		s.fichajeHub.broadcast(a.ActiveRestaurantID, map[string]any{"type": "ad_schedule_conflict", "reqId": reqID, "adId": adID, "conflict": false})
+		return
+	}
+	start, err1 := time.Parse("2006-01-02", *candidate.StartsAt)
+	end, err2 := time.Parse("2006-01-02", *candidate.EndsAt)
+	if err1 != nil || err2 != nil || end.Before(start) {
+		return
+	}
+	rows, err := s.db.QueryContext(context.Background(), `SELECT id, name, starts_at, ends_at FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND id <> ? AND starts_at IS NOT NULL AND ends_at IS NOT NULL AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at LIMIT 1`, a.ActiveRestaurantID, adID, *candidate.EndsAt, *candidate.StartsAt)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	var otherID int64
+	var name string
+	var otherStart, otherEnd time.Time
+	if rows.Next() && rows.Scan(&otherID, &name, &otherStart, &otherEnd) == nil {
+		s.fichajeHub.broadcast(a.ActiveRestaurantID, map[string]any{"type": "ad_schedule_conflict", "reqId": reqID, "adId": adID, "conflict": true, "name": name, "starts_at": otherStart.Format("2006-01-02"), "ends_at": otherEnd.Format("2006-01-02")})
+		return
+	}
+	s.fichajeHub.broadcast(a.ActiveRestaurantID, map[string]any{"type": "ad_schedule_conflict", "reqId": reqID, "adId": adID, "conflict": false})
+}
+
+func (s *Server) handleWSAdSave(a boAuth, reqID string, adID int64, payload json.RawMessage) {
+	broadcastFailure := func(code, message string) {
+		s.fichajeHub.broadcast(a.ActiveRestaurantID, map[string]any{
+			"type":    "ad_save_failed",
+			"reqId":   reqID,
+			"adId":    adID,
+			"code":    code,
+			"message": message,
+			"at":      time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+
+	if len(payload) == 0 {
+		broadcastFailure("validation", "Missing ad payload")
+		return
+	}
+	if len(payload) > 256*1024 {
+		broadcastFailure("validation", "Ad payload too large")
+		return
+	}
+	var input boAdInput
+	if err := json.Unmarshal(payload, &input); err != nil {
+		broadcastFailure("validation", "Invalid ad payload")
+		return
+	}
+	ad, err := s.updateBOAd(context.Background(), a.ActiveRestaurantID, adID, input)
+	if err != nil {
+		var verr *boAdValidationError
+		if errors.As(err, &verr) {
+			broadcastFailure("validation", verr.Error())
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			broadcastFailure("not_found", "Ad not found")
+			return
+		}
+		broadcastFailure("server", "No se pudo guardar el anuncio")
+		return
+	}
+	s.fichajeHub.broadcast(a.ActiveRestaurantID, map[string]any{
+		"type":  "ad_saved",
+		"reqId": reqID,
+		"adId":  ad.ID,
+		"ad":    ad,
+		"at":    time.Now().UTC().Format(time.RFC3339),
+	})
 }

@@ -140,7 +140,12 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo importancia de rol")
 		return
 	}
-	sectionAccess, err := s.roleSections(r.Context(), roleSlug)
+	appVersion, err := s.getBOUserAppVersionForRestaurant(r.Context(), userID, activeRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo version de app")
+		return
+	}
+	sectionAccess, err := s.roleSectionsForVersion(r.Context(), roleSlug, appVersion)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo permisos de rol")
 		return
@@ -181,6 +186,7 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 			Role:           roleSlug,
 			RoleImportance: roleImportance,
 			SectionAccess:  sectionAccess,
+			AppVersion:     appVersion,
 			MustChangePass: mustChangePassword != 0,
 		},
 		Restaurants:        restaurants,
@@ -244,6 +250,7 @@ func (s *Server) handleBOMe(w http.ResponseWriter, r *http.Request) {
 	roleSlug := a.User.Role
 	roleImportance := a.User.RoleImportance
 	sectionAccess := a.User.SectionAccess
+	appVersion := a.User.AppVersion
 	if activeID == 0 || !restaurantInList(restaurants, activeID) {
 		activeID = restaurants[0].ID
 		_, _ = s.db.ExecContext(r.Context(), "UPDATE bo_sessions SET active_restaurant_id = ? WHERE id = ?", activeID, a.SessionID)
@@ -257,7 +264,12 @@ func (s *Server) handleBOMe(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo importancia de rol")
 			return
 		}
-		sectionAccess, err = s.roleSections(r.Context(), roleSlug)
+		appVersion, err = s.getBOUserAppVersionForRestaurant(r.Context(), a.User.ID, activeID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo version de app")
+			return
+		}
+		sectionAccess, err = s.roleSectionsForVersion(r.Context(), roleSlug, appVersion)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo permisos de rol")
 			return
@@ -281,6 +293,7 @@ func (s *Server) handleBOMe(w http.ResponseWriter, r *http.Request) {
 				Role:           roleSlug,
 				RoleImportance: roleImportance,
 				SectionAccess:  sectionAccess,
+				AppVersion:     appVersion,
 				MustChangePass: a.User.MustChangePass,
 			},
 			Restaurants:        restaurants,
@@ -430,7 +443,12 @@ func (s *Server) handleBOSetActiveRestaurant(w http.ResponseWriter, r *http.Requ
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo importancia de rol")
 		return
 	}
-	sectionAccess, err := s.roleSections(r.Context(), roleSlug)
+	appVersion, err := s.getBOUserAppVersionForRestaurant(r.Context(), a.User.ID, req.RestaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo version de app")
+		return
+	}
+	sectionAccess, err := s.roleSectionsForVersion(r.Context(), roleSlug, appVersion)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo permisos de rol")
 		return
@@ -441,6 +459,7 @@ func (s *Server) handleBOSetActiveRestaurant(w http.ResponseWriter, r *http.Requ
 		"activeRestaurantId": req.RestaurantID,
 		"role":               roleSlug,
 		"roleImportance":     roleImportance,
+		"appVersion":         appVersion,
 		"sectionAccess":      sectionAccess,
 	})
 }

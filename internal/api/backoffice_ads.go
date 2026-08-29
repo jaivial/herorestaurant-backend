@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/lib/specialmenuimage"
@@ -33,6 +36,7 @@ type boAdContentElement struct {
 	ID    string `json:"id"`
 	Type  string `json:"type"`
 	Value string `json:"value"`
+	Align string `json:"align,omitempty"`
 }
 
 type boAdCTA struct {
@@ -44,21 +48,44 @@ type boAdCTA struct {
 	CustomURL      string `json:"custom_url,omitempty"`
 }
 
+type boAdImageGenerationStatus string
+
+const (
+	boAdImageGenerationIdle    boAdImageGenerationStatus = "idle"
+	boAdImageGenerationPending boAdImageGenerationStatus = "pending"
+	boAdImageGenerationReady   boAdImageGenerationStatus = "ready"
+	boAdImageGenerationFailed  boAdImageGenerationStatus = "failed"
+)
+
+type boAdScheduleRange struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	StartsAt string `json:"starts_at"`
+	EndsAt   string `json:"ends_at"`
+}
+
 type boAd struct {
-	ID        int64                `json:"id"`
-	Name      string               `json:"name"`
-	Active    bool                 `json:"active"`
-	Content   []boAdContentElement `json:"content"`
-	CTAs      []boAdCTA            `json:"ctas"`
-	CreatedAt string               `json:"created_at,omitempty"`
-	UpdatedAt string               `json:"updated_at,omitempty"`
+	ID                       int64                     `json:"id"`
+	Name                     string                    `json:"name"`
+	Active                   bool                      `json:"active"`
+	Content                  []boAdContentElement      `json:"content"`
+	CTAs                     []boAdCTA                 `json:"ctas"`
+	ImageGenerationStatus    boAdImageGenerationStatus `json:"image_generation_status,omitempty"`
+	ImageGenerationStartedAt string                    `json:"image_generation_started_at,omitempty"`
+	StartsAt                 *string                   `json:"starts_at,omitempty"`
+	EndsAt                   *string                   `json:"ends_at,omitempty"`
+	CreatedAt                string                    `json:"created_at,omitempty"`
+	UpdatedAt                string                    `json:"updated_at,omitempty"`
+	BlockedRanges            []boAdScheduleRange       `json:"blocked_ranges,omitempty"`
 }
 
 type boAdInput struct {
-	Name    string               `json:"name"`
-	Active  bool                 `json:"active"`
-	Content []boAdContentElement `json:"content"`
-	CTAs    []boAdCTA            `json:"ctas"`
+	Name     string               `json:"name"`
+	Active   bool                 `json:"active"`
+	Content  []boAdContentElement `json:"content"`
+	CTAs     []boAdCTA            `json:"ctas"`
+	StartsAt *string              `json:"starts_at,omitempty"`
+	EndsAt   *string              `json:"ends_at,omitempty"`
 }
 
 func normalizeBOAdContent(input []boAdContentElement) ([]boAdContentElement, error) {
@@ -69,6 +96,13 @@ func normalizeBOAdContent(input []boAdContentElement) ([]boAdContentElement, err
 		item.ID = strings.TrimSpace(item.ID)
 		item.Type = strings.ToLower(strings.TrimSpace(item.Type))
 		item.Value = strings.TrimSpace(item.Value)
+		item.Align = strings.ToLower(strings.TrimSpace(item.Align))
+		if item.Align == "" {
+			item.Align = "left"
+		}
+		if item.Align != "left" && item.Align != "center" && item.Align != "right" {
+			return nil, errors.New("invalid content alignment")
+		}
 		if item.ID == "" {
 			return nil, errors.New("content item id is required")
 		}
@@ -163,14 +197,30 @@ func boAdEnhanceURL(baseURL string) string     { return aiImageEditURLForModel(b
 func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (boAd, error) {
 	var ad boAd
 	var active int
+	var startsAt, endsAt sql.NullTime
 	var contentRaw, ctasRaw []byte
-	var createdAt, updatedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, content_json, ctas_json, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
-		Scan(&ad.ID, &ad.Name, &active, &contentRaw, &ctasRaw, &createdAt, &updatedAt)
+	var statusRaw sql.NullString
+	var startedAt, createdAt, updatedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
+		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
 	if err != nil {
 		return ad, err
 	}
 	ad.Active = active != 0
+	if startsAt.Valid {
+		value := startsAt.Time.Format("2006-01-02")
+		ad.StartsAt = &value
+	}
+	if endsAt.Valid {
+		value := endsAt.Time.Format("2006-01-02")
+		ad.EndsAt = &value
+	}
+	if statusRaw.Valid && strings.TrimSpace(statusRaw.String) != "" {
+		ad.ImageGenerationStatus = boAdImageGenerationStatus(strings.TrimSpace(statusRaw.String))
+	}
+	if startedAt.Valid {
+		ad.ImageGenerationStartedAt = startedAt.Time.UTC().Format(time.RFC3339)
+	}
 	if err := json.Unmarshal(contentRaw, &ad.Content); err != nil {
 		return ad, err
 	}
@@ -203,6 +253,21 @@ func validateBOAdInput(input boAdInput) (boAdInput, error) {
 		return input, err
 	}
 	input.Content, input.CTAs = content, ctas
+	if (input.StartsAt == nil) != (input.EndsAt == nil) {
+		return input, errors.New("start and end dates must be provided together")
+	}
+	if input.StartsAt != nil {
+		start, err := time.Parse("2006-01-02", strings.TrimSpace(*input.StartsAt))
+		if err != nil {
+			return input, errors.New("invalid start date")
+		}
+		end, err := time.Parse("2006-01-02", strings.TrimSpace(*input.EndsAt))
+		if err != nil || end.Before(start) {
+			return input, errors.New("invalid date range")
+		}
+		startText, endText := start.Format("2006-01-02"), end.Format("2006-01-02")
+		input.StartsAt, input.EndsAt = &startText, &endText
+	}
 	return input, nil
 }
 
@@ -219,6 +284,24 @@ func (s *Server) handleBOAdsList(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	ads := make([]boAd, 0)
+	blockedRows, blockedErr := s.db.QueryContext(r.Context(), `SELECT id, name, starts_at, ends_at FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND starts_at IS NOT NULL AND ends_at IS NOT NULL ORDER BY starts_at, id`, a.ActiveRestaurantID)
+	if blockedErr != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ad schedules")
+		return
+	}
+	blockedRanges := make([]boAdScheduleRange, 0)
+	for blockedRows.Next() {
+		var item boAdScheduleRange
+		var start, end time.Time
+		if err := blockedRows.Scan(&item.ID, &item.Name, &start, &end); err != nil {
+			blockedRows.Close()
+			httpx.WriteError(w, 500, "Error loading ad schedules")
+			return
+		}
+		item.StartsAt, item.EndsAt = start.Format("2006-01-02"), end.Format("2006-01-02")
+		blockedRanges = append(blockedRanges, item)
+	}
+	blockedRows.Close()
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
@@ -230,9 +313,41 @@ func (s *Server) handleBOAdsList(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, 500, "Error loading ads")
 			return
 		}
+		ad.BlockedRanges = blockedRanges
 		ads = append(ads, ad)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ads": ads})
+}
+
+// boAdValidationError marks input-validation failures from updateBOAd so the
+// WebSocket path can answer with code "validation" without string matching.
+type boAdValidationError struct{ err error }
+
+func (e *boAdValidationError) Error() string { return e.err.Error() }
+func (e *boAdValidationError) Unwrap() error { return e.err }
+
+// updateBOAd validates and persists an ad (INSERT when adID<=0, UPDATE
+// otherwise) and returns the freshly-read row. Shared by the REST handler and
+// the ad_save WebSocket message so both paths enforce identical validation.
+func (s *Server) updateBOAd(ctx context.Context, restaurantID int, adID int64, input boAdInput) (boAd, error) {
+	normalized, err := validateBOAdInput(input)
+	if err != nil {
+		return boAd{}, &boAdValidationError{err}
+	}
+	contentRaw, _ := json.Marshal(normalized.Content)
+	ctasRaw, _ := json.Marshal(normalized.CTAs)
+	if adID <= 0 {
+		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json) VALUES (?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw)
+		if err != nil {
+			return boAd{}, err
+		}
+		id, _ := res.LastInsertId()
+		return s.readBOAd(ctx, restaurantID, id)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ? WHERE id = ? AND restaurant_id = ?`, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, adID, restaurantID); err != nil {
+		return boAd{}, err
+	}
+	return s.readBOAd(ctx, restaurantID, adID)
 }
 
 func (s *Server) handleBOAdsCreate(w http.ResponseWriter, r *http.Request) {
@@ -249,22 +364,14 @@ func (s *Server) handleBOAdsCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	normalized, err := validateBOAdInput(input)
+	ad, err := s.updateBOAd(r.Context(), a.ActiveRestaurantID, 0, input)
 	if err != nil {
-		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": err.Error()})
-		return
-	}
-	contentRaw, _ := json.Marshal(normalized.Content)
-	ctasRaw, _ := json.Marshal(normalized.CTAs)
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO restaurant_ads (restaurant_id, name, active, content_json, ctas_json) VALUES (?, ?, ?, ?, ?)`, a.ActiveRestaurantID, normalized.Name, boolToTinyint(normalized.Active), contentRaw, ctasRaw)
-	if err != nil {
+		var validationErr *boAdValidationError
+		if errors.As(err, &validationErr) {
+			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": validationErr.Error()})
+			return
+		}
 		httpx.WriteError(w, 500, "Error creating ad")
-		return
-	}
-	id, _ := res.LastInsertId()
-	ad, err := s.readBOAd(r.Context(), a.ActiveRestaurantID, id)
-	if err != nil {
-		httpx.WriteError(w, 500, "Error loading ad")
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "ad": ad})
@@ -287,26 +394,18 @@ func (s *Server) handleBOAdsUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid JSON body"})
 		return
 	}
-	input, err = validateBOAdInput(input)
-	if err != nil {
-		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": err.Error()})
-		return
-	}
-	contentRaw, _ := json.Marshal(input.Content)
-	ctasRaw, _ := json.Marshal(input.CTAs)
-	res, err := s.db.ExecContext(r.Context(), `UPDATE restaurant_ads SET name = ?, active = ?, content_json = ?, ctas_json = ? WHERE id = ? AND restaurant_id = ?`, input.Name, boolToTinyint(input.Active), contentRaw, ctasRaw, adID, a.ActiveRestaurantID)
-	if err != nil {
-		httpx.WriteError(w, 500, "Error saving ad")
-		return
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	ad, err := s.updateBOAd(r.Context(), a.ActiveRestaurantID, adID, input)
+	if errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Ad not found"})
 		return
 	}
-	ad, err := s.readBOAd(r.Context(), a.ActiveRestaurantID, adID)
 	if err != nil {
-		httpx.WriteError(w, 500, "Error loading ad")
+		var validationErr *boAdValidationError
+		if errors.As(err, &validationErr) {
+			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": validationErr.Error()})
+			return
+		}
+		httpx.WriteError(w, 500, "Error saving ad")
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "ad": ad})
@@ -334,6 +433,80 @@ func (s *Server) handleBOAdsDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ensureBOAd(ctx context.Context, restaurantID int, adID int64) (boAd, error) {
 	return s.readBOAd(ctx, restaurantID, adID)
+}
+
+// setBOAdImageGenerationStatus persists the AI image-generation lifecycle state
+// for an ad. Best-effort: failures are logged but do not mask the original
+// error from the caller, since callers wrap this around their primary work.
+func (s *Server) setBOAdImageGenerationStatus(ctx context.Context, restaurantID int, adID int64, status boAdImageGenerationStatus, setStartedAt bool) {
+	startedClause := ""
+	args := []any{string(status), adID, restaurantID}
+	if setStartedAt {
+		startedClause = ", image_generation_started_at = NOW()"
+	}
+	res, err := s.db.ExecContext(ctx, "UPDATE restaurant_ads SET image_generation_status = ?"+startedClause+" WHERE id = ? AND restaurant_id = ?", args...)
+	if err != nil {
+		slog.Default().Warn("failed to update ad image_generation_status", "ad_id", adID, "restaurant_id", restaurantID, "status", status, "err", err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// No row matched — either the ad was deleted mid-flight or never existed.
+		slog.Default().Warn("no ad row updated for image_generation_status", "ad_id", adID, "restaurant_id", restaurantID, "status", status)
+	}
+}
+
+// persistBOAdImageURL atomically writes the new image URL into the ad's
+// content_json (creating an image element if the ad has none) and stamps
+// updated_at. The image_generation_status transition (pending -> ready) is
+// handled separately by setBOAdImageGenerationStatus; the two writes are
+// independent so a status-update failure does not silently leave a stale
+// URL on disk. The atomic part that matters here is: when the AI finishes
+// successfully, the new URL is committed to the DB before the handler
+// returns, so a mid-flight page reload shows the new image (or the pending
+// skeleton) instead of the old one.
+func (s *Server) persistBOAdImageURL(ctx context.Context, restaurantID int, adID int64, url string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var raw []byte
+	if err := tx.QueryRowContext(ctx,
+		`SELECT content_json FROM restaurant_ads WHERE id = ? AND restaurant_id = ? FOR UPDATE`,
+		adID, restaurantID,
+	).Scan(&raw); err != nil {
+		return err
+	}
+
+	var content []boAdContentElement
+	if err := json.Unmarshal(raw, &content); err != nil {
+		return err
+	}
+
+	updated := false
+	for i := range content {
+		if content[i].Type == "image" {
+			content[i].Value = url
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		content = append(content, boAdContentElement{ID: "image-" + uuid.NewString(), Type: "image", Value: url})
+	}
+
+	patched, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE restaurant_ads SET content_json = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?`,
+		patched, adID, restaurantID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func readBOAdMultipartImage(r *http.Request, maxInput int) ([]byte, string, string, error) {
@@ -400,6 +573,13 @@ func (s *Server) handleBOAdImageUpload(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
+	if err := s.persistBOAdImageURL(r.Context(), a.ActiveRestaurantID, adID, url); err != nil {
+		slog.Default().Warn("failed to persist uploaded ad image url", "ad_id", adID, "restaurant_id", a.ActiveRestaurantID, "err", err.Error())
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo guardar la imagen en el anuncio"})
+		return
+	}
+	s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationReady, false)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "url": url})
 }
 
@@ -431,13 +611,16 @@ func (s *Server) handleBOAdImageEnhance(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
 	}
+	s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationPending, true)
 	raw, filename, ct, err := readBOAdMultipartImage(r, specialmenuimage.MaxInputBytes)
 	if err != nil {
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid image"})
 		return
 	}
 	compressed, err := specialmenuimage.NormalizeToWebPWithLimit(r.Context(), raw, filename, ct, boAdMaxImageBytes)
 	if err != nil {
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
@@ -445,14 +628,25 @@ func (s *Server) handleBOAdImageEnhance(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 	output, err := s.callComidaImageEdit(ctx, boAdEnhanceURL(provider.BaseURL), provider.APIKey, "Enhance this restaurant advertising image into a premium website campaign photo. Preserve the subject and composition, improve lighting, detail and polish, and do not add any text or logos.", compressed, "image/webp")
 	if err != nil {
+		code, detail := classifyBOAdAIError(err)
+		s.broadcastBOAdImageFailed(r.Context(), a.ActiveRestaurantID, adID, code, detail)
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
 		httpx.WriteJSON(w, 502, map[string]any{"success": false, "message": aiFailureMessage("AI image enhancement failed", err)})
 		return
 	}
 	url, err := s.saveBOAdImage(r.Context(), a.ActiveRestaurantID, adID, output, "enhanced", http.DetectContentType(output), "ai")
 	if err != nil {
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
+	if err := s.persistBOAdImageURL(r.Context(), a.ActiveRestaurantID, adID, url); err != nil {
+		slog.Default().Warn("failed to persist enhanced ad image url", "ad_id", adID, "restaurant_id", a.ActiveRestaurantID, "err", err.Error())
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo guardar la imagen mejorada en el anuncio"})
+		return
+	}
+	s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationReady, false)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "url": url})
 }
 
@@ -539,17 +733,34 @@ func (s *Server) handleBOAdImageGenerate(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Write banner text before generating an image"})
 		return
 	}
+	s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationPending, true)
 	ctx, cancel := context.WithTimeout(r.Context(), s.openAIRequestTimeout())
 	defer cancel()
 	output, err := s.callBOAdTextToImage(ctx, boAdTextToImageURL(provider.BaseURL), provider.APIKey, prompt)
 	if err != nil {
+		code, detail := classifyBOAdAIError(err)
+		s.broadcastBOAdImageFailed(r.Context(), a.ActiveRestaurantID, adID, code, detail)
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
 		httpx.WriteJSON(w, 502, map[string]any{"success": false, "message": aiFailureMessage("AI image generation failed", err)})
 		return
 	}
 	url, err := s.saveBOAdImage(r.Context(), a.ActiveRestaurantID, adID, output, "generated", http.DetectContentType(output), "generated")
 	if err != nil {
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
+	// Commit the generated URL into the ad's content_json server-side so the
+	// image survives a reload even if the editor's follow-up persist is lost.
+	// Upload/enhance already call persistBOAdImageURL; generate was the only
+	// path returning the URL to the client without persisting it, leaving the
+	// row as status=ready but image value empty after a reload.
+	if err := s.persistBOAdImageURL(r.Context(), a.ActiveRestaurantID, adID, url); err != nil {
+		slog.Default().Warn("failed to persist generated ad image url", "ad_id", adID, "restaurant_id", a.ActiveRestaurantID, "err", err.Error())
+		s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationFailed, false)
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo guardar la imagen generada en el anuncio"})
+		return
+	}
+	s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationReady, false)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "url": url})
 }
