@@ -16,8 +16,9 @@ import (
 // Backoffice A/B app versions. Stored per user+restaurant in
 // bo_user_restaurants.app_version (see migration 111).
 const (
-	boAppVersion01 = "0.1"
-	boAppVersion02 = "0.2"
+	boAppVersion001 = "0.0.1"
+	boAppVersion01  = "0.1"
+	boAppVersion02  = "0.2"
 )
 
 type boAppCapability string
@@ -47,7 +48,7 @@ var boSectionCapability = map[string]boAppCapability{
 
 func parseSupportedBOAppVersion(raw string) (string, bool) {
 	version := strings.TrimSpace(raw)
-	if version == boAppVersion01 || version == boAppVersion02 {
+	if version == boAppVersion001 || version == boAppVersion01 || version == boAppVersion02 {
 		return version, true
 	}
 	return "", false
@@ -60,30 +61,35 @@ func normalizeAppVersion(raw string) string {
 	return boAppVersion01
 }
 
-// appVersionAtLeast compares dotted numeric versions like "0.1"/"0.2".
+// appVersionAtLeast compares dotted numeric versions like "0.0.1"/"0.1"/"0.2".
 func appVersionAtLeast(version, minimum string) bool {
 	va, oka := parseAppVersion(version)
 	vb, okb := parseAppVersion(minimum)
 	if !oka || !okb {
 		return false
 	}
-	if va[0] != vb[0] {
-		return va[0] > vb[0]
+	for i := 0; i < 3; i++ {
+		if va[i] != vb[i] {
+			return va[i] > vb[i]
+		}
 	}
-	return va[1] >= vb[1]
+	return true
 }
 
-func parseAppVersion(v string) ([2]int, bool) {
+func parseAppVersion(v string) ([3]int, bool) {
 	parts := strings.Split(strings.TrimSpace(v), ".")
-	if len(parts) != 2 {
-		return [2]int{}, false
+	if len(parts) < 2 || len(parts) > 3 {
+		return [3]int{}, false
 	}
-	major, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
-	minor, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if err1 != nil || err2 != nil || major < 0 || minor < 0 {
-		return [2]int{}, false
+	var out [3]int
+	for i, part := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil || n < 0 {
+			return [3]int{}, false
+		}
+		out[i] = n
 	}
-	return [2]int{major, minor}, true
+	return out, true
 }
 
 // sectionAllowedForAppVersion reports whether a user on `version` may access

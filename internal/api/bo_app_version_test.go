@@ -11,11 +11,20 @@ func TestParseSupportedBOAppVersionRejectsUnknownValues(t *testing.T) {
 }
 
 func TestParseSupportedBOAppVersionAcceptsKnownValues(t *testing.T) {
-	for _, want := range []string{boAppVersion01, boAppVersion02} {
+	for _, want := range []string{boAppVersion001, boAppVersion01, boAppVersion02} {
 		got, ok := parseSupportedBOAppVersion("  " + want + "  ")
 		if !ok || got != want {
 			t.Fatalf("parseSupportedBOAppVersion(%q) = %q, %v; want %q, true", want, got, ok, want)
 		}
+	}
+}
+
+func TestAppVersionAtLeastSupportsPatchVersions(t *testing.T) {
+	if !appVersionAtLeast("0.1", "0.0.1") || !appVersionAtLeast("0.0.1", "0.0.1") {
+		t.Fatal("0.0.1 feature must be available to 0.0.1 and later versions")
+	}
+	if appVersionAtLeast("0.0.1", "0.1") {
+		t.Fatal("0.0.1 must remain below 0.1")
 	}
 }
 
