@@ -278,6 +278,13 @@ func (s *Server) roleExists(ctx context.Context, role string) (bool, error) {
 }
 
 func (s *Server) roleSections(ctx context.Context, role string) ([]string, error) {
+	return s.roleSectionsForVersion(ctx, role, boAppVersion01)
+}
+
+// roleSectionsForVersion returns the role's sections intersected with the
+// user's app version, so v0.1 users never see v0.2-only modules regardless of
+// role permissions.
+func (s *Server) roleSectionsForVersion(ctx context.Context, role, appVersion string) ([]string, error) {
 	role = normalizeBORole(role)
 	if role == "" {
 		return []string{}, nil
@@ -338,7 +345,7 @@ func (s *Server) roleSections(ctx context.Context, role string) ([]string, error
 	}
 
 	sort.Strings(out)
-	return out, nil
+	return sectionsForAppVersion(appVersion, out), nil
 }
 
 func (s *Server) requireBORoleImportanceAtLeast(minImportance int) func(http.Handler) http.Handler {
@@ -396,6 +403,12 @@ func (s *Server) requireBOSection(section string) func(http.Handler) http.Handle
 				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
 				return
 			}
+			// A/B version gate: v0.1 users cannot reach v0.2-only sections even if
+			// their role would allow them.
+			if !sectionAllowedForAppVersion(normalized, a.User.AppVersion) {
+				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
+				return
+			}
 
 			next.ServeHTTP(w, r)
 		})
@@ -411,6 +424,10 @@ func (s *Server) requireBOPOSViewOrFichajeAdmin(next http.Handler) http.Handler 
 		a, ok := boAuthFromContext(r.Context())
 		if !ok {
 			httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+			return
+		}
+		if !appCapabilityAllowed(boCapabilityPOS, a.User.AppVersion) {
+			httpx.WriteError(w, http.StatusForbidden, "Forbidden")
 			return
 		}
 		posAllowed, err := s.boPOSPermissionAllowed(r.Context(), a, posPermissionView)

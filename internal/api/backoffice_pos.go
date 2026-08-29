@@ -77,6 +77,12 @@ func (s *Server) requireBOPOSPermission(permission string) func(http.Handler) ht
 				httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 				return
 			}
+			// A/B version gate: POS (TPV) is a v0.2 module; v0.1 users are blocked
+			// even if their role permission would allow it.
+			if !appCapabilityAllowed(boCapabilityPOS, a.User.AppVersion) {
+				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
+				return
+			}
 			allowed, err := s.boPOSPermissionAllowed(r.Context(), a, permission)
 			if err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error validating POS permission")

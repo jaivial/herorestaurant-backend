@@ -106,6 +106,12 @@ func (s *Server) requireBOStockPermission(permission string) func(http.Handler) 
 				httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 				return
 			}
+			// A/B version gate: stock is a v0.2 module; v0.1 users are blocked even
+			// if their role permission would allow it.
+			if !appCapabilityAllowed(boCapabilityStock, a.User.AppVersion) {
+				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
+				return
+			}
 			allowed, err := s.boStockPermissionAllowed(r.Context(), a, permission)
 			if err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error validating stock permission")

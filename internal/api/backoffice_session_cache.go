@@ -62,3 +62,16 @@ func (c *boSessionCache) invalidate(tokenSHA string) {
 	defer c.mu.Unlock()
 	delete(c.items, tokenSHA)
 }
+
+// invalidateByUserRestaurant drops every cached session belonging to a
+// user+restaurant pair. Used when the user's app version (or role) changes for
+// a restaurant while their sessions may still be cached.
+func (c *boSessionCache) invalidateByUserRestaurant(userID, restaurantID int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for tokenSHA, e := range c.items {
+		if e.auth.User.ID == userID && e.auth.ActiveRestaurantID == restaurantID {
+			delete(c.items, tokenSHA)
+		}
+	}
+}

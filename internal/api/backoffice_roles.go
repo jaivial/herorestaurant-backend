@@ -30,6 +30,7 @@ type boRoleUserItem struct {
 	Name           string `json:"name"`
 	Role           string `json:"role"`
 	RoleImportance int    `json:"roleImportance"`
+	AppVersion     string `json:"appVersion"`
 }
 
 type boRoleCurrentUser struct {
@@ -322,7 +323,8 @@ func (s *Server) handleBORolesGet(w http.ResponseWriter, r *http.Request) {
 			u.email,
 			u.name,
 			u.is_superadmin,
-			ur.role AS role_slug
+			ur.role AS role_slug,
+			ur.app_version
 		FROM bo_users u
 		LEFT JOIN bo_user_restaurants ur
 			ON ur.user_id = u.id AND ur.restaurant_id = ?
@@ -349,11 +351,12 @@ func (s *Server) handleBORolesGet(w http.ResponseWriter, r *http.Request) {
 	users := make([]boRoleUserItem, 0, 24)
 	for rows.Next() {
 		var (
-			uu      boRoleUserItem
-			isSuper int
-			rawRole sql.NullString
+			uu            boRoleUserItem
+			isSuper       int
+			rawRole       sql.NullString
+			rawAppVersion sql.NullString
 		)
-		if err := rows.Scan(&uu.ID, &uu.Email, &uu.Name, &isSuper, &rawRole); err != nil {
+		if err := rows.Scan(&uu.ID, &uu.Email, &uu.Name, &isSuper, &rawRole, &rawAppVersion); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo usuarios")
 			return
 		}
@@ -375,6 +378,7 @@ func (s *Server) handleBORolesGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		uu.RoleImportance = imp
+		uu.AppVersion = normalizeAppVersion(rawAppVersion.String)
 		users = append(users, uu)
 	}
 

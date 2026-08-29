@@ -1669,7 +1669,17 @@ func (s *Server) handleBOFichajeWS(w http.ResponseWriter, r *http.Request) {
 			}
 			typ := strings.ToLower(strings.TrimSpace(msg.Type))
 			if typ == "ad_save" {
+				if !appCapabilityAllowed(boCapabilityAds, a.User.AppVersion) {
+					continue
+				}
 				s.handleWSAdSave(a, msg.ReqID, msg.AdID, msg.Payload)
+				continue
+			}
+			if typ == "ad_schedule_check" {
+				if !appCapabilityAllowed(boCapabilityAds, a.User.AppVersion) {
+					continue
+				}
+				s.handleWSAdScheduleCheck(a, msg.ReqID, msg.AdID, msg.Payload)
 				continue
 			}
 			if typ != "join_restaurant" && typ != "join_restaurante" {
@@ -2127,6 +2137,35 @@ func normalizeBODNI(raw string) string {
 // broadcasts the outcome to the restaurant room. Auth is already enforced at
 // upgrade time (requireBOSession) and the write is scoped with
 // a.ActiveRestaurantID, so a client can never touch another restaurant's ads.
+func (s *Server) handleWSAdScheduleCheck(a boAuth, reqID string, adID int64, payload json.RawMessage) {
+	var candidate struct {
+		StartsAt *string `json:"starts_at"`
+		EndsAt   *string `json:"ends_at"`
+	}
+	if err := json.Unmarshal(payload, &candidate); err != nil || candidate.StartsAt == nil || candidate.EndsAt == nil {
+		s.fichajeHub.broadcast(a.ActiveRestaurantID, map[string]any{"type": "ad_schedule_conflict", "reqId": reqID, "adId": adID, "conflict": false})
+		return
+	}
+	start, err1 := time.Parse("2006-01-02", *candidate.StartsAt)
+	end, err2 := time.Parse("2006-01-02", *candidate.EndsAt)
+	if err1 != nil || err2 != nil || end.Before(start) {
+		return
+	}
+	rows, err := s.db.QueryContext(context.Background(), `SELECT id, name, starts_at, ends_at FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND id <> ? AND starts_at IS NOT NULL AND ends_at IS NOT NULL AND starts_at <= ? AND ends_at >= ? ORDER BY starts_at LIMIT 1`, a.ActiveRestaurantID, adID, *candidate.EndsAt, *candidate.StartsAt)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	var otherID int64
+	var name string
+	var otherStart, otherEnd time.Time
+	if rows.Next() && rows.Scan(&otherID, &name, &otherStart, &otherEnd) == nil {
+		s.fichajeHub.broadcast(a.ActiveRestaurantID, map[string]any{"type": "ad_schedule_conflict", "reqId": reqID, "adId": adID, "conflict": true, "name": name, "starts_at": otherStart.Format("2006-01-02"), "ends_at": otherEnd.Format("2006-01-02")})
+		return
+	}
+	s.fichajeHub.broadcast(a.ActiveRestaurantID, map[string]any{"type": "ad_schedule_conflict", "reqId": reqID, "adId": adID, "conflict": false})
+}
+
 func (s *Server) handleWSAdSave(a boAuth, reqID string, adID int64, payload json.RawMessage) {
 	broadcastFailure := func(code, message string) {
 		s.fichajeHub.broadcast(a.ActiveRestaurantID, map[string]any{

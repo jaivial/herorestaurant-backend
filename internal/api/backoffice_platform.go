@@ -47,6 +47,10 @@ func (s *Server) requireBOSuperadmin(next http.Handler) http.Handler {
 			httpx.WriteError(w, http.StatusForbidden, "Forbidden")
 			return
 		}
+		if !appCapabilityAllowed(boCapabilityPlataforma, a.User.AppVersion) {
+			httpx.WriteError(w, http.StatusForbidden, "Forbidden")
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
