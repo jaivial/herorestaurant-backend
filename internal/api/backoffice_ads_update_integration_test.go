@@ -98,8 +98,8 @@ func TestHandleBOAdsUpdateSamePayloadReturnsOK(t *testing.T) {
 	}
 
 	var resp struct {
-		Success bool  `json:"success"`
-		Ad      boAd  `json:"ad"`
+		Success bool   `json:"success"`
+		Ad      boAd   `json:"ad"`
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
