@@ -20,24 +20,42 @@ const (
 	boAppVersion02 = "0.2"
 )
 
-// boAppVersionMinSections maps version-gated sections to the minimum app
-// version that unlocks them. Sections absent from this map are available on
-// every version. v0.1 therefore never sees stock, POS, estadisticas or
-// plataforma; v0.2 unlocks them.
-var boAppVersionMinSections = map[string]string{
-	boSectionStock:        boAppVersion02,
-	boSectionPOS:          boAppVersion02,
-	boSectionEstadisticas: boAppVersion02,
-	boSectionPlataforma:   boAppVersion02,
+type boAppCapability string
+
+const (
+	boCapabilityStock        boAppCapability = "stock"
+	boCapabilityPOS          boAppCapability = "pos"
+	boCapabilityEstadisticas boAppCapability = "estadisticas"
+	boCapabilityPlataforma   boAppCapability = "plataforma"
+	boCapabilityAds          boAppCapability = "ads"
+)
+
+var boCapabilityMinVersion = map[boAppCapability]string{
+	boCapabilityStock:        boAppVersion02,
+	boCapabilityPOS:          boAppVersion02,
+	boCapabilityEstadisticas: boAppVersion02,
+	boCapabilityPlataforma:   boAppVersion02,
+	boCapabilityAds:          boAppVersion02,
+}
+
+var boSectionCapability = map[string]boAppCapability{
+	boSectionStock:        boCapabilityStock,
+	boSectionPOS:          boCapabilityPOS,
+	boSectionEstadisticas: boCapabilityEstadisticas,
+	boSectionPlataforma:   boCapabilityPlataforma,
+}
+
+func parseSupportedBOAppVersion(raw string) (string, bool) {
+	version := strings.TrimSpace(raw)
+	if version == boAppVersion01 || version == boAppVersion02 {
+		return version, true
+	}
+	return "", false
 }
 
 func normalizeAppVersion(raw string) string {
-	v := strings.TrimSpace(raw)
-	if v == "" {
-		return boAppVersion01
-	}
-	if v == boAppVersion01 || v == boAppVersion02 {
-		return v
+	if version, ok := parseSupportedBOAppVersion(raw); ok {
+		return version
 	}
 	return boAppVersion01
 }
@@ -72,11 +90,19 @@ func parseAppVersion(v string) ([2]int, bool) {
 // the RBAC section. Sections not gated by version are always allowed here;
 // role ACL is enforced separately.
 func sectionAllowedForAppVersion(section, version string) bool {
-	minVersion, gated := boAppVersionMinSections[section]
+	capability, gated := boSectionCapability[section]
 	if !gated {
 		return true
 	}
-	return appVersionAtLeast(version, minVersion)
+	return appCapabilityAllowed(capability, version)
+}
+
+func appCapabilityAllowed(capability boAppCapability, version string) bool {
+	minVersion, known := boCapabilityMinVersion[capability]
+	if !known {
+		return false
+	}
+	return appVersionAtLeast(normalizeAppVersion(version), minVersion)
 }
 
 // sectionsForAppVersion filters a section list down to what the version
@@ -111,10 +137,7 @@ func (s *Server) getBOUserAppVersionForRestaurant(ctx context.Context, userID, r
 	return normalizeAppVersion(raw.String), nil
 }
 
-// requireBOAppVersion blocks the route unless the user's app version is at
-// least minVersion. Used to gate v0.2-only surfaces (e.g. the Anuncios editor).
-func (s *Server) requireBOAppVersion(minVersion string) func(http.Handler) http.Handler {
-	minVersion = normalizeAppVersion(minVersion)
+func (s *Server) requireBOCapability(capability boAppCapability) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			a, ok := boAuthFromContext(r.Context())
@@ -122,7 +145,7 @@ func (s *Server) requireBOAppVersion(minVersion string) func(http.Handler) http.
 				httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 				return
 			}
-			if !appVersionAtLeast(a.User.AppVersion, minVersion) {
+			if !appCapabilityAllowed(capability, a.User.AppVersion) {
 				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
 				return
 			}
@@ -163,8 +186,8 @@ func (s *Server) handleBOUserVersionPatch(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	version := normalizeAppVersion(req.AppVersion)
-	if version != boAppVersion01 && version != boAppVersion02 {
+	version, valid := parseSupportedBOAppVersion(req.AppVersion)
+	if !valid {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "Version invalida",
@@ -224,7 +247,7 @@ func (s *Server) handleBOUserVersionPatch(w http.ResponseWriter, r *http.Request
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":    true,
+		"success": true,
 		"user": map[string]any{
 			"id":         userID,
 			"appVersion": version,

@@ -603,7 +603,7 @@ func (s *Server) Routes() http.Handler {
 		// Restaurant website banners/popovers.
 		// Anuncios editor is a v0.2-only module: the reservas gate admits the
 		// role, the app-version gate keeps v0.1 users out entirely.
-		adsVersionGate := s.requireBOAppVersion(boAppVersion02)
+		adsVersionGate := s.requireBOCapability(boCapabilityAds)
 		r.With(s.requireBOSession, reservasGate, adsVersionGate).Get("/config/ads", s.handleBOAdsList)
 		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads", s.handleBOAdsCreate)
 		r.With(s.requireBOSession, reservasGate, adsVersionGate).Put("/config/ads/{adId}", s.handleBOAdsUpdate)

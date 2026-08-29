@@ -108,7 +108,7 @@ func (s *Server) requireBOStockPermission(permission string) func(http.Handler) 
 			}
 			// A/B version gate: stock is a v0.2 module; v0.1 users are blocked even
 			// if their role permission would allow it.
-			if !sectionAllowedForAppVersion(boSectionStock, a.User.AppVersion) {
+			if !appCapabilityAllowed(boCapabilityStock, a.User.AppVersion) {
 				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
 				return
 			}

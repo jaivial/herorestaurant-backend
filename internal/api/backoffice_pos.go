@@ -79,7 +79,7 @@ func (s *Server) requireBOPOSPermission(permission string) func(http.Handler) ht
 			}
 			// A/B version gate: POS (TPV) is a v0.2 module; v0.1 users are blocked
 			// even if their role permission would allow it.
-			if !sectionAllowedForAppVersion(boSectionPOS, a.User.AppVersion) {
+			if !appCapabilityAllowed(boCapabilityPOS, a.User.AppVersion) {
 				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
 				return
 			}
