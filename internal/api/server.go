@@ -834,6 +834,7 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/public/booking/rice", s.handlePublicBookingRice)
 	r.Get("/public/booking-policies", s.handlePublicBookingPolicies)
 	r.Get("/public/legal-page", s.handlePublicLegalPageGet)
+	r.Get("/public/ads", s.handlePublicAdsList)
 
 	// Embeddable booking widget API under /widget/* — accepts ?restaurant_id=.
 	// Same-origin on published restaurant sites (instatic proxy passes /widget/*
