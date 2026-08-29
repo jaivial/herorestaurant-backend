@@ -601,13 +601,16 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Post("/config/check-website", s.handleBOWebsiteCheck)
 
 		// Restaurant website banners/popovers.
-		r.With(s.requireBOSession, reservasGate).Get("/config/ads", s.handleBOAdsList)
-		r.With(s.requireBOSession, reservasGate).Post("/config/ads", s.handleBOAdsCreate)
-		r.With(s.requireBOSession, reservasGate).Put("/config/ads/{adId}", s.handleBOAdsUpdate)
-		r.With(s.requireBOSession, reservasGate).Delete("/config/ads/{adId}", s.handleBOAdsDelete)
-		r.With(s.requireBOSession, reservasGate).Post("/config/ads/{adId}/image/upload", s.handleBOAdImageUpload)
-		r.With(s.requireBOSession, reservasGate).Post("/config/ads/{adId}/image/enhance", s.handleBOAdImageEnhance)
-		r.With(s.requireBOSession, reservasGate).Post("/config/ads/{adId}/image/generate", s.handleBOAdImageGenerate)
+		// Anuncios editor is a v0.2-only module: the reservas gate admits the
+		// role, the app-version gate keeps v0.1 users out entirely.
+		adsVersionGate := s.requireBOAppVersion(boAppVersion02)
+		r.With(s.requireBOSession, reservasGate, adsVersionGate).Get("/config/ads", s.handleBOAdsList)
+		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads", s.handleBOAdsCreate)
+		r.With(s.requireBOSession, reservasGate, adsVersionGate).Put("/config/ads/{adId}", s.handleBOAdsUpdate)
+		r.With(s.requireBOSession, reservasGate, adsVersionGate).Delete("/config/ads/{adId}", s.handleBOAdsDelete)
+		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads/{adId}/image/upload", s.handleBOAdImageUpload)
+		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads/{adId}/image/enhance", s.handleBOAdImageEnhance)
+		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads/{adId}/image/generate", s.handleBOAdImageGenerate)
 
 		r.With(s.requireBOSession, reservasGate).Get("/config/mandatory-menus", s.handleBOMandatoryMenusGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/mandatory-menus", s.handleBOMandatoryMenusSave)
@@ -738,6 +741,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/roles", s.handleBORolesGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/roles", s.handleBORoleCreate)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Patch("/users/{id}/role", s.handleBOUserRolePatch)
+		// A/B app version management: root only, per user + active restaurant.
+		r.With(s.requireBOSession, miembrosGate, rootOnlyGate).Patch("/users/{id}/version", s.handleBOUserVersionPatch)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/send", s.handleBOMembersWhatsAppSend)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/members/whatsapp/subscribe", s.handleBOMembersWhatsAppSubscribe)
 		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)

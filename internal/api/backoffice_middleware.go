@@ -103,6 +103,7 @@ func (s *Server) loadBOSessionAuth(ctx context.Context, tokenSHA string) (boAuth
 		mustChangePassword int
 		role               sql.NullString
 		roleImportanceRaw  sql.NullInt64
+		appVersionRaw      sql.NullString
 		memberIDRaw        sql.NullInt64
 		lastSeenAt         sql.NullTime
 		currentExpiresAt   time.Time
@@ -119,6 +120,7 @@ func (s *Server) loadBOSessionAuth(ctx context.Context, tokenSHA string) (boAuth
 			u.must_change_password,
 			ur.role,
 			br.importance,
+			ur.app_version,
 			rm.id,
 			s.last_seen_at,
 			s.expires_at
@@ -144,6 +146,7 @@ func (s *Server) loadBOSessionAuth(ctx context.Context, tokenSHA string) (boAuth
 		&mustChangePassword,
 		&role,
 		&roleImportanceRaw,
+		&appVersionRaw,
 		&memberIDRaw,
 		&lastSeenAt,
 		&currentExpiresAt,
@@ -175,7 +178,8 @@ func (s *Server) loadBOSessionAuth(ctx context.Context, tokenSHA string) (boAuth
 			roleImportance = 100
 		}
 	}
-	sectionAccess, err := s.roleSections(ctx, roleSlug)
+	appVersion := normalizeAppVersion(appVersionRaw.String)
+	sectionAccess, err := s.roleSectionsForVersion(ctx, roleSlug, appVersion)
 	if err != nil {
 		return boAuth{}, time.Time{}, time.Time{}, err
 	}
@@ -185,7 +189,6 @@ func (s *Server) loadBOSessionAuth(ctx context.Context, tokenSHA string) (boAuth
 		mid := memberIDRaw.Int64
 		memberID = &mid
 	}
-
 	a := boAuth{
 		SessionID:   sessionID,
 		TokenSHA256: tokenSHA,
@@ -197,6 +200,7 @@ func (s *Server) loadBOSessionAuth(ctx context.Context, tokenSHA string) (boAuth
 			Role:           roleSlug,
 			RoleImportance: roleImportance,
 			SectionAccess:  sectionAccess,
+			AppVersion:     appVersion,
 			MustChangePass: mustChangePassword != 0,
 			isSuperadmin:   isSuper != 0,
 		},
