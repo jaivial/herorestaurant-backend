@@ -162,7 +162,15 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 
 	var arrozTypeJSON any = nil
 	var arrozServingsJSON any = nil
-	preferredFloorNumber, err := s.resolvePreferredFloorNumberForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_floor_number")))
+	locationFlags, err := s.resolveLocationBooking(r.Context(), restaurantID, resDate)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "No se pudo consultar la configuración de ubicación",
+		})
+		return
+	}
+	preferredFloorNumber, err := s.resolvePreferredFloorNumberForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_floor_number")), locationFlags.Floor.Value)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
@@ -170,7 +178,7 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	preferredSalonID, err := s.resolvePreferredSalonIDForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_salon_id")), preferredFloorNumber)
+	preferredSalonID, err := s.resolvePreferredSalonIDForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_salon_id")), preferredFloorNumber, locationFlags.Salon.Value)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
@@ -407,7 +415,15 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	preferredFloorNumber, err := s.resolvePreferredFloorNumberForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_floor_number")))
+	locationFlags, err := s.resolveLocationBooking(r.Context(), restaurantID, resDate)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "No se pudo consultar la configuración de ubicación",
+		})
+		return
+	}
+	preferredFloorNumber, err := s.resolvePreferredFloorNumberForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_floor_number")), locationFlags.Floor.Value)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
@@ -415,7 +431,7 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	preferredSalonID, err := s.resolvePreferredSalonIDForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_salon_id")), preferredFloorNumber)
+	preferredSalonID, err := s.resolvePreferredSalonIDForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_salon_id")), preferredFloorNumber, locationFlags.Salon.Value)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
@@ -708,7 +724,10 @@ func (s *Server) enrichBookingLocationForNotifications(ctx context.Context, rest
 	}
 }
 
-func (s *Server) resolvePreferredFloorNumberForFront(ctx context.Context, restaurantID int, date string, raw string) (any, error) {
+func (s *Server) resolvePreferredFloorNumberForFront(ctx context.Context, restaurantID int, date string, raw string, allowFloorReservation bool) (any, error) {
+	if !allowFloorReservation {
+		return nil, nil
+	}
 	floors, err := s.loadDateFloors(ctx, restaurantID, date)
 	if err != nil {
 		return nil, errors.New("No se pudo consultar las plantas activas")
@@ -938,7 +957,10 @@ func nullIntOrNil(v int) any {
 // value against the active salons for the date. Empty input stays nil (no
 // salon chosen). When both salon and floor are provided, the salon must
 // belong to that floor.
-func (s *Server) resolvePreferredSalonIDForFront(ctx context.Context, restaurantID int, date string, raw string, preferredFloor any) (any, error) {
+func (s *Server) resolvePreferredSalonIDForFront(ctx context.Context, restaurantID int, date string, raw string, preferredFloor any, allowSalonReservation bool) (any, error) {
+	if !allowSalonReservation {
+		return nil, nil
+	}
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
