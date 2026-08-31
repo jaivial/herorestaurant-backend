@@ -112,6 +112,14 @@ func buildBookingWhatsAppButtonPayload(brandName string, booking map[string]any,
 // through the restaurant's provisioned gateway (UAZAPI or Evolution).
 // It tries the button message first and falls back to plain text.
 func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID int, booking map[string]any, bookingID int64) error {
+	if rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); err == nil && found && strings.EqualFold(rec.Provider, "evolution") {
+		if _, refreshErr := s.refreshRestaurantUAZAPIConnectionStatus(ctx, restaurantID); refreshErr != nil {
+			log.Printf("WhatsApp connection refresh failed for booking #%d: %v", bookingID, refreshErr)
+		} else if refreshed, ok, loadErr := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); loadErr == nil && ok && !isUAZAPIConnected(refreshed.Status) {
+			return fmt.Errorf("WhatsApp desconectado (estado: %s)", refreshed.Status)
+		}
+	}
+
 	gw, ok := s.botGatewayFor(ctx, restaurantID)
 	if !ok {
 		return fmt.Errorf("WhatsApp no configurado")
