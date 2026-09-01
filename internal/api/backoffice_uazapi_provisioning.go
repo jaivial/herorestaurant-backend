@@ -964,6 +964,10 @@ func uazapiAnyToString(v any) string {
 		return fmt.Sprintf("%d", t)
 	case float64:
 		return strings.TrimSpace(fmt.Sprintf("%.0f", t))
+	case nil:
+		// JSON null (e.g. Evolution "pairingCode": null): fmt.Sprint would
+		// render the literal "<nil>", which then gets stored as a pair code.
+		return ""
 	default:
 		return strings.TrimSpace(fmt.Sprint(t))
 	}
