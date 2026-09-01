@@ -1440,8 +1440,11 @@ func (s *Server) handleVinos(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, _ := json.Marshal(response)
 
-	w.Header().Set("Cache-Control", "public, max-age=300, stale-while-revalidate=300")
-	w.Header().Set("Surrogate-Control", "max-age=300")
+	// Dynamic admin-editable content: never serve stale. `no-cache` forces
+	// revalidation against the ETag on every request (304 when unchanged),
+	// so BO edits are visible immediately without losing bandwidth savings.
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Surrogate-Control", "no-cache")
 	w.Header().Set("Vary", "Accept-Encoding")
 
 	etag := `"` + md5Hex(payload) + `"`
