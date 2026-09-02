@@ -1598,6 +1598,205 @@ func (s *Server) handleBOStockExpiring(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "days": days, "items": items})
 }
 
+// handleBOStockValuation values current stock at the latest known purchase cost,
+// falling back to the average cost kept on stock_levels when no purchase carries a price.
+func (s *Server) handleBOStockValuation(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, 401, "Unauthorized")
+		return
+	}
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT i.id, i.name, COALESCE(c.name, ''), SUM(l.qty_base),
+		       CASE WHEN SUM(l.qty_base) = 0 THEN 0 ELSE SUM(l.qty_base * l.avg_unit_cost) / SUM(l.qty_base) END,
+		       (SELECT m.unit_cost FROM stock_movements m
+		          WHERE m.restaurant_id = i.restaurant_id AND m.stock_item_id = i.id
+		            AND m.type = 'PURCHASE' AND m.unit_cost IS NOT NULL
+		          ORDER BY m.occurred_at DESC, m.id DESC LIMIT 1)
+		FROM stock_items i
+		JOIN stock_levels l ON l.restaurant_id = i.restaurant_id AND l.stock_item_id = i.id
+		LEFT JOIN stock_categories c ON c.restaurant_id = i.restaurant_id AND c.id = i.category_id
+		WHERE i.restaurant_id = ? AND i.is_active = 1 AND i.is_tracked = 1 AND i.deleted_at IS NULL
+		GROUP BY i.id, i.name, c.name
+		HAVING SUM(l.qty_base) <> 0
+		ORDER BY i.name
+	`, a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, 500, "Error loading stock valuation")
+		return
+	}
+	defer rows.Close()
+	type valuationItem struct {
+		ItemID       int64    `json:"itemId"`
+		ItemName     string   `json:"itemName"`
+		CategoryName string   `json:"categoryName"`
+		QtyBase      float64  `json:"qtyBase"`
+		AvgUnitCost  float64  `json:"avgUnitCost"`
+		LastUnitCost *float64 `json:"lastUnitCost"`
+		UnitCost     float64  `json:"unitCost"`
+		Value        float64  `json:"value"`
+	}
+	items := []valuationItem{}
+	var total float64
+	for rows.Next() {
+		var it valuationItem
+		var lastCost sql.NullFloat64
+		if err := rows.Scan(&it.ItemID, &it.ItemName, &it.CategoryName, &it.QtyBase, &it.AvgUnitCost, &lastCost); err != nil {
+			httpx.WriteError(w, 500, "Error reading stock valuation")
+			return
+		}
+		if lastCost.Valid && lastCost.Float64 > 0 {
+			it.LastUnitCost = &lastCost.Float64
+			it.UnitCost = lastCost.Float64
+		} else {
+			it.UnitCost = it.AvgUnitCost
+		}
+		it.Value = it.QtyBase * it.UnitCost
+		total += it.Value
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading stock valuation")
+		return
+	}
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "totalValue": total, "items": items})
+}
+
+// handleBOStockExport streams items, movements or waste as CSV.
+func (s *Server) handleBOStockExport(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, 401, "Unauthorized")
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type"))) {
+	case "items":
+		s.exportStockItems(w, r, a)
+	case "movements":
+		s.exportStockMovements(w, r, a, false)
+	case "waste":
+		s.exportStockMovements(w, r, a, true)
+	default:
+		httpx.WriteError(w, 400, "Invalid export type")
+	}
+}
+
+func (s *Server) exportStockItems(w http.ResponseWriter, r *http.Request, a boAuth) {
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT i.id, i.sku, i.name, COALESCE(c.name, ''), i.base_unit, COALESCE(SUM(l.qty_base), 0),
+		       COALESCE(SUM(l.par_level_base), 0), COALESCE(SUM(l.reorder_point_base), 0),
+		       CASE WHEN SUM(l.qty_base) = 0 THEN 0 ELSE SUM(l.qty_base * l.avg_unit_cost) / SUM(l.qty_base) END,
+		       (SELECT m.unit_cost FROM stock_movements m
+		          WHERE m.restaurant_id = i.restaurant_id AND m.stock_item_id = i.id
+		            AND m.type = 'PURCHASE' AND m.unit_cost IS NOT NULL
+		          ORDER BY m.occurred_at DESC, m.id DESC LIMIT 1)
+		FROM stock_items i
+		LEFT JOIN stock_levels l ON l.restaurant_id = i.restaurant_id AND l.stock_item_id = i.id
+		LEFT JOIN stock_categories c ON c.restaurant_id = i.restaurant_id AND c.id = i.category_id
+		WHERE i.restaurant_id = ? AND i.is_active = 1 AND i.deleted_at IS NULL
+		GROUP BY i.id, i.sku, i.name, c.name, i.base_unit
+		ORDER BY i.name
+	`, a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteError(w, 500, "Error exporting stock items")
+		return
+	}
+	defer rows.Close()
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="stock-items-`+time.Now().Format("20060102")+`.csv"`)
+	_, _ = w.Write([]byte("id,sku,name,category,base_unit,qty_base,par_level_base,reorder_point_base,avg_unit_cost,last_unit_cost,value\n"))
+	for rows.Next() {
+		var id int64
+		var name, baseUnit string
+		var sku, category sql.NullString
+		var qty, par, reorder, avgCost float64
+		var lastCost sql.NullFloat64
+		if err = rows.Scan(&id, &sku, &name, &category, &baseUnit, &qty, &par, &reorder, &avgCost, &lastCost); err != nil {
+			return
+		}
+		cost := avgCost
+		if lastCost.Valid && lastCost.Float64 > 0 {
+			cost = lastCost.Float64
+		}
+		value := strconv.FormatFloat(qty*cost, 'f', -1, 64)
+		line := strings.Join([]string{
+			strconv.FormatInt(id, 10), csvCell(sku.String), csvCell(name), csvCell(category.String), baseUnit,
+			strconv.FormatFloat(qty, 'f', -1, 64), strconv.FormatFloat(par, 'f', -1, 64), strconv.FormatFloat(reorder, 'f', -1, 64),
+			strconv.FormatFloat(avgCost, 'f', -1, 64), strconv.FormatFloat(cost, 'f', -1, 64), value,
+		}, ",") + "\n"
+		_, _ = w.Write([]byte(line))
+	}
+}
+
+func (s *Server) exportStockMovements(w http.ResponseWriter, r *http.Request, a boAuth, wasteOnly bool) {
+	where := ` WHERE m.restaurant_id=?`
+	args := []any{a.ActiveRestaurantID}
+	movementType := ""
+	if wasteOnly {
+		movementType = "WASTE"
+	} else {
+		movementType = strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("movementType")))
+	}
+	if movementType != "" {
+		if !validStockMovementType(movementType) {
+			httpx.WriteError(w, 400, "Invalid movement type")
+			return
+		}
+		where += ` AND m.type=?`
+		args = append(args, movementType)
+	}
+	fromDate, err := stockQueryDate(r, "from")
+	if err != nil {
+		httpx.WriteError(w, 400, "Invalid from date")
+		return
+	}
+	toDate, err := stockQueryDate(r, "to")
+	if err != nil {
+		httpx.WriteError(w, 400, "Invalid to date")
+		return
+	}
+	if fromDate != "" {
+		where += ` AND m.occurred_at>=?`
+		args = append(args, fromDate+" 00:00:00")
+	}
+	if toDate != "" {
+		where += ` AND m.occurred_at<=?`
+		args = append(args, toDate+" 23:59:59")
+	}
+	if fromDate == "" && toDate == "" {
+		where += ` AND m.occurred_at>=DATE_SUB(NOW(), INTERVAL 90 DAY)`
+	}
+	args = append(args, 5000)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT m.id,DATE_FORMAT(m.occurred_at,'%Y-%m-%d %H:%i:%s'),i.name,w.name,m.type,m.qty_base,m.entered_qty,u.label,COALESCE(m.unit_cost,''),COALESCE(m.total_cost,''),COALESCE(m.waste_reason,''),COALESCE(DATE_FORMAT(m.expires_at,'%Y-%m-%d'),''),COALESCE(m.note,''),COALESCE(NULLIF(bu.name,''),bu.email) FROM stock_movements m JOIN stock_items i ON i.restaurant_id=m.restaurant_id AND i.id=m.stock_item_id JOIN stock_warehouses w ON w.restaurant_id=m.restaurant_id AND w.id=m.warehouse_id JOIN stock_item_units u ON u.restaurant_id=m.restaurant_id AND u.id=m.entered_unit_id JOIN bo_users bu ON bu.id=m.actor_user_id`+where+` ORDER BY m.occurred_at DESC,m.id DESC LIMIT ?`, args...)
+	if err != nil {
+		httpx.WriteError(w, 500, "Error exporting movements")
+		return
+	}
+	defer rows.Close()
+	name := "stock-movements-"
+	if wasteOnly {
+		name = "stock-waste-"
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+time.Now().Format("20060102")+`.csv"`)
+	_, _ = w.Write([]byte("id,occurred_at,item,warehouse,type,qty_base,entered_qty,entered_unit,unit_cost,total_cost,waste_reason,expires_at,note,actor\n"))
+	for rows.Next() {
+		var id int64
+		var occurredAt, itemName, warehouse, movementType, enteredQty, enteredUnit, actor string
+		var qty float64
+		var unitCost, totalCost, wasteReason, expiresAt, note sql.NullString
+		if err = rows.Scan(&id, &occurredAt, &itemName, &warehouse, &movementType, &qty, &enteredQty, &enteredUnit, &unitCost, &totalCost, &wasteReason, &expiresAt, &note, &actor); err != nil {
+			return
+		}
+		line := strings.Join([]string{
+			strconv.FormatInt(id, 10), occurredAt, csvCell(itemName), csvCell(warehouse), movementType,
+			strconv.FormatFloat(qty, 'f', -1, 64), enteredQty, csvCell(enteredUnit),
+			csvCell(unitCost.String), csvCell(totalCost.String), csvCell(wasteReason.String), csvCell(expiresAt.String), csvCell(note.String), csvCell(actor),
+		}, ",") + "\n"
+		_, _ = w.Write([]byte(line))
+	}
+}
+
 func stockBoolInt(v bool) int {
 	if v {
 		return 1
