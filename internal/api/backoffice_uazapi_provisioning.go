@@ -302,6 +302,19 @@ func (s *Server) provisionAndConnectRestaurantWhatsApp(ctx context.Context, rest
 	if err != nil {
 		return nil, err
 	}
+	// A provider whose Baileys session was just torn down can answer connect
+	// with neither QR nor pairing code (async QR generation, auth churn).
+	// Retry once after a settle delay; if it is still empty, fail loudly
+	// instead of returning success with nulls that leave the UI waiting forever.
+	if err == nil && st.QR == "" && st.PairCode == "" && !isUAZAPIConnected(st.Status) {
+		log.Printf("[whatsapp][obs][CP-CONNECT-EMPTY] restaurant=%d provider returned no qr/pair (status=%s); retrying once after 3s", restaurantID, st.Status)
+		time.Sleep(3 * time.Second)
+		st, err = gateway.Connect(ctx, normalizedPhone)
+		log.Printf("[whatsapp][obs][CP-CONNECT-RETRY] restaurant=%d err=%v qr=%d pair=%q status=%s", restaurantID, err, len(st.QR), st.PairCode, st.Status)
+		if err == nil && st.QR == "" && st.PairCode == "" && !isUAZAPIConnected(st.Status) {
+			return nil, errors.New("el proveedor no genero QR ni codigo de vinculacion; la instancia necesita reconexion")
+		}
+	}
 	status := st.Status
 	qr := st.QR
 	pairCode := st.PairCode
