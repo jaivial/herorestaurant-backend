@@ -3127,6 +3127,7 @@ Manual `CARD` rows require an external terminal reference; PAN/CVV are never acc
 | GET | `/api/admin/pos/reports/sales.csv` | `pos.reports.view` |
 | GET | `/api/admin/pos/accounting/export.csv` | `pos.reports.view`; `type=SALES_VAT|PAYMENTS|REFUNDS|STOCK`, optional `from/to`; immutable SHA-256 audited export |
 | GET | `/api/admin/pos/health` | `pos.settings.manage` |
+| GET | `/api/admin/pos/stock-anomalies` | `pos.stock_mapping.manage` | Lists anomalies joined to ticket/item/warehouse names; `unresolved=1` filters `status='OPEN'`, `limit` (1-500, default 200) |
 | POST | `/api/admin/pos/stock-anomalies/{id}/resolve` | `pos.stock_mapping.manage` |
 | GET/PUT | `/api/admin/pos/roles/{slug}/permissions` | `pos.settings.manage` | Fine-grained tenant role permissions |
 

@@ -492,6 +492,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/reports/sales.csv", s.handleBOPOSExportSales)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/accounting/export.csv", s.handleBOAccountingExport)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Get("/pos/health", s.handleBOPOSHealth)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posStockMappingGate).Get("/pos/stock-anomalies", s.handleBOPOSStockAnomaliesList)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posStockMappingGate).Post("/pos/stock-anomalies/{id}/resolve", s.handleBOPOSStockAnomalyResolve)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Get("/pos/roles/{slug}/permissions", s.handleBOPOSRolePermissionsGet)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Put("/pos/roles/{slug}/permissions", s.handleBOPOSRolePermissionsPut)
