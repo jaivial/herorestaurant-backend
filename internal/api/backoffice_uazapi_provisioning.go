@@ -85,6 +85,7 @@ func (s *Server) handleBOMembersWhatsAppConnect(w http.ResponseWriter, r *http.R
 
 	connection, err := s.provisionAndConnectRestaurantWhatsApp(r.Context(), a.ActiveRestaurantID, strings.TrimSpace(req.Phone))
 	if err != nil {
+		log.Printf("[whatsapp] restaurant=%d connect failed: %v", a.ActiveRestaurantID, err)
 		if errors.Is(err, errUAZAPINoCapacity) {
 			writeBOPremiumError(w, http.StatusServiceUnavailable, "WHATSAPP_POOL_FULL", "No hay servidores de WhatsApp disponibles en este momento. Inténtalo más tarde.")
 			return
