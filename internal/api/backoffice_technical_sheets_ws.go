@@ -126,12 +126,12 @@ func (s *Server) handleBOTechnicalSheetsWS(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			var incoming struct {
-				Type  string `json:"type"`
-				Query       string `json:"query"`
-				Status      string `json:"status"`
-				CategoryID  int64  `json:"categoryId"`
-				Page        int    `json:"page"`
-				PageSize    int    `json:"pageSize"`
+				Type       string `json:"type"`
+				Query      string `json:"query"`
+				Status     string `json:"status"`
+				CategoryID int64  `json:"categoryId"`
+				Page       int    `json:"page"`
+				PageSize   int    `json:"pageSize"`
 			}
 			if json.Unmarshal(raw, &incoming) != nil {
 				continue
