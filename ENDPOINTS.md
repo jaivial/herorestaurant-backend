@@ -2896,7 +2896,7 @@ and endpoint-specific stock permission. Responses use `{ success: true, ... }` o
 | PATCH | `/api/admin/stock/items/{id}/targets` | `stock.items.manage` | Saves warehouse par/reorder targets in selected item unit |
 | GET/POST | `/api/admin/stock/items/{id}/units` | `stock.view` / `stock.items.manage` | List or create item-specific conversion units |
 | DELETE | `/api/admin/stock/items/{id}/units/{unitId}` | `stock.items.manage` | Delete unused, non-default unit |
-| GET | `/api/admin/stock/items/{id}/movements` | `stock.view` | Query `page`, `pageSize<=100`; audited movement history |
+| GET | `/api/admin/stock/items/{id}/movements` | `stock.view` | Query `page`, `pageSize<=200`, optional filters `type` (PURCHASE, PRODUCTION_IN, TRANSFER_IN, RETURN, ADJUSTMENT, PRODUCTION_OUT, SALE, WASTE, TRANSFER_OUT, INVENTORY_COUNT), `from`/`to` (`YYYY-MM-DD`, inclusive); audited movement history |
 | POST | `/api/admin/stock/items/{id}/movements` | `stock.adjust` or `stock.waste.record` | Atomic ledger + level update; adjustment accepts `direction=ADD|SUBTRACT` |
 | GET | `/api/admin/stock/summary` | `stock.view` | `{ itemsTracked, belowPar, belowReorder, outOfStock, negative, coveragePct }` |
 | POST | `/api/admin/stock/transfers` | `stock.transfer` | Atomic two-ledger-entry warehouse transfer |
