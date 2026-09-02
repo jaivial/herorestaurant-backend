@@ -174,6 +174,7 @@ type stockMovementRow struct {
 	Note          string  `json:"note,omitempty"`
 	ActorName     string  `json:"actorName"`
 	OccurredAt    string  `json:"occurredAt"`
+	ExpiresAt     string  `json:"expiresAt,omitempty"`
 }
 
 func stockBaseUnitForDimension(dimension string) (string, bool) {
@@ -202,6 +203,14 @@ func normalizeStockMovementQuantity(movementType string, enteredQty, factor floa
 	default:
 		return 0, errors.New("unsupported movement type")
 	}
+}
+
+func stockParseExpiryDate(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, raw)
 }
 
 func (s *Server) handleBOStockWarehousesList(w http.ResponseWriter, r *http.Request) {
@@ -1057,9 +1066,10 @@ func (s *Server) handleBOStockCountClose(w http.ResponseWriter, r *http.Request)
 	}
 	var in struct {
 		Lines []struct {
-			ItemID   int64   `json:"itemId"`
-			Quantity float64 `json:"quantity"`
-			UnitID   int64   `json:"unitId"`
+			ItemID    int64   `json:"itemId"`
+			Quantity  float64 `json:"quantity"`
+			UnitID    int64   `json:"unitId"`
+			ExpiresAt string  `json:"expiresAt"`
 		} `json:"lines"`
 		IdempotencyKey string `json:"idempotencyKey"`
 	}
@@ -1111,7 +1121,16 @@ func (s *Server) handleBOStockCountClose(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if delta != 0 {
-			_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, line.ItemID, warehouseID, delta, "INVENTORY_COUNT", line.Quantity, line.UnitID, "stock_count", sheetID, in.IdempotencyKey+"-"+strconv.Itoa(index), a.User.ID)
+			var lineExpiresAt sql.NullTime
+			if delta > 0 && strings.TrimSpace(line.ExpiresAt) != "" {
+				parsed, parseErr := stockParseExpiryDate(line.ExpiresAt)
+				if parseErr != nil {
+					httpx.WriteError(w, http.StatusBadRequest, "Invalid line expiresAt")
+					return
+				}
+				lineExpiresAt = sql.NullTime{Time: parsed, Valid: true}
+			}
+			_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,expires_at,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, line.ItemID, warehouseID, delta, "INVENTORY_COUNT", line.Quantity, line.UnitID, lineExpiresAt, "stock_count", sheetID, in.IdempotencyKey+"-"+strconv.Itoa(index), a.User.ID)
 			if err != nil {
 				httpx.WriteError(w, http.StatusBadRequest, "Count movement could not be applied")
 				return
@@ -1218,7 +1237,7 @@ func (s *Server) handleBOStockItemMovementsList(w http.ResponseWriter, r *http.R
 		return
 	}
 	args = append(args, pageSize, (page-1)*pageSize)
-	rows, err := s.db.QueryContext(r.Context(), `SELECT m.id,m.qty_base,m.type,COALESCE(m.waste_reason,''),m.entered_qty,u.label,w.name,COALESCE(m.note,''),COALESCE(NULLIF(bu.name,''),bu.email),DATE_FORMAT(m.occurred_at,'%Y-%m-%dT%H:%i:%sZ') FROM stock_movements m JOIN stock_item_units u ON u.restaurant_id=m.restaurant_id AND u.id=m.entered_unit_id JOIN stock_warehouses w ON w.restaurant_id=m.restaurant_id AND w.id=m.warehouse_id JOIN bo_users bu ON bu.id=m.actor_user_id`+where+` ORDER BY m.occurred_at DESC,m.id DESC LIMIT ? OFFSET ?`, args...)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT m.id,m.qty_base,m.type,COALESCE(m.waste_reason,''),m.entered_qty,u.label,w.name,COALESCE(m.note,''),COALESCE(NULLIF(bu.name,''),bu.email),DATE_FORMAT(m.occurred_at,'%Y-%m-%dT%H:%i:%sZ'),COALESCE(DATE_FORMAT(m.expires_at,'%Y-%m-%dT%H:%i:%sZ'),'') FROM stock_movements m JOIN stock_item_units u ON u.restaurant_id=m.restaurant_id AND u.id=m.entered_unit_id JOIN stock_warehouses w ON w.restaurant_id=m.restaurant_id AND w.id=m.warehouse_id JOIN bo_users bu ON bu.id=m.actor_user_id`+where+` ORDER BY m.occurred_at DESC,m.id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading movements")
 		return
@@ -1227,7 +1246,7 @@ func (s *Server) handleBOStockItemMovementsList(w http.ResponseWriter, r *http.R
 	movements := []stockMovementRow{}
 	for rows.Next() {
 		var movement stockMovementRow
-		if err = rows.Scan(&movement.ID, &movement.QuantityBase, &movement.Type, &movement.WasteReason, &movement.EnteredQty, &movement.EnteredUnit, &movement.WarehouseName, &movement.Note, &movement.ActorName, &movement.OccurredAt); err != nil {
+		if err = rows.Scan(&movement.ID, &movement.QuantityBase, &movement.Type, &movement.WasteReason, &movement.EnteredQty, &movement.EnteredUnit, &movement.WarehouseName, &movement.Note, &movement.ActorName, &movement.OccurredAt, &movement.ExpiresAt); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error reading movements")
 			return
 		}
@@ -1324,6 +1343,7 @@ func (s *Server) handleBOStockMovementCreate(w http.ResponseWriter, r *http.Requ
 		WasteReason    string  `json:"wasteReason"`
 		Note           string  `json:"note"`
 		IdempotencyKey string  `json:"idempotencyKey"`
+		ExpiresAt      string  `json:"expiresAt"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || in.WarehouseID <= 0 || in.UnitID <= 0 || in.Quantity <= 0 || strings.TrimSpace(in.IdempotencyKey) == "" {
 		httpx.WriteError(w, 400, "Invalid movement")
@@ -1382,6 +1402,16 @@ func (s *Server) handleBOStockMovementCreate(w http.ResponseWriter, r *http.Requ
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid adjustment direction")
 		return
 	}
+	var expiresAt sql.NullTime
+	inbound := movementType == "PURCHASE" || (movementType == "ADJUSTMENT" && strings.EqualFold(in.Direction, "ADD"))
+	if inbound && strings.TrimSpace(in.ExpiresAt) != "" {
+		parsed, parseErr := stockParseExpiryDate(in.ExpiresAt)
+		if parseErr != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "Invalid expiresAt")
+			return
+		}
+		expiresAt = sql.NullTime{Time: parsed, Valid: true}
+	}
 	if err != nil {
 		httpx.WriteError(w, 400, err.Error())
 		return
@@ -1410,7 +1440,7 @@ func (s *Server) handleBOStockMovementCreate(w http.ResponseWriter, r *http.Requ
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid waste reason")
 		return
 	}
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,waste_reason,entered_qty,entered_unit_id,idempotency_key,note,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, itemID, in.WarehouseID, qtyBase, movementType, stockNullableString(in.WasteReason), in.Quantity, in.UnitID, in.IdempotencyKey, stockNullableString(in.Note), a.User.ID)
+	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,waste_reason,entered_qty,entered_unit_id,expires_at,idempotency_key,note,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, itemID, in.WarehouseID, qtyBase, movementType, stockNullableString(in.WasteReason), in.Quantity, in.UnitID, expiresAt, in.IdempotencyKey, stockNullableString(in.Note), a.User.ID)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			httpx.WriteJSON(w, 200, map[string]any{"success": true, "duplicate": true})
@@ -1498,6 +1528,74 @@ func (s *Server) handleBOStockSummary(w http.ResponseWriter, r *http.Request) {
 		response["unresolvedAnomalies"] = unresolvedAnomalies
 	}
 	httpx.WriteJSON(w, 200, response)
+}
+
+// handleBOStockExpiring estimates soon-to-expire stock per item and warehouse.
+// Without a lots table the figure is approximate: unexpired inbound quantities
+// carrying expires_at minus every outbound movement since the earliest of
+// those inbound movements, clamped at zero.
+func (s *Server) handleBOStockExpiring(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, 401, "Unauthorized")
+		return
+	}
+	days := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("days")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 365 {
+			httpx.WriteError(w, 400, "Invalid days")
+			return
+		}
+		days = parsed
+	}
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT m.stock_item_id, i.name, m.warehouse_id, w.name,
+		       MIN(m.expires_at), SUM(m.qty_base),
+		       (SELECT COALESCE(SUM(-o.qty_base),0) FROM stock_movements o
+		          WHERE o.restaurant_id = m.restaurant_id AND o.stock_item_id = m.stock_item_id
+		            AND o.warehouse_id = m.warehouse_id AND o.qty_base < 0
+		            AND o.occurred_at >= MIN(m.occurred_at))
+		FROM stock_movements m
+		JOIN stock_items i ON i.id = m.stock_item_id AND i.restaurant_id = m.restaurant_id AND i.deleted_at IS NULL
+		JOIN stock_warehouses w ON w.id = m.warehouse_id AND w.restaurant_id = m.restaurant_id
+		WHERE m.restaurant_id = ? AND m.expires_at IS NOT NULL AND m.expires_at > NOW()
+		  AND m.expires_at <= DATE_ADD(NOW(), INTERVAL ? DAY) AND m.qty_base > 0
+		GROUP BY m.stock_item_id, i.name, m.warehouse_id, w.name
+		ORDER BY MIN(m.expires_at)
+	`, a.ActiveRestaurantID, days)
+	if err != nil {
+		httpx.WriteError(w, 500, "Error loading expiring stock")
+		return
+	}
+	defer rows.Close()
+	type expiringItem struct {
+		ItemID           int64     `json:"itemId"`
+		ItemName         string    `json:"itemName"`
+		WarehouseID      int64     `json:"warehouseId"`
+		WarehouseName    string    `json:"warehouseName"`
+		ExpiresAt        time.Time `json:"expiresAt"`
+		EstimatedQtyBase float64   `json:"estimatedQtyBase"`
+	}
+	items := []expiringItem{}
+	for rows.Next() {
+		var it expiringItem
+		var purchased, consumed float64
+		if err := rows.Scan(&it.ItemID, &it.ItemName, &it.WarehouseID, &it.WarehouseName, &it.ExpiresAt, &purchased, &consumed); err != nil {
+			httpx.WriteError(w, 500, "Error reading expiring stock")
+			return
+		}
+		if purchased-consumed <= 0 {
+			continue
+		}
+		it.EstimatedQtyBase = purchased - consumed
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading expiring stock")
+		return
+	}
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "days": days, "items": items})
 }
 
 func stockBoolInt(v bool) int {

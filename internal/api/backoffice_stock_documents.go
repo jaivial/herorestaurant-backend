@@ -572,8 +572,9 @@ func (s *Server) handleBOStockInvoiceConfirm(w http.ResponseWriter, r *http.Requ
 	}
 	scanID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var in struct {
-		WarehouseID    int64  `json:"warehouseId"`
-		IdempotencyKey string `json:"idempotencyKey"`
+		WarehouseID    int64             `json:"warehouseId"`
+		IdempotencyKey string            `json:"idempotencyKey"`
+		LineExpiries   map[string]string `json:"lineExpiries"`
 	}
 	if scanID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || in.WarehouseID <= 0 || strings.TrimSpace(in.IdempotencyKey) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid confirmation")
@@ -657,7 +658,16 @@ func (s *Server) handleBOStockInvoiceConfirm(w http.ResponseWriter, r *http.Requ
 			newCost = (valuedCurrent*currentCost + qtyBase*unitCostBase) / (valuedCurrent + qtyBase)
 		}
 		key := fmt.Sprintf("%s-line-%d", strings.TrimSpace(in.IdempotencyKey), line.id)
-		if _, err := tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,unit_cost,total_cost,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,'PURCHASE',?,?,?,?, 'stock_document',?,?,?)`, a.ActiveRestaurantID, line.itemID, in.WarehouseID, qtyBase, line.quantity, line.unitID, stockNullableFloat(unitCostBase), stockNullableFloat(line.quantity*line.unitPrice), scanID, key, a.User.ID); err != nil {
+		var lineExpiresAt sql.NullTime
+		if raw := strings.TrimSpace(in.LineExpiries[strconv.FormatInt(line.id, 10)]); raw != "" {
+			parsed, parseErr := stockParseExpiryDate(raw)
+			if parseErr != nil {
+				httpx.WriteError(w, http.StatusBadRequest, "Invalid line expiry date")
+				return
+			}
+			lineExpiresAt = sql.NullTime{Time: parsed, Valid: true}
+		}
+		if _, err := tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,unit_cost,total_cost,expires_at,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,'PURCHASE',?,?,?,?,?,?, 'stock_document',?,?,?)`, a.ActiveRestaurantID, line.itemID, in.WarehouseID, qtyBase, line.quantity, line.unitID, stockNullableFloat(unitCostBase), stockNullableFloat(line.quantity*line.unitPrice), lineExpiresAt, scanID, key, a.User.ID); err != nil {
 			httpx.WriteError(w, http.StatusConflict, "Invoice was already applied")
 			return
 		}

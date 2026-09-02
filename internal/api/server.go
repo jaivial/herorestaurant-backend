@@ -321,6 +321,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, withBOStockTimeout, stockVersionGate).Post("/stock/items/{id}/movements", s.handleBOStockMovementCreate)
 		r.With(s.requireBOSession, withBOStockTimeout, stockTransferGate).Post("/stock/transfers", s.handleBOStockTransferCreate)
 		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/summary", s.handleBOStockSummary)
+		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/expiring", s.handleBOStockExpiring)
 		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/reconciliation", s.handleBOStockReconciliationGet)
 		r.With(s.requireBOSession, withBOStockTimeout, stockSettingsGate).Post("/stock/reconciliation/rebuild", s.handleBOStockReconciliationRebuild)
 		r.With(s.requireBOSession, withBOStockTimeout, stockViewGate).Get("/stock/settings", s.handleBOStockSettingsGet)
