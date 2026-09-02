@@ -481,6 +481,11 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS products")
 		return
 	}
+	productStock, err := s.loadPOSProductStock(r.Context(), a.ActiveRestaurantID, settings.StockMode)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading product stock")
+		return
+	}
 	// Occupancy follows the same scope as the visit list, so a past day never
 	// shows tables as occupied by today's service.
 	// The date placeholder belongs to the EXISTS subquery, which precedes the
@@ -584,7 +589,13 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift, "date": businessDate, "cashDay": cashDay})
+	payload := map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift, "date": businessDate, "cashDay": cashDay}
+	// Only shipped when stock tracking is on: an absent key tells the sell
+	// screen it should not render stock badges at all.
+	if settings.StockMode != "OFF" {
+		payload["productStock"] = productStock
+	}
+	httpx.WriteJSON(w, http.StatusOK, payload)
 }
 
 func nextPOSTicketNumber(ctx context.Context, tx *sql.Tx, restaurantID int, businessDate, prefix string) (string, error) {
