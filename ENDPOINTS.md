@@ -2897,12 +2897,13 @@ and endpoint-specific stock permission. Responses use `{ success: true, ... }` o
 | GET/POST | `/api/admin/stock/items/{id}/units` | `stock.view` / `stock.items.manage` | List or create item-specific conversion units |
 | DELETE | `/api/admin/stock/items/{id}/units/{unitId}` | `stock.items.manage` | Delete unused, non-default unit |
 | GET | `/api/admin/stock/items/{id}/movements` | `stock.view` | Query `page`, `pageSize<=200`, optional filters `type` (PURCHASE, PRODUCTION_IN, TRANSFER_IN, RETURN, ADJUSTMENT, PRODUCTION_OUT, SALE, WASTE, TRANSFER_OUT, INVENTORY_COUNT), `from`/`to` (`YYYY-MM-DD`, inclusive); audited movement history |
-| POST | `/api/admin/stock/items/{id}/movements` | `stock.adjust` or `stock.waste.record` | Atomic ledger + level update; adjustment accepts `direction=ADD|SUBTRACT` |
+| POST | `/api/admin/stock/items/{id}/movements` | `stock.adjust` or `stock.waste.record` | Atomic ledger + level update; adjustment accepts `direction=ADD|SUBTRACT`; inbound rows (PURCHASE, ADJUSTMENT+ADD) accept optional `expiresAt` (`YYYY-MM-DD` or RFC3339) |
+| GET | `/api/admin/stock/expiring` | `stock.view` | Optional `days` (default 30, 1–365); estimate of soon-to-expire stock per item+warehouse: `{ days, items: [{ itemId, itemName, warehouseId, warehouseName, expiresAt, estimatedQtyBase }] }` (unexpired inbound with `expires_at` minus outbound since earliest inbound, clamped at 0) |
 | GET | `/api/admin/stock/summary` | `stock.view` | `{ itemsTracked, belowPar, belowReorder, outOfStock, negative, coveragePct }`; `details=1` adds `belowParItems`/`belowReorderItems`/`outOfStockItems`/`negativeItems` (`{id,name,qty,par,reorderPoint}`) and `unresolvedAnomalies` (open `pos_stock_anomalies`) |
 | POST | `/api/admin/stock/transfers` | `stock.transfer` | Atomic two-ledger-entry warehouse transfer |
 | POST | `/api/admin/stock/counts` | `stock.count.perform` | Opens count sheet and snapshots expected stock |
 | GET | `/api/admin/stock/counts/{id}` | `stock.view` | Count sheet plus item lines |
-| POST | `/api/admin/stock/counts/{id}/close` | `stock.count.close` | Applies observed quantities as idempotent inventory-count deltas |
+| POST | `/api/admin/stock/counts/{id}/close` | `stock.count.close` | Applies observed quantities as idempotent inventory-count deltas; positive-delta lines accept optional `expiresAt` |
 | GET | `/api/admin/stock/reconciliation` | `stock.view` | Compares materialized levels with ledger sums |
 | POST | `/api/admin/stock/reconciliation/rebuild` | `stock.settings.manage` | Rebuilds materialized quantities from ledger |
 | GET | `/api/admin/stock/settings` | `stock.view` | Tenant stock settings with defaults |
@@ -2941,7 +2942,7 @@ positive; direction derives from type. `WASTE` requires `wasteReason`.
 | GET | `/api/admin/stock/documents/{id}/original` | Authenticated private original download; `Cache-Control: private, no-store` |
 | DELETE | `/api/admin/stock/documents/{id}/original` | Delete private original and retain reviewed extraction/audit |
 | PATCH | `/api/admin/stock/documents/{id}/review` | Edit metadata/lines and map tenant item units |
-| POST | `/api/admin/stock/documents/{id}/confirm-invoice` | Atomic purchases, weighted cost and supplier-alias learning |
+| POST | `/api/admin/stock/documents/{id}/confirm-invoice` | Atomic purchases, weighted cost and supplier-alias learning; optional `lineExpiries` map (`{lineId: YYYY-MM-DD}`) stores per-line expiry on the PURCHASE rows |
 | POST | `/api/admin/stock/documents/{id}/confirm-recipe` | Create reviewed OCR recipe |
 | POST | `/api/admin/stock/documents/{id}/reject` | Reject review draft |
 
