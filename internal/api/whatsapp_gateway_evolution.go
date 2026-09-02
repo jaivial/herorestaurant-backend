@@ -193,14 +193,18 @@ func (g *evolutionGateway) evoConnState(resp map[string]any) waConnState {
 		pair = pick(qrcode, "pairingCode", "pairCode", "pair_code")
 	}
 	// A nested qrcode.code is a provider pairing code. A top-level code is
-	// also accepted unless it is Evolution's raw `2@...` QR protocol payload.
+	// also accepted unless it is not a user-facing code at all: Evolution's
+	// raw `2@...` QR protocol payload, or a wa.me deep link wrapping it
+	// (e.g. "https://wa.me/settings/linked_devices#2@...") — pairing that
+	// value overflows pair_code and the whole connect request fails.
 	if pair == "" {
-		pair = pick(qrcode, "code")
+		if code := pick(qrcode, "code"); looksLikePairingCode(code) {
+			pair = code
+		}
 	}
 	if pair == "" {
-		topCode := pick(resp, "code")
-		if !strings.HasPrefix(topCode, "2@") {
-			pair = topCode
+		if code := pick(resp, "code"); looksLikePairingCode(code) {
+			pair = code
 		}
 	}
 	phone := pick(resp, "number", "phone", "owner", "wuid")
@@ -208,6 +212,20 @@ func (g *evolutionGateway) evoConnState(resp map[string]any) waConnState {
 		phone = pick(instance, "number", "phone", "owner", "wuid")
 	}
 	return waConnState{Status: normalizeUAZAPIConnectionStatus(state), ConnectedPhone: phone, QR: qr, PairCode: formatEvolutionPairingCode(pair)}
+}
+
+// looksLikePairingCode accepts only short, opaque, user-facing linking codes.
+// Anything URL-shaped ("https://...", "wa.me"), whitespace-bearing, or QR
+// protocol payload ("2@...") is not a code a human can type into WhatsApp.
+func looksLikePairingCode(code string) bool {
+	code = strings.TrimSpace(code)
+	if len(code) < 4 || len(code) > 32 {
+		return false
+	}
+	if strings.ContainsAny(code, " \t/#:?&") || strings.Contains(code, "://") || strings.HasPrefix(code, "2@") {
+		return false
+	}
+	return true
 }
 
 // Evolution returns an eight-character code without punctuation, while its
