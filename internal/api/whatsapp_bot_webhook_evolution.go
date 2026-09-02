@@ -43,7 +43,7 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 	}
 
 	in, ok := gw.ParseInboundMessage(body)
-	if !ok || in.FromMe {
+	if !ok {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false})
 		return
 	}
@@ -51,6 +51,20 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 	restaurantID, ok := s.resolveBotRestaurantByProviderInstance(r.Context(), in.SessionRef)
 	if !ok {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "message": "unknown instance"})
+		return
+	}
+	if in.FromMe {
+		// Messages typed manually by restaurant staff are part of the customer
+		// conversation too. Persist plain text so the bot sees that intervention
+		// on the next customer turn, but never run the inbound bot pipeline (which
+		// would otherwise answer our own outbound message).
+		if in.Text != "" {
+			s.botRecordConversationMessage(r.Context(), restaurantID, in.Sender, "assistant", in.Text, "", "manual_whatsapp")
+			s.botTouchSession(r.Context(), restaurantID, in.Sender, in.PushName)
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "manual": true})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "manual": true})
 		return
 	}
 

@@ -85,6 +85,7 @@ func (s *Server) handleBOMembersWhatsAppConnect(w http.ResponseWriter, r *http.R
 
 	connection, err := s.provisionAndConnectRestaurantWhatsApp(r.Context(), a.ActiveRestaurantID, strings.TrimSpace(req.Phone))
 	if err != nil {
+		log.Printf("[whatsapp] restaurant=%d connect failed: %v", a.ActiveRestaurantID, err)
 		if errors.Is(err, errUAZAPINoCapacity) {
 			writeBOPremiumError(w, http.StatusServiceUnavailable, "WHATSAPP_POOL_FULL", "No hay servidores de WhatsApp disponibles en este momento. Inténtalo más tarde.")
 			return
@@ -300,6 +301,19 @@ func (s *Server) provisionAndConnectRestaurantWhatsApp(ctx context.Context, rest
 	st, err := gateway.Connect(ctx, normalizedPhone)
 	if err != nil {
 		return nil, err
+	}
+	// A provider whose Baileys session was just torn down can answer connect
+	// with neither QR nor pairing code (async QR generation, auth churn).
+	// Retry once after a settle delay; if it is still empty, fail loudly
+	// instead of returning success with nulls that leave the UI waiting forever.
+	if err == nil && st.QR == "" && st.PairCode == "" && !isUAZAPIConnected(st.Status) {
+		log.Printf("[whatsapp][obs][CP-CONNECT-EMPTY] restaurant=%d provider returned no qr/pair (status=%s); retrying once after 3s", restaurantID, st.Status)
+		time.Sleep(3 * time.Second)
+		st, err = gateway.Connect(ctx, normalizedPhone)
+		log.Printf("[whatsapp][obs][CP-CONNECT-RETRY] restaurant=%d err=%v qr=%d pair=%q status=%s", restaurantID, err, len(st.QR), st.PairCode, st.Status)
+		if err == nil && st.QR == "" && st.PairCode == "" && !isUAZAPIConnected(st.Status) {
+			return nil, errors.New("el proveedor no genero QR ni codigo de vinculacion; la instancia necesita reconexion")
+		}
 	}
 	status := st.Status
 	qr := st.QR
@@ -754,7 +768,7 @@ func (s *Server) updateRestaurantUAZAPIInstanceRuntime(ctx context.Context, rest
 	if connectedPhone != "" {
 		connectedPhone = normalizeWhatsAppNumber(connectedPhone)
 	}
-	qrPayload = strings.TrimSpace(qrPayload)
+	qrPayload = normalizeQRImage(strings.TrimSpace(qrPayload))
 	pairCode = strings.TrimSpace(pairCode)
 	if isUAZAPIConnected(status) {
 		qrPayload = ""
@@ -964,6 +978,10 @@ func uazapiAnyToString(v any) string {
 		return fmt.Sprintf("%d", t)
 	case float64:
 		return strings.TrimSpace(fmt.Sprintf("%.0f", t))
+	case nil:
+		// JSON null (e.g. Evolution "pairingCode": null): fmt.Sprint would
+		// render the literal "<nil>", which then gets stored as a pair code.
+		return ""
 	default:
 		return strings.TrimSpace(fmt.Sprint(t))
 	}
