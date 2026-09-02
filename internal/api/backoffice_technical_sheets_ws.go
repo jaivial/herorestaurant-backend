@@ -146,10 +146,9 @@ func (s *Server) handleBOTechnicalSheetsWS(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) replySheetSearch(ctx context.Context, client *sheetWSClient, query, status string, categoryID int64, page, pageSize int) {
-	// Clamp before the SQL so an enormous OFFSET cannot be requested, and so
-	// the response's page/pageSize echo the values that were actually used.
-	page, pageSize = clampSheetSearchPage(page, pageSize)
-	sheets, total, err := s.searchSheets(ctx, client.restaurantID, query, status, categoryID, page, pageSize)
+	// searchSheets returns the clamped page/pageSize it actually used, so the
+	// response can echo them without a second clamp call.
+	sheets, total, page, pageSize, err := s.searchSheets(ctx, client.restaurantID, query, status, categoryID, page, pageSize)
 	if err != nil {
 		_ = client.send(map[string]any{"type": "searchError", "message": "No se pudo buscar"})
 		return
@@ -184,7 +183,10 @@ func clampSheetSearchPage(page, pageSize int) (int, int) {
 	return page, pageSize
 }
 
-func (s *Server) searchSheets(ctx context.Context, restaurantID int, query, status string, categoryID int64, page, pageSize int) ([]map[string]any, int, error) {
+// searchSheets runs the WS search; it clamps paging once and returns the
+// values actually used so callers do not have to repeat the clamp just to
+// echo them in a response.
+func (s *Server) searchSheets(ctx context.Context, restaurantID int, query, status string, categoryID int64, page, pageSize int) ([]map[string]any, int, int, int, error) {
 	page, pageSize = clampSheetSearchPage(page, pageSize)
 	status = strings.ToUpper(strings.TrimSpace(status))
 
@@ -193,7 +195,7 @@ func (s *Server) searchSheets(ctx context.Context, restaurantID int, query, stat
 	from, args := sheetListFrom(restaurantID, strings.TrimSpace(query), status, categoryID)
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) `+from, args...).Scan(&total); err != nil {
-		return nil, 0, err
+		return nil, 0, page, pageSize, err
 	}
 
 	sql := `SELECT r.id, r.name, r.status, COALESCE(r.portions,1),
@@ -204,7 +206,7 @@ func (s *Server) searchSheets(ctx context.Context, restaurantID int, query, stat
 
 	rows, err := s.db.QueryContext(ctx, sql, args...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, page, pageSize, err
 	}
 	defer rows.Close()
 	out := []map[string]any{}
@@ -213,12 +215,12 @@ func (s *Server) searchSheets(ctx context.Context, restaurantID int, query, stat
 		var name, status string
 		var portions, usageCount int
 		if err := rows.Scan(&id, &name, &status, &portions, &usageCount); err != nil {
-			return nil, 0, err
+			return nil, 0, page, pageSize, err
 		}
 		out = append(out, map[string]any{
 			"id": id, "name": name, "status": status,
 			"portions": portions, "usageCount": usageCount,
 		})
 	}
-	return out, total, rows.Err()
+	return out, total, page, pageSize, rows.Err()
 }

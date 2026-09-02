@@ -337,10 +337,19 @@ func sheetListFrom(restaurantID int, query, status string, categoryID int64) (st
 	// The API speaks of PUBLISHED sheets, but the column's enum has no such
 	// row value: handleBOTechnicalSheetPublish writes ACTIVE. Map the API word
 	// here — matching it literally would return nothing for every tenant.
-	if status == "PUBLISHED" {
+	// ARCHIVED maps straight through; the enum row exists for sheets the
+	// tenant has retired but kept on file. Any unknown status (a future enum
+	// row, an empty string, or a typo) intentionally applies no predicate,
+	// matching the historical fall-through so a malformed client gets the
+	// full list rather than a silent empty one — the REST gateway already
+	// validates the accepted set upstream.
+	switch status {
+	case "PUBLISHED":
 		from += ` AND r.status='ACTIVE'`
-	} else if status == "DRAFT" {
+	case "DRAFT":
 		from += ` AND r.status='DRAFT'`
+	case "ARCHIVED":
+		from += ` AND r.status='ARCHIVED'`
 	}
 	// The category belongs to the sheet's output item, which is where the
 	// stock catalogue records it.
@@ -440,17 +449,16 @@ func (s *Server) handleBOTechnicalSheetList(w http.ResponseWriter, r *http.Reque
 	}
 
 	// The caller's stored page preferences ride along so the client hydrates
-	// its switches in the same request that fills the grid. Only the keys this
-	// UI actually consumes are projected: getUserPreferences returns every key
-	// the user has stored (including state from unrelated screens such as the
-	// reservations table view), and leaking that into a stock-grid response
-	// would couple unrelated modules through this endpoint.
+	// its switches in the same request that fills the grid. The list endpoint
+	// only consumes `stockSheetsShowImages`, so the targeted single-key
+	// helper is used: it does a `WHERE pref_key=?` lookup rather than
+	// streaming every stored preference across the wire just to drop it
+	// server-side. Other preference keys (reservations view mode, hours
+	// accordion, future allowlist rows) stay out of the response entirely.
 	preferences := map[string]string{}
 	if a.User.ID != 0 && a.ActiveRestaurantID != 0 {
-		if stored, err := s.getUserPreferences(r.Context(), a.User.ID, a.ActiveRestaurantID); err == nil {
-			if v, ok := stored["stockSheetsShowImages"]; ok {
-				preferences["stockSheetsShowImages"] = v
-			}
+		if v, ok, err := s.getUserPreference(r.Context(), a.User.ID, a.ActiveRestaurantID, "stockSheetsShowImages"); err == nil && ok {
+			preferences["stockSheetsShowImages"] = v
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

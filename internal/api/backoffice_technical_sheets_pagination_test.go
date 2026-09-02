@@ -118,7 +118,7 @@ func TestSheetSearchPaginatesAndFiltersLikeREST(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sheets, total, err := s.searchSheets(context.Background(), 1, "Sopa", "", 0, 1, 2)
+	sheets, total, _, _, err := s.searchSheets(context.Background(), 1, "Sopa", "", 0, 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestSheetSearchPaginatesAndFiltersLikeREST(t *testing.T) {
 		t.Fatalf("first window len=%d total=%d, want 2/3", len(sheets), total)
 	}
 
-	sheets, total, err = s.searchSheets(context.Background(), 1, "Sopa", "", 0, 2, 2)
+	sheets, total, _, _, err = s.searchSheets(context.Background(), 1, "Sopa", "", 0, 2, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,16 +134,20 @@ func TestSheetSearchPaginatesAndFiltersLikeREST(t *testing.T) {
 		t.Fatalf("second window len=%d total=%d, want 1/3", len(sheets), total)
 	}
 
-	// Zero page/pageSize: the historical LIMIT 25 window.
-	sheets, total, err = s.searchSheets(context.Background(), 1, "", "", 0, 0, 0)
+	// Zero page/pageSize: the historical LIMIT 25 window. searchSheets now
+	// returns the clamped page/pageSize it used, which would be (1, 25).
+	sheets, total, page, pageSize, err := s.searchSheets(context.Background(), 1, "", "", 0, 0, 0)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if page != 1 || pageSize != 25 {
+		t.Fatalf("default window page=%d pageSize=%d, want 1/25", page, pageSize)
 	}
 	if total != 3 || len(sheets) != 3 {
 		t.Fatalf("default window len=%d total=%d, want 3/3", len(sheets), total)
 	}
 
-	sheets, total, err = s.searchSheets(context.Background(), 1, "", "PUBLISHED", 0, 1, 0)
+	sheets, total, _, _, err = s.searchSheets(context.Background(), 1, "", "PUBLISHED", 0, 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -65,6 +67,28 @@ func (s *Server) setUserPreference(ctx context.Context, userID, restaurantID int
 		ON DUPLICATE KEY UPDATE pref_value = VALUES(pref_value)
 	`, userID, restaurantID, key, value)
 	return err
+}
+
+// getUserPreference reads a single preference. Returns (value, ok=true)
+// when a row exists, ("", false, nil) when the key is unset, and the
+// underlying error otherwise. Use this instead of getUserPreferences
+// when the caller only needs one key — picking the row in SQL avoids
+// sending every other stored preference over the wire and serializing
+// it onto a JSON response that has no business knowing it.
+func (s *Server) getUserPreference(ctx context.Context, userID, restaurantID int, key string) (string, bool, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT pref_value FROM user_preferences WHERE user_id = ? AND restaurant_id = ? AND pref_key = ?`,
+		userID, restaurantID, key,
+	).Scan(&value)
+	switch {
+	case err == nil:
+		return value, true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return "", false, nil
+	default:
+		return "", false, err
+	}
 }
 
 type boPreferencesSetRequest struct {
