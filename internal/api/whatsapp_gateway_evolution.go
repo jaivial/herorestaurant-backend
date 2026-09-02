@@ -1,9 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http"
 	"net/url"
 	"strings"
@@ -212,6 +217,70 @@ func (g *evolutionGateway) evoConnState(resp map[string]any) waConnState {
 		phone = pick(instance, "number", "phone", "owner", "wuid")
 	}
 	return waConnState{Status: normalizeUAZAPIConnectionStatus(state), ConnectedPhone: phone, QR: qr, PairCode: formatEvolutionPairingCode(pair)}
+}
+
+// normalizeQRImage repairs provider QRs whose dark modules are encoded as
+// fully transparent pixels instead of opaque black (observed in the
+// baileys-qr-fix fork's canvas output): over the backoffice panel such modules
+// take the background color and the code renders invisible and unscannable.
+// Fully opaque QRs pass through untouched; transparent ones are re-encoded as
+// plain black-on-white using alpha as the module mask. Applied at the instance
+// runtime store so gateway, webhook and poller QRs all get repaired.
+func normalizeQRImage(qr string) string {
+	qr = strings.TrimSpace(qr)
+	if qr == "" {
+		return ""
+	}
+	prefix, payload := "", qr
+	if strings.HasPrefix(qr, "data:") {
+		idx := strings.Index(qr, ",")
+		if idx < 0 {
+			return qr
+		}
+		prefix, payload = qr[:idx+1], qr[idx+1:]
+	}
+	raw, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return qr
+	}
+	img, err := png.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return qr
+	}
+	bounds := img.Bounds()
+	hasTransparency := false
+	for y := bounds.Min.Y; y < bounds.Max.Y && !hasTransparency; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if _, _, _, a := img.At(x, y).RGBA(); a < 0xFFFF {
+				hasTransparency = true
+				break
+			}
+		}
+	}
+	if !hasTransparency {
+		return qr
+	}
+	out := image.NewRGBA(bounds)
+	white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	black := color.RGBA{A: 255}
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if _, _, _, a := img.At(x, y).RGBA(); a < 0x8000 {
+				out.Set(x, y, black)
+			} else {
+				out.Set(x, y, white)
+			}
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, out); err != nil {
+		return qr
+	}
+	enc := base64.StdEncoding.EncodeToString(buf.Bytes())
+	if prefix != "" {
+		return prefix + enc
+	}
+	return enc
 }
 
 // looksLikePairingCode accepts only short, opaque, user-facing linking codes.

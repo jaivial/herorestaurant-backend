@@ -755,7 +755,7 @@ func (s *Server) updateRestaurantUAZAPIInstanceRuntime(ctx context.Context, rest
 	if connectedPhone != "" {
 		connectedPhone = normalizeWhatsAppNumber(connectedPhone)
 	}
-	qrPayload = strings.TrimSpace(qrPayload)
+	qrPayload = normalizeQRImage(strings.TrimSpace(qrPayload))
 	pairCode = strings.TrimSpace(pairCode)
 	if isUAZAPIConnected(status) {
 		qrPayload = ""
