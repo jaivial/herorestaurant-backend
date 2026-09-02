@@ -1180,13 +1180,45 @@ func (s *Server) handleBOStockItemMovementsList(w http.ResponseWriter, r *http.R
 		return
 	}
 	page := stockQueryInt(r, "page", 1, 1, 100000)
-	pageSize := stockQueryInt(r, "pageSize", 30, 1, 100)
+	pageSize := stockQueryInt(r, "pageSize", 30, 1, 200)
+	movementType := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("type")))
+	if movementType != "" && !validStockMovementType(movementType) {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid movement type")
+		return
+	}
+	fromDate, err := stockQueryDate(r, "from")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid from date")
+		return
+	}
+	toDate, err := stockQueryDate(r, "to")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid to date")
+		return
+	}
+
+	where := ` WHERE m.restaurant_id=? AND m.stock_item_id=?`
+	args := []any{a.ActiveRestaurantID, itemID}
+	if movementType != "" {
+		where += ` AND m.type=?`
+		args = append(args, movementType)
+	}
+	if fromDate != "" {
+		where += ` AND m.occurred_at>=?`
+		args = append(args, fromDate+" 00:00:00")
+	}
+	if toDate != "" {
+		where += ` AND m.occurred_at<=?`
+		args = append(args, toDate+" 23:59:59")
+	}
+
 	var total int
-	if err = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM stock_movements WHERE restaurant_id=? AND stock_item_id=?`, a.ActiveRestaurantID, itemID).Scan(&total); err != nil {
+	if err = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM stock_movements m`+where, args...).Scan(&total); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading movements")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT m.id,m.qty_base,m.type,COALESCE(m.waste_reason,''),m.entered_qty,u.label,w.name,COALESCE(m.note,''),COALESCE(NULLIF(bu.name,''),bu.email),DATE_FORMAT(m.occurred_at,'%Y-%m-%dT%H:%i:%sZ') FROM stock_movements m JOIN stock_item_units u ON u.restaurant_id=m.restaurant_id AND u.id=m.entered_unit_id JOIN stock_warehouses w ON w.restaurant_id=m.restaurant_id AND w.id=m.warehouse_id JOIN bo_users bu ON bu.id=m.actor_user_id WHERE m.restaurant_id=? AND m.stock_item_id=? ORDER BY m.occurred_at DESC,m.id DESC LIMIT ? OFFSET ?`, a.ActiveRestaurantID, itemID, pageSize, (page-1)*pageSize)
+	args = append(args, pageSize, (page-1)*pageSize)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT m.id,m.qty_base,m.type,COALESCE(m.waste_reason,''),m.entered_qty,u.label,w.name,COALESCE(m.note,''),COALESCE(NULLIF(bu.name,''),bu.email),DATE_FORMAT(m.occurred_at,'%Y-%m-%dT%H:%i:%sZ') FROM stock_movements m JOIN stock_item_units u ON u.restaurant_id=m.restaurant_id AND u.id=m.entered_unit_id JOIN stock_warehouses w ON w.restaurant_id=m.restaurant_id AND w.id=m.warehouse_id JOIN bo_users bu ON bu.id=m.actor_user_id`+where+` ORDER BY m.occurred_at DESC,m.id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading movements")
 		return
@@ -1441,6 +1473,27 @@ func stockQueryInt(r *http.Request, key string, def, min, max int) int {
 		return max
 	}
 	return v
+}
+
+func validStockMovementType(v string) bool {
+	switch v {
+	case "PURCHASE", "PRODUCTION_IN", "TRANSFER_IN", "RETURN", "ADJUSTMENT", "PRODUCTION_OUT", "SALE", "WASTE", "TRANSFER_OUT", "INVENTORY_COUNT":
+		return true
+	}
+	return false
+}
+
+// stockQueryDate parses an optional YYYY-MM-DD query param. Empty means unset.
+func stockQueryDate(r *http.Request, key string) (string, error) {
+	v := strings.TrimSpace(r.URL.Query().Get(key))
+	if v == "" {
+		return "", nil
+	}
+	t, err := time.Parse("2006-01-02", v)
+	if err != nil {
+		return "", err
+	}
+	return t.Format("2006-01-02"), nil
 }
 func nullableFloat(v sql.NullFloat64) any {
 	if !v.Valid {
