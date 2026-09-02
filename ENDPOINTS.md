@@ -2908,6 +2908,7 @@ and endpoint-specific stock permission. Responses use `{ success: true, ... }` o
 | GET | `/api/admin/stock/settings` | `stock.view` | Tenant stock settings with defaults |
 | PATCH | `/api/admin/stock/settings` | `stock.settings.manage` | Saves display/cadence, negative policy, business/seasonality profile and onboarding |
 | POST | `/api/admin/stock/settings/classify-seasonality` | `stock.settings.manage` + AI plan | MiniMax structured business-profile classification |
+| GET | `/api/admin/stock/permissions/mine` | session only | Caller's own effective stock permissions `{ role, permissions: [{key, allowed}] }`; lets restricted roles render the stock UI without `stock.settings.manage` |
 
 Movement `type`: `PURCHASE`, `ADJUSTMENT`, `PRODUCTION_IN`, `PRODUCTION_OUT`,
 `SALE`, `WASTE`, `TRANSFER_IN`, `TRANSFER_OUT`, `RETURN`. Input quantity is always
