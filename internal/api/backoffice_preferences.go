@@ -17,6 +17,9 @@ var allowedBOPreferences = map[string]map[string]struct{}{
 	// Separate keys: /app/reservas/config (per-day) and /app/config (defaults).
 	"hourSplitDetailsOpenDay":     {"0": {}, "1": {}},
 	"hourSplitDetailsOpenDefault": {"0": {}, "1": {}},
+	// Whether the /app/stock?tab=sheets grid renders each card's picture. The
+	// sheets list response carries it so the switcher hydrates on first load.
+	"stockSheetsShowImages": {"0": {}, "1": {}},
 }
 
 // normalizeBOPreference lower-cases the value and validates (key, value)
