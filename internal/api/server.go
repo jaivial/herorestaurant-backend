@@ -328,6 +328,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, stockSettingsGate, s.requireBOStockAI).Post("/stock/settings/classify-seasonality", s.handleBOStockSeasonalityClassify)
 		r.With(s.requireBOSession, withBOStockTimeout, stockSettingsGate).Get("/stock/roles/{slug}/permissions", s.handleBOStockRolePermissionsGet)
 		r.With(s.requireBOSession, withBOStockTimeout, stockSettingsGate).Put("/stock/roles/{slug}/permissions", s.handleBOStockRolePermissionsPut)
+		r.With(s.requireBOSession, withBOStockTimeout).Get("/stock/permissions/mine", s.handleBOStockPermissionsMine)
 
 		sheetsViewGate := s.requireBOStockPermission(stockPermissionSheetsView)
 		sheetsManageGate := s.requireBOStockPermission(stockPermissionSheetsManage)
