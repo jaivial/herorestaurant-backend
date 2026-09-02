@@ -6,6 +6,53 @@ import (
 	"strconv"
 )
 
+// loadPOSProductStock builds the per-product stock status map for the sell
+// screen: "out" when any rule's warehouse level is at or below zero, "low"
+// when any level sits below its reorder point, "ok" otherwise. Levels missing
+// from stock_levels count as zero, matching the real-time deduction path that
+// materialises them at zero on first sale. Only products with active rules on
+// tracked, POS-deductible items appear; OFF mode always returns an empty map.
+func (s *Server) loadPOSProductStock(ctx context.Context, restaurantID int, stockMode string) (map[int64]string, error) {
+	if stockMode == "OFF" {
+		return map[int64]string{}, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.pos_product_id,
+		       MIN(CASE WHEN COALESCE(l.qty_base,0) <= 0 THEN 0
+		                WHEN l.reorder_point_base > 0 AND COALESCE(l.qty_base,0) < l.reorder_point_base THEN 1
+		                ELSE 2 END)
+		FROM pos_product_stock_rules r
+		JOIN stock_items i ON i.restaurant_id = r.restaurant_id AND i.id = r.stock_item_id
+		JOIN stock_warehouses w ON w.restaurant_id = r.restaurant_id AND w.id = r.warehouse_id
+		LEFT JOIN stock_levels l ON l.restaurant_id = r.restaurant_id AND l.stock_item_id = r.stock_item_id AND l.warehouse_id = r.warehouse_id
+		WHERE r.restaurant_id = ? AND r.is_active = 1
+		  AND i.is_active = 1 AND i.deleted_at IS NULL AND i.is_tracked = 1 AND i.deduction_source <> 'PRODUCTION'
+		  AND w.is_active = 1 AND w.deleted_at IS NULL
+		GROUP BY r.pos_product_id
+	`, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	status := map[int64]string{}
+	for rows.Next() {
+		var productID int64
+		var worst int
+		if err = rows.Scan(&productID, &worst); err != nil {
+			return nil, err
+		}
+		switch worst {
+		case 0:
+			status[productID] = "out"
+		case 1:
+			status[productID] = "low"
+		default:
+			status[productID] = "ok"
+		}
+	}
+	return status, rows.Err()
+}
+
 // posStockRule represents a mapping from POS product to stock item
 type posStockRule struct {
 	RuleID          int64
