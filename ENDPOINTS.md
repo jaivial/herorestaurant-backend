@@ -2949,6 +2949,50 @@ Original supplier files are never persisted in public Bunny storage. When
 private originals are retained under opaque tenant paths with access audit and
 `STOCK_DOCUMENT_RETENTION_DAYS`; otherwise extraction continues without retention.
 
+## Technical sheets (fichas técnicas) (`/api/admin/comida/technical-sheets/*`)
+
+Distinct from `/api/admin/stock/recipes` (analytics / costing / production
+orders). These routes drive the ficha-técnica editor and the backoffice's
+"Fichas técnicas" tab on `/app/stock?tab=sheets`. Tenant-scoped via the
+active restaurant; reads need `stock.view` (or any higher stock role),
+writes need `stock.recipe.manage` (or higher).
+
+| Method | Route | Notes |
+|---|---|---|
+| GET | `/api/admin/comida/technical-sheets` | List: `q` (substring on `name`), `status` (`DRAFT` / `PUBLISHED` → maps to `ACTIVE`), `categoryId`, `page` (1-based, server cap 1,000,000), `pageSize` (default 100, cap 100). Returns `{ success, sheets:[...full hydration], page, pageSize, total, totalPages, preferences:{ stockSheetsShowImages } }`. The `preferences` map only carries keys this UI consumes — other stored user preferences are not exposed. |
+| POST | `/api/admin/comida/technical-sheets` | Body `{name, portions, outputUnit?}` where `outputUnit` overrides COUNT/ud defaults: `{baseDimension, displayUnitCode, displayUnitLabel, displayUnitFactor}`. |
+| GET | `/api/admin/comida/technical-sheets/{id}` | Detail. |
+| DELETE | `/api/admin/comida/technical-sheets/{id}` | Aborts with `409 { code: "SHEET_IN_USE", products, usedBySheets }` when any product (comida/vinos/postres) or parent sheet still depends on it. The output item stays if it has ledger history. |
+| GET | `/api/admin/comida/technical-sheets/{id}/usage` | `{ success, products:[{id,name,source}], usedBySheets:[name], inUse }` — what would break if this sheet changed. |
+| POST | `/api/admin/comida/technical-sheets/{id}/duplicate` | Body `{name?}`; returns `{sheetId, outputItemId}`. |
+| POST | `/api/admin/comida/technical-sheets/ensure` | Idempotent: returns or creates the sheet for a product. Body `{itemId, name, source:comida|vinos|postres}`. |
+| GET / POST / PATCH / DELETE | `/api/admin/comida/technical-sheets/{id}/components[/{componentId}]` | Component CRUD; each line is a stock item or a sub-recipe (`subRecipeId`). |
+| GET / POST / PATCH / DELETE | `/api/admin/comida/technical-sheets/{id}/steps[/{stepId}]` | Step CRUD + `PUT /steps/order` (body `{stepIds}`). |
+| POST | `/api/admin/comida/technical-sheets/{id}/steps/{stepId}/image` | Multipart upload; client compresses to WebP and the server re-normalises. |
+| POST | `/api/admin/comida/technical-sheets/{id}/steps/{stepId}/image-jobs` | Queues AI work; result arrives over the socket (see below), not from this call. Body `{mode:"AI_ENHANCE"|"AI_GENERATE", prompt?, idempotencyKey?}`. |
+| GET | `/api/admin/comida/technical-sheets/{id}/cost` | Recursive ingredient + member-labour cost, overhead, net price, food-cost %, margin and missing-rate diagnostics. |
+| GET / PATCH | `/api/admin/comida/technical-sheets/{id}/allergens` | Effective allergen list + manual `{added?, disabled?}` overrides. |
+| PATCH | `/api/admin/comida/items/{itemId}/production-type` | Toggle between `RAW` (restores the backfilled SKU item) and `MANUFACTURED` (links to a sheet). Body `{productionType, stockRecipeId?, source:comida|vinos|postres}`. Reverting an untouched draft discards it; sheets with real content are kept. |
+
+### WS: `/api/admin/comida/technical-sheets/ws`
+
+Live notification channel for image-job progress and a paginated search.
+Auth + origin check follow the other backoffice sockets. One socket per
+tenant; the same endpoint is used by the editor and by the sheets grid,
+which mutually gate `enabled` so only one is mounted at a time.
+
+**Frames**
+
+| Direction | Frame | Notes |
+|---|---|---|
+| client → server | `{"type":"search","query":"...","status":"DRAFT\|PUBLISHED","categoryId":0,"page":1,"pageSize":25}` | `pageSize` cap 100, `page` cap 1,000,000 (server-side); missing `pageSize` falls back to the historical LIMIT 25. |
+| server → client | `{"type":"searchResults","query":<trimmed>,"sheets":[...summary],"page":<clamped>,"pageSize":<clamped>,"total":N,"totalPages":ceil(total/pageSize)}` | The echoed `query` is whitespace-trimmed so the client can render it back into the search box without re-sending padding. |
+| server → client | `{"type":"imageJob", ...}` | Same shape as the editor's existing socket (step + card image jobs); same hub also broadcasts to clients open in the sheets grid. |
+| server → client | `{"type":"searchError","message":"..."}` | One per failed search. |
+
+REST remains the source of truth for hydration; messages only tell the
+caller to re-read the current page over HTTP.
+
 ## POS / TPV (`/api/admin/pos/*`)
 
 All routes require `bo_session`, active `pos_pack`, tenant scope and exact POS permission. Money fields are integer cents. Paid tickets are immutable; corrections use refunds and append-only stock returns.

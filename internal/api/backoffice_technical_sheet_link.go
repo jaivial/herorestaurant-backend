@@ -440,11 +440,17 @@ func (s *Server) handleBOTechnicalSheetList(w http.ResponseWriter, r *http.Reque
 	}
 
 	// The caller's stored page preferences ride along so the client hydrates
-	// its switches in the same request that fills the grid.
+	// its switches in the same request that fills the grid. Only the keys this
+	// UI actually consumes are projected: getUserPreferences returns every key
+	// the user has stored (including state from unrelated screens such as the
+	// reservations table view), and leaking that into a stock-grid response
+	// would couple unrelated modules through this endpoint.
 	preferences := map[string]string{}
 	if a.User.ID != 0 && a.ActiveRestaurantID != 0 {
 		if stored, err := s.getUserPreferences(r.Context(), a.User.ID, a.ActiveRestaurantID); err == nil {
-			preferences = stored
+			if v, ok := stored["stockSheetsShowImages"]; ok {
+				preferences["stockSheetsShowImages"] = v
+			}
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

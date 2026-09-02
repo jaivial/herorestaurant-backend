@@ -146,14 +146,18 @@ func (s *Server) handleBOTechnicalSheetsWS(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) replySheetSearch(ctx context.Context, client *sheetWSClient, query, status string, categoryID int64, page, pageSize int) {
+	// Clamp before the SQL so an enormous OFFSET cannot be requested, and so
+	// the response's page/pageSize echo the values that were actually used.
+	page, pageSize = clampSheetSearchPage(page, pageSize)
 	sheets, total, err := s.searchSheets(ctx, client.restaurantID, query, status, categoryID, page, pageSize)
 	if err != nil {
 		_ = client.send(map[string]any{"type": "searchError", "message": "No se pudo buscar"})
 		return
 	}
-	page, pageSize = clampSheetSearchPage(page, pageSize)
 	_ = client.send(map[string]any{
-		"type": "searchResults", "query": query, "sheets": sheets,
+		// Echo the trimmed query so the client can render it back into the
+		// search box without sending the leading/trailing whitespace again.
+		"type": "searchResults", "query": strings.TrimSpace(query), "sheets": sheets,
 		"page": page, "pageSize": pageSize, "total": total,
 		"totalPages": (total + pageSize - 1) / pageSize,
 	})
@@ -161,10 +165,15 @@ func (s *Server) replySheetSearch(ctx context.Context, client *sheetWSClient, qu
 
 // clampSheetSearchPage normalizes the paging a client asked for. An absent
 // pageSize falls back to the historical LIMIT 25 so clients predating
-// pagination keep seeing the same window.
+// pagination keep seeing the same window. The page cap mirrors
+// stockQueryInt's REST-side ceiling so a malicious or malformed WS message
+// cannot ask MySQL for OFFSET = ~2.1e11 (page * pageSize).
 func clampSheetSearchPage(page, pageSize int) (int, int) {
 	if page < 1 {
 		page = 1
+	}
+	if page > 1000000 {
+		page = 1000000
 	}
 	if pageSize < 1 {
 		pageSize = 25
