@@ -126,8 +126,12 @@ func (s *Server) handleBOTechnicalSheetsWS(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			var incoming struct {
-				Type  string `json:"type"`
-				Query string `json:"query"`
+				Type       string `json:"type"`
+				Query      string `json:"query"`
+				Status     string `json:"status"`
+				CategoryID int64  `json:"categoryId"`
+				Page       int    `json:"page"`
+				PageSize   int    `json:"pageSize"`
 			}
 			if json.Unmarshal(raw, &incoming) != nil {
 				continue
@@ -135,37 +139,74 @@ func (s *Server) handleBOTechnicalSheetsWS(w http.ResponseWriter, r *http.Reques
 			if incoming.Type == "search" {
 				// The search runs under the connection's own tenant, never a
 				// tenant supplied in the message.
-				s.replySheetSearch(r.Context(), client, incoming.Query)
+				s.replySheetSearch(r.Context(), client, incoming.Query, incoming.Status, incoming.CategoryID, incoming.Page, incoming.PageSize)
 			}
 		}
 	}()
 }
 
-func (s *Server) replySheetSearch(ctx context.Context, client *sheetWSClient, query string) {
-	sheets, err := s.searchSheets(ctx, client.restaurantID, strings.TrimSpace(query))
+func (s *Server) replySheetSearch(ctx context.Context, client *sheetWSClient, query, status string, categoryID int64, page, pageSize int) {
+	// searchSheets returns the clamped page/pageSize it actually used, so the
+	// response can echo them without a second clamp call.
+	sheets, total, page, pageSize, err := s.searchSheets(ctx, client.restaurantID, query, status, categoryID, page, pageSize)
 	if err != nil {
 		_ = client.send(map[string]any{"type": "searchError", "message": "No se pudo buscar"})
 		return
 	}
-	_ = client.send(map[string]any{"type": "searchResults", "query": query, "sheets": sheets})
+	_ = client.send(map[string]any{
+		// Echo the trimmed query so the client can render it back into the
+		// search box without sending the leading/trailing whitespace again.
+		"type": "searchResults", "query": strings.TrimSpace(query), "sheets": sheets,
+		"page": page, "pageSize": pageSize, "total": total,
+		"totalPages": (total + pageSize - 1) / pageSize,
+	})
 }
 
-func (s *Server) searchSheets(ctx context.Context, restaurantID int, query string) ([]map[string]any, error) {
+// clampSheetSearchPage normalizes the paging a client asked for. An absent
+// pageSize falls back to the historical LIMIT 25 so clients predating
+// pagination keep seeing the same window. The page cap mirrors
+// stockQueryInt's REST-side ceiling so a malicious or malformed WS message
+// cannot ask MySQL for OFFSET = ~2.1e11 (page * pageSize).
+func clampSheetSearchPage(page, pageSize int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if page > 1000000 {
+		page = 1000000
+	}
+	if pageSize < 1 {
+		pageSize = 25
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	return page, pageSize
+}
+
+// searchSheets runs the WS search; it clamps paging once and returns the
+// values actually used so callers do not have to repeat the clamp just to
+// echo them in a response.
+func (s *Server) searchSheets(ctx context.Context, restaurantID int, query, status string, categoryID int64, page, pageSize int) ([]map[string]any, int, int, int, error) {
+	page, pageSize = clampSheetSearchPage(page, pageSize)
+	status = strings.ToUpper(strings.TrimSpace(status))
+
+	// Same filter set as the REST list: the two transports must agree on what
+	// a search matches, and the category lives on the output item.
+	from, args := sheetListFrom(restaurantID, strings.TrimSpace(query), status, categoryID)
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) `+from, args...).Scan(&total); err != nil {
+		return nil, 0, page, pageSize, err
+	}
+
 	sql := `SELECT r.id, r.name, r.status, COALESCE(r.portions,1),
 	               (SELECT COUNT(*) FROM comida_items p
 	                 WHERE p.restaurant_id=r.restaurant_id AND p.stock_recipe_id=r.id)
-	          FROM stock_recipes r
-	         WHERE r.restaurant_id=? AND r.is_active=1`
-	args := []any{restaurantID}
-	if query != "" {
-		sql += ` AND r.name LIKE ?`
-		args = append(args, "%"+query+"%")
-	}
-	sql += ` ORDER BY r.name LIMIT 25`
+	          ` + from + ` ORDER BY r.name LIMIT ? OFFSET ?`
+	args = append(args, pageSize, (page-1)*pageSize)
 
 	rows, err := s.db.QueryContext(ctx, sql, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, page, pageSize, err
 	}
 	defer rows.Close()
 	out := []map[string]any{}
@@ -174,12 +215,12 @@ func (s *Server) searchSheets(ctx context.Context, restaurantID int, query strin
 		var name, status string
 		var portions, usageCount int
 		if err := rows.Scan(&id, &name, &status, &portions, &usageCount); err != nil {
-			return nil, err
+			return nil, 0, page, pageSize, err
 		}
 		out = append(out, map[string]any{
 			"id": id, "name": name, "status": status,
 			"portions": portions, "usageCount": usageCount,
 		})
 	}
-	return out, rows.Err()
+	return out, total, page, pageSize, rows.Err()
 }

@@ -321,18 +321,75 @@ func sheetAllergensFromJSON(derivedJSON, manualJSON string) []string {
 	return resolved
 }
 
+// sheetListFrom builds the FROM/JOIN/WHERE shared by the paginated list, its
+// count and the WebSocket search, so all three can never disagree about which
+// rows a filter matches.
+func sheetListFrom(restaurantID int, query, status string, categoryID int64) (string, []any) {
+	from := `FROM stock_recipes r
+	          JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.output_item_id
+	          LEFT JOIN stock_categories c ON c.restaurant_id=i.restaurant_id AND c.id=i.category_id
+	         WHERE r.restaurant_id=? AND r.is_active=1`
+	args := []any{restaurantID}
+	if query != "" {
+		from += ` AND r.name LIKE ?`
+		args = append(args, "%"+query+"%")
+	}
+	// The API speaks of PUBLISHED sheets, but the column's enum has no such
+	// row value: handleBOTechnicalSheetPublish writes ACTIVE. Map the API word
+	// here — matching it literally would return nothing for every tenant.
+	// ARCHIVED maps straight through; the enum row exists for sheets the
+	// tenant has retired but kept on file. Any unknown status (a future enum
+	// row, an empty string, or a typo) intentionally applies no predicate,
+	// matching the historical fall-through: a malformed client gets the
+	// full list rather than a silent empty one. Validation lives at the
+	// caller in pages that build the request (the segmented control on
+	// /app/stock?tab=sheets only emits DRAFT or PUBLISHED); the gateway
+	// forwards the raw query parameter, so the WS path here is the same
+	// surface that needs to be lenient.
+	switch status {
+	case "PUBLISHED":
+		from += ` AND r.status='ACTIVE'`
+	case "DRAFT":
+		from += ` AND r.status='DRAFT'`
+	case "ARCHIVED":
+		from += ` AND r.status='ARCHIVED'`
+	}
+	// The category belongs to the sheet's output item, which is where the
+	// stock catalogue records it.
+	if categoryID > 0 {
+		from += ` AND i.category_id=?`
+		args = append(args, categoryID)
+	}
+	return from, args
+}
+
 // handleBOTechnicalSheetList backs the sheet picker. Search is a simple
 // prefix/substring match on the name; the live-typing path goes over the
 // WebSocket, but REST stays the hydration source of truth so a dropped socket
 // never leaves the picker empty.
+//
+// Pagination mirrors the stock items list: page is 1-based, pageSize is capped
+// at 100, and the response reports total/totalPages so the grid can page. It
+// also carries the caller's stored page preferences, so the client hydrates
+// switchers like "show images" from the same request that fills the grid.
 func (s *Server) handleBOTechnicalSheetList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	status := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status")))
+	page := stockQueryInt(r, "page", 1, 1, 1000000)
+	pageSize := stockQueryInt(r, "pageSize", 100, 1, 100)
+	categoryID, _ := strconv.ParseInt(r.URL.Query().Get("categoryId"), 10, 64)
 
 	// The browser fills the product form straight from a card, so the list
 	// carries the same values the form needs. Fetching each sheet separately
 	// just to render a card would be a request per row.
+	from, args := sheetListFrom(a.ActiveRestaurantID, query, status, categoryID)
+	var total int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) `+from, args...).Scan(&total); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando fichas tecnicas")
+		return
+	}
+
 	querySQL := `SELECT r.id, r.name, r.status, COALESCE(r.portions,1), COALESCE(i.image_url,''),
 	               (SELECT COUNT(*) FROM comida_items p
 	                 WHERE p.restaurant_id=r.restaurant_id AND p.stock_recipe_id=r.id),
@@ -343,26 +400,8 @@ func (s *Server) handleBOTechnicalSheetList(w http.ResponseWriter, r *http.Reque
 	                 WHERE rc.restaurant_id=r.restaurant_id AND rc.recipe_id=r.id),
 	               (SELECT COUNT(*) FROM stock_recipe_steps rs
 	                 WHERE rs.restaurant_id=r.restaurant_id AND rs.recipe_id=r.id)
-	          FROM stock_recipes r
-	          JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.output_item_id
-	          LEFT JOIN stock_categories c ON c.restaurant_id=i.restaurant_id AND c.id=i.category_id
-	         WHERE r.restaurant_id=? AND r.is_active=1`
-	args := []any{a.ActiveRestaurantID}
-	if query != "" {
-		querySQL += ` AND r.name LIKE ?`
-		args = append(args, "%"+query+"%")
-	}
-	if status == "PUBLISHED" || status == "DRAFT" {
-		querySQL += ` AND r.status=?`
-		args = append(args, status)
-	}
-	// The category belongs to the sheet's output item, which is where the
-	// stock catalogue records it.
-	if categoryID, _ := strconv.ParseInt(r.URL.Query().Get("categoryId"), 10, 64); categoryID > 0 {
-		querySQL += ` AND i.category_id=?`
-		args = append(args, categoryID)
-	}
-	querySQL += ` ORDER BY r.name LIMIT 100`
+	          ` + from + ` ORDER BY r.name LIMIT ? OFFSET ?`
+	args = append(args, pageSize, (page-1)*pageSize)
 
 	rows, err := s.db.QueryContext(r.Context(), querySQL, args...)
 	if err != nil {
@@ -407,7 +446,33 @@ func (s *Server) handleBOTechnicalSheetList(w http.ResponseWriter, r *http.Reque
 		}
 		sheets = append(sheets, row)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "sheets": sheets})
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo fichas tecnicas")
+		return
+	}
+
+	// The caller's stored page preferences ride along so the client hydrates
+	// its switches in the same request that fills the grid. The list endpoint
+	// only consumes `stockSheetsShowImages`, so the targeted single-key
+	// helper is used: it does a `WHERE pref_key=?` lookup rather than
+	// streaming every stored preference across the wire just to drop it
+	// server-side. Other preference keys (reservations view mode, hours
+	// accordion, future allowlist rows) stay out of the response entirely.
+	preferences := map[string]string{}
+	if a.User.ID != 0 && a.ActiveRestaurantID != 0 {
+		if v, ok, err := s.getUserPreference(r.Context(), a.User.ID, a.ActiveRestaurantID, "stockSheetsShowImages"); err == nil && ok {
+			preferences["stockSheetsShowImages"] = v
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":     true,
+		"sheets":      sheets,
+		"page":        page,
+		"pageSize":    pageSize,
+		"total":       total,
+		"totalPages":  (total + pageSize - 1) / pageSize,
+		"preferences": preferences,
+	})
 }
 
 // discardUntouchedDraftSheet removes a draft nobody has worked on. It is
