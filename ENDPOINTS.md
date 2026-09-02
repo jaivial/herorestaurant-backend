@@ -2898,7 +2898,7 @@ and endpoint-specific stock permission. Responses use `{ success: true, ... }` o
 | DELETE | `/api/admin/stock/items/{id}/units/{unitId}` | `stock.items.manage` | Delete unused, non-default unit |
 | GET | `/api/admin/stock/items/{id}/movements` | `stock.view` | Query `page`, `pageSize<=200`, optional filters `type` (PURCHASE, PRODUCTION_IN, TRANSFER_IN, RETURN, ADJUSTMENT, PRODUCTION_OUT, SALE, WASTE, TRANSFER_OUT, INVENTORY_COUNT), `from`/`to` (`YYYY-MM-DD`, inclusive); audited movement history |
 | POST | `/api/admin/stock/items/{id}/movements` | `stock.adjust` or `stock.waste.record` | Atomic ledger + level update; adjustment accepts `direction=ADD|SUBTRACT` |
-| GET | `/api/admin/stock/summary` | `stock.view` | `{ itemsTracked, belowPar, belowReorder, outOfStock, negative, coveragePct }` |
+| GET | `/api/admin/stock/summary` | `stock.view` | `{ itemsTracked, belowPar, belowReorder, outOfStock, negative, coveragePct }`; `details=1` adds `belowParItems`/`belowReorderItems`/`outOfStockItems`/`negativeItems` (`{id,name,qty,par,reorderPoint}`) and `unresolvedAnomalies` (open `pos_stock_anomalies`) |
 | POST | `/api/admin/stock/transfers` | `stock.transfer` | Atomic two-ledger-entry warehouse transfer |
 | POST | `/api/admin/stock/counts` | `stock.count.perform` | Opens count sheet and snapshots expected stock |
 | GET | `/api/admin/stock/counts/{id}` | `stock.view` | Count sheet plus item lines |

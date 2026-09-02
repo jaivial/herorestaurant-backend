@@ -1445,7 +1445,59 @@ func (s *Server) handleBOStockSummary(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 500, "Error loading stock summary")
 		return
 	}
-	httpx.WriteJSON(w, 200, map[string]any{"success": true, "itemsTracked": tracked, "belowPar": belowPar, "belowReorder": belowReorder, "outOfStock": out, "negative": negative, "coveragePct": coverage.Float64})
+	response := map[string]any{"success": true, "itemsTracked": tracked, "belowPar": belowPar, "belowReorder": belowReorder, "outOfStock": out, "negative": negative, "coveragePct": coverage.Float64}
+	if r.URL.Query().Get("details") == "1" {
+		rows, err := s.db.QueryContext(r.Context(), `SELECT i.id,i.name,COALESCE(totals.qty,0),COALESCE(totals.par,0),COALESCE(totals.reorder_point,0) FROM stock_items i LEFT JOIN (SELECT restaurant_id,stock_item_id,SUM(qty_base) qty,SUM(par_level_base) par,SUM(reorder_point_base) reorder_point FROM stock_levels WHERE restaurant_id=? GROUP BY restaurant_id,stock_item_id) totals ON totals.restaurant_id=i.restaurant_id AND totals.stock_item_id=i.id WHERE i.restaurant_id=? AND i.is_active=1 AND i.is_tracked=1 AND i.deleted_at IS NULL ORDER BY i.name`, a.ActiveRestaurantID, a.ActiveRestaurantID)
+		if err != nil {
+			httpx.WriteError(w, 500, "Error loading stock details")
+			return
+		}
+		belowParItems := []map[string]any{}
+		belowReorderItems := []map[string]any{}
+		outOfStockItems := []map[string]any{}
+		negativeItems := []map[string]any{}
+		var scanErr error
+		for rows.Next() {
+			var id int64
+			var name string
+			var qty, par, reorderPoint float64
+			if scanErr = rows.Scan(&id, &name, &qty, &par, &reorderPoint); scanErr != nil {
+				break
+			}
+			detail := map[string]any{"id": id, "name": name, "qty": qty, "par": par, "reorderPoint": reorderPoint}
+			if par > 0 && qty < par {
+				belowParItems = append(belowParItems, detail)
+			}
+			if reorderPoint > 0 && qty < reorderPoint {
+				belowReorderItems = append(belowReorderItems, detail)
+			}
+			if qty == 0 {
+				outOfStockItems = append(outOfStockItems, detail)
+			}
+			if qty < 0 {
+				negativeItems = append(negativeItems, detail)
+			}
+		}
+		if scanErr == nil {
+			scanErr = rows.Err()
+		}
+		rows.Close()
+		if scanErr != nil {
+			httpx.WriteError(w, 500, "Error reading stock details")
+			return
+		}
+		var unresolvedAnomalies int
+		if err = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_stock_anomalies WHERE restaurant_id=? AND status='OPEN'`, a.ActiveRestaurantID).Scan(&unresolvedAnomalies); err != nil {
+			httpx.WriteError(w, 500, "Error loading stock details")
+			return
+		}
+		response["belowParItems"] = belowParItems
+		response["belowReorderItems"] = belowReorderItems
+		response["outOfStockItems"] = outOfStockItems
+		response["negativeItems"] = negativeItems
+		response["unresolvedAnomalies"] = unresolvedAnomalies
+	}
+	httpx.WriteJSON(w, 200, response)
 }
 
 func stockBoolInt(v bool) int {
