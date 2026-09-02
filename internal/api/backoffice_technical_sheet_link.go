@@ -340,9 +340,12 @@ func sheetListFrom(restaurantID int, query, status string, categoryID int64) (st
 	// ARCHIVED maps straight through; the enum row exists for sheets the
 	// tenant has retired but kept on file. Any unknown status (a future enum
 	// row, an empty string, or a typo) intentionally applies no predicate,
-	// matching the historical fall-through so a malformed client gets the
-	// full list rather than a silent empty one — the REST gateway already
-	// validates the accepted set upstream.
+	// matching the historical fall-through: a malformed client gets the
+	// full list rather than a silent empty one. Validation lives at the
+	// caller in pages that build the request (the segmented control on
+	// /app/stock?tab=sheets only emits DRAFT or PUBLISHED); the gateway
+	// forwards the raw query parameter, so the WS path here is the same
+	// surface that needs to be lenient.
 	switch status {
 	case "PUBLISHED":
 		from += ` AND r.status='ACTIVE'`
