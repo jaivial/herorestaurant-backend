@@ -3001,7 +3001,7 @@ All routes require `bo_session`, active `pos_pack`, tenant scope and exact POS p
 
 | Method | Route | Permission | Purpose |
 |---|---|---|---|
-| GET | `/api/admin/pos/bootstrap` | `pos.view` | Settings, active products, visits, table occupancy and the cash day |
+| GET | `/api/admin/pos/bootstrap` | `pos.view` | Settings, active products, visits, table occupancy and the cash day; with stock mode `SHADOW`/`LIVE` also `productStock` (`{productId: ok\|low\|out}`) |
 | GET/PATCH | `/api/admin/pos/settings` | `pos.view` / `pos.settings.manage` | Enable POS; stock/covers modes; timezone and cutoff |
 | GET/POST/PATCH/DELETE | `/api/admin/pos/service-periods[/{id}]` | `pos.view` / `pos.settings.manage` | `LUNCH`, `DINNER`, `OTHER` periods including cross-midnight ranges |
 
