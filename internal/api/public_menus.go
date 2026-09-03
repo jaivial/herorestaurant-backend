@@ -78,8 +78,9 @@ type publicMenuSettings struct {
 	Comments             []string       `json:"comments"`
 	MinPartySize         int            `json:"min_party_size"`
 	MainDishesLimit      bool           `json:"main_dishes_limit"`
-	MainDishesLimitCount int            `json:"main_dishes_limit_number"`
-	CommentsEnglish      []string       `json:"comments_english,omitempty"`
+	MainDishesLimitCount int              `json:"main_dishes_limit_number"`
+	BeverageOptions      []map[string]any `json:"beverage_options"`
+	CommentsEnglish      []string         `json:"comments_english,omitempty"`
 }
 
 type publicMenuItem struct {
@@ -587,6 +588,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			Settings: publicMenuSettings{
 				IncludedCoffee:       includedCoffeeInt != 0,
 				Beverage:             beverage,
+				BeverageOptions:      s.menuBeverageOptionsPayload(restaurantID, menuID),
 				Comments:             anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
 				MinPartySize:         minPartySize,
 				MainDishesLimit:      mainDishesLimitInt != 0,
@@ -1010,6 +1012,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		Settings: publicMenuSettings{
 			IncludedCoffee:       includedCoffeeInt != 0,
 			Beverage:             beverage,
+			BeverageOptions:      s.menuBeverageOptionsPayload(int(restaurantID), menuID),
 			Comments:             anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
 			MinPartySize:         minPartySize,
 			MainDishesLimit:      mainDishesLimitInt != 0,

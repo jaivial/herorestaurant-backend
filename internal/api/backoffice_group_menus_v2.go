@@ -899,6 +899,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 			"settings": map[string]any{
 				"included_coffee":          includedCoffeeInt != 0,
 				"beverage":                 decodeJSONOrFallback(beverageRaw.String, map[string]any{"type": "no_incluida", "price_per_person": nil, "has_supplement": false, "supplement_price": nil}),
+				"beverage_options":         s.menuBeverageOptionsPayload(a.ActiveRestaurantID, menuID),
 				"comments":                 anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
 				"min_party_size":           minPartySize,
 				"main_dishes_limit":        mainLimitInt != 0,
