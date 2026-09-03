@@ -19,21 +19,32 @@ func echoCorrelationID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// sanitizeLogValue strips control characters (notably newlines) so user- or
+// error-derived strings cannot forge extra log lines (log injection).
+func sanitizeLogValue(v string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, v)
+}
+
 // logCheckpoint emits a named, greppable checkpoint tied to the request's
 // correlation id. Format: checkpoint <name> correlation_id=<id> key=value...
 func logCheckpoint(r *http.Request, name string, kv ...string) {
 	var b strings.Builder
 	b.WriteString("checkpoint ")
-	b.WriteString(name)
+	b.WriteString(sanitizeLogValue(name))
 	if cid := correlationIDFromRequest(r); cid != "" {
 		b.WriteString(" correlation_id=")
-		b.WriteString(cid)
+		b.WriteString(sanitizeLogValue(cid))
 	}
 	for i := 0; i+1 < len(kv); i += 2 {
 		b.WriteString(" ")
-		b.WriteString(kv[i])
+		b.WriteString(sanitizeLogValue(kv[i]))
 		b.WriteString("=")
-		b.WriteString(kv[i+1])
+		b.WriteString(sanitizeLogValue(kv[i+1]))
 	}
 	log.Printf("%s", b.String())
 }

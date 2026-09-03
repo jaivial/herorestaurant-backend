@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"preactvillacarmen/internal/httpx"
 )
@@ -590,7 +591,9 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 	}
 
 	logCheckpoint(r, "group_menus_list_db_query_started", "restaurant_id", fmt.Sprintf("%d", restaurantID))
-	rows, err := s.db.QueryContext(r.Context(), query, restaurantID)
+	queryCtx, cancelQuery := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancelQuery()
+	rows, err := s.db.QueryContext(queryCtx, query, restaurantID)
 	if err != nil {
 		logCheckpoint(r, "group_menus_list_db_query_failed", "error", err.Error())
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -672,6 +675,14 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 			"created_at":               createdAt.String,
 		}
 		menus = append(menus, menu)
+	}
+	if err := rows.Err(); err != nil {
+		logCheckpoint(r, "group_menus_list_rows_iteration_failed", "error", err.Error())
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Server error: " + err.Error(),
+		})
+		return
 	}
 
 	if richDishes {
