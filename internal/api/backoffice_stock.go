@@ -150,6 +150,7 @@ type stockItemCard struct {
 	ID               int64     `json:"id"`
 	Name             string    `json:"name"`
 	SKU              string    `json:"sku,omitempty"`
+	Barcode          string    `json:"barcode,omitempty"`
 	CategoryName     string    `json:"categoryName,omitempty"`
 	Kind             string    `json:"kind"`
 	BaseDimension    string    `json:"baseDimension"`
@@ -521,9 +522,9 @@ func (s *Server) handleBOStockItemsList(w http.ResponseWriter, r *http.Request) 
 	where := `i.restaurant_id=? AND i.deleted_at IS NULL AND i.is_active=1`
 	whereArgs := []any{a.ActiveRestaurantID}
 	if q != "" {
-		where += ` AND (i.name LIKE ? OR i.sku LIKE ?)`
+		where += ` AND (i.name LIKE ? OR i.sku LIKE ? OR i.barcode LIKE ?)`
 		like := "%" + q + "%"
-		whereArgs = append(whereArgs, like, like)
+		whereArgs = append(whereArgs, like, like, like)
 	}
 	if tracked := strings.TrimSpace(r.URL.Query().Get("isTracked")); tracked == "true" || tracked == "false" {
 		where += ` AND i.is_tracked=?`
@@ -558,7 +559,7 @@ func (s *Server) handleBOStockItemsList(w http.ResponseWriter, r *http.Request) 
 	case "updated_at":
 		sortSQL = "i.updated_at DESC"
 	}
-	query := `SELECT i.id,i.name,COALESCE(i.sku,''),COALESCE(c.name,''),i.kind,i.base_dimension,i.base_unit,i.is_tracked,i.deduction_source,COALESCE(l.qty_base,0),COALESCE(l.par_level_base,0),COALESCE(l.reorder_point_base,0),u.id,u.code,u.label,u.factor_to_base,u.is_default_purchase,u.is_default_display FROM stock_items i LEFT JOIN stock_categories c ON c.id=i.category_id AND c.restaurant_id=i.restaurant_id ` + joinLevel + ` JOIN stock_item_units u ON u.restaurant_id=i.restaurant_id AND u.stock_item_id=i.id AND u.is_default_display=1 WHERE ` + where + ` ORDER BY ` + sortSQL + ` LIMIT ? OFFSET ?`
+	query := `SELECT i.id,i.name,COALESCE(i.sku,''),COALESCE(i.barcode,''),COALESCE(c.name,''),i.kind,i.base_dimension,i.base_unit,i.is_tracked,i.deduction_source,COALESCE(l.qty_base,0),COALESCE(l.par_level_base,0),COALESCE(l.reorder_point_base,0),u.id,u.code,u.label,u.factor_to_base,u.is_default_purchase,u.is_default_display FROM stock_items i LEFT JOIN stock_categories c ON c.id=i.category_id AND c.restaurant_id=i.restaurant_id ` + joinLevel + ` JOIN stock_item_units u ON u.restaurant_id=i.restaurant_id AND u.stock_item_id=i.id AND u.is_default_display=1 WHERE ` + where + ` ORDER BY ` + sortSQL + ` LIMIT ? OFFSET ?`
 	args := append(joinArgs, whereArgs...)
 	args = append(args, pageSize, offset)
 	rows, err := s.db.QueryContext(r.Context(), query, args...)
@@ -571,7 +572,7 @@ func (s *Server) handleBOStockItemsList(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var x stockItemCard
 		var tracked, dp, dd int
-		if err := rows.Scan(&x.ID, &x.Name, &x.SKU, &x.CategoryName, &x.Kind, &x.BaseDimension, &x.BaseUnit, &tracked, &x.DeductionSource, &x.QuantityBase, &x.ParLevelBase, &x.ReorderPointBase, &x.DisplayUnit.ID, &x.DisplayUnit.Code, &x.DisplayUnit.Label, &x.DisplayUnit.FactorToBase, &dp, &dd); err != nil {
+		if err := rows.Scan(&x.ID, &x.Name, &x.SKU, &x.Barcode, &x.CategoryName, &x.Kind, &x.BaseDimension, &x.BaseUnit, &tracked, &x.DeductionSource, &x.QuantityBase, &x.ParLevelBase, &x.ReorderPointBase, &x.DisplayUnit.ID, &x.DisplayUnit.Code, &x.DisplayUnit.Label, &x.DisplayUnit.FactorToBase, &dp, &dd); err != nil {
 			httpx.WriteError(w, 500, "Error reading stock")
 			return
 		}
@@ -593,7 +594,7 @@ func (s *Server) handleBOStockItemOptions(w http.ResponseWriter, r *http.Request
 		return
 	}
 	q := "%" + strings.TrimSpace(r.URL.Query().Get("q")) + "%"
-	rows, err := s.db.QueryContext(r.Context(), `SELECT i.id,i.name,i.kind,i.is_tracked,u.id,u.code,u.label,u.factor_to_base FROM stock_items i JOIN stock_item_units u ON u.restaurant_id=i.restaurant_id AND u.stock_item_id=i.id AND u.is_default_display=1 WHERE i.restaurant_id=? AND i.is_active=1 AND i.deleted_at IS NULL AND (?='%%' OR i.name LIKE ? OR i.sku LIKE ?) ORDER BY i.name LIMIT 500`, a.ActiveRestaurantID, q, q, q)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT i.id,i.name,i.kind,i.is_tracked,u.id,u.code,u.label,u.factor_to_base FROM stock_items i JOIN stock_item_units u ON u.restaurant_id=i.restaurant_id AND u.stock_item_id=i.id AND u.is_default_display=1 WHERE i.restaurant_id=? AND i.is_active=1 AND i.deleted_at IS NULL AND (?='%%' OR i.name LIKE ? OR i.sku LIKE ? OR i.barcode LIKE ?) ORDER BY i.name LIMIT 500`, a.ActiveRestaurantID, q, q, q, q)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading item options")
 		return
@@ -623,6 +624,7 @@ func (s *Server) handleBOStockItemCreate(w http.ResponseWriter, r *http.Request)
 	var in struct {
 		Name              string  `json:"name"`
 		SKU               string  `json:"sku"`
+		Barcode           string  `json:"barcode"`
 		CategoryID        *int64  `json:"categoryId"`
 		Kind              string  `json:"kind"`
 		BaseDimension     string  `json:"baseDimension"`
@@ -674,7 +676,7 @@ func (s *Server) handleBOStockItemCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_items (restaurant_id,category_id,sku,name,kind,base_dimension,base_unit,is_tracked,deduction_source) VALUES (?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, in.CategoryID, stockNullableString(in.SKU), strings.TrimSpace(in.Name), in.Kind, strings.ToUpper(in.BaseDimension), baseUnit, stockBoolInt(isTracked), in.DeductionSource)
+	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_items (restaurant_id,category_id,sku,barcode,name,kind,base_dimension,base_unit,is_tracked,deduction_source) VALUES (?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, in.CategoryID, stockNullableString(in.SKU), stockNullableString(in.Barcode), strings.TrimSpace(in.Name), in.Kind, strings.ToUpper(in.BaseDimension), baseUnit, stockBoolInt(isTracked), in.DeductionSource)
 	if err != nil {
 		httpx.WriteError(w, 400, "Item could not be created")
 		return
@@ -706,6 +708,7 @@ func (s *Server) handleBOStockItemPatch(w http.ResponseWriter, r *http.Request) 
 	var in struct {
 		Name            string `json:"name"`
 		SKU             string `json:"sku"`
+		Barcode         string `json:"barcode"`
 		Kind            string `json:"kind"`
 		IsTracked       bool   `json:"isTracked"`
 		DeductionSource string `json:"deductionSource"`
@@ -725,7 +728,7 @@ func (s *Server) handleBOStockItemPatch(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid item configuration")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `UPDATE stock_items SET name=?,sku=?,kind=?,is_tracked=?,deduction_source=?,shelf_life_days=? WHERE id=? AND restaurant_id=? AND deleted_at IS NULL`, strings.TrimSpace(in.Name), stockNullableString(in.SKU), in.Kind, stockBoolInt(in.IsTracked), in.DeductionSource, in.ShelfLifeDays, itemID, a.ActiveRestaurantID)
+	res, err := s.db.ExecContext(r.Context(), `UPDATE stock_items SET name=?,sku=?,barcode=?,kind=?,is_tracked=?,deduction_source=?,shelf_life_days=? WHERE id=? AND restaurant_id=? AND deleted_at IS NULL`, strings.TrimSpace(in.Name), stockNullableString(in.SKU), stockNullableString(in.Barcode), in.Kind, stockBoolInt(in.IsTracked), in.DeductionSource, in.ShelfLifeDays, itemID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Item could not be updated")
 		return
