@@ -599,6 +599,7 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 	if bands == nil {
 		bands = stockDefaultMarginBands()
 	}
+	salesDays := stockQueryInt(r, "salesDays", 90, 7, 365)
 	tx, err := s.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading costs")
@@ -634,6 +635,34 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading labour costs")
 		return
 	}
+	// Sales mix joins tickets→products→recipes through the same rule table the
+	// real-time depletion uses (pos_product_stock_rules), so a dish only gets
+	// credit for sales of products actually wired to it. DISTINCT product/recipe
+	// pairs keep multi-warehouse rules from double counting a line.
+	soldByRecipe := map[int64]float64{}
+	ticketsByRecipe := map[int64]int{}
+	salesRows, err := tx.QueryContext(r.Context(), `SELECT rr.stock_recipe_id,COALESCE(SUM(l.quantity),0),COUNT(DISTINCT l.ticket_id)
+		FROM (SELECT DISTINCT pos_product_id,stock_recipe_id FROM pos_product_stock_rules WHERE restaurant_id=? AND is_active=1 AND stock_recipe_id>0) rr
+		JOIN pos_ticket_lines l ON l.restaurant_id=? AND l.pos_product_id=rr.pos_product_id AND l.status='ACTIVE' AND l.created_at>=DATE_SUB(NOW(),INTERVAL ? DAY)
+		JOIN pos_tickets t ON t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id AND t.status IN ('PAID','PARTIALLY_REFUNDED')
+		GROUP BY rr.stock_recipe_id`, a.ActiveRestaurantID, a.ActiveRestaurantID, salesDays)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading sales mix")
+		return
+	}
+	for salesRows.Next() {
+		var recipeID int64
+		var sold float64
+		var tickets int
+		if err = salesRows.Scan(&recipeID, &sold, &tickets); err != nil {
+			salesRows.Close()
+			httpx.WriteError(w, http.StatusInternalServerError, "Error reading sales mix")
+			return
+		}
+		soldByRecipe[recipeID] = sold
+		ticketsByRecipe[recipeID] = tickets
+	}
+	salesRows.Close()
 	rows, err := tx.QueryContext(r.Context(), `SELECT r.id,r.name,r.selling_price_gross,COALESCE(v.rate,0),r.overhead_pct,r.is_protected FROM stock_recipes r LEFT JOIN stock_vat_rates v ON v.restaurant_id=r.restaurant_id AND v.id=r.vat_rate_id WHERE r.restaurant_id=? AND r.is_active=1 ORDER BY r.name`, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading costs")
@@ -669,7 +698,59 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 		net, pct, margin := stockCostMetrics(gross.Float64, vat, totalCost)
 		out = append(out, map[string]any{"recipeId": id, "name": name, "grossPrice": gross.Float64, "netPrice": net, "vatRate": vat, "ingredientCost": ingredientCost, "labourCost": labourCost, "overheadCost": overheadCost, "totalCost": totalCost, "foodCostPct": pct, "grossMargin": margin, "zone": stockMarginZone(pct, bands), "isProtected": protected != 0, "labourCostEnabled": labourEnabled != 0, "labourCostAvailable": len(missingMembers) == 0, "missingLabourMembers": missingMembers})
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": out})
+	rows.Close()
+	// Menu engineering (Kasavana-Smith): popularity compares each dish's sales
+	// mix share against 70% of an even split; margin compares its contribution
+	// margin against the units-weighted average. Only dishes on the current
+	// active menu count toward the baselines.
+	recipesWithSales := 0
+	var totalSold float64
+	for _, item := range out {
+		recipeID := item["recipeId"].(int64)
+		sold := soldByRecipe[recipeID]
+		item["sold"] = sold
+		item["tickets"] = ticketsByRecipe[recipeID]
+		netPrice := item["netPrice"].(float64)
+		margin := item["grossMargin"].(float64)
+		marginPct := 0.0
+		if netPrice > 0 {
+			marginPct = margin / netPrice * 100
+		}
+		item["marginPct"] = marginPct
+		if sold > 0 {
+			recipesWithSales++
+			totalSold += sold
+		}
+	}
+	classified := totalSold > 0 && len(out) > 0
+	avgSold, weightedMargin := 0.0, 0.0
+	if classified {
+		avgSold = totalSold / float64(recipesWithSales)
+		for _, item := range out {
+			weightedMargin += item["sold"].(float64) * item["grossMargin"].(float64)
+		}
+		weightedMargin /= totalSold
+		for _, item := range out {
+			sold := item["sold"].(float64)
+			popular := sold > 0 && sold >= 0.7*avgSold
+			highMargin := item["grossMargin"].(float64) >= weightedMargin
+			switch {
+			case popular && highMargin:
+				item["class"] = "star"
+			case popular:
+				item["class"] = "plowhorse"
+			case highMargin:
+				item["class"] = "puzzle"
+			default:
+				item["class"] = "dog"
+			}
+		}
+	} else {
+		for _, item := range out {
+			item["class"] = ""
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": out, "salesMix": map[string]any{"days": salesDays, "totalSold": totalSold, "recipesWithSales": recipesWithSales, "avgSold": avgSold, "weightedAvgMargin": weightedMargin, "classified": classified}})
 }
 
 func (s *Server) handleBOStockAIRecommendations(w http.ResponseWriter, r *http.Request) {

@@ -2938,10 +2938,10 @@ positive; direction derives from type. `WASTE` requires `wasteReason`.
 | GET/POST | `/api/admin/stock/production-orders/{id}/labour` | List or allocate actual fichaje minutes to production; missing compensation stays incomplete |
 | DELETE | `/api/admin/stock/production-orders/{id}/labour/{allocationId}` | Remove allocation and deterministically rebuild actual labour snapshot |
 | PUT | `/api/admin/stock/affluence` | Manual covers input until POS module exists |
-| GET | `/api/admin/stock/forecast` | Scenario/horizon forecast with eight-week confidence state |
+| GET | `/api/admin/stock/forecast` | Scenario/horizon forecast with eight-week confidence state. `?scenario=LIGHT\|MEDIUM\|HIGH` (default MEDIUM), `?horizonDays=1..30` (default 7). When a `stock_settings.seasonality_profile` exists, its multipliers are day-weighted over the window and composed on top of the scenario (`effectiveMultiplier = scenario × seasonal`); response carries `seasonalFactor` (window average, 1.0 = neutral) and `seasonalityApplied`. Malformed profiles fall back to neutral, never error. |
 | GET/POST/PATCH/DELETE | `/api/admin/stock/vat-rates[/{id}]` | Tenant VAT CRUD |
 | POST | `/api/admin/stock/items/{id}/prices` | Record raw-item base-unit purchase price |
-| GET | `/api/admin/stock/costing` | Recursive ingredient + member labour cost, overhead, net price, food-cost %, margin and missing-rate diagnostics |
+| GET | `/api/admin/stock/costing` | Recursive ingredient + member labour cost, overhead, net price, food-cost %, margin and missing-rate diagnostics. `?salesDays=7..365` (default 90) adds menu-engineering sales mix per recipe: `sold` (ACTIVE lines on PAID/PARTIALLY_REFUNDED tickets, joined product→recipe via `pos_product_stock_rules`), `tickets`, `marginPct` and `class` (`star`/`plowhorse`/`puzzle`/`dog`; empty until sales exist). Top-level `salesMix` reports `{days, totalSold, recipesWithSales, avgSold, weightedAvgMargin, classified}`. |
 | GET | `/api/admin/stock/labour-members` | Active members with cost availability only; salary and hourly amount are not exposed |
 | GET/POST/PATCH/DELETE | `/api/admin/stock/margin-bands[/{id}]` | Tenant margin-band CRUD |
 | POST | `/api/admin/stock/ai/recommendations` | Persisted MiniMax advisory report; protected dishes cannot receive removal advice |
