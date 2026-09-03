@@ -246,6 +246,19 @@ func (s *Server) handleBOStockForecast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	horizon := stockQueryInt(r, "horizonDays", 7, 1, 30)
+	seasonalFactors := stockSeasonalityMonthlyFactors(s.stockSeasonalityProfileRaw(r.Context(), a.ActiveRestaurantID))
+	seasonalityApplied := false
+	for _, factor := range seasonalFactors {
+		if factor != 1 {
+			seasonalityApplied = true
+		}
+	}
+	seasonalFactor := 0.0
+	for day := 0; day < horizon; day++ {
+		seasonalFactor += seasonalFactors[time.Now().AddDate(0, 0, day).Month()-1]
+	}
+	seasonalFactor /= float64(horizon)
+	effectiveMultiplier := multiplier * seasonalFactor
 	var historyDays, totalCovers, affluenceDays int
 	_ = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(DATEDIFF(MAX(occurred_at),MIN(occurred_at))+1,0) FROM stock_movements WHERE restaurant_id=? AND type IN ('SALE','PRODUCTION_OUT','WASTE')`, a.ActiveRestaurantID).Scan(&historyDays)
 	_ = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(covers),0),COUNT(DISTINCT service_date) FROM stock_affluence_daily WHERE restaurant_id=? AND service_date>=DATE_SUB(CURDATE(),INTERVAL 8 WEEK)`, a.ActiveRestaurantID).Scan(&totalCovers, &affluenceDays)
@@ -264,11 +277,11 @@ func (s *Server) handleBOStockForecast(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error reading forecast")
 			return
 		}
-		forecast := avgDaily * float64(horizon) * multiplier
+		forecast := avgDaily * float64(horizon) * effectiveMultiplier
 		if totalCovers > 0 && affluenceDays > 0 {
 			usagePerCover := totalUsage / float64(totalCovers)
 			expectedCoversPerDay := float64(totalCovers) / float64(affluenceDays)
-			forecast = usagePerCover * expectedCoversPerDay * float64(horizon) * multiplier
+			forecast = usagePerCover * expectedCoversPerDay * float64(horizon) * effectiveMultiplier
 		}
 		safety := avgDaily * 2
 		recommended := forecast + safety
@@ -283,8 +296,119 @@ func (s *Server) handleBOStockForecast(w http.ResponseWriter, r *http.Request) {
 	} else if historyDays < 56 {
 		confidence = "MEDIUM"
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "scenario": scenario, "horizonDays": horizon, "historyDays": historyDays, "requiredHistoryDays": 56, "affluenceDays": affluenceDays, "confidence": confidence, "items": items})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "scenario": scenario, "horizonDays": horizon, "historyDays": historyDays, "requiredHistoryDays": 56, "affluenceDays": affluenceDays, "confidence": confidence, "seasonalFactor": seasonalFactor, "seasonalityApplied": seasonalityApplied, "items": items})
 }
+
+// stockSeasonalityProfileRaw returns the stored seasonality profile, or `{}`.
+// A missing or unreadable profile must never fail the forecast.
+func (s *Server) stockSeasonalityProfileRaw(ctx context.Context, restaurantID int) json.RawMessage {
+	profileRaw := json.RawMessage(`{}`)
+	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(seasonality_profile,JSON_OBJECT()) FROM stock_settings WHERE restaurant_id=?`, restaurantID).Scan(&profileRaw)
+	return profileRaw
+}
+
+// stockSeasonalityMonthlyFactors turns a seasonality profile into one usage
+// multiplier per month. Profiles written by the classifier only carry
+// peakMonths/lowMonths (month names or numbers, ES or EN); an explicit
+// monthlyFactors map wins when present. Anything unparseable is ignored.
+func stockSeasonalityMonthlyFactors(profileRaw json.RawMessage) [12]float64 {
+	var factors [12]float64
+	for i := range factors {
+		factors[i] = 1
+	}
+	var profile map[string]json.RawMessage
+	if json.Unmarshal(profileRaw, &profile) != nil {
+		return factors
+	}
+	if raw, ok := profile["monthlyFactors"]; ok {
+		var byMonth map[string]float64
+		if json.Unmarshal(raw, &byMonth) == nil {
+			for key, value := range byMonth {
+				if idx := stockSeasonalityMonthIndex(key); idx > 0 {
+					factors[idx-1] = stockClampSeasonalFactor(value)
+				}
+			}
+			return factors
+		}
+	}
+	peakFactor, lowFactor := 1.2, 0.8
+	if raw, ok := profile["peakFactor"]; ok {
+		var v float64
+		if json.Unmarshal(raw, &v) == nil {
+			peakFactor = stockClampSeasonalFactor(v)
+		}
+	}
+	if raw, ok := profile["lowFactor"]; ok {
+		var v float64
+		if json.Unmarshal(raw, &v) == nil {
+			lowFactor = stockClampSeasonalFactor(v)
+		}
+	}
+	applyMonths := func(key string, factor float64) {
+		raw, ok := profile[key]
+		if !ok {
+			return
+		}
+		var months []any
+		if json.Unmarshal(raw, &months) != nil {
+			return
+		}
+		for _, month := range months {
+			if idx := stockSeasonalityMonthIndex(month); idx > 0 {
+				factors[idx-1] = factor
+			}
+		}
+	}
+	applyMonths("peakMonths", peakFactor)
+	applyMonths("lowMonths", lowFactor)
+	return factors
+}
+
+func stockClampSeasonalFactor(value float64) float64 {
+	if math.IsNaN(value) || value <= 0 {
+		return 1
+	}
+	return math.Min(2.5, math.Max(0.2, value))
+}
+
+// stockSeasonalityMonthIndex accepts month numbers (1-12) and month names in
+// Spanish or English, full or 3-letter, case-insensitive; 0 when unknown.
+func stockSeasonalityMonthIndex(token any) int {
+	switch value := token.(type) {
+	case float64:
+		if value >= 1 && value <= 12 && value == math.Trunc(value) {
+			return int(value)
+		}
+	case string:
+		trimmed := strings.ToLower(strings.TrimSpace(value))
+		if trimmed == "" {
+			return 0
+		}
+		if n, err := strconv.Atoi(trimmed); err == nil {
+			if n >= 1 && n <= 12 {
+				return n
+			}
+			return 0
+		}
+		return stockMonthNames[trimmed]
+	}
+	return 0
+}
+
+var stockMonthNames = func() map[string]int {
+	names := map[string]int{}
+	english := []string{"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"}
+	spanish := []string{"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"}
+	for i, name := range english {
+		names[name] = i + 1
+		names[name[:3]] = i + 1
+	}
+	for i, name := range spanish {
+		names[name] = i + 1
+		names[name[:3]] = i + 1
+	}
+	return names
+}()
 
 func (s *Server) handleBOStockVATList(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
