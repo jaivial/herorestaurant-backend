@@ -1511,13 +1511,14 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 	}
 
 	type existingDishState struct {
-		Title    string
-		Active   bool
-		Position int
+		Title              string
+		Active             bool
+		Position           int
+		DescriptionEnabled bool
 	}
 	existing := map[int64]existingDishState{}
 	rows, err := tx.QueryContext(r.Context(), `
-		SELECT id, title_snapshot, active, position
+		SELECT id, title_snapshot, active, position, COALESCE(description_enabled, 1)
 		FROM group_menu_section_dishes_v2
 		WHERE section_id = ? AND menu_id = ? AND restaurant_id = ?
 	`, sectionID, menuID, a.ActiveRestaurantID)
@@ -1531,16 +1532,18 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			title    string
 			active   int
 			position int
+			descEn   int
 		)
-		if err := rows.Scan(&id, &title, &active, &position); err != nil {
+		if err := rows.Scan(&id, &title, &active, &position, &descEn); err != nil {
 			rows.Close()
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo platos")
 			return
 		}
 		existing[id] = existingDishState{
-			Title:    strings.TrimSpace(title),
-			Active:   active != 0,
-			Position: position,
+			Title:              strings.TrimSpace(title),
+			Active:             active != 0,
+			Position:           position,
+			DescriptionEnabled: descEn != 0,
 		}
 	}
 	rows.Close()
@@ -1581,8 +1584,14 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			if !ok {
 				// Invalid/foreign id for this section: treat as new dish to avoid touching unrelated rows.
 				dish.ID = 0
-			} else if prev.Title != title || prev.Active != active || (active && prev.Position != position) {
-				needsLegacySync = true
+			} else {
+				// Omitted description_enabled on update must not reset a persisted 0.
+				if dish.DescriptionEnabled == nil {
+					descEnabled = prev.DescriptionEnabled
+				}
+				if prev.Title != title || prev.Active != active || (active && prev.Position != position) {
+					needsLegacySync = true
+				}
 			}
 		}
 
