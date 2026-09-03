@@ -853,6 +853,8 @@ func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[stri
 		return nil
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
 		return errors.New("restaurant not found")
@@ -886,7 +888,7 @@ func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[stri
 	}
 
 	sectionArgs := append([]any(nil), args...)
-	sectionRows, err := s.db.QueryContext(r.Context(), fmt.Sprintf(`
+	sectionRows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, menu_id, section_kind, title
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id IN (%s)
@@ -915,7 +917,7 @@ func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[stri
 	}
 	sectionRows.Close()
 
-	dishRows, err := s.db.QueryContext(r.Context(), fmt.Sprintf(`
+	dishRows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT d.id, d.menu_id, d.section_id, d.title_snapshot, d.description_snapshot,
 		       d.allergens_json, COALESCE(d.description_enabled, 1),
 		       c.description, c.allergens_json, COALESCE(c.default_supplement_enabled, 0), c.default_supplement_price,
@@ -1044,7 +1046,9 @@ func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[stri
 }
 
 func (s *Server) loadGroupMenuFoodItemsByName(r *http.Request, restaurantID int) (map[string]map[string]any, error) {
-	rows, err := s.db.QueryContext(r.Context(), `
+	queryCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	rows, err := s.db.QueryContext(queryCtx, `
 		SELECT id, nombre, descripcion, alergenos_json, COALESCE(suplemento, 0)
 		FROM comida_items
 		WHERE restaurant_id = ? AND source_type = 'platos' AND active = 1
