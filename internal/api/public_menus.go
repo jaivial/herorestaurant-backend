@@ -73,11 +73,11 @@ type publicMenuPrincipales struct {
 }
 
 type publicMenuSettings struct {
-	IncludedCoffee       bool           `json:"included_coffee"`
-	Beverage             map[string]any `json:"beverage"`
-	Comments             []string       `json:"comments"`
-	MinPartySize         int            `json:"min_party_size"`
-	MainDishesLimit      bool           `json:"main_dishes_limit"`
+	IncludedCoffee       bool             `json:"included_coffee"`
+	Beverage             map[string]any   `json:"beverage"`
+	Comments             []string         `json:"comments"`
+	MinPartySize         int              `json:"min_party_size"`
+	MainDishesLimit      bool             `json:"main_dishes_limit"`
 	MainDishesLimitCount int              `json:"main_dishes_limit_number"`
 	BeverageOptions      []map[string]any `json:"beverage_options"`
 	CommentsEnglish      []string         `json:"comments_english,omitempty"`

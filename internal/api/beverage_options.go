@@ -182,11 +182,11 @@ func (s *Server) handleBOBeverageOptionsList(w http.ResponseWriter, r *http.Requ
 
 func (s *Server) handleBOBeverageOptionsWSMessage(r *http.Request, restaurantID int, menuID int64, client *boGroupMenuV2AIClient, raw []byte) {
 	var msg struct {
-		Type       string `json:"type"`
-		MenuID     int64  `json:"menu_id"`
-		OptionID   int64  `json:"option_id"`
-		Selected   *bool  `json:"selected"`
-		Name       string `json:"name"`
+		Type        string `json:"type"`
+		MenuID      int64  `json:"menu_id"`
+		OptionID    int64  `json:"option_id"`
+		Selected    *bool  `json:"selected"`
+		Name        string `json:"name"`
 		Correlation string `json:"correlation_id"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
@@ -285,4 +285,3 @@ func (s *Server) menuBeverageOptionsPayload(restaurantID int, menuID int64) []ma
 	}
 	return out
 }
-
