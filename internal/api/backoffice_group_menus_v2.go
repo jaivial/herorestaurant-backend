@@ -1785,19 +1785,21 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 	}
 
 	var (
-		currentCatalogID sql.NullInt64
-		currentTitle     string
-		currentDesc      string
-		currentAllergens sql.NullString
-		currentSuppInt   int
-		currentSuppPrice sql.NullFloat64
-		currentPrice     sql.NullFloat64
-		currentActiveInt int
-		currentPosition  int
+		currentCatalogID   sql.NullInt64
+		currentTitle       string
+		currentDesc        string
+		currentAllergens   sql.NullString
+		currentSuppInt     int
+		currentSuppPrice   sql.NullFloat64
+		currentPrice       sql.NullFloat64
+		currentActiveInt   int
+		currentPosition    int
+		currentDescEnabled int
 	)
 	err = tx.QueryRowContext(r.Context(), `
 		SELECT catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
-		       supplement_enabled, supplement_price, price, active, position
+		       supplement_enabled, supplement_price, price, active, position,
+		       COALESCE(description_enabled, 1)
 		FROM group_menu_section_dishes_v2
 		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
 		LIMIT 1
@@ -1811,6 +1813,7 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 		&currentPrice,
 		&currentActiveInt,
 		&currentPosition,
+		&currentDescEnabled,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1883,12 +1886,17 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 	if raw, ok := input["active"]; ok {
 		active = parseLooseBoolOrDefault(raw, active)
 	}
+	descriptionEnabled := currentDescEnabled != 0
+	if raw, ok := input["description_enabled"]; ok {
+		descriptionEnabled = parseLooseBoolOrDefault(raw, descriptionEnabled)
+	}
 
 	_, err = tx.ExecContext(r.Context(), `
 		UPDATE group_menu_section_dishes_v2
 		SET catalog_dish_id = ?,
 		    title_snapshot = ?,
 		    description_snapshot = ?,
+		    description_enabled = ?,
 		    allergens_json = ?,
 		    supplement_enabled = ?,
 		    supplement_price = ?,
@@ -1900,6 +1908,7 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 		catalogDishID,
 		title,
 		description,
+		boolToTinyint(descriptionEnabled),
 		mustJSON(allergens, []any{}),
 		boolToTinyint(supplementEnabled),
 		supplementPrice,
