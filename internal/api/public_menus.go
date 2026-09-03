@@ -1295,12 +1295,15 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 // handlePublicMenusHome handles GET /menus/home.
 // Returns a lightweight list of active menus for the homepage cards section.
 func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
+	echoCorrelationID(w, r)
+	logCheckpoint(r, "home_menus_request_received")
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusInternalServerError, "Restaurant not found")
 		return
 	}
 
+	logCheckpoint(r, "home_menus_db_query_started", "restaurant_id", strconv.Itoa(restaurantID))
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, menu_type, active, menu_subtitle,
 		       show_menu_preview_image, menu_preview_image_path
@@ -1363,10 +1366,12 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.enrichPublicHomeMenus(r.Context(), restaurantID, menus)
+	logCheckpoint(r, "home_menus_db_query_completed", "menu_count", strconv.Itoa(len(menus)))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"count":   len(menus),
 		"menus":   menus,
 	})
+	logCheckpoint(r, "home_menus_response_sent", "menu_count", strconv.Itoa(len(menus)))
 }
