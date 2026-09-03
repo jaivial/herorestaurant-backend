@@ -1607,7 +1607,7 @@ func (s *Server) handleBOStockValuation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT i.id, i.name, COALESCE(c.name, ''), SUM(l.qty_base),
+		SELECT i.id, i.name, COALESCE(c.name, ''), i.base_unit, SUM(l.qty_base),
 		       CASE WHEN SUM(l.qty_base) = 0 THEN 0 ELSE SUM(l.qty_base * l.avg_unit_cost) / SUM(l.qty_base) END,
 		       (SELECT m.unit_cost FROM stock_movements m
 		          WHERE m.restaurant_id = i.restaurant_id AND m.stock_item_id = i.id
@@ -1617,7 +1617,7 @@ func (s *Server) handleBOStockValuation(w http.ResponseWriter, r *http.Request) 
 		JOIN stock_levels l ON l.restaurant_id = i.restaurant_id AND l.stock_item_id = i.id
 		LEFT JOIN stock_categories c ON c.restaurant_id = i.restaurant_id AND c.id = i.category_id
 		WHERE i.restaurant_id = ? AND i.is_active = 1 AND i.is_tracked = 1 AND i.deleted_at IS NULL
-		GROUP BY i.id, i.name, c.name
+		GROUP BY i.id, i.name, c.name, i.base_unit
 		HAVING SUM(l.qty_base) <> 0
 		ORDER BY i.name
 	`, a.ActiveRestaurantID)
@@ -1630,6 +1630,7 @@ func (s *Server) handleBOStockValuation(w http.ResponseWriter, r *http.Request) 
 		ItemID       int64    `json:"itemId"`
 		ItemName     string   `json:"itemName"`
 		CategoryName string   `json:"categoryName"`
+		BaseUnit     string   `json:"baseUnit"`
 		QtyBase      float64  `json:"qtyBase"`
 		AvgUnitCost  float64  `json:"avgUnitCost"`
 		LastUnitCost *float64 `json:"lastUnitCost"`
@@ -1641,7 +1642,7 @@ func (s *Server) handleBOStockValuation(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var it valuationItem
 		var lastCost sql.NullFloat64
-		if err := rows.Scan(&it.ItemID, &it.ItemName, &it.CategoryName, &it.QtyBase, &it.AvgUnitCost, &lastCost); err != nil {
+		if err := rows.Scan(&it.ItemID, &it.ItemName, &it.CategoryName, &it.BaseUnit, &it.QtyBase, &it.AvgUnitCost, &lastCost); err != nil {
 			httpx.WriteError(w, 500, "Error reading stock valuation")
 			return
 		}
