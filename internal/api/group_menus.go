@@ -978,12 +978,13 @@ func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[stri
 			supplementActive = true
 		}
 		dish := map[string]any{
-			"id":                id,
-			"nombre":            strings.TrimSpace(name),
-			"alergenos":         allergens,
-			"suplemento":        nil,
-			"suplemento_activo": supplementActive,
-			"active":            active != 0,
+			"id":                  id,
+			"nombre":              strings.TrimSpace(name),
+			"alergenos":           allergens,
+			"suplemento":          nil,
+			"suplemento_activo":   supplementActive,
+			"active":              active != 0,
+			"descripcion_enabled": descriptionEnabled != 0,
 		}
 		if descriptionEnabled != 0 {
 			dish["descripcion"] = strings.TrimSpace(description)
@@ -1106,11 +1107,12 @@ func (s *Server) enrichGroupMenuLegacyDishArray(raw any, foodByKey map[string]ma
 
 func enrichGroupMenuLegacyDish(name string, foodByKey map[string]map[string]any) map[string]any {
 	dish := map[string]any{
-		"nombre":      name,
-		"descripcion": "",
-		"alergenos":   []string{},
-		"suplemento":  nil,
-		"active":      true,
+		"nombre":              name,
+		"descripcion":         "",
+		"descripcion_enabled": true,
+		"alergenos":           []string{},
+		"suplemento":          nil,
+		"active":              true,
 	}
 	key := normalizeGroupMenuDishKey(name)
 	if key == "" {
@@ -1144,11 +1146,12 @@ func richLegacyDishArray(raw any) []map[string]any {
 			continue
 		}
 		out = append(out, map[string]any{
-			"nombre":      name,
-			"descripcion": "",
-			"alergenos":   []string{},
-			"suplemento":  nil,
-			"active":      true,
+			"nombre":              name,
+			"descripcion":         "",
+			"descripcion_enabled": true,
+			"alergenos":           []string{},
+			"suplemento":          nil,
+			"active":              true,
 		})
 	}
 	return out
