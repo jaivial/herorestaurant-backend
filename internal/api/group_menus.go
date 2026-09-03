@@ -600,7 +600,7 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 		logCheckpoint(r, "group_menus_list_db_query_failed", "error", err.Error())
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
-			"message": "Server error: " + err.Error(),
+			"message": "Server error",
 		})
 		return
 	}
@@ -616,7 +616,7 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 		if err := rows.Scan(&id, &title); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
-				"message": "Server error: " + err.Error(),
+				"message": "Server error",
 			})
 			return
 		}
@@ -629,12 +629,14 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 		logCheckpoint(r, "group_menus_list_rows_iteration_failed", "error", err.Error())
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
-			"message": "Server error: " + err.Error(),
+			"message": "Server error",
 		})
 		return
 	}
 
-	s.enrichGroupMenuDisplayMenus(r.Context(), restaurantID, menus)
+	enrichCtx, enrichCancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer enrichCancel()
+	s.enrichGroupMenuDisplayMenus(enrichCtx, restaurantID, menus)
 
 	logCheckpoint(r, "group_menus_list_response_sent", "count", strconv.Itoa(len(menus)))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -662,7 +664,7 @@ func (s *Server) handleGetGroupMenuForDisplay(w http.ResponseWriter, r *http.Req
 
 	id, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("id")))
 	if err != nil || id <= 0 {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
 			"message": "Invalid menu id",
 		})
@@ -686,7 +688,7 @@ func (s *Server) handleGetGroupMenuForDisplay(w http.ResponseWriter, r *http.Req
 		logCheckpoint(r, "public_group_menu_db_query_failed", "error", err.Error())
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
-			"message": "Server error: " + err.Error(),
+			"message": "Server error",
 		})
 		return
 	}
@@ -740,7 +742,7 @@ func (s *Server) handleGetGroupMenuForDisplay(w http.ResponseWriter, r *http.Req
 		); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
-				"message": "Server error: " + err.Error(),
+				"message": "Server error",
 			})
 			return
 		}
@@ -766,7 +768,7 @@ func (s *Server) handleGetGroupMenuForDisplay(w http.ResponseWriter, r *http.Req
 		logCheckpoint(r, "public_group_menu_db_query_failed", "error", err.Error())
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
-			"message": "Server error: " + err.Error(),
+			"message": "Server error",
 		})
 		return
 	}
@@ -789,7 +791,9 @@ func (s *Server) handleGetGroupMenuForDisplay(w http.ResponseWriter, r *http.Req
 		})
 		return
 	}
-	s.enrichGroupMenuDisplayMenus(r.Context(), restaurantID, menus)
+	enrichCtx, enrichCancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer enrichCancel()
+	s.enrichGroupMenuDisplayMenus(enrichCtx, restaurantID, menus)
 
 	logCheckpoint(r, "public_group_menu_response_sent", "menu_id", strconv.Itoa(id))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
