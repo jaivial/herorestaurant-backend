@@ -2887,11 +2887,11 @@ and endpoint-specific stock permission. Responses use `{ success: true, ... }` o
 | DELETE | `/api/admin/stock/warehouses/{id}` | `stock.warehouses.manage` | Soft delete; rejects default or non-empty warehouse with `409` |
 | GET/POST | `/api/admin/stock/categories` | `stock.view` / `stock.items.manage` | List or create tenant categories |
 | PATCH/DELETE | `/api/admin/stock/categories/{id}` | `stock.items.manage` | Update or delete unused category |
-| GET | `/api/admin/stock/items` | `stock.view` | Query `q`, `warehouseId`, `page`, `pageSize<=100`; returns paginated card payload |
-| GET | `/api/admin/stock/item-options` | `stock.view` | Active item/default-unit options for recipes and OCR mapping |
-| POST | `/api/admin/stock/items` | `stock.items.manage` | Creates item plus default display/purchase unit |
+| GET | `/api/admin/stock/items` | `stock.view` | Query `q` (matches name, SKU or barcode), `warehouseId`, `page`, `pageSize<=100`; returns paginated card payload incl. `barcode` |
+| GET | `/api/admin/stock/item-options` | `stock.view` | Active item/default-unit options for recipes and OCR mapping; `q` matches name, SKU or barcode |
+| POST | `/api/admin/stock/items` | `stock.items.manage` | Creates item (optional `barcode`, max 64 chars) plus default display/purchase unit |
 | POST | `/api/admin/stock/items/import` | `stock.items.manage` | Multipart CSV/XLSX preview; `confirm=1` atomically creates valid rows |
-| PATCH | `/api/admin/stock/items/{id}` | `stock.items.manage` | Updates item metadata, tracking flag and deduction source |
+| PATCH | `/api/admin/stock/items/{id}` | `stock.items.manage` | Updates item metadata incl. `barcode`, tracking flag and deduction source |
 | DELETE | `/api/admin/stock/items/{id}` | `stock.items.manage` | Soft delete; rejects item with non-zero stock |
 | PATCH | `/api/admin/stock/items/{id}/targets` | `stock.items.manage` | Saves warehouse par/reorder targets in selected item unit |
 | GET/POST | `/api/admin/stock/items/{id}/units` | `stock.view` / `stock.items.manage` | List or create item-specific conversion units |
