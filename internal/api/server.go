@@ -101,6 +101,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	s.siteBuilderHub = newSiteBuilderWSHub()
 	go s.runBOFichajeAutoCutLoop()
 	go s.runPreShiftReminderLoop(context.Background())
+	go s.runStockDigestLoop(context.Background())
 	go s.runWhatsAppOutboxLoop(context.Background())
 	return s
 }
