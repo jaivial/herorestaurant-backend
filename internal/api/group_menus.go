@@ -561,20 +561,22 @@ func (s *Server) handleDeleteGroupMenu(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetActiveGroupMenusForDisplay(w http.ResponseWriter, r *http.Request) {
-	s.handleActiveGroupMenusForDisplay(w, r, false)
+	s.handleActiveGroupMenusForDisplay(w, r)
 }
 
 func (s *Server) handleGetActiveGroupMenusForDisplayRich(w http.ResponseWriter, r *http.Request) {
-	s.handleActiveGroupMenusForDisplay(w, r, true)
+	s.handleActiveGroupMenusForDisplay(w, r)
 }
 
-func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http.Request, richDishes bool) {
+// handleActiveGroupMenusForDisplay returns the slim active group-menu list:
+// per menu only id, menu_title and menu_title_english. Full per-menu content
+// (sections, dishes, description toggles) is served by getGroupMenuForDisplay.
+func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http.Request) {
 	echoCorrelationID(w, r)
 	logCheckpoint(r, "group_menus_list_request_received")
 
 	query := `
-		SELECT id, menu_title, price, included_coffee, menu_subtitle, entrantes, principales, postre, beverage, comments,
-		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at
+		SELECT id, menu_title
 		FROM menus
 		WHERE restaurant_id = ? AND active = 1
 		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') IN ('closed_group', 'a_la_carte_group')
@@ -605,6 +607,91 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 	defer rows.Close()
 	logCheckpoint(r, "group_menus_list_db_query_completed")
 
+	menus := []map[string]any{}
+	for rows.Next() {
+		var (
+			id    int
+			title string
+		)
+		if err := rows.Scan(&id, &title); err != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"message": "Server error: " + err.Error(),
+			})
+			return
+		}
+		menus = append(menus, map[string]any{
+			"id":         id,
+			"menu_title": title,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		logCheckpoint(r, "group_menus_list_rows_iteration_failed", "error", err.Error())
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Server error: " + err.Error(),
+		})
+		return
+	}
+
+	s.enrichGroupMenuDisplayMenus(r.Context(), restaurantID, menus)
+
+	logCheckpoint(r, "group_menus_list_response_sent", "count", strconv.Itoa(len(menus)))
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"count":   len(menus),
+		"menus":   menus,
+	})
+}
+
+// handleGetGroupMenuForDisplay returns the full display payload for ONE active
+// group menu (?id=...): legacy blobs plus v2 dish details. Dishes with
+// description_enabled = 0 are returned without a "descripcion" field.
+func (s *Server) handleGetGroupMenuForDisplay(w http.ResponseWriter, r *http.Request) {
+	echoCorrelationID(w, r)
+	logCheckpoint(r, "public_group_menu_request_received")
+
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+			"success": false,
+			"message": "Unknown restaurant",
+		})
+		return
+	}
+
+	id, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("id")))
+	if err != nil || id <= 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Invalid menu id",
+		})
+		return
+	}
+
+	query := `
+		SELECT id, menu_title, price, included_coffee, menu_subtitle, entrantes, principales, postre, beverage, comments,
+		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at
+		FROM menus
+		WHERE id = ? AND restaurant_id = ? AND active = 1
+		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') IN ('closed_group', 'a_la_carte_group')
+		LIMIT 1
+	`
+
+	logCheckpoint(r, "public_group_menu_db_query_started", "menu_id", strconv.Itoa(id), "restaurant_id", fmt.Sprintf("%d", restaurantID))
+	queryCtx, cancelQuery := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancelQuery()
+	rows, err := s.db.QueryContext(queryCtx, query, id, restaurantID)
+	if err != nil {
+		logCheckpoint(r, "public_group_menu_db_query_failed", "error", err.Error())
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Server error: " + err.Error(),
+		})
+		return
+	}
+	defer rows.Close()
+
 	decode := func(raw sql.NullString, fallback any) any {
 		if !raw.Valid || strings.TrimSpace(raw.String) == "" {
 			return fallback
@@ -616,10 +703,11 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 		return out
 	}
 
-	var menus []map[string]any
+	menuFound := false
+	var menu map[string]any
 	for rows.Next() {
 		var (
-			id           int
+			menuID       int
 			title        string
 			price        float64
 			inclCoffee   int
@@ -634,9 +722,8 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 			mainLimitNum int
 			createdAt    sql.NullString
 		)
-
 		if err := rows.Scan(
-			&id,
+			&menuID,
 			&title,
 			&price,
 			&inclCoffee,
@@ -657,9 +744,9 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 			})
 			return
 		}
-
-		menu := map[string]any{
-			"id":                       id,
+		menuFound = true
+		menu = map[string]any{
+			"id":                       menuID,
 			"menu_title":               title,
 			"price":                    price,
 			"included_coffee":          inclCoffee != 0,
@@ -674,34 +761,40 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 			"main_dishes_limit_number": mainLimitNum,
 			"created_at":               createdAt.String,
 		}
-		menus = append(menus, menu)
 	}
 	if err := rows.Err(); err != nil {
-		logCheckpoint(r, "group_menus_list_rows_iteration_failed", "error", err.Error())
+		logCheckpoint(r, "public_group_menu_db_query_failed", "error", err.Error())
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Server error: " + err.Error(),
 		})
 		return
 	}
-
-	if richDishes {
-		if err := s.addActiveGroupMenuDishDetails(r, menus); err != nil {
-			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
-				"success": false,
-				"message": "Error leyendo platos de menus",
-			})
-			return
-		}
+	if !menuFound {
+		logCheckpoint(r, "public_group_menu_not_found", "menu_id", strconv.Itoa(id))
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Menu not found",
+		})
+		return
 	}
+	logCheckpoint(r, "public_group_menu_db_query_completed", "menu_id", strconv.Itoa(id))
 
+	menus := []map[string]any{menu}
+	if err := s.addActiveGroupMenuDishDetails(r, menus); err != nil {
+		logCheckpoint(r, "public_group_menu_dish_details_failed", "error", err.Error())
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error leyendo platos de menus",
+		})
+		return
+	}
 	s.enrichGroupMenuDisplayMenus(r.Context(), restaurantID, menus)
 
-	logCheckpoint(r, "group_menus_list_response_sent", "count", strconv.Itoa(len(menus)))
+	logCheckpoint(r, "public_group_menu_response_sent", "menu_id", strconv.Itoa(id))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
-		"count":   len(menus),
-		"menus":   menus,
+		"menu":    menu,
 	})
 }
 
@@ -820,7 +913,7 @@ func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[stri
 
 	dishRows, err := s.db.QueryContext(r.Context(), fmt.Sprintf(`
 		SELECT d.id, d.menu_id, d.section_id, d.title_snapshot, d.description_snapshot,
-		       d.allergens_json,
+		       d.allergens_json, COALESCE(d.description_enabled, 1),
 		       c.description, c.allergens_json, COALESCE(c.default_supplement_enabled, 0), c.default_supplement_price,
 		       ci.descripcion, ci.alergenos_json, ci.suplemento,
 		       d.supplement_enabled, d.supplement_price, d.active
@@ -846,11 +939,13 @@ func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[stri
 	for dishRows.Next() {
 		var id, menuID, sectionID int64
 		var name, description string
-		var allergensRaw, catalogDescription, catalogAllergens, foodDescription, foodAllergens sql.NullString
+		var allergensRaw sql.NullString
+		var descriptionEnabled int
+		var catalogDescription, catalogAllergens, foodDescription, foodAllergens sql.NullString
 		var catalogSupplementEnabled, supplementEnabled, active int
 		var catalogSupplementPrice, foodSupplement, supplementPrice sql.NullFloat64
 		if err := dishRows.Scan(
-			&id, &menuID, &sectionID, &name, &description, &allergensRaw,
+			&id, &menuID, &sectionID, &name, &description, &allergensRaw, &descriptionEnabled,
 			&catalogDescription, &catalogAllergens, &catalogSupplementEnabled, &catalogSupplementPrice,
 			&foodDescription, &foodAllergens, &foodSupplement,
 			&supplementEnabled, &supplementPrice, &active,
@@ -885,11 +980,13 @@ func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[stri
 		dish := map[string]any{
 			"id":                id,
 			"nombre":            strings.TrimSpace(name),
-			"descripcion":       strings.TrimSpace(description),
 			"alergenos":         allergens,
 			"suplemento":        nil,
 			"suplemento_activo": supplementActive,
 			"active":            active != 0,
+		}
+		if descriptionEnabled != 0 {
+			dish["descripcion"] = strings.TrimSpace(description)
 		}
 		if supplementPrice.Valid && supplementPrice.Float64 > 0 {
 			dish["suplemento"] = supplementPrice.Float64

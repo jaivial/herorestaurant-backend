@@ -909,6 +909,8 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/getMenu.php", s.handleGetGroupMenu)
 			r.Get("/getActiveMenusForDisplay", s.handleGetActiveGroupMenusForDisplayRich)
 			r.Get("/getActiveMenusForDisplay.php", s.handleGetActiveGroupMenusForDisplay)
+			r.Get("/getMenuForDisplay", s.handleGetGroupMenuForDisplay)
+			r.Get("/getMenuForDisplay.php", s.handleGetGroupMenuForDisplay)
 			r.With(s.requireAdmin).Post("/addMenu.php", s.handleAddGroupMenu)
 			r.With(s.requireAdmin).Post("/updateMenu.php", s.handleUpdateGroupMenu)
 			r.With(s.requireAdmin).Put("/updateMenu.php", s.handleUpdateGroupMenu)

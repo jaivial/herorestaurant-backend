@@ -31,22 +31,23 @@ type boV2Section struct {
 }
 
 type boV2Dish struct {
-	ID                int64    `json:"id"`
-	SectionID         int64    `json:"section_id"`
-	CatalogDishID     *int64   `json:"catalog_dish_id,omitempty"`
-	Title             string   `json:"title"`
-	Description       string   `json:"description"`
-	Allergens         []string `json:"allergens"`
-	SupplementEnabled bool     `json:"supplement_enabled"`
-	SupplementPrice   *float64 `json:"supplement_price"`
-	Price             *float64 `json:"price"`
-	Active            bool     `json:"active"`
-	Position          int      `json:"position"`
-	FotoURL           *string  `json:"foto_url,omitempty"`
-	ImageURL          *string  `json:"image_url,omitempty"`
-	AIRequestedImg    bool     `json:"ai_requested_img"`
-	AIGeneratingImg   bool     `json:"ai_generating_img"`
-	AIGeneratedImg    *string  `json:"ai_generated_img,omitempty"`
+	ID                 int64    `json:"id"`
+	SectionID          int64    `json:"section_id"`
+	CatalogDishID      *int64   `json:"catalog_dish_id,omitempty"`
+	Title              string   `json:"title"`
+	Description        string   `json:"description"`
+	DescriptionEnabled bool     `json:"description_enabled"`
+	Allergens          []string `json:"allergens"`
+	SupplementEnabled  bool     `json:"supplement_enabled"`
+	SupplementPrice    *float64 `json:"supplement_price"`
+	Price              *float64 `json:"price"`
+	Active             bool     `json:"active"`
+	Position           int      `json:"position"`
+	FotoURL            *string  `json:"foto_url,omitempty"`
+	ImageURL           *string  `json:"image_url,omitempty"`
+	AIRequestedImg     bool     `json:"ai_requested_img"`
+	AIGeneratingImg    bool     `json:"ai_generating_img"`
+	AIGeneratedImg     *string  `json:"ai_generated_img,omitempty"`
 }
 
 func normalizeV2MenuType(raw string) string {
@@ -460,7 +461,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 	}
 
 	dRows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
+		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json,
 		       supplement_enabled, supplement_price, price, active, position, COALESCE(foto_path, ''),
 		       COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
 		FROM group_menu_section_dishes_v2
@@ -477,6 +478,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 			d               boV2Dish
 			catalogID       sql.NullInt64
 			allergensRaw    sql.NullString
+			descEnabledInt  int
 			suppPriceRaw    sql.NullFloat64
 			priceRaw        sql.NullFloat64
 			suppEnabledInt  int
@@ -492,6 +494,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 			&catalogID,
 			&d.Title,
 			&d.Description,
+			&descEnabledInt,
 			&allergensRaw,
 			&suppEnabledInt,
 			&suppPriceRaw,
@@ -510,6 +513,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 			d.CatalogDishID = &v
 		}
 		d.Allergens = anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{}))
+		d.DescriptionEnabled = descEnabledInt != 0
 		d.SupplementEnabled = suppEnabledInt != 0
 		if suppPriceRaw.Valid {
 			p := suppPriceRaw.Float64
@@ -545,7 +549,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 
 func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, menuID int64, sectionID int64) ([]boV2Dish, error) {
 	dRows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
+		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json,
 		       supplement_enabled, supplement_price, price, active, position, COALESCE(foto_path, ''),
 		       COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
 		FROM group_menu_section_dishes_v2
@@ -563,6 +567,7 @@ func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, me
 			d               boV2Dish
 			catalogID       sql.NullInt64
 			allergensRaw    sql.NullString
+			descEnabledInt  int
 			suppPriceRaw    sql.NullFloat64
 			priceRaw        sql.NullFloat64
 			suppEnabledInt  int
@@ -578,6 +583,7 @@ func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, me
 			&catalogID,
 			&d.Title,
 			&d.Description,
+			&descEnabledInt,
 			&allergensRaw,
 			&suppEnabledInt,
 			&suppPriceRaw,
@@ -596,6 +602,7 @@ func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, me
 			d.CatalogDishID = &v
 		}
 		d.Allergens = anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{}))
+		d.DescriptionEnabled = descEnabledInt != 0
 		d.SupplementEnabled = suppEnabledInt != 0
 		if suppPriceRaw.Valid {
 			p := suppPriceRaw.Float64
@@ -664,6 +671,7 @@ func (s *Server) loadBOMenuV2DishByID(r *http.Request, restaurantID int, menuID 
 		d               boV2Dish
 		catalogID       sql.NullInt64
 		allergensRaw    sql.NullString
+		descEnabledInt  int
 		suppPriceRaw    sql.NullFloat64
 		priceRaw        sql.NullFloat64
 		suppEnabledInt  int
@@ -674,7 +682,7 @@ func (s *Server) loadBOMenuV2DishByID(r *http.Request, restaurantID int, menuID 
 		aiGeneratedRaw  sql.NullString
 	)
 	err := s.db.QueryRowContext(r.Context(), `
-		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
+		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json,
 		       supplement_enabled, supplement_price, price, active, position, COALESCE(foto_path, ''),
 		       COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
 		FROM group_menu_section_dishes_v2
@@ -686,6 +694,7 @@ func (s *Server) loadBOMenuV2DishByID(r *http.Request, restaurantID int, menuID 
 		&catalogID,
 		&d.Title,
 		&d.Description,
+		&descEnabledInt,
 		&allergensRaw,
 		&suppEnabledInt,
 		&suppPriceRaw,
@@ -705,6 +714,7 @@ func (s *Server) loadBOMenuV2DishByID(r *http.Request, restaurantID int, menuID 
 		d.CatalogDishID = &v
 	}
 	d.Allergens = anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{}))
+	d.DescriptionEnabled = descEnabledInt != 0
 	d.SupplementEnabled = suppEnabledInt != 0
 	if suppPriceRaw.Valid {
 		v := suppPriceRaw.Float64
@@ -1462,15 +1472,16 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 
 	var req struct {
 		Dishes []struct {
-			ID                int64    `json:"id"`
-			CatalogDishID     *int64   `json:"catalog_dish_id"`
-			Title             string   `json:"title"`
-			Description       string   `json:"description"`
-			Allergens         []string `json:"allergens"`
-			SupplementEnabled bool     `json:"supplement_enabled"`
-			SupplementPrice   *float64 `json:"supplement_price"`
-			Price             *float64 `json:"price"`
-			Active            *bool    `json:"active"`
+			ID                 int64    `json:"id"`
+			CatalogDishID      *int64   `json:"catalog_dish_id"`
+			Title              string   `json:"title"`
+			Description        string   `json:"description"`
+			DescriptionEnabled *bool    `json:"description_enabled"`
+			Allergens          []string `json:"allergens"`
+			SupplementEnabled  bool     `json:"supplement_enabled"`
+			SupplementPrice    *float64 `json:"supplement_price"`
+			Price              *float64 `json:"price"`
+			Active             *bool    `json:"active"`
 		} `json:"dishes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1500,13 +1511,14 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 	}
 
 	type existingDishState struct {
-		Title    string
-		Active   bool
-		Position int
+		Title              string
+		Active             bool
+		Position           int
+		DescriptionEnabled bool
 	}
 	existing := map[int64]existingDishState{}
 	rows, err := tx.QueryContext(r.Context(), `
-		SELECT id, title_snapshot, active, position
+		SELECT id, title_snapshot, active, position, COALESCE(description_enabled, 1)
 		FROM group_menu_section_dishes_v2
 		WHERE section_id = ? AND menu_id = ? AND restaurant_id = ?
 	`, sectionID, menuID, a.ActiveRestaurantID)
@@ -1520,16 +1532,18 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			title    string
 			active   int
 			position int
+			descEn   int
 		)
-		if err := rows.Scan(&id, &title, &active, &position); err != nil {
+		if err := rows.Scan(&id, &title, &active, &position, &descEn); err != nil {
 			rows.Close()
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo platos")
 			return
 		}
 		existing[id] = existingDishState{
-			Title:    strings.TrimSpace(title),
-			Active:   active != 0,
-			Position: position,
+			Title:              strings.TrimSpace(title),
+			Active:             active != 0,
+			Position:           position,
+			DescriptionEnabled: descEn != 0,
 		}
 	}
 	rows.Close()
@@ -1550,6 +1564,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			continue
 		}
 		description := strings.TrimSpace(dish.Description)
+		descEnabled := dish.DescriptionEnabled == nil || *dish.DescriptionEnabled
 		allergens := make([]string, 0, len(dish.Allergens))
 		for _, aName := range dish.Allergens {
 			aName = strings.TrimSpace(aName)
@@ -1569,8 +1584,14 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			if !ok {
 				// Invalid/foreign id for this section: treat as new dish to avoid touching unrelated rows.
 				dish.ID = 0
-			} else if prev.Title != title || prev.Active != active || (active && prev.Position != position) {
-				needsLegacySync = true
+			} else {
+				// Omitted description_enabled on update must not reset a persisted 0.
+				if dish.DescriptionEnabled == nil {
+					descEnabled = prev.DescriptionEnabled
+				}
+				if prev.Title != title || prev.Active != active || (active && prev.Position != position) {
+					needsLegacySync = true
+				}
 			}
 		}
 
@@ -1580,6 +1601,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 				SET catalog_dish_id = ?,
 				    title_snapshot = ?,
 				    description_snapshot = ?,
+				    description_enabled = ?,
 				    allergens_json = ?,
 				    supplement_enabled = ?,
 				    supplement_price = ?,
@@ -1591,6 +1613,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 				dish.CatalogDishID,
 				title,
 				description,
+				boolToTinyint(descEnabled),
 				mustJSON(allergens, []any{}),
 				boolToTinyint(dish.SupplementEnabled),
 				dish.SupplementPrice,
@@ -1618,8 +1641,8 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 		res, err := tx.ExecContext(r.Context(), `
 			INSERT INTO group_menu_section_dishes_v2
 				(restaurant_id, menu_id, section_id, catalog_dish_id, title_snapshot, description_snapshot,
-				 allergens_json, supplement_enabled, supplement_price, price, active, position)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 description_enabled, allergens_json, supplement_enabled, supplement_price, price, active, position)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			a.ActiveRestaurantID,
 			menuID,
@@ -1627,6 +1650,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			dish.CatalogDishID,
 			title,
 			description,
+			boolToTinyint(descEnabled),
 			mustJSON(allergens, []any{}),
 			boolToTinyint(dish.SupplementEnabled),
 			dish.SupplementPrice,

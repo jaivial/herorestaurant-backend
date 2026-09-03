@@ -1799,9 +1799,24 @@ Response:
 Response:
 - `{ success: true, menu: MenuDeGrupo }`
 
-### `GET /api/menuDeGruposBackend/getActiveMenusForDisplay.php`
+### `GET /api/menuDeGruposBackend/getActiveMenusForDisplay.php` (also `/getActiveMenusForDisplay`)
+Slim list of active group menus (`closed_group`, `a_la_carte_group`). Each menu
+carries only `id`, `menu_title` and (when a translation exists)
+`menu_title_english`. Use `getMenuForDisplay` for full per-menu content.
+
 Response:
-- `{ success: true, menus: MenuDeGrupoDisplay[] }`
+- `{ success: true, count: number, menus: [{ id, menu_title, menu_title_english? }] }`
+
+### `GET /api/menuDeGruposBackend/getMenuForDisplay?id=<id>` (alias: `/getMenuForDisplay.php`)
+Full display payload for ONE active group menu (must be `closed_group` or
+`a_la_carte_group`, active, belonging to the resolved restaurant). Includes the
+legacy blobs (menu_subtitle, entrantes, principales, postre, beverage,
+comments, ...) enriched with v2 dish details (`nombre`, `alergenos`,
+`suplemento`, `suplemento_activo`) and English translations. Dishes persisted
+with `description_enabled = 0` are returned WITHOUT a `descripcion` field.
+
+Response:
+- `{ success: true, menu: MenuDeGrupoDisplay }` or `{ success: false, message }` when the id is invalid/unknown.
 
 ### `POST /api/menuDeGruposBackend/addMenu.php` (admin)
 Accepts JSON or `multipart/form-data` (from legacy axios).
