@@ -1660,6 +1660,10 @@ Response:
 - `position` (number)
 - `foto_url` (string|null; full Bunny pull URL when dish image exists)
 
+### `GET /api/menus/{menuID}`
+Returns one public menu by id (same `PublicMenu` shape as `/api/menus/public`).
+Responses carry `Cache-Control: no-store` and echo the `x-correlation-id` header.
+
 ### `GET /api/menus/dia`
 Response:
 - `{ success: true, entrantes: Dish[], principales: Dish[], arroces: Dish[], precio: string }`
@@ -1800,8 +1804,11 @@ Response:
 - `{ success: true, menu: MenuDeGrupo }`
 
 ### `GET /api/menuDeGruposBackend/getActiveMenusForDisplay.php`
+Also available without the `.php` suffix (rich dishes variant).
+Only active menus of group types (`closed_group`, `a_la_carte_group`) are returned.
+Responses carry `Cache-Control: no-store` and echo the `x-correlation-id` header.
 Response:
-- `{ success: true, menus: MenuDeGrupoDisplay[] }`
+- `{ success: true, count: <int>, menus: MenuDeGrupoDisplay[] }`
 
 ### `POST /api/menuDeGruposBackend/addMenu.php` (admin)
 Accepts JSON or `multipart/form-data` (from legacy axios).

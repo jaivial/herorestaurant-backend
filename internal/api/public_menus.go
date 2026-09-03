@@ -803,6 +803,9 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, restaurantID int, menuIDParam string) {
+	echoCorrelationID(w, r)
+	logCheckpoint(r, "public_menu_by_id_request_received", "menu_id", menuIDParam)
+
 	menuID, err := strconv.ParseInt(menuIDParam, 10, 64)
 	if err != nil || menuID <= 0 {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
@@ -814,6 +817,7 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 
 	// First, get the menu type to determine response format
 	var menuType string
+	logCheckpoint(r, "public_menu_by_id_db_query_started", "menu_id", menuIDParam)
 	err = s.db.QueryRowContext(r.Context(), `
 		SELECT COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
 		FROM menus
@@ -833,6 +837,7 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 		})
 		return
 	}
+	logCheckpoint(r, "public_menu_by_id_db_query_completed", "menu_type", menuType)
 
 	// If menu type is "special", return minimal response
 	if menuType == "special" {
@@ -1168,6 +1173,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 
 	s.enrichPublicMenu(r.Context(), int(restaurantID), &item)
 
+	logCheckpoint(r, "public_menu_by_id_response_sent", "menu_id", strconv.FormatInt(menuID, 10))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"menu":    item,

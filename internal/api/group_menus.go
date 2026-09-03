@@ -568,11 +568,15 @@ func (s *Server) handleGetActiveGroupMenusForDisplayRich(w http.ResponseWriter, 
 }
 
 func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http.Request, richDishes bool) {
+	echoCorrelationID(w, r)
+	logCheckpoint(r, "group_menus_list_request_received")
+
 	query := `
 		SELECT id, menu_title, price, included_coffee, menu_subtitle, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at
 		FROM menus
 		WHERE restaurant_id = ? AND active = 1
+		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') IN ('closed_group', 'a_la_carte_group')
 		ORDER BY created_at ASC
 	`
 
@@ -585,8 +589,10 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 		return
 	}
 
+	logCheckpoint(r, "group_menus_list_db_query_started", "restaurant_id", fmt.Sprintf("%d", restaurantID))
 	rows, err := s.db.QueryContext(r.Context(), query, restaurantID)
 	if err != nil {
+		logCheckpoint(r, "group_menus_list_db_query_failed", "error", err.Error())
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Server error: " + err.Error(),
@@ -594,6 +600,7 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 		return
 	}
 	defer rows.Close()
+	logCheckpoint(r, "group_menus_list_db_query_completed")
 
 	decode := func(raw sql.NullString, fallback any) any {
 		if !raw.Valid || strings.TrimSpace(raw.String) == "" {
@@ -679,6 +686,7 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 
 	s.enrichGroupMenuDisplayMenus(r.Context(), restaurantID, menus)
 
+	logCheckpoint(r, "group_menus_list_response_sent", "count", strconv.Itoa(len(menus)))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"count":   len(menus),
