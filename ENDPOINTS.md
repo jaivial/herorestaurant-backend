@@ -1807,7 +1807,7 @@ carries only `id`, `menu_title` and (when a translation exists)
 Response:
 - `{ success: true, count: number, menus: [{ id, menu_title, menu_title_english? }] }`
 
-### `GET /api/menuDeGruposBackend/getMenuForDisplay?id=<id>`
+### `GET /api/menuDeGruposBackend/getMenuForDisplay?id=<id>` (alias: `/getMenuForDisplay.php`)
 Full display payload for ONE active group menu (must be `closed_group` or
 `a_la_carte_group`, active, belonging to the resolved restaurant). Includes the
 legacy blobs (menu_subtitle, entrantes, principales, postre, beverage,
