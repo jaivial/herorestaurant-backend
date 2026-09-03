@@ -199,6 +199,49 @@ func (s *Server) handleBOPOSRolePermissionsPut(w http.ResponseWriter, r *http.Re
 	httpx.WriteJSON(w, 200, map[string]any{"success": true})
 }
 
+func (s *Server) handleBOPOSStockAnomaliesList(w http.ResponseWriter, r *http.Request) {
+	a, _ := boAuthFromContext(r.Context())
+	query := `SELECT a.id, a.ticket_id, t.ticket_number, a.stock_item_id, COALESCE(si.name,''), a.warehouse_id, COALESCE(wh.name,''), a.quantity_after_base, a.status, a.created_at
+		FROM pos_stock_anomalies a
+		JOIN pos_tickets t ON t.restaurant_id=a.restaurant_id AND t.id=a.ticket_id
+		LEFT JOIN stock_items si ON si.restaurant_id=a.restaurant_id AND si.id=a.stock_item_id
+		LEFT JOIN stock_warehouses wh ON wh.restaurant_id=a.restaurant_id AND wh.id=a.warehouse_id
+		WHERE a.restaurant_id=?`
+	args := []any{a.ActiveRestaurantID}
+	if r.URL.Query().Get("unresolved") == "1" {
+		query += ` AND a.status='OPEN'`
+	}
+	limit := 200
+	if parsed, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && parsed > 0 && parsed <= 500 {
+		limit = parsed
+	}
+	query += ` ORDER BY a.created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		httpx.WriteError(w, 500, "Error listing stock anomalies")
+		return
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, ticketID, stockItemID, warehouseID int64
+		var ticketNumber, itemName, warehouseName, status string
+		var quantityAfter float64
+		var createdAt time.Time
+		if err = rows.Scan(&id, &ticketID, &ticketNumber, &stockItemID, &itemName, &warehouseID, &warehouseName, &quantityAfter, &status, &createdAt); err != nil {
+			httpx.WriteError(w, 500, "Error reading stock anomalies")
+			return
+		}
+		items = append(items, map[string]any{"id": id, "ticketId": ticketID, "ticketNumber": ticketNumber, "stockItemId": stockItemID, "itemName": itemName, "warehouseId": warehouseID, "warehouseName": warehouseName, "quantityAfter": quantityAfter, "status": status, "createdAt": createdAt})
+	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading stock anomalies")
+		return
+	}
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
+}
+
 func (s *Server) handleBOPOSStockAnomalyResolve(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)

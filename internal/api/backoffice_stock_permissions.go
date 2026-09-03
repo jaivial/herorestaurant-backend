@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -13,19 +14,12 @@ import (
 // The catalogue endpoint materialises that fallback so the UI can show the
 // effective answer without duplicating the rule.
 
-func (s *Server) handleBOStockRolePermissionsGet(w http.ResponseWriter, r *http.Request) {
-	a, _ := boAuthFromContext(r.Context())
-	role := normalizeBORole(chi.URLParam(r, "slug"))
-	if role == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "Invalid role")
-		return
-	}
-	rows, err := s.db.QueryContext(r.Context(),
+func (s *Server) stockPermissionsCatalogue(ctx context.Context, restaurantID int, role string) ([]map[string]any, error) {
+	rows, err := s.db.QueryContext(ctx,
 		`SELECT permission_key,is_allowed FROM stock_role_permissions WHERE restaurant_id=? AND role_slug=?`,
-		a.ActiveRestaurantID, role)
+		restaurantID, role)
 	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error loading stock permissions")
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	overrides := map[string]bool{}
@@ -33,14 +27,12 @@ func (s *Server) handleBOStockRolePermissionsGet(w http.ResponseWriter, r *http.
 		var key string
 		var allowed int
 		if err = rows.Scan(&key, &allowed); err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error reading stock permissions")
-			return
+			return nil, err
 		}
 		overrides[key] = allowed != 0
 	}
 	if err = rows.Err(); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error reading stock permissions")
-		return
+		return nil, err
 	}
 	items := make([]map[string]any, 0, len(stockPermissionKeys))
 	for _, key := range stockPermissionKeys {
@@ -49,6 +41,39 @@ func (s *Server) handleBOStockRolePermissionsGet(w http.ResponseWriter, r *http.
 			allowed = role == "root" || role == "admin"
 		}
 		items = append(items, map[string]any{"key": key, "allowed": allowed})
+	}
+	return items, nil
+}
+
+func (s *Server) handleBOStockRolePermissionsGet(w http.ResponseWriter, r *http.Request) {
+	a, _ := boAuthFromContext(r.Context())
+	role := normalizeBORole(chi.URLParam(r, "slug"))
+	if role == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid role")
+		return
+	}
+	items, err := s.stockPermissionsCatalogue(r.Context(), a.ActiveRestaurantID, role)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading stock permissions")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "role": role, "permissions": items})
+}
+
+// The catalogue endpoint requires stock.settings.manage, so a restricted role
+// cannot read its own effective permissions to render the UI. This endpoint is
+// session-only and returns the caller's own permissions instead.
+func (s *Server) handleBOStockPermissionsMine(w http.ResponseWriter, r *http.Request) {
+	a, _ := boAuthFromContext(r.Context())
+	role := normalizeBORole(a.Role)
+	if role == "" {
+		httpx.WriteError(w, http.StatusForbidden, "Invalid role")
+		return
+	}
+	items, err := s.stockPermissionsCatalogue(r.Context(), a.ActiveRestaurantID, role)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading stock permissions")
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "role": role, "permissions": items})
 }

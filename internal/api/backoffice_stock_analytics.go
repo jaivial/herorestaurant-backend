@@ -246,6 +246,19 @@ func (s *Server) handleBOStockForecast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	horizon := stockQueryInt(r, "horizonDays", 7, 1, 30)
+	seasonalFactors := stockSeasonalityMonthlyFactors(s.stockSeasonalityProfileRaw(r.Context(), a.ActiveRestaurantID))
+	seasonalityApplied := false
+	for _, factor := range seasonalFactors {
+		if factor != 1 {
+			seasonalityApplied = true
+		}
+	}
+	seasonalFactor := 0.0
+	for day := 0; day < horizon; day++ {
+		seasonalFactor += seasonalFactors[time.Now().AddDate(0, 0, day).Month()-1]
+	}
+	seasonalFactor /= float64(horizon)
+	effectiveMultiplier := multiplier * seasonalFactor
 	var historyDays, totalCovers, affluenceDays int
 	_ = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(DATEDIFF(MAX(occurred_at),MIN(occurred_at))+1,0) FROM stock_movements WHERE restaurant_id=? AND type IN ('SALE','PRODUCTION_OUT','WASTE')`, a.ActiveRestaurantID).Scan(&historyDays)
 	_ = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(covers),0),COUNT(DISTINCT service_date) FROM stock_affluence_daily WHERE restaurant_id=? AND service_date>=DATE_SUB(CURDATE(),INTERVAL 8 WEEK)`, a.ActiveRestaurantID).Scan(&totalCovers, &affluenceDays)
@@ -264,11 +277,11 @@ func (s *Server) handleBOStockForecast(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error reading forecast")
 			return
 		}
-		forecast := avgDaily * float64(horizon) * multiplier
+		forecast := avgDaily * float64(horizon) * effectiveMultiplier
 		if totalCovers > 0 && affluenceDays > 0 {
 			usagePerCover := totalUsage / float64(totalCovers)
 			expectedCoversPerDay := float64(totalCovers) / float64(affluenceDays)
-			forecast = usagePerCover * expectedCoversPerDay * float64(horizon) * multiplier
+			forecast = usagePerCover * expectedCoversPerDay * float64(horizon) * effectiveMultiplier
 		}
 		safety := avgDaily * 2
 		recommended := forecast + safety
@@ -283,8 +296,119 @@ func (s *Server) handleBOStockForecast(w http.ResponseWriter, r *http.Request) {
 	} else if historyDays < 56 {
 		confidence = "MEDIUM"
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "scenario": scenario, "horizonDays": horizon, "historyDays": historyDays, "requiredHistoryDays": 56, "affluenceDays": affluenceDays, "confidence": confidence, "items": items})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "scenario": scenario, "horizonDays": horizon, "historyDays": historyDays, "requiredHistoryDays": 56, "affluenceDays": affluenceDays, "confidence": confidence, "seasonalFactor": seasonalFactor, "seasonalityApplied": seasonalityApplied, "items": items})
 }
+
+// stockSeasonalityProfileRaw returns the stored seasonality profile, or `{}`.
+// A missing or unreadable profile must never fail the forecast.
+func (s *Server) stockSeasonalityProfileRaw(ctx context.Context, restaurantID int) json.RawMessage {
+	profileRaw := json.RawMessage(`{}`)
+	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(seasonality_profile,JSON_OBJECT()) FROM stock_settings WHERE restaurant_id=?`, restaurantID).Scan(&profileRaw)
+	return profileRaw
+}
+
+// stockSeasonalityMonthlyFactors turns a seasonality profile into one usage
+// multiplier per month. Profiles written by the classifier only carry
+// peakMonths/lowMonths (month names or numbers, ES or EN); an explicit
+// monthlyFactors map wins when present. Anything unparseable is ignored.
+func stockSeasonalityMonthlyFactors(profileRaw json.RawMessage) [12]float64 {
+	var factors [12]float64
+	for i := range factors {
+		factors[i] = 1
+	}
+	var profile map[string]json.RawMessage
+	if json.Unmarshal(profileRaw, &profile) != nil {
+		return factors
+	}
+	if raw, ok := profile["monthlyFactors"]; ok {
+		var byMonth map[string]float64
+		if json.Unmarshal(raw, &byMonth) == nil {
+			for key, value := range byMonth {
+				if idx := stockSeasonalityMonthIndex(key); idx > 0 {
+					factors[idx-1] = stockClampSeasonalFactor(value)
+				}
+			}
+			return factors
+		}
+	}
+	peakFactor, lowFactor := 1.2, 0.8
+	if raw, ok := profile["peakFactor"]; ok {
+		var v float64
+		if json.Unmarshal(raw, &v) == nil {
+			peakFactor = stockClampSeasonalFactor(v)
+		}
+	}
+	if raw, ok := profile["lowFactor"]; ok {
+		var v float64
+		if json.Unmarshal(raw, &v) == nil {
+			lowFactor = stockClampSeasonalFactor(v)
+		}
+	}
+	applyMonths := func(key string, factor float64) {
+		raw, ok := profile[key]
+		if !ok {
+			return
+		}
+		var months []any
+		if json.Unmarshal(raw, &months) != nil {
+			return
+		}
+		for _, month := range months {
+			if idx := stockSeasonalityMonthIndex(month); idx > 0 {
+				factors[idx-1] = factor
+			}
+		}
+	}
+	applyMonths("peakMonths", peakFactor)
+	applyMonths("lowMonths", lowFactor)
+	return factors
+}
+
+func stockClampSeasonalFactor(value float64) float64 {
+	if math.IsNaN(value) || value <= 0 {
+		return 1
+	}
+	return math.Min(2.5, math.Max(0.2, value))
+}
+
+// stockSeasonalityMonthIndex accepts month numbers (1-12) and month names in
+// Spanish or English, full or 3-letter, case-insensitive; 0 when unknown.
+func stockSeasonalityMonthIndex(token any) int {
+	switch value := token.(type) {
+	case float64:
+		if value >= 1 && value <= 12 && value == math.Trunc(value) {
+			return int(value)
+		}
+	case string:
+		trimmed := strings.ToLower(strings.TrimSpace(value))
+		if trimmed == "" {
+			return 0
+		}
+		if n, err := strconv.Atoi(trimmed); err == nil {
+			if n >= 1 && n <= 12 {
+				return n
+			}
+			return 0
+		}
+		return stockMonthNames[trimmed]
+	}
+	return 0
+}
+
+var stockMonthNames = func() map[string]int {
+	names := map[string]int{}
+	english := []string{"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"}
+	spanish := []string{"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"}
+	for i, name := range english {
+		names[name] = i + 1
+		names[name[:3]] = i + 1
+	}
+	for i, name := range spanish {
+		names[name] = i + 1
+		names[name[:3]] = i + 1
+	}
+	return names
+}()
 
 func (s *Server) handleBOStockVATList(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
@@ -475,6 +599,7 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 	if bands == nil {
 		bands = stockDefaultMarginBands()
 	}
+	salesDays := stockQueryInt(r, "salesDays", 90, 7, 365)
 	tx, err := s.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading costs")
@@ -510,6 +635,34 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading labour costs")
 		return
 	}
+	// Sales mix joins tickets→products→recipes through the same rule table the
+	// real-time depletion uses (pos_product_stock_rules), so a dish only gets
+	// credit for sales of products actually wired to it. DISTINCT product/recipe
+	// pairs keep multi-warehouse rules from double counting a line.
+	soldByRecipe := map[int64]float64{}
+	ticketsByRecipe := map[int64]int{}
+	salesRows, err := tx.QueryContext(r.Context(), `SELECT rr.stock_recipe_id,COALESCE(SUM(l.quantity),0),COUNT(DISTINCT l.ticket_id)
+		FROM (SELECT DISTINCT pos_product_id,stock_recipe_id FROM pos_product_stock_rules WHERE restaurant_id=? AND is_active=1 AND stock_recipe_id>0) rr
+		JOIN pos_ticket_lines l ON l.restaurant_id=? AND l.pos_product_id=rr.pos_product_id AND l.status='ACTIVE' AND l.created_at>=DATE_SUB(NOW(),INTERVAL ? DAY)
+		JOIN pos_tickets t ON t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id AND t.status IN ('PAID','PARTIALLY_REFUNDED')
+		GROUP BY rr.stock_recipe_id`, a.ActiveRestaurantID, a.ActiveRestaurantID, salesDays)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading sales mix")
+		return
+	}
+	for salesRows.Next() {
+		var recipeID int64
+		var sold float64
+		var tickets int
+		if err = salesRows.Scan(&recipeID, &sold, &tickets); err != nil {
+			salesRows.Close()
+			httpx.WriteError(w, http.StatusInternalServerError, "Error reading sales mix")
+			return
+		}
+		soldByRecipe[recipeID] = sold
+		ticketsByRecipe[recipeID] = tickets
+	}
+	salesRows.Close()
 	rows, err := tx.QueryContext(r.Context(), `SELECT r.id,r.name,r.selling_price_gross,COALESCE(v.rate,0),r.overhead_pct,r.is_protected FROM stock_recipes r LEFT JOIN stock_vat_rates v ON v.restaurant_id=r.restaurant_id AND v.id=r.vat_rate_id WHERE r.restaurant_id=? AND r.is_active=1 ORDER BY r.name`, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading costs")
@@ -545,7 +698,59 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 		net, pct, margin := stockCostMetrics(gross.Float64, vat, totalCost)
 		out = append(out, map[string]any{"recipeId": id, "name": name, "grossPrice": gross.Float64, "netPrice": net, "vatRate": vat, "ingredientCost": ingredientCost, "labourCost": labourCost, "overheadCost": overheadCost, "totalCost": totalCost, "foodCostPct": pct, "grossMargin": margin, "zone": stockMarginZone(pct, bands), "isProtected": protected != 0, "labourCostEnabled": labourEnabled != 0, "labourCostAvailable": len(missingMembers) == 0, "missingLabourMembers": missingMembers})
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": out})
+	rows.Close()
+	// Menu engineering (Kasavana-Smith): popularity compares each dish's sales
+	// mix share against 70% of an even split; margin compares its contribution
+	// margin against the units-weighted average. Only dishes on the current
+	// active menu count toward the baselines.
+	recipesWithSales := 0
+	var totalSold float64
+	for _, item := range out {
+		recipeID := item["recipeId"].(int64)
+		sold := soldByRecipe[recipeID]
+		item["sold"] = sold
+		item["tickets"] = ticketsByRecipe[recipeID]
+		netPrice := item["netPrice"].(float64)
+		margin := item["grossMargin"].(float64)
+		marginPct := 0.0
+		if netPrice > 0 {
+			marginPct = margin / netPrice * 100
+		}
+		item["marginPct"] = marginPct
+		if sold > 0 {
+			recipesWithSales++
+			totalSold += sold
+		}
+	}
+	classified := totalSold > 0 && len(out) > 0
+	avgSold, weightedMargin := 0.0, 0.0
+	if classified {
+		avgSold = totalSold / float64(recipesWithSales)
+		for _, item := range out {
+			weightedMargin += item["sold"].(float64) * item["grossMargin"].(float64)
+		}
+		weightedMargin /= totalSold
+		for _, item := range out {
+			sold := item["sold"].(float64)
+			popular := sold > 0 && sold >= 0.7*avgSold
+			highMargin := item["grossMargin"].(float64) >= weightedMargin
+			switch {
+			case popular && highMargin:
+				item["class"] = "star"
+			case popular:
+				item["class"] = "plowhorse"
+			case highMargin:
+				item["class"] = "puzzle"
+			default:
+				item["class"] = "dog"
+			}
+		}
+	} else {
+		for _, item := range out {
+			item["class"] = ""
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": out, "salesMix": map[string]any{"days": salesDays, "totalSold": totalSold, "recipesWithSales": recipesWithSales, "avgSold": avgSold, "weightedAvgMargin": weightedMargin, "classified": classified}})
 }
 
 func (s *Server) handleBOStockAIRecommendations(w http.ResponseWriter, r *http.Request) {

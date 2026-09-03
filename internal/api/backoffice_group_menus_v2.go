@@ -461,12 +461,15 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 	}
 
 	dRows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json,
-		       supplement_enabled, supplement_price, price, active, position, COALESCE(foto_path, ''),
-		       COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
-		FROM group_menu_section_dishes_v2
-		WHERE restaurant_id = ? AND menu_id = ?
-		ORDER BY section_id ASC, position ASC, id ASC
+		SELECT d.id, d.section_id, d.catalog_dish_id, d.title_snapshot,
+		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description) AS description_snapshot,
+		       COALESCE(d.description_enabled, 1), d.allergens_json,
+		       d.supplement_enabled, d.supplement_price, d.price, d.active, d.position, COALESCE(d.foto_path, ''),
+		       COALESCE(d.ai_requested_img, 0), COALESCE(d.ai_generating_img, 0), d.ai_generated_img
+		FROM group_menu_section_dishes_v2 d
+		LEFT JOIN menu_dishes_catalog c ON c.id = d.catalog_dish_id
+		WHERE d.restaurant_id = ? AND d.menu_id = ?
+		ORDER BY d.section_id ASC, d.position ASC, d.id ASC
 	`, restaurantID, menuID)
 	if err != nil {
 		return nil, err
@@ -549,12 +552,15 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 
 func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, menuID int64, sectionID int64) ([]boV2Dish, error) {
 	dRows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json,
-		       supplement_enabled, supplement_price, price, active, position, COALESCE(foto_path, ''),
-		       COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
-		FROM group_menu_section_dishes_v2
-		WHERE restaurant_id = ? AND menu_id = ? AND section_id = ?
-		ORDER BY position ASC, id ASC
+		SELECT d.id, d.section_id, d.catalog_dish_id, d.title_snapshot,
+		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description) AS description_snapshot,
+		       COALESCE(d.description_enabled, 1), d.allergens_json,
+		       d.supplement_enabled, d.supplement_price, d.price, d.active, d.position, COALESCE(d.foto_path, ''),
+		       COALESCE(d.ai_requested_img, 0), COALESCE(d.ai_generating_img, 0), d.ai_generated_img
+		FROM group_menu_section_dishes_v2 d
+		LEFT JOIN menu_dishes_catalog c ON c.id = d.catalog_dish_id
+		WHERE d.restaurant_id = ? AND d.menu_id = ? AND d.section_id = ?
+		ORDER BY d.position ASC, d.id ASC
 	`, restaurantID, menuID, sectionID)
 	if err != nil {
 		return nil, err
@@ -682,11 +688,14 @@ func (s *Server) loadBOMenuV2DishByID(r *http.Request, restaurantID int, menuID 
 		aiGeneratedRaw  sql.NullString
 	)
 	err := s.db.QueryRowContext(r.Context(), `
-		SELECT id, section_id, catalog_dish_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json,
-		       supplement_enabled, supplement_price, price, active, position, COALESCE(foto_path, ''),
-		       COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
-		FROM group_menu_section_dishes_v2
-		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
+		SELECT d.id, d.section_id, d.catalog_dish_id, d.title_snapshot,
+		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description) AS description_snapshot,
+		       COALESCE(d.description_enabled, 1), d.allergens_json,
+		       d.supplement_enabled, d.supplement_price, d.price, d.active, d.position, COALESCE(d.foto_path, ''),
+		       COALESCE(d.ai_requested_img, 0), COALESCE(d.ai_generating_img, 0), d.ai_generated_img
+		FROM group_menu_section_dishes_v2 d
+		LEFT JOIN menu_dishes_catalog c ON c.id = d.catalog_dish_id
+		WHERE d.id = ? AND d.section_id = ? AND d.menu_id = ? AND d.restaurant_id = ?
 		LIMIT 1
 	`, dishID, sectionID, menuID, restaurantID).Scan(
 		&d.ID,

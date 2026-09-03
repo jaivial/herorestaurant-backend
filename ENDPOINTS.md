@@ -2904,27 +2904,38 @@ and endpoint-specific stock permission. Responses use `{ success: true, ... }` o
 | DELETE | `/api/admin/stock/warehouses/{id}` | `stock.warehouses.manage` | Soft delete; rejects default or non-empty warehouse with `409` |
 | GET/POST | `/api/admin/stock/categories` | `stock.view` / `stock.items.manage` | List or create tenant categories |
 | PATCH/DELETE | `/api/admin/stock/categories/{id}` | `stock.items.manage` | Update or delete unused category |
-| GET | `/api/admin/stock/items` | `stock.view` | Query `q`, `warehouseId`, `page`, `pageSize<=100`; returns paginated card payload |
-| GET | `/api/admin/stock/item-options` | `stock.view` | Active item/default-unit options for recipes and OCR mapping |
-| POST | `/api/admin/stock/items` | `stock.items.manage` | Creates item plus default display/purchase unit |
+| GET | `/api/admin/stock/items` | `stock.view` | Query `q` (matches name, SKU or barcode), `warehouseId`, `page`, `pageSize<=100`; returns paginated card payload incl. `barcode` |
+| GET | `/api/admin/stock/item-options` | `stock.view` | Active item/default-unit options for recipes and OCR mapping; `q` matches name, SKU or barcode |
+| POST | `/api/admin/stock/items` | `stock.items.manage` | Creates item (optional `barcode`, max 64 chars) plus default display/purchase unit |
 | POST | `/api/admin/stock/items/import` | `stock.items.manage` | Multipart CSV/XLSX preview; `confirm=1` atomically creates valid rows |
-| PATCH | `/api/admin/stock/items/{id}` | `stock.items.manage` | Updates item metadata, tracking flag and deduction source |
+| PATCH | `/api/admin/stock/items/{id}` | `stock.items.manage` | Updates item metadata incl. `barcode`, tracking flag and deduction source |
 | DELETE | `/api/admin/stock/items/{id}` | `stock.items.manage` | Soft delete; rejects item with non-zero stock |
 | PATCH | `/api/admin/stock/items/{id}/targets` | `stock.items.manage` | Saves warehouse par/reorder targets in selected item unit |
 | GET/POST | `/api/admin/stock/items/{id}/units` | `stock.view` / `stock.items.manage` | List or create item-specific conversion units |
 | DELETE | `/api/admin/stock/items/{id}/units/{unitId}` | `stock.items.manage` | Delete unused, non-default unit |
-| GET | `/api/admin/stock/items/{id}/movements` | `stock.view` | Query `page`, `pageSize<=100`; audited movement history |
-| POST | `/api/admin/stock/items/{id}/movements` | `stock.adjust` or `stock.waste.record` | Atomic ledger + level update; adjustment accepts `direction=ADD|SUBTRACT` |
-| GET | `/api/admin/stock/summary` | `stock.view` | `{ itemsTracked, belowPar, belowReorder, outOfStock, negative, coveragePct }` |
+| GET | `/api/admin/stock/items/{id}/movements` | `stock.view` | Query `page`, `pageSize<=200`, optional filters `type` (PURCHASE, PRODUCTION_IN, TRANSFER_IN, RETURN, ADJUSTMENT, PRODUCTION_OUT, SALE, WASTE, TRANSFER_OUT, INVENTORY_COUNT), `from`/`to` (`YYYY-MM-DD`, inclusive); audited movement history |
+| POST | `/api/admin/stock/items/{id}/movements` | `stock.adjust` or `stock.waste.record` | Atomic ledger + level update; adjustment accepts `direction=ADD|SUBTRACT`; inbound rows (PURCHASE, ADJUSTMENT+ADD) accept optional `expiresAt` (`YYYY-MM-DD` or RFC3339) |
+| GET | `/api/admin/stock/expiring` | `stock.view` | Optional `days` (default 30, 1–365); estimate of soon-to-expire stock per item+warehouse: `{ days, items: [{ itemId, itemName, warehouseId, warehouseName, expiresAt, estimatedQtyBase }] }` (unexpired inbound with `expires_at` minus outbound since earliest inbound, clamped at 0) |
+| GET | `/api/admin/stock/summary` | `stock.view` | `{ itemsTracked, belowPar, belowReorder, outOfStock, negative, coveragePct }`; `details=1` adds `belowParItems`/`belowReorderItems`/`outOfStockItems`/`negativeItems` (`{id,name,qty,par,reorderPoint}`) and `unresolvedAnomalies` (open `pos_stock_anomalies`) |
+| GET | `/api/admin/stock/valuation` | `stock.view` | `{ totalValue, items: [{ itemId, itemName, categoryName, qtyBase, avgUnitCost, lastUnitCost, unitCost, value }] }`; values qty at latest PURCHASE `unit_cost`, falling back to `stock_levels.avg_unit_cost`; only items with qty ≠ 0 |
+| GET | `/api/admin/stock/export` | `stock.view` | CSV download via `type=items\|movements\|waste`. `items`: id/sku/name/category/base_unit/qty/par/reorder/avg+last unit cost/value. `movements`: last 90 days (cap 5000), filters `movementType`, `from`/`to` (`YYYY-MM-DD`). `waste`: WASTE movements only, same filters |
+| GET | `/api/admin/stock/suppliers` | `stock.view` | Supplier registry (backfilled from `supplier_name` on prices/scans): `{ suppliers: [{ id, name, notes, isActive, aliasCount, itemCount, pricePointCount, lastPriceAt }] }` |
+| POST | `/api/admin/stock/suppliers` | `stock.items.manage` | Create supplier `{ name, notes }`; 409 on duplicate name (unique per restaurant) |
+| PATCH | `/api/admin/stock/suppliers/{id}` | `stock.items.manage` | Update `{ name, notes, isActive }`; 409 on name clash, 404 if missing. Aliases/price history are keyed by `supplier_name`, so renaming orphans old history rows |
+| DELETE | `/api/admin/stock/suppliers/{id}` | `stock.items.manage` | Removes the registry row only — aliases and price history (keyed by name) are kept |
+| GET | `/api/admin/stock/suppliers/{id}/aliases` | `stock.view` | OCR alias rows for this supplier: `{ aliases: [{ id, supplierCode, description, stockItemId, itemName, stockUnitId, unitLabel, unitFactor, updatedAt }] }` |
+| PUT | `/api/admin/stock/suppliers/{id}/aliases` | `stock.items.manage` | Full-replace save `{ aliases: [{ supplierCode, description, stockItemId, stockUnitId }] }` (≤500): upserts by (code, description), deletes rows missing from payload, one transaction. Unit must belong to item, else falls back to the item's default purchase unit |
+| GET | `/api/admin/stock/suppliers/{id}/prices` | `stock.view` | Per-item price stats over `days` (default 180, 7–730) from `stock_item_prices`: `{ items: [{ itemId, itemName, baseUnit, samples, minCost, maxCost, avgCost, lastCost, lastAt, others: [{ supplierName, avgCost, samples }] }] }` for cross-supplier comparison |
 | POST | `/api/admin/stock/transfers` | `stock.transfer` | Atomic two-ledger-entry warehouse transfer |
 | POST | `/api/admin/stock/counts` | `stock.count.perform` | Opens count sheet and snapshots expected stock |
 | GET | `/api/admin/stock/counts/{id}` | `stock.view` | Count sheet plus item lines |
-| POST | `/api/admin/stock/counts/{id}/close` | `stock.count.close` | Applies observed quantities as idempotent inventory-count deltas |
+| POST | `/api/admin/stock/counts/{id}/close` | `stock.count.close` | Applies observed quantities as idempotent inventory-count deltas; positive-delta lines accept optional `expiresAt` |
 | GET | `/api/admin/stock/reconciliation` | `stock.view` | Compares materialized levels with ledger sums |
 | POST | `/api/admin/stock/reconciliation/rebuild` | `stock.settings.manage` | Rebuilds materialized quantities from ledger |
 | GET | `/api/admin/stock/settings` | `stock.view` | Tenant stock settings with defaults |
 | PATCH | `/api/admin/stock/settings` | `stock.settings.manage` | Saves display/cadence, negative policy, business/seasonality profile and onboarding |
 | POST | `/api/admin/stock/settings/classify-seasonality` | `stock.settings.manage` + AI plan | MiniMax structured business-profile classification |
+| GET | `/api/admin/stock/permissions/mine` | session only | Caller's own effective stock permissions `{ role, permissions: [{key, allowed}] }`; lets restricted roles render the stock UI without `stock.settings.manage` |
 
 Movement `type`: `PURCHASE`, `ADJUSTMENT`, `PRODUCTION_IN`, `PRODUCTION_OUT`,
 `SALE`, `WASTE`, `TRANSFER_IN`, `TRANSFER_OUT`, `RETURN`. Input quantity is always
@@ -2944,10 +2955,10 @@ positive; direction derives from type. `WASTE` requires `wasteReason`.
 | GET/POST | `/api/admin/stock/production-orders/{id}/labour` | List or allocate actual fichaje minutes to production; missing compensation stays incomplete |
 | DELETE | `/api/admin/stock/production-orders/{id}/labour/{allocationId}` | Remove allocation and deterministically rebuild actual labour snapshot |
 | PUT | `/api/admin/stock/affluence` | Manual covers input until POS module exists |
-| GET | `/api/admin/stock/forecast` | Scenario/horizon forecast with eight-week confidence state |
+| GET | `/api/admin/stock/forecast` | Scenario/horizon forecast with eight-week confidence state. `?scenario=LIGHT\|MEDIUM\|HIGH` (default MEDIUM), `?horizonDays=1..30` (default 7). When a `stock_settings.seasonality_profile` exists, its multipliers are day-weighted over the window and composed on top of the scenario (`effectiveMultiplier = scenario × seasonal`); response carries `seasonalFactor` (window average, 1.0 = neutral) and `seasonalityApplied`. Malformed profiles fall back to neutral, never error. |
 | GET/POST/PATCH/DELETE | `/api/admin/stock/vat-rates[/{id}]` | Tenant VAT CRUD |
 | POST | `/api/admin/stock/items/{id}/prices` | Record raw-item base-unit purchase price |
-| GET | `/api/admin/stock/costing` | Recursive ingredient + member labour cost, overhead, net price, food-cost %, margin and missing-rate diagnostics |
+| GET | `/api/admin/stock/costing` | Recursive ingredient + member labour cost, overhead, net price, food-cost %, margin and missing-rate diagnostics. `?salesDays=7..365` (default 90) adds menu-engineering sales mix per recipe: `sold` (ACTIVE lines on PAID/PARTIALLY_REFUNDED tickets, joined product→recipe via `pos_product_stock_rules`), `tickets`, `marginPct` and `class` (`star`/`plowhorse`/`puzzle`/`dog`; empty until sales exist). Top-level `salesMix` reports `{days, totalSold, recipesWithSales, avgSold, weightedAvgMargin, classified}`. |
 | GET | `/api/admin/stock/labour-members` | Active members with cost availability only; salary and hourly amount are not exposed |
 | GET/POST/PATCH/DELETE | `/api/admin/stock/margin-bands[/{id}]` | Tenant margin-band CRUD |
 | POST | `/api/admin/stock/ai/recommendations` | Persisted MiniMax advisory report; protected dishes cannot receive removal advice |
@@ -2957,7 +2968,7 @@ positive; direction derives from type. `WASTE` requires `wasteReason`.
 | GET | `/api/admin/stock/documents/{id}/original` | Authenticated private original download; `Cache-Control: private, no-store` |
 | DELETE | `/api/admin/stock/documents/{id}/original` | Delete private original and retain reviewed extraction/audit |
 | PATCH | `/api/admin/stock/documents/{id}/review` | Edit metadata/lines and map tenant item units |
-| POST | `/api/admin/stock/documents/{id}/confirm-invoice` | Atomic purchases, weighted cost and supplier-alias learning |
+| POST | `/api/admin/stock/documents/{id}/confirm-invoice` | Atomic purchases, weighted cost and supplier-alias learning; optional `lineExpiries` map (`{lineId: YYYY-MM-DD}`) stores per-line expiry on the PURCHASE rows |
 | POST | `/api/admin/stock/documents/{id}/confirm-recipe` | Create reviewed OCR recipe |
 | POST | `/api/admin/stock/documents/{id}/reject` | Reject review draft |
 
@@ -3018,7 +3029,7 @@ All routes require `bo_session`, active `pos_pack`, tenant scope and exact POS p
 
 | Method | Route | Permission | Purpose |
 |---|---|---|---|
-| GET | `/api/admin/pos/bootstrap` | `pos.view` | Settings, active products, visits, table occupancy and the cash day |
+| GET | `/api/admin/pos/bootstrap` | `pos.view` | Settings, active products, visits, table occupancy and the cash day; with stock mode `SHADOW`/`LIVE` also `productStock` (`{productId: ok\|low\|out}`) |
 | GET/PATCH | `/api/admin/pos/settings` | `pos.view` / `pos.settings.manage` | Enable POS; stock/covers modes; timezone and cutoff |
 | GET/POST/PATCH/DELETE | `/api/admin/pos/service-periods[/{id}]` | `pos.view` / `pos.settings.manage` | `LUNCH`, `DINNER`, `OTHER` periods including cross-midnight ranges |
 
@@ -3144,6 +3155,7 @@ Manual `CARD` rows require an external terminal reference; PAN/CVV are never acc
 | GET | `/api/admin/pos/reports/sales.csv` | `pos.reports.view` |
 | GET | `/api/admin/pos/accounting/export.csv` | `pos.reports.view`; `type=SALES_VAT|PAYMENTS|REFUNDS|STOCK`, optional `from/to`; immutable SHA-256 audited export |
 | GET | `/api/admin/pos/health` | `pos.settings.manage` |
+| GET | `/api/admin/pos/stock-anomalies` | `pos.stock_mapping.manage` | Lists anomalies joined to ticket/item/warehouse names; `unresolved=1` filters `status='OPEN'`, `limit` (1-500, default 200) |
 | POST | `/api/admin/pos/stock-anomalies/{id}/resolve` | `pos.stock_mapping.manage` |
 | GET/PUT | `/api/admin/pos/roles/{slug}/permissions` | `pos.settings.manage` | Fine-grained tenant role permissions |
 
