@@ -1812,8 +1812,10 @@ Full display payload for ONE active group menu (must be `closed_group` or
 `a_la_carte_group`, active, belonging to the resolved restaurant). Includes the
 legacy blobs (menu_subtitle, entrantes, principales, postre, beverage,
 comments, ...) enriched with v2 dish details (`nombre`, `alergenos`,
-`suplemento`, `suplemento_activo`) and English translations. Dishes persisted
-with `description_enabled = 0` are returned WITHOUT a `descripcion` field.
+`suplemento`, `suplemento_activo`, `descripcion_enabled`) and English
+translations. Every dish carries the explicit boolean `descripcion_enabled`;
+dishes persisted with `description_enabled = 0` return
+`descripcion_enabled: false` WITHOUT a `descripcion` field.
 
 Response:
 - `{ success: true, menu: MenuDeGrupoDisplay }` or `{ success: false, message }` when the id is invalid/unknown.
