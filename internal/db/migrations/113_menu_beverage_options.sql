@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS restaurant_beverage_options (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS menu_beverage_options (
-  menu_id BIGINT NOT NULL,
+  menu_id INT NOT NULL,
   restaurant_id INT NOT NULL,
   beverage_option_id BIGINT NOT NULL,
   selected TINYINT(1) NOT NULL DEFAULT 1,
