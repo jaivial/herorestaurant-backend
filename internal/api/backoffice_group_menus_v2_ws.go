@@ -287,24 +287,29 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 		return conn.SetReadDeadline(time.Now().Add(70 * time.Second))
 	})
 
-	if tracker, err := s.loadBOMenuV2AIImageTracker(r.Context(), a.ActiveRestaurantID, menuID); err == nil {
-		helloPayload := map[string]any{
-			"type":          "hello",
-			"restaurant_id": a.ActiveRestaurantID,
-			"menu_id":       menuID,
-			"at":            time.Now().UTC().Format(time.RFC3339),
-			"tracker":       tracker,
-		}
-		if menuPreview, previewErr := s.loadBOMenuV2MenuPreviewTracker(r.Context(), a.ActiveRestaurantID, menuID); previewErr == nil {
-			helloPayload["menu_preview"] = menuPreview
-		}
-		if beverageOptions, beverageErr := s.loadMenuBeverageOptions(a.ActiveRestaurantID, menuID); beverageErr == nil {
-			helloPayload["beverage_options"] = beverageOptions
-		}
-		if menuSlider, sliderErr := s.loadBOMenuV2SliderTracker(r.Context(), a.ActiveRestaurantID, menuID); sliderErr == nil {
-			helloPayload["menu_slider"] = menuSlider
-		}
-		_ = client.writeJSON(helloPayload)
+	// Build and send the hello frame unconditionally. Previously the entire
+	// hello (including beverage_options) was dropped when the AI image
+	// tracker failed to load; that left the backoffice editor with the
+	// hardcoded 4-default beverage fallback and the operator's custom
+	// beverages never showed up on initial load. Each loader now logs its
+	// own failure but does not block the hello.
+	tracker, trackerErr := s.loadBOMenuV2AIImageTracker(r.Context(), a.ActiveRestaurantID, menuID)
+	if trackerErr != nil {
+		s.logBOGroupMenuV2AITrace("ws hello tracker load error restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, trackerErr)
+	}
+	menuPreview, menuPreviewErr := s.loadBOMenuV2MenuPreviewTracker(r.Context(), a.ActiveRestaurantID, menuID)
+	beverageOptions, beverageErr := s.loadMenuBeverageOptions(a.ActiveRestaurantID, menuID)
+	menuSlider, sliderErr := s.loadBOMenuV2SliderTracker(r.Context(), a.ActiveRestaurantID, menuID)
+
+	helloPayload := buildBOGroupMenuV2WSHelloPayload(
+		a.ActiveRestaurantID, menuID, time.Now(),
+		tracker, trackerErr,
+		menuPreview, menuPreviewErr,
+		beverageOptions, beverageErr,
+		menuSlider, sliderErr,
+	)
+	_ = client.writeJSON(helloPayload)
+	if trackerErr == nil {
 		s.logBOGroupMenuV2AITrace(
 			"ws hello snapshot sent restaurant=%d menu=%d requested=%d generating=%d",
 			a.ActiveRestaurantID,
@@ -313,7 +318,7 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 			tracker.TotalGenerating,
 		)
 	} else {
-		s.logBOGroupMenuV2AITrace("ws hello snapshot load error restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, err)
+		s.logBOGroupMenuV2AITrace("ws hello snapshot sent with empty tracker restaurant=%d menu=%d", a.ActiveRestaurantID, menuID)
 	}
 
 	readDone := make(chan struct{})
@@ -453,6 +458,49 @@ func (s *Server) loadBOMenuV2AIImageTracker(ctx context.Context, restaurantID in
 	)
 	return tracker, nil
 }
+
+// buildBOGroupMenuV2WSHelloPayload assembles the initial hello frame sent
+// over the backoffice group-menus-v2 WebSocket. The hello is ALWAYS returned
+// regardless of whether the individual loader calls succeed — failures are
+// logged by the caller but never drop the frame, otherwise the backoffice
+// editor (and the live preview iframe) never receives the live
+// `beverage_options` list on initial load.
+//
+// Pure (no DB / WS), so it can be unit-tested.
+func buildBOGroupMenuV2WSHelloPayload(
+	restaurantID int,
+	menuID int64,
+	sentAt time.Time,
+	tracker boV2AIImagesTracker, trackerErr error,
+	menuPreview boV2MenuPreviewTracker, menuPreviewErr error,
+	beverageOptions []beverageOption, beverageErr error,
+	menuSlider map[string]any, sliderErr error,
+) map[string]any {
+	payload := map[string]any{
+		"type":          "hello",
+		"restaurant_id": restaurantID,
+		"menu_id":       menuID,
+		"at":            sentAt.UTC().Format(time.RFC3339),
+	}
+	// Tracker is always attached so consumers that read it directly
+	// don't crash. Zero value on error.
+	if trackerErr == nil {
+		payload["tracker"] = tracker
+	} else {
+		payload["tracker"] = boV2AIImagesTracker{}
+	}
+	if menuPreviewErr == nil {
+		payload["menu_preview"] = menuPreview
+	}
+	if beverageErr == nil {
+		payload["beverage_options"] = beverageOptions
+	}
+	if sliderErr == nil {
+		payload["menu_slider"] = menuSlider
+	}
+	return payload
+}
+
 
 func (s *Server) loadBOMenuV2SliderTracker(ctx context.Context, restaurantID int, menuID int64) (map[string]any, error) {
 	var generating int
