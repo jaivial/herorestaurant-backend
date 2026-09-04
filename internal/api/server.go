@@ -548,6 +548,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2", s.handleBOGroupMenusV2List)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/drafts", s.handleBOGroupMenusV2CreateDraft)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/ws", s.handleBOGroupMenusV2AIWS)
+		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}/beverage-options", s.handleBOBeverageOptionsList)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}", s.handleBOGroupMenusV2Get)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/basics", s.handleBOGroupMenusV2PatchBasics)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/menu-type", s.handleBOGroupMenusV2PatchMenuType)

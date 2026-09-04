@@ -298,6 +298,9 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 		if menuPreview, previewErr := s.loadBOMenuV2MenuPreviewTracker(r.Context(), a.ActiveRestaurantID, menuID); previewErr == nil {
 			helloPayload["menu_preview"] = menuPreview
 		}
+		if beverageOptions, beverageErr := s.loadMenuBeverageOptions(a.ActiveRestaurantID, menuID); beverageErr == nil {
+			helloPayload["beverage_options"] = beverageOptions
+		}
 		if menuSlider, sliderErr := s.loadBOMenuV2SliderTracker(r.Context(), a.ActiveRestaurantID, menuID); sliderErr == nil {
 			helloPayload["menu_slider"] = menuSlider
 		}
@@ -333,6 +336,10 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 				continue
 			}
 			typ := strings.ToLower(strings.TrimSpace(msg.Type))
+			if strings.HasPrefix(typ, "beverage_") {
+				s.handleBOBeverageOptionsWSMessage(r, a.ActiveRestaurantID, menuID, client, raw)
+				continue
+			}
 			if typ != "sync" && typ != "refresh" && typ != "join" && typ != "join_menu" && typ != "join_group_menu" {
 				s.logBOGroupMenuV2AITrace("ws message ignored type restaurant=%d menu=%d type=%q", a.ActiveRestaurantID, menuID, typ)
 				continue

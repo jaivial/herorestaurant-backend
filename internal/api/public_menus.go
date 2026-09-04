@@ -73,13 +73,14 @@ type publicMenuPrincipales struct {
 }
 
 type publicMenuSettings struct {
-	IncludedCoffee       bool           `json:"included_coffee"`
-	Beverage             map[string]any `json:"beverage"`
-	Comments             []string       `json:"comments"`
-	MinPartySize         int            `json:"min_party_size"`
-	MainDishesLimit      bool           `json:"main_dishes_limit"`
-	MainDishesLimitCount int            `json:"main_dishes_limit_number"`
-	CommentsEnglish      []string       `json:"comments_english,omitempty"`
+	IncludedCoffee       bool             `json:"included_coffee"`
+	Beverage             map[string]any   `json:"beverage"`
+	Comments             []string         `json:"comments"`
+	MinPartySize         int              `json:"min_party_size"`
+	MainDishesLimit      bool             `json:"main_dishes_limit"`
+	MainDishesLimitCount int              `json:"main_dishes_limit_number"`
+	BeverageOptions      []map[string]any `json:"beverage_options"`
+	CommentsEnglish      []string         `json:"comments_english,omitempty"`
 }
 
 type publicMenuItem struct {
@@ -587,6 +588,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			Settings: publicMenuSettings{
 				IncludedCoffee:       includedCoffeeInt != 0,
 				Beverage:             beverage,
+				BeverageOptions:      s.menuBeverageOptionsPayload(restaurantID, menuID),
 				Comments:             anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
 				MinPartySize:         minPartySize,
 				MainDishesLimit:      mainDishesLimitInt != 0,
@@ -1010,6 +1012,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		Settings: publicMenuSettings{
 			IncludedCoffee:       includedCoffeeInt != 0,
 			Beverage:             beverage,
+			BeverageOptions:      s.menuBeverageOptionsPayload(int(restaurantID), menuID),
 			Comments:             anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
 			MinPartySize:         minPartySize,
 			MainDishesLimit:      mainDishesLimitInt != 0,
@@ -1295,12 +1298,15 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 // handlePublicMenusHome handles GET /menus/home.
 // Returns a lightweight list of active menus for the homepage cards section.
 func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
+	echoCorrelationID(w, r)
+	logCheckpoint(r, "home_menus_request_received")
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusInternalServerError, "Restaurant not found")
 		return
 	}
 
+	logCheckpoint(r, "home_menus_db_query_started", "restaurant_id", strconv.Itoa(restaurantID))
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, menu_type, active, menu_subtitle,
 		       show_menu_preview_image, menu_preview_image_path
@@ -1363,10 +1369,12 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.enrichPublicHomeMenus(r.Context(), restaurantID, menus)
+	logCheckpoint(r, "home_menus_db_query_completed", "menu_count", strconv.Itoa(len(menus)))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"count":   len(menus),
 		"menus":   menus,
 	})
+	logCheckpoint(r, "home_menus_response_sent", "menu_count", strconv.Itoa(len(menus)))
 }
