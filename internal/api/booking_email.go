@@ -292,7 +292,13 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 	if tableNumber != "" {
 		detailsHTML += tableRow("Mesa", htmlEscape(tableNumber))
 	}
-	detailsHTML += menuArrozHTML + tableRow("Tronas", strconv.Itoa(highChairs)) + tableRow("Carritos", strconv.Itoa(babyStrollers))
+	detailsHTML += menuArrozHTML
+	if highChairs > 0 {
+		detailsHTML += tableRow("Tronas", strconv.Itoa(highChairs))
+	}
+	if babyStrollers > 0 {
+		detailsHTML += tableRow("Carritos", strconv.Itoa(babyStrollers))
+	}
 	if commentary != "" {
 		detailsHTML += tableRow("Observaciones", htmlEscape(commentary))
 	}
