@@ -1731,7 +1731,7 @@ INSERT IGNORE INTO schema_migrations (id) VALUES
   ('006_booking_phone_prefix_and_children.sql'),
   ('007_reservation_defaults_and_floors.sql'),
   ('008_backoffice_roles_members_and_time_entries.sql'),
-  ('008_group_menus_v2.sql'),
+  ('008a_group_menus_v2.sql'),
   ('009_backoffice_fichaje_schedules_and_permissions.sql'),
   ('010_backoffice_roles_importance_and_custom.sql'),
   ('011_invoices.sql');
