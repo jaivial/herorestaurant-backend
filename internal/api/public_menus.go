@@ -103,6 +103,7 @@ type publicMenuItem struct {
 	Active               bool                  `json:"active"`
 	MenuSubtitle         []string              `json:"menu_subtitle"`
 	ShowDishImages       bool                  `json:"show_dish_images"`
+	ShowSectionTabs      bool                  `json:"show_section_tabs"`
 	Entrantes            []string              `json:"entrantes"`
 	Principales          publicMenuPrincipales `json:"principales"`
 	Postre               []string              `json:"postre"`
@@ -131,6 +132,7 @@ type publicMenuItemHome struct {
 	MenuSubtitle         []string `json:"menu_subtitle"`
 	MenuSubtitleEnglish  []string `json:"menu_subtitle_english,omitempty"`
 	ShowDishImages       bool     `json:"show_dish_images"`
+	ShowSectionTabs      bool     `json:"show_section_tabs"`
 	ShowMenuPreviewImage bool     `json:"show_menu_preview_image"`
 	MenuPreviewImageURL  string   `json:"menu_preview_image_url"`
 	SpecialMenuImageURL  string   `json:"special_menu_image_url"`
@@ -383,10 +385,10 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 
 	isHomePage := r.URL.Query().Get("home_page") == "true"
 
-	selectFields := "id, menu_title, menu_type, active, menu_subtitle, show_dish_images, show_menu_preview_image, menu_preview_image_path, special_menu_image_url"
+	selectFields := "id, menu_title, menu_type, active, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, special_menu_image_url"
 	if !isHomePage {
 		selectFields = `id, menu_title, price, active, menu_type, menu_subtitle,
-		       show_dish_images, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
+		       show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
 		       special_menu_image_url, legacy_source_table, created_at, modified_at`
 	}
@@ -430,6 +432,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				activeInt               int
 				menuSubtitleRaw         sql.NullString
 				showDishImagesInt       int
+				showSectionTabsInt      int
 				showMenuPreviewImageInt int
 				menuPreviewPathRaw      sql.NullString
 				specialImageURLRaw      sql.NullString
@@ -441,6 +444,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				&activeInt,
 				&menuSubtitleRaw,
 				&showDishImagesInt,
+				&showSectionTabsInt,
 				&showMenuPreviewImageInt,
 				&menuPreviewPathRaw,
 				&specialImageURLRaw,
@@ -465,6 +469,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				Active:               activeInt != 0,
 				MenuSubtitle:         anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
 				ShowDishImages:       showDishImagesInt != 0,
+				ShowSectionTabs:      showSectionTabsInt != 0,
 				ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
 				MenuPreviewImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, menuPreviewPathRaw.String),
 				SpecialMenuImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, specialImageURLRaw.String),
@@ -495,6 +500,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			menuTypeRaw             sql.NullString
 			menuSubtitleRaw         sql.NullString
 			showDishImagesInt       int
+			showSectionTabsInt      int
 			showMenuPreviewImageInt int
 			menuPreviewPathRaw      sql.NullString
 			entrantesRaw            sql.NullString
@@ -520,6 +526,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			&menuTypeRaw,
 			&menuSubtitleRaw,
 			&showDishImagesInt,
+			&showSectionTabsInt,
 			&showMenuPreviewImageInt,
 			&menuPreviewPathRaw,
 			&entrantesRaw,
@@ -589,8 +596,9 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			MenuSubtitle: anySliceToStringList(
 				decodeJSONOrFallback(menuSubtitleRaw.String, []any{}),
 			),
-			ShowDishImages: showDishImagesInt != 0,
-			Entrantes:      anySliceToStringList(decodeJSONOrFallback(entrantesRaw.String, []any{})),
+			ShowDishImages:  showDishImagesInt != 0,
+			ShowSectionTabs: showSectionTabsInt != 0,
+			Entrantes:       anySliceToStringList(decodeJSONOrFallback(entrantesRaw.String, []any{})),
 			Principales: publicMenuPrincipales{
 				TituloPrincipales: principalesTitle,
 				Items:             principalesItems,
@@ -903,6 +911,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		menuTypeRaw             sql.NullString
 		menuSubtitleRaw         sql.NullString
 		showDishImagesInt       int
+		showSectionTabsInt      int
 		showMenuPreviewImageInt int
 		menuPreviewPathRaw      sql.NullString
 		entrantesRaw            sql.NullString
@@ -922,7 +931,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT id, menu_title, price, active, menu_type, menu_subtitle,
-		       show_dish_images, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
+		       show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
 		       special_menu_image_url, legacy_source_table, created_at, modified_at
 		FROM menus
@@ -935,6 +944,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		&menuTypeRaw,
 		&menuSubtitleRaw,
 		&showDishImagesInt,
+		&showSectionTabsInt,
 		&showMenuPreviewImageInt,
 		&menuPreviewPathRaw,
 		&entrantesRaw,
@@ -1016,8 +1026,9 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		MenuSubtitle: anySliceToStringList(
 			decodeJSONOrFallback(menuSubtitleRaw.String, []any{}),
 		),
-		ShowDishImages: showDishImagesInt != 0,
-		Entrantes:      anySliceToStringList(decodeJSONOrFallback(entrantesRaw.String, []any{})),
+		ShowDishImages:  showDishImagesInt != 0,
+		ShowSectionTabs: showSectionTabsInt != 0,
+		Entrantes:       anySliceToStringList(decodeJSONOrFallback(entrantesRaw.String, []any{})),
 		Principales: publicMenuPrincipales{
 			TituloPrincipales: principalesTitle,
 			Items:             principalesItems,
