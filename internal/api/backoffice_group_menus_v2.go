@@ -827,6 +827,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		showDishImagesInt          int
 		showSectionTabsInt         int
 		showMenuPreviewInt         int
+		editorPreviewOpenInt       int
 		beverageRaw                sql.NullString
 		commentsRaw                sql.NullString
 		minPartySize               int
@@ -840,7 +841,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, beverage, comments,
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, editor_preview_open, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee, special_menu_image_url,
 		       menu_preview_image_path, menu_preview_ai_requested, menu_preview_ai_generating
 		FROM menus
@@ -856,6 +857,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		&showDishImagesInt,
 		&showSectionTabsInt,
 		&showMenuPreviewInt,
+		&editorPreviewOpenInt,
 		&beverageRaw,
 		&commentsRaw,
 		&minPartySize,
@@ -908,6 +910,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 			"show_dish_images":        showDishImagesInt != 0,
 			"show_section_tabs":       showSectionTabsInt != 0,
 			"show_menu_preview_image": showMenuPreviewImage,
+			"editor_preview_open":     editorPreviewOpenInt != 0,
 			"settings": map[string]any{
 				"included_coffee":          includedCoffeeInt != 0,
 				"beverage":                 decodeJSONOrFallback(beverageRaw.String, map[string]any{"type": "no_incluida", "price_per_person": nil, "has_supplement": false, "supplement_price": nil}),
@@ -1003,25 +1006,26 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	}
 
 	var (
-		currentTitle              string
-		currentPrice              string
-		currentActiveInt          int
-		currentDraftInt           int
-		currentType               sql.NullString
-		currentMenuSubtitle       sql.NullString
-		currentShowDishImagesInt  int
-		currentShowSectionTabsInt int
-		currentShowMenuPreviewInt int
-		currentBeverage           sql.NullString
-		currentComments           sql.NullString
-		currentMinParty           int
-		currentMainLimitInt       int
-		currentMainLimitNumber    int
-		currentIncludedCoffeeInt  int
+		currentTitle                string
+		currentPrice                string
+		currentActiveInt            int
+		currentDraftInt             int
+		currentType                 sql.NullString
+		currentMenuSubtitle         sql.NullString
+		currentShowDishImagesInt    int
+		currentShowSectionTabsInt   int
+		currentShowMenuPreviewInt   int
+		currentEditorPreviewOpenInt int
+		currentBeverage             sql.NullString
+		currentComments             sql.NullString
+		currentMinParty             int
+		currentMainLimitInt         int
+		currentMainLimitNumber      int
+		currentIncludedCoffeeInt    int
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, beverage, comments,
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, editor_preview_open, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee
 		FROM menus
 		WHERE id = ? AND restaurant_id = ?
@@ -1036,6 +1040,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		&currentShowDishImagesInt,
 		&currentShowSectionTabsInt,
 		&currentShowMenuPreviewInt,
+		&currentEditorPreviewOpenInt,
 		&currentBeverage,
 		&currentComments,
 		&currentMinParty,
@@ -1107,6 +1112,10 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	if v, ok := input["show_menu_preview_image"]; ok {
 		showMenuPreviewImage = parseLooseBoolOrDefault(v, showMenuPreviewImage)
 	}
+	editorPreviewOpen := currentEditorPreviewOpenInt != 0
+	if v, ok := input["editor_preview_open"]; ok {
+		editorPreviewOpen = parseLooseBoolOrDefault(v, editorPreviewOpen)
+	}
 
 	beverageJSON := currentBeverage.String
 	if v, ok := input["beverage"]; ok {
@@ -1159,6 +1168,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 			    show_dish_images = ?,
 			    show_section_tabs = ?,
 			    show_menu_preview_image = ?,
+			    editor_preview_open = ?,
 			    beverage = ?,
 			    comments = ?,
 			    min_party_size = ?,
@@ -1177,6 +1187,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		boolToTinyint(showDishImages),
 		boolToTinyint(showSectionTabs),
 		boolToTinyint(showMenuPreviewImage),
+		boolToTinyint(editorPreviewOpen),
 		beverageJSON,
 		commentsJSON,
 		minParty,
