@@ -22,12 +22,15 @@ import (
 )
 
 type boV2Section struct {
-	ID          int64      `json:"id"`
-	Title       string     `json:"title"`
-	Kind        string     `json:"kind"`
-	Position    int        `json:"position"`
-	Annotations []string   `json:"annotations"`
-	Dishes      []boV2Dish `json:"dishes"`
+	ID           int64      `json:"id"`
+	Title        string     `json:"title"`
+	DisplayTitle string     `json:"display_title"`
+	Subtitle     string     `json:"subtitle"`
+	TabLabel     string     `json:"tab_label"`
+	Kind         string     `json:"kind"`
+	Position     int        `json:"position"`
+	Annotations  []string   `json:"annotations"`
+	Dishes       []boV2Dish `json:"dishes"`
 }
 
 type boV2Dish struct {
@@ -374,10 +377,12 @@ func (s *Server) ensureBOMenuV2SectionsFromSnapshot(ctx *http.Request, restauran
 	defer tx.Rollback()
 
 	insertSection := func(title string, kind string, pos int) (int64, error) {
+		// Snapshot the legacy `title` into `display_title` so freshly created
+		// sections from the legacy snapshot are immediately usable by preact.
 		res, err := tx.ExecContext(ctx.Context(), `
-			INSERT INTO group_menu_sections_v2 (restaurant_id, menu_id, title, section_kind, position)
-			VALUES (?, ?, ?, ?, ?)
-		`, restaurantID, menuID, title, kind, pos)
+			INSERT INTO group_menu_sections_v2 (restaurant_id, menu_id, title, display_title, section_kind, position)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, restaurantID, menuID, title, title, kind, pos)
 		if err != nil {
 			return 0, err
 		}
@@ -432,7 +437,7 @@ func (s *Server) ensureBOMenuV2SectionsFromSnapshot(ctx *http.Request, restauran
 
 func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID int, menuID int64) ([]boV2Section, error) {
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, title, section_kind, position, COALESCE(annotations_json, '')
+		SELECT id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, '')
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
@@ -447,11 +452,21 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 	for rows.Next() {
 		var sec boV2Section
 		var annotationsRaw sql.NullString
-		if err := rows.Scan(&sec.ID, &sec.Title, &sec.Kind, &sec.Position, &annotationsRaw); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.Title, &sec.DisplayTitle, &sec.Subtitle, &sec.TabLabel, &sec.Kind, &sec.Position, &annotationsRaw); err != nil {
 			return nil, err
 		}
 		sec.Kind = normalizeV2SectionKind(sec.Kind)
 		sec.Annotations = normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{})))
+		// Normalize whitespace-only fields to empty so the legacy fallback below
+		// fires whenever the operator never filled in a heading.
+		sec.DisplayTitle = strings.TrimSpace(sec.DisplayTitle)
+		sec.Subtitle = strings.TrimSpace(sec.Subtitle)
+		sec.TabLabel = strings.TrimSpace(sec.TabLabel)
+		// New rows from older databases may miss display_title; fall back to the
+		// backoffice-only `title` so public consumers still see a heading.
+		if sec.DisplayTitle == "" {
+			sec.DisplayTitle = sec.Title
+		}
 		sec.Dishes = []boV2Dish{}
 		sectionByID[sec.ID] = len(sections)
 		sections = append(sections, sec)
@@ -1284,11 +1299,14 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 
 	var req struct {
 		Sections []struct {
-			ID          int64  `json:"id"`
-			Title       string `json:"title"`
-			Kind        string `json:"kind"`
-			Position    int    `json:"position"`
-			Annotations any    `json:"annotations"`
+			ID           int64  `json:"id"`
+			Title        string `json:"title"`
+			DisplayTitle string `json:"display_title"`
+			Subtitle     string `json:"subtitle"`
+			TabLabel     string `json:"tab_label"`
+			Kind         string `json:"kind"`
+			Position     int    `json:"position"`
+			Annotations  any    `json:"annotations"`
 		} `json:"sections"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1298,6 +1316,12 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 	if len(req.Sections) == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "At least one section is required"})
 		return
+	}
+	for idx, sec := range req.Sections {
+		if strings.TrimSpace(sec.DisplayTitle) == "" {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": fmt.Sprintf("El titulo a mostrar es obligatorio en la seccion %d", idx+1)})
+			return
+		}
 	}
 
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -1351,6 +1375,20 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 		if title == "" {
 			title = "Seccion"
 		}
+		// The handler rejects empty display_title before this loop runs, so the
+		// value here is always non-empty after TrimSpace.
+		displayTitle := strings.TrimSpace(sec.DisplayTitle)
+		if len(displayTitle) > 255 {
+			displayTitle = displayTitle[:255]
+		}
+		subtitle := strings.TrimSpace(sec.Subtitle)
+		if len(subtitle) > 500 {
+			subtitle = subtitle[:500]
+		}
+		tabLabel := strings.TrimSpace(sec.TabLabel)
+		if len(tabLabel) > 255 {
+			tabLabel = tabLabel[:255]
+		}
 		kind := normalizeV2SectionKind(sec.Kind)
 		position := idx
 		annotations := normalizeV2SectionAnnotations(anySliceToStringList(sec.Annotations))
@@ -1361,17 +1399,17 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 			if annotationsProvided {
 				if _, err := tx.ExecContext(r.Context(), `
 					UPDATE group_menu_sections_v2
-					SET title = ?, section_kind = ?, position = ?, annotations_json = ?
+					SET title = ?, display_title = ?, subtitle = ?, tab_label = ?, section_kind = ?, position = ?, annotations_json = ?
 					WHERE id = ? AND restaurant_id = ? AND menu_id = ?
-				`, title, kind, position, annotationsJSON, sec.ID, a.ActiveRestaurantID, menuID); err != nil {
+				`, title, displayTitle, subtitle, tabLabel, kind, position, annotationsJSON, sec.ID, a.ActiveRestaurantID, menuID); err != nil {
 					httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando seccion")
 					return
 				}
 			} else if _, err := tx.ExecContext(r.Context(), `
 				UPDATE group_menu_sections_v2
-				SET title = ?, section_kind = ?, position = ?
+				SET title = ?, display_title = ?, subtitle = ?, tab_label = ?, section_kind = ?, position = ?
 				WHERE id = ? AND restaurant_id = ? AND menu_id = ?
-			`, title, kind, position, sec.ID, a.ActiveRestaurantID, menuID); err != nil {
+			`, title, displayTitle, subtitle, tabLabel, kind, position, sec.ID, a.ActiveRestaurantID, menuID); err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando seccion")
 				return
 			}
@@ -1381,9 +1419,9 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 		}
 
 		res, err := tx.ExecContext(r.Context(), `
-			INSERT INTO group_menu_sections_v2 (restaurant_id, menu_id, title, section_kind, position, annotations_json)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, a.ActiveRestaurantID, menuID, title, kind, position, annotationsJSON)
+			INSERT INTO group_menu_sections_v2 (restaurant_id, menu_id, title, display_title, subtitle, tab_label, section_kind, position, annotations_json)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, a.ActiveRestaurantID, menuID, title, displayTitle, subtitle, tabLabel, kind, position, annotationsJSON)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error creando seccion")
 			return
