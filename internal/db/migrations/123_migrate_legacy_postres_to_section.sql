@@ -19,8 +19,8 @@ SET @sections_ready := (
 
 -- 1. Carrier menu, one per restaurant that has legacy desserts.
 SET @ddl := IF(@postres_exists = 1 AND @sections_ready = 1,
-  'INSERT INTO menus (restaurant_id, menu_title, menu_type, active, is_draft, legacy_source_table)
-     SELECT DISTINCT p.restaurant_id, ''Postres'', ''special'', 1, 0, ''POSTRES''
+  'INSERT INTO menus (restaurant_id, menu_title, price, menu_type, active, is_draft, legacy_source_table)
+     SELECT DISTINCT p.restaurant_id, ''Postres'', 0, ''special'', 1, 0, ''POSTRES''
        FROM POSTRES p
       WHERE NOT EXISTS (
             SELECT 1 FROM menus m
@@ -57,9 +57,10 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- 4. Dessert rows as section dishes, preserving NUM ordering and active flag.
 SET @ddl := IF(@postres_exists = 1 AND @sections_ready = 1,
   'INSERT INTO group_menu_section_dishes_v2
-     (restaurant_id, menu_id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json, active, position)
+     (restaurant_id, menu_id, section_id, catalog_dish_id, title_snapshot, description_snapshot, allergens_json, price, foto_path, ui_data_id, active, position)
      SELECT p.restaurant_id, sec.menu_id, sec.id, c.id, TRIM(p.DESCRIPCION), NULL,
             CASE WHEN JSON_VALID(p.alergenos) THEN CAST(p.alergenos AS JSON) ELSE NULL END,
+            NULL, p.foto_url, p.ui_data_id,
             COALESCE(p.active, 1),
             (SELECT COUNT(*) FROM POSTRES prev
               WHERE prev.restaurant_id = p.restaurant_id AND prev.NUM < p.NUM)
