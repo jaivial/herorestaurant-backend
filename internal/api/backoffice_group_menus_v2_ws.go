@@ -501,7 +501,6 @@ func buildBOGroupMenuV2WSHelloPayload(
 	return payload
 }
 
-
 func (s *Server) loadBOMenuV2SliderTracker(ctx context.Context, restaurantID int, menuID int64) (map[string]any, error) {
 	var generating int
 	err := s.db.QueryRowContext(ctx, `
