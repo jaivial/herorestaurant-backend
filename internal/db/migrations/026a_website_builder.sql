@@ -159,37 +159,59 @@ CREATE TABLE IF NOT EXISTS website_section_components (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Website assets (images, logos, etc.)
-CREATE TABLE IF NOT EXISTS website_assets (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    website_id BIGINT NOT NULL,
-    asset_type ENUM('image', 'logo', 'favicon', 'video', 'document') DEFAULT 'image',
-    original_filename VARCHAR(255),
-    storage_path VARCHAR(500) NOT NULL COMMENT 'BunnyCDN storage path',
-    public_url VARCHAR(500) NOT NULL COMMENT 'BunnyCDN pull URL',
-    mime_type VARCHAR(100),
-    file_size INT,
-    width INT,
-    height INT,
-    alt_text VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (website_id) REFERENCES restaurant_websites(id) ON DELETE CASCADE,
-    INDEX idx_type (website_id, asset_type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- website_id must match restaurant_websites.id type: on legacy installs that
+-- table predates 018/026a and its PK is INT, while fresh DBs get BIGINT from
+-- 018. A static BIGINT FK here crashes legacy DBs (Error 3780) and a static
+-- INT FK crashes fresh DBs, so derive the FK type from the live column.
+SET @rw_id_type := (
+  SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'restaurant_websites' AND COLUMN_NAME = 'id'
+);
+SET @ddl := IF(
+  @rw_id_type IS NULL,
+  'SELECT 1',
+  CONCAT(
+    'CREATE TABLE IF NOT EXISTS website_assets (',
+    'id INT AUTO_INCREMENT PRIMARY KEY, ',
+    'website_id ', @rw_id_type, ' NOT NULL, ',
+    "asset_type ENUM('image','logo','favicon','video','document') DEFAULT 'image', ",
+    'original_filename VARCHAR(255), ',
+    "storage_path VARCHAR(500) NOT NULL COMMENT 'BunnyCDN storage path', ",
+    "public_url VARCHAR(500) NOT NULL COMMENT 'BunnyCDN pull URL', ",
+    'mime_type VARCHAR(100), ',
+    'file_size INT, ',
+    'width INT, ',
+    'height INT, ',
+    'alt_text VARCHAR(255), ',
+    'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, ',
+    'FOREIGN KEY (website_id) REFERENCES restaurant_websites(id) ON DELETE CASCADE, ',
+    'INDEX idx_type (website_id, asset_type)',
+    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+  )
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- Website publish history (for rollback and audit)
-CREATE TABLE IF NOT EXISTS website_publish_history (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    website_id BIGINT NOT NULL,
-    version INT NOT NULL,
-    snapshot_json JSON NOT NULL COMMENT 'Full website snapshot at publish time',
-    published_by INT COMMENT 'bo_users.id',
-    published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    storage_path VARCHAR(500) COMMENT 'BunnyCDN path to generated files',
-    FOREIGN KEY (website_id) REFERENCES restaurant_websites(id) ON DELETE CASCADE,
-    FOREIGN KEY (published_by) REFERENCES bo_users(id) ON DELETE SET NULL,
-    UNIQUE KEY uk_website_version (website_id, version),
-    INDEX idx_published (website_id, published_at DESC)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+SET @ddl := IF(
+  @rw_id_type IS NULL,
+  'SELECT 1',
+  CONCAT(
+    'CREATE TABLE IF NOT EXISTS website_publish_history (',
+    'id INT AUTO_INCREMENT PRIMARY KEY, ',
+    'website_id ', @rw_id_type, ' NOT NULL, ',
+    'version INT NOT NULL, ',
+    "snapshot_json JSON NOT NULL COMMENT 'Full website snapshot at publish time', ",
+    "published_by INT COMMENT 'bo_users.id', ",
+    'published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, ',
+    "storage_path VARCHAR(500) COMMENT 'BunnyCDN path to generated files', ",
+    'FOREIGN KEY (website_id) REFERENCES restaurant_websites(id) ON DELETE CASCADE, ',
+    'FOREIGN KEY (published_by) REFERENCES bo_users(id) ON DELETE SET NULL, ',
+    'UNIQUE KEY uk_website_version (website_id, version), ',
+    'INDEX idx_published (website_id, published_at DESC)',
+    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+  )
+);
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- Insert default templates
 INSERT INTO website_templates (slug, name, description, category, template_data) VALUES
