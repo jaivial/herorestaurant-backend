@@ -70,11 +70,17 @@ func publicMenuDescription(description string, enabled bool) string {
 type publicMenuSection struct {
 	ID                 int64            `json:"id"`
 	Title              string           `json:"title"`
+	DisplayTitle       string           `json:"display_title"`
+	Subtitle           string           `json:"subtitle"`
+	TabLabel           string           `json:"tab_label"`
 	Kind               string           `json:"kind"`
 	Position           int              `json:"position"`
 	Annotations        []string         `json:"annotations"`
 	Dishes             []publicMenuDish `json:"dishes"`
 	TitleEnglish       string           `json:"title_english,omitempty"`
+	DisplayTitleEnglish string          `json:"display_title_english,omitempty"`
+	SubtitleEnglish    string           `json:"subtitle_english,omitempty"`
+	TabLabelEnglish    string           `json:"tab_label_english,omitempty"`
 	AnnotationsEnglish []string         `json:"annotations_english,omitempty"`
 }
 
@@ -638,7 +644,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		sectionsQuery := fmt.Sprintf(`
-			SELECT id, menu_id, title, section_kind, position, COALESCE(annotations_json, '')
+			SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, '')
 			FROM group_menu_sections_v2
 			WHERE restaurant_id = ?
 			  AND menu_id IN (%s)
@@ -658,11 +664,14 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				sectionID      int64
 				menuID         int64
 				title          string
+				displayTitle   string
+				subtitle       string
+				tabLabel       string
 				sectionKind    string
 				position       int
 				annotationsRaw sql.NullString
 			)
-			if err := sectionRows.Scan(&sectionID, &menuID, &title, &sectionKind, &position, &annotationsRaw); err != nil {
+			if err := sectionRows.Scan(&sectionID, &menuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw); err != nil {
 				sectionRows.Close()
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 					"success": false,
@@ -670,13 +679,21 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
+			// Fall back to the legacy title when display_title has not been
+			// populated yet so older menus still render.
+			if strings.TrimSpace(displayTitle) == "" {
+				displayTitle = title
+			}
 			section := &publicMenuSection{
-				ID:          sectionID,
-				Title:       title,
-				Kind:        normalizeV2SectionKind(sectionKind),
-				Position:    position,
-				Annotations: normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
-				Dishes:      []publicMenuDish{},
+				ID:           sectionID,
+				Title:        title,
+				DisplayTitle: displayTitle,
+				Subtitle:     subtitle,
+				TabLabel:     tabLabel,
+				Kind:         normalizeV2SectionKind(sectionKind),
+				Position:     position,
+				Annotations:  normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
+				Dishes:       []publicMenuDish{},
 			}
 			sectionsByMenu[menuID] = append(sectionsByMenu[menuID], section)
 			sectionByID[sectionID] = section
@@ -1060,7 +1077,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	sectionsByMenu := make(map[int64][]*publicMenuSection, 1)
 
 	sectionRows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, menu_id, title, section_kind, position, COALESCE(annotations_json, '')
+		SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, '')
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
@@ -1077,11 +1094,14 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 			sectionID      int64
 			secMenuID      int64
 			title          string
+			displayTitle   string
+			subtitle       string
+			tabLabel       string
 			sectionKind    string
 			position       int
 			annotationsRaw sql.NullString
 		)
-		if err := sectionRows.Scan(&sectionID, &secMenuID, &title, &sectionKind, &position, &annotationsRaw); err != nil {
+		if err := sectionRows.Scan(&sectionID, &secMenuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw); err != nil {
 			sectionRows.Close()
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -1089,13 +1109,19 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
+		if strings.TrimSpace(displayTitle) == "" {
+			displayTitle = title
+		}
 		section := &publicMenuSection{
-			ID:          sectionID,
-			Title:       title,
-			Kind:        normalizeV2SectionKind(sectionKind),
-			Position:    position,
-			Annotations: normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
-			Dishes:      []publicMenuDish{},
+			ID:           sectionID,
+			Title:        title,
+			DisplayTitle: displayTitle,
+			Subtitle:     subtitle,
+			TabLabel:     tabLabel,
+			Kind:         normalizeV2SectionKind(sectionKind),
+			Position:     position,
+			Annotations:  normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
+			Dishes:       []publicMenuDish{},
 		}
 		sectionsByMenu[secMenuID] = append(sectionsByMenu[secMenuID], section)
 		sectionByID[sectionID] = section
