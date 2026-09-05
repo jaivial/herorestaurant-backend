@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS `restaurant_page_visibility` (
   `restaurant_id` INT NOT NULL,
   `cafe_page_active` TINYINT(1) NOT NULL DEFAULT 1,
   `bebidas_page_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `postres_page_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `postres_web_placement` VARCHAR(64) NOT NULL DEFAULT 'inside_menus',
   `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
