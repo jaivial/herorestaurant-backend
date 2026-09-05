@@ -457,6 +457,11 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 		}
 		sec.Kind = normalizeV2SectionKind(sec.Kind)
 		sec.Annotations = normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{})))
+		// Normalize whitespace-only fields to empty so the legacy fallback below
+		// fires whenever the operator never filled in a heading.
+		sec.DisplayTitle = strings.TrimSpace(sec.DisplayTitle)
+		sec.Subtitle = strings.TrimSpace(sec.Subtitle)
+		sec.TabLabel = strings.TrimSpace(sec.TabLabel)
 		// New rows from older databases may miss display_title; fall back to the
 		// backoffice-only `title` so public consumers still see a heading.
 		if sec.DisplayTitle == "" {
@@ -1370,10 +1375,9 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 		if title == "" {
 			title = "Seccion"
 		}
+		// The handler rejects empty display_title before this loop runs, so the
+		// value here is always non-empty after TrimSpace.
 		displayTitle := strings.TrimSpace(sec.DisplayTitle)
-		if displayTitle == "" {
-			displayTitle = title
-		}
 		if len(displayTitle) > 255 {
 			displayTitle = displayTitle[:255]
 		}
@@ -1382,8 +1386,8 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 			subtitle = subtitle[:500]
 		}
 		tabLabel := strings.TrimSpace(sec.TabLabel)
-		if len(tabLabel) > 80 {
-			tabLabel = tabLabel[:80]
+		if len(tabLabel) > 255 {
+			tabLabel = tabLabel[:255]
 		}
 		kind := normalizeV2SectionKind(sec.Kind)
 		position := idx
