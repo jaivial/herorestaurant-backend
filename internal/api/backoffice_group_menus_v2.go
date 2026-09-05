@@ -825,6 +825,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		menuType                   sql.NullString
 		menuSubtitleRaw            sql.NullString
 		showDishImagesInt          int
+		showSectionTabsInt         int
 		showMenuPreviewInt         int
 		editorPreviewOpenInt       int
 		beverageRaw                sql.NullString
@@ -840,7 +841,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_menu_preview_image, editor_preview_open, beverage, comments,
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, editor_preview_open, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee, special_menu_image_url,
 		       menu_preview_image_path, menu_preview_ai_requested, menu_preview_ai_generating
 		FROM menus
@@ -854,6 +855,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		&menuType,
 		&menuSubtitleRaw,
 		&showDishImagesInt,
+		&showSectionTabsInt,
 		&showMenuPreviewInt,
 		&editorPreviewOpenInt,
 		&beverageRaw,
@@ -906,6 +908,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 			"menu_type":               normalizeV2MenuType(menuType.String),
 			"menu_subtitle":           anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
 			"show_dish_images":        showDishImagesInt != 0,
+			"show_section_tabs":       showSectionTabsInt != 0,
 			"show_menu_preview_image": showMenuPreviewImage,
 			"editor_preview_open":     editorPreviewOpenInt != 0,
 			"settings": map[string]any{
@@ -1010,6 +1013,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		currentType                 sql.NullString
 		currentMenuSubtitle         sql.NullString
 		currentShowDishImagesInt    int
+		currentShowSectionTabsInt   int
 		currentShowMenuPreviewInt   int
 		currentEditorPreviewOpenInt int
 		currentBeverage             sql.NullString
@@ -1021,7 +1025,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_menu_preview_image, editor_preview_open, beverage, comments,
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, editor_preview_open, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee
 		FROM menus
 		WHERE id = ? AND restaurant_id = ?
@@ -1034,6 +1038,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		&currentType,
 		&currentMenuSubtitle,
 		&currentShowDishImagesInt,
+		&currentShowSectionTabsInt,
 		&currentShowMenuPreviewInt,
 		&currentEditorPreviewOpenInt,
 		&currentBeverage,
@@ -1098,6 +1103,11 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	if v, ok := input["show_dish_images"]; ok {
 		showDishImages = parseLooseBoolOrDefault(v, showDishImages)
 	}
+	// Coordination id: menu_section_tabs_flag (backoffice -> DB -> public API)
+	showSectionTabs := currentShowSectionTabsInt != 0
+	if v, ok := input["show_section_tabs"]; ok {
+		showSectionTabs = parseLooseBoolOrDefault(v, showSectionTabs)
+	}
 	showMenuPreviewImage := currentShowMenuPreviewInt != 0
 	if v, ok := input["show_menu_preview_image"]; ok {
 		showMenuPreviewImage = parseLooseBoolOrDefault(v, showMenuPreviewImage)
@@ -1156,6 +1166,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 			    menu_type = ?,
 			    menu_subtitle = ?,
 			    show_dish_images = ?,
+			    show_section_tabs = ?,
 			    show_menu_preview_image = ?,
 			    editor_preview_open = ?,
 			    beverage = ?,
@@ -1174,6 +1185,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		menuType,
 		menuSubtitleJSON,
 		boolToTinyint(showDishImages),
+		boolToTinyint(showSectionTabs),
 		boolToTinyint(showMenuPreviewImage),
 		boolToTinyint(editorPreviewOpen),
 		beverageJSON,
