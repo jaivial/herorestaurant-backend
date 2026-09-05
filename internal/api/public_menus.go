@@ -153,34 +153,75 @@ type publicMenuItemSpecial struct {
 	SpecialMenuImageURL string   `json:"special_menu_image_url"`
 }
 
-func (s *Server) getPageVisibility(ctx context.Context, restaurantID int) (cafeActive bool, bebidasActive bool) {
-	cafeActive = true
-	bebidasActive = true
-	var cafe, bebidas int
-	err := s.db.QueryRowContext(ctx,
-		"SELECT cafe_page_active, bebidas_page_active FROM restaurant_page_visibility WHERE restaurant_id = ?",
-		restaurantID,
-	).Scan(&cafe, &bebidas)
-	if err == nil {
-		cafeActive = cafe != 0
-		bebidasActive = bebidas != 0
-	}
-	return
+// pageVisibility holds every per-restaurant public page toggle.
+// Coordination id: postres_page_visibility_v1
+type pageVisibility struct {
+	CafeActive          bool   `json:"cafe_page_active"`
+	BebidasActive       bool   `json:"bebidas_page_active"`
+	PostresActive       bool   `json:"postres_page_active"`
+	PostresWebPlacement string `json:"postres_web_placement"`
 }
 
-func (s *Server) updatePageVisibility(ctx context.Context, restaurantID int, cafeActive *bool, bebidasActive *bool) error {
-	if cafeActive == nil && bebidasActive == nil {
+// normalizedWebPlacement keeps the stored placement inside the known set so the
+// public frontend never has to defend against unexpected values.
+func normalizedWebPlacement(value string) string {
+	if strings.TrimSpace(value) == "independent_section" {
+		return "independent_section"
+	}
+	return "inside_menus"
+}
+
+func (s *Server) getPageVisibility(ctx context.Context, restaurantID int) pageVisibility {
+	vis := pageVisibility{CafeActive: true, BebidasActive: true, PostresActive: true, PostresWebPlacement: "inside_menus"}
+	var cafe, bebidas, postres int
+	var placement string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT cafe_page_active, bebidas_page_active, postres_page_active, postres_web_placement FROM restaurant_page_visibility WHERE restaurant_id = ?",
+		restaurantID,
+	).Scan(&cafe, &bebidas, &postres, &placement)
+	if err == nil {
+		vis.CafeActive = cafe != 0
+		vis.BebidasActive = bebidas != 0
+		vis.PostresActive = postres != 0
+		vis.PostresWebPlacement = normalizedWebPlacement(placement)
+	}
+	return vis
+}
+
+// pageVisibilityPatch is the partial update payload: every field is optional and
+// a nil field leaves the stored value untouched.
+// Coordination id: postres_page_visibility_v1
+type pageVisibilityPatch struct {
+	CafeActive          *bool   `json:"cafe_page_active,omitempty"`
+	BebidasActive       *bool   `json:"bebidas_page_active,omitempty"`
+	PostresActive       *bool   `json:"postres_page_active,omitempty"`
+	PostresWebPlacement *string `json:"postres_web_placement,omitempty"`
+}
+
+func (p pageVisibilityPatch) isEmpty() bool {
+	return p.CafeActive == nil && p.BebidasActive == nil && p.PostresActive == nil && p.PostresWebPlacement == nil
+}
+
+func (s *Server) updatePageVisibility(ctx context.Context, restaurantID int, patch pageVisibilityPatch) error {
+	if patch.isEmpty() {
 		return nil
 	}
+	var placement *string
+	if patch.PostresWebPlacement != nil {
+		normalized := normalizedWebPlacement(*patch.PostresWebPlacement)
+		placement = &normalized
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO restaurant_page_visibility (restaurant_id, cafe_page_active, bebidas_page_active)
-		VALUES (?, COALESCE(?, 1), COALESCE(?, 1))
+		INSERT INTO restaurant_page_visibility (restaurant_id, cafe_page_active, bebidas_page_active, postres_page_active, postres_web_placement)
+		VALUES (?, COALESCE(?, 1), COALESCE(?, 1), COALESCE(?, 1), COALESCE(?, 'inside_menus'))
 		ON DUPLICATE KEY UPDATE
 		  cafe_page_active = COALESCE(?, cafe_page_active),
-		  bebidas_page_active = COALESCE(?, bebidas_page_active)
+		  bebidas_page_active = COALESCE(?, bebidas_page_active),
+		  postres_page_active = COALESCE(?, postres_page_active),
+		  postres_web_placement = COALESCE(?, postres_web_placement)
 	`, restaurantID,
-		cafeActive, bebidasActive,
-		cafeActive, bebidasActive,
+		patch.CafeActive, patch.BebidasActive, patch.PostresActive, placement,
+		patch.CafeActive, patch.BebidasActive, patch.PostresActive, placement,
 	)
 	return err
 }
@@ -194,11 +235,16 @@ func (s *Server) handleGetPageVisibility(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	cafeActive, bebidasActive := s.getPageVisibility(r.Context(), restaurantID)
+	vis := s.getPageVisibility(r.Context(), restaurantID)
+	logCheckpoint(r, "page_visibility_read",
+		"postres_active", strconv.FormatBool(vis.PostresActive),
+		"postres_web_placement", vis.PostresWebPlacement)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":             true,
-		"cafe_page_active":    cafeActive,
-		"bebidas_page_active": bebidasActive,
+		"success":               true,
+		"cafe_page_active":      vis.CafeActive,
+		"bebidas_page_active":   vis.BebidasActive,
+		"postres_page_active":   vis.PostresActive,
+		"postres_web_placement": vis.PostresWebPlacement,
 	})
 }
 
@@ -211,16 +257,13 @@ func (s *Server) handlePageVisibilityPatch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var input struct {
-		CafeActive    *bool `json:"cafe_page_active,omitempty"`
-		BebidasActive *bool `json:"bebidas_page_active,omitempty"`
-	}
+	var input pageVisibilityPatch
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
-	if err := s.updatePageVisibility(r.Context(), restaurantID, input.CafeActive, input.BebidasActive); err != nil {
+	if err := s.updatePageVisibility(r.Context(), restaurantID, input); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Error updating page visibility",
@@ -228,11 +271,16 @@ func (s *Server) handlePageVisibilityPatch(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	cafeActive, bebidasActive := s.getPageVisibility(r.Context(), restaurantID)
+	vis := s.getPageVisibility(r.Context(), restaurantID)
+	logCheckpoint(r, "page_visibility_updated",
+		"postres_active", strconv.FormatBool(vis.PostresActive),
+		"postres_web_placement", vis.PostresWebPlacement)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":             true,
-		"cafe_page_active":    cafeActive,
-		"bebidas_page_active": bebidasActive,
+		"success":               true,
+		"cafe_page_active":      vis.CafeActive,
+		"bebidas_page_active":   vis.BebidasActive,
+		"postres_page_active":   vis.PostresActive,
+		"postres_web_placement": vis.PostresWebPlacement,
 	})
 }
 
@@ -1347,7 +1395,7 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 		})
 	}
 
-	cafeActive, bebidasActive := s.getPageVisibility(r.Context(), restaurantID)
+	vis := s.getPageVisibility(r.Context(), restaurantID)
 
 	visibleSections, err := s.loadPublicVisibleSections(r, restaurantID)
 	if err != nil {
@@ -1362,12 +1410,14 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 		"visible_sections", strconv.Itoa(len(visibleSections)))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":             true,
-		"count":               len(menus),
-		"menus":               menus,
-		"cafe_page_active":    cafeActive,
-		"bebidas_page_active": bebidasActive,
-		"visible_sections":    visibleSections,
+		"success":               true,
+		"count":                 len(menus),
+		"menus":                 menus,
+		"cafe_page_active":      vis.CafeActive,
+		"bebidas_page_active":   vis.BebidasActive,
+		"postres_page_active":   vis.PostresActive,
+		"postres_web_placement": vis.PostresWebPlacement,
+		"visible_sections":      visibleSections,
 	})
 }
 
