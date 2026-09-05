@@ -46,6 +46,7 @@ type publicMenuDish struct {
 	ID                 int64    `json:"id"`
 	Title              string   `json:"title"`
 	Description        string   `json:"description"`
+	DescriptionEnabled bool     `json:"description_enabled"`
 	FotoURL            string   `json:"foto_url"`
 	Allergens          []string `json:"allergens"`
 	SupplementEnabled  bool     `json:"supplement_enabled"`
@@ -54,6 +55,16 @@ type publicMenuDish struct {
 	Position           int      `json:"position"`
 	TitleEnglish       string   `json:"title_english,omitempty"`
 	DescriptionEnglish string   `json:"description_english,omitempty"`
+}
+
+// publicMenuDescription returns the dish description only when the per-dish
+// description_enabled flag is on; disabled dishes carry an empty description so
+// no consumer can leak text the backoffice asked to hide.
+func publicMenuDescription(description string, enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	return strings.TrimSpace(description)
 }
 
 type publicMenuSection struct {
@@ -679,7 +690,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		dishesQuery := fmt.Sprintf(`
-			SELECT id, menu_id, section_id, title_snapshot, description_snapshot, allergens_json, foto_path,
+			SELECT id, menu_id, section_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json, foto_path,
 			       supplement_enabled, supplement_price, price, position
 			FROM group_menu_section_dishes_v2
 			WHERE restaurant_id = ?
@@ -698,17 +709,18 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 		for dishRows.Next() {
 			var (
-				dishID          int64
-				menuID          int64
-				sectionID       int64
-				title           string
-				description     string
-				allergensRaw    sql.NullString
-				fotoPath        sql.NullString
-				supplementInt   int
-				supplementPrice sql.NullFloat64
-				priceRaw        sql.NullFloat64
-				position        int
+				dishID             int64
+				menuID             int64
+				sectionID          int64
+				title              string
+				description        string
+				descriptionEnabled int
+				allergensRaw       sql.NullString
+				fotoPath           sql.NullString
+				supplementInt      int
+				supplementPrice    sql.NullFloat64
+				priceRaw           sql.NullFloat64
+				position           int
 			)
 			if err := dishRows.Scan(
 				&dishID,
@@ -716,6 +728,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				&sectionID,
 				&title,
 				&description,
+				&descriptionEnabled,
 				&allergensRaw,
 				&fotoPath,
 				&supplementInt,
@@ -740,15 +753,16 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			}
 
 			dish := publicMenuDish{
-				ID:                dishID,
-				Title:             strings.TrimSpace(title),
-				Description:       strings.TrimSpace(description),
-				FotoURL:           s.publicMenuMediaURL(r.Context(), restaurantID, fotoPath.String),
-				Allergens:         anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
-				SupplementEnabled: supplementInt != 0,
-				SupplementPrice:   nil,
-				Price:             nil,
-				Position:          position,
+				ID:                 dishID,
+				Title:              strings.TrimSpace(title),
+				Description:        publicMenuDescription(description, descriptionEnabled != 0),
+				DescriptionEnabled: descriptionEnabled != 0,
+				FotoURL:            s.publicMenuMediaURL(r.Context(), restaurantID, fotoPath.String),
+				Allergens:          anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
+				SupplementEnabled:  supplementInt != 0,
+				SupplementPrice:    nil,
+				Price:              nil,
+				Position:           position,
 			}
 			if supplementPrice.Valid {
 				value := supplementPrice.Float64
@@ -1078,7 +1092,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	sectionRows.Close()
 
 	dishRows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, menu_id, section_id, title_snapshot, description_snapshot, allergens_json, foto_path,
+		SELECT id, menu_id, section_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json, foto_path,
 		       supplement_enabled, supplement_price, price, position
 		FROM group_menu_section_dishes_v2
 		WHERE restaurant_id = ? AND menu_id = ? AND active = 1
@@ -1093,17 +1107,18 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	}
 	for dishRows.Next() {
 		var (
-			dishID          int64
-			dishMenuID      int64
-			sectionID       int64
-			title           string
-			description     string
-			allergensRaw    sql.NullString
-			fotoPath        sql.NullString
-			supplementInt   int
-			supplementPrice sql.NullFloat64
-			priceRaw        sql.NullFloat64
-			position        int
+			dishID             int64
+			dishMenuID         int64
+			sectionID          int64
+			title              string
+			description        string
+			descriptionEnabled int
+			allergensRaw       sql.NullString
+			fotoPath           sql.NullString
+			supplementInt      int
+			supplementPrice    sql.NullFloat64
+			priceRaw           sql.NullFloat64
+			position           int
 		)
 		if err := dishRows.Scan(
 			&dishID,
@@ -1111,6 +1126,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 			&sectionID,
 			&title,
 			&description,
+			&descriptionEnabled,
 			&allergensRaw,
 			&fotoPath,
 			&supplementInt,
@@ -1132,15 +1148,16 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		}
 
 		dish := publicMenuDish{
-			ID:                dishID,
-			Title:             strings.TrimSpace(title),
-			Description:       strings.TrimSpace(description),
-			FotoURL:           s.publicMenuMediaURL(r.Context(), int(restaurantID), fotoPath.String),
-			Allergens:         anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
-			SupplementEnabled: supplementInt != 0,
-			SupplementPrice:   nil,
-			Price:             nil,
-			Position:          position,
+			ID:                 dishID,
+			Title:              strings.TrimSpace(title),
+			Description:        publicMenuDescription(description, descriptionEnabled != 0),
+			DescriptionEnabled: descriptionEnabled != 0,
+			FotoURL:            s.publicMenuMediaURL(r.Context(), int(restaurantID), fotoPath.String),
+			Allergens:          anySliceToStringList(decodeJSONOrFallback(allergensRaw.String, []any{})),
+			SupplementEnabled:  supplementInt != 0,
+			SupplementPrice:    nil,
+			Price:              nil,
+			Position:           position,
 		}
 		if supplementPrice.Valid {
 			value := supplementPrice.Float64
