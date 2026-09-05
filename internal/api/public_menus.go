@@ -68,20 +68,20 @@ func publicMenuDescription(description string, enabled bool) string {
 }
 
 type publicMenuSection struct {
-	ID                 int64            `json:"id"`
-	Title              string           `json:"title"`
-	DisplayTitle       string           `json:"display_title"`
-	Subtitle           string           `json:"subtitle"`
-	TabLabel           string           `json:"tab_label"`
-	Kind               string           `json:"kind"`
-	Position           int              `json:"position"`
-	Annotations        []string         `json:"annotations"`
-	Dishes             []publicMenuDish `json:"dishes"`
-	TitleEnglish       string           `json:"title_english,omitempty"`
-	DisplayTitleEnglish string          `json:"display_title_english,omitempty"`
-	SubtitleEnglish    string           `json:"subtitle_english,omitempty"`
-	TabLabelEnglish    string           `json:"tab_label_english,omitempty"`
-	AnnotationsEnglish []string         `json:"annotations_english,omitempty"`
+	ID                  int64            `json:"id"`
+	Title               string           `json:"title"`
+	DisplayTitle        string           `json:"display_title"`
+	Subtitle            string           `json:"subtitle"`
+	TabLabel            string           `json:"tab_label"`
+	Kind                string           `json:"kind"`
+	Position            int              `json:"position"`
+	Annotations         []string         `json:"annotations"`
+	Dishes              []publicMenuDish `json:"dishes"`
+	TitleEnglish        string           `json:"title_english,omitempty"`
+	DisplayTitleEnglish string           `json:"display_title_english,omitempty"`
+	SubtitleEnglish     string           `json:"subtitle_english,omitempty"`
+	TabLabelEnglish     string           `json:"tab_label_english,omitempty"`
+	AnnotationsEnglish  []string         `json:"annotations_english,omitempty"`
 }
 
 type publicMenuPrincipales struct {
