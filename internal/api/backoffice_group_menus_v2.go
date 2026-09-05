@@ -22,12 +22,14 @@ import (
 )
 
 type boV2Section struct {
-	ID          int64      `json:"id"`
-	Title       string     `json:"title"`
-	Kind        string     `json:"kind"`
-	Position    int        `json:"position"`
-	Annotations []string   `json:"annotations"`
-	Dishes      []boV2Dish `json:"dishes"`
+	ID               int64      `json:"id"`
+	Title            string     `json:"title"`
+	Kind             string     `json:"kind"`
+	Position         int        `json:"position"`
+	Annotations      []string   `json:"annotations"`
+	PublicPageActive bool       `json:"public_page_active"`
+	WebPlacement     string     `json:"web_placement"`
+	Dishes           []boV2Dish `json:"dishes"`
 }
 
 type boV2Dish struct {
@@ -85,6 +87,19 @@ func normalizeV2SectionKind(raw string) string {
 		return "bebidas"
 	default:
 		return "custom"
+	}
+}
+
+// normalizeV2SectionWebPlacement constrains where a publicly visible section is
+// surfaced on the public site navigation.
+// Coordination id: menu_section_public_placement_v1
+// (backoffice -> DB group_menu_sections_v2.web_placement -> public REST -> preact nav)
+func normalizeV2SectionWebPlacement(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "independent_section", "independent", "seccion_independiente":
+		return "independent_section"
+	default:
+		return "inside_menus"
 	}
 }
 
@@ -432,7 +447,8 @@ func (s *Server) ensureBOMenuV2SectionsFromSnapshot(ctx *http.Request, restauran
 
 func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID int, menuID int64) ([]boV2Section, error) {
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, title, section_kind, position, COALESCE(annotations_json, '')
+		SELECT id, title, section_kind, position, COALESCE(annotations_json, ''),
+		       COALESCE(public_page_active, 0), COALESCE(web_placement, 'inside_menus')
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
@@ -447,10 +463,13 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 	for rows.Next() {
 		var sec boV2Section
 		var annotationsRaw sql.NullString
-		if err := rows.Scan(&sec.ID, &sec.Title, &sec.Kind, &sec.Position, &annotationsRaw); err != nil {
+		var publicActive int
+		if err := rows.Scan(&sec.ID, &sec.Title, &sec.Kind, &sec.Position, &annotationsRaw, &publicActive, &sec.WebPlacement); err != nil {
 			return nil, err
 		}
 		sec.Kind = normalizeV2SectionKind(sec.Kind)
+		sec.PublicPageActive = publicActive == 1
+		sec.WebPlacement = normalizeV2SectionWebPlacement(sec.WebPlacement)
 		sec.Annotations = normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{})))
 		sec.Dishes = []boV2Dish{}
 		sectionByID[sec.ID] = len(sections)
@@ -1430,6 +1449,159 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "sections": sections})
+}
+
+// handleBOGroupMenusV2PatchSectionVisibility updates the public-page toggle and
+// the web placement of a single section.
+// Coordination id: menu_section_public_placement_v1
+func (s *Server) handleBOGroupMenusV2PatchSectionVisibility(w http.ResponseWriter, r *http.Request) {
+	echoCorrelationID(w, r)
+
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+	sectionID, err := parseChiPositiveInt64(r, "sectionId")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid section id"})
+		return
+	}
+
+	var req struct {
+		PublicPageActive *bool   `json:"public_page_active"`
+		WebPlacement     *string `json:"web_placement"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid JSON"})
+		return
+	}
+
+	logCheckpoint(r, "menu_section_visibility_request_received",
+		"menu_id", strconv.FormatInt(menuID, 10),
+		"section_id", strconv.FormatInt(sectionID, 10))
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error checking menu")
+		return
+	}
+	if !owns {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	sets := make([]string, 0, 2)
+	args := make([]any, 0, 5)
+	if req.PublicPageActive != nil {
+		sets = append(sets, "public_page_active = ?")
+		args = append(args, boolToTinyint(*req.PublicPageActive))
+	}
+	placement := ""
+	if req.WebPlacement != nil {
+		placement = normalizeV2SectionWebPlacement(*req.WebPlacement)
+		sets = append(sets, "web_placement = ?")
+		args = append(args, placement)
+	}
+	if len(sets) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Nothing to update"})
+		return
+	}
+	args = append(args, sectionID, menuID, a.ActiveRestaurantID)
+
+	res, err := s.db.ExecContext(r.Context(), fmt.Sprintf(`
+		UPDATE group_menu_sections_v2 SET %s
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`, strings.Join(sets, ", ")), args...)
+	if err != nil {
+		logCheckpoint(r, "menu_section_visibility_db_failed", "section_id", strconv.FormatInt(sectionID, 10))
+		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando visibilidad")
+		return
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
+		return
+	}
+
+	logCheckpoint(r, "menu_section_visibility_persisted",
+		"section_id", strconv.FormatInt(sectionID, 10),
+		"web_placement", placement)
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// handleBOGroupMenusV2DeleteSection removes a single section from a menu.
+// Child dishes cascade via fk_group_menu_section_dishes_v2_section.
+// Coordination id: menu_section_delete_v1 (backoffice modal -> DELETE -> DB -> public snapshot)
+func (s *Server) handleBOGroupMenusV2DeleteSection(w http.ResponseWriter, r *http.Request) {
+	echoCorrelationID(w, r)
+
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	menuID, err := parseChiPositiveInt64(r, "id")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+		return
+	}
+	sectionID, err := parseChiPositiveInt64(r, "sectionId")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid section id"})
+		return
+	}
+
+	logCheckpoint(r, "menu_section_delete_request_received",
+		"menu_id", strconv.FormatInt(menuID, 10),
+		"section_id", strconv.FormatInt(sectionID, 10),
+		"restaurant_id", strconv.Itoa(a.ActiveRestaurantID))
+
+	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error checking menu")
+		return
+	}
+	if !owns {
+		logCheckpoint(r, "menu_section_delete_menu_not_found", "menu_id", strconv.FormatInt(menuID, 10))
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
+		return
+	}
+
+	logCheckpoint(r, "menu_section_delete_db_started", "section_id", strconv.FormatInt(sectionID, 10))
+
+	res, err := s.db.ExecContext(r.Context(), `
+		DELETE FROM group_menu_sections_v2 WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`, sectionID, menuID, a.ActiveRestaurantID)
+	if err != nil {
+		logCheckpoint(r, "menu_section_delete_db_failed", "section_id", strconv.FormatInt(sectionID, 10))
+		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando seccion")
+		return
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		logCheckpoint(r, "menu_section_delete_not_found", "section_id", strconv.FormatInt(sectionID, 10))
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
+		return
+	}
+
+	if err := s.syncBOMenuV2LegacySnapshot(r, a.ActiveRestaurantID, menuID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando snapshot")
+		return
+	}
+
+	logCheckpoint(r, "menu_section_delete_persisted",
+		"menu_id", strconv.FormatInt(menuID, 10),
+		"section_id", strconv.FormatInt(sectionID, 10))
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "section_id": sectionID})
 }
 
 func (s *Server) handleBOGroupMenusV2PatchSectionAnnotations(w http.ResponseWriter, r *http.Request) {
@@ -3243,4 +3415,57 @@ func (s *Server) callOpenAISliderImageEdit(ctx context.Context, input []byte, in
 		return payload, nil
 	}
 	return s.extractOpenAIImagePayload(ctx, payload)
+}
+
+// handleBOGroupMenusV2ResolvePostres returns the id of the restaurant's Postres
+// carrier menu, creating it (with its single publicly visible section) when the
+// restaurant has none yet. The backoffice Postres page redirects to the shared
+// menu editor for that id, so desserts reuse the whole section machinery.
+// Coordination id: menu_section_public_placement_v1
+func (s *Server) handleBOGroupMenusV2ResolvePostres(w http.ResponseWriter, r *http.Request) {
+	echoCorrelationID(w, r)
+
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	logCheckpoint(r, "menu_postres_resolve_request_received", "restaurant_id", strconv.Itoa(a.ActiveRestaurantID))
+
+	var menuID int64
+	err := s.db.QueryRowContext(r.Context(), `
+		SELECT id FROM menus
+		 WHERE restaurant_id = ? AND UPPER(COALESCE(legacy_source_table, '')) = 'POSTRES'
+		 ORDER BY id LIMIT 1
+	`, a.ActiveRestaurantID).Scan(&menuID)
+	if err != nil && err != sql.ErrNoRows {
+		logCheckpoint(r, "menu_postres_resolve_db_failed", "restaurant_id", strconv.Itoa(a.ActiveRestaurantID))
+		httpx.WriteError(w, http.StatusInternalServerError, "Error resolviendo postres")
+		return
+	}
+
+	if err == sql.ErrNoRows {
+		res, insErr := s.db.ExecContext(r.Context(), `
+			INSERT INTO menus (restaurant_id, menu_title, menu_type, active, is_draft, legacy_source_table)
+			VALUES (?, 'Postres', 'special', 1, 0, 'POSTRES')
+		`, a.ActiveRestaurantID)
+		if insErr != nil {
+			logCheckpoint(r, "menu_postres_resolve_create_failed", "restaurant_id", strconv.Itoa(a.ActiveRestaurantID))
+			httpx.WriteError(w, http.StatusInternalServerError, "Error creando postres")
+			return
+		}
+		menuID, _ = res.LastInsertId()
+		if _, insErr = s.db.ExecContext(r.Context(), `
+			INSERT INTO group_menu_sections_v2 (restaurant_id, menu_id, title, section_kind, position, public_page_active, web_placement)
+			VALUES (?, ?, 'Postres', 'postres', 0, 0, 'inside_menus')
+		`, a.ActiveRestaurantID, menuID); insErr != nil {
+			logCheckpoint(r, "menu_postres_resolve_section_failed", "menu_id", strconv.FormatInt(menuID, 10))
+			httpx.WriteError(w, http.StatusInternalServerError, "Error creando seccion postres")
+			return
+		}
+	}
+
+	logCheckpoint(r, "menu_postres_resolve_persisted", "menu_id", strconv.FormatInt(menuID, 10))
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "menu_id": menuID})
 }

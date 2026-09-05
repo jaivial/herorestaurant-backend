@@ -1243,6 +1243,15 @@ func activePublicMenuWhere() string {
 		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') IN ('closed_conventional', 'closed_group', 'a_la_carte', 'a_la_carte_group', 'special')`
 }
 
+// activePublicMenuWhereAliased is activePublicMenuWhere for queries that join
+// the menus table under an alias. Keeps the public-visibility criteria single-sourced.
+func activePublicMenuWhereAliased(alias string) string {
+	return alias + `.restaurant_id = ?
+		  AND ` + alias + `.active = 1
+		  AND ` + alias + `.is_draft = 0
+		  AND COALESCE(NULLIF(TRIM(` + alias + `.menu_type), ''), 'closed_conventional') IN ('closed_conventional', 'closed_group', 'a_la_carte', 'a_la_carte_group', 'special')`
+}
+
 // handlePublicMenuByRouteID handles GET /menus/{menuID}.
 // It extracts the menuID from the chi URL param and delegates to handlePublicMenuByID.
 func (s *Server) handlePublicMenuByRouteID(w http.ResponseWriter, r *http.Request) {
@@ -1314,13 +1323,70 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 
 	cafeActive, bebidasActive := s.getPageVisibility(r.Context(), restaurantID)
 
+	visibleSections, err := s.loadPublicVisibleSections(r, restaurantID)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error querying visible sections",
+		})
+		return
+	}
+
+	logCheckpoint(r, "public_sidebar_sections_resolved",
+		"visible_sections", strconv.Itoa(len(visibleSections)))
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":             true,
 		"count":               len(menus),
 		"menus":               menus,
 		"cafe_page_active":    cafeActive,
 		"bebidas_page_active": bebidasActive,
+		"visible_sections":    visibleSections,
 	})
+}
+
+// publicSidebarSection is a menu section the restaurant chose to surface in the
+// public navigation, plus where it should appear.
+// Coordination id: menu_section_public_placement_v1
+type publicSidebarSection struct {
+	ID           int64  `json:"id"`
+	MenuID       int64  `json:"menu_id"`
+	Title        string `json:"title"`
+	Kind         string `json:"kind"`
+	WebPlacement string `json:"web_placement"`
+	Href         string `json:"href"`
+}
+
+// loadPublicVisibleSections returns sections flagged public_page_active that
+// belong to an active, publicly visible menu.
+func (s *Server) loadPublicVisibleSections(r *http.Request, restaurantID int) ([]publicSidebarSection, error) {
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT sec.id, sec.menu_id, sec.title, sec.section_kind,
+		       COALESCE(sec.web_placement, 'inside_menus'), m.menu_title
+		FROM group_menu_sections_v2 sec
+		INNER JOIN menus m ON m.id = sec.menu_id AND m.restaurant_id = sec.restaurant_id
+		WHERE sec.restaurant_id = ? AND COALESCE(sec.public_page_active, 0) = 1
+		  AND `+activePublicMenuWhereAliased("m")+`
+		ORDER BY sec.position ASC, sec.id ASC
+	`, restaurantID, restaurantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]publicSidebarSection, 0, 8)
+	for rows.Next() {
+		var sec publicSidebarSection
+		var menuTitle string
+		if err := rows.Scan(&sec.ID, &sec.MenuID, &sec.Title, &sec.Kind, &sec.WebPlacement, &menuTitle); err != nil {
+			return nil, err
+		}
+		sec.Kind = normalizeV2SectionKind(sec.Kind)
+		sec.WebPlacement = normalizeV2SectionWebPlacement(sec.WebPlacement)
+		sec.Href = fmt.Sprintf("/menu/%d/%s#seccion-%d", sec.MenuID, buildPublicMenuSlug(menuTitle, sec.MenuID), sec.ID)
+		out = append(out, sec)
+	}
+	return out, rows.Err()
 }
 
 // handlePublicMenusHome handles GET /menus/home.
