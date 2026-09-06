@@ -102,6 +102,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	go s.runBOFichajeAutoCutLoop()
 	go s.runPreShiftReminderLoop(context.Background())
 	go s.runStockDigestLoop(context.Background())
+	go s.runBookingReminderLoop(context.Background())
 	go s.runWhatsAppOutboxLoop(context.Background())
 	return s
 }
@@ -683,6 +684,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/settings/{restaurantId}", s.handleBOBotSettingsGet)
 		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/settings/{restaurantId}", s.handleBOBotSettingsPut)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/bot/settings/{restaurantId}/preview", s.handleBOBotSettingsPreview)
+		// Booking WhatsApp notifications (confirmation / reconfirmation) — bkg-wa-notif.
+		r.With(s.requireBOSession, ajustesGate).Get("/booking-notifications", s.handleBOBookingNotificationsGet)
+		r.With(s.requireBOSession, ajustesGate).Put("/booking-notifications", s.handleBOBookingNotificationsPut)
 		r.With(s.requireBOSession, ajustesGate).Get("/branding", s.handleBOBrandingGet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding", s.handleBOBrandingSet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding/logo", s.handleBOBrandingLogoUpload)

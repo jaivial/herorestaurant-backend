@@ -101,7 +101,16 @@ func needsRiceReminder(arrozType sql.NullString) bool {
 	return strings.EqualFold(v, "null")
 }
 
-func buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDisplay string, partySize int, floorDisplay, salonDisplay string) string {
+// bookingReminderExtras carries the optional booking detail rendered in the
+// reminder. Arroz is always shown (as "No" when absent); tronas and carritos are
+// always shown including 0, mirroring the confirmation message.
+type bookingReminderExtras struct {
+	ArrozLine     string
+	HighChairs    int
+	BabyStrollers int
+}
+
+func buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDisplay string, partySize int, floorDisplay, salonDisplay string, extras bookingReminderExtras) string {
 	msg := "Hola " + customerName + ",\n\n" +
 		"Le recordamos su reserva en " + brandName + ":\n\n" +
 		"📅 Fecha: " + dateDisplay + "\n" +
@@ -113,7 +122,26 @@ func buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDispl
 	if salonDisplay != "" {
 		msg += "🚪 Salón: " + salonDisplay + "\n"
 	}
+	arrozLine := strings.TrimSpace(extras.ArrozLine)
+	if arrozLine == "" {
+		arrozLine = "🍚 Arroz: No"
+	}
+	msg += arrozLine + "\n"
+	msg += "👶 Tronas: " + strconv.Itoa(extras.HighChairs) + "\n"
+	msg += "🍼 Carros de bebé: " + strconv.Itoa(extras.BabyStrollers) + "\n"
 	return msg + "\nPor favor, confirme su asistencia haciendo clic en el botón de abajo:"
+}
+
+// bookingReminderArrozLine renders the arroz summary as a single unstarred line
+// for the reminder, reusing the confirmation formatter so both stay in sync.
+func bookingReminderArrozLine(arrozType, arrozServings sql.NullString) string {
+	booking := map[string]any{
+		"toggleArroz":    "true",
+		"arroz_type":     arrozType.String,
+		"arroz_servings": arrozServings.String,
+	}
+	line := strings.TrimRight(formatArrozWhatsApp(booking), "\n")
+	return strings.ReplaceAll(line, "*", "")
 }
 
 func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +201,8 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 		SELECT b.id, b.customer_name, b.contact_phone_country_code, b.contact_phone,
 		       DATE_FORMAT(b.reservation_date, '%Y-%m-%d') AS reservation_date,
 		       TIME_FORMAT(b.reservation_time, '%H:%i:%s') AS reservation_time,
-		       b.party_size, b.arroz_type, b.preferred_floor_number, sal.name
+		       b.party_size, b.arroz_type, b.arroz_servings, b.highChairs, b.babyStrollers,
+		       b.preferred_floor_number, sal.name
 		FROM bookings b
 		LEFT JOIN restaurant_salons sal ON sal.id = b.preferred_salon_id AND sal.restaurant_id = b.restaurant_id
 		WHERE b.restaurant_id = ?
@@ -203,6 +232,9 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 		ReservationTime string
 		PartySize       int
 		ArrozType       sql.NullString
+		ArrozServings   sql.NullString
+		HighChairs      sql.NullInt64
+		BabyStrollers   sql.NullInt64
 		PreferredFloor  sql.NullInt64
 		SalonName       sql.NullString
 	}
@@ -210,7 +242,8 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 	var bookings []rowBooking
 	for rows.Next() {
 		var b rowBooking
-		if err := rows.Scan(&b.ID, &b.CustomerName, &b.ContactPhoneCC, &b.ContactPhone, &b.ReservationDate, &b.ReservationTime, &b.PartySize, &b.ArrozType, &b.PreferredFloor, &b.SalonName); err != nil {
+		if err := rows.Scan(&b.ID, &b.CustomerName, &b.ContactPhoneCC, &b.ContactPhone, &b.ReservationDate, &b.ReservationTime,
+			&b.PartySize, &b.ArrozType, &b.ArrozServings, &b.HighChairs, &b.BabyStrollers, &b.PreferredFloor, &b.SalonName); err != nil {
 			results["error"] = err.Error()
 			appendReminderLog(ts + " - ERROR: " + err.Error() + "\n")
 			httpx.WriteJSON(w, http.StatusOK, results)
@@ -307,17 +340,18 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 			"rice_sent":         false,
 		}
 
-		confirmationURL := baseURL + "/confirm?id=" + strconv.Itoa(bookingID)
 		floorDisplay := ""
 		if booking.PreferredFloor.Valid && booking.PreferredFloor.Int64 >= 0 {
 			floorDisplay = "Planta " + strconv.FormatInt(booking.PreferredFloor.Int64, 10)
 		}
-		confirmationMessage := buildBookingReminderMessage(customerName, brandName, bookingDateDisplay, bookingTimeDisplay, partySize, floorDisplay, strings.TrimSpace(booking.SalonName.String))
-		confirmationButtons := []string{
-			"✅ Confirmar Reserva|" + confirmationURL,
+		extras := bookingReminderExtras{
+			ArrozLine:     bookingReminderArrozLine(booking.ArrozType, booking.ArrozServings),
+			HighChairs:    int(booking.HighChairs.Int64),
+			BabyStrollers: int(booking.BabyStrollers.Int64),
 		}
+		reminder := buildBookingReminderPayload(brandName, customerName, bookingDateDisplay, bookingTimeDisplay, partySize, floorDisplay, strings.TrimSpace(booking.SalonName.String), extras, int64(bookingID), baseURL)
 
-		confirmOK, confirmErr := sendMenu(r.Context(), phoneWithPrefix, confirmationMessage, confirmationButtons)
+		confirmOK, confirmErr := sendMenu(r.Context(), phoneWithPrefix, reminder.Text, reminder.Choices)
 		if confirmOK {
 			results["confirmation_sent"] = results["confirmation_sent"].(int) + 1
 			bookingDetail["confirmation_sent"] = true
