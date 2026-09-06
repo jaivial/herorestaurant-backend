@@ -108,10 +108,50 @@ func buildBookingWhatsAppButtonPayload(brandName string, booking map[string]any,
 	}, nil
 }
 
+// buildBookingReminderPayload builds the reconfirmation (reminder) message and
+// its single confirm button. Shared by the n8n webhook path and the scheduled
+// reminder worker so both render one identical template, with the confirm URL
+// resolved from the restaurant's own base URL.
+func buildBookingReminderPayload(brandName, customerName, dateDisplay, timeDisplay string, partySize int, floorDisplay, salonDisplay string, bookingID int64, baseURL string) bookingWhatsAppMessage {
+	base := strings.TrimRight(baseURL, "/")
+	return bookingWhatsAppMessage{
+		Text:    buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDisplay, partySize, floorDisplay, salonDisplay),
+		Choices: []string{fmt.Sprintf("✅ Confirmar Reserva|%s/confirm?id=%d", base, bookingID)},
+	}
+}
+
+// resolveRestaurantPublicBaseURL prefers the restaurant's configured website
+// (ConfigContacto → restaurant_info.website) so public booking links point to
+// its own domain, then falls back to env var / primary domain.
+func resolveRestaurantPublicBaseURL(ctx context.Context, s *Server, restaurantID int) string {
+	if info, err := s.loadRestaurantInfo(ctx, restaurantID); err == nil && info.Website != "" {
+		if normalized, nErr := normalizeRestaurantWebsiteURL(info.Website); nErr == nil && normalized != "" {
+			return normalized
+		}
+	}
+	return publicBaseURLFromContext(ctx, s, restaurantID)
+}
+
+// restaurantBrandNameOrDefault resolves the display brand name for messages.
+func restaurantBrandNameOrDefault(ctx context.Context, s *Server, restaurantID int) string {
+	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
+	if name := strings.TrimSpace(branding.BrandName); name != "" {
+		return name
+	}
+	return "Restaurante"
+}
+
 // sendBookingWhatsAppToCustomer sends a WhatsApp confirmation to the customer
 // through the restaurant's provisioned gateway (UAZAPI or Evolution).
 // It tries the button message first and falls back to plain text.
 func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID int, booking map[string]any, bookingID int64) error {
+	// Operators can disable booking confirmations per restaurant from
+	// ConfigContacto → Notificaciones de reserva (bkg-wa-notif). A disabled
+	// confirmation is not a failure, so callers keep reporting success.
+	if cfg, err := s.loadBookingNotificationSettings(ctx, restaurantID); err == nil && !cfg.SendConfirmation {
+		log.Printf("%s.confirmation.skipped restaurant=%d booking=%d", bookingNotifCoordinationID, restaurantID, bookingID)
+		return nil
+	}
 	if rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); err == nil && found && strings.EqualFold(rec.Provider, "evolution") {
 		if _, refreshErr := s.refreshRestaurantUAZAPIConnectionStatus(ctx, restaurantID); refreshErr != nil {
 			log.Printf("WhatsApp connection refresh failed for booking #%d: %v", bookingID, refreshErr)
@@ -125,22 +165,8 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 		return fmt.Errorf("WhatsApp no configurado")
 	}
 
-	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
-	brandName := branding.BrandName
-	if brandName == "" {
-		brandName = "Restaurante"
-	}
-	baseURL := publicBaseURLFromContext(ctx, s, restaurantID)
-
-	// Prefer the restaurant's configured website (ConfigContacto →
-	// restaurant_info.website) for public booking links, mirroring the email
-	// confirmation builder. Links must point to the restaurant's own domain,
-	// not the backend host or a hardcoded legacy domain.
-	if info, infoErr := s.loadRestaurantInfo(ctx, restaurantID); infoErr == nil && info.Website != "" {
-		if normalized, normalizeErr := normalizeRestaurantWebsiteURL(info.Website); normalizeErr == nil && normalized != "" {
-			baseURL = normalized
-		}
-	}
+	brandName := restaurantBrandNameOrDefault(ctx, s, restaurantID)
+	baseURL := resolveRestaurantPublicBaseURL(ctx, s, restaurantID)
 
 	msg, err := buildBookingWhatsAppButtonPayload(brandName, booking, bookingID, baseURL)
 	if err != nil {

@@ -307,17 +307,13 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 			"rice_sent":         false,
 		}
 
-		confirmationURL := baseURL + "/confirm?id=" + strconv.Itoa(bookingID)
 		floorDisplay := ""
 		if booking.PreferredFloor.Valid && booking.PreferredFloor.Int64 >= 0 {
 			floorDisplay = "Planta " + strconv.FormatInt(booking.PreferredFloor.Int64, 10)
 		}
-		confirmationMessage := buildBookingReminderMessage(customerName, brandName, bookingDateDisplay, bookingTimeDisplay, partySize, floorDisplay, strings.TrimSpace(booking.SalonName.String))
-		confirmationButtons := []string{
-			"✅ Confirmar Reserva|" + confirmationURL,
-		}
+		reminder := buildBookingReminderPayload(brandName, customerName, bookingDateDisplay, bookingTimeDisplay, partySize, floorDisplay, strings.TrimSpace(booking.SalonName.String), int64(bookingID), baseURL)
 
-		confirmOK, confirmErr := sendMenu(r.Context(), phoneWithPrefix, confirmationMessage, confirmationButtons)
+		confirmOK, confirmErr := sendMenu(r.Context(), phoneWithPrefix, reminder.Text, reminder.Choices)
 		if confirmOK {
 			results["confirmation_sent"] = results["confirmation_sent"].(int) + 1
 			bookingDetail["confirmation_sent"] = true
