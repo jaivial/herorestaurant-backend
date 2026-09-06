@@ -473,12 +473,19 @@ func (s *Server) handlePublicBookingRice(w http.ResponseWriter, r *http.Request)
 
 	typeJSON, _ := json.Marshal([]string{selectedRice})
 	servJSON, _ := json.Marshal([]int{body.Servings})
-	_, err = s.db.ExecContext(r.Context(),
+	res, err := s.db.ExecContext(r.Context(),
 		"UPDATE bookings SET arroz_type = ?, arroz_servings = ? WHERE restaurant_id = ? AND id = ?",
 		string(typeJSON), string(servJSON), restaurantID, b.ID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error al actualizar la reserva"})
 		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		// Register the customer modification for the "Modificadas" tab.
+		// Coordination id: booking-modification-recorded.
+		s.insertBookingModification(r.Context(), restaurantID, b.ID, b.ReservationDate, "rice",
+			oldRiceType+"|"+oldRiceServs, string(typeJSON)+"|"+string(servJSON),
+			"customer", nil, "Cliente", b.CustomerName, defaultString(b.ContactPhone, ""))
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

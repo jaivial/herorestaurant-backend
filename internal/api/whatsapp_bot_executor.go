@@ -719,8 +719,11 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 
 	sets := []string{}
 	args := []any{}
-	newDateISO := "" // set when the date is being changed
-	newPeople := 0   // set (>0) when party size is being changed
+	newDateISO := ""     // set when the date is being changed
+	newPeople := 0       // set (>0) when party size is being changed
+	resTimeStored := ""  // set when the time is being changed
+	riceTypeStored := "" // set when rice is being changed
+	riceServingsStored := ""
 	if in.Date != "" {
 		dateISO, err := parseBotDate(in.Date)
 		if err != nil {
@@ -740,6 +743,7 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 		}
 		sets = append(sets, "reservation_time = ?")
 		args = append(args, resTime)
+		resTimeStored = resTime
 	}
 	if in.People > 0 {
 		if in.People > 100 {
@@ -760,6 +764,8 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 		bs, _ := json.Marshal([]int{servings})
 		sets = append(sets, "arroz_type = ?", "arroz_servings = ?")
 		args = append(args, string(bt), string(bs))
+		riceTypeStored = string(bt)
+		riceServingsStored = string(bs)
 	}
 	if in.HighChairs != nil {
 		sets = append(sets, "highChairs = ?")
@@ -811,9 +817,62 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 	}
 
 	args = append(args, in.BookingID, restaurantID)
+
+	// Snapshot the pre-update values so every applied change is recorded for
+	// the "Modificadas" tab. Coordination id: booking-modification-recorded.
+	var snap struct {
+		date, time, customerName, contactPhone, riceType, riceServings string
+		party, strollers, highChairs                                   int
+	}
+	var riceType, riceServings sql.NullString
+	snapErr := s.db.QueryRowContext(ctx, `
+		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'),
+		       TIME_FORMAT(reservation_time, '%H:%i:%s'),
+		       party_size, customer_name, contact_phone,
+		       arroz_type, arroz_servings, babyStrollers, highChairs
+		FROM bookings WHERE id = ? AND restaurant_id = ?
+	`, in.BookingID, restaurantID).Scan(
+		&snap.date, &snap.time, &snap.party, &snap.customerName, &snap.contactPhone,
+		&riceType, &riceServings, &snap.strollers, &snap.highChairs)
+	if snapErr != nil {
+		return botJSON(map[string]any{"error": "error verificando la reserva"}), nil
+	}
+	snap.riceType = riceType.String
+	snap.riceServings = riceServings.String
+
 	query := fmt.Sprintf("UPDATE bookings SET %s WHERE id = ? AND restaurant_id = ?", strings.Join(sets, ", "))
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return botJSON(map[string]any{"error": "error modificando la reserva"}), nil
+	}
+
+	// Record tracked changes with the WhatsApp attribution for the tab.
+	const botActor = "whatsapp"
+	const botActorName = "Asistente WhatsApp"
+	record := func(field, oldVal, newVal string) {
+		s.insertBookingModification(ctx, restaurantID, int(in.BookingID), snap.date, field,
+			oldVal, newVal, botActor, nil, botActorName, snap.customerName, snap.contactPhone)
+	}
+	if newDateISO != "" {
+		record("date", snap.date, newDateISO)
+	}
+	if in.Time != "" {
+		record("time", snap.time, resTimeStored)
+	}
+	if newPeople > 0 {
+		record("party_size", fmt.Sprintf("%d", snap.party), fmt.Sprintf("%d", in.People))
+	}
+	if in.ClearRice || in.RiceType != "" {
+		newType, newServ := "", ""
+		if !in.ClearRice {
+			newType, newServ = riceTypeStored, riceServingsStored
+		}
+		record("rice", fmt.Sprintf("%v|%v", snap.riceType, snap.riceServings), newType+"|"+newServ)
+	}
+	if in.BabyStrollers != nil {
+		record("strollers", fmt.Sprintf("%d", snap.strollers), fmt.Sprintf("%d", clampBotInt(*in.BabyStrollers, 0, 3)))
+	}
+	if in.HighChairs != nil {
+		record("high_chairs", fmt.Sprintf("%d", snap.highChairs), fmt.Sprintf("%d", clampBotInt(*in.HighChairs, 0, 3)))
 	}
 	return botJSON(map[string]any{"modified": true, "booking_id": in.BookingID}), nil
 }

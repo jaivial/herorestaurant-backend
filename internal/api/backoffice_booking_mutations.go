@@ -1136,24 +1136,42 @@ func boBookingToNotificationData(b boNormalizedBooking, id int) map[string]any {
 	}
 }
 
+// insertBookingModification records one tracked booking-field change for the
+// "Modificadas" tab. Shared by every actor path so the tab shows a single
+// consistent row shape regardless of origin (staff patch, WhatsApp bot,
+// customer rice update).
+// Coordination id: booking-modification-recorded (backend → reservas tabs).
+func (s *Server) insertBookingModification(ctx context.Context, restaurantID, bookingID int, origDate, field, oldVal, newVal, actor string, actorUserID *int64, actorName, customerName, contactPhone string) {
+	if oldVal == newVal {
+		return
+	}
+	if _, err := s.db.ExecContext(ctx, `
+			INSERT INTO booking_modifications
+				(restaurant_id, booking_id, original_reservation_date, field_modified,
+				 old_value, new_value, modified_by, modified_by_user_id, modified_by_name,
+				 customer_name, contact_phone, modification_date)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+		restaurantID, bookingID, origDate, field, oldVal, newVal,
+		actor, actorUserID, actorName, customerName, contactPhone); err != nil {
+		log.Printf("checkpoint booking_modification_record_failed restaurant_id=%d booking_id=%d field=%s actor=%s error=%v",
+			restaurantID, bookingID, field, actor, err)
+		return
+	}
+	log.Printf("checkpoint booking_modification_recorded restaurant_id=%d booking_id=%d field=%s actor=%s",
+		restaurantID, bookingID, field, actor)
+}
+
 // recordBookingModificationsAfterPatch compares old vs new tracked fields and
 // inserts a row into booking_modifications for each change.
 func (s *Server) recordBookingModificationsAfterPatch(ctx context.Context, restaurantID, bookingID int, old map[string]any, next boNormalizedBooking, a boAuth) {
 	customerName, _ := old["customer_name"].(string)
 	contactPhone, _ := old["contact_phone"].(string)
 	origDate, _ := old["reservation_date"].(string)
+	actorID := int64(a.User.ID)
 
 	maybe := func(field, oldStr, newStr string) {
-		if oldStr != newStr {
-			s.db.ExecContext(ctx, `
-				INSERT INTO booking_modifications
-					(restaurant_id, booking_id, original_reservation_date, field_modified,
-					 old_value, new_value, modified_by, modified_by_user_id, modified_by_name,
-					 customer_name, contact_phone, modification_date)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-				restaurantID, bookingID, origDate, field, oldStr, newStr,
-				"staff", int64(a.User.ID), a.User.Name, customerName, contactPhone)
-		}
+		s.insertBookingModification(ctx, restaurantID, bookingID, origDate, field, oldStr, newStr,
+			"staff", &actorID, a.User.Name, customerName, contactPhone)
 	}
 
 	maybe("date", origDate, next.ReservationDate)
