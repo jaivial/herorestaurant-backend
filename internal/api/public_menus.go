@@ -154,12 +154,56 @@ type publicMenuItemSpecial struct {
 }
 
 // pageVisibility holds every per-restaurant public page toggle.
-// Coordination id: postres_page_visibility_v1
+// Coordination id: foodtype_page_visibility_v1
 type pageVisibility struct {
 	CafeActive          bool   `json:"cafe_page_active"`
 	BebidasActive       bool   `json:"bebidas_page_active"`
 	PostresActive       bool   `json:"postres_page_active"`
+	VinosActive         bool   `json:"vinos_page_active"`
 	PostresWebPlacement string `json:"postres_web_placement"`
+	CafesWebPlacement   string `json:"cafes_web_placement"`
+	VinosWebPlacement   string `json:"vinos_web_placement"`
+	BebidasWebPlacement string `json:"bebidas_web_placement"`
+}
+
+// foodTypeVisibilityColumn binds one public food-type page to the columns that
+// store its toggle and its placement, so every food type is handled by the same
+// read, write and response code instead of one branch per type.
+// Coordination id: foodtype_page_visibility_v1
+type foodTypeVisibilityColumn struct {
+	activeColumn    string
+	placementColumn string
+	activeKey       string
+	placementKey    string
+	active          func(*pageVisibility) *bool
+	placement       func(*pageVisibility) *string
+}
+
+var foodTypeVisibilityColumns = []foodTypeVisibilityColumn{
+	{
+		activeColumn: "cafe_page_active", placementColumn: "cafes_web_placement",
+		activeKey: "cafe_page_active", placementKey: "cafes_web_placement",
+		active:    func(v *pageVisibility) *bool { return &v.CafeActive },
+		placement: func(v *pageVisibility) *string { return &v.CafesWebPlacement },
+	},
+	{
+		activeColumn: "bebidas_page_active", placementColumn: "bebidas_web_placement",
+		activeKey: "bebidas_page_active", placementKey: "bebidas_web_placement",
+		active:    func(v *pageVisibility) *bool { return &v.BebidasActive },
+		placement: func(v *pageVisibility) *string { return &v.BebidasWebPlacement },
+	},
+	{
+		activeColumn: "postres_page_active", placementColumn: "postres_web_placement",
+		activeKey: "postres_page_active", placementKey: "postres_web_placement",
+		active:    func(v *pageVisibility) *bool { return &v.PostresActive },
+		placement: func(v *pageVisibility) *string { return &v.PostresWebPlacement },
+	},
+	{
+		activeColumn: "vinos_page_active", placementColumn: "vinos_web_placement",
+		activeKey: "vinos_page_active", placementKey: "vinos_web_placement",
+		active:    func(v *pageVisibility) *bool { return &v.VinosActive },
+		placement: func(v *pageVisibility) *string { return &v.VinosWebPlacement },
+	},
 }
 
 // normalizedWebPlacement keeps the stored placement inside the known set so the
@@ -171,57 +215,131 @@ func normalizedWebPlacement(value string) string {
 	return "inside_menus"
 }
 
+// defaultPageVisibility is what a restaurant with no stored row looks like:
+// every page on, every placement inside the menus accordion.
+func defaultPageVisibility() pageVisibility {
+	vis := pageVisibility{}
+	for _, col := range foodTypeVisibilityColumns {
+		*col.active(&vis) = true
+		*col.placement(&vis) = "inside_menus"
+	}
+	return vis
+}
+
+// payload renders the visibility as the JSON body every endpoint returns, so
+// the read, patch and sidebar responses can never drift apart.
+func (v pageVisibility) payload() map[string]any {
+	out := map[string]any{"success": true}
+	for _, col := range foodTypeVisibilityColumns {
+		out[col.activeKey] = *col.active(&v)
+		out[col.placementKey] = *col.placement(&v)
+	}
+	return out
+}
+
 func (s *Server) getPageVisibility(ctx context.Context, restaurantID int) pageVisibility {
-	vis := pageVisibility{CafeActive: true, BebidasActive: true, PostresActive: true, PostresWebPlacement: "inside_menus"}
-	var cafe, bebidas, postres int
-	var placement string
+	vis := defaultPageVisibility()
+	columns := make([]string, 0, len(foodTypeVisibilityColumns)*2)
+	actives := make([]int, len(foodTypeVisibilityColumns))
+	placements := make([]string, len(foodTypeVisibilityColumns))
+	targets := make([]any, 0, len(foodTypeVisibilityColumns)*2)
+	for i, col := range foodTypeVisibilityColumns {
+		columns = append(columns, col.activeColumn, col.placementColumn)
+		targets = append(targets, &actives[i], &placements[i])
+	}
+
 	err := s.db.QueryRowContext(ctx,
-		"SELECT cafe_page_active, bebidas_page_active, postres_page_active, postres_web_placement FROM restaurant_page_visibility WHERE restaurant_id = ?",
+		"SELECT "+strings.Join(columns, ", ")+" FROM restaurant_page_visibility WHERE restaurant_id = ?",
 		restaurantID,
-	).Scan(&cafe, &bebidas, &postres, &placement)
-	if err == nil {
-		vis.CafeActive = cafe != 0
-		vis.BebidasActive = bebidas != 0
-		vis.PostresActive = postres != 0
-		vis.PostresWebPlacement = normalizedWebPlacement(placement)
+	).Scan(targets...)
+	if err != nil {
+		return vis
+	}
+
+	for i, col := range foodTypeVisibilityColumns {
+		*col.active(&vis) = actives[i] != 0
+		*col.placement(&vis) = normalizedWebPlacement(placements[i])
 	}
 	return vis
 }
 
 // pageVisibilityPatch is the partial update payload: every field is optional and
 // a nil field leaves the stored value untouched.
-// Coordination id: postres_page_visibility_v1
+// Coordination id: foodtype_page_visibility_v1
 type pageVisibilityPatch struct {
 	CafeActive          *bool   `json:"cafe_page_active,omitempty"`
 	BebidasActive       *bool   `json:"bebidas_page_active,omitempty"`
 	PostresActive       *bool   `json:"postres_page_active,omitempty"`
+	VinosActive         *bool   `json:"vinos_page_active,omitempty"`
 	PostresWebPlacement *string `json:"postres_web_placement,omitempty"`
+	CafesWebPlacement   *string `json:"cafes_web_placement,omitempty"`
+	VinosWebPlacement   *string `json:"vinos_web_placement,omitempty"`
+	BebidasWebPlacement *string `json:"bebidas_web_placement,omitempty"`
+}
+
+// fields pairs every patch value with the column it writes, in the same order as
+// foodTypeVisibilityColumns, so the update statement stays generated rather than
+// hand maintained.
+func (p pageVisibilityPatch) fields() []any {
+	placement := func(value *string) *string {
+		if value == nil {
+			return nil
+		}
+		normalized := normalizedWebPlacement(*value)
+		return &normalized
+	}
+	return []any{
+		p.CafeActive, placement(p.CafesWebPlacement),
+		p.BebidasActive, placement(p.BebidasWebPlacement),
+		p.PostresActive, placement(p.PostresWebPlacement),
+		p.VinosActive, placement(p.VinosWebPlacement),
+	}
 }
 
 func (p pageVisibilityPatch) isEmpty() bool {
-	return p.CafeActive == nil && p.BebidasActive == nil && p.PostresActive == nil && p.PostresWebPlacement == nil
+	for _, value := range p.fields() {
+		switch typed := value.(type) {
+		case *bool:
+			if typed != nil {
+				return false
+			}
+		case *string:
+			if typed != nil {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (s *Server) updatePageVisibility(ctx context.Context, restaurantID int, patch pageVisibilityPatch) error {
 	if patch.isEmpty() {
 		return nil
 	}
-	var placement *string
-	if patch.PostresWebPlacement != nil {
-		normalized := normalizedWebPlacement(*patch.PostresWebPlacement)
-		placement = &normalized
+
+	values := patch.fields()
+	columns := make([]string, 0, len(values))
+	inserts := make([]string, 0, len(values))
+	updates := make([]string, 0, len(values))
+	for _, col := range foodTypeVisibilityColumns {
+		columns = append(columns, col.activeColumn, col.placementColumn)
+		inserts = append(inserts, "COALESCE(?, 1)", "COALESCE(?, 'inside_menus')")
+		updates = append(updates,
+			col.activeColumn+" = COALESCE(?, "+col.activeColumn+")",
+			col.placementColumn+" = COALESCE(?, "+col.placementColumn+")",
+		)
 	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO restaurant_page_visibility (restaurant_id, cafe_page_active, bebidas_page_active, postres_page_active, postres_web_placement)
-		VALUES (?, COALESCE(?, 1), COALESCE(?, 1), COALESCE(?, 1), COALESCE(?, 'inside_menus'))
-		ON DUPLICATE KEY UPDATE
-		  cafe_page_active = COALESCE(?, cafe_page_active),
-		  bebidas_page_active = COALESCE(?, bebidas_page_active),
-		  postres_page_active = COALESCE(?, postres_page_active),
-		  postres_web_placement = COALESCE(?, postres_web_placement)
-	`, restaurantID,
-		patch.CafeActive, patch.BebidasActive, patch.PostresActive, placement,
-		patch.CafeActive, patch.BebidasActive, patch.PostresActive, placement,
+
+	args := make([]any, 0, len(values)*2+1)
+	args = append(args, restaurantID)
+	args = append(args, values...)
+	args = append(args, values...)
+
+	_, err := s.db.ExecContext(ctx,
+		"INSERT INTO restaurant_page_visibility (restaurant_id, "+strings.Join(columns, ", ")+") "+
+			"VALUES (?, "+strings.Join(inserts, ", ")+") "+
+			"ON DUPLICATE KEY UPDATE "+strings.Join(updates, ", "),
+		args...,
 	)
 	return err
 }
@@ -237,15 +355,11 @@ func (s *Server) handleGetPageVisibility(w http.ResponseWriter, r *http.Request)
 
 	vis := s.getPageVisibility(r.Context(), restaurantID)
 	logCheckpoint(r, "page_visibility_read",
-		"postres_active", strconv.FormatBool(vis.PostresActive),
+		"cafes_web_placement", vis.CafesWebPlacement,
+		"vinos_web_placement", vis.VinosWebPlacement,
+		"bebidas_web_placement", vis.BebidasWebPlacement,
 		"postres_web_placement", vis.PostresWebPlacement)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":               true,
-		"cafe_page_active":      vis.CafeActive,
-		"bebidas_page_active":   vis.BebidasActive,
-		"postres_page_active":   vis.PostresActive,
-		"postres_web_placement": vis.PostresWebPlacement,
-	})
+	httpx.WriteJSON(w, http.StatusOK, vis.payload())
 }
 
 func (s *Server) handlePageVisibilityPatch(w http.ResponseWriter, r *http.Request) {
@@ -273,15 +387,11 @@ func (s *Server) handlePageVisibilityPatch(w http.ResponseWriter, r *http.Reques
 
 	vis := s.getPageVisibility(r.Context(), restaurantID)
 	logCheckpoint(r, "page_visibility_updated",
-		"postres_active", strconv.FormatBool(vis.PostresActive),
+		"cafes_web_placement", vis.CafesWebPlacement,
+		"vinos_web_placement", vis.VinosWebPlacement,
+		"bebidas_web_placement", vis.BebidasWebPlacement,
 		"postres_web_placement", vis.PostresWebPlacement)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":               true,
-		"cafe_page_active":      vis.CafeActive,
-		"bebidas_page_active":   vis.BebidasActive,
-		"postres_page_active":   vis.PostresActive,
-		"postres_web_placement": vis.PostresWebPlacement,
-	})
+	httpx.WriteJSON(w, http.StatusOK, vis.payload())
 }
 
 func isPublicMenuType(menuType string) bool {
@@ -1409,16 +1519,11 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 	logCheckpoint(r, "public_sidebar_sections_resolved",
 		"visible_sections", strconv.Itoa(len(visibleSections)))
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":               true,
-		"count":                 len(menus),
-		"menus":                 menus,
-		"cafe_page_active":      vis.CafeActive,
-		"bebidas_page_active":   vis.BebidasActive,
-		"postres_page_active":   vis.PostresActive,
-		"postres_web_placement": vis.PostresWebPlacement,
-		"visible_sections":      visibleSections,
-	})
+	sidebar := vis.payload()
+	sidebar["count"] = len(menus)
+	sidebar["menus"] = menus
+	sidebar["visible_sections"] = visibleSections
+	httpx.WriteJSON(w, http.StatusOK, sidebar)
 }
 
 // publicSidebarSection is a menu section the restaurant chose to surface in the
