@@ -38,7 +38,9 @@ var boCapabilityMinVersion = map[boAppCapability]string{
 	boCapabilityEstadisticas: boAppVersion02,
 	boCapabilityPlataforma:   boAppVersion02,
 	boCapabilityAds:          boAppVersion02,
-	boCapabilityCampanas:     boAppVersion02,
+	// Campanas ships to every app version: it replaces manual mailing outside
+	// the product, so gating it behind 0.2 would leave 0.1 users without it.
+	boCapabilityCampanas: boAppVersion001,
 }
 
 var boSectionCapability = map[string]boAppCapability{
