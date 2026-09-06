@@ -29,6 +29,7 @@ const (
 	boCapabilityEstadisticas boAppCapability = "estadisticas"
 	boCapabilityPlataforma   boAppCapability = "plataforma"
 	boCapabilityAds          boAppCapability = "ads"
+	boCapabilityCampanas     boAppCapability = "campanas"
 )
 
 var boCapabilityMinVersion = map[boAppCapability]string{
@@ -37,6 +38,7 @@ var boCapabilityMinVersion = map[boAppCapability]string{
 	boCapabilityEstadisticas: boAppVersion02,
 	boCapabilityPlataforma:   boAppVersion02,
 	boCapabilityAds:          boAppVersion02,
+	boCapabilityCampanas:     boAppVersion02,
 }
 
 var boSectionCapability = map[string]boAppCapability{
