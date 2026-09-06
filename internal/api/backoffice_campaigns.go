@@ -389,6 +389,34 @@ func (s *Server) handleBOCampaignImageUpload(w http.ResponseWriter, r *http.Requ
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "url": url})
 }
 
+// campaignTemplateReferenceRestaurant is the restaurant whose transactional
+// email design seeds every campaign preview.
+const campaignTemplateReferenceRestaurant = 1
+
+// handleBOCampaignTemplate returns the default email template: the reference
+// restaurant's look plus the active restaurant's brand and logo.
+func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, 401, "Unauthorized")
+		return
+	}
+	reference, _ := s.loadRestaurantBranding(r.Context(), campaignTemplateReferenceRestaurant)
+	branding := reference
+	if a.ActiveRestaurantID != campaignTemplateReferenceRestaurant {
+		if own, err := s.loadRestaurantBranding(r.Context(), a.ActiveRestaurantID); err == nil {
+			branding = own
+		}
+	}
+	theme := normalizeCampaignTheme(campaignTheme{})
+	httpx.WriteJSON(w, 200, map[string]any{
+		"success":    true,
+		"theme":      theme,
+		"brand_name": firstNonEmpty(branding.BrandName, reference.BrandName, "Restaurante"),
+		"logo_url":   firstNonEmpty(branding.LogoURL, reference.LogoURL),
+	})
+}
+
 // handleBOCampaignPreview renders both channel outputs without sending.
 func (s *Server) handleBOCampaignPreview(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
