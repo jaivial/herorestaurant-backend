@@ -123,6 +123,20 @@ func renderCampaignEmailHTML(markdown string, theme campaignTheme, brandName, lo
 		theme.Background, theme.MaxWidth, theme.Surface, theme.Text, theme.FontFamily, theme.Align, header, b.String())
 }
 
+// splitCampaignLeadImage returns the first markdown image URL and the body with
+// that image removed, so WhatsApp can send it as media plus caption.
+func splitCampaignLeadImage(markdown string) (string, string) {
+	match := mdImageRe.FindStringSubmatchIndex(markdown)
+	if match == nil {
+		return "", markdown
+	}
+	url := markdown[match[4]:match[5]]
+	if !strings.HasPrefix(url, "https://") {
+		return "", markdown
+	}
+	return url, markdown[:match[0]] + markdown[match[1]:]
+}
+
 // renderCampaignWhatsAppText converts the same markdown into WhatsApp markup.
 // Images degrade to their CDN URL so the client still previews them.
 func renderCampaignWhatsAppText(markdown string) string {

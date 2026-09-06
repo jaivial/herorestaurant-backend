@@ -24,10 +24,23 @@ import (
 // the campaign coord_id ("camp-<uuid>") across frontend and backend logs.
 
 const (
-	campaignMaxImageBytes  = 400 * 1024
-	campaignSendBatchPause = 400 * time.Millisecond
-	campaignMaxRecipients  = 5000
+	campaignMaxImageBytes = 400 * 1024
+	campaignMaxRecipients = 5000
+	// Operator-facing pacing bounds, expressed in messages per minute.
+	campaignMinPerMinute            = 1
+	campaignMaxEmailPerMinute       = 600
+	campaignMaxWhatsAppPerMinute    = 120
+	campaignDefaultEmailPerMinute   = 60
+	campaignDefaultWhatsAppPerMinut = 12
 )
+
+// campaignChannelPause turns a per-minute rate into the delay between sends.
+func campaignChannelPause(perMinute int) time.Duration {
+	if perMinute < campaignMinPerMinute {
+		perMinute = campaignMinPerMinute
+	}
+	return time.Duration(float64(time.Minute) / float64(perMinute))
+}
 
 type boCampaign struct {
 	ID               int64         `json:"id"`
@@ -40,6 +53,8 @@ type boCampaign struct {
 	Audience         string        `json:"audience"`
 	AudienceDays     int           `json:"audience_days"`
 	ManualRecipients []string      `json:"manual_recipients"`
+	EmailPerMinute   int           `json:"email_per_minute"`
+	WhatsAppPerMin   int           `json:"whatsapp_per_minute"`
 	Status           string        `json:"status"`
 	SentAt           string        `json:"sent_at,omitempty"`
 	CreatedAt        string        `json:"created_at,omitempty"`
@@ -63,12 +78,28 @@ type boCampaignInput struct {
 	Audience         string        `json:"audience"`
 	AudienceDays     int           `json:"audience_days"`
 	ManualRecipients []string      `json:"manual_recipients"`
+	EmailPerMinute   int           `json:"email_per_minute"`
+	WhatsAppPerMin   int           `json:"whatsapp_per_minute"`
 }
 
 type campaignTarget struct {
-	Channel string `json:"channel"`
-	Target  string `json:"target"`
-	Name    string `json:"name"`
+	Channel   string `json:"channel"`
+	Target    string `json:"target"`
+	Name      string `json:"name"`
+	BookingID int64  `json:"booking_id,omitempty"`
+}
+
+func clampCampaignRate(value, fallback, max int) int {
+	if value <= 0 {
+		return fallback
+	}
+	if value < campaignMinPerMinute {
+		return campaignMinPerMinute
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 func campaignHasChannel(list []string, want string) bool {
@@ -126,6 +157,8 @@ func normalizeCampaignInput(in boCampaignInput) (boCampaignInput, error) {
 		}
 	}
 	in.ManualRecipients = manual
+	in.EmailPerMinute = clampCampaignRate(in.EmailPerMinute, campaignDefaultEmailPerMinute, campaignMaxEmailPerMinute)
+	in.WhatsAppPerMin = clampCampaignRate(in.WhatsAppPerMin, campaignDefaultWhatsAppPerMinut, campaignMaxWhatsAppPerMinute)
 	return in, nil
 }
 
@@ -139,7 +172,7 @@ func scanBOCampaign(scan func(dest ...any) error) (boCampaign, error) {
 		createdAt sql.NullString
 		updatedAt sql.NullString
 	)
-	if err := scan(&c.ID, &c.CoordID, &c.Name, &c.Subject, &c.BodyMarkdown, &themeRaw, &channels, &c.Audience, &c.AudienceDays, &manualRaw, &c.Status, &sentAt, &createdAt, &updatedAt); err != nil {
+	if err := scan(&c.ID, &c.CoordID, &c.Name, &c.Subject, &c.BodyMarkdown, &themeRaw, &channels, &c.Audience, &c.AudienceDays, &manualRaw, &c.EmailPerMinute, &c.WhatsAppPerMin, &c.Status, &sentAt, &createdAt, &updatedAt); err != nil {
 		return boCampaign{}, err
 	}
 	_ = json.Unmarshal([]byte(themeRaw.String), &c.Theme)
@@ -156,7 +189,7 @@ func scanBOCampaign(scan func(dest ...any) error) (boCampaign, error) {
 	return c, nil
 }
 
-const boCampaignColumns = `id, coord_id, name, subject, body_markdown, theme_json, channels, audience, audience_days, manual_recipients, status,
+const boCampaignColumns = `id, coord_id, name, subject, body_markdown, theme_json, channels, audience, audience_days, manual_recipients, email_per_minute, whatsapp_per_minute, status,
 	DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i'), DATE_FORMAT(created_at, '%Y-%m-%d %H:%i'), DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i')`
 
 func (s *Server) loadBOCampaign(ctx context.Context, restaurantID int, id int64) (boCampaign, error) {
@@ -244,9 +277,9 @@ func (s *Server) handleBOCampaignCreate(w http.ResponseWriter, r *http.Request) 
 	manual, _ := json.Marshal(in.ManualRecipients)
 	coordID := "camp-" + uuid.NewString()
 	res, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO campaigns (restaurant_id, coord_id, name, subject, body_markdown, theme_json, channels, audience, audience_days, manual_recipients, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
-	`, a.ActiveRestaurantID, coordID, in.Name, in.Subject, in.BodyMarkdown, string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual))
+		INSERT INTO campaigns (restaurant_id, coord_id, name, subject, body_markdown, theme_json, channels, audience, audience_days, manual_recipients, email_per_minute, whatsapp_per_minute, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
+	`, a.ActiveRestaurantID, coordID, in.Name, in.Subject, in.BodyMarkdown, string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin)
 	if err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error creando campana"})
 		return
@@ -285,9 +318,10 @@ func (s *Server) handleBOCampaignUpdate(w http.ResponseWriter, r *http.Request) 
 	theme, _ := json.Marshal(in.Theme)
 	manual, _ := json.Marshal(in.ManualRecipients)
 	if _, err := s.db.ExecContext(r.Context(), `
-		UPDATE campaigns SET name = ?, subject = ?, body_markdown = ?, theme_json = ?, channels = ?, audience = ?, audience_days = ?, manual_recipients = ?
+		UPDATE campaigns SET name = ?, subject = ?, body_markdown = ?, theme_json = ?, channels = ?, audience = ?, audience_days = ?, manual_recipients = ?,
+			email_per_minute = ?, whatsapp_per_minute = ?
 		WHERE restaurant_id = ? AND id = ?
-	`, in.Name, in.Subject, in.BodyMarkdown, string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), a.ActiveRestaurantID, id); err != nil {
+	`, in.Name, in.Subject, in.BodyMarkdown, string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin, a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error guardando campana"})
 		return
 	}
@@ -381,7 +415,7 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 	wantsWhatsApp := campaignHasChannel(c.Channels, "whatsapp")
 	seen := map[string]bool{}
 	out := []campaignTarget{}
-	add := func(channel, target, name string) {
+	add := func(channel, target, name string, bookingID int64) {
 		target = strings.TrimSpace(target)
 		if target == "" || len(out) >= campaignMaxRecipients {
 			return
@@ -399,43 +433,48 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 			return
 		}
 		seen[key] = true
-		out = append(out, campaignTarget{Channel: channel, Target: target, Name: strings.TrimSpace(name)})
+		out = append(out, campaignTarget{Channel: channel, Target: target, Name: strings.TrimSpace(name), BookingID: bookingID})
 	}
 
 	if c.Audience == "manual" {
 		for _, raw := range c.ManualRecipients {
 			if strings.Contains(raw, "@") {
 				if wantsEmail {
-					add("email", raw, "")
+					add("email", raw, "", 0)
 				}
 				continue
 			}
 			if wantsWhatsApp {
-				add("whatsapp", raw, "")
+				add("whatsapp", raw, "", 0)
 			}
 		}
 		return out, nil
 	}
 
+	// The newest booking per contact is the traceability anchor stored with
+	// each recipient row (campaign id + booking id + channel).
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT customer_name, COALESCE(contact_email, ''), COALESCE(contact_phone, '')
+		SELECT MAX(id), customer_name, COALESCE(contact_email, ''), COALESCE(contact_phone, '')
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+		GROUP BY customer_name, contact_email, contact_phone
+		ORDER BY MAX(id) DESC
 	`, restaurantID, c.AudienceDays)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var bookingID int64
 		var name, email, phone string
-		if err := rows.Scan(&name, &email, &phone); err != nil {
+		if err := rows.Scan(&bookingID, &name, &email, &phone); err != nil {
 			continue
 		}
 		if wantsEmail {
-			add("email", email, name)
+			add("email", email, name, bookingID)
 		}
 		if wantsWhatsApp {
-			add("whatsapp", phone, name)
+			add("whatsapp", phone, name, bookingID)
 		}
 	}
 	return out, rows.Err()
@@ -520,6 +559,16 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		if num == "" {
 			return errors.New("telefono invalido")
 		}
+		// A markdown image becomes a real WhatsApp media message with the rest
+		// of the body as caption; extra images stay as URLs inside the text.
+		if imageURL, rest := splitCampaignLeadImage(c.BodyMarkdown); imageURL != "" {
+			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
+				caption := renderCampaignWhatsAppText(rest)
+				if err := gw.SendMedia(ctx, num, waMedia{Kind: "image", URL: imageURL, Caption: caption, Filename: "campana.webp"}); err == nil {
+					return nil
+				}
+			}
+		}
 		text := renderCampaignWhatsAppText(c.BodyMarkdown)
 		if err := s.sendWhatsAppMessage(ctx, restaurantID, num, text); err != nil {
 			// Queue for retry so a provider hiccup never loses the message.
@@ -571,9 +620,9 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, t := range targets {
 		_, _ = s.db.ExecContext(r.Context(), `
-			INSERT IGNORE INTO campaign_recipients (campaign_id, restaurant_id, channel, target, name, status)
-			VALUES (?, ?, ?, ?, ?, 'pending')
-		`, c.ID, a.ActiveRestaurantID, t.Channel, t.Target, t.Name)
+			INSERT IGNORE INTO campaign_recipients (campaign_id, restaurant_id, channel, target, name, booking_id, status)
+			VALUES (?, ?, ?, ?, ?, ?, 'pending')
+		`, c.ID, a.ActiveRestaurantID, t.Channel, t.Target, t.Name, nullIfZeroInt64(t.BookingID))
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE campaigns SET status = 'sending' WHERE id = ?`, c.ID)
 	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets))
@@ -589,7 +638,7 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 		return
 	}
 	for {
-		rows, err := s.db.QueryContext(ctx, `SELECT id, channel, target, name FROM campaign_recipients WHERE campaign_id = ? AND status = 'pending' ORDER BY id LIMIT 50`, campaignID)
+		rows, err := s.db.QueryContext(ctx, `SELECT id, channel, target, name, COALESCE(booking_id, 0) FROM campaign_recipients WHERE campaign_id = ? AND status = 'pending' ORDER BY id LIMIT 50`, campaignID)
 		if err != nil {
 			break
 		}
@@ -600,7 +649,7 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 		batch := []pending{}
 		for rows.Next() {
 			var p pending
-			if err := rows.Scan(&p.id, &p.t.Channel, &p.t.Target, &p.t.Name); err == nil {
+			if err := rows.Scan(&p.id, &p.t.Channel, &p.t.Target, &p.t.Name, &p.t.BookingID); err == nil {
 				batch = append(batch, p)
 			}
 		}
@@ -612,16 +661,76 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			sendErr := s.deliverCampaignTo(ctx, restaurantID, c, p.t)
 			if sendErr != nil {
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, truncate(sendErr.Error(), 500), p.id)
-				slog.Default().Warn("campaign.delivery.failed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "err", sendErr.Error())
+				slog.Default().Warn("campaign.delivery.failed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID, "err", sendErr.Error())
 			} else {
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = NOW() WHERE id = ?`, p.id)
+				slog.Default().Info("campaign.delivery.sent", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID)
 			}
-			time.Sleep(campaignSendBatchPause)
+			if p.t.Channel == "whatsapp" {
+				time.Sleep(campaignChannelPause(c.WhatsAppPerMin))
+			} else {
+				time.Sleep(campaignChannelPause(c.EmailPerMinute))
+			}
 		}
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE campaigns SET status = 'sent', sent_at = NOW() WHERE id = ?`, campaignID)
 	st, _ := s.campaignStats(ctx, campaignID)
 	slog.Default().Info("campaign.send.finished", "coord_id", c.CoordID, "campaign_id", campaignID, "sent", st.Sent, "failed", st.Failed)
+}
+
+func nullIfZeroInt64(v int64) any {
+	if v <= 0 {
+		return nil
+	}
+	return v
+}
+
+// handleBOCampaignRecipients exposes the delivery ledger: which booking id was
+// reached, on which channel, when, and with which error if it failed.
+func (s *Server) handleBOCampaignRecipients(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, 401, "Unauthorized")
+		return
+	}
+	id, err := parseChiPositiveInt64(r, "campaignId")
+	if err != nil {
+		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Id invalido"})
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	query := `SELECT id, channel, target, name, COALESCE(booking_id, 0), status, COALESCE(error, ''), COALESCE(DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i'), '')
+		FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ?`
+	args := []any{a.ActiveRestaurantID, id}
+	if status == "sent" || status == "failed" || status == "pending" {
+		query += ` AND status = ?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY id DESC LIMIT 500`
+	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error cargando destinatarios"})
+		return
+	}
+	defer rows.Close()
+	type recipientRow struct {
+		ID        int64  `json:"id"`
+		Channel   string `json:"channel"`
+		Target    string `json:"target"`
+		Name      string `json:"name"`
+		BookingID int64  `json:"booking_id"`
+		Status    string `json:"status"`
+		Error     string `json:"error"`
+		SentAt    string `json:"sent_at"`
+	}
+	out := []recipientRow{}
+	for rows.Next() {
+		var row recipientRow
+		if err := rows.Scan(&row.ID, &row.Channel, &row.Target, &row.Name, &row.BookingID, &row.Status, &row.Error, &row.SentAt); err == nil {
+			out = append(out, row)
+		}
+	}
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "recipients": out})
 }
 
 func (s *Server) handleBOCampaignStatus(w http.ResponseWriter, r *http.Request) {
