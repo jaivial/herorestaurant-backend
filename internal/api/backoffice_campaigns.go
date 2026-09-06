@@ -408,12 +408,30 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 			branding = own
 		}
 	}
-	theme := normalizeCampaignTheme(campaignTheme{})
+	// Optional theme overrides let the editor refresh the shell when the user
+	// tweaks colors, without ever building the markup on the client.
+	q := r.URL.Query()
+	width, _ := strconv.Atoi(q.Get("max_width"))
+	theme := normalizeCampaignTheme(campaignTheme{
+		Background: q.Get("background"),
+		Surface:    q.Get("surface"),
+		Text:       q.Get("text"),
+		Accent:     q.Get("accent"),
+		FontFamily: q.Get("font_family"),
+		MaxWidth:   width,
+		Align:      q.Get("align"),
+	})
+	brandName := firstNonEmpty(branding.BrandName, reference.BrandName, "Restaurante")
+	logoURL := firstNonEmpty(branding.LogoURL, reference.LogoURL)
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success":    true,
 		"theme":      theme,
-		"brand_name": firstNonEmpty(branding.BrandName, reference.BrandName, "Restaurante"),
-		"logo_url":   firstNonEmpty(branding.LogoURL, reference.LogoURL),
+		"brand_name": brandName,
+		"logo_url":   logoURL,
+		// The editor renders the markdown locally and drops it in this exact
+		// shell, so the preview matches the delivered email byte for byte.
+		"shell":            campaignEmailShell(theme, brandName, logoURL, campaignEmailBodyPlaceholder),
+		"body_placeholder": campaignEmailBodyPlaceholder,
 	})
 }
 

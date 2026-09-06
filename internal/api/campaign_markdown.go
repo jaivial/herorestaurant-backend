@@ -125,23 +125,57 @@ func renderCampaignEmailHTML(markdown string, theme campaignTheme, brandName, lo
 	}
 	closeList()
 
-	// Same shell as the transactional booking email: accent header band with the
-	// logo, white card, automatic-message footer.
+	return campaignEmailShell(theme, brandName, logoURL, b.String())
+}
+
+// campaignEmailBodyPlaceholder marks where the rendered markdown goes when the
+// shell is handed to the editor for live preview.
+const campaignEmailBodyPlaceholder = "{{CAMPAIGN_BODY}}"
+
+// campaignEmailShell reproduces the transactional booking email layout: accent
+// header band with the logo, 600px white card, automatic-message footer. Both
+// the sent email and the editor preview use this exact markup.
+func campaignEmailShell(theme campaignTheme, brandName, logoURL, bodyHTML string) string {
+	theme = normalizeCampaignTheme(theme)
 	header := ""
 	if strings.TrimSpace(logoURL) != "" {
-		header = fmt.Sprintf(`<tr><td style="padding:30px 20px;text-align:center;background-color:%s"><img src="%s" alt="%s" style="max-width:200px;height:auto" /></td></tr>`,
-			theme.Accent, logoURL, htmlEscape(brandName))
+		header = fmt.Sprintf(`<tr>
+<td style="padding:30px 20px;text-align:center;background-color:%s;">
+<img src="%s" alt="%s" style="max-width:200px;height:auto;">
+</td>
+</tr>
+`, theme.Accent, logoURL, htmlEscape(brandName))
 	}
-	return fmt.Sprintf(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">`+
-		`<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>%s</title></head>`+
-		`<body style="margin:0;padding:0;font-family:%s;line-height:1.6;background-color:%s">`+
-		`<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:%dpx;margin:0 auto;background-color:%s;border-radius:8px;overflow:hidden;box-shadow:0 2px 4px rgba(0,0,0,0.1)">`+
-		`%s<tr><td style="padding:30px 20px;color:%s;text-align:%s">%s`+
-		`<hr style="border:none;border-top:1px solid #eee;margin:30px 0" />`+
-		`<p style="font-size:12px;color:#666;text-align:center">Este es un email automatico, por favor no responda a este mensaje.<br>&copy; %s</p>`+
-		`</td></tr></table></body></html>`,
-		htmlEscape(brandName), theme.FontFamily, theme.Background, theme.MaxWidth, theme.Surface,
-		header, theme.Text, theme.Align, b.String(), htmlEscape(brandName))
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>%s</title>
+</head>
+<body style="margin:0;padding:0;font-family:%s;line-height:1.6;background-color:%s;">
+<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:%dpx;margin:0 auto;background-color:%s;border-radius:8px;overflow:hidden;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+%s<tr>
+<td style="padding:30px 20px;color:%s;text-align:%s;">
+%s
+<hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
+<p style="font-size:12px;color:#666;text-align:center;">Este es un email automatico, por favor no responda a este mensaje.<br>&copy; %s. Todos los derechos reservados.</p>
+</td>
+</tr>
+</table>
+</body>
+</html>`,
+		htmlEscape(brandName),
+		theme.FontFamily,
+		theme.Background,
+		theme.MaxWidth,
+		theme.Surface,
+		header,
+		theme.Text,
+		theme.Align,
+		bodyHTML,
+		htmlEscape(brandName),
+	)
 }
 
 // splitCampaignLeadImage returns the first markdown image URL and the body with
