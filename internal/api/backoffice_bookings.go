@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -534,6 +535,37 @@ func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {
 
 // ─── Cancelled by date (for Canceladas tab) ─────────────────────────────────
 
+// bookingActorGroup maps raw cancelled_by / modified_by attribution values
+// ("staff", "customer", "whatsapp" and legacy n8n values such as AI_AGENT or
+// AI_ASSISTANT) to the three tab groups used by the reservas view.
+// Coordination id: booking-actor-group (shared by Canceladas & Modificadas).
+func bookingActorGroup(raw string) string {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "STAFF":
+		return "staff"
+	case "WHATSAPP", "WA", "AI", "AI_AGENT", "AI_ASSISTANT", "BOT", "ROBOT":
+		return "whatsapp"
+	default:
+		return "customer"
+	}
+}
+
+// bookingActorDisplayName returns the label shown in the "Cancelado por" /
+// "Modificado por" column when the row has no stored display name.
+func bookingActorDisplayName(actor, name string) string {
+	if strings.TrimSpace(name) != "" {
+		return name
+	}
+	switch actor {
+	case "staff":
+		return "Personal"
+	case "whatsapp":
+		return "Asistente WhatsApp"
+	default:
+		return "Cliente"
+	}
+}
+
 func (s *Server) handleBOBookingsCancelledByDate(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -546,12 +578,16 @@ func (s *Server) handleBOBookingsCancelledByDate(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// reservation_date / cancellation_date are formatted in SQL because the
+	// DSN uses parseTime=true and the tab expects plain strings.
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, booking_id, reservation_date, party_size, reservation_time,
+		SELECT id, booking_id,
+		       DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
+		       party_size, reservation_time,
 		       customer_name, contact_phone, contact_email, commentary,
 		       arroz_type, arroz_servings, babyStrollers, highChairs,
-		       cancellation_date, cancelled_by, cancelled_by_user_id, cancelled_by_name,
-		       special_menu, menu_de_grupo_id, principales_json
+		       DATE_FORMAT(cancellation_date, '%Y-%m-%d %H:%i') AS cancellation_date,
+		       cancelled_by, cancelled_by_user_id, cancelled_by_name
 		FROM cancelled_bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
 		ORDER BY cancellation_date DESC
@@ -610,7 +646,8 @@ func (s *Server) handleBOBookingsCancelledByDate(w http.ResponseWriter, r *http.
 			uid := int(cancelledByUser.Int64)
 			it.CancelledByUser = &uid
 		}
-		it.CancelledByName = cancelledByName.String
+		it.CancelledBy = bookingActorGroup(it.CancelledBy)
+		it.CancelledByName = bookingActorDisplayName(it.CancelledBy, cancelledByName.String)
 
 		switch it.CancelledBy {
 		case "staff":
@@ -621,6 +658,10 @@ func (s *Server) handleBOBookingsCancelledByDate(w http.ResponseWriter, r *http.
 			customer = append(customer, it)
 		}
 	}
+
+	// Observational point: bookings-cancelled-by-date (Canceladas tab response).
+	log.Printf("checkpoint bookings_cancelled_by_date_completed restaurant_id=%d date=%s staff=%d customer=%d whatsapp=%d",
+		a.ActiveRestaurantID, date, len(staff), len(customer), len(whatsapp))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
@@ -645,10 +686,15 @@ func (s *Server) handleBOBookingsModifiedByDate(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Dates are formatted in SQL because the DSN uses parseTime=true and the
+	// tab expects plain strings.
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, booking_id, original_reservation_date, field_modified,
+		SELECT id, booking_id,
+		       DATE_FORMAT(original_reservation_date, '%Y-%m-%d') AS original_reservation_date,
+		       field_modified,
 		       old_value, new_value, modified_by, modified_by_user_id, modified_by_name,
-		       customer_name, contact_phone, modification_date
+		       customer_name, contact_phone,
+		       DATE_FORMAT(modification_date, '%Y-%m-%d %H:%i') AS modification_date
 		FROM booking_modifications
 		WHERE restaurant_id = ? AND original_reservation_date = ?
 		ORDER BY modification_date DESC
@@ -689,7 +735,6 @@ func (s *Server) handleBOBookingsModifiedByDate(w http.ResponseWriter, r *http.R
 		it.FieldModified = field.String
 		it.OldValue = oldVal.String
 		it.NewValue = newVal.String
-		it.ModifiedByName = modByName.String
 		it.CustomerName = custName.String
 		it.ContactPhone = phone.String
 		it.ModificationDate = modDate.String
@@ -697,6 +742,8 @@ func (s *Server) handleBOBookingsModifiedByDate(w http.ResponseWriter, r *http.R
 			uid := int(modByUser.Int64)
 			it.ModifiedByUser = &uid
 		}
+		it.ModifiedBy = bookingActorGroup(it.ModifiedBy)
+		it.ModifiedByName = bookingActorDisplayName(it.ModifiedBy, modByName.String)
 
 		switch it.ModifiedBy {
 		case "staff":
@@ -707,6 +754,10 @@ func (s *Server) handleBOBookingsModifiedByDate(w http.ResponseWriter, r *http.R
 			customer = append(customer, it)
 		}
 	}
+
+	// Observational point: bookings-modified-by-date (Modificadas tab response).
+	log.Printf("checkpoint bookings_modified_by_date_completed restaurant_id=%d date=%s staff=%d customer=%d whatsapp=%d",
+		a.ActiveRestaurantID, date, len(staff), len(customer), len(whatsapp))
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
@@ -757,7 +808,11 @@ func (s *Server) handleBOBookingReactivate(w http.ResponseWriter, r *http.Reques
 		var baby, chairs, specMenu, menuDeGrupo sql.NullInt64
 
 		err := tx.QueryRowContext(ctx, `
-			SELECT booking_id, reservation_date, party_size, reservation_time, customer_name,
+			SELECT booking_id,
+			       DATE_FORMAT(reservation_date, '%Y-%m-%d') AS reservation_date,
+			       party_size,
+			       TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
+			       customer_name,
 			       contact_phone, contact_email, commentary, arroz_type, arroz_servings,
 			       babyStrollers, highChairs, special_menu, menu_de_grupo_id, principales_json
 			FROM cancelled_bookings
@@ -799,7 +854,7 @@ func (s *Server) handleBOBookingReactivate(w http.ResponseWriter, r *http.Reques
 				 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
 				 babyStrollers, highChairs, status, special_menu, menu_de_grupo_id, principales_json,
 				 children)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, confirmed, ?, ?, ?, 0)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, 0)
 		`, a.ActiveRestaurantID, resDate, row.partySize, resTime, custName,
 			phone, email, comment, arrozType, arrozServ, baby, chairs,
 			specMenu, menuDeGrupo, principales)
