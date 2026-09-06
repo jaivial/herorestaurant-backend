@@ -29,6 +29,10 @@ type dueBookingReminder struct {
 	ReservationDate string
 	ReservationTime string
 	PartySize       int
+	ArrozType       sql.NullString
+	ArrozServings   sql.NullString
+	HighChairs      sql.NullInt64
+	BabyStrollers   sql.NullInt64
 	PreferredFloor  sql.NullInt64
 	SalonName       sql.NullString
 }
@@ -128,8 +132,13 @@ func (s *Server) deliverBookingReminders(ctx context.Context, restaurantID int, 
 		}
 		log.Printf("%s.reminder.claimed restaurant=%d booking=%d", bookingNotifCoordinationID, restaurantID, b.ID)
 
+		extras := bookingReminderExtras{
+			ArrozLine:     bookingReminderArrozLine(b.ArrozType, b.ArrozServings),
+			HighChairs:    int(b.HighChairs.Int64),
+			BabyStrollers: int(b.BabyStrollers.Int64),
+		}
 		msg := buildBookingReminderPayload(brandName, b.CustomerName, formatBookingDateDisplay(b.ReservationDate), formatHHMM(b.ReservationTime),
-			b.PartySize, bookingReminderFloorDisplay(b.PreferredFloor), strings.TrimSpace(b.SalonName.String), b.ID, baseURL)
+			b.PartySize, bookingReminderFloorDisplay(b.PreferredFloor), strings.TrimSpace(b.SalonName.String), extras, b.ID, baseURL)
 
 		if sendErr := s.sendWhatsAppMenuTracked(ctx, restaurantID, gw, phone, msg.Text, msg.Choices, bookingReminderSource); sendErr != nil {
 			s.markBookingReminderFailed(ctx, key, sendErr)
@@ -149,7 +158,8 @@ func (s *Server) dueBookingReminders(ctx context.Context, restaurantID int, from
 		SELECT b.id, b.customer_name, b.contact_phone_country_code, b.contact_phone,
 		       DATE_FORMAT(b.reservation_date, '%Y-%m-%d') AS reservation_date,
 		       TIME_FORMAT(b.reservation_time, '%H:%i:%s') AS reservation_time,
-		       b.party_size, b.preferred_floor_number, sal.name
+		       b.party_size, b.arroz_type, b.arroz_servings, b.highChairs, b.babyStrollers,
+		       b.preferred_floor_number, sal.name
 		FROM bookings b
 		LEFT JOIN restaurant_salons sal ON sal.id = b.preferred_salon_id AND sal.restaurant_id = b.restaurant_id
 		LEFT JOIN booking_reminder_deliveries d
@@ -169,7 +179,7 @@ func (s *Server) dueBookingReminders(ctx context.Context, restaurantID int, from
 	for rows.Next() {
 		var b dueBookingReminder
 		if err = rows.Scan(&b.ID, &b.CustomerName, &b.PhoneCC, &b.Phone, &b.ReservationDate, &b.ReservationTime,
-			&b.PartySize, &b.PreferredFloor, &b.SalonName); err != nil {
+			&b.PartySize, &b.ArrozType, &b.ArrozServings, &b.HighChairs, &b.BabyStrollers, &b.PreferredFloor, &b.SalonName); err != nil {
 			return nil, err
 		}
 		out = append(out, b)

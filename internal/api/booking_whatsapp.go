@@ -68,12 +68,10 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 		msg += formatArrozWhatsApp(booking)
 	}
 
-	if highChairs > 0 {
-		msg += fmt.Sprintf("👶 *Tronas:* %d\n", highChairs)
-	}
-	if babyStrollers > 0 {
-		msg += fmt.Sprintf("🍼 *Carros de bebé:* %d\n", babyStrollers)
-	}
+	// Tronas and carritos are always listed, including 0, so the customer can
+	// verify at a glance that nothing was requested by mistake.
+	msg += fmt.Sprintf("👶 *Tronas:* %d\n", highChairs)
+	msg += fmt.Sprintf("🍼 *Carros de bebé:* %d\n", babyStrollers)
 
 	msg += "\nAl hacer esta reserva, usted ha confirmado y aceptado las condiciones de reserva y políticas del restaurante, las cuales puede consultar en el botón de abajo."
 
@@ -112,10 +110,10 @@ func buildBookingWhatsAppButtonPayload(brandName string, booking map[string]any,
 // its single confirm button. Shared by the n8n webhook path and the scheduled
 // reminder worker so both render one identical template, with the confirm URL
 // resolved from the restaurant's own base URL.
-func buildBookingReminderPayload(brandName, customerName, dateDisplay, timeDisplay string, partySize int, floorDisplay, salonDisplay string, bookingID int64, baseURL string) bookingWhatsAppMessage {
+func buildBookingReminderPayload(brandName, customerName, dateDisplay, timeDisplay string, partySize int, floorDisplay, salonDisplay string, extras bookingReminderExtras, bookingID int64, baseURL string) bookingWhatsAppMessage {
 	base := strings.TrimRight(baseURL, "/")
 	return bookingWhatsAppMessage{
-		Text:    buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDisplay, partySize, floorDisplay, salonDisplay),
+		Text:    buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDisplay, partySize, floorDisplay, salonDisplay, extras),
 		Choices: []string{fmt.Sprintf("✅ Confirmar Reserva|%s/confirm?id=%d", base, bookingID)},
 	}
 }
