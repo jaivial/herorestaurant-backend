@@ -18,13 +18,25 @@ type campaignTheme struct {
 	Align      string `json:"align"`
 }
 
+// campaignBaseTheme mirrors the transactional email template already used by
+// restaurant 1 (booking confirmations), so campaigns look native by default.
+var campaignBaseTheme = campaignTheme{
+	Background: "#f4f4f4",
+	Surface:    "#ffffff",
+	Text:       "#333333",
+	Accent:     "#097969",
+	FontFamily: "Arial, Helvetica, sans-serif",
+	MaxWidth:   600,
+	Align:      "left",
+}
+
 func normalizeCampaignTheme(t campaignTheme) campaignTheme {
 	out := t
-	out.Background = firstNonEmpty(hexColorOrEmpty(t.Background), "#f5f5f4")
-	out.Surface = firstNonEmpty(hexColorOrEmpty(t.Surface), "#ffffff")
-	out.Text = firstNonEmpty(hexColorOrEmpty(t.Text), "#1c1917")
-	out.Accent = firstNonEmpty(hexColorOrEmpty(t.Accent), "#b45309")
-	out.FontFamily = firstNonEmpty(strings.TrimSpace(t.FontFamily), "Helvetica, Arial, sans-serif")
+	out.Background = firstNonEmpty(hexColorOrEmpty(t.Background), campaignBaseTheme.Background)
+	out.Surface = firstNonEmpty(hexColorOrEmpty(t.Surface), campaignBaseTheme.Surface)
+	out.Text = firstNonEmpty(hexColorOrEmpty(t.Text), campaignBaseTheme.Text)
+	out.Accent = firstNonEmpty(hexColorOrEmpty(t.Accent), campaignBaseTheme.Accent)
+	out.FontFamily = firstNonEmpty(strings.TrimSpace(t.FontFamily), campaignBaseTheme.FontFamily)
 	if out.MaxWidth < 320 || out.MaxWidth > 900 {
 		out.MaxWidth = 600
 	}
@@ -113,14 +125,23 @@ func renderCampaignEmailHTML(markdown string, theme campaignTheme, brandName, lo
 	}
 	closeList()
 
+	// Same shell as the transactional booking email: accent header band with the
+	// logo, white card, automatic-message footer.
 	header := ""
 	if strings.TrimSpace(logoURL) != "" {
-		header = fmt.Sprintf(`<img src="%s" alt="%s" style="max-height:56px;margin-bottom:16px" />`, logoURL, htmlEscape(brandName))
+		header = fmt.Sprintf(`<tr><td style="padding:30px 20px;text-align:center;background-color:%s"><img src="%s" alt="%s" style="max-width:200px;height:auto" /></td></tr>`,
+			theme.Accent, logoURL, htmlEscape(brandName))
 	}
-	return fmt.Sprintf(`<!doctype html><html><body style="margin:0;padding:24px 12px;background:%s">`+
-		`<div data-campaign-surface="1" style="max-width:%dpx;margin:0 auto;background:%s;color:%s;font-family:%s;font-size:16px;text-align:%s;padding:28px;border-radius:14px">`+
-		`%s%s</div></body></html>`,
-		theme.Background, theme.MaxWidth, theme.Surface, theme.Text, theme.FontFamily, theme.Align, header, b.String())
+	return fmt.Sprintf(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">`+
+		`<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>%s</title></head>`+
+		`<body style="margin:0;padding:0;font-family:%s;line-height:1.6;background-color:%s">`+
+		`<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:%dpx;margin:0 auto;background-color:%s;border-radius:8px;overflow:hidden;box-shadow:0 2px 4px rgba(0,0,0,0.1)">`+
+		`%s<tr><td style="padding:30px 20px;color:%s;text-align:%s">%s`+
+		`<hr style="border:none;border-top:1px solid #eee;margin:30px 0" />`+
+		`<p style="font-size:12px;color:#666;text-align:center">Este es un email automatico, por favor no responda a este mensaje.<br>&copy; %s</p>`+
+		`</td></tr></table></body></html>`,
+		htmlEscape(brandName), theme.FontFamily, theme.Background, theme.MaxWidth, theme.Surface,
+		header, theme.Text, theme.Align, b.String(), htmlEscape(brandName))
 }
 
 // splitCampaignLeadImage returns the first markdown image URL and the body with
