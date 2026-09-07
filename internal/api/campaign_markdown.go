@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -64,6 +65,45 @@ var (
 	mdCodeRe   = regexp.MustCompile("`([^`]+)`")
 )
 
+// campaignUnsubscribePath is the public landing route that opts a recipient out
+// of future marketing. The query keys are contractual: the landing page and the
+// REST endpoint that persists the opt-out read exactly these names.
+const campaignUnsubscribePath = "/baja-publicidad"
+
+// Coordination ids shared with the public site so the landing page can be
+// traced back to the campaign email/WhatsApp footer that produced the click.
+const (
+	campaignUnsubscribeEmailCoordID = "camp-unsub"
+	campaignUnsubscribeEmailTestID  = "campaign-unsubscribe-email-btn"
+	campaignUnsubscribeCopy         = "No deseo recibir emails de publicidad"
+)
+
+// campaignUnsubscribeURL builds the per-recipient opt-out link. baseURL comes
+// already resolved by the caller (restaurant_domains), bookingID identifies the
+// booking the message was sent to and channel is "email" or "whatsapp".
+// An empty result means "no link available": callers must omit the footer
+// instead of rendering a broken button.
+func campaignUnsubscribeURL(baseURL string, bookingID int64, channel string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" || bookingID <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s%s?b=%d&c=%s", baseURL, campaignUnsubscribePath, bookingID, url.QueryEscape(strings.TrimSpace(channel)))
+}
+
+// campaignUnsubscribeFooterHTML renders the muted inline-styled footer button
+// appended to every campaign email (email clients ignore <style> blocks).
+func campaignUnsubscribeFooterHTML(unsubscribeURL string, theme campaignTheme) string {
+	unsubscribeURL = strings.TrimSpace(unsubscribeURL)
+	if unsubscribeURL == "" {
+		return ""
+	}
+	return fmt.Sprintf(`<p style="margin:16px 0 0;font-size:12px;line-height:1.5;text-align:center;">
+<a href="%s" data-testid="%s" data-coord-id="%s" style="display:inline-block;padding:7px 12px;border:1px solid %s33;border-radius:6px;color:%s;font-family:%s;font-size:12px;text-decoration:none;">%s</a>
+</p>
+`, htmlEscape(unsubscribeURL), campaignUnsubscribeEmailTestID, campaignUnsubscribeEmailCoordID, theme.Text, theme.Text, theme.FontFamily, campaignUnsubscribeCopy)
+}
+
 // renderCampaignInline turns the inline markdown subset into email HTML.
 func renderCampaignInline(line string, theme campaignTheme) string {
 	out := htmlEscape(line)
@@ -79,8 +119,16 @@ func renderCampaignInline(line string, theme campaignTheme) string {
 }
 
 // renderCampaignEmailHTML renders the markdown body into a table-free but
-// email-safe HTML document using the campaign theme.
+// email-safe HTML document using the campaign theme. Kept with the original
+// signature (no opt-out link) so existing callers stay untouched; the send path
+// uses renderCampaignEmailHTMLWithUnsubscribe.
 func renderCampaignEmailHTML(markdown string, theme campaignTheme, brandName, logoURL string) string {
+	return renderCampaignEmailHTMLWithUnsubscribe(markdown, theme, brandName, logoURL, "")
+}
+
+// renderCampaignEmailHTMLWithUnsubscribe behaves like renderCampaignEmailHTML
+// and, when unsubscribeURL is not empty, appends the opt-out footer button.
+func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme, brandName, logoURL, unsubscribeURL string) string {
 	theme = normalizeCampaignTheme(theme)
 	var b strings.Builder
 	inList := false
@@ -125,7 +173,7 @@ func renderCampaignEmailHTML(markdown string, theme campaignTheme, brandName, lo
 	}
 	closeList()
 
-	return campaignEmailShell(theme, brandName, logoURL, b.String())
+	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, b.String(), unsubscribeURL)
 }
 
 // campaignEmailBodyPlaceholder marks where the rendered markdown goes when the
@@ -134,9 +182,17 @@ const campaignEmailBodyPlaceholder = "{{CAMPAIGN_BODY}}"
 
 // campaignEmailShell reproduces the transactional booking email layout: accent
 // header band with the logo, 600px white card, automatic-message footer. Both
-// the sent email and the editor preview use this exact markup.
+// the sent email and the editor preview use this exact markup. Kept with the
+// original signature so the editor preview keeps rendering without the footer.
 func campaignEmailShell(theme campaignTheme, brandName, logoURL, bodyHTML string) string {
+	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, bodyHTML, "")
+}
+
+// campaignEmailShellWithUnsubscribe behaves like campaignEmailShell and adds the
+// opt-out footer button when unsubscribeURL is not empty.
+func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, bodyHTML, unsubscribeURL string) string {
 	theme = normalizeCampaignTheme(theme)
+	unsubFooter := campaignUnsubscribeFooterHTML(unsubscribeURL, theme)
 	header := ""
 	if strings.TrimSpace(logoURL) != "" {
 		header = fmt.Sprintf(`<tr>
@@ -158,7 +214,7 @@ func campaignEmailShell(theme campaignTheme, brandName, logoURL, bodyHTML string
 %s<tr>
 <td style="padding:30px 20px;color:%s;text-align:%s;">
 %s
-<hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
+%s<hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
 <p style="font-size:12px;color:#666;text-align:center;">Este es un email automatico, por favor no responda a este mensaje.<br>&copy; %s. Todos los derechos reservados.</p>
 </td>
 </tr>
@@ -174,6 +230,7 @@ func campaignEmailShell(theme campaignTheme, brandName, logoURL, bodyHTML string
 		theme.Text,
 		theme.Align,
 		bodyHTML,
+		unsubFooter,
 		htmlEscape(brandName),
 	)
 }
@@ -193,8 +250,17 @@ func splitCampaignLeadImage(markdown string) (string, string) {
 }
 
 // renderCampaignWhatsAppText converts the same markdown into WhatsApp markup.
-// Images degrade to their CDN URL so the client still previews them.
+// Images degrade to their CDN URL so the client still previews them. Kept with
+// the original signature (no opt-out link); the send path uses
+// renderCampaignWhatsAppTextWithUnsubscribe.
 func renderCampaignWhatsAppText(markdown string) string {
+	return renderCampaignWhatsAppTextWithUnsubscribe(markdown, "")
+}
+
+// renderCampaignWhatsAppTextWithUnsubscribe behaves like
+// renderCampaignWhatsAppText and appends the plain-text opt-out link (WhatsApp
+// free-form messages have no buttons) when unsubscribeURL is not empty.
+func renderCampaignWhatsAppTextWithUnsubscribe(markdown, unsubscribeURL string) string {
 	lines := strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))
 	for _, raw := range lines {
@@ -224,5 +290,12 @@ func renderCampaignWhatsAppText(markdown string) string {
 	for strings.Contains(text, "\n\n\n") {
 		text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
 	}
-	return strings.TrimSpace(text)
+	text = strings.TrimSpace(text)
+	if strings.TrimSpace(unsubscribeURL) == "" {
+		return text
+	}
+	if text != "" {
+		text += "\n\n"
+	}
+	return text + fmt.Sprintf("%s: %s", campaignUnsubscribeCopy, strings.TrimSpace(unsubscribeURL))
 }
