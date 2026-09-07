@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -694,8 +696,83 @@ func (s *Server) handleBOCampaignTest(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID})
 }
 
+// campaignNonPublicDomains are the dev-only hosts a restaurant_domains row can
+// hold on a local run: an opt-out link on them can never be opened from a real
+// phone, so they must not produce a footer.
+var campaignNonPublicDomains = map[string]bool{
+	"localhost": true,
+	"127.0.0.1": true,
+	"0.0.0.0":   true,
+	"::1":       true,
+}
+
+// campaignPublicBaseURL turns a restaurant_domains row into the https base URL
+// used to build per-recipient opt-out links. Empty, loopback or single-label
+// hosts return "": the caller then omits the footer instead of rendering a
+// link that cannot be opened.
+func campaignPublicBaseURL(domain string) string {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if i := strings.Index(domain, "://"); i >= 0 {
+		domain = domain[i+3:]
+	}
+	if i := strings.IndexAny(domain, "/?#"); i >= 0 {
+		domain = domain[:i]
+	}
+	if i := strings.LastIndex(domain, ":"); i >= 0 {
+		domain = domain[:i]
+	}
+	domain = strings.TrimSuffix(domain, ".")
+	if domain == "" || campaignNonPublicDomains[domain] || !strings.Contains(domain, ".") {
+		return ""
+	}
+	// Loopback / LAN addresses are equally unreachable from a recipient phone.
+	if ip := net.ParseIP(domain); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+		return ""
+	}
+	return "https://" + domain
+}
+
+// campaignUnsubscribeBaseURLCache memoizes the resolved public base URL per
+// restaurant: deliverCampaignTo runs once per recipient, so restaurant_domains
+// must be read once per send, not once per message.
+var campaignUnsubscribeBaseURLCache sync.Map // restaurant id -> campaignDomainCacheEntry
+
+// campaignDomainCacheTTL keeps a restaurant that publishes its domain later from
+// waiting for a backend restart to get working opt-out links.
+const campaignDomainCacheTTL = 10 * time.Minute
+
+type campaignDomainCacheEntry struct {
+	baseURL   string
+	expiresAt time.Time
+}
+
+// campaignUnsubscribeBaseURL resolves the https base URL of the restaurant
+// public site (backoffice_premium.go pattern: primary domain first). An empty
+// result means "no public domain" and the caller skips the opt-out footer.
+func (s *Server) campaignUnsubscribeBaseURL(ctx context.Context, restaurantID int) string {
+	if v, ok := campaignUnsubscribeBaseURLCache.Load(restaurantID); ok {
+		if e, ok := v.(campaignDomainCacheEntry); ok && time.Now().Before(e.expiresAt) {
+			return e.baseURL
+		}
+	}
+	var domain string
+	baseURL := ""
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT domain FROM restaurant_domains WHERE restaurant_id = ? ORDER BY is_primary DESC, id DESC LIMIT 1`,
+		restaurantID,
+	).Scan(&domain); err == nil {
+		baseURL = campaignPublicBaseURL(domain)
+	}
+	campaignUnsubscribeBaseURLCache.Store(restaurantID, campaignDomainCacheEntry{baseURL: baseURL, expiresAt: time.Now().Add(campaignDomainCacheTTL)})
+	return baseURL
+}
+
 // deliverCampaignTo sends the campaign to a single target on its channel.
 func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCampaign, target campaignTarget) error {
+	// Per-recipient opt-out link: booking id + channel identify the recipient on
+	// the public landing page (/baja-publicidad). The base URL is per restaurant
+	// and memoized, and an empty link simply drops the footer.
+	unsubscribeURL := campaignUnsubscribeURL(s.campaignUnsubscribeBaseURL(ctx, restaurantID), target.BookingID, target.Channel)
 	if target.Channel == "whatsapp" {
 		num := normalizeWhatsAppNumber(target.Target)
 		if num == "" {
@@ -705,13 +782,13 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		// of the body as caption; extra images stay as URLs inside the text.
 		if imageURL, rest := splitCampaignLeadImage(c.BodyMarkdown); imageURL != "" {
 			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-				caption := renderCampaignWhatsAppText(rest)
+				caption := renderCampaignWhatsAppTextWithUnsubscribe(rest, unsubscribeURL)
 				if err := gw.SendMedia(ctx, num, waMedia{Kind: "image", URL: imageURL, Caption: caption, Filename: "campana.webp"}); err == nil {
 					return nil
 				}
 			}
 		}
-		text := renderCampaignWhatsAppText(c.BodyMarkdown)
+		text := renderCampaignWhatsAppTextWithUnsubscribe(c.BodyMarkdown, unsubscribeURL)
 		if err := s.sendWhatsAppMessage(ctx, restaurantID, num, text); err != nil {
 			// Queue for retry so a provider hiccup never loses the message.
 			_ = s.enqueueWhatsAppDelivery(ctx, restaurantID, "campaign", fmt.Sprintf("%s|%s", c.CoordID, num), num, whatsappOutboxPayload{Text: text}, err)
@@ -730,7 +807,7 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	fromName := firstNonEmpty(branding.EmailFromName, branding.BrandName, "Restaurante")
 	fromAddr := resolveEmailFromAddr(branding, cfg)
 	subject := firstNonEmpty(c.Subject, c.Name)
-	html := renderCampaignEmailHTML(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL)
+	html := renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, unsubscribeURL)
 	return sendViaConfig(ctx, cfg, fromName, fromAddr, target.Target, subject, html)
 }
 
