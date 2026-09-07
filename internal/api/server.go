@@ -891,6 +891,11 @@ func (s *Server) Routes() http.Handler {
 
 		// Public endpoints (used by the Preact client).
 		r.Get("/menu-visibility", s.handleMenuVisibility)
+
+		// Campaign unsubscribe (public, no auth). Tenant from the Host header.
+		// Preact page: /baja-publicidad?b=<bookingID>&c=<channel>. coord: camp-unsub.
+		r.Get("/unsubscribe/context", s.handlePublicUnsubscribeContext)
+		r.Post("/unsubscribe", s.handlePublicUnsubscribe)
 		r.Get("/reservations/closed-days", s.handleReservationsClosedDays)
 		r.Get("/reservations/rice-types", s.handleReservationsRiceTypes)
 		r.Get("/reservations/month-availability", s.handleReservationsMonthAvailability)
