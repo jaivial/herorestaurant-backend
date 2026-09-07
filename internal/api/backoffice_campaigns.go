@@ -26,20 +26,68 @@ import (
 const (
 	campaignMaxImageBytes = 400 * 1024
 	campaignMaxRecipients = 5000
-	// Operator-facing pacing bounds, expressed in messages per minute.
+	// Operator-facing pacing bounds, expressed in messages per minute. The
+	// ceilings are the limits the legacy scripts ran with in production:
+	// email (Titan SMTP) 300/hour => 5 per minute, WhatsApp 12/hour, which a
+	// per-minute knob can only express as its floor (1) plus the hard 300s
+	// spacing enforced in campaignChannelPause.
 	campaignMinPerMinute            = 1
-	campaignMaxEmailPerMinute       = 600
-	campaignMaxWhatsAppPerMinute    = 120
-	campaignDefaultEmailPerMinute   = 60
-	campaignDefaultWhatsAppPerMinut = 12
+	campaignMaxEmailPerMinute       = 5
+	campaignMaxWhatsAppPerMinute    = 1
+	campaignDefaultEmailPerMinute   = 5
+	campaignDefaultWhatsAppPerMinut = 1
+
+	// send_whatsapp_campaign.php: $delayBetweenSends = 300 (12/hour, 300/day).
+	campaignWhatsAppMinPause = 300 * time.Second
 )
 
-// campaignChannelPause turns a per-minute rate into the delay between sends.
-func campaignChannelPause(perMinute int) time.Duration {
-	if perMinute < campaignMinPerMinute {
-		perMinute = campaignMinPerMinute
+// campaignBookingsAudienceQuery is the audience source: the newest booking per
+// contact inside the lookback window.
+const campaignBookingsAudienceQuery = `
+	SELECT MAX(id), customer_name, COALESCE(contact_email, ''), COALESCE(contact_phone, '')
+	FROM bookings
+	WHERE restaurant_id = ? AND reservation_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+	GROUP BY customer_name, contact_email, contact_phone
+	ORDER BY MAX(id) DESC`
+
+// campaignSuppressionQuery is every do-not-contact target of a restaurant plus
+// the legacy invalid_emails / invalid_phones / no_marketing rows. The legacy
+// tables do not share one collation, so every branch is cast to the same one.
+const campaignSuppressionQuery = `
+	SELECT channel, target FROM (
+		SELECT channel, CONVERT(target USING utf8mb4) COLLATE utf8mb4_unicode_ci AS target
+		FROM campaign_suppressions WHERE restaurant_id = ?
+		UNION ALL
+		SELECT 'email', CONVERT(LOWER(TRIM(email)) USING utf8mb4) COLLATE utf8mb4_unicode_ci
+		FROM invalid_emails WHERE TRIM(COALESCE(email, '')) <> ''
+		UNION ALL
+		SELECT 'whatsapp', CONVERT(TRIM(phone) USING utf8mb4) COLLATE utf8mb4_unicode_ci
+		FROM invalid_phones WHERE TRIM(COALESCE(phone, '')) <> ''
+		UNION ALL
+		SELECT 'whatsapp', CONVERT(TRIM(contact_phone) USING utf8mb4) COLLATE utf8mb4_unicode_ci
+		FROM no_marketing WHERE TRIM(COALESCE(contact_phone, '')) <> ''
+		UNION ALL
+		SELECT 'email', CONVERT(LOWER(TRIM(contact_email)) USING utf8mb4) COLLATE utf8mb4_unicode_ci
+		FROM no_marketing WHERE TRIM(COALESCE(contact_email, '')) <> ''
+	) suppressed`
+
+// campaignChannelPause turns a per-minute rate into the delay between sends,
+// clamped through clampCampaignRate. The whatsapp channel keeps a hard minimum
+// spacing of 300s whatever the configured rate: the legacy
+// send_whatsapp_campaign.php only allowed 12 messages per hour and 300s between
+// sends, which no per-minute value can express.
+func campaignChannelPause(channel string, perMinute int) time.Duration {
+	fallback := campaignDefaultEmailPerMinute
+	ceiling := campaignMaxEmailPerMinute
+	if channel == "whatsapp" {
+		fallback = campaignDefaultWhatsAppPerMinut
+		ceiling = campaignMaxWhatsAppPerMinute
 	}
-	return time.Duration(float64(time.Minute) / float64(perMinute))
+	pause := time.Duration(float64(time.Minute) / float64(clampCampaignRate(perMinute, fallback, ceiling)))
+	if channel == "whatsapp" && pause < campaignWhatsAppMinPause {
+		return campaignWhatsAppMinPause
+	}
+	return pause
 }
 
 type boCampaign struct {
@@ -455,10 +503,61 @@ func (s *Server) handleBOCampaignPreview(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// campaignAudience resolves the recipient list for the campaign settings.
+// campaignSuppressionFilter is the do-not-contact list of a restaurant, keyed
+// the way campaignAudience compares targets: emails lower-cased, phones through
+// normalizeWhatsAppNumber. campaign_suppressions is the source of truth; the
+// legacy invalid_emails / invalid_phones / no_marketing tables are still
+// honoured so an old bounce or opt-out can never be re-contacted.
+type campaignSuppressionFilter struct {
+	emails map[string]bool
+	phones map[string]bool
+}
+
+func (f campaignSuppressionFilter) blocked(channel, target string) bool {
+	if channel == "whatsapp" {
+		return f.phones[normalizeWhatsAppNumber(target)]
+	}
+	return f.emails[strings.ToLower(strings.TrimSpace(target))]
+}
+
+// loadCampaignSuppressionFilter reads every suppressed target of the restaurant
+// plus the legacy bounce/opt-out rows (they carry no restaurant_id, exactly as
+// the legacy send scripts used them globally).
+func (s *Server) loadCampaignSuppressionFilter(ctx context.Context, restaurantID int) (campaignSuppressionFilter, error) {
+	f := campaignSuppressionFilter{emails: map[string]bool{}, phones: map[string]bool{}}
+	rows, err := s.db.QueryContext(ctx, campaignSuppressionQuery, restaurantID)
+	if err != nil {
+		return f, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channel, target string
+		if err := rows.Scan(&channel, &target); err != nil {
+			continue
+		}
+		if channel == "whatsapp" {
+			if num := normalizeWhatsAppNumber(target); num != "" {
+				f.phones[num] = true
+			}
+			continue
+		}
+		if mail := strings.ToLower(strings.TrimSpace(target)); mail != "" {
+			f.emails[mail] = true
+		}
+	}
+	return f, rows.Err()
+}
+
+// campaignAudience resolves the recipient list for the campaign settings. Both
+// the bookings and the manual audience go through the suppression filter, so a
+// hand-pasted list cannot bypass an unsubscribe.
 func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCampaign) ([]campaignTarget, error) {
 	wantsEmail := campaignHasChannel(c.Channels, "email")
 	wantsWhatsApp := campaignHasChannel(c.Channels, "whatsapp")
+	suppressed, err := s.loadCampaignSuppressionFilter(ctx, restaurantID)
+	if err != nil {
+		return nil, err
+	}
 	seen := map[string]bool{}
 	out := []campaignTarget{}
 	add := func(channel, target, name string, bookingID int64) {
@@ -472,6 +571,9 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 			return
 		}
 		if target == "" {
+			return
+		}
+		if suppressed.blocked(channel, target) {
 			return
 		}
 		key := channel + "|" + strings.ToLower(target)
@@ -499,13 +601,7 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 
 	// The newest booking per contact is the traceability anchor stored with
 	// each recipient row (campaign id + booking id + channel).
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT MAX(id), customer_name, COALESCE(contact_email, ''), COALESCE(contact_phone, '')
-		FROM bookings
-		WHERE restaurant_id = ? AND reservation_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-		GROUP BY customer_name, contact_email, contact_phone
-		ORDER BY MAX(id) DESC
-	`, restaurantID, c.AudienceDays)
+	rows, err := s.db.QueryContext(ctx, campaignBookingsAudienceQuery, restaurantID, c.AudienceDays)
 	if err != nil {
 		return nil, err
 	}
@@ -713,9 +809,9 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 				slog.Default().Info("campaign.delivery.sent", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID)
 			}
 			if p.t.Channel == "whatsapp" {
-				time.Sleep(campaignChannelPause(c.WhatsAppPerMin))
+				time.Sleep(campaignChannelPause("whatsapp", c.WhatsAppPerMin))
 			} else {
-				time.Sleep(campaignChannelPause(c.EmailPerMinute))
+				time.Sleep(campaignChannelPause("email", c.EmailPerMinute))
 			}
 		}
 	}
