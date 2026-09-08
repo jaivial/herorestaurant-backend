@@ -193,15 +193,19 @@ func campaignEmailShell(theme campaignTheme, brandName, logoURL, bodyHTML string
 func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, bodyHTML, unsubscribeURL string) string {
 	theme = normalizeCampaignTheme(theme)
 	unsubFooter := campaignUnsubscribeFooterHTML(unsubscribeURL, theme)
-	header := ""
+	// Header band of the booking confirmation template. It is always rendered so
+	// campaigns keep that chrome; without a logo the brand name takes its place
+	// instead of leaving an empty accent strip.
+	headerContent := fmt.Sprintf(`<span style="color:#ffffff;font-size:22px;font-weight:bold;">%s</span>`, htmlEscape(brandName))
 	if strings.TrimSpace(logoURL) != "" {
-		header = fmt.Sprintf(`<tr>
+		headerContent = fmt.Sprintf(`<img src="%s" alt="%s" style="max-width:200px;height:auto;">`, logoURL, htmlEscape(brandName))
+	}
+	header := fmt.Sprintf(`<tr>
 <td style="padding:30px 20px;text-align:center;background-color:%s;">
-<img src="%s" alt="%s" style="max-width:200px;height:auto;">
+%s
 </td>
 </tr>
-`, theme.Accent, logoURL, htmlEscape(brandName))
-	}
+`, theme.Accent, headerContent)
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="es">
 <head>
