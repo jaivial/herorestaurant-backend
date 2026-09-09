@@ -473,14 +473,16 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 	})
 	brandName := firstNonEmpty(branding.BrandName, reference.BrandName, "Restaurante")
 	logoURL := firstNonEmpty(branding.LogoURL, reference.LogoURL)
+	websiteURL := firstNonEmpty(branding.Website, reference.Website)
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success":    true,
 		"theme":      theme,
 		"brand_name": brandName,
 		"logo_url":   logoURL,
+		"website":    websiteURL,
 		// The editor renders the markdown locally and drops it in this exact
 		// shell, so the preview matches the delivered email byte for byte.
-		"shell":            campaignEmailShell(theme, brandName, logoURL, campaignEmailBodyPlaceholder),
+		"shell":            campaignEmailShell(theme, brandName, logoURL, campaignEmailBodyPlaceholder, websiteURL),
 		"body_placeholder": campaignEmailBodyPlaceholder,
 	})
 }
@@ -500,8 +502,8 @@ func (s *Server) handleBOCampaignPreview(w http.ResponseWriter, r *http.Request)
 	branding, _ := s.loadRestaurantBranding(r.Context(), a.ActiveRestaurantID)
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success":  true,
-		"html":     renderCampaignEmailHTML(in.BodyMarkdown, in.Theme, branding.BrandName, branding.LogoURL),
-		"whatsapp": renderCampaignWhatsAppText(in.BodyMarkdown),
+		"html":     renderCampaignEmailHTML(in.BodyMarkdown, in.Theme, branding.BrandName, branding.LogoURL, branding.Website),
+		"whatsapp": renderCampaignWhatsAppText(in.BodyMarkdown, branding.BrandName, branding.Website),
 	})
 }
 
@@ -773,6 +775,9 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	// the public landing page (/baja-publicidad). The base URL is per restaurant
 	// and memoized, and an empty link simply drops the footer.
 	unsubscribeURL := campaignUnsubscribeURL(s.campaignUnsubscribeBaseURL(ctx, restaurantID), target.BookingID, target.Channel)
+	// Brand + website come from the restaurant configuration; an empty website
+	// simply omits the website button / line on both channels.
+	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
 	if target.Channel == "whatsapp" {
 		num := normalizeWhatsAppNumber(target.Target)
 		if num == "" {
@@ -782,13 +787,13 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		// of the body as caption; extra images stay as URLs inside the text.
 		if imageURL, rest := splitCampaignLeadImage(c.BodyMarkdown); imageURL != "" {
 			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-				caption := renderCampaignWhatsAppTextWithUnsubscribe(rest, unsubscribeURL)
+				caption := renderCampaignWhatsAppTextWithUnsubscribe(rest, branding.BrandName, branding.Website, unsubscribeURL)
 				if err := gw.SendMedia(ctx, num, waMedia{Kind: "image", URL: imageURL, Caption: caption, Filename: "campana.webp"}); err == nil {
 					return nil
 				}
 			}
 		}
-		text := renderCampaignWhatsAppTextWithUnsubscribe(c.BodyMarkdown, unsubscribeURL)
+		text := renderCampaignWhatsAppTextWithUnsubscribe(c.BodyMarkdown, branding.BrandName, branding.Website, unsubscribeURL)
 		if err := s.sendWhatsAppMessage(ctx, restaurantID, num, text); err != nil {
 			// Queue for retry so a provider hiccup never loses the message.
 			_ = s.enqueueWhatsAppDelivery(ctx, restaurantID, "campaign", fmt.Sprintf("%s|%s", c.CoordID, num), num, whatsappOutboxPayload{Text: text}, err)
@@ -803,11 +808,10 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	if cfg.ID == 0 || !cfg.IsActive {
 		return errors.New("email no configurado")
 	}
-	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
 	fromName := firstNonEmpty(branding.EmailFromName, branding.BrandName, "Restaurante")
 	fromAddr := resolveEmailFromAddr(branding, cfg)
 	subject := firstNonEmpty(c.Subject, c.Name)
-	html := renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, unsubscribeURL)
+	html := renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, branding.Website, unsubscribeURL)
 	return sendViaConfig(ctx, cfg, fromName, fromAddr, target.Target, subject, html)
 }
 
