@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -58,12 +59,33 @@ func hexColorOrEmpty(v string) string {
 }
 
 var (
-	mdImageRe  = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)\)`)
+	mdImageRe  = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)(?:\s*=([0-9]+))?\)`)
 	mdLinkRe   = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
 	mdBoldRe   = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	mdItalicRe = regexp.MustCompile(`(^|[^*])\*([^*]+)\*`)
 	mdCodeRe   = regexp.MustCompile("`([^`]+)`")
 )
+
+// Markdown images may carry an optional pixel width hint, appended by the
+// backoffice editor as `![alt](URL =W)` (one space, no quotes). The height is
+// never stored: the rendered <img> keeps height:auto so the aspect ratio comes
+// from the source image. Anything invalid, below 40 or above 600 is treated as
+// "no hint" (values above 600 mean "as wide as the email body", which the
+// max-width:100% already delivers).
+const (
+	campaignImageMinWidth = 40
+	campaignImageMaxWidth = 600
+)
+
+// campaignImageWidth returns the clamped pixel width of the hint, or 0 when the
+// image must keep its natural size.
+func campaignImageWidth(hint string) int {
+	w, err := strconv.Atoi(strings.TrimSpace(hint))
+	if err != nil || w < campaignImageMinWidth || w > campaignImageMaxWidth {
+		return 0
+	}
+	return w
+}
 
 // campaignUnsubscribePath is the public landing route that opts a recipient out
 // of future marketing. The query keys are contractual: the landing page and the
@@ -109,7 +131,11 @@ func renderCampaignInline(line string, theme campaignTheme) string {
 	out := htmlEscape(line)
 	out = mdImageRe.ReplaceAllStringFunc(out, func(m string) string {
 		parts := mdImageRe.FindStringSubmatch(m)
-		return fmt.Sprintf(`<img src="%s" alt="%s" style="max-width:100%%;height:auto;border-radius:10px;display:block;margin:12px 0" />`, parts[2], parts[1])
+		style := `max-width:100%;height:auto;border-radius:10px;display:block;margin:12px 0`
+		if w := campaignImageWidth(parts[3]); w > 0 {
+			style = fmt.Sprintf("width:%dpx;", w) + style
+		}
+		return fmt.Sprintf(`<img src="%s" alt="%s" style="%s" />`, parts[2], parts[1], style)
 	})
 	out = mdLinkRe.ReplaceAllString(out, fmt.Sprintf(`<a href="$2" style="color:%s;text-decoration:underline">$1</a>`, theme.Accent))
 	out = mdBoldRe.ReplaceAllString(out, "<strong>$1</strong>")
