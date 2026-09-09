@@ -274,6 +274,7 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 %s
 %s<hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
 <p style="font-size:12px;color:#666;text-align:center;">Este es un email automatico, por favor no responda a este mensaje.<br>&copy; %s. Todos los derechos reservados.</p>
+%s
 </td>
 </tr>
 </table>
@@ -289,8 +290,8 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 		theme.Align,
 		bodyHTML,
 		webButton,
-		unsubFooter,
 		htmlEscape(brandName),
+		unsubFooter,
 	)
 }
 

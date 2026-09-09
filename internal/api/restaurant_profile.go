@@ -29,12 +29,12 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 		emailFromName    sql.NullString
 		emailFromAddress sql.NullString
 	)
+	// Public website of the restaurant (restaurants.website_url); blank or NULL
+	// collapses to '' so callers can skip the website block.
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(NULLIF(TRIM(rb.brand_name), ''), r.name) AS brand_name,
 			rb.logo_url,
-			// Public website of the restaurant (restaurants.website_url); blank
-			// or NULL collapses to '' so callers can skip the website block.
 			NULLIF(TRIM(r.website_url), '') AS website,
 			rb.primary_color,
 			rb.accent_color,
