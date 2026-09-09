@@ -182,7 +182,7 @@ func normalizeCampaignInput(in boCampaignInput) (boCampaignInput, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Subject = strings.TrimSpace(in.Subject)
 	if in.Name == "" {
-		return in, errors.New("El nombre de la campana es obligatorio")
+		return in, errors.New("El nombre de la campaña es obligatorio")
 	}
 	if len(in.Name) > 180 {
 		in.Name = in.Name[:180]
@@ -272,7 +272,7 @@ func (s *Server) handleBOCampaignsList(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.QueryContext(r.Context(), `SELECT `+boCampaignColumns+` FROM campaigns WHERE restaurant_id = ? ORDER BY updated_at DESC`, a.ActiveRestaurantID)
 	if err != nil {
-		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error cargando campanas"})
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error cargando campañas"})
 		return
 	}
 	defer rows.Close()
@@ -301,7 +301,7 @@ func (s *Server) handleBOCampaignGet(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := s.loadBOCampaign(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
-		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campana no encontrada"})
+		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "campaign": c})
@@ -331,14 +331,14 @@ func (s *Server) handleBOCampaignCreate(w http.ResponseWriter, r *http.Request) 
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
 	`, a.ActiveRestaurantID, coordID, in.Name, in.Subject, in.BodyMarkdown, string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin)
 	if err != nil {
-		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error creando campana"})
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error creando campaña"})
 		return
 	}
 	id, _ := res.LastInsertId()
 	slog.Default().Info("campaign.created", "coord_id", coordID, "campaign_id", id, "restaurant_id", a.ActiveRestaurantID)
 	c, err := s.loadBOCampaign(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
-		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error leyendo campana"})
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error leyendo campaña"})
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "campaign": c})
@@ -372,12 +372,12 @@ func (s *Server) handleBOCampaignUpdate(w http.ResponseWriter, r *http.Request) 
 			email_per_minute = ?, whatsapp_per_minute = ?
 		WHERE restaurant_id = ? AND id = ?
 	`, in.Name, in.Subject, in.BodyMarkdown, string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin, a.ActiveRestaurantID, id); err != nil {
-		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error guardando campana"})
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error guardando campaña"})
 		return
 	}
 	c, err := s.loadBOCampaign(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
-		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campana no encontrada"})
+		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "campaign": c})
@@ -395,7 +395,7 @@ func (s *Server) handleBOCampaignDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM campaigns WHERE restaurant_id = ? AND id = ?`, a.ActiveRestaurantID, id); err != nil {
-		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error borrando campana"})
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error borrando campaña"})
 		return
 	}
 	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ?`, a.ActiveRestaurantID, id)
@@ -474,15 +474,20 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 	brandName := firstNonEmpty(branding.BrandName, reference.BrandName, "Restaurante")
 	logoURL := firstNonEmpty(branding.LogoURL, reference.LogoURL)
 	websiteURL := firstNonEmpty(branding.Website, reference.Website)
+	// The previews must show the opt-out button the recipient gets, so the shell
+	// is built with a placeholder link (an unknown booking id inserts nothing).
+	unsubBase := firstNonEmpty(strings.TrimSpace(websiteURL), s.campaignUnsubscribeBaseURL(r.Context(), a.ActiveRestaurantID))
+	unsubscribeURL := campaignUnsubscribePreviewURL(unsubBase)
 	httpx.WriteJSON(w, 200, map[string]any{
-		"success":    true,
-		"theme":      theme,
-		"brand_name": brandName,
-		"logo_url":   logoURL,
-		"website":    websiteURL,
+		"success":         true,
+		"theme":           theme,
+		"brand_name":      brandName,
+		"logo_url":        logoURL,
+		"website":         websiteURL,
+		"unsubscribe_url": unsubscribeURL,
 		// The editor renders the markdown locally and drops it in this exact
 		// shell, so the preview matches the delivered email byte for byte.
-		"shell":            campaignEmailShell(theme, brandName, logoURL, campaignEmailBodyPlaceholder, websiteURL),
+		"shell":            campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, campaignEmailBodyPlaceholder, websiteURL, unsubscribeURL),
 		"body_placeholder": campaignEmailBodyPlaceholder,
 	})
 }
@@ -639,7 +644,7 @@ func (s *Server) handleBOCampaignAudience(w http.ResponseWriter, r *http.Request
 	}
 	c, err := s.loadBOCampaign(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
-		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campana no encontrada"})
+		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
 		return
 	}
 	targets, err := s.campaignAudience(r.Context(), a.ActiveRestaurantID, c)
@@ -684,7 +689,7 @@ func (s *Server) handleBOCampaignTest(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := s.loadBOCampaign(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
-		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campana no encontrada"})
+		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
 		return
 	}
 	channel := strings.ToLower(strings.TrimSpace(body.Channel))
@@ -790,10 +795,15 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	// Per-recipient opt-out link: booking id + channel identify the recipient on
 	// the public landing page (/baja-publicidad). The base URL is per restaurant
 	// and memoized, and an empty link simply drops the footer.
-	unsubscribeURL := campaignUnsubscribeURL(s.campaignUnsubscribeBaseURL(ctx, restaurantID), target.BookingID, target.Channel)
 	// Brand + website come from the restaurant configuration; an empty website
 	// simply omits the website button / line on both channels.
 	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
+	// The opt-out link is published on the restaurant own website (the public
+	// Preact app serves /baja-publicidad); the per-restaurant app domain is the
+	// fallback when no website is configured.
+	unsubscribeURL := campaignUnsubscribeURL(
+		firstNonEmpty(strings.TrimSpace(branding.Website), s.campaignUnsubscribeBaseURL(ctx, restaurantID)),
+		target.BookingID, target.Channel)
 	if target.Channel == "whatsapp" {
 		num := normalizeWhatsAppNumber(target.Target)
 		if num == "" {
@@ -805,34 +815,34 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		// only header + body + opt-out link. Without a gateway configured the
 		// button is impossible and the link stays in the text as before.
 		gw, gwOK := s.botGatewayFor(ctx, restaurantID)
-		webButton := ""
-		if gwOK {
-			if site := strings.TrimSpace(branding.Website); site != "" {
-				webButton = campaignWebsiteCopy + "|" + site
-			}
-		}
-		// Text every fallback reuses: same message, with the website back as the
-		// plain-text line so the link is never lost.
-		fallback := appendCampaignWebsiteLine(renderCampaignWhatsAppTextWithUnsubscribe(c.BodyMarkdown, branding.BrandName, "", unsubscribeURL), branding.Website)
+		// Website and opt-out travel as interactive buttons of the message, so
+		// the text keeps only the brand header, the body and nothing else.
+		choices := campaignWhatsAppChoices(branding.Website, unsubscribeURL)
+		// Text every fallback reuses: same message with both links back as
+		// plain-text lines, so no link is ever lost.
+		fallback := appendCampaignUnsubscribeLine(
+			appendCampaignWebsiteLine(renderCampaignWhatsAppBody(c.BodyMarkdown, branding.BrandName, "", false), branding.Website),
+			unsubscribeURL)
 		// A markdown image becomes a real WhatsApp media message with the rest
 		// of the body as caption; extra images stay as URLs inside the text.
 		// Evolution cannot mix media and buttons in one call, so the button
 		// message follows the image.
 		if imageURL, rest := splitCampaignLeadImage(c.BodyMarkdown); imageURL != "" && gwOK {
-			caption := renderCampaignWhatsAppTextWithUnsubscribe(rest, branding.BrandName, "", unsubscribeURL)
+			caption := renderCampaignWhatsAppBody(rest, branding.BrandName, "", false)
 			if err := gw.SendMedia(ctx, num, waMedia{Kind: "image", URL: imageURL, Caption: caption, Filename: "campana.webp"}); err == nil {
-				if webButton == "" {
+				if len(choices) == 0 {
 					return nil
 				}
-				if err := gw.SendMenu(ctx, num, caption, []string{webButton}); err == nil {
+				if err := gw.SendMenu(ctx, num, caption, choices); err == nil {
 					return nil
 				}
-				return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num, fallback)
+				return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num,
+					appendCampaignUnsubscribeLine(appendCampaignWebsiteLine(caption, branding.Website), unsubscribeURL))
 			}
 		}
-		text := renderCampaignWhatsAppTextWithUnsubscribe(c.BodyMarkdown, branding.BrandName, "", unsubscribeURL)
-		if webButton != "" {
-			if err := gw.SendMenu(ctx, num, text, []string{webButton}); err == nil {
+		text := renderCampaignWhatsAppBody(c.BodyMarkdown, branding.BrandName, "", false)
+		if len(choices) > 0 {
+			if err := gw.SendMenu(ctx, num, text, choices); err == nil {
 				return nil
 			}
 			return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num, fallback)
@@ -867,11 +877,11 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := s.loadBOCampaign(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
-		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campana no encontrada"})
+		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
 		return
 	}
 	if c.Status == "sending" {
-		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campana ya se esta enviando"})
+		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
 		return
 	}
 	targets, err := s.campaignAudience(r.Context(), a.ActiveRestaurantID, c)
@@ -1007,8 +1017,106 @@ func (s *Server) handleBOCampaignStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	c, err := s.loadBOCampaign(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
-		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campana no encontrada"})
+		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID, "status": c.Status, "stats": c.Stats})
 }
+
+// handleBOCampaignUnsubscribed lists, paginated, every booking that opted out
+// of marketing, with the booking details the operator needs to recognise it.
+// Read only: rows are added by the recipient through the public landing page,
+// never here.
+func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	const campaignUnsubscribedPageSize = 10
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * campaignUnsubscribedPageSize
+
+	var total int
+	if err := s.db.QueryRowContext(r.Context(), `
+		SELECT COUNT(*) FROM campaign_suppressions
+		WHERE restaurant_id = ? AND booking_id > 0
+	`, a.ActiveRestaurantID).Scan(&total); err != nil {
+		slog.Default().Warn("campaign.unsubscribed.count_failed", "coord_id", campaignUnsubscribedCoordID,
+			"restaurant_id", a.ActiveRestaurantID, "err", err.Error())
+		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo listar las bajas")
+		return
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT s.booking_id,
+		       COALESCE(NULLIF(TRIM(b.customer_name), ''), '')        AS customer_name,
+		       COALESCE(NULLIF(TRIM(s.target), ''), '')               AS target,
+		       s.channel,
+		       COALESCE(NULLIF(TRIM(s.reason), ''), '')               AS reason,
+		       s.created_at,
+		       COALESCE(b.reservation_date, DATE(s.created_at))       AS reservation_date,
+		       COALESCE(b.party_size, 0)                              AS party_size
+		FROM campaign_suppressions s
+		LEFT JOIN bookings b ON b.id = s.booking_id AND b.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.booking_id > 0
+		ORDER BY s.created_at DESC, s.id DESC
+		LIMIT ? OFFSET ?
+	`, a.ActiveRestaurantID, campaignUnsubscribedPageSize, offset)
+	if err != nil {
+		slog.Default().Warn("campaign.unsubscribed.list_failed", "coord_id", campaignUnsubscribedCoordID,
+			"restaurant_id", a.ActiveRestaurantID, "err", err.Error())
+		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo listar las bajas")
+		return
+	}
+	defer rows.Close()
+
+	type campaignUnsubscribedRow struct {
+		BookingID       int64  `json:"booking_id"`
+		CustomerName    string `json:"customer_name"`
+		Contact         string `json:"contact"`
+		Channel         string `json:"channel"`
+		Reason          string `json:"reason"`
+		Since           string `json:"since"`
+		ReservationDate string `json:"reservation_date"`
+		PartySize       int    `json:"party_size"`
+	}
+	items := make([]campaignUnsubscribedRow, 0)
+	for rows.Next() {
+		var row campaignUnsubscribedRow
+		var (
+			unsubAt    time.Time
+			reservedAt sql.NullTime
+			partySize  sql.NullInt64
+		)
+		if err := rows.Scan(&row.BookingID, &row.CustomerName, &row.Contact, &row.Channel, &row.Reason,
+			&unsubAt, &reservedAt, &partySize); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "No se pudo listar las bajas")
+			return
+		}
+		row.Since = unsubAt.Format("02/01/2006")
+		if reservedAt.Valid {
+			row.ReservationDate = reservedAt.Time.Format("02/01/2006")
+		}
+		row.PartySize = int(partySize.Int64)
+		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo listar las bajas")
+		return
+	}
+
+	totalPages := (total + campaignUnsubscribedPageSize - 1) / campaignUnsubscribedPageSize
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":     true,
+		"items":       items,
+		"page":        page,
+		"page_size":   campaignUnsubscribedPageSize,
+		"total":       total,
+		"total_pages": totalPages,
+	})
+}
+

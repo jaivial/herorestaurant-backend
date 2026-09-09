@@ -96,6 +96,7 @@ const campaignUnsubscribePath = "/baja-publicidad"
 // traced back to the campaign email/WhatsApp footer that produced the click.
 const (
 	campaignUnsubscribeEmailCoordID = "camp-unsub"
+	campaignUnsubscribedCoordID     = "camp-unsub-list"
 	campaignUnsubscribeEmailTestID  = "campaign-unsubscribe-email-btn"
 	campaignUnsubscribeCopy         = "No deseo recibir emails de publicidad"
 )
@@ -260,6 +261,9 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 </td>
 </tr>
 `, theme.Accent, headerContent)
+	// Order of the card: body, then the website and opt-out actions, then the
+	// footer rule with the automatic-message notice. Each action disappears when
+	// its URL is empty.
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -272,9 +276,10 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 %s<tr>
 <td style="padding:30px 20px;color:%s;text-align:%s;">
 %s
-%s<hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
-<p style="font-size:12px;color:#666;text-align:center;">Este es un email automatico, por favor no responda a este mensaje.<br>&copy; %s. Todos los derechos reservados.</p>
 %s
+%s
+<hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
+<p style="font-size:12px;color:#666;text-align:center;">Este es un email automatico, por favor no responda a este mensaje.<br>&copy; %s. Todos los derechos reservados.</p>
 </td>
 </tr>
 </table>
@@ -290,8 +295,8 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 		theme.Align,
 		bodyHTML,
 		webButton,
-		htmlEscape(brandName),
 		unsubFooter,
+		htmlEscape(brandName),
 	)
 }
 
@@ -312,6 +317,49 @@ func splitCampaignLeadImage(markdown string) (string, string) {
 // appendCampaignWebsiteLine is the plain-text fallback of the WhatsApp website
 // button: the send path only uses it when the button message could not be
 // delivered, so the link is never lost. An empty website is a no-op.
+// campaignWhatsAppChoices builds the interactive buttons of a campaign message:
+// the restaurant website (when configured) and the opt-out link (always, so the
+// recipient stops the messages with one tap). Nil when there is nothing to
+// offer, in which case the message is sent as plain text.
+func campaignWhatsAppChoices(websiteURL, unsubscribeURL string) []string {
+	choices := make([]string, 0, 2)
+	if site := strings.TrimSpace(websiteURL); site != "" {
+		choices = append(choices, campaignWebsiteCopy+"|"+site)
+	}
+	if unsub := strings.TrimSpace(unsubscribeURL); unsub != "" {
+		choices = append(choices, campaignUnsubscribeCopy+"|"+unsub)
+	}
+	if len(choices) == 0 {
+		return nil
+	}
+	return choices
+}
+
+// campaignUnsubscribePreviewURL is the opt-out link shown in the editor preview:
+// same shape as a real one but with a placeholder booking id, which the landing
+// page ignores (an unknown id inserts nothing).
+func campaignUnsubscribePreviewURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s%s?b=0&c=email", baseURL, campaignUnsubscribePath)
+}
+
+// appendCampaignUnsubscribeLine is the plain-text opt-out fallback used when the
+// interactive button could not be delivered. An empty URL is a no-op.
+func appendCampaignUnsubscribeLine(text, unsubscribeURL string) string {
+	unsubscribeURL = strings.TrimSpace(unsubscribeURL)
+	if unsubscribeURL == "" {
+		return text
+	}
+	line := fmt.Sprintf("%s: %s", campaignUnsubscribeCopy, unsubscribeURL)
+	if strings.TrimSpace(text) == "" {
+		return line
+	}
+	return text + "\n\n" + line
+}
+
 func appendCampaignWebsiteLine(text, websiteURL string) string {
 	websiteURL = strings.TrimSpace(websiteURL)
 	if websiteURL == "" {
@@ -340,6 +388,13 @@ func renderCampaignWhatsAppText(markdown, brandName, websiteURL string) string {
 // delivered as a native WhatsApp button by the send path, never as a text line
 // (callers pass "" and the fallback re-adds the line itself).
 func renderCampaignWhatsAppTextWithUnsubscribe(markdown, brandName, websiteURL, unsubscribeURL string) string {
+	return renderCampaignWhatsAppBody(markdown, brandName, unsubscribeURL, false)
+}
+
+// renderCampaignWhatsAppBody composes the WhatsApp text. withUnsubscribeText is
+// only true on the plain-text fallback: normally the opt-out travels as a
+// gateway button next to the message, never as a line inside it.
+func renderCampaignWhatsAppBody(markdown, brandName, unsubscribeURL string, withUnsubscribeText bool) string {
 	lines := strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))
 	for _, raw := range lines {
@@ -379,8 +434,10 @@ func renderCampaignWhatsAppTextWithUnsubscribe(markdown, brandName, websiteURL, 
 	if text != "" {
 		parts = append(parts, text)
 	}
-	if strings.TrimSpace(unsubscribeURL) != "" {
-		parts = append(parts, fmt.Sprintf("%s: %s", campaignUnsubscribeCopy, strings.TrimSpace(unsubscribeURL)))
+	if withUnsubscribeText {
+		if unsub := strings.TrimSpace(unsubscribeURL); unsub != "" {
+			parts = append(parts, fmt.Sprintf("%s: %s", campaignUnsubscribeCopy, unsub))
+		}
 	}
 	return strings.Join(parts, "\n\n")
 }
