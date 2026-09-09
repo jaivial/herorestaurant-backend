@@ -309,6 +309,21 @@ func splitCampaignLeadImage(markdown string) (string, string) {
 	return url, markdown[:match[0]] + markdown[match[1]:]
 }
 
+// appendCampaignWebsiteLine is the plain-text fallback of the WhatsApp website
+// button: the send path only uses it when the button message could not be
+// delivered, so the link is never lost. An empty website is a no-op.
+func appendCampaignWebsiteLine(text, websiteURL string) string {
+	websiteURL = strings.TrimSpace(websiteURL)
+	if websiteURL == "" {
+		return text
+	}
+	line := fmt.Sprintf("%s: %s", campaignWebsiteCopy, websiteURL)
+	if strings.TrimSpace(text) == "" {
+		return line
+	}
+	return text + "\n\n" + line
+}
+
 // renderCampaignWhatsAppText converts the same markdown into WhatsApp markup.
 // Images degrade to their CDN URL so the client still previews them. Kept with
 // the original signature (no opt-out link); the send path uses
@@ -319,10 +334,11 @@ func renderCampaignWhatsAppText(markdown, brandName, websiteURL string) string {
 
 // renderCampaignWhatsAppTextWithUnsubscribe behaves like
 // renderCampaignWhatsAppText: brandName opens the message as the WhatsApp bold
-// header (the same name the email header band shows), websiteURL is announced
-// after the body and unsubscribeURL appends the plain-text opt-out link
-// (WhatsApp free-form messages have no buttons). Every extra block is optional:
-// an empty value leaves the text exactly as before.
+// header (the same name the email header band shows) and unsubscribeURL appends
+// the plain-text opt-out link (WhatsApp free-form messages have no buttons).
+// websiteURL is kept in the signature but ignored: the restaurant website is
+// delivered as a native WhatsApp button by the send path, never as a text line
+// (callers pass "" and the fallback re-adds the line itself).
 func renderCampaignWhatsAppTextWithUnsubscribe(markdown, brandName, websiteURL, unsubscribeURL string) string {
 	lines := strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))
@@ -354,16 +370,14 @@ func renderCampaignWhatsAppTextWithUnsubscribe(markdown, brandName, websiteURL, 
 		text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
 	}
 	text = strings.TrimSpace(text)
-	// Header (who is writing), body, website and opt-out, in that order.
-	parts := make([]string, 0, 4)
+	// Header (who is writing), body and opt-out, in that order. The website is
+	// delivered as a gateway button, so it is never a line here.
+	parts := make([]string, 0, 3)
 	if brand := strings.TrimSpace(brandName); brand != "" {
 		parts = append(parts, "*"+brand+"*")
 	}
 	if text != "" {
 		parts = append(parts, text)
-	}
-	if websiteURL = strings.TrimSpace(websiteURL); websiteURL != "" {
-		parts = append(parts, fmt.Sprintf("%s: %s", campaignWebsiteCopy, websiteURL))
 	}
 	if strings.TrimSpace(unsubscribeURL) != "" {
 		parts = append(parts, fmt.Sprintf("%s: %s", campaignUnsubscribeCopy, strings.TrimSpace(unsubscribeURL)))
