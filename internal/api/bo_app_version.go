@@ -19,6 +19,7 @@ const (
 	boAppVersion001 = "0.0.1"
 	boAppVersion01  = "0.1"
 	boAppVersion02  = "0.2"
+	boAppVersion03  = "0.3"
 )
 
 type boAppCapability string
@@ -40,7 +41,7 @@ var boCapabilityMinVersion = map[boAppCapability]string{
 	boCapabilityAds:          boAppVersion02,
 	// Campanas ships to every app version: it replaces manual mailing outside
 	// the product, so gating it behind 0.2 would leave 0.1 users without it.
-	boCapabilityCampanas: boAppVersion001,
+	boCapabilityCampanas: boAppVersion03,
 }
 
 var boSectionCapability = map[string]boAppCapability{
@@ -52,7 +53,8 @@ var boSectionCapability = map[string]boAppCapability{
 
 func parseSupportedBOAppVersion(raw string) (string, bool) {
 	version := strings.TrimSpace(raw)
-	if version == boAppVersion001 || version == boAppVersion01 || version == boAppVersion02 {
+	if version == boAppVersion001 || version == boAppVersion01 ||
+		version == boAppVersion02 || version == boAppVersion03 {
 		return version, true
 	}
 	return "", false
