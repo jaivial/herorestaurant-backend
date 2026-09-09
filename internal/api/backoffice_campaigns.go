@@ -769,6 +769,22 @@ func (s *Server) campaignUnsubscribeBaseURL(ctx context.Context, restaurantID in
 	return baseURL
 }
 
+// sendCampaignWhatsAppText is the campaign text path: tracked send plus outbox
+// retry so a provider hiccup never loses the message. The text it is handed is
+// already final: the website button path passes the bare render, the fallback
+// passes appendCampaignWebsiteLine's output (the "Visita nuestra web: url"
+// line). A missing gateway reproduces sendWhatsAppMessage's error.
+func (s *Server) sendCampaignWhatsAppText(ctx context.Context, restaurantID int, gw WhatsAppGateway, coordID, num, text string) error {
+	if gw == nil {
+		return errors.New("whatsapp no configurado")
+	}
+	if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, num, text, "backoffice_member_message"); err != nil {
+		_ = s.enqueueWhatsAppDelivery(ctx, restaurantID, "campaign", fmt.Sprintf("%s|%s", coordID, num), num, whatsappOutboxPayload{Text: text}, err)
+		return err
+	}
+	return nil
+}
+
 // deliverCampaignTo sends the campaign to a single target on its channel.
 func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCampaign, target campaignTarget) error {
 	// Per-recipient opt-out link: booking id + channel identify the recipient on
@@ -783,23 +799,45 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		if num == "" {
 			return errors.New("telefono invalido")
 		}
-		// A markdown image becomes a real WhatsApp media message with the rest
-		// of the body as caption; extra images stay as URLs inside the text.
-		if imageURL, rest := splitCampaignLeadImage(c.BodyMarkdown); imageURL != "" {
-			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-				caption := renderCampaignWhatsAppTextWithUnsubscribe(rest, branding.BrandName, branding.Website, unsubscribeURL)
-				if err := gw.SendMedia(ctx, num, waMedia{Kind: "image", URL: imageURL, Caption: caption, Filename: "campana.webp"}); err == nil {
-					return nil
-				}
+		// The restaurant website travels as a native WhatsApp button
+		// ("label|url" -> call-to-action URL button on Evolution, choices as-is
+		// on UAZAPI) instead of a plain-text line, so the text/caption keeps
+		// only header + body + opt-out link. Without a gateway configured the
+		// button is impossible and the link stays in the text as before.
+		gw, gwOK := s.botGatewayFor(ctx, restaurantID)
+		webButton := ""
+		if gwOK {
+			if site := strings.TrimSpace(branding.Website); site != "" {
+				webButton = campaignWebsiteCopy + "|" + site
 			}
 		}
-		text := renderCampaignWhatsAppTextWithUnsubscribe(c.BodyMarkdown, branding.BrandName, branding.Website, unsubscribeURL)
-		if err := s.sendWhatsAppMessage(ctx, restaurantID, num, text); err != nil {
-			// Queue for retry so a provider hiccup never loses the message.
-			_ = s.enqueueWhatsAppDelivery(ctx, restaurantID, "campaign", fmt.Sprintf("%s|%s", c.CoordID, num), num, whatsappOutboxPayload{Text: text}, err)
-			return err
+		// Text every fallback reuses: same message, with the website back as the
+		// plain-text line so the link is never lost.
+		fallback := appendCampaignWebsiteLine(renderCampaignWhatsAppTextWithUnsubscribe(c.BodyMarkdown, branding.BrandName, "", unsubscribeURL), branding.Website)
+		// A markdown image becomes a real WhatsApp media message with the rest
+		// of the body as caption; extra images stay as URLs inside the text.
+		// Evolution cannot mix media and buttons in one call, so the button
+		// message follows the image.
+		if imageURL, rest := splitCampaignLeadImage(c.BodyMarkdown); imageURL != "" && gwOK {
+			caption := renderCampaignWhatsAppTextWithUnsubscribe(rest, branding.BrandName, "", unsubscribeURL)
+			if err := gw.SendMedia(ctx, num, waMedia{Kind: "image", URL: imageURL, Caption: caption, Filename: "campana.webp"}); err == nil {
+				if webButton == "" {
+					return nil
+				}
+				if err := gw.SendMenu(ctx, num, caption, []string{webButton}); err == nil {
+					return nil
+				}
+				return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num, fallback)
+			}
 		}
-		return nil
+		text := renderCampaignWhatsAppTextWithUnsubscribe(c.BodyMarkdown, branding.BrandName, "", unsubscribeURL)
+		if webButton != "" {
+			if err := gw.SendMenu(ctx, num, text, []string{webButton}); err == nil {
+				return nil
+			}
+			return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num, fallback)
+		}
+		return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num, text)
 	}
 	cfg, err := s.loadEmailProviderConfig(ctx, restaurantID)
 	if err != nil {
