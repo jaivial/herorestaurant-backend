@@ -99,6 +99,7 @@ const (
 	campaignUnsubscribedCoordID     = "camp-unsub-list"
 	campaignUnsubscribeEmailTestID  = "campaign-unsubscribe-email-btn"
 	campaignUnsubscribeCopy         = "No deseo recibir emails de publicidad"
+	campaignUnsubscribeButtonCopy   = "No deseo recibir campañas"
 )
 
 // Restaurant website button (email) and plain-text website line (WhatsApp).
@@ -327,7 +328,7 @@ func campaignWhatsAppChoices(websiteURL, unsubscribeURL string) []string {
 		choices = append(choices, campaignWebsiteCopy+"|"+site)
 	}
 	if unsub := strings.TrimSpace(unsubscribeURL); unsub != "" {
-		choices = append(choices, campaignUnsubscribeCopy+"|"+unsub)
+		choices = append(choices, campaignUnsubscribeButtonCopy+"|"+unsub)
 	}
 	if len(choices) == 0 {
 		return nil
@@ -344,6 +345,21 @@ func campaignUnsubscribePreviewURL(baseURL string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s%s?b=0&c=email", baseURL, campaignUnsubscribePath)
+}
+
+// campaignAbsoluteBase makes an opt-out base URL absolute so the delivered
+// button or link is never a relative path: operators type bare domains in the
+// settings form. An empty input stays empty (no opt-out at all).
+func campaignAbsoluteBase(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	raw = strings.TrimRight(raw, "/")
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw
+	}
+	return "https://" + raw
 }
 
 // appendCampaignUnsubscribeLine is the plain-text opt-out fallback used when the

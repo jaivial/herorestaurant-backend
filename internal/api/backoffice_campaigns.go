@@ -801,9 +801,8 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	// The opt-out link is published on the restaurant own website (the public
 	// Preact app serves /baja-publicidad); the per-restaurant app domain is the
 	// fallback when no website is configured.
-	unsubscribeURL := campaignUnsubscribeURL(
-		firstNonEmpty(strings.TrimSpace(branding.Website), s.campaignUnsubscribeBaseURL(ctx, restaurantID)),
-		target.BookingID, target.Channel)
+	unsubBase := campaignAbsoluteBase(firstNonEmpty(strings.TrimSpace(branding.Website), s.campaignUnsubscribeBaseURL(ctx, restaurantID)))
+	unsubscribeURL := campaignUnsubscribeURL(unsubBase, target.BookingID, target.Channel)
 	if target.Channel == "whatsapp" {
 		num := normalizeWhatsAppNumber(target.Target)
 		if num == "" {
@@ -833,8 +832,14 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 				if len(choices) == 0 {
 					return nil
 				}
-				if err := gw.SendMenu(ctx, num, caption, choices); err == nil {
-					return nil
+				// The image caption already carries the message, so the button
+				// message keeps a short header instead of repeating the whole
+				// caption the recipient just read.
+				buttonBody := strings.TrimSpace(branding.BrandName)
+				if buttonBody != "" {
+					if err := gw.SendMenu(ctx, num, buttonBody, choices); err == nil {
+						return nil
+					}
 				}
 				return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num,
 					appendCampaignUnsubscribeLine(appendCampaignWebsiteLine(caption, branding.Website), unsubscribeURL))
