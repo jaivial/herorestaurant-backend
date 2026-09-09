@@ -26,6 +26,7 @@ const (
 	boSectionPOS          = "pos"
 	boSectionEstadisticas = "estadisticas"
 	boSectionPlataforma   = "plataforma"
+	boSectionCampanas     = "campanas"
 )
 
 var defaultRolePermissions = map[string]map[string]bool{
@@ -44,6 +45,7 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionPOS:          true,
 		boSectionEstadisticas: true,
 		boSectionPlataforma:   true,
+		boSectionCampanas:     true,
 	},
 	"admin": {
 		boSectionReservas:     true,
@@ -59,6 +61,7 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionStock:        true,
 		boSectionPOS:          true,
 		boSectionEstadisticas: true,
+		boSectionCampanas:     true,
 	},
 	"metre": {
 		boSectionReservas:     true,
@@ -186,6 +189,8 @@ func normalizeBOSection(section string) string {
 		return boSectionEstadisticas
 	case boSectionPlataforma:
 		return boSectionPlataforma
+	case boSectionCampanas:
+		return boSectionCampanas
 	default:
 		return ""
 	}
@@ -198,6 +203,9 @@ func (s *Server) roleCanAccessSection(ctx context.Context, role, section string)
 		return false, nil
 	}
 	if section == boSectionEstadisticas {
+		return role == "root" || role == "admin", nil
+	}
+	if section == boSectionCampanas {
 		return role == "root" || role == "admin", nil
 	}
 	if (section == boSectionStock || section == boSectionPOS) && (role == "root" || role == "admin") {

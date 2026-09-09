@@ -12,6 +12,7 @@ import (
 type restaurantBrandingCfg struct {
 	BrandName        string
 	LogoURL          string
+	Website          string
 	PrimaryColor     string
 	AccentColor      string
 	EmailFromName    string
@@ -22,24 +23,31 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 	var (
 		brandName        string
 		logoURL          sql.NullString
+		website          sql.NullString
 		primaryColor     sql.NullString
 		accentColor      sql.NullString
 		emailFromName    sql.NullString
 		emailFromAddress sql.NullString
 	)
+	// Website of the restaurant. The backoffice settings form saves it into
+	// restaurant_info.website, so that column wins and the legacy
+	// restaurants.website_url stays only as fallback; blank or NULL collapses
+	// to '' so callers can skip the website block.
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(NULLIF(TRIM(rb.brand_name), ''), r.name) AS brand_name,
 			rb.logo_url,
+			COALESCE(NULLIF(TRIM(ri.website), ''), NULLIF(TRIM(r.website_url), '')) AS website,
 			rb.primary_color,
 			rb.accent_color,
 			rb.email_from_name,
 			rb.email_from_address
 		FROM restaurants r
 		LEFT JOIN restaurant_branding rb ON rb.restaurant_id = r.id
+		LEFT JOIN restaurant_info ri ON ri.restaurant_id = r.id
 		WHERE r.id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&brandName, &logoURL, &primaryColor, &accentColor, &emailFromName, &emailFromAddress)
+	`, restaurantID).Scan(&brandName, &logoURL, &website, &primaryColor, &accentColor, &emailFromName, &emailFromAddress)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return restaurantBrandingCfg{}, nil
@@ -47,9 +55,18 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 		return restaurantBrandingCfg{}, err
 	}
 
+	// Operators type bare domains in the settings form; make the URL absolute
+	// here so every consumer (email button, WhatsApp line, template payload)
+	// gets a usable link instead of a relative one.
+	websiteURL := strings.TrimSpace(website.String)
+	if normalized, normalizeErr := normalizeRestaurantWebsiteURL(websiteURL); normalizeErr == nil {
+		websiteURL = normalized
+	}
+
 	return restaurantBrandingCfg{
 		BrandName:        strings.TrimSpace(brandName),
 		LogoURL:          strings.TrimSpace(logoURL.String),
+		Website:          websiteURL,
 		PrimaryColor:     strings.TrimSpace(primaryColor.String),
 		AccentColor:      strings.TrimSpace(accentColor.String),
 		EmailFromName:    strings.TrimSpace(emailFromName.String),

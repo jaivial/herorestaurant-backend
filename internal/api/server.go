@@ -631,6 +631,23 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads/{adId}/image/enhance", s.handleBOAdImageEnhance)
 		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads/{adId}/image/generate", s.handleBOAdImageGenerate)
 
+		// Campanas: markdown broadcasts over email + WhatsApp (coord id camp-*).
+		campaignsGate := s.requireBOCapability(boCapabilityCampanas)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas", s.handleBOCampaignsList)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/unsubscribed", s.handleBOCampaignUnsubscribed)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas", s.handleBOCampaignCreate)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/preview", s.handleBOCampaignPreview)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/template", s.handleBOCampaignTemplate)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/{campaignId}", s.handleBOCampaignGet)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Put("/campanas/{campaignId}", s.handleBOCampaignUpdate)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Delete("/campanas/{campaignId}", s.handleBOCampaignDelete)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/{campaignId}/image", s.handleBOCampaignImageUpload)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/{campaignId}/audience", s.handleBOCampaignAudience)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/{campaignId}/test", s.handleBOCampaignTest)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/{campaignId}/send", s.handleBOCampaignSend)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/{campaignId}/status", s.handleBOCampaignStatus)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/{campaignId}/recipients", s.handleBOCampaignRecipients)
+
 		r.With(s.requireBOSession, reservasGate).Get("/config/mandatory-menus", s.handleBOMandatoryMenusGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/mandatory-menus", s.handleBOMandatoryMenusSave)
 
@@ -875,6 +892,11 @@ func (s *Server) Routes() http.Handler {
 
 		// Public endpoints (used by the Preact client).
 		r.Get("/menu-visibility", s.handleMenuVisibility)
+
+		// Campaign unsubscribe (public, no auth). Tenant from the Host header.
+		// Preact page: /baja-publicidad?b=<bookingID>&c=<channel>. coord: camp-unsub.
+		r.Get("/unsubscribe/context", s.handlePublicUnsubscribeContext)
+		r.Post("/unsubscribe", s.handlePublicUnsubscribe)
 		r.Get("/reservations/closed-days", s.handleReservationsClosedDays)
 		r.Get("/reservations/rice-types", s.handleReservationsRiceTypes)
 		r.Get("/reservations/month-availability", s.handleReservationsMonthAvailability)
