@@ -100,6 +100,15 @@ const (
 	campaignUnsubscribeCopy         = "No deseo recibir emails de publicidad"
 )
 
+// Restaurant website button (email) and plain-text website line (WhatsApp).
+// Coordination ids follow the same convention as the opt-out ones above and are
+// shared with the backoffice editor preview.
+const (
+	campaignWebsiteEmailCoordID = "camp-web"
+	campaignWebsiteEmailTestID  = "campaign-email-website-btn"
+	campaignWebsiteCopy         = "Visita nuestra web"
+)
+
 // campaignUnsubscribeURL builds the per-recipient opt-out link. baseURL comes
 // already resolved by the caller (restaurant_domains), bookingID identifies the
 // booking the message was sent to and channel is "email" or "whatsapp".
@@ -126,6 +135,20 @@ func campaignUnsubscribeFooterHTML(unsubscribeURL string, theme campaignTheme) s
 `, htmlEscape(unsubscribeURL), campaignUnsubscribeEmailTestID, campaignUnsubscribeEmailCoordID, theme.Text, theme.Text, theme.FontFamily, campaignUnsubscribeCopy)
 }
 
+// campaignWebsiteButtonHTML renders the centred call-to-action that opens the
+// restaurant website. It sits below the campaign body and just above the footer,
+// and is dropped entirely when the restaurant has no website configured.
+func campaignWebsiteButtonHTML(websiteURL string, theme campaignTheme) string {
+	websiteURL = strings.TrimSpace(websiteURL)
+	if websiteURL == "" {
+		return ""
+	}
+	return fmt.Sprintf(`<p style="margin:24px 0 0;font-size:14px;line-height:1.5;text-align:center;">
+<a href="%s" data-testid="%s" data-coord-id="%s" style="display:inline-block;padding:12px 24px;background-color:%s;border-radius:6px;color:#ffffff;font-family:%s;font-size:14px;text-decoration:none;">%s</a>
+</p>
+`, htmlEscape(websiteURL), campaignWebsiteEmailTestID, campaignWebsiteEmailCoordID, theme.Accent, theme.FontFamily, campaignWebsiteCopy)
+}
+
 // renderCampaignInline turns the inline markdown subset into email HTML.
 func renderCampaignInline(line string, theme campaignTheme) string {
 	out := htmlEscape(line)
@@ -145,16 +168,17 @@ func renderCampaignInline(line string, theme campaignTheme) string {
 }
 
 // renderCampaignEmailHTML renders the markdown body into a table-free but
-// email-safe HTML document using the campaign theme. Kept with the original
-// signature (no opt-out link) so existing callers stay untouched; the send path
-// uses renderCampaignEmailHTMLWithUnsubscribe.
-func renderCampaignEmailHTML(markdown string, theme campaignTheme, brandName, logoURL string) string {
-	return renderCampaignEmailHTMLWithUnsubscribe(markdown, theme, brandName, logoURL, "")
+// email-safe HTML document using the campaign theme. It never appends the
+// opt-out footer; the send path uses renderCampaignEmailHTMLWithUnsubscribe.
+func renderCampaignEmailHTML(markdown string, theme campaignTheme, brandName, logoURL, websiteURL string) string {
+	return renderCampaignEmailHTMLWithUnsubscribe(markdown, theme, brandName, logoURL, websiteURL, "")
 }
 
 // renderCampaignEmailHTMLWithUnsubscribe behaves like renderCampaignEmailHTML
 // and, when unsubscribeURL is not empty, appends the opt-out footer button.
-func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme, brandName, logoURL, unsubscribeURL string) string {
+// websiteURL adds the restaurant website button, below the body and above the
+// footer; an empty URL renders no button at all.
+func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme, brandName, logoURL, websiteURL, unsubscribeURL string) string {
 	theme = normalizeCampaignTheme(theme)
 	var b strings.Builder
 	inList := false
@@ -199,7 +223,7 @@ func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme
 	}
 	closeList()
 
-	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, b.String(), unsubscribeURL)
+	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, b.String(), websiteURL, unsubscribeURL)
 }
 
 // campaignEmailBodyPlaceholder marks where the rendered markdown goes when the
@@ -207,17 +231,21 @@ func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme
 const campaignEmailBodyPlaceholder = "{{CAMPAIGN_BODY}}"
 
 // campaignEmailShell reproduces the transactional booking email layout: accent
-// header band with the logo, 600px white card, automatic-message footer. Both
-// the sent email and the editor preview use this exact markup. Kept with the
-// original signature so the editor preview keeps rendering without the footer.
-func campaignEmailShell(theme campaignTheme, brandName, logoURL, bodyHTML string) string {
-	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, bodyHTML, "")
+// header band with the logo, 600px white card, restaurant website button,
+// automatic-message footer. Both the sent email and the editor preview use this
+// exact markup. It adds no opt-out footer; the send path uses
+// campaignEmailShellWithUnsubscribe.
+func campaignEmailShell(theme campaignTheme, brandName, logoURL, bodyHTML, websiteURL string) string {
+	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, bodyHTML, websiteURL, "")
 }
 
 // campaignEmailShellWithUnsubscribe behaves like campaignEmailShell and adds the
-// opt-out footer button when unsubscribeURL is not empty.
-func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, bodyHTML, unsubscribeURL string) string {
+// restaurant website button (below the body, just above the footer) when
+// websiteURL is not empty plus the opt-out footer when unsubscribeURL is not
+// empty.
+func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, bodyHTML, websiteURL, unsubscribeURL string) string {
 	theme = normalizeCampaignTheme(theme)
+	webButton := campaignWebsiteButtonHTML(websiteURL, theme)
 	unsubFooter := campaignUnsubscribeFooterHTML(unsubscribeURL, theme)
 	// Header band of the booking confirmation template. It is always rendered so
 	// campaigns keep that chrome; without a logo the brand name takes its place
@@ -260,6 +288,7 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 		theme.Text,
 		theme.Align,
 		bodyHTML,
+		webButton,
 		unsubFooter,
 		htmlEscape(brandName),
 	)
@@ -283,14 +312,17 @@ func splitCampaignLeadImage(markdown string) (string, string) {
 // Images degrade to their CDN URL so the client still previews them. Kept with
 // the original signature (no opt-out link); the send path uses
 // renderCampaignWhatsAppTextWithUnsubscribe.
-func renderCampaignWhatsAppText(markdown string) string {
-	return renderCampaignWhatsAppTextWithUnsubscribe(markdown, "")
+func renderCampaignWhatsAppText(markdown, brandName, websiteURL string) string {
+	return renderCampaignWhatsAppTextWithUnsubscribe(markdown, brandName, websiteURL, "")
 }
 
 // renderCampaignWhatsAppTextWithUnsubscribe behaves like
-// renderCampaignWhatsAppText and appends the plain-text opt-out link (WhatsApp
-// free-form messages have no buttons) when unsubscribeURL is not empty.
-func renderCampaignWhatsAppTextWithUnsubscribe(markdown, unsubscribeURL string) string {
+// renderCampaignWhatsAppText: brandName opens the message as the WhatsApp bold
+// header (the same name the email header band shows), websiteURL is announced
+// after the body and unsubscribeURL appends the plain-text opt-out link
+// (WhatsApp free-form messages have no buttons). Every extra block is optional:
+// an empty value leaves the text exactly as before.
+func renderCampaignWhatsAppTextWithUnsubscribe(markdown, brandName, websiteURL, unsubscribeURL string) string {
 	lines := strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))
 	for _, raw := range lines {
@@ -321,11 +353,19 @@ func renderCampaignWhatsAppTextWithUnsubscribe(markdown, unsubscribeURL string) 
 		text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
 	}
 	text = strings.TrimSpace(text)
-	if strings.TrimSpace(unsubscribeURL) == "" {
-		return text
+	// Header (who is writing), body, website and opt-out, in that order.
+	parts := make([]string, 0, 4)
+	if brand := strings.TrimSpace(brandName); brand != "" {
+		parts = append(parts, "*"+brand+"*")
 	}
 	if text != "" {
-		text += "\n\n"
+		parts = append(parts, text)
 	}
-	return text + fmt.Sprintf("%s: %s", campaignUnsubscribeCopy, strings.TrimSpace(unsubscribeURL))
+	if websiteURL = strings.TrimSpace(websiteURL); websiteURL != "" {
+		parts = append(parts, fmt.Sprintf("%s: %s", campaignWebsiteCopy, websiteURL))
+	}
+	if strings.TrimSpace(unsubscribeURL) != "" {
+		parts = append(parts, fmt.Sprintf("%s: %s", campaignUnsubscribeCopy, strings.TrimSpace(unsubscribeURL)))
+	}
+	return strings.Join(parts, "\n\n")
 }

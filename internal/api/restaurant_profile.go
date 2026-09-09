@@ -12,6 +12,7 @@ import (
 type restaurantBrandingCfg struct {
 	BrandName        string
 	LogoURL          string
+	Website          string
 	PrimaryColor     string
 	AccentColor      string
 	EmailFromName    string
@@ -22,6 +23,7 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 	var (
 		brandName        string
 		logoURL          sql.NullString
+		website          sql.NullString
 		primaryColor     sql.NullString
 		accentColor      sql.NullString
 		emailFromName    sql.NullString
@@ -31,6 +33,9 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 		SELECT
 			COALESCE(NULLIF(TRIM(rb.brand_name), ''), r.name) AS brand_name,
 			rb.logo_url,
+			// Public website of the restaurant (restaurants.website_url); blank
+			// or NULL collapses to '' so callers can skip the website block.
+			NULLIF(TRIM(r.website_url), '') AS website,
 			rb.primary_color,
 			rb.accent_color,
 			rb.email_from_name,
@@ -39,7 +44,7 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 		LEFT JOIN restaurant_branding rb ON rb.restaurant_id = r.id
 		WHERE r.id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&brandName, &logoURL, &primaryColor, &accentColor, &emailFromName, &emailFromAddress)
+	`, restaurantID).Scan(&brandName, &logoURL, &website, &primaryColor, &accentColor, &emailFromName, &emailFromAddress)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return restaurantBrandingCfg{}, nil
@@ -50,6 +55,7 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 	return restaurantBrandingCfg{
 		BrandName:        strings.TrimSpace(brandName),
 		LogoURL:          strings.TrimSpace(logoURL.String),
+		Website:          strings.TrimSpace(website.String),
 		PrimaryColor:     strings.TrimSpace(primaryColor.String),
 		AccentColor:      strings.TrimSpace(accentColor.String),
 		EmailFromName:    strings.TrimSpace(emailFromName.String),
