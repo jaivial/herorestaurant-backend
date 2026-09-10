@@ -918,7 +918,7 @@ func (s *Server) addActiveGroupMenuDishDetails(r *http.Request, menus []map[stri
 	sectionRows.Close()
 
 	dishRows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT d.id, d.menu_id, d.section_id, d.title_snapshot, d.description_snapshot,
+		SELECT d.id, d.menu_id, d.section_id, d.title_snapshot, COALESCE(d.description_snapshot, ''),
 		       d.allergens_json, COALESCE(d.description_enabled, 1),
 		       c.description, c.allergens_json, COALESCE(c.default_supplement_enabled, 0), c.default_supplement_price,
 		       ci.descripcion, ci.alergenos_json, ci.suplemento,
