@@ -48,17 +48,21 @@ func (s *Server) handlePublicUnsubscribeContext(w http.ResponseWriter, r *http.R
 	restaurantID, _ := restaurantIDFromContext(r.Context())
 	bookingID := campaignUnsubscribeBookingID(r.URL.Query().Get("b"))
 
-	// Generic name until the booking is proven to belong to this tenant, so an
-	// unknown id is indistinguishable from a foreign one.
+	// Generic name until the target is proven to belong to this tenant, so an
+	// unknown id is indistinguishable from a foreign one. A recipient without a
+	// booking (test send, hand-pasted audience) still resolves through its own
+	// token, so the page shows the real state instead of a generic one.
 	name := campaignUnsubscribeGenericName
 	already, masked := false, ""
 
-	if bookingID > 0 {
-		if t, ok := s.campaignUnsubscribeBookingTarget(r.Context(), restaurantID, bookingID); ok {
-			name = s.campaignUnsubscribeRestaurantName(r.Context(), restaurantID)
-			already = s.campaignUnsubscribeAlready(r.Context(), restaurantID, t)
-			masked = campaignUnsubscribeMask(campaignUnsubscribePick(r.URL.Query().Get("c"), t))
-		}
+	target, ok := s.campaignUnsubscribeBookingTarget(r.Context(), restaurantID, bookingID)
+	if !ok {
+		target, ok = campaignUnsubscribeTokenTarget(r.URL.Query().Get("t"))
+	}
+	if ok {
+		name = s.campaignUnsubscribeRestaurantName(r.Context(), restaurantID)
+		already = s.campaignUnsubscribeAlready(r.Context(), restaurantID, target)
+		masked = campaignUnsubscribeMask(campaignUnsubscribePick(r.URL.Query().Get("c"), target))
 	}
 
 	slog.Default().Info("campaign.unsubscribe.context", "coord_id", campaignUnsubscribeCoordID,
@@ -82,6 +86,9 @@ func (s *Server) handlePublicUnsubscribe(w http.ResponseWriter, r *http.Request)
 		BookingID int64  `json:"booking_id"`
 		Channel   string `json:"channel"`
 		Reason    string `json:"reason"`
+		// Target is the base64url token of the contact when the message had no
+		// booking row; the booking id still wins when it resolves.
+		Target string `json:"target"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, campaignUnsubscribeMaxBodyBytes)).Decode(&in); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Peticion invalida")
@@ -96,9 +103,13 @@ func (s *Server) handlePublicUnsubscribe(w http.ResponseWriter, r *http.Request)
 	slog.Default().Info("campaign.unsubscribe.received", "coord_id", campaignUnsubscribeCoordID,
 		"restaurant_id", restaurantID, "booking_id", in.BookingID, "channel", in.Channel)
 
+	target, ok := s.campaignUnsubscribeBookingTarget(r.Context(), restaurantID, in.BookingID)
+	if !ok {
+		target, ok = campaignUnsubscribeTokenTarget(in.Target)
+	}
 	stored := 0
-	if t, ok := s.campaignUnsubscribeBookingTarget(r.Context(), restaurantID, in.BookingID); ok {
-		stored = s.campaignUnsubscribeStore(r, restaurantID, in.BookingID, in.Channel, t,
+	if ok {
+		stored = s.campaignUnsubscribeStore(r, restaurantID, in.BookingID, in.Channel, target,
 			campaignUnsubscribeReason(in.Reason))
 	} else {
 		slog.Default().Info("campaign.unsubscribe.unknown_booking", "coord_id", campaignUnsubscribeCoordID,
@@ -239,6 +250,30 @@ func campaignUnsubscribeReason(raw string) string {
 		reason = reason[:255]
 	}
 	return reason
+}
+
+// campaignUnsubscribeTokenTarget decodes the ?t= opt-out token (base64url of the
+// recipient target) emitted only in the recipient's own email/WhatsApp link, so
+// a recipient without a booking row can still stop the campaigns. Invalid or
+// oversized values are rejected.
+func campaignUnsubscribeTokenTarget(raw string) (campaignUnsubscribeTarget, bool) {
+	decoded := campaignDecodeTargetToken(raw)
+	if decoded == "" || len(decoded) > 190 {
+		return campaignUnsubscribeTarget{}, false
+	}
+	if strings.Contains(decoded, "@") {
+		email := strings.ToLower(strings.TrimSpace(decoded))
+		local, domain, found := strings.Cut(email, "@")
+		if !found || local == "" || !strings.Contains(domain, ".") {
+			return campaignUnsubscribeTarget{}, false
+		}
+		return campaignUnsubscribeTarget{Email: email}, true
+	}
+	phone := normalizeWhatsAppNumber(decoded)
+	if phone == "" {
+		return campaignUnsubscribeTarget{}, false
+	}
+	return campaignUnsubscribeTarget{Phone: phone}, true
 }
 
 // campaignUnsubscribeBookingID parses the ?b= parameter defensively.

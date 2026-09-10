@@ -473,11 +473,13 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 	})
 	brandName := firstNonEmpty(branding.BrandName, reference.BrandName, "Restaurante")
 	logoURL := firstNonEmpty(branding.LogoURL, reference.LogoURL)
-	websiteURL := firstNonEmpty(branding.Website, reference.Website)
+	// The restaurant own public site is the last-resort website: even without a
+	// website saved in ConfigContacto the CTA and the opt-out button render.
+	baseURL := s.campaignRestaurantBaseURL(r.Context(), a.ActiveRestaurantID)
+	websiteURL := firstNonEmpty(strings.TrimSpace(branding.Website), strings.TrimSpace(reference.Website), baseURL)
 	// The previews must show the opt-out button the recipient gets, so the shell
 	// is built with a placeholder link (an unknown booking id inserts nothing).
-	unsubBase := firstNonEmpty(strings.TrimSpace(websiteURL), s.campaignUnsubscribeBaseURL(r.Context(), a.ActiveRestaurantID))
-	unsubscribeURL := campaignUnsubscribePreviewURL(unsubBase)
+	unsubscribeURL := campaignUnsubscribePreviewURL(campaignAbsoluteBase(websiteURL))
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success":         true,
 		"theme":           theme,
@@ -505,10 +507,14 @@ func (s *Server) handleBOCampaignPreview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	branding, _ := s.loadRestaurantBranding(r.Context(), a.ActiveRestaurantID)
+	// Same base as the editor shell: the restaurant own public site is the
+	// last-resort website, and the opt-out link always rides on that base.
+	siteURL := firstNonEmpty(strings.TrimSpace(branding.Website), s.campaignRestaurantBaseURL(r.Context(), a.ActiveRestaurantID))
+	unsubscribeURL := campaignUnsubscribePreviewURL(siteURL)
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success":  true,
-		"html":     renderCampaignEmailHTML(in.BodyMarkdown, in.Theme, branding.BrandName, branding.LogoURL, branding.Website),
-		"whatsapp": renderCampaignWhatsAppText(in.BodyMarkdown, branding.BrandName, branding.Website),
+		"html":     renderCampaignEmailHTMLWithUnsubscribe(in.BodyMarkdown, in.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL),
+		"whatsapp": renderCampaignWhatsAppTextWithUnsubscribe(in.BodyMarkdown, branding.BrandName, siteURL, unsubscribeURL),
 	})
 }
 
@@ -739,13 +745,13 @@ func campaignPublicBaseURL(domain string) string {
 	return "https://" + domain
 }
 
-// campaignUnsubscribeBaseURLCache memoizes the resolved public base URL per
+// campaignRestaurantBaseURLCache memoizes the resolved public base URL per
 // restaurant: deliverCampaignTo runs once per recipient, so restaurant_domains
 // must be read once per send, not once per message.
-var campaignUnsubscribeBaseURLCache sync.Map // restaurant id -> campaignDomainCacheEntry
+var campaignRestaurantBaseURLCache sync.Map // restaurant id -> campaignDomainCacheEntry
 
 // campaignDomainCacheTTL keeps a restaurant that publishes its domain later from
-// waiting for a backend restart to get working opt-out links.
+// waiting for a backend restart to get working CTAs.
 const campaignDomainCacheTTL = 10 * time.Minute
 
 type campaignDomainCacheEntry struct {
@@ -753,24 +759,41 @@ type campaignDomainCacheEntry struct {
 	expiresAt time.Time
 }
 
-// campaignUnsubscribeBaseURL resolves the https base URL of the restaurant
-// public site (backoffice_premium.go pattern: primary domain first). An empty
-// result means "no public domain" and the caller skips the opt-out footer.
-func (s *Server) campaignUnsubscribeBaseURL(ctx context.Context, restaurantID int) string {
-	if v, ok := campaignUnsubscribeBaseURLCache.Load(restaurantID); ok {
+// campaignRestaurantBaseURL resolves the public https base URL of the
+// restaurant: the target of both the "Visita nuestra web" button and the
+// per-recipient opt-out link. Domains are walked by priority (primary first) and
+// the first host a recipient can actually open wins, so a dev-only row such as
+// localhost (often the primary on a local install) can no longer blank out the
+// campaign CTAs. Without a usable domain the shared booking fallback is used, so
+// the buttons are never silently dropped.
+func (s *Server) campaignRestaurantBaseURL(ctx context.Context, restaurantID int) string {
+	if v, ok := campaignRestaurantBaseURLCache.Load(restaurantID); ok {
 		if e, ok := v.(campaignDomainCacheEntry); ok && time.Now().Before(e.expiresAt) {
 			return e.baseURL
 		}
 	}
-	var domain string
 	baseURL := ""
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT domain FROM restaurant_domains WHERE restaurant_id = ? ORDER BY is_primary DESC, id DESC LIMIT 1`,
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT domain FROM restaurant_domains WHERE restaurant_id = ? ORDER BY is_primary DESC, id ASC`,
 		restaurantID,
-	).Scan(&domain); err == nil {
-		baseURL = campaignPublicBaseURL(domain)
+	)
+	if err == nil {
+		for rows.Next() {
+			var domain string
+			if scanErr := rows.Scan(&domain); scanErr != nil {
+				break
+			}
+			if candidate := campaignPublicBaseURL(domain); candidate != "" {
+				baseURL = candidate
+				break
+			}
+		}
+		_ = rows.Close()
 	}
-	campaignUnsubscribeBaseURLCache.Store(restaurantID, campaignDomainCacheEntry{baseURL: baseURL, expiresAt: time.Now().Add(campaignDomainCacheTTL)})
+	if baseURL == "" {
+		baseURL = strings.TrimRight(publicBaseURLFromContext(ctx, s, restaurantID), "/")
+	}
+	campaignRestaurantBaseURLCache.Store(restaurantID, campaignDomainCacheEntry{baseURL: baseURL, expiresAt: time.Now().Add(campaignDomainCacheTTL)})
 	return baseURL
 }
 
@@ -794,15 +817,18 @@ func (s *Server) sendCampaignWhatsAppText(ctx context.Context, restaurantID int,
 func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCampaign, target campaignTarget) error {
 	// Per-recipient opt-out link: booking id + channel identify the recipient on
 	// the public landing page (/baja-publicidad). The base URL is per restaurant
-	// and memoized, and an empty link simply drops the footer.
-	// Brand + website come from the restaurant configuration; an empty website
-	// simply omits the website button / line on both channels.
+	// and memoized.
+	// Website comes from the restaurant configuration; when none is saved the
+	// restaurant own public domain is used, so both CTAs are always rendered.
 	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
+	siteURL := firstNonEmpty(strings.TrimSpace(branding.Website), s.campaignRestaurantBaseURL(ctx, restaurantID))
 	// The opt-out link is published on the restaurant own website (the public
-	// Preact app serves /baja-publicidad); the per-restaurant app domain is the
-	// fallback when no website is configured.
-	unsubBase := campaignAbsoluteBase(firstNonEmpty(strings.TrimSpace(branding.Website), s.campaignUnsubscribeBaseURL(ctx, restaurantID)))
-	unsubscribeURL := campaignUnsubscribeURL(unsubBase, target.BookingID, target.Channel)
+	// Preact app serves /baja-publicidad).
+	unsubBase := campaignAbsoluteBase(siteURL)
+	unsubscribeURL := campaignUnsubscribeURL(unsubBase, target.BookingID, target.Channel, target.Target)
+	// Observational point: proves both CTAs were attached to the delivered message.
+	slog.Default().Info("campaign.delivery.links", "coord_id", c.CoordID, "channel", target.Channel,
+		"booking_id", target.BookingID, "website_button", strings.TrimSpace(siteURL) != "", "optout_button", unsubscribeURL != "")
 	if target.Channel == "whatsapp" {
 		num := normalizeWhatsAppNumber(target.Target)
 		if num == "" {
@@ -816,11 +842,11 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		gw, gwOK := s.botGatewayFor(ctx, restaurantID)
 		// Website and opt-out travel as interactive buttons of the message, so
 		// the text keeps only the brand header, the body and nothing else.
-		choices := campaignWhatsAppChoices(branding.Website, unsubscribeURL)
+		choices := campaignWhatsAppChoices(siteURL, unsubscribeURL)
 		// Text every fallback reuses: same message with both links back as
 		// plain-text lines, so no link is ever lost.
 		fallback := appendCampaignUnsubscribeLine(
-			appendCampaignWebsiteLine(renderCampaignWhatsAppBody(c.BodyMarkdown, branding.BrandName, "", false), branding.Website),
+			appendCampaignWebsiteLine(renderCampaignWhatsAppBody(c.BodyMarkdown, branding.BrandName, "", false), siteURL),
 			unsubscribeURL)
 		// A markdown image becomes a real WhatsApp media message with the rest
 		// of the body as caption; extra images stay as URLs inside the text.
@@ -842,13 +868,15 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 					}
 				}
 				return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num,
-					appendCampaignUnsubscribeLine(appendCampaignWebsiteLine(caption, branding.Website), unsubscribeURL))
+					appendCampaignUnsubscribeLine(appendCampaignWebsiteLine(caption, siteURL), unsubscribeURL))
 			}
 		}
 		text := renderCampaignWhatsAppBody(c.BodyMarkdown, branding.BrandName, "", false)
 		if len(choices) > 0 {
-			if err := gw.SendMenu(ctx, num, text, choices); err == nil {
-				return nil
+			if gwOK {
+				if err := gw.SendMenu(ctx, num, text, choices); err == nil {
+					return nil
+				}
 			}
 			return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num, fallback)
 		}
@@ -864,7 +892,7 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	fromName := firstNonEmpty(branding.EmailFromName, branding.BrandName, "Restaurante")
 	fromAddr := resolveEmailFromAddr(branding, cfg)
 	subject := firstNonEmpty(c.Subject, c.Name)
-	html := renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, branding.Website, unsubscribeURL)
+	html := renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL)
 	return sendViaConfig(ctx, cfg, fromName, fromAddr, target.Target, subject, html)
 }
 
@@ -1124,4 +1152,3 @@ func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Req
 		"total_pages": totalPages,
 	})
 }
-

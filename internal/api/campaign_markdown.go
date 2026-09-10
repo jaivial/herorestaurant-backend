@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -111,17 +112,55 @@ const (
 	campaignWebsiteCopy         = "Visita nuestra web"
 )
 
-// campaignUnsubscribeURL builds the per-recipient opt-out link. baseURL comes
-// already resolved by the caller (restaurant_domains), bookingID identifies the
-// booking the message was sent to and channel is "email" or "whatsapp".
-// An empty result means "no link available": callers must omit the footer
-// instead of rendering a broken button.
-func campaignUnsubscribeURL(baseURL string, bookingID int64, channel string) string {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if baseURL == "" || bookingID <= 0 {
+// campaignTargetToken encodes a recipient target (email or phone) as an opaque
+// base64url token. It rides the opt-out link of every recipient without a
+// booking row (test sends, hand-pasted audiences), so the opt-out button is
+// never dropped just because the message cannot be anchored to a booking.
+func campaignTargetToken(target string) string {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s%s?b=%d&c=%s", baseURL, campaignUnsubscribePath, bookingID, url.QueryEscape(strings.TrimSpace(channel)))
+	return base64.RawURLEncoding.EncodeToString([]byte(target))
+}
+
+// campaignDecodeTargetToken reverses campaignTargetToken; an invalid token
+// decodes to "" so callers can ignore it.
+func campaignDecodeTargetToken(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+// campaignUnsubscribeURL builds the per-recipient opt-out link. baseURL comes
+// already resolved by the caller, bookingID identifies the booking the message
+// was sent to, channel is "email" or "whatsapp" and target is the contact the
+// message went to. The target token keeps the link working for recipients
+// without a booking id; an empty result means "no link available": callers must
+// omit the footer instead of rendering a broken button.
+func campaignUnsubscribeURL(baseURL string, bookingID int64, channel, target string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return ""
+	}
+	token := campaignTargetToken(target)
+	if bookingID <= 0 && token == "" {
+		return ""
+	}
+	if bookingID < 0 {
+		bookingID = 0
+	}
+	query := fmt.Sprintf("b=%d&c=%s", bookingID, url.QueryEscape(strings.TrimSpace(channel)))
+	if token != "" {
+		query += "&t=" + url.QueryEscape(token)
+	}
+	return fmt.Sprintf("%s%s?%s", baseURL, campaignUnsubscribePath, query)
 }
 
 // campaignUnsubscribeFooterHTML renders the muted inline-styled footer button
