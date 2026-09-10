@@ -281,6 +281,7 @@ func (s *Server) handleBOGroupMenusV2CreateDraft(w http.ResponseWriter, r *http.
 	postre := mustJSON([]string{}, []any{})
 	beverage := mustJSON(map[string]any{"type": "no_incluida", "price_per_person": nil, "has_supplement": false, "supplement_price": nil}, map[string]any{})
 	comments := mustJSON([]string{}, []any{})
+	importantInfo := mustJSON([]string{}, []any{})
 
 	// Special menus should not be drafts by default
 	isDraft := 1
@@ -291,9 +292,9 @@ func (s *Server) handleBOGroupMenusV2CreateDraft(w http.ResponseWriter, r *http.
 	res, err := tx.ExecContext(r.Context(), `
 		INSERT INTO menus
 			(restaurant_id, menu_title, price, included_coffee, active, menu_type, is_draft, editor_version,
-			 menu_subtitle, entrantes, principales, postre, beverage, comments,
+			 menu_subtitle, entrantes, principales, postre, beverage, comments, important_info,
 			 min_party_size, main_dishes_limit, main_dishes_limit_number)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		a.ActiveRestaurantID,
 		"Nuevo menu",
@@ -308,6 +309,7 @@ func (s *Server) handleBOGroupMenusV2CreateDraft(w http.ResponseWriter, r *http.
 		postre,
 		beverage,
 		comments,
+		importantInfo,
 		8,
 		0,
 		1,
@@ -865,6 +867,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		editorPreviewOpenInt       int
 		beverageRaw                sql.NullString
 		commentsRaw                sql.NullString
+		importantInfoRaw           sql.NullString
 		minPartySize               int
 		mainLimitInt               int
 		mainLimitNumber            int
@@ -876,7 +879,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, editor_preview_open, beverage, comments,
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, editor_preview_open, beverage, comments, important_info,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee, special_menu_image_url,
 		       menu_preview_image_path, menu_preview_ai_requested, menu_preview_ai_generating
 		FROM menus
@@ -895,6 +898,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		&editorPreviewOpenInt,
 		&beverageRaw,
 		&commentsRaw,
+		&importantInfoRaw,
 		&minPartySize,
 		&mainLimitInt,
 		&mainLimitNumber,
@@ -951,6 +955,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 				"beverage":                 decodeJSONOrFallback(beverageRaw.String, map[string]any{"type": "no_incluida", "price_per_person": nil, "has_supplement": false, "supplement_price": nil}),
 				"beverage_options":         s.menuBeverageOptionsPayload(a.ActiveRestaurantID, menuID),
 				"comments":                 anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
+				"important_info":           anySliceToStringList(decodeJSONOrFallback(importantInfoRaw.String, []any{})),
 				"min_party_size":           minPartySize,
 				"main_dishes_limit":        mainLimitInt != 0,
 				"main_dishes_limit_number": mainLimitNumber,
@@ -1053,6 +1058,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		currentEditorPreviewOpenInt int
 		currentBeverage             sql.NullString
 		currentComments             sql.NullString
+		currentImportantInfo        sql.NullString
 		currentMinParty             int
 		currentMainLimitInt         int
 		currentMainLimitNumber      int
@@ -1060,7 +1066,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, editor_preview_open, beverage, comments,
+		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, editor_preview_open, beverage, comments, important_info,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee
 		FROM menus
 		WHERE id = ? AND restaurant_id = ?
@@ -1078,6 +1084,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		&currentEditorPreviewOpenInt,
 		&currentBeverage,
 		&currentComments,
+		&currentImportantInfo,
 		&currentMinParty,
 		&currentMainLimitInt,
 		&currentMainLimitNumber,
@@ -1162,6 +1169,11 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		commentsJSON = mustJSON(anySliceToStringList(v), []any{})
 	}
 
+	importantInfoJSON := currentImportantInfo.String
+	if v, ok := input["important_info"]; ok {
+		importantInfoJSON = mustJSON(anySliceToStringList(v), []any{})
+	}
+
 	minParty := currentMinParty
 	if v, ok := input["min_party_size"]; ok {
 		if parsed, err := anyToInt(v); err == nil {
@@ -1206,6 +1218,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 			    editor_preview_open = ?,
 			    beverage = ?,
 			    comments = ?,
+			    important_info = ?,
 			    min_party_size = ?,
 			    main_dishes_limit = ?,
 		    main_dishes_limit_number = ?,
@@ -1225,6 +1238,7 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		boolToTinyint(editorPreviewOpen),
 		beverageJSON,
 		commentsJSON,
+		importantInfoJSON,
 		minParty,
 		boolToTinyint(mainLimit),
 		mainLimitNumber,
@@ -1239,7 +1253,8 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 
 	subtitleArr := anySliceToStringList(decodeJSONOrFallback(menuSubtitleJSON, []any{}))
 	commentsArr := anySliceToStringList(decodeJSONOrFallback(commentsJSON, []any{}))
-	s.translateMenuBasics(r.Context(), a.ActiveRestaurantID, menuID, title, subtitleArr, commentsArr)
+	importantInfoArr := anySliceToStringList(decodeJSONOrFallback(importantInfoJSON, []any{}))
+	s.translateMenuBasics(r.Context(), a.ActiveRestaurantID, menuID, title, subtitleArr, commentsArr, importantInfoArr)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
