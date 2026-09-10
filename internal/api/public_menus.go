@@ -93,11 +93,13 @@ type publicMenuSettings struct {
 	IncludedCoffee       bool             `json:"included_coffee"`
 	Beverage             map[string]any   `json:"beverage"`
 	Comments             []string         `json:"comments"`
+	ImportantInfo        []string         `json:"important_info"`
 	MinPartySize         int              `json:"min_party_size"`
 	MainDishesLimit      bool             `json:"main_dishes_limit"`
 	MainDishesLimitCount int              `json:"main_dishes_limit_number"`
 	BeverageOptions      []map[string]any `json:"beverage_options"`
 	CommentsEnglish      []string         `json:"comments_english,omitempty"`
+	ImportantInfoEnglish []string         `json:"important_info_english,omitempty"`
 }
 
 type publicMenuItem struct {
@@ -552,7 +554,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 	selectFields := "id, menu_title, menu_type, active, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, special_menu_image_url"
 	if !isHomePage {
 		selectFields = `id, menu_title, price, active, menu_type, menu_subtitle,
-		       show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
+		       show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments, important_info,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
 		       special_menu_image_url, legacy_source_table, created_at, modified_at`
 	}
@@ -672,6 +674,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			postreRaw               sql.NullString
 			beverageRaw             sql.NullString
 			commentsRaw             sql.NullString
+			importantInfoRaw        sql.NullString
 			minPartySize            int
 			mainDishesLimitInt      int
 			mainDishesLimitNum      int
@@ -698,6 +701,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			&postreRaw,
 			&beverageRaw,
 			&commentsRaw,
+			&importantInfoRaw,
 			&minPartySize,
 			&mainDishesLimitInt,
 			&mainDishesLimitNum,
@@ -773,6 +777,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				Beverage:             beverage,
 				BeverageOptions:      s.menuBeverageOptionsPayload(restaurantID, menuID),
 				Comments:             anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
+				ImportantInfo:        anySliceToStringList(decodeJSONOrFallback(importantInfoRaw.String, []any{})),
 				MinPartySize:         minPartySize,
 				MainDishesLimit:      mainDishesLimitInt != 0,
 				MainDishesLimitCount: mainDishesLimitNum,
@@ -1104,6 +1109,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		postreRaw               sql.NullString
 		beverageRaw             sql.NullString
 		commentsRaw             sql.NullString
+		importantInfoRaw        sql.NullString
 		minPartySize            int
 		mainDishesLimitInt      int
 		mainDishesLimitNum      int
@@ -1116,7 +1122,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT id, menu_title, price, active, menu_type, menu_subtitle,
-		       show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments,
+		       show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments, important_info,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
 		       special_menu_image_url, legacy_source_table, created_at, modified_at
 		FROM menus
@@ -1137,6 +1143,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		&postreRaw,
 		&beverageRaw,
 		&commentsRaw,
+		&importantInfoRaw,
 		&minPartySize,
 		&mainDishesLimitInt,
 		&mainDishesLimitNum,
@@ -1224,6 +1231,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 			Beverage:             beverage,
 			BeverageOptions:      s.menuBeverageOptionsPayload(int(restaurantID), menuID),
 			Comments:             anySliceToStringList(decodeJSONOrFallback(commentsRaw.String, []any{})),
+			ImportantInfo:        anySliceToStringList(decodeJSONOrFallback(importantInfoRaw.String, []any{})),
 			MinPartySize:         minPartySize,
 			MainDishesLimit:      mainDishesLimitInt != 0,
 			MainDishesLimitCount: mainDishesLimitNum,

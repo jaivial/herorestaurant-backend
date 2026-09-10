@@ -336,13 +336,14 @@ func (s *Server) translateEntityFields(ctx context.Context, restaurantID int, en
 
 // ---- menus / sections / dishes (group menus v2) ----
 
-func (s *Server) translateMenuBasics(ctx context.Context, restaurantID int, menuID int64, title string, subtitle, comments []string) {
+func (s *Server) translateMenuBasics(ctx context.Context, restaurantID int, menuID int64, title string, subtitle, comments, importantInfo []string) {
 	if menuID <= 0 {
 		return
 	}
 	fields := []translationField{{Name: "menu_title", Text: title}}
 	fields = append(fields, flattenArrayFields("menu_subtitle", subtitle)...)
 	fields = append(fields, flattenArrayFields("comments", comments)...)
+	fields = append(fields, flattenArrayFields("important_info", importantInfo)...)
 	s.translateEntityFields(ctx, restaurantID, entityMenus, menuID, fields)
 }
 
@@ -407,6 +408,7 @@ func (s *Server) enrichPublicMenus(ctx context.Context, restaurantID int, menus 
 			m.MenuTitleEnglish = translationOr(mt, "menu_title")
 			m.MenuSubtitleEnglish = buildEnglishArray(mt, "menu_subtitle", len(m.MenuSubtitle))
 			m.Settings.CommentsEnglish = buildEnglishArray(mt, "comments", len(m.Settings.Comments))
+			m.Settings.ImportantInfoEnglish = buildEnglishArray(mt, "important_info", len(m.Settings.ImportantInfo))
 		}
 		// Enrich fallback sections (ID=0, used by closed_conventional / a_la_carte)
 		s.enrichFallbackSections(m, menuTr)
