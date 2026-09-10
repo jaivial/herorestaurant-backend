@@ -20,6 +20,10 @@ const (
 	boAppVersion01  = "0.1"
 	boAppVersion02  = "0.2"
 	boAppVersion03  = "0.3"
+	// boAppVersion04 is the restricted line: instead of unlocking extra modules
+	// it whitelists the operational ones (reservas, carta, miembros, horarios,
+	// fichaje, facturas, campanas) and nothing else.
+	boAppVersion04 = "0.4"
 )
 
 type boAppCapability string
@@ -32,6 +36,26 @@ const (
 	boCapabilityAds          boAppCapability = "ads"
 	boCapabilityCampanas     boAppCapability = "campanas"
 )
+
+// boAppVersion04Modules is the explicit module list of boAppVersion04. Sections
+// outside it are hidden and their routes denied, whatever the role allows.
+var boAppVersion04Modules = map[string]bool{
+	boSectionReservas: true,
+	boSectionMenus:    true,
+	boSectionComida:   true,
+	boSectionMiembros: true,
+	boSectionHorarios: true,
+	boSectionFichaje:  true,
+	boSectionFacturas: true,
+	boSectionCampanas: true,
+}
+
+// boAppVersion04Capabilities is the capability whitelist of boAppVersion04:
+// campanas only, so stock / POS / statistics / platform / ads stay closed even
+// though 0.4 sorts above their 0.2 minimum.
+var boAppVersion04Capabilities = map[boAppCapability]bool{
+	boCapabilityCampanas: true,
+}
 
 var boCapabilityMinVersion = map[boAppCapability]string{
 	boCapabilityStock:        boAppVersion02,
@@ -54,7 +78,7 @@ var boSectionCapability = map[string]boAppCapability{
 func parseSupportedBOAppVersion(raw string) (string, bool) {
 	version := strings.TrimSpace(raw)
 	if version == boAppVersion001 || version == boAppVersion01 ||
-		version == boAppVersion02 || version == boAppVersion03 {
+		version == boAppVersion02 || version == boAppVersion03 || version == boAppVersion04 {
 		return version, true
 	}
 	return "", false
@@ -102,6 +126,9 @@ func parseAppVersion(v string) ([3]int, bool) {
 // the RBAC section. Sections not gated by version are always allowed here;
 // role ACL is enforced separately.
 func sectionAllowedForAppVersion(section, version string) bool {
+	if normalizeAppVersion(version) == boAppVersion04 {
+		return boAppVersion04Modules[section]
+	}
 	capability, gated := boSectionCapability[section]
 	if !gated {
 		return true
@@ -110,11 +137,15 @@ func sectionAllowedForAppVersion(section, version string) bool {
 }
 
 func appCapabilityAllowed(capability boAppCapability, version string) bool {
+	normalized := normalizeAppVersion(version)
+	if normalized == boAppVersion04 {
+		return boAppVersion04Capabilities[capability]
+	}
 	minVersion, known := boCapabilityMinVersion[capability]
 	if !known {
 		return false
 	}
-	return appVersionAtLeast(normalizeAppVersion(version), minVersion)
+	return appVersionAtLeast(normalized, minVersion)
 }
 
 // sectionsForAppVersion filters a section list down to what the version
