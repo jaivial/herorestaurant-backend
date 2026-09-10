@@ -557,6 +557,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections", s.handleBOGroupMenusV2PutSections)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/sections/{sectionId}", s.handleBOGroupMenusV2DeleteSection)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/visibility", s.handleBOGroupMenusV2PatchSectionVisibility)
+		// Coordination id: dessert_section_source_v1 (general carta of desserts <-> custom section list)
+		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/dessert-source", s.handleBOGroupMenusV2PatchSectionDessertSource)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/annotations", s.handleBOGroupMenusV2PatchSectionAnnotations)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2GetSectionDishes)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2PutSectionDishes)

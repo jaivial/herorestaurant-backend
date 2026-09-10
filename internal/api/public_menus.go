@@ -873,7 +873,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		dishesQuery := fmt.Sprintf(`
-			SELECT id, menu_id, section_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json, foto_path,
+			SELECT id, menu_id, section_id, title_snapshot, COALESCE(description_snapshot, ''), COALESCE(description_enabled, 1), allergens_json, foto_path,
 			       supplement_enabled, supplement_price, price, position
 			FROM group_menu_section_dishes_v2
 			WHERE restaurant_id = ?
@@ -967,6 +967,16 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dishRows.Close()
+
+		// Coordination id: dessert_section_source_v1 - sections that mirror the
+		// general desserts carta serve the carta's dishes, never their own rows.
+		if err := s.applyPublicGeneralDessertMirrors(r.Context(), restaurantID, menuIDs, sectionByID); err != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"message": "Error sincronizando la carta general de postres",
+			})
+			return
+		}
 
 		for menuID, idx := range menuIndexByID {
 			sectionPointers := sectionsByMenu[menuID]
@@ -1287,7 +1297,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	sectionRows.Close()
 
 	dishRows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, menu_id, section_id, title_snapshot, description_snapshot, COALESCE(description_enabled, 1), allergens_json, foto_path,
+		SELECT id, menu_id, section_id, title_snapshot, COALESCE(description_snapshot, ''), COALESCE(description_enabled, 1), allergens_json, foto_path,
 		       supplement_enabled, supplement_price, price, position
 		FROM group_menu_section_dishes_v2
 		WHERE restaurant_id = ? AND menu_id = ? AND active = 1
@@ -1366,6 +1376,16 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		section.Dishes = append(section.Dishes, dish)
 	}
 	dishRows.Close()
+
+	// Coordination id: dessert_section_source_v1 - sections that mirror the
+	// general desserts carta serve the carta's dishes, never their own rows.
+	if err := s.applyPublicGeneralDessertMirrors(r.Context(), int(restaurantID), []int64{menuID}, sectionByID); err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Error sincronizando la carta general de postres",
+		})
+		return
+	}
 
 	sectionPointers := sectionsByMenu[menuID]
 	if len(sectionPointers) == 0 {
