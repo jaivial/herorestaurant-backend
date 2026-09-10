@@ -313,19 +313,23 @@ func NormalizeToWebPWithLimit(ctx context.Context, input []byte, fileName string
 // image payload untouched, so a caller can keep the original bytes whenever they
 // already fit its budget instead of re-encoding them. Only images are accepted.
 func ImageContentTypeAndExt(input []byte, fileName string, declaredContentType string) (string, string, error) {
-	kind, ext, err := detectSourceKind(input, fileName, declaredContentType)
+	kind, _, err := detectSourceKind(input, fileName, declaredContentType)
 	if err != nil {
 		return "", "", err
 	}
 	if kind != sourceImage {
 		return "", "", errors.New("unsupported source file")
 	}
-	switch ext {
-	case ".png":
+	// Derive the extension from the bytes, not from the file name: a caller can
+	// hand over a payload whose name lies (some mobile canvases produce PNG bytes
+	// under a .webp name), and the stored object must match its content.
+	detected := strings.ToLower(strings.TrimSpace(http.DetectContentType(input)))
+	switch {
+	case strings.Contains(detected, "png"):
 		return "image/png", ".png", nil
-	case ".gif":
+	case strings.Contains(detected, "gif"):
 		return "image/gif", ".gif", nil
-	case ".webp":
+	case strings.Contains(detected, "webp"):
 		return "image/webp", ".webp", nil
 	default:
 		return "image/jpeg", ".jpg", nil
