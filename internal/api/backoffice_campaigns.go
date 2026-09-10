@@ -825,7 +825,10 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	// The opt-out link is published on the restaurant own website (the public
 	// Preact app serves /baja-publicidad).
 	unsubBase := campaignAbsoluteBase(siteURL)
-	unsubscribeURL := campaignUnsubscribeURL(unsubBase, target.BookingID, target.Channel)
+	unsubscribeURL := campaignUnsubscribeURL(unsubBase, target.BookingID, target.Channel, target.Target)
+	// Observational point: proves both CTAs were attached to the delivered message.
+	slog.Default().Info("campaign.delivery.links", "coord_id", c.CoordID, "channel", target.Channel,
+		"booking_id", target.BookingID, "website_button", strings.TrimSpace(siteURL) != "", "optout_button", unsubscribeURL != "")
 	if target.Channel == "whatsapp" {
 		num := normalizeWhatsAppNumber(target.Target)
 		if num == "" {
@@ -870,8 +873,10 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		}
 		text := renderCampaignWhatsAppBody(c.BodyMarkdown, branding.BrandName, "", false)
 		if len(choices) > 0 {
-			if err := gw.SendMenu(ctx, num, text, choices); err == nil {
-				return nil
+			if gwOK {
+				if err := gw.SendMenu(ctx, num, text, choices); err == nil {
+					return nil
+				}
 			}
 			return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, c.CoordID, num, fallback)
 		}
