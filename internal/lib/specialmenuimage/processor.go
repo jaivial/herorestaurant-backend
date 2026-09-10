@@ -309,6 +309,29 @@ func NormalizeToWebPWithLimit(ctx context.Context, input []byte, fileName string
 	return output, nil
 }
 
+// ImageContentTypeAndExt returns the content type and file extension to store an
+// image payload untouched, so a caller can keep the original bytes whenever they
+// already fit its budget instead of re-encoding them. Only images are accepted.
+func ImageContentTypeAndExt(input []byte, fileName string, declaredContentType string) (string, string, error) {
+	kind, ext, err := detectSourceKind(input, fileName, declaredContentType)
+	if err != nil {
+		return "", "", err
+	}
+	if kind != sourceImage {
+		return "", "", errors.New("unsupported source file")
+	}
+	switch ext {
+	case ".png":
+		return "image/png", ".png", nil
+	case ".gif":
+		return "image/gif", ".gif", nil
+	case ".webp":
+		return "image/webp", ".webp", nil
+	default:
+		return "image/jpeg", ".jpg", nil
+	}
+}
+
 func pickImageMagickCommand(sourcePath string) (string, []string, error) {
 	if magickPath, err := findCommandPath("magick"); err == nil {
 		return magickPath, []string{sourcePath + "[0]"}, nil
