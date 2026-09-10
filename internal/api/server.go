@@ -622,14 +622,16 @@ func (s *Server) Routes() http.Handler {
 		// Restaurant website banners/popovers.
 		// Anuncios editor is a v0.2-only module: the reservas gate admits the
 		// role, the app-version gate keeps v0.1 users out entirely.
-		adsVersionGate := s.requireBOCapability(boCapabilityAds)
-		r.With(s.requireBOSession, reservasGate, adsVersionGate).Get("/config/ads", s.handleBOAdsList)
-		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads", s.handleBOAdsCreate)
-		r.With(s.requireBOSession, reservasGate, adsVersionGate).Put("/config/ads/{adId}", s.handleBOAdsUpdate)
-		r.With(s.requireBOSession, reservasGate, adsVersionGate).Delete("/config/ads/{adId}", s.handleBOAdsDelete)
-		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads/{adId}/image/upload", s.handleBOAdImageUpload)
-		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads/{adId}/image/enhance", s.handleBOAdImageEnhance)
-		r.With(s.requireBOSession, reservasGate, adsVersionGate).Post("/config/ads/{adId}/image/generate", s.handleBOAdImageGenerate)
+		// Anuncios is a first-class module: its own RBAC section, reached from the
+		// sidenav / bottom nav instead of a tab inside Config.
+		adsGate := s.requireBOSection(boSectionAnuncios)
+		r.With(s.requireBOSession, adsGate).Get("/config/ads", s.handleBOAdsList)
+		r.With(s.requireBOSession, adsGate).Post("/config/ads", s.handleBOAdsCreate)
+		r.With(s.requireBOSession, adsGate).Put("/config/ads/{adId}", s.handleBOAdsUpdate)
+		r.With(s.requireBOSession, adsGate).Delete("/config/ads/{adId}", s.handleBOAdsDelete)
+		r.With(s.requireBOSession, adsGate).Post("/config/ads/{adId}/image/upload", s.handleBOAdImageUpload)
+		r.With(s.requireBOSession, adsGate).Post("/config/ads/{adId}/image/enhance", s.handleBOAdImageEnhance)
+		r.With(s.requireBOSession, adsGate).Post("/config/ads/{adId}/image/generate", s.handleBOAdImageGenerate)
 
 		// Campanas: markdown broadcasts over email + WhatsApp (coord id camp-*).
 		campaignsGate := s.requireBOCapability(boCapabilityCampanas)
