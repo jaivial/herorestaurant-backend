@@ -22,12 +22,15 @@ import (
 )
 
 type boV2Section struct {
-	ID               int64      `json:"id"`
-	Title            string     `json:"title"`
-	DisplayTitle     string     `json:"display_title"`
-	Subtitle         string     `json:"subtitle"`
-	TabLabel         string     `json:"tab_label"`
-	Kind             string     `json:"kind"`
+	ID           int64  `json:"id"`
+	Title        string `json:"title"`
+	DisplayTitle string `json:"display_title"`
+	Subtitle     string `json:"subtitle"`
+	TabLabel     string `json:"tab_label"`
+	Kind         string `json:"kind"`
+	// Coordination id: dessert_section_source_v1 ("general" mirrors the general
+	// desserts carta and is read-only; "custom" owns its own dish list).
+	DessertSource    string     `json:"dessert_source"`
 	Position         int        `json:"position"`
 	Annotations      []string   `json:"annotations"`
 	PublicPageActive bool       `json:"public_page_active"`
@@ -53,6 +56,9 @@ type boV2Dish struct {
 	AIRequestedImg     bool     `json:"ai_requested_img"`
 	AIGeneratingImg    bool     `json:"ai_generating_img"`
 	AIGeneratedImg     *string  `json:"ai_generated_img,omitempty"`
+	// Coordination id: dessert_section_source_v1 - true when the dish is owned by
+	// the general desserts carta, so the editor must not let the operator edit it.
+	ReadOnly bool `json:"read_only,omitempty"`
 }
 
 func normalizeV2MenuType(raw string) string {
@@ -455,7 +461,7 @@ func (s *Server) ensureBOMenuV2SectionsFromSnapshot(ctx *http.Request, restauran
 func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID int, menuID int64) ([]boV2Section, error) {
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''),
-		       section_kind, position, COALESCE(annotations_json, ''),
+		       section_kind, COALESCE(dessert_source, 'custom'), position, COALESCE(annotations_json, ''),
 		       COALESCE(public_page_active, 0), COALESCE(web_placement, 'inside_menus')
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id = ?
@@ -472,10 +478,12 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 		var sec boV2Section
 		var annotationsRaw sql.NullString
 		var publicActive int
-		if err := rows.Scan(&sec.ID, &sec.Title, &sec.DisplayTitle, &sec.Subtitle, &sec.TabLabel, &sec.Kind, &sec.Position, &annotationsRaw, &publicActive, &sec.WebPlacement); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.Title, &sec.DisplayTitle, &sec.Subtitle, &sec.TabLabel, &sec.Kind, &sec.DessertSource, &sec.Position, &annotationsRaw, &publicActive, &sec.WebPlacement); err != nil {
 			return nil, err
 		}
 		sec.Kind = normalizeV2SectionKind(sec.Kind)
+		// Coordination id: dessert_section_source_v1
+		sec.DessertSource = normalizeV2SectionDessertSource(sec.Kind, sec.DessertSource)
 		sec.PublicPageActive = publicActive == 1
 		sec.WebPlacement = normalizeV2SectionWebPlacement(sec.WebPlacement)
 		sec.Annotations = normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{})))
@@ -499,7 +507,9 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 
 	dRows, err := s.db.QueryContext(r.Context(), `
 		SELECT d.id, d.section_id, d.catalog_dish_id, d.title_snapshot,
-		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description) AS description_snapshot,
+		       -- '' tail keeps the scan non-NULL: legacy rows (e.g. the migrated
+		       -- desserts) carry NULL in both the snapshot and the catalog.
+		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description, '') AS description_snapshot,
 		       COALESCE(d.description_enabled, 1), d.allergens_json,
 		       d.supplement_enabled, d.supplement_price, d.price, d.active, d.position, COALESCE(d.foto_path, ''),
 		       COALESCE(d.ai_requested_img, 0), COALESCE(d.ai_generating_img, 0), d.ai_generated_img
@@ -584,13 +594,21 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 		sections[idx].Dishes = append(sections[idx].Dishes, d)
 	}
 
+	// Coordination id: dessert_section_source_v1 - sections that read from the
+	// general desserts carta show the carta's dishes instead of their own rows.
+	if err := s.applyGeneralDessertMirrors(r, restaurantID, sections); err != nil {
+		return nil, err
+	}
+
 	return sections, nil
 }
 
 func (s *Server) loadBOMenuV2SectionDishes(r *http.Request, restaurantID int, menuID int64, sectionID int64) ([]boV2Dish, error) {
 	dRows, err := s.db.QueryContext(r.Context(), `
 		SELECT d.id, d.section_id, d.catalog_dish_id, d.title_snapshot,
-		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description) AS description_snapshot,
+		       -- '' tail keeps the scan non-NULL: legacy rows (e.g. the migrated
+		       -- desserts) carry NULL in both the snapshot and the catalog.
+		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description, '') AS description_snapshot,
 		       COALESCE(d.description_enabled, 1), d.allergens_json,
 		       d.supplement_enabled, d.supplement_price, d.price, d.active, d.position, COALESCE(d.foto_path, ''),
 		       COALESCE(d.ai_requested_img, 0), COALESCE(d.ai_generating_img, 0), d.ai_generated_img
@@ -726,7 +744,9 @@ func (s *Server) loadBOMenuV2DishByID(r *http.Request, restaurantID int, menuID 
 	)
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT d.id, d.section_id, d.catalog_dish_id, d.title_snapshot,
-		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description) AS description_snapshot,
+		       -- '' tail keeps the scan non-NULL: legacy rows (e.g. the migrated
+		       -- desserts) carry NULL in both the snapshot and the catalog.
+		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description, '') AS description_snapshot,
 		       COALESCE(d.description_enabled, 1), d.allergens_json,
 		       d.supplement_enabled, d.supplement_price, d.price, d.active, d.position, COALESCE(d.foto_path, ''),
 		       COALESCE(d.ai_requested_img, 0), COALESCE(d.ai_generating_img, 0), d.ai_generated_img
@@ -1014,7 +1034,20 @@ func (s *Server) handleBOGroupMenusV2GetSectionDishes(w http.ResponseWriter, r *
 		return
 	}
 
-	dishes, err := s.loadBOMenuV2SectionDishes(r, a.ActiveRestaurantID, menuID, sectionID)
+	// Coordination id: dessert_section_source_v1 - a section that reads from the
+	// general desserts carta serves the carta's dishes, flagged read-only.
+	kind, source, _, err := s.loadSectionDessertSource(r.Context(), a.ActiveRestaurantID, menuID, sectionID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error verifying section")
+		return
+	}
+
+	var dishes []boV2Dish
+	if isGeneralDessertSection(kind, source) {
+		dishes, err = s.boV2GeneralDessertDishes(r, a.ActiveRestaurantID, sectionID)
+	} else {
+		dishes, err = s.loadBOMenuV2SectionDishes(r, a.ActiveRestaurantID, menuID, sectionID)
+	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading dishes")
 		return
@@ -1340,8 +1373,11 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 			Subtitle     string `json:"subtitle"`
 			TabLabel     string `json:"tab_label"`
 			Kind         string `json:"kind"`
-			Position     int    `json:"position"`
-			Annotations  any    `json:"annotations"`
+			// Coordination id: dessert_section_source_v1 - pointer so an omitted
+			// field means "keep the stored value" and never silently unlinks a mirror.
+			DessertSource *string `json:"dessert_source"`
+			Position      int     `json:"position"`
+			Annotations   any     `json:"annotations"`
 		} `json:"sections"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1379,8 +1415,11 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 	}
 
 	existing := map[int64]bool{}
+	// Coordination id: dessert_section_source_v1 - remember the stored source so a
+	// payload that omits it keeps the section linked to the general carta.
+	existingDessertSource := map[int64]string{}
 	rows, err := tx.QueryContext(r.Context(), `
-		SELECT id FROM group_menu_sections_v2 WHERE restaurant_id = ? AND menu_id = ?
+		SELECT id, COALESCE(dessert_source, 'custom') FROM group_menu_sections_v2 WHERE restaurant_id = ? AND menu_id = ?
 	`, a.ActiveRestaurantID, menuID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo secciones")
@@ -1388,12 +1427,14 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 	}
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var storedSource string
+		if err := rows.Scan(&id, &storedSource); err != nil {
 			rows.Close()
 			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo secciones")
 			return
 		}
 		existing[id] = true
+		existingDessertSource[id] = storedSource
 	}
 	rows.Close()
 
@@ -1425,6 +1466,14 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 			tabLabel = tabLabel[:255]
 		}
 		kind := normalizeV2SectionKind(sec.Kind)
+		// Coordination id: dessert_section_source_v1 - non-dessert kinds are pinned
+		// back to "custom" by the normalizer, so only postres can mirror the carta.
+		// An omitted field keeps whatever the row already stores.
+		rawDessertSource := existingDessertSource[sec.ID]
+		if sec.DessertSource != nil {
+			rawDessertSource = *sec.DessertSource
+		}
+		dessertSource := normalizeV2SectionDessertSource(kind, rawDessertSource)
 		position := idx
 		annotations := normalizeV2SectionAnnotations(anySliceToStringList(sec.Annotations))
 		annotationsProvided := sec.Annotations != nil
@@ -1434,17 +1483,17 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 			if annotationsProvided {
 				if _, err := tx.ExecContext(r.Context(), `
 					UPDATE group_menu_sections_v2
-					SET title = ?, display_title = ?, subtitle = ?, tab_label = ?, section_kind = ?, position = ?, annotations_json = ?
+					SET title = ?, display_title = ?, subtitle = ?, tab_label = ?, section_kind = ?, dessert_source = ?, position = ?, annotations_json = ?
 					WHERE id = ? AND restaurant_id = ? AND menu_id = ?
-				`, title, displayTitle, subtitle, tabLabel, kind, position, annotationsJSON, sec.ID, a.ActiveRestaurantID, menuID); err != nil {
+				`, title, displayTitle, subtitle, tabLabel, kind, dessertSource, position, annotationsJSON, sec.ID, a.ActiveRestaurantID, menuID); err != nil {
 					httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando seccion")
 					return
 				}
 			} else if _, err := tx.ExecContext(r.Context(), `
 				UPDATE group_menu_sections_v2
-				SET title = ?, display_title = ?, subtitle = ?, tab_label = ?, section_kind = ?, position = ?
+				SET title = ?, display_title = ?, subtitle = ?, tab_label = ?, section_kind = ?, dessert_source = ?, position = ?
 				WHERE id = ? AND restaurant_id = ? AND menu_id = ?
-			`, title, displayTitle, subtitle, tabLabel, kind, position, sec.ID, a.ActiveRestaurantID, menuID); err != nil {
+			`, title, displayTitle, subtitle, tabLabel, kind, dessertSource, position, sec.ID, a.ActiveRestaurantID, menuID); err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando seccion")
 				return
 			}
@@ -1454,9 +1503,9 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 		}
 
 		res, err := tx.ExecContext(r.Context(), `
-			INSERT INTO group_menu_sections_v2 (restaurant_id, menu_id, title, display_title, subtitle, tab_label, section_kind, position, annotations_json)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, a.ActiveRestaurantID, menuID, title, displayTitle, subtitle, tabLabel, kind, position, annotationsJSON)
+			INSERT INTO group_menu_sections_v2 (restaurant_id, menu_id, title, display_title, subtitle, tab_label, section_kind, dessert_source, position, annotations_json)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, a.ActiveRestaurantID, menuID, title, displayTitle, subtitle, tabLabel, kind, dessertSource, position, annotationsJSON)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error creando seccion")
 			return
@@ -1726,6 +1775,12 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 	sectionID, err := parseChiPositiveInt64(r, "sectionId")
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid section id"})
+		return
+	}
+
+	// Coordination id: dessert_section_source_v1 - a section mirroring the general
+	// desserts carta is read-only; edits must go through /app/comida/postres.
+	if s.guardGeneralDessertSection(w, r, a.ActiveRestaurantID, menuID, sectionID) {
 		return
 	}
 
@@ -2016,6 +2071,12 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 		return
 	}
 
+	// Coordination id: dessert_section_source_v1 - a section mirroring the general
+	// desserts carta is read-only; edits must go through /app/comida/postres.
+	if s.guardGeneralDessertSection(w, r, a.ActiveRestaurantID, menuID, sectionID) {
+		return
+	}
+
 	var input map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid JSON body"})
@@ -2056,7 +2117,7 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 		currentDescEnabled int
 	)
 	err = tx.QueryRowContext(r.Context(), `
-		SELECT catalog_dish_id, title_snapshot, description_snapshot, allergens_json,
+		SELECT catalog_dish_id, title_snapshot, COALESCE(description_snapshot, ''), allergens_json,
 		       supplement_enabled, supplement_price, price, active, position,
 		       COALESCE(description_enabled, 1)
 		FROM group_menu_section_dishes_v2
@@ -2523,6 +2584,12 @@ func (s *Server) handleBOGroupMenusV2UploadSectionDishImage(w http.ResponseWrite
 	}
 	if exists == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Dish not found"})
+		return
+	}
+
+	// Coordination id: dessert_section_source_v1 - never let an image land on a
+	// dish that is really owned by the general desserts carta.
+	if s.guardGeneralDessertSection(w, r, a.ActiveRestaurantID, menuID, sectionID) {
 		return
 	}
 
