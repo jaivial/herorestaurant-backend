@@ -392,6 +392,27 @@ func (s *Server) requireBORoleImportanceAtLeast(minImportance int) func(http.Han
 	}
 }
 
+// boAuthCanAccessSection reports whether a session may use a section: the role
+// ACL must allow it and the user app version must unlock it. This is the single
+// policy shared by the HTTP section middleware and the WebSocket handlers, so a
+// section can never be reachable over one transport and not the other.
+func (s *Server) boAuthCanAccessSection(ctx context.Context, a boAuth, section string) (bool, error) {
+	normalized := normalizeBOSection(section)
+	if normalized == "" {
+		return false, nil
+	}
+	allowed, err := s.roleCanAccessSection(ctx, a.Role, normalized)
+	if err != nil {
+		return false, err
+	}
+	if !allowed {
+		return false, nil
+	}
+	// A/B version gate: older users cannot reach a section their version does
+	// not unlock even if their role would allow it.
+	return sectionAllowedForAppVersion(normalized, a.User.AppVersion), nil
+}
+
 func (s *Server) requireBOSection(section string) func(http.Handler) http.Handler {
 	normalized := normalizeBOSection(section)
 	return func(next http.Handler) http.Handler {
@@ -407,18 +428,12 @@ func (s *Server) requireBOSection(section string) func(http.Handler) http.Handle
 				return
 			}
 
-			allowed, err := s.roleCanAccessSection(r.Context(), a.Role, normalized)
+			allowed, err := s.boAuthCanAccessSection(r.Context(), a, normalized)
 			if err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error validating permissions")
 				return
 			}
 			if !allowed {
-				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
-				return
-			}
-			// A/B version gate: v0.1 users cannot reach v0.2-only sections even if
-			// their role would allow them.
-			if !sectionAllowedForAppVersion(normalized, a.User.AppVersion) {
 				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
 				return
 			}

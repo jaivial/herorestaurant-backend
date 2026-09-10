@@ -10,12 +10,13 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
+// publicAdVisibleOnDate is the canonical ad visibility rule: an ad only runs
+// inside an explicit date range, so an active ad whose range was cleared (or is
+// incomplete) must not be shown. Mirrored client-side by activeAdsForDate in
+// preactvillacarmen (`frontend/src/lib/publicAds.ts`).
 func publicAdVisibleOnDate(ad boAd, isoDate string) bool {
 	if !ad.Active {
 		return false
-	}
-	if ad.StartsAt == nil && ad.EndsAt == nil {
-		return true
 	}
 	if ad.StartsAt == nil || ad.EndsAt == nil || isoDate == "" {
 		return false
