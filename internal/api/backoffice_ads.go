@@ -27,9 +27,11 @@ var boAdPublicRoutes = []string{"/", "/contacto", "/eventos", "/menufindesemana"
 const (
 	boAdMaxTextElements = 5
 	boAdMaxCTAs         = 5
-	boAdMaxImageBytes   = 100 * 1024
-	boAdT2IModel        = "wavespeed-ai/z-image/turbo"
-	boAdEnhanceModel    = "openai/gpt-image-2/edit"
+	// boAdMaxImageBytes is the single ads image budget: an upload within it is
+	// stored untouched, and a larger one is compressed down to it (never below).
+	boAdMaxImageBytes = 5 * 1024 * 1024
+	boAdT2IModel      = "wavespeed-ai/z-image/turbo"
+	boAdEnhanceModel  = "openai/gpt-image-2/edit"
 )
 
 type boAdContentElement struct {
@@ -528,13 +530,28 @@ func readBOAdMultipartImage(r *http.Request, maxInput int) ([]byte, string, stri
 	return raw, header.Filename, header.Header.Get("Content-Type"), nil
 }
 
+// saveBOAdImage stores an ad image. Within the ads budget the original bytes are
+// kept (no re-encode, no size loss); only a payload above the budget is
+// compressed down to it, and never further than needed.
 func (s *Server) saveBOAdImage(ctx context.Context, restaurantID int, adID int64, raw []byte, filename, contentType, suffix string) (string, error) {
-	normalized, err := specialmenuimage.NormalizeToWebPWithLimit(ctx, raw, filename, contentType, boAdMaxImageBytes)
-	if err != nil {
-		return "", err
+	body := raw
+	storeContentType := "image/webp"
+	storeExt := ".webp"
+	if len(raw) > boAdMaxImageBytes {
+		normalized, err := specialmenuimage.NormalizeToWebPWithLimit(ctx, raw, filename, contentType, boAdMaxImageBytes)
+		if err != nil {
+			return "", err
+		}
+		body = normalized
+	} else {
+		detectedType, detectedExt, err := specialmenuimage.ImageContentTypeAndExt(raw, filename, contentType)
+		if err != nil {
+			return "", err
+		}
+		storeContentType, storeExt = detectedType, detectedExt
 	}
-	objectPath := path.Join(strconv.Itoa(restaurantID), "pictures", "ads", strconv.FormatInt(adID, 10), fmt.Sprintf("%s-%d.webp", suffix, time.Now().UTC().UnixMilli()))
-	if err := s.bunnyPut(ctx, restaurantID, objectPath, normalized, "image/webp"); err != nil {
+	objectPath := path.Join(strconv.Itoa(restaurantID), "pictures", "ads", strconv.FormatInt(adID, 10), fmt.Sprintf("%s-%d%s", suffix, time.Now().UTC().UnixMilli(), storeExt))
+	if err := s.bunnyPut(ctx, restaurantID, objectPath, body, storeContentType); err != nil {
 		return "", err
 	}
 	return s.bunnyPullURL(ctx, restaurantID, objectPath), nil
