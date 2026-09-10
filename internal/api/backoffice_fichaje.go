@@ -1669,14 +1669,14 @@ func (s *Server) handleBOFichajeWS(w http.ResponseWriter, r *http.Request) {
 			}
 			typ := strings.ToLower(strings.TrimSpace(msg.Type))
 			if typ == "ad_save" {
-				if !appCapabilityAllowed(boCapabilityAds, a.User.AppVersion) {
+				if allowed, err := s.boAuthCanAccessSection(context.Background(), a, boSectionAnuncios); err != nil || !allowed {
 					continue
 				}
 				s.handleWSAdSave(a, msg.ReqID, msg.AdID, msg.Payload)
 				continue
 			}
 			if typ == "ad_schedule_check" {
-				if !appCapabilityAllowed(boCapabilityAds, a.User.AppVersion) {
+				if allowed, err := s.boAuthCanAccessSection(context.Background(), a, boSectionAnuncios); err != nil || !allowed {
 					continue
 				}
 				s.handleWSAdScheduleCheck(a, msg.ReqID, msg.AdID, msg.Payload)
