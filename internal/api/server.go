@@ -706,8 +706,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/settings/{restaurantId}", s.handleBOBotSettingsPut)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/bot/settings/{restaurantId}/preview", s.handleBOBotSettingsPreview)
 		// Booking WhatsApp notifications (confirmation / reconfirmation) — bkg-wa-notif.
-		r.With(s.requireBOSession, ajustesGate).Get("/booking-notifications", s.handleBOBookingNotificationsGet)
-		r.With(s.requireBOSession, ajustesGate).Put("/booking-notifications", s.handleBOBookingNotificationsPut)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/booking-notifications", s.handleBOBookingNotificationsGet)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Put("/booking-notifications", s.handleBOBookingNotificationsPut)
 		r.With(s.requireBOSession, ajustesGate).Get("/branding", s.handleBOBrandingGet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding", s.handleBOBrandingSet)
 		r.With(s.requireBOSession, ajustesGate).Post("/branding/logo", s.handleBOBrandingLogoUpload)
@@ -787,11 +787,16 @@ func (s *Server) Routes() http.Handler {
 		// A/B app version management: root only, per user + active restaurant.
 		r.With(s.requireBOSession, miembrosGate, rootOnlyGate).Patch("/users/{id}/version", s.handleBOUserVersionPatch)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/send", s.handleBOMembersWhatsAppSend)
+		// The bot connection panel lives on the Contact/Config page, so it must be
+		// reachable through the members section it belongs to. Gating it behind
+		// `ajustes` hid it for app version 0.4 (that version whitelists miembros
+		// but denies ajustes): the status GET returned 403, entitled stayed
+		// null and the panel rendered nothing.
 		r.With(s.requireBOSession, rootOnlyGate).Post("/members/whatsapp/subscribe", s.handleBOMembersWhatsAppSubscribe)
-		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)
-		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
-		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Get("/members/whatsapp/ws", s.handleBOMembersWhatsAppWS)
-		r.With(s.requireBOSession, ajustesGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/connect", s.handleBOMembersWhatsAppConnect)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/whatsapp/ws", s.handleBOMembersWhatsAppWS)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/members/whatsapp/cancel", s.handleBOMembersWhatsAppCancel)
 
 		// Fichaje and schedules.
