@@ -18,6 +18,8 @@ type botTenantConfig struct {
 	DisableAttachments bool   `json:"disable_attachments"`
 	CustomInstructions string `json:"custom_instructions"`
 	ContactPhone       string `json:"contact_phone"`
+	// ContactName overrides the contact-card display name (defaults to the brand).
+	ContactName string `json:"contact_name"`
 	// Rules overrides the default critical rules block of the system prompt.
 	// Empty means use botDefaultRules.
 	Rules string `json:"rules"`

@@ -458,7 +458,8 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 
 	messages := s.botLoadHistory(ctx, restaurantID, msg.Sender)
 	tools := botToolDefs(tenant)
-	exec := s.botToolExecutorFor(restaurantID, msg, tenant)
+	turn := &botTurnState{}
+	exec := s.botToolExecutorForTurn(restaurantID, msg, tenant, turn)
 
 	result, err := s.botRunAgentLoop(ctx, restaurantID, tenant.Model, system, messages, tools, exec)
 	if err != nil {
@@ -468,8 +469,9 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	}
 	// If the model ended its turn without actually delivering anything (plain
 	// text, or only read-only tools), send the final assistant text so the
-	// customer is never left in silence.
-	if !botDeliveredReply(result.ToolCalls) {
+	// customer is never left in silence. A server-side notice (same-day policy)
+	// counts as delivered and must not be duplicated.
+	if !botDeliveredReply(result.ToolCalls) && !turn.noticeDelivered {
 		if text := botFinalAssistantText(result.Messages); text != "" {
 			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
 			}

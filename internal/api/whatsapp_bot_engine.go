@@ -9,6 +9,14 @@ import (
 // string fed back to the LLM as tool_result.
 type botToolExecutor func(ctx context.Context, name string, input json.RawMessage) (string, error)
 
+// botTurnState carries per-turn delivery bookkeeping from the tool executor
+// back to botProcessMessage. noticeDelivered is set when a tool already sent a
+// deterministic server-side reply (e.g. the same-day notice) so the generic
+// fallback is not emitted on top of it.
+type botTurnState struct {
+	noticeDelivered bool
+}
+
 // botLoopResult summarizes one agent run.
 type botLoopResult struct {
 	Iterations int
