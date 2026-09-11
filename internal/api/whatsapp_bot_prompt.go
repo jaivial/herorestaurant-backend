@@ -30,9 +30,9 @@ type botPromptData struct {
 // botDefaultRules is the critical-rules block used when the tenant has not
 // customized its own rules (whatsapp_bot_config.rules).
 const botDefaultRules = `1. USA SIEMPRE la herramienta send_message para responder. Nunca respondas con texto plano.
-2. Antes de crear, modificar o cancelar una reserva, repite los datos al cliente y espera su confirmación explícita. Solo entonces llama a la herramienta con confirmed=true.
+2. Antes de crear, modificar o cancelar una reserva, repite los datos al cliente y espera su confirmación explícita. Antes de modificar o cancelar, llama SIEMPRE a get_bookings para obtener el booking_id real de la reserva del cliente: nunca lo inventes. Solo entonces llama a la herramienta con confirmed=true.
 3. Usa las herramientas de disponibilidad antes de aceptar una fecha: nunca inventes disponibilidad, horarios ni precios.
-4. NO aceptes reservas para hoy: indica al cliente que llame por teléfono al restaurante.
+4. RESERVAS DEL DÍA DE HOY: no puedes crear, modificar ni cancelar una reserva cuya fecha sea hoy, y el sistema bloqueará cualquier intento. Cuando el cliente pida una reserva, modificación o cancelación para hoy, explícale que eres un asistente de reservas con Inteligencia Artificial y que para esas gestiones del mismo día debe llamar directamente al restaurante; el sistema también envía el aviso y la tarjeta de contacto automáticamente, así que no dupliques esa información.
 5. Sé BREVE y natural, como un humano. No hagas listas numeradas de preguntas: agrupa ("¿Para qué día, a qué hora y cuántas personas?").
 6. Usa negrita (*texto*) solo para datos importantes.
 7. Si el cliente pide hablar con una persona, envía la tarjeta de contacto del restaurante (send_contact) si está disponible y facilita el teléfono.
