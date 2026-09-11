@@ -13,7 +13,20 @@ import (
 // botToolExecutorFor returns the executor closure bound to a tenant and the
 // current WhatsApp sender. Every tool is scoped by restaurantID.
 func (s *Server) botToolExecutorFor(restaurantID int, msg botWebhookMessage, tenant botTenantConfig) botToolExecutor {
+	return s.botToolExecutorForTurn(restaurantID, msg, tenant, nil)
+}
+
+// botToolExecutorForTurn binds the executor to a per-turn state so server-side
+// replies (like the same-day notice) can suppress the generic fallback.
+func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage, tenant botTenantConfig, state *botTurnState) botToolExecutor {
 	return func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		// Same-day policy is enforced before any mutation tool runs.
+		if blocked, out := s.botSameDayOperation(ctx, restaurantID, msg, tenant, name, input); blocked {
+			if state != nil {
+				state.noticeDelivered = true
+			}
+			return out, nil
+		}
 		out, err := s.botExecuteTool(ctx, restaurantID, msg, tenant, name, input)
 		if err != nil {
 			return "", err
@@ -193,25 +206,10 @@ func (s *Server) botToolSendLocation(ctx context.Context, restaurantID int, msg 
 }
 
 func (s *Server) botToolSendContact(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) (string, error) {
-	phone := strings.TrimSpace(tenant.ContactPhone)
-	if phone == "" {
-		var telefono sql.NullString
-		_ = s.db.QueryRowContext(ctx, `SELECT telefono FROM restaurant_info WHERE restaurant_id = ? LIMIT 1`, restaurantID).Scan(&telefono)
-		phone = strings.TrimSpace(telefono.String)
-	}
-	if phone == "" {
-		return botJSON(map[string]any{"error": "el restaurante no tiene teléfono configurado"}), nil
-	}
-	brand := s.botBrandName(ctx, restaurantID)
-
-	gw, ok := s.botGatewayFor(ctx, restaurantID)
-	if !ok {
-		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
-	}
-	if err := gw.SendContact(ctx, msg.Sender, waContact{FullName: brand, Phone: phone, Organization: brand}); err != nil {
+	phone, err := s.botSendContactCard(ctx, restaurantID, msg, tenant)
+	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-	s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "assistant", "Contacto: "+brand+" "+phone, "send_contact", "agent")
 	return botJSON(map[string]any{"sent": true, "phone": phone}), nil
 }
 
@@ -475,11 +473,7 @@ type botBookingRow struct {
 }
 
 func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone string) ([]botBookingRow, error) {
-	digits := digitsOnly(phone)
-	national := digits
-	if strings.HasPrefix(digits, "34") && len(digits) == 11 {
-		national = digits[2:]
-	}
+	national, digits := botPhoneVariants(phone)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id,
 			DATE_FORMAT(reservation_date, '%Y-%m-%d'),
@@ -878,25 +872,8 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 }
 
 func (s *Server) botBookingBelongsToPhone(ctx context.Context, restaurantID int, bookingID int64, phone string) (bool, error) {
-	digits := digitsOnly(phone)
-	national := digits
-	if strings.HasPrefix(digits, "34") && len(digits) == 11 {
-		national = digits[2:]
-	}
-	var one int
-	err := s.db.QueryRowContext(ctx, `
-		SELECT 1 FROM bookings
-		WHERE id = ? AND restaurant_id = ?
-			AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
-		LIMIT 1
-	`, bookingID, restaurantID, national, digits, digits).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	_, found, err := s.botOwnedBookingDate(ctx, restaurantID, bookingID, phone)
+	return found, err
 }
 
 func clampBotInt(v, lo, hi int) int {
