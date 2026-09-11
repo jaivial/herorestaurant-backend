@@ -28,8 +28,15 @@ type posAccountingVATBucket struct {
 }
 
 func accountingVATBuckets(lines []posAccountingLine, ticketDiscount int64) ([]posAccountingVATBucket, error) {
-	if ticketDiscount < 0 {
-		return nil, errors.New("invalid discount")
+	return accountingVATBucketsWithSurcharge(lines, ticketDiscount, 0)
+}
+
+// accountingVATBucketsWithSurcharge mirrors calculatePOSTotalsWithAdjustments:
+// the ticket discount and surcharge are allocated over the net line base, so the
+// per-rate split exported here matches the ticket's own tax_cents.
+func accountingVATBucketsWithSurcharge(lines []posAccountingLine, ticketDiscount, ticketSurcharge int64) ([]posAccountingVATBucket, error) {
+	if ticketDiscount < 0 || ticketSurcharge < 0 {
+		return nil, errors.New("invalid adjustment")
 	}
 	var total int64
 	for _, line := range lines {
@@ -43,6 +50,7 @@ func accountingVATBuckets(lines []posAccountingLine, ticketDiscount int64) ([]po
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i].ID < lines[j].ID })
 	remaining := ticketDiscount
+	remainingSurcharge := ticketSurcharge
 	buckets := map[string]posAccountingVATBucket{}
 	for index, line := range lines {
 		allocated := int64(0)
@@ -57,7 +65,19 @@ func accountingVATBuckets(lines []posAccountingLine, ticketDiscount int64) ([]po
 			}
 			remaining -= allocated
 		}
-		gross := line.GrossCents - allocated
+		surchargeShare := int64(0)
+		if ticketSurcharge > 0 && total > 0 {
+			if index == len(lines)-1 {
+				surchargeShare = remainingSurcharge
+			} else {
+				surchargeShare = int64(math.Round(float64(ticketSurcharge) * float64(line.GrossCents) / float64(total)))
+				if surchargeShare > remainingSurcharge {
+					surchargeShare = remainingSurcharge
+				}
+			}
+			remainingSurcharge -= surchargeShare
+		}
+		gross := line.GrossCents - allocated + surchargeShare
 		tax := int64(math.Round(float64(gross) * line.VATRate / (100 + line.VATRate)))
 		key := strconv.FormatFloat(line.VATRate, 'f', 2, 64)
 		bucket := buckets[key]
@@ -121,7 +141,7 @@ func accountingCSVCell(value string) string {
 }
 
 func (s *Server) accountingSalesVATCSV(ctx context.Context, restaurantID int, from, to string) (string, int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,t.ticket_number,v.service_date,l.id,l.line_total_gross_cents,l.vat_rate_snapshot,t.ticket_discount_cents FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id JOIN pos_ticket_lines l ON l.restaurant_id=t.restaurant_id AND l.ticket_id=t.id AND l.status='ACTIVE' WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') ORDER BY t.id,l.id`, restaurantID, from, to)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id,t.ticket_number,v.service_date,l.id,ROUND(l.quantity*l.unit_price_gross_cents)-l.discount_cents,l.vat_rate_snapshot,t.ticket_discount_cents,t.surcharge_cents FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id JOIN pos_ticket_lines l ON l.restaurant_id=t.restaurant_id AND l.ticket_id=t.id AND l.status='ACTIVE' WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') ORDER BY t.id,l.id`, restaurantID, from, to)
 	if err != nil {
 		return "", 0, err
 	}
@@ -130,19 +150,20 @@ func (s *Server) accountingSalesVATCSV(ctx context.Context, restaurantID int, fr
 		id           int64
 		number, date string
 		discount     int64
+		surcharge    int64
 		lines        []posAccountingLine
 	}
 	tickets := []ticket{}
 	var current *ticket
 	for rows.Next() {
-		var id, lineID, gross, discount int64
+		var id, lineID, gross, discount, surcharge int64
 		var number, date string
 		var vat float64
-		if err = rows.Scan(&id, &number, &date, &lineID, &gross, &vat, &discount); err != nil {
+		if err = rows.Scan(&id, &number, &date, &lineID, &gross, &vat, &discount, &surcharge); err != nil {
 			return "", 0, err
 		}
 		if current == nil || current.id != id {
-			tickets = append(tickets, ticket{id: id, number: number, date: normalizePOSDate(date), discount: discount})
+			tickets = append(tickets, ticket{id: id, number: number, date: normalizePOSDate(date), discount: discount, surcharge: surcharge})
 			current = &tickets[len(tickets)-1]
 		}
 		current.lines = append(current.lines, posAccountingLine{ID: lineID, GrossCents: gross, VATRate: vat})
@@ -151,7 +172,7 @@ func (s *Server) accountingSalesVATCSV(ctx context.Context, restaurantID int, fr
 	b.WriteString("ticket,date,vat_rate,net_cents,tax_cents,gross_cents\n")
 	count := 0
 	for _, item := range tickets {
-		buckets, err := accountingVATBuckets(item.lines, item.discount)
+		buckets, err := accountingVATBucketsWithSurcharge(item.lines, item.discount, item.surcharge)
 		if err != nil {
 			return "", 0, err
 		}
@@ -167,28 +188,28 @@ func (s *Server) accountingPaymentsCSV(ctx context.Context, restaurantID int, fr
 	return s.accountingSimpleCSV(ctx, `SELECT t.ticket_number,v.service_date,p.method,p.amount_cents,COALESCE(p.provider,''),COALESCE(p.provider_reference,'') FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE p.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND p.status='CAPTURED' ORDER BY v.service_date,p.id`, []string{"ticket", "date", "method", "amount_cents", "provider", "provider_reference"}, restaurantID, from, to)
 }
 func (s *Server) accountingRefundsCSV(ctx context.Context, restaurantID int, from, to string) (string, int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.ticket_id,t.ticket_number,v.service_date,r.amount_cents,r.payment_method,r.reason,t.ticket_discount_cents,rl.id,rl.amount_cents,l.vat_rate_snapshot FROM pos_refunds r JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN pos_refund_lines rl ON rl.restaurant_id=r.restaurant_id AND rl.refund_id=r.id LEFT JOIN pos_ticket_lines l ON l.restaurant_id=rl.restaurant_id AND l.id=rl.ticket_line_id WHERE r.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND r.status='COMPLETED' ORDER BY r.id,rl.id`, restaurantID, from, to)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.ticket_id,t.ticket_number,v.service_date,r.amount_cents,r.payment_method,r.reason,t.ticket_discount_cents,t.surcharge_cents,rl.id,rl.amount_cents,l.vat_rate_snapshot FROM pos_refunds r JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN pos_refund_lines rl ON rl.restaurant_id=r.restaurant_id AND rl.refund_id=r.id LEFT JOIN pos_ticket_lines l ON l.restaurant_id=rl.restaurant_id AND l.id=rl.ticket_line_id WHERE r.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND r.status='COMPLETED' ORDER BY r.id,rl.id`, restaurantID, from, to)
 	if err != nil {
 		return "", 0, err
 	}
 	defer rows.Close()
 	type refund struct {
-		id, ticketID, amount, ticketDiscount int64
-		ticket, date, method, reason         string
-		lines                                []posAccountingLine
+		id, ticketID, amount, ticketDiscount, ticketSurcharge int64
+		ticket, date, method, reason                          string
+		lines                                                 []posAccountingLine
 	}
 	items := []refund{}
 	var current *refund
 	for rows.Next() {
-		var id, ticketID, amount, ticketDiscount int64
+		var id, ticketID, amount, ticketDiscount, ticketSurcharge int64
 		var ticket, date, method, reason string
 		var lineID, lineAmount sql.NullInt64
 		var vat sql.NullFloat64
-		if err = rows.Scan(&id, &ticketID, &ticket, &date, &amount, &method, &reason, &ticketDiscount, &lineID, &lineAmount, &vat); err != nil {
+		if err = rows.Scan(&id, &ticketID, &ticket, &date, &amount, &method, &reason, &ticketDiscount, &ticketSurcharge, &lineID, &lineAmount, &vat); err != nil {
 			return "", 0, err
 		}
 		if current == nil || current.id != id {
-			items = append(items, refund{id: id, ticketID: ticketID, amount: amount, ticketDiscount: ticketDiscount, ticket: ticket, date: normalizePOSDate(date), method: method, reason: reason})
+			items = append(items, refund{id: id, ticketID: ticketID, amount: amount, ticketDiscount: ticketDiscount, ticketSurcharge: ticketSurcharge, ticket: ticket, date: normalizePOSDate(date), method: method, reason: reason})
 			current = &items[len(items)-1]
 		}
 		if lineID.Valid {
@@ -201,7 +222,7 @@ func (s *Server) accountingRefundsCSV(ctx context.Context, restaurantID int, fro
 	for _, item := range items {
 		lines := item.lines
 		if len(lines) == 0 {
-			lineRows, queryErr := s.db.QueryContext(ctx, `SELECT id,line_total_gross_cents,vat_rate_snapshot FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`, restaurantID, item.ticketID)
+			lineRows, queryErr := s.db.QueryContext(ctx, `SELECT id,ROUND(quantity*unit_price_gross_cents)-discount_cents,vat_rate_snapshot FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`, restaurantID, item.ticketID)
 			if queryErr != nil {
 				return "", 0, queryErr
 			}
@@ -215,8 +236,8 @@ func (s *Server) accountingRefundsCSV(ctx context.Context, restaurantID int, fro
 			}
 			lineRows.Close()
 		}
-		if len(item.lines) == 0 && item.ticketDiscount > 0 {
-			adjusted, discountErr := accountingVATBuckets(lines, item.ticketDiscount)
+		if len(item.lines) == 0 && (item.ticketDiscount > 0 || item.ticketSurcharge > 0) {
+			adjusted, discountErr := accountingVATBucketsWithSurcharge(lines, item.ticketDiscount, item.ticketSurcharge)
 			if discountErr != nil {
 				return "", 0, discountErr
 			}
