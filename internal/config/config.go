@@ -16,47 +16,52 @@ type MySQLConfig struct {
 }
 
 type Config struct {
-	Addr                        string
-	StaticDir                   string
-	CORSAllowOrigins            string
-	AdminToken                  string
-	BunnyPullBaseURL            string
-	BunnyStorageZone            string
-	BunnyStorageKey             string
-	BunnyMemberPullBaseURL      string
-	BunnyMemberStorageZone      string
-	BunnyMemberStorageKey       string
-	BunnyPrivateStorageZone     string
-	BunnyPrivateStorageKey      string
-	StockDocumentRetentionDays  int
-	CloudflareAPIToken          string
-	CloudflareAPIEmail          string
-	CloudflareAPIKey            string
-	CloudflareAccountID         string
-	CloudflareZoneID            string
-	StripeSecretKey             string
-	StripeWebhookSecret         string
-	RegisterAPIToken            string // security token required on domain-register (anti-abuse)
-	InstaticBasePort            int
-	InstaticBaseDir             string
-	InstaticServerDir           string
-	InstaticMaxInstances        int
-	InstaticSeedAdminEmail      string
-	InstaticSeedAdminPassword   string
-	OpenAIAPIKey                string
-	OpenAIImageEditModel        string
-	OpenAIImageEditURL          string
-	OpenAITimeout               time.Duration
-	OpenAIFetchTimeout          time.Duration
-	OpenAIMaxInputBytes         int
-	OpenAIMaxOutputBytes        int
-	OpenAIConcurrency           int
-	PreShiftReminderMinutes     int
-	StockDigestHour             int
-	MiniMaxAPIKey               string
-	MiniMaxBaseURL              string
-	MiniMaxModel                string
-	VaultToken                  string
+	Addr                       string
+	StaticDir                  string
+	CORSAllowOrigins           string
+	AdminToken                 string
+	BunnyPullBaseURL           string
+	BunnyStorageZone           string
+	BunnyStorageKey            string
+	BunnyMemberPullBaseURL     string
+	BunnyMemberStorageZone     string
+	BunnyMemberStorageKey      string
+	BunnyPrivateStorageZone    string
+	BunnyPrivateStorageKey     string
+	StockDocumentRetentionDays int
+	CloudflareAPIToken         string
+	CloudflareAPIEmail         string
+	CloudflareAPIKey           string
+	CloudflareAccountID        string
+	CloudflareZoneID           string
+	StripeSecretKey            string
+	StripeWebhookSecret        string
+	RegisterAPIToken           string // security token required on domain-register (anti-abuse)
+	InstaticBasePort           int
+	InstaticBaseDir            string
+	InstaticServerDir          string
+	InstaticMaxInstances       int
+	InstaticSeedAdminEmail     string
+	InstaticSeedAdminPassword  string
+	OpenAIAPIKey               string
+	OpenAIImageEditModel       string
+	OpenAIImageEditURL         string
+	OpenAITimeout              time.Duration
+	OpenAIFetchTimeout         time.Duration
+	OpenAIMaxInputBytes        int
+	OpenAIMaxOutputBytes       int
+	OpenAIConcurrency          int
+	PreShiftReminderMinutes    int
+	StockDigestHour            int
+	MiniMaxAPIKey              string
+	MiniMaxBaseURL             string
+	MiniMaxModel               string
+	VaultToken                 string
+	// VaultKey is the shared bearer secret required by the admin API and its
+	// WebSockets. Unlike VaultToken (encryption at rest) this authenticates
+	// requests; it is injected server-side by the backoffice SSR proxy so it
+	// never reaches the browser.
+	VaultKey                    string
 	MiniMaxTranslateTimeout     time.Duration
 	MiniMaxTranslateConcurrency int
 	StockOCRProvider            string
@@ -131,6 +136,7 @@ func Load() Config {
 		MiniMaxBaseURL:              strings.TrimRight(getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic"), "/"),
 		MiniMaxModel:                getenv("MINIMAX_MODEL", "MiniMax-M3"),
 		VaultToken:                  strings.TrimSpace(os.Getenv("VAULT_TOKEN")),
+		VaultKey:                    strings.TrimSpace(os.Getenv("VAULT_KEY")),
 		MiniMaxTranslateTimeout:     time.Duration(getenvInt("MINIMAX_TRANSLATE_TIMEOUT_SECONDS", 20, 5, 120)) * time.Second,
 		MiniMaxTranslateConcurrency: getenvInt("MINIMAX_TRANSLATE_CONCURRENCY", 4, 1, 32),
 		StockOCRProvider:            strings.ToLower(strings.TrimSpace(getenv("STOCK_OCR_PROVIDER", "minimax"))),
