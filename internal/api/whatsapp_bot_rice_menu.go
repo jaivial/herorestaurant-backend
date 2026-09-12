@@ -54,7 +54,9 @@ func botRiceSupplement(name string) string {
 	if len(m) < 2 {
 		return ""
 	}
-	return "+" + strings.ReplaceAll(strings.TrimSpace(m[1]), " ", "") + "€"
+	value := strings.ReplaceAll(strings.TrimSpace(m[1]), " ", "")
+	value = strings.TrimPrefix(value, "+")
+	return "+" + value + "€"
 }
 
 // botRiceNeedsAdvanceOrder reports whether the rice must be ordered ahead.
