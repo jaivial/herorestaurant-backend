@@ -2475,12 +2475,26 @@ type boEmailProviderConfig struct {
 	SMTPHost         string `json:"smtpHost"`
 	SMTPPort         int    `json:"smtpPort"`
 	SMTPUsername     string `json:"smtpUsername"`
-	SMTPPassword     string `json:"smtpPassword"`
+	SMTPPassword     string `json:"-"`
 	SMTPFromEmail    string `json:"smtpFromEmail"`
 	SMTEncryption    string `json:"smtpEncryption"`
-	GmailAppPassword string `json:"gmailAppPassword"`
+	GmailAppPassword string `json:"-"`
 	GmailFromEmail   string `json:"gmailFromEmail"`
 	IsActive         bool   `json:"isActive"`
+	// Has* flags tell the UI whether a secret is stored without ever sending the
+	// secret back, so a compromised/curious backoffice session cannot read it.
+	HasSMTPPassword     bool `json:"hasSmtpPassword"`
+	HasGmailAppPassword bool `json:"hasGmailAppPassword"`
+}
+
+// sanitized returns a copy safe to serialize to the client: the secrets are
+// stripped and replaced by their presence flags.
+func (c boEmailProviderConfig) sanitized() boEmailProviderConfig {
+	c.HasSMTPPassword = strings.TrimSpace(c.SMTPPassword) != ""
+	c.HasGmailAppPassword = strings.TrimSpace(c.GmailAppPassword) != ""
+	c.SMTPPassword = ""
+	c.GmailAppPassword = ""
+	return c
 }
 
 type boEmailProviderSetRequest struct {
@@ -2608,7 +2622,7 @@ func (s *Server) handleBOEmailProviderGet(w http.ResponseWriter, r *http.Request
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":       true,
-		"config":        cfg,
+		"config":        cfg.sanitized(),
 		"isComplete":    isComplete,
 		"missingFields": missingFields,
 	})
@@ -2674,7 +2688,7 @@ func (s *Server) handleBOEmailProviderSet(w http.ResponseWriter, r *http.Request
 	if req.SMTPUsername != nil {
 		current.SMTPUsername = strings.TrimSpace(*req.SMTPUsername)
 	}
-	if req.SMTPPassword != nil {
+	if req.SMTPPassword != nil && strings.TrimSpace(*req.SMTPPassword) != "" {
 		current.SMTPPassword = *req.SMTPPassword
 	}
 	if req.SMTPFromEmail != nil {
@@ -2683,7 +2697,7 @@ func (s *Server) handleBOEmailProviderSet(w http.ResponseWriter, r *http.Request
 	if req.SMTEncryption != nil {
 		current.SMTEncryption = normalizeEncryption(*req.SMTEncryption)
 	}
-	if req.GmailAppPassword != nil {
+	if req.GmailAppPassword != nil && strings.TrimSpace(*req.GmailAppPassword) != "" {
 		current.GmailAppPassword = *req.GmailAppPassword
 	}
 	if req.GmailFromEmail != nil {
@@ -2733,6 +2747,6 @@ func (s *Server) handleBOEmailProviderSet(w http.ResponseWriter, r *http.Request
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
-		"config":  stored,
+		"config":  stored.sanitized(),
 	})
 }
