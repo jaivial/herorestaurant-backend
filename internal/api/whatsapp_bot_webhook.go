@@ -451,11 +451,18 @@ func sanitizeBotPushName(name string) string {
 // botProcessMessage runs the full agent turn for an inbound message.
 func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg botWebhookMessage) error {
 	tenant := s.loadBotTenantConfig(ctx, restaurantID)
-	system := s.buildBotSystemPrompt(ctx, restaurantID, msg.PushName, msg.Sender, tenant)
 
 	s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "user", msg.Text, "", "inbound")
 	s.botTouchSession(ctx, restaurantID, msg.Sender, msg.PushName)
 
+	// Same-day policy is resolved from the raw message before the model runs, so
+	// a same-day create/modify/cancel gets the AI notice + contact card instead
+	// of a clarifying question the model would ask first.
+	if s.botSameDayIntentGuard(ctx, restaurantID, msg, tenant) {
+		return nil
+	}
+
+	system := s.buildBotSystemPrompt(ctx, restaurantID, msg.PushName, msg.Sender, tenant)
 	messages := s.botLoadHistory(ctx, restaurantID, msg.Sender)
 	tools := botToolDefs(tenant)
 	turn := &botTurnState{}

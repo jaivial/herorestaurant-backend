@@ -175,6 +175,11 @@ func (s *Server) loadBotPromptData(ctx context.Context, restaurantID int, pushNa
 	if tenant.ContactPhone != "" {
 		data.Phone = tenant.ContactPhone
 	}
+	// Reuse the shared resolver so the prompt also sees the restaurant's own
+	// WhatsApp number when restaurant_info/contact_phone are empty.
+	if data.Phone == "" {
+		data.Phone = s.botRestaurantPhone(ctx, restaurantID)
+	}
 
 	if rices, _, err := s.loadRiceTypes(ctx, restaurantID); err == nil {
 		data.RiceTypes = rices
