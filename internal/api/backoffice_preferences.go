@@ -30,7 +30,7 @@ var allowedBOPreferences = map[string]map[string]struct{}{
 // Coordination id: reservas_columns_realtime_v1
 var reservasColumnIDs = []string{
 	"added", "mesa", "time", "client", "status", "floor",
-	"salon", "pax", "children", "phone", "rice", "comment",
+	"salon", "pax", "children", "highChairs", "strollers", "phone", "rice", "comment",
 }
 
 const boPrefReservasVisibleColumns = "reservasVisibleColumns"
