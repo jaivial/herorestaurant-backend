@@ -49,6 +49,7 @@ var boAppVersion04Modules = map[string]bool{
 	boSectionFacturas: true,
 	boSectionCampanas: true,
 	boSectionAnuncios: true,
+	boSectionQR:       true,
 }
 
 // boAppVersion04Capabilities is the capability whitelist of boAppVersion04:

@@ -28,6 +28,7 @@ const (
 	boSectionPlataforma   = "plataforma"
 	boSectionCampanas     = "campanas"
 	boSectionAnuncios     = "anuncios"
+	boSectionQR           = "qr"
 )
 
 var defaultRolePermissions = map[string]map[string]bool{
@@ -48,6 +49,7 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionPlataforma:   true,
 		boSectionCampanas:     true,
 		boSectionAnuncios:     true,
+		boSectionQR:           true,
 	},
 	"admin": {
 		boSectionReservas:     true,
@@ -65,6 +67,7 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionEstadisticas: true,
 		boSectionCampanas:     true,
 		boSectionAnuncios:     true,
+		boSectionQR:           true,
 	},
 	"metre": {
 		boSectionReservas:     true,
@@ -196,6 +199,8 @@ func normalizeBOSection(section string) string {
 		return boSectionCampanas
 	case boSectionAnuncios:
 		return boSectionAnuncios
+	case boSectionQR:
+		return boSectionQR
 	default:
 		return ""
 	}
