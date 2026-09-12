@@ -58,7 +58,7 @@ func (s *Server) handleBOPOSCardReconciliation(w http.ResponseWriter, r *http.Re
 		httpx.WriteError(w, 400, "Invalid report range")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT v.service_date,COUNT(*),COALESCE(SUM(p.amount_cents),0),SUM(CASE WHEN p.provider_reference IS NOT NULL AND p.provider_reference<>'' THEN 1 ELSE 0 END),COUNT(DISTINCT p.provider_reference) FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE p.restaurant_id=? AND p.method='CARD' AND p.status='CAPTURED' AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date ORDER BY v.service_date DESC`, a.ActiveRestaurantID, from, to)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT v.service_date,COUNT(*),COALESCE(SUM(p.amount_cents+p.tip_cents),0),SUM(CASE WHEN p.provider_reference IS NOT NULL AND p.provider_reference<>'' THEN 1 ELSE 0 END),COUNT(DISTINCT p.provider_reference),COALESCE(SUM(cr.amount_cents),0) FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN (SELECT r.restaurant_id,rv.service_date,SUM(r.amount_cents) AS amount_cents FROM pos_refunds r JOIN pos_tickets rt ON rt.restaurant_id=r.restaurant_id AND rt.id=r.ticket_id JOIN pos_visits rv ON rv.restaurant_id=rt.restaurant_id AND rv.id=rt.visit_id WHERE r.status='COMPLETED' AND r.payment_method='CARD' GROUP BY r.restaurant_id,rv.service_date) cr ON cr.restaurant_id=v.restaurant_id AND cr.service_date=v.service_date WHERE p.restaurant_id=? AND p.method='CARD' AND p.status='CAPTURED' AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date ORDER BY v.service_date DESC`, a.ActiveRestaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading card reconciliation")
 		return
@@ -68,12 +68,12 @@ func (s *Server) handleBOPOSCardReconciliation(w http.ResponseWriter, r *http.Re
 	for rows.Next() {
 		var date string
 		var payments, referenced, uniqueReferences int
-		var amount int64
-		if err = rows.Scan(&date, &payments, &amount, &referenced, &uniqueReferences); err != nil {
+		var amount, cardRefunds int64
+		if err = rows.Scan(&date, &payments, &amount, &referenced, &uniqueReferences, &cardRefunds); err != nil {
 			httpx.WriteError(w, 500, "Error reading card reconciliation")
 			return
 		}
-		items = append(items, map[string]any{"date": normalizePOSDate(date), "payments": payments, "amountCents": amount, "referencedPayments": referenced, "uniqueReferences": uniqueReferences, "referencesComplete": referenced == payments, "referencesUnique": uniqueReferences == payments})
+		items = append(items, map[string]any{"date": normalizePOSDate(date), "payments": payments, "amountCents": amount, "cardRefundsCents": cardRefunds, "referencedPayments": referenced, "uniqueReferences": uniqueReferences, "referencesComplete": referenced == payments, "referencesUnique": uniqueReferences == payments})
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "from": from, "to": to, "items": items})
 }
@@ -85,7 +85,7 @@ func (s *Server) handleBOPOSStockReport(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, 400, "Invalid report range")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT s.status,COUNT(*),COALESCE(SUM(s.qty_base_planned),0) FROM pos_ticket_line_stock s JOIN pos_tickets t ON t.restaurant_id=s.restaurant_id AND t.id=s.ticket_id WHERE s.restaurant_id=? AND DATE(t.paid_at) BETWEEN ? AND ? GROUP BY s.status ORDER BY s.status`, a.ActiveRestaurantID, from, to)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT s.status,COUNT(*),COALESCE(SUM(s.qty_base_planned),0) FROM pos_ticket_line_stock s JOIN pos_tickets t ON t.restaurant_id=s.restaurant_id AND t.id=s.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE s.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY s.status ORDER BY s.status`, a.ActiveRestaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading POS stock report")
 		return

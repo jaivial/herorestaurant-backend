@@ -902,9 +902,29 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "POS product not found")
 		return
 	}
-	// Use price override if provided, otherwise use catalog price
-	if in.UnitPriceOverrideCents != nil && *in.UnitPriceOverrideCents >= 0 {
-		price = *in.UnitPriceOverrideCents
+	// A price override is an unbounded discount path, so it is gated by the
+	// discount permission, bounded, and always audited against the catalog price.
+	catalogPrice := price
+	overrideApplied := false
+	if in.UnitPriceOverrideCents != nil {
+		override := *in.UnitPriceOverrideCents
+		if override < 0 || override > 100000000 {
+			httpx.WriteError(w, http.StatusBadRequest, "Invalid price override")
+			return
+		}
+		if override != catalogPrice {
+			allowed, permErr := s.boPOSPermissionAllowed(r.Context(), a, posPermissionDiscount)
+			if permErr != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error validating POS permission")
+				return
+			}
+			if !allowed {
+				httpx.WriteError(w, http.StatusForbidden, "Forbidden")
+				return
+			}
+		}
+		price = override
+		overrideApplied = override != catalogPrice
 	}
 	lineTotal := int64(math.Round(in.Quantity * float64(price)))
 	lineRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, price, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, a.User.ID)
@@ -919,10 +939,17 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
 			return
 		}
-		// Real-time stock deduction when stock_mode is LIVE
+		// Real-time stock deduction when stock_mode is LIVE. A failure aborts the
+		// whole line insert; a half-applied ledger must never commit.
 		settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
 		if settingsErr == nil && settings.StockMode == "LIVE" {
-			_, _ = s.deductStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, lineID, in.ProductID, in.Quantity, "pos-line-add:"+in.IdempotencyKey)
+			if _, err = s.deductStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, lineID, in.ProductID, in.Quantity, "pos-line-add:"+in.IdempotencyKey); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error deducting stock")
+				return
+			}
+		}
+		if overrideApplied {
+			_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PRICE_OVERRIDE',JSON_OBJECT('productId',?,'catalogPriceCents',?,'overridePriceCents',?),?)`, a.ActiveRestaurantID, lineID, in.ProductID, catalogPrice, price, a.User.ID)
 		}
 	}
 	if err = tx.Commit(); err != nil {
@@ -966,10 +993,14 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
-	// Real-time stock restoration when stock_mode is LIVE (before voiding the line)
+	// Real-time stock restoration when stock_mode is LIVE (before voiding the line).
+	// A failure aborts the void so the snapshot can never be left deducted.
 	settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
 	if settingsErr == nil && settings.StockMode == "LIVE" {
-		_ = s.restoreStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, lineID, "pos-line-void:"+strconv.FormatInt(ticketID, 10))
+		if err = s.restoreStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, lineID, "pos-line-void:"+strconv.FormatInt(ticketID, 10)); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error restoring stock")
+			return
+		}
 	}
 	res, err := tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=NOW() WHERE restaurant_id=? AND ticket_id=? AND id=? AND status='ACTIVE'`, strings.TrimSpace(in.Reason), a.User.ID, a.ActiveRestaurantID, ticketID, lineID)
 	if err != nil {
@@ -1002,8 +1033,9 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		AmountCents int64  `json:"amountCents"`
-		Reason      string `json:"reason"`
+		AmountCents     int64  `json:"amountCents"`
+		Reason          string `json:"reason"`
+		ExpectedVersion int    `json:"expectedVersion"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || in.AmountCents < 0 || in.AmountCents > 100000000 || in.AmountCents > 0 && strings.TrimSpace(in.Reason) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid discount")
@@ -1016,8 +1048,13 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var status string
-	if err = tx.QueryRowContext(r.Context(), `SELECT status FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status); err != nil || status != "OPEN" {
+	var version int
+	if err = tx.QueryRowContext(r.Context(), `SELECT status,version FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &version); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
+		return
+	}
+	if in.ExpectedVersion > 0 && in.ExpectedVersion != version {
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Ticket changed", "code": "STALE_TICKET"})
 		return
 	}
 	if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, in.AmountCents); err != nil {

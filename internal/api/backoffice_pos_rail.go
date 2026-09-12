@@ -142,8 +142,9 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	targetID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var in struct {
-		SourceVisitIDs []int64 `json:"sourceVisitIds"`
-		IdempotencyKey string  `json:"idempotencyKey"`
+		SourceVisitIDs  []int64 `json:"sourceVisitIds"`
+		IdempotencyKey  string  `json:"idempotencyKey"`
+		ExpectedVersion int     `json:"expectedVersion"`
 	}
 	if targetID <= 0 || !posDecodeBody(w, r, &in) || len(in.SourceVisitIDs) == 0 || strings.TrimSpace(in.IdempotencyKey) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid merge request")
@@ -201,20 +202,26 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var targetStatus, targetChannel string
+	var targetStatus, targetChannel, targetServiceDate string
 	var targetCovers int
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,channel,covers FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, targetID).Scan(&targetStatus, &targetChannel, &targetCovers); err != nil || targetStatus != "OPEN" || targetChannel != "DINE_IN" {
+	if err = tx.QueryRowContext(r.Context(), `SELECT status,channel,covers,service_date FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, targetID).Scan(&targetStatus, &targetChannel, &targetCovers, &targetServiceDate); err != nil || targetStatus != "OPEN" || targetChannel != "DINE_IN" {
 		httpx.WriteError(w, http.StatusConflict, "Target visit is not open")
 		return
 	}
+	targetServiceDate = normalizePOSDate(targetServiceDate)
 	var targetTicketID int64
 	if err = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_tickets WHERE restaurant_id=? AND visit_id=? AND status='OPEN' ORDER BY id LIMIT 1`, a.ActiveRestaurantID, targetID).Scan(&targetTicketID); err != nil {
 		httpx.WriteError(w, http.StatusConflict, "Target visit has no open ticket")
 		return
 	}
 	var mergedTicketDiscount, mergedSurcharge int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT ticket_discount_cents,surcharge_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, targetTicketID).Scan(&mergedTicketDiscount, &mergedSurcharge); err != nil {
+	var targetVersion int
+	if err = tx.QueryRowContext(r.Context(), `SELECT ticket_discount_cents,surcharge_cents,version FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, targetTicketID).Scan(&mergedTicketDiscount, &mergedSurcharge, &targetVersion); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading target adjustments")
+		return
+	}
+	if in.ExpectedVersion > 0 && in.ExpectedVersion != targetVersion {
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Ticket changed", "code": "STALE_TICKET"})
 		return
 	}
 
@@ -225,11 +232,17 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, "Cannot merge a visit into itself")
 			return
 		}
-		var sourceStatus, sourceChannel string
+		var sourceStatus, sourceChannel, sourceServiceDate string
 		var sourceCovers int
 		var parkedAt sql.NullTime
-		if err = tx.QueryRowContext(r.Context(), `SELECT status,channel,covers,parked_at FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, sourceID).Scan(&sourceStatus, &sourceChannel, &sourceCovers, &parkedAt); err != nil || sourceStatus != "OPEN" || sourceChannel != "DINE_IN" || parkedAt.Valid {
+		if err = tx.QueryRowContext(r.Context(), `SELECT status,channel,covers,parked_at,service_date FROM pos_visits WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, sourceID).Scan(&sourceStatus, &sourceChannel, &sourceCovers, &parkedAt, &sourceServiceDate); err != nil || sourceStatus != "OPEN" || sourceChannel != "DINE_IN" || parkedAt.Valid {
 			httpx.WriteError(w, http.StatusConflict, "Source visit is not open")
+			return
+		}
+		// Moving lines changes the business day a sale is reported in, so a merge
+		// must stay inside a single service date.
+		if normalizePOSDate(sourceServiceDate) != targetServiceDate {
+			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Visits belong to different business days", "code": "MERGE_DIFFERENT_BUSINESS_DAY"})
 			return
 		}
 		// A source that already took money must not be folded into another bill.
@@ -253,6 +266,12 @@ func (s *Server) handleBOPOSVisitMerge(w http.ResponseWriter, r *http.Request) {
 		affected, _ := res.RowsAffected()
 		// Update pos_ticket_line_stock to reference the new target ticket
 		_, _ = tx.ExecContext(r.Context(), `UPDATE pos_ticket_line_stock s JOIN pos_tickets t ON t.restaurant_id=s.restaurant_id AND t.id=s.ticket_id SET s.ticket_id=? WHERE s.restaurant_id=? AND t.visit_id=?`, targetTicketID, a.ActiveRestaurantID, sourceID)
+		// Re-point the source visit's kitchen dispatches so the KDS queue and the
+		// delta history do not treat regrouped dishes as new and cook them twice.
+		if _, err = tx.ExecContext(r.Context(), `UPDATE pos_kitchen_dispatches d JOIN pos_tickets t ON t.restaurant_id=d.restaurant_id AND t.id=d.ticket_id SET d.ticket_id=? WHERE d.restaurant_id=? AND t.visit_id=?`, targetTicketID, a.ActiveRestaurantID, sourceID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error moving kitchen dispatches")
+			return
+		}
 		movedLines += int(affected)
 		if _, err = tx.ExecContext(r.Context(), `UPDATE pos_ticket_adjustments a JOIN pos_tickets t ON t.restaurant_id=a.restaurant_id AND t.id=a.ticket_id SET a.ticket_id=? WHERE a.restaurant_id=? AND t.visit_id=? AND t.status='OPEN'`, targetTicketID, a.ActiveRestaurantID, sourceID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error moving source adjustments")

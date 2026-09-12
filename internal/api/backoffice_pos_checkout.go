@@ -403,7 +403,7 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in posCheckoutInput
-	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" || len(in.Payments) > 10 {
+	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" || len(in.IdempotencyKey) > 120 || len(in.Payments) > 10 {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid checkout")
 		return
 	}
@@ -682,7 +682,7 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		}
 		var sold, already float64
 		var lineTotal int64
-		if err = tx.QueryRowContext(r.Context(), `SELECT quantity,line_total_gross_cents,(SELECT COALESCE(SUM(rl.quantity),0) FROM pos_refund_lines rl JOIN pos_refunds rr ON rr.restaurant_id=rl.restaurant_id AND rr.id=rl.refund_id WHERE rl.restaurant_id=l.restaurant_id AND rl.ticket_line_id=l.id AND rr.status='COMPLETED') FROM pos_ticket_lines l WHERE l.restaurant_id=? AND l.ticket_id=? AND l.id=?`, a.ActiveRestaurantID, ticketID, line.TicketLineID).Scan(&sold, &lineTotal, &already); err != nil || already+line.Quantity > sold {
+		if err = tx.QueryRowContext(r.Context(), `SELECT quantity,line_total_gross_cents,(SELECT COALESCE(SUM(rl.quantity),0) FROM pos_refund_lines rl JOIN pos_refunds rr ON rr.restaurant_id=rl.restaurant_id AND rr.id=rl.refund_id WHERE rl.restaurant_id=l.restaurant_id AND rl.ticket_line_id=l.id AND rr.status='COMPLETED') FROM pos_ticket_lines l WHERE l.restaurant_id=? AND l.ticket_id=? AND l.id=? AND l.status='ACTIVE'`, a.ActiveRestaurantID, ticketID, line.TicketLineID).Scan(&sold, &lineTotal, &already); err != nil || already+line.Quantity > sold {
 			httpx.WriteError(w, 409, "Refund quantity exceeds sale")
 			return
 		}
@@ -697,7 +697,7 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if line.RestockRequested {
-			rows, rowErr := tx.QueryContext(r.Context(), `SELECT id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,status FROM pos_ticket_line_stock WHERE restaurant_id=? AND ticket_line_id=? AND status IN ('APPLIED','REVERSED') ORDER BY id`, a.ActiveRestaurantID, line.TicketLineID)
+			rows, rowErr := tx.QueryContext(r.Context(), `SELECT id,stock_item_id,warehouse_id,quantity_sold,qty_base_planned,status FROM pos_ticket_line_stock WHERE restaurant_id=? AND ticket_line_id=? AND status='APPLIED' ORDER BY id`, a.ActiveRestaurantID, line.TicketLineID)
 			if rowErr != nil {
 				httpx.WriteError(w, 500, "Error loading stock return")
 				return
