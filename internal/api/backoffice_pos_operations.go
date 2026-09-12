@@ -219,10 +219,14 @@ func (s *Server) handleBOPOSVisitCancel(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, 409, "Paid visit cannot be cancelled")
 		return
 	}
-	// Real-time stock restoration when stock_mode is LIVE (before cancelling)
+	// Real-time stock restoration when stock_mode is LIVE (before cancelling).
+	// A failure aborts the cancel so the snapshots can never be left deducted.
 	settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
 	if settingsErr == nil && settings.StockMode == "LIVE" {
-		_ = s.restoreStockForVisit(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, visitID, "pos-visit-cancel:"+strconv.FormatInt(visitID, 10))
+		if err = s.restoreStockForVisit(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, visitID, "pos-visit-cancel:"+strconv.FormatInt(visitID, 10)); err != nil {
+			httpx.WriteError(w, 500, "Error restoring stock")
+			return
+		}
 	}
 	var tableID sql.NullInt64
 	res, err := tx.ExecContext(r.Context(), `UPDATE pos_visits SET status='CANCELLED',closed_by=?,closed_at=NOW(),version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, a.User.ID, a.ActiveRestaurantID, visitID)
@@ -364,12 +368,16 @@ func (s *Server) handleBOPOSLinePatch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 404, "Ticket line not found")
 		return
 	}
-	// Real-time stock adjustment when stock_mode is LIVE
+	// Real-time stock adjustment when stock_mode is LIVE. A failure aborts the
+	// patch so the ledger and the line quantity can never diverge.
 	if productID.Valid && oldQuantity != in.Quantity {
 		settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
 		if settingsErr == nil && settings.StockMode == "LIVE" {
 			idempotencyKey := "pos-line-patch:" + strconv.FormatInt(ticketID, 10) + ":" + strconv.FormatInt(lineID, 10) + ":" + strconv.FormatInt(time.Now().UnixNano(), 10)
-			_ = s.adjustStockForQuantityChange(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, lineID, productID.Int64, oldQuantity, in.Quantity, idempotencyKey)
+			if err = s.adjustStockForQuantityChange(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, lineID, productID.Int64, oldQuantity, in.Quantity, idempotencyKey); err != nil {
+				httpx.WriteError(w, 500, "Error adjusting stock")
+				return
+			}
 		}
 	}
 	if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, ticketDiscount); err != nil {
@@ -456,6 +464,13 @@ func (s *Server) handleBOPOSShiftClose(w http.ResponseWriter, r *http.Request) {
 	summary, summaryErr := s.loadPOSCashSummary(r.Context(), tx, a.ActiveRestaurantID, id)
 	if summaryErr != nil {
 		httpx.WriteError(w, 500, "Error calculating cash")
+		return
+	}
+	// A shift Z is a signed closure; refuse it while service is still open,
+	// mirroring handleBOPOSCashClosureCreate so later sales cannot land in a day
+	// that already has a final Z.
+	if summary.OpenVisitCount > 0 || summary.OpenTicketCount > 0 {
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Close all open visits and tickets before the final Z close", "code": "OPEN_POS_ITEMS", "openVisitCount": summary.OpenVisitCount, "openTicketCount": summary.OpenTicketCount})
 		return
 	}
 	expected := summary.ExpectedCash

@@ -185,7 +185,10 @@ func (s *Server) handleBOPOSLineMove(w http.ResponseWriter, r *http.Request) {
 				// Restore the moved quantity's stock from the source line
 				// The new line will deduct it when created
 				idempotencyKey := "pos-line-move:" + in.IdempotencyKey + ":source"
-				_ = s.adjustStockForQuantityChange(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, sourceTicketID, lineID, productID.Int64, quantity, remaining, idempotencyKey)
+				if err = s.adjustStockForQuantityChange(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, sourceTicketID, lineID, productID.Int64, quantity, remaining, idempotencyKey); err != nil {
+					httpx.WriteError(w, 500, "Error adjusting stock")
+					return
+				}
 			}
 		}
 	}
@@ -198,7 +201,10 @@ func (s *Server) handleBOPOSLineMove(w http.ResponseWriter, r *http.Request) {
 			if in.Quantity != quantity {
 				settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
 				if settingsErr == nil && settings.StockMode == "LIVE" && productID.Valid {
-					_, _ = s.deductStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, in.TargetTicketID, newLineID, productID.Int64, in.Quantity, "pos-line-move:"+in.IdempotencyKey+":target")
+					if _, stockErr := s.deductStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, in.TargetTicketID, newLineID, productID.Int64, in.Quantity, "pos-line-move:"+in.IdempotencyKey+":target"); stockErr != nil {
+						httpx.WriteError(w, 500, "Error deducting stock")
+						return
+					}
 				}
 			} else {
 				// Full move: update stock tracking to reference new line

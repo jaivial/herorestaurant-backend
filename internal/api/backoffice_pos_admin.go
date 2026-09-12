@@ -98,7 +98,7 @@ func (s *Server) handleBOPOSExportSales(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, 400, "Invalid report range")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT t.ticket_number,v.service_date,v.service_type,v.channel,COALESCE(rt.name,''),v.covers,t.status,t.total_gross_cents,t.refunded_cents,t.stock_status FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? ORDER BY v.service_date,t.id`, a.ActiveRestaurantID, from, to)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT t.ticket_number,v.service_date,v.service_type,v.channel,COALESCE(rt.name,''),v.covers,t.status,t.total_gross_cents,t.refunded_cents,t.stock_status FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') ORDER BY v.service_date,t.id`, a.ActiveRestaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error exporting sales")
 		return
