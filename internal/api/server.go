@@ -755,6 +755,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Delete("/tables/{id}", s.handleBOPremiumTablesDelete)
 		r.With(s.requireBOSession, reservasGate).Post("/tables/{id}/texture-image", s.handleBOPremiumTablesTextureImageUpload)
 		r.With(s.requireBOSession, reservasGate).Get("/tables/ws", s.handleBOPremiumTablesWS)
+		// Realtime column-visibility sync for the reservations table.
+		r.With(s.requireBOSession, reservasGate).Get("/reservas/ws", s.handleBOReservasColumnsWS)
 		// Layout template (cross-day). Owns limit_area_template_points and
 		// draw_elements_template for the given floor.
 		r.With(s.requireBOSession, reservasGate).Get("/tables/template/{floorNumber}", s.handleBOPremiumTablesTemplateGet)
