@@ -59,8 +59,8 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 		},
 		{
 			Name:        "get_rice_menu",
-			Description: "Obtiene los tipos de arroz activos en la carta del restaurante. ÚSALO SIEMPRE antes de hablar de arroces: nunca inventes tipos de arroz.",
-			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+			Description: "Devuelve los arroces ACTIVOS del menú que aplica a una fecha: menú del día (lunes a viernes) o menú de fin de semana (sábado y domingo), con su tipo (seco/meloso/fideuá/paella), suplemento y si requiere encargo anticipado. ÚSALO SIEMPRE con la fecha de la reserva antes de hablar de arroces: nunca inventes ni confirmes un arroz que no aparezca en la lista devuelta.",
+			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha de la reserva en formato YYYY-MM-DD o dd/MM/yyyy. Si no se indica, se usa hoy."}}}`),
 		},
 		{
 			Name:        "list_menus",
