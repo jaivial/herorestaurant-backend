@@ -16,10 +16,30 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
+// loadRiceTypes returns the active rices of the weekend menu (legacy FINDE
+// table). Kept for callers that have no reservation date.
 func (s *Server) loadRiceTypes(ctx context.Context, restaurantID int) ([]string, []string, error) {
+	return s.loadRiceTypesFromTable(ctx, restaurantID, "FINDE")
+}
+
+// loadRiceTypesForMenu returns the active rices for the menu that applies to a
+// reservation date: "dia" (Monday-Friday, legacy DIA table) or "finde"
+// (Saturday-Sunday, legacy FINDE table).
+// Coordination id: bot_rice_menu_by_date_v1
+func (s *Server) loadRiceTypesForMenu(ctx context.Context, restaurantID int, menu string) ([]string, []string, error) {
+	table := "FINDE"
+	if strings.EqualFold(strings.TrimSpace(menu), "dia") {
+		table = "DIA"
+	}
+	return s.loadRiceTypesFromTable(ctx, restaurantID, table)
+}
+
+// loadRiceTypesFromTable is the shared reader for both legacy menu tables. The
+// table name is a fixed internal literal (DIA/FINDE), never user input.
+func (s *Server) loadRiceTypesFromTable(ctx context.Context, restaurantID int, table string) ([]string, []string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT NUM, DESCRIPCION
-		FROM FINDE
+		FROM `+table+`
 		WHERE restaurant_id = ? AND TIPO = 'ARROZ' AND (active = 1 OR active IS NULL)
 		ORDER BY DESCRIPCION ASC
 	`, restaurantID)
@@ -56,7 +76,7 @@ func (s *Server) loadRiceTypes(ctx context.Context, restaurantID int) ([]string,
 	}
 
 	english := make([]string, len(out))
-	if all, err := s.loadTranslations(ctx, restaurantID, "FINDE", ids, translationLang); err == nil {
+	if all, err := s.loadTranslations(ctx, restaurantID, table, ids, translationLang); err == nil {
 		for i, id := range ids {
 			english[i] = translationOr(all[id], "descripcion")
 		}
