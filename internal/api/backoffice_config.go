@@ -2091,10 +2091,17 @@ func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRe
 		website              sql.NullString
 		menuURL              sql.NullString
 	)
+	// The settings form saves the site into restaurant_info.website; the legacy
+	// restaurants.website_url (and menu_url) stay as fallback so the effective
+	// website matches what Admin shows (see loadRestaurantBranding).
 	err := s.db.QueryRowContext(ctx, `
-		SELECT direccion, telefono, email, cif, direccion_facturacion, clasificacion, tipo_empresa, website, menu_url
-		FROM restaurant_info
-		WHERE restaurant_id = ?
+		SELECT
+			ri.direccion, ri.telefono, ri.email, ri.cif, ri.direccion_facturacion, ri.clasificacion, ri.tipo_empresa,
+			COALESCE(NULLIF(TRIM(ri.website), ''), NULLIF(TRIM(r.website_url), '')) AS website,
+			COALESCE(NULLIF(TRIM(ri.menu_url), ''), NULLIF(TRIM(r.menu_url), '')) AS menu_url
+		FROM restaurants r
+		LEFT JOIN restaurant_info ri ON ri.restaurant_id = r.id
+		WHERE r.id = ?
 		LIMIT 1
 	`, restaurantID).Scan(&direccion, &telefono, &email, &cif, &direccionFacturacion, &clasificacion, &tipoEmpresa, &website, &menuURL)
 	if err != nil {
