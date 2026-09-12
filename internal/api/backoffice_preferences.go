@@ -24,11 +24,63 @@ var allowedBOPreferences = map[string]map[string]struct{}{
 	"stockSheetsShowImages": {"0": {}, "1": {}},
 }
 
+// reservasColumnIDs is the canonical order of the bookings table columns. The
+// preference stores the visible subset as a CSV in this order so the value is
+// deterministic whatever order the client sent, and unknown ids are dropped.
+// Coordination id: reservas_columns_realtime_v1
+var reservasColumnIDs = []string{
+	"added", "mesa", "time", "client", "status", "floor",
+	"salon", "pax", "children", "phone", "rice", "comment",
+}
+
+const boPrefReservasVisibleColumns = "reservasVisibleColumns"
+
+// normalizeReservasVisibleColumns validates a CSV of column ids against the
+// canonical set and re-serializes it in canonical order. An empty selection is
+// rejected so the table can never end up with zero data columns.
+func normalizeReservasVisibleColumns(value string) (string, bool) {
+	selected := map[string]struct{}{}
+	for _, part := range strings.Split(value, ",") {
+		selected[strings.ToLower(strings.TrimSpace(part))] = struct{}{}
+	}
+	out := make([]string, 0, len(reservasColumnIDs))
+	for _, id := range reservasColumnIDs {
+		if _, ok := selected[id]; ok {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		return "", false
+	}
+	return strings.Join(out, ","), true
+}
+
+// parseReservasVisibleColumns expands a stored preference into the ordered id
+// slice broadcast to clients; an unset value means every column is visible.
+func parseReservasVisibleColumns(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return append([]string{}, reservasColumnIDs...)
+	}
+	out := make([]string, 0, len(reservasColumnIDs))
+	for _, part := range strings.Split(value, ",") {
+		if id := strings.TrimSpace(part); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // normalizeBOPreference lower-cases the value and validates (key, value)
 // against allowedBOPreferences. Returns the normalized value and ok=true when
 // the pair is accepted.
 func normalizeBOPreference(key, value string) (string, bool) {
-	allowed, ok := allowedBOPreferences[strings.TrimSpace(key)]
+	key = strings.TrimSpace(key)
+	// Column visibility is a validated list, not a fixed enum, so it does not
+	// fit the value-set map below.
+	if key == boPrefReservasVisibleColumns {
+		return normalizeReservasVisibleColumns(value)
+	}
+	allowed, ok := allowedBOPreferences[key]
 	if !ok {
 		return "", false
 	}
@@ -122,6 +174,11 @@ func (s *Server) handleBOPreferencesSet(w http.ResponseWriter, r *http.Request) 
 	if err := s.setUserPreference(r.Context(), a.User.ID, restaurantID, strings.TrimSpace(req.Key), normValue); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando preferencia")
 		return
+	}
+	// Fan the new column selection out to every open tab of this user in
+	// real time, without waiting for the next page load.
+	if strings.TrimSpace(req.Key) == boPrefReservasVisibleColumns {
+		s.broadcastReservasColumns(restaurantID, a.User.ID, parseReservasVisibleColumns(normValue))
 	}
 	prefs, err := s.getUserPreferences(r.Context(), a.User.ID, restaurantID)
 	if err != nil {
