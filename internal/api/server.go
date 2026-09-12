@@ -717,8 +717,12 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, ajustesGate).Get("/website/templates", s.handleBOPremiumWebsiteTemplates)
 		r.With(s.requireBOSession, ajustesGate).Get("/website/menu-templates", s.handleBOPremiumWebsiteMenuTemplatesGet)
 		r.With(s.requireBOSession, ajustesGate).Put("/website/menu-templates", s.handleBOPremiumWebsiteMenuTemplatesUpsert)
-		r.With(s.requireBOSession, ajustesGate).Get("/restaurant/pages/visibility", s.handleGetPageVisibility)
-		r.With(s.requireBOSession, ajustesGate).Patch("/restaurant/pages/visibility", s.handlePageVisibilityPatch)
+		// Page visibility belongs to the Carta/Comida pages it configures, so it is
+		// gated by the menus section. Gating it under "ajustes" returned 403 for
+		// app-version 0.4 users (who are whitelisted for comida/menus) and made the
+		// food-type settings switch fail.
+		r.With(s.requireBOSession, menusGate).Get("/restaurant/pages/visibility", s.handleGetPageVisibility)
+		r.With(s.requireBOSession, menusGate).Patch("/restaurant/pages/visibility", s.handlePageVisibilityPatch)
 		r.With(s.requireBOSession, ajustesGate).Post("/website/ai-generate", s.handleBOPremiumWebsiteAIGenerate)
 		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
 			websiteBuilder.RegisterRoutes(r)
