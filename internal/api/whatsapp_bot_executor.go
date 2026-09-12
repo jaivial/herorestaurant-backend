@@ -53,7 +53,7 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 	case "get_restaurant_info":
 		return s.botToolRestaurantInfo(ctx, restaurantID)
 	case "get_rice_menu":
-		return s.botToolRiceMenu(ctx, restaurantID)
+		return s.botToolRiceMenu(ctx, restaurantID, input)
 	case "list_menus":
 		return s.botToolListMenus(ctx, restaurantID)
 	case "get_menu_details":
@@ -243,17 +243,6 @@ func (s *Server) botToolRestaurantInfo(ctx context.Context, restaurantID int) (s
 		"email":    strings.TrimSpace(email.String),
 		"website":  strings.TrimSpace(website.String),
 		"menu_url": strings.TrimSpace(menuURL.String),
-	}), nil
-}
-
-func (s *Server) botToolRiceMenu(ctx context.Context, restaurantID int) (string, error) {
-	rices, english, err := s.loadRiceTypes(ctx, restaurantID)
-	if err != nil {
-		return botJSON(map[string]any{"error": "error consultando arroces"}), nil
-	}
-	return botJSON(map[string]any{
-		"rice_types":         rices,
-		"rice_types_english": english,
 	}), nil
 }
 
