@@ -68,6 +68,16 @@ func (s *Server) handleBOLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Brute-force guard: cap attempts per source IP and per target account.
+	if !allowBOLoginAttempt(clientIP(r), identifier) {
+		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{
+			"success": false,
+			"code":    "LOGIN_RATE_LIMITED",
+			"message": "Demasiados intentos. Prueba de nuevo en unos minutos.",
+		})
+		return
+	}
+
 	var (
 		userID             int
 		dbEmail            string
