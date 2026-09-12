@@ -45,7 +45,7 @@ func normalizeReservasVisibleColumns(value string) (string, bool) {
 	}
 	out := make([]string, 0, len(reservasColumnIDs))
 	for _, id := range reservasColumnIDs {
-		if _, ok := selected[id]; ok {
+		if _, ok := selected[strings.ToLower(id)]; ok {
 			out = append(out, id)
 		}
 	}
