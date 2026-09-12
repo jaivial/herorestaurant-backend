@@ -132,7 +132,7 @@ func (s *Server) Routes() http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, X-Api-Token")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, X-Api-Token, X-Vault-Key")
 			}
 
 			if r.Method == http.MethodOptions {
@@ -164,6 +164,9 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/healthz", s.handleHealthz)
 
 	r.Route("/admin", func(r chi.Router) {
+		// Shared-secret layer for the whole admin API and its WebSockets, injected
+		// server-side by the backoffice SSR proxy. No-op when VAULT_KEY is unset.
+		r.Use(s.requireVaultKey)
 		reservasGate := s.requireBOSection(boSectionReservas)
 		menusGate := s.requireBOSection(boSectionMenus)
 		ajustesGate := s.requireBOSection(boSectionAjustes)
