@@ -61,38 +61,45 @@ func botPhoneVariants(phone string) (national, digits string) {
 	return national, digits
 }
 
-// botRestaurantPhone resolves the restaurant's phone with the widest reusable
-// precedence: restaurant_info, then the restaurants table, and finally the
-// provisioned WhatsApp instance's own connected number. Without the last
-// fallback a tenant that never filled restaurant_info would produce a
-// contact card with no phone to send.
+// botRestaurantPhone resolves the restaurant's PUBLIC phone: restaurant_info
+// (authored from /app/config?content=contacto) and then the restaurants table.
+// The provisioned WhatsApp instance's own connected number is deliberately NOT
+// a fallback: it is the bot, not a person, so handing it over as "call this
+// number" tells the customer to call a machine. An empty result means the
+// restaurant has not published a phone and callers must stay generic.
 func (s *Server) botRestaurantPhone(ctx context.Context, restaurantID int) string {
+	if branding, err := s.loadRestaurantBranding(ctx, restaurantID); err == nil {
+		if v := strings.TrimSpace(branding.Phone); v != "" {
+			return v
+		}
+	}
 	var phone sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT telefono FROM restaurant_info WHERE restaurant_id = ? LIMIT 1`, restaurantID).Scan(&phone); err == nil {
-		if v := strings.TrimSpace(phone.String); v != "" {
-			return v
-		}
-	}
 	if err := s.db.QueryRowContext(ctx, `SELECT contact_phone FROM restaurants WHERE id = ? LIMIT 1`, restaurantID).Scan(&phone); err == nil {
-		if v := strings.TrimSpace(phone.String); v != "" {
-			return v
-		}
-	}
-	if rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); err == nil && found {
-		if v := strings.TrimSpace(rec.ConnectedPhone); v != "" {
-			return v
-		}
+		return strings.TrimSpace(phone.String)
 	}
 	return ""
 }
 
-// botContactDetails resolves the human-handoff contact (name + phone) used for
-// the contact card. Precedence: tenant override, then restaurant data.
-func (s *Server) botContactDetails(ctx context.Context, restaurantID int, tenant botTenantConfig) (name, phone string) {
-	phone = strings.TrimSpace(tenant.ContactPhone)
-	if phone == "" {
-		phone = s.botRestaurantPhone(ctx, restaurantID)
+// botManagementPhone resolves the restaurant's MANAGEMENT phone (the number a
+// human answers during service) authored per restaurant from
+// /app/config?content=contacto. Empty when the restaurant has not published one.
+func (s *Server) botManagementPhone(ctx context.Context, restaurantID int) string {
+	branding, err := s.loadRestaurantBranding(ctx, restaurantID)
+	if err != nil {
+		return ""
 	}
+	return strings.TrimSpace(branding.ManagementPhone)
+}
+
+// botContactDetails resolves the human-handoff contact (name + phone) used for
+// the contact card. Precedence: tenant override, the restaurant's management
+// phone, then its public phone.
+func (s *Server) botContactDetails(ctx context.Context, restaurantID int, tenant botTenantConfig) (name, phone string) {
+	phone = firstNonEmpty(
+		strings.TrimSpace(tenant.ContactPhone),
+		s.botManagementPhone(ctx, restaurantID),
+		s.botRestaurantPhone(ctx, restaurantID),
+	)
 	name = strings.TrimSpace(tenant.ContactName)
 	if name == "" {
 		name = s.botBrandName(ctx, restaurantID)
@@ -102,19 +109,19 @@ func (s *Server) botContactDetails(ctx context.Context, restaurantID int, tenant
 
 // botSameDayContactDetails resolves the human-handoff contact used when a
 // same-day operation has to be refused. Precedence: tenant same-day override,
-// global same-day phone (BOT_SAME_DAY_CONTACT_PHONE), tenant contact override,
-// restaurant data. It stays separate from botContactDetails because the number
-// that answers during service is an operational decision per tenant, not a
-// generic brand attribute.
+// global same-day phone (BOT_SAME_DAY_CONTACT_PHONE), the restaurant's own
+// management phone (telefono_gestion, authored from /app/config?content=contacto),
+// tenant contact override, restaurant public phone. It stays separate from
+// botContactDetails because the number that answers during service is an
+// operational decision per tenant, not a generic brand attribute.
 func (s *Server) botSameDayContactDetails(ctx context.Context, restaurantID int, tenant botTenantConfig) (name, phone string) {
 	phone = firstNonEmpty(
 		strings.TrimSpace(tenant.SameDayContactPhone),
 		strings.TrimSpace(s.cfg.BotSameDayContactPhone),
+		s.botManagementPhone(ctx, restaurantID),
 		strings.TrimSpace(tenant.ContactPhone),
+		s.botRestaurantPhone(ctx, restaurantID),
 	)
-	if phone == "" {
-		phone = s.botRestaurantPhone(ctx, restaurantID)
-	}
 	name = strings.TrimSpace(tenant.ContactName)
 	if name == "" {
 		name = s.botBrandName(ctx, restaurantID)
