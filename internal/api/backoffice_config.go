@@ -2064,6 +2064,9 @@ type boRestaurantInfo struct {
 	TipoEmpresa          string `json:"tipoEmpresa"`
 	Website              string `json:"website"`
 	MenuURL              string `json:"menuUrl"`
+	// ManagementPhone is the number a human answers: it is what the WhatsApp bot
+	// hands over for same-day bookings and "speak with a person" requests.
+	ManagementPhone string `json:"managementPhone"`
 }
 
 type boRestaurantInfoSetRequest struct {
@@ -2076,6 +2079,7 @@ type boRestaurantInfoSetRequest struct {
 	TipoEmpresa          *string `json:"tipoEmpresa,omitempty"`
 	Website              *string `json:"website,omitempty"`
 	MenuURL              *string `json:"menuUrl,omitempty"`
+	ManagementPhone      *string `json:"managementPhone,omitempty"`
 }
 
 func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRestaurantInfo, error) {
@@ -2090,20 +2094,21 @@ func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRe
 		tipoEmpresa          sql.NullString
 		website              sql.NullString
 		menuURL              sql.NullString
+		managementPhone      sql.NullString
 	)
 	// The settings form saves the site into restaurant_info.website; the legacy
 	// restaurants.website_url (and menu_url) stay as fallback so the effective
 	// website matches what Admin shows (see loadRestaurantBranding).
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
-			ri.direccion, ri.telefono, ri.email, ri.cif, ri.direccion_facturacion, ri.clasificacion, ri.tipo_empresa,
+			ri.direccion, ri.telefono, ri.telefono_gestion, ri.email, ri.cif, ri.direccion_facturacion, ri.clasificacion, ri.tipo_empresa,
 			COALESCE(NULLIF(TRIM(ri.website), ''), NULLIF(TRIM(r.website_url), '')) AS website,
 			COALESCE(NULLIF(TRIM(ri.menu_url), ''), NULLIF(TRIM(r.menu_url), '')) AS menu_url
 		FROM restaurants r
 		LEFT JOIN restaurant_info ri ON ri.restaurant_id = r.id
 		WHERE r.id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&direccion, &telefono, &email, &cif, &direccionFacturacion, &clasificacion, &tipoEmpresa, &website, &menuURL)
+	`, restaurantID).Scan(&direccion, &telefono, &managementPhone, &email, &cif, &direccionFacturacion, &clasificacion, &tipoEmpresa, &website, &menuURL)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, nil
@@ -2112,6 +2117,7 @@ func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRe
 	}
 	out.Direccion = strings.TrimSpace(direccion.String)
 	out.Telefono = strings.TrimSpace(telefono.String)
+	out.ManagementPhone = strings.TrimSpace(managementPhone.String)
 	out.Email = strings.TrimSpace(email.String)
 	out.CIF = strings.TrimSpace(cif.String)
 	out.DireccionFacturacion = strings.TrimSpace(direccionFacturacion.String)
@@ -2218,6 +2224,9 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 	if req.Telefono != nil {
 		current.Telefono = strings.TrimSpace(*req.Telefono)
 	}
+	if req.ManagementPhone != nil {
+		current.ManagementPhone = strings.TrimSpace(*req.ManagementPhone)
+	}
 	if req.Email != nil {
 		current.Email = strings.TrimSpace(*req.Email)
 	}
@@ -2265,12 +2274,13 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 
 	_, err = s.db.ExecContext(r.Context(), `
 		INSERT INTO restaurant_info (
-			restaurant_id, direccion, telefono, email, cif, direccion_facturacion, clasificacion, tipo_empresa, website, menu_url
+			restaurant_id, direccion, telefono, telefono_gestion, email, cif, direccion_facturacion, clasificacion, tipo_empresa, website, menu_url
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			direccion = VALUES(direccion),
 			telefono = VALUES(telefono),
+			telefono_gestion = VALUES(telefono_gestion),
 			email = VALUES(email),
 			cif = VALUES(cif),
 			direccion_facturacion = VALUES(direccion_facturacion),
@@ -2278,7 +2288,7 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 			tipo_empresa = VALUES(tipo_empresa),
 			website = VALUES(website),
 			menu_url = VALUES(menu_url)
-	`, a.ActiveRestaurantID, current.Direccion, current.Telefono, current.Email, current.CIF, current.DireccionFacturacion, current.Clasificacion, current.TipoEmpresa, current.Website, current.MenuURL)
+	`, a.ActiveRestaurantID, current.Direccion, current.Telefono, current.ManagementPhone, current.Email, current.CIF, current.DireccionFacturacion, current.Clasificacion, current.TipoEmpresa, current.Website, current.MenuURL)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando informacion del restaurante")
 		return

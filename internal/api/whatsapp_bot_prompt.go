@@ -11,20 +11,24 @@ import (
 // botPromptData carries the dynamic per-restaurant data injected into the
 // system prompt on every turn.
 type botPromptData struct {
-	BrandName  string
-	Phone      string
-	Address    string
-	Email      string
-	Website    string
-	MenuURL    string
-	TodayES    string
-	TodayISO   string
-	PushName   string
-	UserPhone  string
-	RiceTypes  []string
-	Hours      string
-	DailyLimit int
-	Tenant     botTenantConfig
+	BrandName string
+	Phone     string
+	// ManagementPhone is the human-answered number used for same-day handoff
+	// and "speak with a person" requests. Empty when the restaurant has not
+	// published one: the prompt must then stay generic about it.
+	ManagementPhone string
+	Address         string
+	Email           string
+	Website         string
+	MenuURL         string
+	TodayES         string
+	TodayISO        string
+	PushName        string
+	UserPhone       string
+	RiceTypes       []string
+	Hours           string
+	DailyLimit      int
+	Tenant          botTenantConfig
 }
 
 // botDefaultRules is the critical-rules block used when the tenant has not
@@ -46,6 +50,19 @@ var botSpanishMonths = []string{"", "enero", "febrero", "marzo", "abril", "mayo"
 
 func botFormatSpanishDate(t time.Time) string {
 	return fmt.Sprintf("%s, %d de %s de %d", botSpanishDays[int(t.Weekday())], t.Day(), botSpanishMonths[int(t.Month())], t.Year())
+}
+
+// botHasRestaurantContactData reports whether the restaurant has published at
+// least one contact datum. Anything left empty is deliberately absent from the
+// prompt, so the assistant answers generically instead of inventing a phone,
+// address, email or website.
+func botHasRestaurantContactData(d botPromptData) bool {
+	for _, v := range []string{d.Phone, d.ManagementPhone, d.Address, d.Email, d.Website, d.MenuURL} {
+		if strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // renderBotSystemPrompt builds the personalized system prompt for a tenant.
@@ -89,6 +106,12 @@ func renderBotSystemPrompt(d botPromptData) string {
 	}
 	if d.MenuURL != "" {
 		fmt.Fprintf(&b, "- Carta (URL): %s\n", d.MenuURL)
+	}
+	if d.ManagementPhone != "" {
+		fmt.Fprintf(&b, "- Teléfono de gestión (persona del restaurante): %s\n", d.ManagementPhone)
+	}
+	if !botHasRestaurantContactData(d) {
+		b.WriteString("- Este restaurante todavía no tiene publicados estos datos: NO los inventes y no menciones teléfono, dirección, email ni web. Responde de forma genérica y ofrece lo que sí puedas hacer (reservar, consultar disponibilidad, menús y horarios con las herramientas).\n")
 	}
 	b.WriteString("\n")
 
@@ -153,8 +176,19 @@ func (s *Server) loadBotPromptData(ctx context.Context, restaurantID int, pushNa
 	data.TodayES = botFormatSpanishDate(now)
 	data.TodayISO = now.Format("2006-01-02")
 
-	if branding, err := s.loadRestaurantBranding(ctx, restaurantID); err == nil && strings.TrimSpace(branding.BrandName) != "" {
-		data.BrandName = strings.TrimSpace(branding.BrandName)
+	// Single reusable profile load: name, address, phones, email, website and
+	// menu for THIS restaurant id. Whatever the restaurant has not published
+	// stays empty, and the prompt says so instead of inventing it.
+	if branding, err := s.loadRestaurantBranding(ctx, restaurantID); err == nil {
+		if strings.TrimSpace(branding.BrandName) != "" {
+			data.BrandName = strings.TrimSpace(branding.BrandName)
+		}
+		data.Address = branding.Address
+		data.Phone = branding.Phone
+		data.Email = branding.Email
+		data.Website = branding.Website
+		data.MenuURL = branding.MenuURL
+		data.ManagementPhone = branding.ManagementPhone
 	}
 	if data.BrandName == "" {
 		var name sql.NullString
@@ -162,26 +196,8 @@ func (s *Server) loadBotPromptData(ctx context.Context, restaurantID int, pushNa
 			data.BrandName = strings.TrimSpace(name.String)
 		}
 	}
-
-	var direccion, telefono, email, website, menuURL sql.NullString
-	err := s.db.QueryRowContext(ctx, `
-		SELECT direccion, telefono, email, website, menu_url
-		FROM restaurant_info WHERE restaurant_id = ? LIMIT 1
-	`, restaurantID).Scan(&direccion, &telefono, &email, &website, &menuURL)
-	if err == nil {
-		data.Address = strings.TrimSpace(direccion.String)
-		data.Phone = strings.TrimSpace(telefono.String)
-		data.Email = strings.TrimSpace(email.String)
-		data.Website = strings.TrimSpace(website.String)
-		data.MenuURL = strings.TrimSpace(menuURL.String)
-	}
 	if tenant.ContactPhone != "" {
 		data.Phone = tenant.ContactPhone
-	}
-	// Reuse the shared resolver so the prompt also sees the restaurant's own
-	// WhatsApp number when restaurant_info/contact_phone are empty.
-	if data.Phone == "" {
-		data.Phone = s.botRestaurantPhone(ctx, restaurantID)
 	}
 
 	if rices, _, err := s.loadRiceTypes(ctx, restaurantID); err == nil {
