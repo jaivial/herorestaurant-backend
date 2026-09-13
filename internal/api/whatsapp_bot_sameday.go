@@ -100,11 +100,41 @@ func (s *Server) botContactDetails(ctx context.Context, restaurantID int, tenant
 	return name, phone
 }
 
+// botSameDayContactDetails resolves the human-handoff contact used when a
+// same-day operation has to be refused. Precedence: tenant same-day override,
+// global same-day phone (BOT_SAME_DAY_CONTACT_PHONE), tenant contact override,
+// restaurant data. It stays separate from botContactDetails because the number
+// that answers during service is an operational decision per tenant, not a
+// generic brand attribute.
+func (s *Server) botSameDayContactDetails(ctx context.Context, restaurantID int, tenant botTenantConfig) (name, phone string) {
+	phone = firstNonEmpty(
+		strings.TrimSpace(tenant.SameDayContactPhone),
+		strings.TrimSpace(s.cfg.BotSameDayContactPhone),
+		strings.TrimSpace(tenant.ContactPhone),
+	)
+	if phone == "" {
+		phone = s.botRestaurantPhone(ctx, restaurantID)
+	}
+	name = strings.TrimSpace(tenant.ContactName)
+	if name == "" {
+		name = s.botBrandName(ctx, restaurantID)
+	}
+	return name, phone
+}
+
 // botSendContactCard delivers the restaurant/human-handoff contact card and
 // records it. It is shared by the send_contact agent tool and by the same-day
 // guard, so the card is described in exactly one place.
 func (s *Server) botSendContactCard(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) (string, error) {
 	name, phone := s.botContactDetails(ctx, restaurantID, tenant)
+	return s.botSendContactCardWith(ctx, restaurantID, msg, name, phone)
+}
+
+// botSendContactCardWith delivers the contact card for already-resolved contact
+// details, so callers that must pin a specific handoff number (same-day guard)
+// and callers that resolve it from the tenant (send_contact tool) share one
+// delivery + recording path.
+func (s *Server) botSendContactCardWith(ctx context.Context, restaurantID int, msg botWebhookMessage, name, phone string) (string, error) {
 	if phone == "" {
 		return "", errors.New("el restaurante no tiene teléfono configurado")
 	}
@@ -146,7 +176,7 @@ func (s *Server) botOwnedBookingDate(ctx context.Context, restaurantID int, book
 // contact card) and returns the JSON tool result. The requested mutation is
 // never performed.
 func (s *Server) botBlockSameDay(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, operation string) string {
-	_, phone := s.botContactDetails(ctx, restaurantID, tenant)
+	name, phone := s.botSameDayContactDetails(ctx, restaurantID, tenant)
 	log.Printf("[bot] checkpoint booking_same_day_blocked restaurant_id=%d operation=%s sender=%s date=%s", restaurantID, operation, msg.Sender, botTodayISO())
 
 	noticeSent := false
@@ -155,7 +185,7 @@ func (s *Server) botBlockSameDay(ctx context.Context, restaurantID int, msg botW
 			noticeSent = true
 		}
 	}
-	cardPhone, cardErr := s.botSendContactCard(ctx, restaurantID, msg, tenant)
+	cardPhone, cardErr := s.botSendContactCardWith(ctx, restaurantID, msg, name, phone)
 	if cardErr != nil {
 		log.Printf("[bot] restaurant=%d same-day contact card failed: %v", restaurantID, cardErr)
 	}
@@ -346,6 +376,68 @@ func (s *Server) botSenderTodayBookingTime(ctx context.Context, restaurantID int
 	return timeHHMM
 }
 
+// botArrivalToleranceMinutes is how far an arrival estimate may drift from the
+// booked time ("acudiré sobre las 14:00 - 14:10") before it reads as a change
+// of plans instead of a confirmation.
+const botArrivalToleranceMinutes = 30
+
+// botMinutesOfDay parses HH:MM into minutes since midnight (-1 when unparsable).
+func botMinutesOfDay(hhmm string) int {
+	parts := strings.Split(strings.TrimSpace(hhmm), ":")
+	if len(parts) != 2 {
+		return -1
+	}
+	h, errH := strconv.Atoi(parts[0])
+	m, errM := strconv.Atoi(parts[1])
+	if errH != nil || errM != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+		return -1
+	}
+	return h*60 + m
+}
+
+// botIsArrivalEstimate reports whether every explicit time in the message sits
+// within tolerance of the booked time, i.e. the customer is narrowing an arrival
+// window ("sobre las 14:00 - 14:10") rather than asking for a new time. Only the
+// no-verb branch uses it: explicit modify/cancel verbs are still blocked.
+func botIsArrivalEstimate(times []string, bookingTime string) bool {
+	booking := botMinutesOfDay(bookingTime)
+	if booking < 0 || len(times) == 0 {
+		return false
+	}
+	for _, t := range times {
+		minutes := botMinutesOfDay(t)
+		if minutes < 0 || absInt(minutes-booking) > botArrivalToleranceMinutes {
+			return false
+		}
+	}
+	return true
+}
+
+// botAttendancePhrases are confirmation idioms: they state the customer is
+// coming, never that the booking must change.
+var botAttendancePhrases = []string{
+	"acudiré", "acudire", "acudirá", "llegaré", "llegare", "llegaremos",
+	"iremos", "iré", "estaremos", "nos vemos", "hasta ahora", "allí estaremos",
+	"confirmo", "confirmada", "confirmado", "ya he confirmado", "gracias",
+}
+
+// botTextLooksLikeAttendanceConfirmation reports whether the message reads as a
+// courteous confirmation. It only ever skips the inferred-modification branch:
+// a message that also carries an explicit modify/cancel verb is handled by the
+// intent branch above and stays blocked.
+func botTextLooksLikeAttendanceConfirmation(text string) bool {
+	t := strings.ToLower(text)
+	if botBookingIntentFromText(t) == "modify_booking" || botBookingIntentFromText(t) == "cancel_booking" {
+		return false
+	}
+	for _, phrase := range botAttendancePhrases {
+		if strings.Contains(t, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 // botSameDayIntentGuard enforces the same-day policy from the raw inbound text,
 // before the model can ask any clarifying question. When the customer requests a
 // create/modify/cancel that targets today, the AI notice and the contact card
@@ -380,8 +472,15 @@ func (s *Server) botSameDayIntentGuard(ctx context.Context, restaurantID int, ms
 
 	// No explicit operation verb: a correction that states a different time
 	// ("la reserva la he hecho para las 14h") is still a same-day modification.
+	// A courtesy confirmation is not: "gracias, acudiré sobre las 14:00 - 14:10"
+	// only narrows the arrival window, so blocking it would push a customer with
+	// a perfectly valid booking to call the restaurant.
 	if bookingTime := s.botSenderTodayBookingTime(ctx, restaurantID, msg.Sender); bookingTime != "" {
-		for _, t := range botTextClockTimes(msg.Text) {
+		times := botTextClockTimes(msg.Text)
+		if botTextLooksLikeAttendanceConfirmation(msg.Text) || botIsArrivalEstimate(times, bookingTime) {
+			return false
+		}
+		for _, t := range times {
 			if t != bookingTime {
 				return s.botBlockSameDayIntent(ctx, restaurantID, msg, tenant, "modify_booking")
 			}
