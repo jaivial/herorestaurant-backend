@@ -111,6 +111,31 @@ sudo docker compose -f /var/www/newvillacarmen/backend/deploy/docker-compose.pro
 
 El backend guarda el transcript conversacional del bot en SQLite mediante `BOT_CONTEXT_SQLITE_PATH`. En Docker producción el compose monta el volumen nombrado `whatsapp-bot-context` en `/var/lib/herorestaurant`, por lo que el contexto sobrevive a recreaciones y rebuilds del contenedor. Los mensajes OTP de verificación no se guardan en este transcript.
 
+## VAULT_KEY — auth del API admin (`vault_key_auth_v1`)
+
+Toda ruta `/api/admin/*` (REST + WebSocket) exige el shared secret:
+
+```
+Authorization: Bearer $VAULT_KEY      # también vale X-Vault-Key o ?vault_key=
+```
+
+Reparto del secreto (mismo valor en los dos ficheros, `chmod 600`, nunca en git):
+
+| Quien | De dónde lo saca | Nota |
+|---|---|---|
+| Backend Go | `backend/.env.prod` → `VAULT_KEY` | Si está vacío, la comprobación se desactiva (dev/local). |
+| Proxy SSR backoffice | `backoffice/.env.prod` → `VAULT_KEY` | Lo inyecta `server/index.ts` en `/api/admin`, en los WS admin y en `fetchSession`. |
+| Data hooks SSR | heredado del proxy | Los `+data.ts` llaman al backend **directo** (`backendOrigin`), así que `server/index.ts` registra el header una vez y `api/client` lo envía en cada llamada server-side. |
+| CLIs (`cmd/pos-load`) | env `VAULT_KEY` | Envían `Authorization: Bearer` si la variable está definida. |
+
+Síntoma de desajuste: `401 {"code":"VAULT_KEY_REQUIRED"}` en cualquier página del
+backoffice (p. ej. menús) aunque la sesión sea válida. Comprobación rápida:
+
+```bash
+curl -s http://127.0.0.1:8080/api/admin/me | head -1          # → VAULT_KEY_REQUIRED (esperado sin key)
+docker exec newvillacarmen-backoffice-prod printenv VAULT_KEY  # debe existir y coincidir
+```
+
 ## Verificación post-deploy
 
 1. `docker compose -f backend/deploy/docker-compose.prod.yml config` OK.
@@ -125,6 +150,8 @@ El backend guarda el transcript conversacional del bot en SQLite mediante `BOT_C
    Secure; WS fichaje conecta; subida de imagen OK (50m body).
 7. Webhook Evolution: POST test `/bot/webhook/evolution/<secret>` → 200.
 8. Emails invitación/reset con links `https://backoffice.alqueriavillacarmen.com/...`.
+9. SSR con sesión válida: `/app/comida/menus` renderiza los menús en el HTML
+   inicial y no contiene `"error":"Unauthorized"`.
 
 ## Riesgos conocidos (aceptados)
 
