@@ -487,16 +487,10 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 		sec.PublicPageActive = publicActive == 1
 		sec.WebPlacement = normalizeV2SectionWebPlacement(sec.WebPlacement)
 		sec.Annotations = normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{})))
-		// Normalize whitespace-only fields to empty so the legacy fallback below
-		// fires whenever the operator never filled in a heading.
+		// Coordination id: comida_autosave_v1 — return explicit clears unchanged.
 		sec.DisplayTitle = strings.TrimSpace(sec.DisplayTitle)
 		sec.Subtitle = strings.TrimSpace(sec.Subtitle)
 		sec.TabLabel = strings.TrimSpace(sec.TabLabel)
-		// New rows from older databases may miss display_title; fall back to the
-		// backoffice-only `title` so public consumers still see a heading.
-		if sec.DisplayTitle == "" {
-			sec.DisplayTitle = sec.Title
-		}
 		sec.Dishes = []boV2Dish{}
 		sectionByID[sec.ID] = len(sections)
 		sections = append(sections, sec)
@@ -1136,10 +1130,6 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 	if v, ok := input["menu_title"]; ok {
 		title = strings.TrimSpace(anyToString(v))
 	}
-	if title == "" {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu title is required"})
-		return
-	}
 
 	priceFloat, err := anyToFloat64(currentPrice)
 	if err != nil {
@@ -1388,12 +1378,6 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "At least one section is required"})
 		return
 	}
-	for idx, sec := range req.Sections {
-		if strings.TrimSpace(sec.DisplayTitle) == "" {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": fmt.Sprintf("El titulo a mostrar es obligatorio en la seccion %d", idx+1)})
-			return
-		}
-	}
 
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -1447,12 +1431,8 @@ func (s *Server) handleBOGroupMenusV2PutSections(w http.ResponseWriter, r *http.
 
 	keep := make([]int64, 0, len(req.Sections))
 	for idx, sec := range req.Sections {
+		// Coordination id: comida_autosave_v1 — explicit empty text remains empty.
 		title := strings.TrimSpace(sec.Title)
-		if title == "" {
-			title = "Seccion"
-		}
-		// The handler rejects empty display_title before this loop runs, so the
-		// value here is always non-empty after TrimSpace.
 		displayTitle := strings.TrimSpace(sec.DisplayTitle)
 		if len(displayTitle) > 255 {
 			displayTitle = displayTitle[:255]
@@ -1873,10 +1853,8 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 	keepSet := make(map[int64]struct{}, len(req.Dishes))
 	needsLegacySync := false
 	for idx, dish := range req.Dishes {
+		// Coordination id: comida_autosave_v1 — clearing a title must not delete its row.
 		title := strings.TrimSpace(dish.Title)
-		if title == "" {
-			continue
-		}
 		description := strings.TrimSpace(dish.Description)
 		descEnabled := dish.DescriptionEnabled == nil || *dish.DescriptionEnabled
 		allergens := make([]string, 0, len(dish.Allergens))
@@ -2174,9 +2152,7 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 		}
 	}
 	if raw, ok := input["title"]; ok {
-		if v := strings.TrimSpace(anyToString(raw)); v != "" {
-			title = v
-		}
+		title = strings.TrimSpace(anyToString(raw))
 	}
 	if raw, ok := input["description"]; ok {
 		description = strings.TrimSpace(anyToString(raw))

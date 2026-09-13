@@ -1623,10 +1623,6 @@ func (s *Server) patchCatalogItem(w http.ResponseWriter, r *http.Request, restau
 	}
 	if req.Nombre != nil {
 		n := strings.TrimSpace(*req.Nombre)
-		if n == "" {
-			writeComidaValidationError(w, "Nombre invalido")
-			return
-		}
 		sets = append(sets, "nombre = ?")
 		args = append(args, n)
 	}
@@ -1751,11 +1747,12 @@ func (s *Server) patchPostre(w http.ResponseWriter, r *http.Request, restaurantI
 	args := make([]any, 0, 8)
 
 	if req.Descripcion != nil || req.Nombre != nil {
-		desc := strings.TrimSpace(firstNonEmpty(comidaPtrString(req.Descripcion), comidaPtrString(req.Nombre)))
-		if desc == "" {
-			writeComidaValidationError(w, "Descripcion invalida")
-			return
+		// Coordination id: comida_autosave_v1 — omitted and cleared are distinct.
+		value := req.Descripcion
+		if value == nil {
+			value = req.Nombre
 		}
+		desc := strings.TrimSpace(*value)
 		sets = append(sets, "DESCRIPCION = ?")
 		args = append(args, desc)
 	}
@@ -1818,10 +1815,6 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 	}
 	if req.Nombre != nil {
 		nombre := strings.TrimSpace(*req.Nombre)
-		if nombre == "" {
-			writeComidaValidationError(w, "nombre invalido")
-			return
-		}
 		sets = append(sets, "nombre = ?")
 		args = append(args, nombre)
 	}
@@ -1839,10 +1832,6 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 	}
 	if req.Bodega != nil {
 		b := strings.TrimSpace(*req.Bodega)
-		if b == "" {
-			writeComidaValidationError(w, "bodega invalida")
-			return
-		}
 		sets = append(sets, "bodega = ?")
 		args = append(args, b)
 	}
