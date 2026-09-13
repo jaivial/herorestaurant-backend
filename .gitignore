@@ -24,3 +24,6 @@ graph/.venv/
 
 # go CLI binaries built with `go build ./cmd/<name>`
 /pos-load
+
+# runtime bot context (SQLite) written next to the binary in dev
+/data/

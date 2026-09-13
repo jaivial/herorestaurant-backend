@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// restaurantBrandingCfg is the per-restaurant profile shared by every feature
+// that needs to speak in the restaurant's name: branding (logo, colours, email
+// identity) plus the contact block (address, public phone, email, website, menu
+// and the management phone used for human handoff). One loader, one query, so
+// the backoffice config form and the WhatsApp bot can never disagree.
 type restaurantBrandingCfg struct {
 	BrandName        string
 	LogoURL          string
@@ -17,6 +22,15 @@ type restaurantBrandingCfg struct {
 	AccentColor      string
 	EmailFromName    string
 	EmailFromAddress string
+	Address          string
+	Phone            string
+	Email            string
+	MenuURL          string
+	// ManagementPhone is the number a human answers during service. It is
+	// authored per restaurant from /app/config?content=contacto and is the
+	// number handed to customers when a same-day operation must be refused.
+	// Empty means the restaurant has not published a handoff number.
+	ManagementPhone string
 }
 
 func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (restaurantBrandingCfg, error) {
@@ -28,6 +42,11 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 		accentColor      sql.NullString
 		emailFromName    sql.NullString
 		emailFromAddress sql.NullString
+		address          sql.NullString
+		phone            sql.NullString
+		email            sql.NullString
+		menuURL          sql.NullString
+		managementPhone  sql.NullString
 	)
 	// Website of the restaurant. The backoffice settings form saves it into
 	// restaurant_info.website, so that column wins and the legacy
@@ -41,13 +60,19 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 			rb.primary_color,
 			rb.accent_color,
 			rb.email_from_name,
-			rb.email_from_address
+			rb.email_from_address,
+			ri.direccion,
+			ri.telefono,
+			ri.email,
+			COALESCE(NULLIF(TRIM(ri.menu_url), ''), NULLIF(TRIM(r.menu_url), '')) AS menu_url,
+			ri.telefono_gestion
 		FROM restaurants r
 		LEFT JOIN restaurant_branding rb ON rb.restaurant_id = r.id
 		LEFT JOIN restaurant_info ri ON ri.restaurant_id = r.id
 		WHERE r.id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&brandName, &logoURL, &website, &primaryColor, &accentColor, &emailFromName, &emailFromAddress)
+	`, restaurantID).Scan(&brandName, &logoURL, &website, &primaryColor, &accentColor, &emailFromName, &emailFromAddress,
+		&address, &phone, &email, &menuURL, &managementPhone)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return restaurantBrandingCfg{}, nil
@@ -71,6 +96,11 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 		AccentColor:      strings.TrimSpace(accentColor.String),
 		EmailFromName:    strings.TrimSpace(emailFromName.String),
 		EmailFromAddress: strings.TrimSpace(emailFromAddress.String),
+		Address:          strings.TrimSpace(address.String),
+		Phone:            strings.TrimSpace(phone.String),
+		Email:            strings.TrimSpace(email.String),
+		MenuURL:          strings.TrimSpace(menuURL.String),
+		ManagementPhone:  strings.TrimSpace(managementPhone.String),
 	}, nil
 }
 
