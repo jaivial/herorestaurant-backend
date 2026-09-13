@@ -69,23 +69,28 @@ type Config struct {
 	PaddleOCRModel              string
 	PaddleOCRTimeout            time.Duration
 	BotModel                    string
-	BotTimeout                  time.Duration
-	BotMaxTokens                int
-	BotMaxIterations            int
-	BotContextSQLitePath        string
-	BotDailyTurnsCap            int
-	AssistantModel              string
-	AssistantTimeout            time.Duration
-	AssistantMaxTokens          int
-	AssistantHistoryLimit       int
-	AssistantPublicRateLimit    int
-	BotPublicWebhookURL         string
-	EvolutionWebhookSecret      string
-	SMTPHost                    string
-	SMTPPort                    int
-	SMTPUsername                string
-	SMTPPassword                string
-	MySQL                       MySQLConfig
+	// BotSameDayContactPhone is the phone handed to customers when a same-day
+	// booking operation has to be refused: it overrides the tenant contact
+	// phone so the number that actually answers during service is the one
+	// shown in the notice and in the contact card.
+	BotSameDayContactPhone   string
+	BotTimeout               time.Duration
+	BotMaxTokens             int
+	BotMaxIterations         int
+	BotContextSQLitePath     string
+	BotDailyTurnsCap         int
+	AssistantModel           string
+	AssistantTimeout         time.Duration
+	AssistantMaxTokens       int
+	AssistantHistoryLimit    int
+	AssistantPublicRateLimit int
+	BotPublicWebhookURL      string
+	EvolutionWebhookSecret   string
+	SMTPHost                 string
+	SMTPPort                 int
+	SMTPUsername             string
+	SMTPPassword             string
+	MySQL                    MySQLConfig
 }
 
 func Load() Config {
@@ -144,6 +149,7 @@ func Load() Config {
 		PaddleOCRModel:              getenv("PADDLEOCR_MODEL", "PaddleOCR-VL-1.6"),
 		PaddleOCRTimeout:            time.Duration(getenvInt("PADDLEOCR_TIMEOUT_SECONDS", 180, 5, 900)) * time.Second,
 		BotModel:                    getenv("BOT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3")),
+		BotSameDayContactPhone:      strings.TrimSpace(os.Getenv("BOT_SAME_DAY_CONTACT_PHONE")),
 		BotTimeout:                  time.Duration(getenvInt("BOT_MINIMAX_TIMEOUT_SECONDS", 45, 5, 300)) * time.Second,
 		BotMaxTokens:                getenvInt("BOT_MINIMAX_MAX_TOKENS", 1024, 128, 8192),
 		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 8, 1, 20),

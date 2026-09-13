@@ -18,6 +18,9 @@ type botTenantConfig struct {
 	DisableAttachments bool   `json:"disable_attachments"`
 	CustomInstructions string `json:"custom_instructions"`
 	ContactPhone       string `json:"contact_phone"`
+	// SameDayContactPhone is the number handed over when a same-day booking
+	// operation is refused; empty falls back to ContactPhone.
+	SameDayContactPhone string `json:"same_day_contact_phone"`
 	// ContactName overrides the contact-card display name (defaults to the brand).
 	ContactName string `json:"contact_name"`
 	// Rules overrides the default critical rules block of the system prompt.
