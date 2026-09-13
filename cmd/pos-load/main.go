@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +38,11 @@ func main() {
 			req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/api/admin/pos/tickets/%d/checkout", *base, *ticket), bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Cookie", "bo_session="+*cookie)
+			// The admin API demands the shared secret (vault_key_auth_v1).
+			// Empty VAULT_KEY means enforcement is disabled; send nothing.
+			if key := strings.TrimSpace(os.Getenv("VAULT_KEY")); key != "" {
+				req.Header.Set("Authorization", "Bearer "+key)
+			}
 			res, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 			if err != nil {
 				atomic.AddInt64(&failed, 1)
