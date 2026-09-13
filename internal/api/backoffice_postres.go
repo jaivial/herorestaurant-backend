@@ -187,13 +187,6 @@ func (s *Server) handleBOPostrePatch(w http.ResponseWriter, r *http.Request) {
 	)
 	if req.Descripcion != nil {
 		d := strings.TrimSpace(*req.Descripcion)
-		if d == "" {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success": false,
-				"message": "Descripcion no puede estar vacia",
-			})
-			return
-		}
 		sets = append(sets, "DESCRIPCION = ?")
 		args = append(args, d)
 	}

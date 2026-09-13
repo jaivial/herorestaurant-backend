@@ -357,13 +357,6 @@ func (s *Server) handleBOVinoPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Nombre != nil {
 		v := strings.TrimSpace(*req.Nombre)
-		if v == "" {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success": false,
-				"message": "nombre invalido",
-			})
-			return
-		}
 		sets = append(sets, "nombre = ?")
 		args = append(args, v)
 	}
@@ -384,13 +377,6 @@ func (s *Server) handleBOVinoPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Bodega != nil {
 		v := strings.TrimSpace(*req.Bodega)
-		if v == "" {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"success": false,
-				"message": "bodega invalida",
-			})
-			return
-		}
 		sets = append(sets, "bodega = ?")
 		args = append(args, v)
 	}
