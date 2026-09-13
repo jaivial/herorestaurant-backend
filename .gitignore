@@ -21,3 +21,6 @@ test-results/
 !graph/.env.example
 graph/out/
 graph/.venv/
+
+# go CLI binaries built with `go build ./cmd/<name>`
+/pos-load
