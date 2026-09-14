@@ -134,6 +134,11 @@ func (c *CloudflareClient) EnsureDNSRecord(ctx context.Context, zoneID, rtype, n
 	// Look for an existing record with the same type+name.
 	var existing []DNSRecord
 	err := c.do(ctx, http.MethodGet, fmt.Sprintf("/zones/%s/dns_records?type=%s&name=%s", zoneID, rtype, name), nil, &existing)
+	if err != nil && !isDNSRecordNotFound(err) {
+		// Network/auth/provider failure: surface it instead of creating (or
+		// overwriting) a record blindly.
+		return nil, err
+	}
 	if err == nil && len(existing) > 0 {
 		rec := existing[0]
 		if rec.Content != content || rec.Proxied != proxied {
@@ -153,6 +158,14 @@ func (c *CloudflareClient) EnsureDNSRecord(ctx context.Context, zoneID, rtype, n
 		return nil, err
 	}
 	return &created, nil
+}
+
+// isDNSRecordNotFound reports whether err means "the record does not exist",
+// which is a normal outcome of a lookup (nothing to update yet). Anything else
+// (timeout, 429/5xx, auth failure, unparsable body) must not be masked.
+func isDNSRecordNotFound(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "does not exist")
 }
 
 func (c *CloudflareClient) DeleteDNSRecord(ctx context.Context, zoneID, recordID string) error {
