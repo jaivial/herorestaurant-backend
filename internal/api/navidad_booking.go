@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,21 +61,11 @@ func (l *fixedWindowLimiter) allow(key string, max int, window time.Duration) bo
 
 var navidadLimiter fixedWindowLimiter
 
+// clientIP delegates to httpx.ClientIP so every limiter in the API shares the
+// same hardened resolution (trusted X-Real-IP, never a client-supplied
+// X-Forwarded-For prefix, never an empty result).
 func clientIP(r *http.Request) string {
-	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
-		}
-	}
-	if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
-		return xr
-	}
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil && host != "" {
-		return host
-	}
-	return strings.TrimSpace(r.RemoteAddr)
+	return httpx.ClientIP(r)
 }
 
 func sendUazAPI(ctx context.Context, endpoint string, payload any) (body string, status int, err error) {
