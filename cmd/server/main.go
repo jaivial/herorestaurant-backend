@@ -15,6 +15,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Invalid configuration: %v", err)
+	}
 
 	db, err := appdb.OpenMySQL(cfg.MySQL)
 	if err != nil {
