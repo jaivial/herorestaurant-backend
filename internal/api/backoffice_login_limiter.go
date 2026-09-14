@@ -21,7 +21,15 @@ const (
 // attempt for both keys even when the other key rejects, closing the window
 // where an attacker alternates keys to bypass one of the two limits.
 func allowBOLoginAttempt(ip, identifier string) bool {
-	ipOK := ip == "" || boLoginLimiter.allow("ip:"+ip, boLoginMaxPerIP, boLoginWindow)
-	idOK := identifier == "" || boLoginLimiter.allow("id:"+identifier, boLoginMaxPerIdentifier, boLoginWindow)
+	// An empty IP/identifier is still counted, against a shared "unknown"
+	// bucket: never skip the limit because a key could not be resolved.
+	if ip == "" {
+		ip = "unknown"
+	}
+	if identifier == "" {
+		identifier = "unknown"
+	}
+	ipOK := boLoginLimiter.allow("ip:"+ip, boLoginMaxPerIP, boLoginWindow)
+	idOK := boLoginLimiter.allow("id:"+identifier, boLoginMaxPerIdentifier, boLoginWindow)
 	return ipOK && idOK
 }
