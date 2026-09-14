@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -174,6 +176,39 @@ func Load() Config {
 			DBName:   getenv("DB_NAME", "villacarmen"),
 		},
 	}
+}
+
+// IsProduction reports whether the app runs in production, as declared by
+// APP_ENV or ENV set to "production" (case-insensitive).
+func IsProduction() bool {
+	for _, key := range []string{"APP_ENV", "ENV"} {
+		if strings.EqualFold(strings.TrimSpace(os.Getenv(key)), "production") {
+			return true
+		}
+	}
+	return false
+}
+
+// Validate checks that the secrets guarding the admin API are configured.
+// In production an empty VAULT_KEY or ADMIN_TOKEN silently disables every
+// admin authentication guard, so startup must fail closed. Outside
+// production the dev convenience is kept and only a warning is logged.
+func (c Config) Validate() error {
+	var missing []string
+	if strings.TrimSpace(c.VaultKey) == "" {
+		missing = append(missing, "VAULT_KEY")
+	}
+	if strings.TrimSpace(c.AdminToken) == "" {
+		missing = append(missing, "ADMIN_TOKEN")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if IsProduction() {
+		return fmt.Errorf("missing required secret(s) %s: admin API authentication would be disabled", strings.Join(missing, ", "))
+	}
+	log.Printf("WARNING: %s empty - admin API authentication is DISABLED", strings.Join(missing, ", "))
+	return nil
 }
 
 func getenv(key, fallback string) string {
