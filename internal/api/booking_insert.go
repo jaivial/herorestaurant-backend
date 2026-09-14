@@ -28,6 +28,11 @@ const (
 // rateLimit returns true if the request is allowed, false if rate-limited.
 // It uses a simple token-bucket per (IP, restaurantID) pair.
 func (s *Server) checkRateLimit(ip string, restaurantID int) bool {
+	// An empty/unknown IP must still be counted: it shares one "unknown"
+	// bucket instead of skipping (or collapsing into an empty) key.
+	if ip == "" {
+		ip = "unknown"
+	}
 	key := ip + ":" + strconv.Itoa(restaurantID)
 	now := time.Now().Unix()
 
