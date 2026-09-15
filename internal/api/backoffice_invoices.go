@@ -653,7 +653,10 @@ func (s *Server) handleBOInvoicesSearchReservation(w http.ResponseWriter, r *htt
 	}
 	defer rows.Close()
 
-	var reservations []ReservationSearchResult
+	// Initialize so an empty result marshals as [] instead of null —
+	// clients type this field as an array (invoices_date_coercion_v1 sibling
+	// contract: invoices_reservation_search_null_v1).
+	reservations := make([]ReservationSearchResult, 0, 20)
 	for rows.Next() {
 		var res ReservationSearchResult
 		err := rows.Scan(
