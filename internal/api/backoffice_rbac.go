@@ -459,19 +459,24 @@ func (s *Server) requireBOPOSViewOrFichajeAdmin(next http.Handler) http.Handler 
 			httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
-		if !appCapabilityAllowed(boCapabilityPOS, a.User.AppVersion) {
-			httpx.WriteError(w, http.StatusForbidden, "Forbidden")
-			return
-		}
-		posAllowed, err := s.boPOSPermissionAllowed(r.Context(), a, posPermissionView)
-		if err == nil && posAllowed {
-			next.ServeHTTP(w, r)
-			return
-		}
+		// Fichaje admins come first and skip the POS app-version capability:
+		// fichaje is a 0.4 operational module, so gating this path behind the
+		// POS capability (v0.2 line only, closed on 0.4) 403'd the very users
+		// this endpoint exists for whenever the fichaje panel pulled POS
+		// revenue data.
 		importance, err := s.roleImportance(r.Context(), a.Role)
 		if err == nil && importance >= 90 {
 			next.ServeHTTP(w, r)
 			return
+		}
+		// POS viewers keep the app-version capability gate: POS is a v0.2
+		// module and stays closed on the restricted 0.4 line.
+		if appCapabilityAllowed(boCapabilityPOS, a.User.AppVersion) {
+			posAllowed, err := s.boPOSPermissionAllowed(r.Context(), a, posPermissionView)
+			if err == nil && posAllowed {
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
 		httpx.WriteError(w, http.StatusForbidden, "Forbidden")
 	})
