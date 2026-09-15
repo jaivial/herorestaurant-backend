@@ -386,6 +386,8 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 		input.Status = "borrador"
 	}
 
+	normalizeInvoiceDates(&input)
+
 	// Validate status
 	switch input.Status {
 	case "borrador", "solicitada", "pendiente", "enviada":
@@ -485,6 +487,8 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 	default:
 		input.Status = "borrador"
 	}
+
+	normalizeInvoiceDates(&input)
 
 	template := normalizePdfTemplate(input.PdfTemplate)
 	currency := normalizeCurrency(input.Currency)

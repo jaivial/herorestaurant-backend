@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // validPdfTemplates are the supported invoice designs.
@@ -30,6 +31,37 @@ func normalizeCurrency(v *string) string {
 		return "EUR"
 	}
 	return c
+}
+
+// sqlDate converts an ISO 8601 datetime (RFC3339, e.g.
+// "2026-09-13T00:00:00Z") into the YYYY-MM-DD form MySQL DATE columns
+// require. Anything that is not RFC3339 passes through untouched so MySQL
+// keeps reporting genuinely invalid values.
+// Coordination id: invoices_date_coercion_v1
+func sqlDate(v string) string {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t.Format("2006-01-02")
+	}
+	return v
+}
+
+// sqlDatePtr applies sqlDate to an optional date string.
+func sqlDatePtr(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	s := sqlDate(*v)
+	return &s
+}
+
+// normalizeInvoiceDates coerces every DATE-bound field of an invoice payload
+// to the MySQL DATE shape in place (invoice_date, payment_date,
+// reservation_date, due_date).
+func normalizeInvoiceDates(input *InvoiceInput) {
+	input.InvoiceDate = sqlDate(input.InvoiceDate)
+	input.PaymentDate = sqlDatePtr(input.PaymentDate)
+	input.ReservationDate = sqlDatePtr(input.ReservationDate)
+	input.DueDate = sqlDatePtr(input.DueDate)
 }
 
 // computedLineItem enriches an input line with iva_amount and total.
