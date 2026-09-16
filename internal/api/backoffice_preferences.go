@@ -15,6 +15,9 @@ import (
 // keeps the generic key/value store from becoming an arbitrary write surface.
 var allowedBOPreferences = map[string]map[string]struct{}{
 	"reservasDisplayMode": {"tabla": {}, "grid": {}},
+	// Facturas tabla/grid card display toggle (/app/facturas).
+	// Coordination id: facturas_display_preference_v1
+	"facturasDisplayMode": {"tabla": {}, "grid": {}},
 	// Collapsed/expanded state of the "Reparto por hora" details accordion.
 	// Separate keys: /app/reservas/config (per-day) and /app/config (defaults).
 	"hourSplitDetailsOpenDay":     {"0": {}, "1": {}},
@@ -33,18 +36,31 @@ var reservasColumnIDs = []string{
 	"salon", "pax", "children", "highChairs", "strollers", "phone", "rice", "comment",
 }
 
-const boPrefReservasVisibleColumns = "reservasVisibleColumns"
+// facturasColumnIDs is the canonical order of the invoices table data columns
+// (must match InvoiceColumnId in the backoffice). The preference stores the
+// visible subset as a CSV in this order.
+// Coordination id: facturas_columns_preference_v1
+var facturasColumnIDs = []string{
+	"invoice_number", "customer_name", "customer_email", "amount", "currency",
+	"payment_progress", "invoice_date", "due_date", "payment_date",
+	"payment_method", "status", "is_reservation", "deposit", "category",
+}
 
-// normalizeReservasVisibleColumns validates a CSV of column ids against the
+const (
+	boPrefReservasVisibleColumns = "reservasVisibleColumns"
+	boPrefFacturasVisibleColumns = "facturasVisibleColumns"
+)
+
+// normalizeVisibleColumnsCSV validates a CSV of column ids against the given
 // canonical set and re-serializes it in canonical order. An empty selection is
 // rejected so the table can never end up with zero data columns.
-func normalizeReservasVisibleColumns(value string) (string, bool) {
+func normalizeVisibleColumnsCSV(ids []string, value string) (string, bool) {
 	selected := map[string]struct{}{}
 	for _, part := range strings.Split(value, ",") {
 		selected[strings.ToLower(strings.TrimSpace(part))] = struct{}{}
 	}
-	out := make([]string, 0, len(reservasColumnIDs))
-	for _, id := range reservasColumnIDs {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
 		if _, ok := selected[strings.ToLower(id)]; ok {
 			out = append(out, id)
 		}
@@ -77,8 +93,11 @@ func normalizeBOPreference(key, value string) (string, bool) {
 	key = strings.TrimSpace(key)
 	// Column visibility is a validated list, not a fixed enum, so it does not
 	// fit the value-set map below.
-	if key == boPrefReservasVisibleColumns {
-		return normalizeReservasVisibleColumns(value)
+	switch key {
+	case boPrefReservasVisibleColumns:
+		return normalizeVisibleColumnsCSV(reservasColumnIDs, value)
+	case boPrefFacturasVisibleColumns:
+		return normalizeVisibleColumnsCSV(facturasColumnIDs, value)
 	}
 	allowed, ok := allowedBOPreferences[key]
 	if !ok {
