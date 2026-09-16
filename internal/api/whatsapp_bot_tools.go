@@ -91,6 +91,11 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),
 		},
 		{
+			Name:        "list_booking_extras",
+			Description: "Lista los extras disponibles del restaurante para reservas SIN menú de grupo (por ejemplo café incluido, bebida ilimitada, botella de cava, tarta). ÚSALO cuando el cliente pregunte qué extras o añadidos puede poner a su reserva. Las reservas con menú de grupo no llevan extras.",
+			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+		},
+		{
 			Name:        "get_wines_menu",
 			Description: "Obtiene la carta de vinos del restaurante agrupados por tipo (tinto, blanco, cava...), con bodega, denominación de origen, año y precio.",
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),

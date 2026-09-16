@@ -108,6 +108,8 @@ type bookingReminderExtras struct {
 	ArrozLine     string
 	HighChairs    int
 	BabyStrollers int
+	// Coordination id: booking_extras_v1 - only rendered when non-empty.
+	Extras []string
 }
 
 func buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDisplay string, partySize int, floorDisplay, salonDisplay string, extras bookingReminderExtras) string {
@@ -127,6 +129,9 @@ func buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDispl
 		arrozLine = "🍚 Arroz: No"
 	}
 	msg += arrozLine + "\n"
+	if len(extras.Extras) > 0 {
+		msg += "✨ Extras: " + strings.Join(extras.Extras, ", ") + "\n"
+	}
 	msg += "👶 Tronas: " + strconv.Itoa(extras.HighChairs) + "\n"
 	msg += "🍼 Carros de bebé: " + strconv.Itoa(extras.BabyStrollers) + "\n"
 	return msg + "\nPor favor, confirme su asistencia haciendo clic en el botón de abajo:"

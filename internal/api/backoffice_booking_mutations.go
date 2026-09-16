@@ -104,6 +104,9 @@ type boBookingUpsertReq struct {
 	SpecialMenu    bool            `json:"special_menu"`
 	MenuDeGrupoID  *int            `json:"menu_de_grupo_id,omitempty"`
 	PrincipalesRaw json.RawMessage `json:"principales_json,omitempty"`
+
+	// Coordination id: booking_extras_v1 (selected extras for non-group-menu bookings).
+	Extras []int64 `json:"extras,omitempty"`
 }
 
 func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +146,8 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		SpecialMenu:             req.SpecialMenu,
 		MenuDeGrupoID:           req.MenuDeGrupoID,
 		PrincipalesRaw:          req.PrincipalesRaw,
+		Extras:                  req.Extras,
+		ExtrasTouched:           req.Extras != nil,
 	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -239,6 +244,9 @@ type boBookingPatchReq struct {
 	SpecialMenu    *bool            `json:"special_menu,omitempty"`
 	MenuDeGrupoID  *int             `json:"menu_de_grupo_id,omitempty"`
 	PrincipalesRaw *json.RawMessage `json:"principales_json,omitempty"`
+
+	// Coordination id: booking_extras_v1
+	Extras *[]int64 `json:"extras,omitempty"`
 }
 
 func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
@@ -384,6 +392,10 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 		input.ArrozServings = *req.ArrozServings
 		input.ArrozServingsTouched = true
 	}
+	if req.Extras != nil {
+		input.Extras = *req.Extras
+		input.ExtrasTouched = true
+	}
 
 	next, err := s.boNormalizeAndValidateBookingInput(r.Context(), a.ActiveRestaurantID, input)
 	if err != nil {
@@ -400,6 +412,15 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 	if !next.SpecialMenu && !arrozTouched && !currentIsSpecial {
 		next.ArrozTypeJSON = current["arroz_type"]
 		next.ArrozServingsJSON = current["arroz_servings"]
+	}
+
+	// Coordination id: booking_extras_v1 - keep the stored extras when the patch
+	// does not send the extras field.
+	if !input.ExtrasTouched && !next.SpecialMenu {
+		if names := bookingExtraNames(anyToString(current["extras_json"])); len(names) > 0 {
+			next.ExtrasJSON = anyToString(current["extras_json"])
+			next.ExtrasNames = names
+		}
 	}
 
 	if err := s.boUpdateBooking(r.Context(), a.ActiveRestaurantID, id, next); err != nil {
@@ -491,6 +512,10 @@ type boNormalizedBooking struct {
 	MenuDeGrupoAssigned bool
 	MenuDeGrupoID       any
 	PrincipalesJSON     any
+
+	// Coordination id: booking_extras_v1 (non-group-menu add-ons).
+	ExtrasJSON  any
+	ExtrasNames []string
 }
 
 type boNormalizeInput struct {
@@ -517,6 +542,10 @@ type boNormalizeInput struct {
 	SpecialMenu    bool
 	MenuDeGrupoID  *int
 	PrincipalesRaw json.RawMessage
+
+	// Coordination id: booking_extras_v1
+	Extras        []int64
+	ExtrasTouched bool
 }
 
 func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaurantID int, in boNormalizeInput) (boNormalizedBooking, error) {
@@ -657,6 +686,20 @@ func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaur
 		return out, nil
 	}
 
+	// Non group-menu extras. A group-menu booking does not carry extras (the UI
+	// hides the section), so any extras sent with a group menu are ignored.
+	if in.ExtrasTouched && !out.SpecialMenu {
+		extras, err := s.resolveBookingExtras(restaurantID, in.Extras)
+		if err != nil {
+			return out, errors.New("No se pudieron validar los extras")
+		}
+		out.ExtrasJSON = bookingExtrasSnapshotJSON(extras)
+		out.ExtrasNames = make([]string, 0, len(extras))
+		for _, extra := range extras {
+			out.ExtrasNames = append(out.ExtrasNames, extra.Name)
+		}
+	}
+
 	// Non group-menu: arroz (only if explicitly provided by the caller).
 	if in.ArrozTypesTouched || in.ArrozServingsTouched {
 		types := in.ArrozTypes
@@ -758,9 +801,10 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 			menu_de_grupo_id,
 			menu_de_grupo_assigned,
 			principales_json,
+			extras_json,
 			table_number,
 			preferred_floor_number
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		restaurantID,
 		b.ReservationDate,
@@ -780,6 +824,7 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 		b.MenuDeGrupoID,
 		boolToTinyint(b.MenuDeGrupoAssigned),
 		b.PrincipalesJSON,
+		b.ExtrasJSON,
 		nullableStringOrNil(b.TableNumber),
 		nullableInt64OrNil(b.PreferredFloorNumber),
 	)
@@ -821,7 +866,8 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 			special_menu = ?,
 			menu_de_grupo_id = ?,
 			menu_de_grupo_assigned = ?,
-			principales_json = ?
+			principales_json = ?,
+			extras_json = ?
 		WHERE restaurant_id = ? AND id = ?
 	`,
 		b.ReservationDate,
@@ -843,6 +889,7 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 		b.MenuDeGrupoID,
 		boolToTinyint(b.MenuDeGrupoAssigned),
 		b.PrincipalesJSON,
+		b.ExtrasJSON,
 		restaurantID,
 		id,
 	)
@@ -874,7 +921,8 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			special_menu,
 			menu_de_grupo_id,
 			COALESCE(menu_de_grupo_assigned, 0),
-			principales_json
+			principales_json,
+			COALESCE(extras_json, '')
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
 		ORDER BY reservation_time ASC, id ASC
@@ -908,6 +956,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 		MenuDeGrupoID       sql.NullInt64
 		MenuDeGrupoAssigned sql.NullInt64
 		PrincipalesJSON     sql.NullString
+		ExtrasJSON          sql.NullString
 	}
 
 	out := make([]map[string]any, 0)
@@ -937,6 +986,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			&b.MenuDeGrupoID,
 			&b.MenuDeGrupoAssigned,
 			&b.PrincipalesJSON,
+			&b.ExtrasJSON,
 		); err != nil {
 			return nil, err
 		}
@@ -967,6 +1017,8 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			"menu_de_grupo_id":           nullInt64OrNil(b.MenuDeGrupoID),
 			"menu_de_grupo_assigned":     b.MenuDeGrupoAssigned.Valid && b.MenuDeGrupoAssigned.Int64 != 0,
 			"principales_json":           nullStringOrNil(b.PrincipalesJSON),
+			"extras_json":                nullStringOrNil(b.ExtrasJSON),
+			"extras":                     parseBookingExtrasSnapshot(b.ExtrasJSON.String),
 		})
 	}
 	return out, nil
@@ -997,7 +1049,8 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 			special_menu,
 			menu_de_grupo_id,
 			COALESCE(menu_de_grupo_assigned, 0),
-			principales_json
+			principales_json,
+			COALESCE(extras_json, '')
 		FROM bookings
 		WHERE restaurant_id = ? AND id = ?
 		LIMIT 1
@@ -1027,6 +1080,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		menuDeGrupoID       sql.NullInt64
 		menuDeGrupoAssigned sql.NullInt64
 		principalesJSON     sql.NullString
+		extrasJSON          sql.NullString
 	)
 	if err := row.Scan(
 		&bookingID,
@@ -1052,6 +1106,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		&menuDeGrupoID,
 		&menuDeGrupoAssigned,
 		&principalesJSON,
+		&extrasJSON,
 	); err != nil {
 		return nil, err
 	}
@@ -1082,6 +1137,8 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		"menu_de_grupo_id":           nullInt64OrNil(menuDeGrupoID),
 		"menu_de_grupo_assigned":     menuDeGrupoAssigned.Valid && menuDeGrupoAssigned.Int64 != 0,
 		"principales_json":           nullStringOrNil(principalesJSON),
+		"extras_json":                nullStringOrNil(extrasJSON),
+		"extras":                     parseBookingExtrasSnapshot(extrasJSON.String),
 	}, nil
 }
 
@@ -1147,6 +1204,7 @@ func boBookingToNotificationData(b boNormalizedBooking, id int) map[string]any {
 		"menu_de_grupo_id":           b.MenuDeGrupoID,
 		"menu_de_grupo_assigned":     b.MenuDeGrupoAssigned,
 		"principales_json":           principalesVal,
+		"extras":                     b.ExtrasNames,
 		"preferred_floor_number":     nullInt64OrNil(b.PreferredFloorNumber),
 		"table_number":               nullStringOrNil(b.TableNumber),
 	}

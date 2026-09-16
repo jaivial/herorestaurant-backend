@@ -37,6 +37,7 @@ type bookingRow struct {
 	SpecialMenu     sql.NullInt64
 	MenuDeGrupoID   sql.NullInt64
 	PrincipalesJSON sql.NullString
+	ExtrasJSON      sql.NullString
 }
 
 func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
@@ -64,6 +65,7 @@ func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
 		&b.SpecialMenu,
 		&b.MenuDeGrupoID,
 		&b.PrincipalesJSON,
+		&b.ExtrasJSON,
 	); err != nil {
 		return nil, false
 	}
@@ -93,6 +95,8 @@ func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
 		"special_menu":               isSpecialMenu,
 		"menu_de_grupo_id":           nullInt64OrNil(b.MenuDeGrupoID),
 		"principales_json":           nullStringOrNil(b.PrincipalesJSON),
+		"extras_json":                nullStringOrNil(b.ExtrasJSON),
+		"extras":                     parseBookingExtrasSnapshot(b.ExtrasJSON.String),
 	}, true
 }
 
@@ -262,7 +266,8 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 				DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
 				special_menu,
 				menu_de_grupo_id,
-				principales_json
+				principales_json,
+				COALESCE(extras_json, '')
 			FROM bookings
 		` + where + `
 			ORDER BY ` + orderBy + `

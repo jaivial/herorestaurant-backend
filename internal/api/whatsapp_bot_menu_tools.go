@@ -472,6 +472,7 @@ func (s *Server) botToolBookingMenu(ctx context.Context, restaurantID int, phone
 	dateISO := ""
 	assigned := false
 	var assignedMenuID int64
+	var bookingExtras []string
 	bookingID := in.BookingID
 
 	if bookingID > 0 {
@@ -479,15 +480,18 @@ func (s *Server) botToolBookingMenu(ctx context.Context, restaurantID int, phone
 		var (
 			menuAssignedInt int
 			menuDeGrupoID   sql.NullInt64
+			extrasRaw       sql.NullString
 		)
 		err := s.db.QueryRowContext(ctx, `
 			SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'),
-			       COALESCE(menu_de_grupo_assigned, 0), menu_de_grupo_id
+			       COALESCE(menu_de_grupo_assigned, 0), menu_de_grupo_id,
+			       COALESCE(extras_json, '')
 			FROM bookings
 			WHERE restaurant_id = ? AND id = ?
 				AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
 			LIMIT 1
-		`, restaurantID, bookingID, national, digits, digits).Scan(&dateISO, &menuAssignedInt, &menuDeGrupoID)
+		`, restaurantID, bookingID, national, digits, digits).Scan(&dateISO, &menuAssignedInt, &menuDeGrupoID, &extrasRaw)
+		bookingExtras = bookingExtraNames(extrasRaw.String)
 		if errors.Is(err, sql.ErrNoRows) {
 			return botJSON(map[string]any{"error": "reserva no encontrada"}), nil
 		}
@@ -526,6 +530,7 @@ func (s *Server) botToolBookingMenu(ctx context.Context, restaurantID int, phone
 				"booking_id": bookingID,
 				"date":       dateISO,
 				"weekday":    weekday,
+				"extras":     bookingExtras,
 				"menu":       payload,
 			}), nil
 		}
@@ -540,6 +545,7 @@ func (s *Server) botToolBookingMenu(ctx context.Context, restaurantID int, phone
 		"booking_id":         bookingID,
 		"date":               dateISO,
 		"weekday":            weekday,
+		"extras":             bookingExtras,
 		"weekday_configured": configured,
 		"default_menus":      menus,
 		"note":               "No hay menú de grupo asignado a esta reserva: se sirve por defecto el menú cerrado convencional disponible ese día de la semana.",
