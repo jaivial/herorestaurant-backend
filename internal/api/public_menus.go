@@ -553,9 +553,6 @@ func (s *Server) loadPublicMenuWeekdays(ctx context.Context, restaurantID int, m
 	if len(menuIDs) == 0 {
 		return out
 	}
-	for _, id := range menuIDs {
-		out[id] = emptyBOMenuWeekdays()
-	}
 	args := make([]any, 0, 1+len(menuIDs))
 	args = append(args, restaurantID)
 	for _, id := range menuIDs {
@@ -584,9 +581,14 @@ func (s *Server) loadPublicMenuWeekdays(ctx context.Context, restaurantID int, m
 		if key == "" {
 			continue
 		}
-		if m, ok := out[menuID]; ok {
-			m[key] = availableIn != 0
+		// Only menus with an explicit calendar are published. Menus without any
+		// row keep the client SDK "always available" semantics (weekdays omitted).
+		m := out[menuID]
+		if m == nil {
+			m = emptyBOMenuWeekdays()
+			out[menuID] = m
 		}
+		m[key] = availableIn != 0
 	}
 	return out
 }
