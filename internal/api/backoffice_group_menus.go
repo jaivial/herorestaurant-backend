@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -75,6 +76,82 @@ func (s *Server) handleBOGroupMenusList(w http.ResponseWriter, r *http.Request) 
 		"count":   len(out),
 		"menus":   out,
 	})
+}
+
+// boGroupMenuPrincipalesWithArroz returns the legacy "principales" block with
+// the arroz dishes merged in, so the "add/edit booking" group-menu section can
+// offer them as principales.
+// Coordination id: booking_principales_include_arroz_v1
+// (arroz section + comida_items tipo/categoria arroz -> principales items).
+func (s *Server) boGroupMenuPrincipalesWithArroz(ctx context.Context, restaurantID int, menuID int64, principalesRaw string) map[string]any {
+	out, _ := decodeJSONOrFallback(principalesRaw, map[string]any{}).(map[string]any)
+	if out == nil {
+		out = map[string]any{}
+	}
+	title := strings.TrimSpace(anyToString(out["titulo_principales"]))
+	if title == "" {
+		title = "Principal a elegir"
+	}
+	items := anySliceToStringList(out["items"])
+	seen := make(map[string]bool, len(items))
+	for _, it := range items {
+		seen[strings.ToLower(strings.TrimSpace(it))] = true
+	}
+	add := func(raw string) {
+		t := strings.TrimSpace(raw)
+		if t == "" {
+			return
+		}
+		key := strings.ToLower(t)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		items = append(items, t)
+	}
+
+	// 1) Dishes that live in an "arroces" section of this menu.
+	if rows, err := s.db.QueryContext(ctx, `
+		SELECT d.title_snapshot
+		FROM group_menu_sections_v2 sec
+		JOIN group_menu_section_dishes_v2 d
+		  ON d.section_id = sec.id AND d.restaurant_id = sec.restaurant_id
+		WHERE sec.restaurant_id = ? AND sec.menu_id = ? AND d.active = 1
+		  AND sec.section_kind IN ('arroces', 'rice')
+		ORDER BY d.position ASC, d.id ASC
+	`, restaurantID, menuID); err == nil {
+		for rows.Next() {
+			var name string
+			if scanErr := rows.Scan(&name); scanErr != nil {
+				break
+			}
+			add(name)
+		}
+		rows.Close()
+	}
+
+	// 2) Catalog dishes whose type or category is "arroz".
+	if rows, err := s.db.QueryContext(ctx, `
+		SELECT nombre
+		FROM comida_items
+		WHERE restaurant_id = ? AND active = 1
+		  AND (UPPER(TRIM(COALESCE(tipo, ''))) = 'ARROZ'
+		       OR LOWER(TRIM(COALESCE(categoria, ''))) LIKE 'arroz%')
+		ORDER BY nombre ASC
+	`, restaurantID); err == nil {
+		for rows.Next() {
+			var name string
+			if scanErr := rows.Scan(&name); scanErr != nil {
+				break
+			}
+			add(name)
+		}
+		rows.Close()
+	}
+
+	out["titulo_principales"] = title
+	out["items"] = items
+	return out
 }
 
 func (s *Server) handleBOGroupMenuGet(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +236,7 @@ func (s *Server) handleBOGroupMenuGet(w http.ResponseWriter, r *http.Request) {
 		"active":                   activeInt != 0,
 		"menu_subtitle":            decodeJSONOrFallback(menuSubtitle.String, []any{}),
 		"entrantes":                decodeJSONOrFallback(entrantes.String, []any{}),
-		"principales":              decodeJSONOrFallback(principales.String, map[string]any{}),
+		"principales":              s.boGroupMenuPrincipalesWithArroz(r.Context(), a.ActiveRestaurantID, int64(id), principales.String),
 		"postre":                   decodeJSONOrFallback(postre.String, []any{}),
 		"beverage":                 decodeJSONOrFallback(beverage.String, map[string]any{}),
 		"comments":                 decodeJSONOrFallback(comments.String, []any{}),

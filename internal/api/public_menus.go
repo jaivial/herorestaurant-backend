@@ -127,6 +127,10 @@ type publicMenuItem struct {
 	MenuSubtitleEnglish  []string              `json:"menu_subtitle_english,omitempty"`
 	SliderMode           string                `json:"slider_mode"`
 	SliderImages         []string              `json:"slider_images"`
+	// Coordination id: menu_weekday_availability_v1
+	// (menu_weekday_availability -> public API -> client SDK).
+	Weekdays          map[string]bool `json:"weekdays,omitempty"`
+	WeekdaysAvailable []string        `json:"weekdays_available,omitempty"`
 }
 
 // publicMenuItemHome is a lightweight version for the home page
@@ -144,6 +148,9 @@ type publicMenuItemHome struct {
 	ShowMenuPreviewImage bool     `json:"show_menu_preview_image"`
 	MenuPreviewImageURL  string   `json:"menu_preview_image_url"`
 	SpecialMenuImageURL  string   `json:"special_menu_image_url"`
+	// Coordination id: menu_weekday_availability_v1
+	Weekdays          map[string]bool `json:"weekdays,omitempty"`
+	WeekdaysAvailable []string        `json:"weekdays_available,omitempty"`
 }
 
 // publicMenuItemSpecial is a minimal response for special menus
@@ -537,6 +544,53 @@ func buildFallbackPublicSections(menu publicMenuItem) []publicMenuSection {
 	return out
 }
 
+// loadPublicMenuWeekdays batch-loads the weekly availability calendar for a
+// set of menus so the public payload / client SDK can resolve which menu is
+// served on a given weekday.
+// Coordination id: menu_weekday_availability_v1 (DB -> public API -> client SDK).
+func (s *Server) loadPublicMenuWeekdays(ctx context.Context, restaurantID int, menuIDs []int64) map[int64]map[string]bool {
+	out := make(map[int64]map[string]bool, len(menuIDs))
+	if len(menuIDs) == 0 {
+		return out
+	}
+	for _, id := range menuIDs {
+		out[id] = emptyBOMenuWeekdays()
+	}
+	args := make([]any, 0, 1+len(menuIDs))
+	args = append(args, restaurantID)
+	for _, id := range menuIDs {
+		args = append(args, id)
+	}
+	q := fmt.Sprintf(`
+		SELECT menu_id, weekday, available
+		FROM menu_weekday_availability
+		WHERE restaurant_id = ? AND menu_id IN (%s)
+	`, placeholderList(len(menuIDs)))
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			menuID      int64
+			weekday     string
+			availableIn int
+		)
+		if err := rows.Scan(&menuID, &weekday, &availableIn); err != nil {
+			continue
+		}
+		key := normalizeBOMenuWeekday(weekday)
+		if key == "" {
+			continue
+		}
+		if m, ok := out[menuID]; ok {
+			m[key] = availableIn != 0
+		}
+	}
+	return out
+}
+
 func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 	menuIDParam := r.URL.Query().Get("id")
 	restaurantID, ok := restaurantIDFromContext(r.Context())
@@ -590,6 +644,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 	// Handle home page case (lightweight response)
 	if isHomePage {
 		menus := make([]publicMenuItemHome, 0, 24)
+		homeMenuIDs := make([]int64, 0, 24)
 		for rows.Next() {
 			var (
 				menuID                  int64
@@ -640,9 +695,17 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				MenuPreviewImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, menuPreviewPathRaw.String),
 				SpecialMenuImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, specialImageURLRaw.String),
 			})
+			homeMenuIDs = append(homeMenuIDs, menuID)
 		}
 
 		s.enrichPublicHomeMenus(r.Context(), restaurantID, menus)
+		weekdays := s.loadPublicMenuWeekdays(r.Context(), restaurantID, homeMenuIDs)
+		for i := range menus {
+			if m, ok := weekdays[menus[i].ID]; ok {
+				menus[i].Weekdays = m
+				menus[i].WeekdaysAvailable = botWeekdaysAvailable(m)
+			}
+		}
 
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true,
@@ -1008,6 +1071,15 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.enrichPublicMenus(r.Context(), restaurantID, menus)
+
+	weekdaysByMenu := s.loadPublicMenuWeekdays(r.Context(), restaurantID, menuIDs)
+	for _, menuID := range menuIDs {
+		if m, ok := weekdaysByMenu[menuID]; ok {
+			idx := menuIndexByID[menuID]
+			menus[idx].Weekdays = m
+			menus[idx].WeekdaysAvailable = botWeekdaysAvailable(m)
+		}
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -1416,6 +1488,11 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	}
 
 	s.enrichPublicMenu(r.Context(), int(restaurantID), &item)
+
+	if m, ok := s.loadPublicMenuWeekdays(r.Context(), int(restaurantID), []int64{menuID})[menuID]; ok {
+		item.Weekdays = m
+		item.WeekdaysAvailable = botWeekdaysAvailable(m)
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

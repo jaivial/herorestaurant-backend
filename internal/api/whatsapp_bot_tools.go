@@ -76,6 +76,11 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 			InputSchema: botSchema(`{"type":"object","properties":{"menu_id":{"type":"integer","description":"ID del menú (de list_menus)"}},"required":["menu_id"]}`),
 		},
 		{
+			Name:        "get_booking_menu",
+			Description: "Devuelve el menú que aplica a una reserva: si la reserva tiene un menú de grupo asignado devuelve su detalle completo (secciones, platos, precio, bebida y días de la semana en que se sirve); si no tiene menú de grupo, devuelve los menús cerrado convencional que están disponibles por defecto ese día de la semana. ÚSALO SIEMPRE que el cliente pregunte qué menú se servirá en su reserva o quiera ver el menú de su reserva. Pasa el booking_id obtenido de get_bookings.",
+			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer","description":"ID de la reserva (de get_bookings)"},"date":{"type":"string","description":"Fecha YYYY-MM-DD o dd/MM/yyyy si aún no hay reserva"}}}`),
+		},
+		{
 			Name:        "get_coffee_menu",
 			Description: "Obtiene la carta de cafés del restaurante (nombre, precio, descripción).",
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),

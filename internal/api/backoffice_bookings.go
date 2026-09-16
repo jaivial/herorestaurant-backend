@@ -852,12 +852,12 @@ func (s *Server) handleBOBookingReactivate(w http.ResponseWriter, r *http.Reques
 			INSERT INTO bookings
 				(restaurant_id, reservation_date, party_size, reservation_time, customer_name,
 				 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
-				 babyStrollers, highChairs, status, special_menu, menu_de_grupo_id, principales_json,
-				 children)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, 0)
+				 babyStrollers, highChairs, status, special_menu, menu_de_grupo_id, menu_de_grupo_assigned,
+				 principales_json, children)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, 0)
 		`, a.ActiveRestaurantID, resDate, row.partySize, resTime, custName,
 			phone, email, comment, arrozType, arrozServ, baby, chairs,
-			specMenu, menuDeGrupo, principales)
+			specMenu, menuDeGrupo, menuDeGrupoAssignedTinyint(menuDeGrupo), principales)
 		if err != nil {
 			return err
 		}

@@ -58,6 +58,8 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolListMenus(ctx, restaurantID)
 	case "get_menu_details":
 		return s.botToolMenuDetails(ctx, restaurantID, input)
+	case "get_booking_menu":
+		return s.botToolBookingMenu(ctx, restaurantID, msg.Sender, input)
 	case "get_coffee_menu":
 		return s.botToolCoffeeMenu(ctx, restaurantID)
 	case "get_drinks_menu":
@@ -459,6 +461,11 @@ type botBookingRow struct {
 	RiceServings  string `json:"rice_servings,omitempty"`
 	HighChairs    int    `json:"high_chairs,omitempty"`
 	BabyStrollers int    `json:"baby_strollers,omitempty"`
+	// Coordination id: booking_menu_de_grupo_assigned_v1 — lets the bot know
+	// whether a menu de grupo was assigned when the booking was taken.
+	MenuDeGrupoAssigned bool   `json:"menu_de_grupo_assigned"`
+	MenuDeGrupoID       *int64 `json:"menu_de_grupo_id,omitempty"`
+	Weekday             string `json:"weekday,omitempty"`
 }
 
 func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone string) ([]botBookingRow, error) {
@@ -469,7 +476,8 @@ func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone st
 			TIME_FORMAT(reservation_time, '%H:%i'),
 			party_size, customer_name,
 			COALESCE(arroz_type, ''), COALESCE(arroz_servings, ''),
-			COALESCE(highChairs, 0), COALESCE(babyStrollers, 0)
+			COALESCE(highChairs, 0), COALESCE(babyStrollers, 0),
+			COALESCE(menu_de_grupo_assigned, 0), menu_de_grupo_id
 		FROM bookings
 		WHERE restaurant_id = ?
 			AND reservation_date >= CURDATE()
@@ -484,9 +492,21 @@ func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone st
 
 	out := []botBookingRow{}
 	for rows.Next() {
-		var b botBookingRow
-		if err := rows.Scan(&b.ID, &b.Date, &b.Time, &b.People, &b.Name, &b.RiceType, &b.RiceServings, &b.HighChairs, &b.BabyStrollers); err != nil {
+		var (
+			b               botBookingRow
+			menuAssignedInt int
+			menuDeGrupoID   sql.NullInt64
+		)
+		if err := rows.Scan(&b.ID, &b.Date, &b.Time, &b.People, &b.Name, &b.RiceType, &b.RiceServings, &b.HighChairs, &b.BabyStrollers, &menuAssignedInt, &menuDeGrupoID); err != nil {
 			return nil, err
+		}
+		b.MenuDeGrupoAssigned = menuAssignedInt != 0 || (menuDeGrupoID.Valid && menuDeGrupoID.Int64 > 0)
+		if menuDeGrupoID.Valid && menuDeGrupoID.Int64 > 0 {
+			id := menuDeGrupoID.Int64
+			b.MenuDeGrupoID = &id
+		}
+		if t, terr := time.Parse("2006-01-02", b.Date); terr == nil {
+			b.Weekday = boMenuWeekdayKeyForDate(t)
 		}
 		out = append(out, b)
 	}
