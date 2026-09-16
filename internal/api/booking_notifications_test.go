@@ -364,7 +364,7 @@ func TestBookingNotificationsIncludeReservedLocation(t *testing.T) {
 }
 
 func TestBuildBookingReminderMessageIncludesReservedLocation(t *testing.T) {
-	msg := buildBookingReminderMessage("Ana", "Villa Carmen", "10/09/2026", "14:00", 2, "Planta 1", "La Condesa")
+	msg := buildBookingReminderMessage("Ana", "Villa Carmen", "10/09/2026", "14:00", 2, "Planta 1", "La Condesa", bookingReminderExtras{})
 	for _, want := range []string{"📍 Planta: Planta 1", "🚪 Salón: La Condesa"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("reminder should contain %q; got %s", want, msg)
