@@ -462,6 +462,13 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		return nil
 	}
 
+	// Coordination id: booking-extras-handoff - extras are managed by the
+	// restaurant; the guard answers with the AI notice + contact card before the
+	// model runs so it can never promise an extras change.
+	if s.botExtrasIntentGuard(ctx, restaurantID, msg, tenant) {
+		return nil
+	}
+
 	system := s.buildBotSystemPrompt(ctx, restaurantID, msg.PushName, msg.Sender, tenant)
 	messages := s.botLoadHistory(ctx, restaurantID, msg.Sender)
 	tools := botToolDefs(tenant)

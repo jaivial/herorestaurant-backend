@@ -92,7 +92,7 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 		},
 		{
 			Name:        "list_booking_extras",
-			Description: "Lista los extras disponibles del restaurante para reservas SIN menú de grupo (por ejemplo café incluido, bebida ilimitada, botella de cava, tarta). ÚSALO cuando el cliente pregunte qué extras o añadidos puede poner a su reserva. Las reservas con menú de grupo no llevan extras.",
+			Description: "Lista los extras disponibles del restaurante para reservas SIN menú de grupo (por ejemplo café incluido, bebida ilimitada, botella de cava, tarta). ÚSALO solo para INFORMAR de los disponibles; NO puedes añadir, quitar ni modificar extras de una reserva (esa gestión la realiza el restaurante). Las reservas con menú de grupo no llevan extras.",
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),
 		},
 		{
