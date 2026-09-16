@@ -245,6 +245,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/cancelled", s.handleBOBookingsCancelledByDate)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/modified", s.handleBOBookingsModifiedByDate)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings/cancelled/{id}/reactivate", s.handleBOBookingReactivate)
+		// Coordination id: booking_extras_v1
+		r.With(s.requireBOSession, reservasGate).Get("/booking-extras", s.handleBOBookingExtrasList)
+		r.With(s.requireBOSession, reservasGate).Post("/booking-extras", s.handleBOBookingExtrasCreate)
+		r.With(s.requireBOSession, reservasGate).Delete("/booking-extras/{id}", s.handleBOBookingExtrasDelete)
 
 		r.With(s.requireBOSession, reservasGate).Get("/arroz-types", s.handleBOArrozTypes)
 

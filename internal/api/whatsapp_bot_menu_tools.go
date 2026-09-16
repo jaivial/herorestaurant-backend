@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 )
 
 // botMenuCategoryLabel maps a menu_type to its Spanish label.
@@ -136,7 +137,25 @@ func (s *Server) botToolMenuDetails(ctx context.Context, restaurantID int, input
 	if err := json.Unmarshal(input, &in); err != nil || in.MenuID <= 0 {
 		return botJSON(map[string]any{"error": "menu_id inválido"}), nil
 	}
+	payload, err := s.botMenuDetailsPayload(ctx, restaurantID, in.MenuID)
+	if errors.Is(err, errBotMenuNotFound) {
+		return botJSON(map[string]any{"error": "menú no encontrado"}), nil
+	}
+	if err != nil {
+		return botJSON(map[string]any{"error": "error consultando el menú"}), nil
+	}
+	return botJSON(payload), nil
+}
 
+// errBotMenuNotFound lets callers translate a missing menu into a bot-facing
+// message without leaking database errors.
+var errBotMenuNotFound = errors.New("bot menu not found")
+
+// botMenuDetailsPayload builds the full menu payload shared by
+// `get_menu_details` and `get_booking_menu`.
+// Coordination id: menu_weekday_availability_v1 — the payload carries the
+// weekday calendar so the LLM knows on which days the menu is served.
+func (s *Server) botMenuDetailsPayload(ctx context.Context, restaurantID int, menuID int64) (map[string]any, error) {
 	var (
 		title, menuType, price, subtitleRaw     string
 		entrantesRaw, principalesRaw, postreRaw string
@@ -154,17 +173,17 @@ func (s *Server) botToolMenuDetails(ctx context.Context, restaurantID int, input
 		FROM menus
 		WHERE restaurant_id = ? AND id = ? AND active = 1 AND is_draft = 0
 		LIMIT 1
-	`, restaurantID, in.MenuID).Scan(
+	`, restaurantID, menuID).Scan(
 		&title, &menuType, &price, &subtitleRaw,
 		&entrantesRaw, &principalesRaw, &postreRaw,
 		&beverageRaw, &commentsRaw,
 		&minPartySize, &mainLimit, &mainLimitNum, &includedCoffee,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return botJSON(map[string]any{"error": "menú no encontrado"}), nil
+		return nil, errBotMenuNotFound
 	}
 	if err != nil {
-		return botJSON(map[string]any{"error": "error consultando el menú"}), nil
+		return nil, err
 	}
 
 	menuType = normalizeV2MenuType(menuType)
@@ -195,24 +214,42 @@ func (s *Server) botToolMenuDetails(ctx context.Context, restaurantID int, input
 		principalesItems = anySliceToStringList(decoded["items"])
 	}
 
-	sections := s.botLoadMenuSections(ctx, restaurantID, in.MenuID)
+	sections := s.botLoadMenuSections(ctx, restaurantID, menuID)
 
-	return botJSON(map[string]any{
-		"menu_id":        in.MenuID,
-		"title":          strings.TrimSpace(title),
-		"category":       menuType,
-		"category_label": botMenuCategoryLabel(menuType),
-		"price":          price,
-		"subtitle":       anySliceToStringList(decodeJSONOrFallback(subtitleRaw, []any{})),
-		"settings":       settings,
-		"sections":       sections,
-		"entrantes":      anySliceToStringList(decodeJSONOrFallback(entrantesRaw, []any{})),
+	weekdays := emptyBOMenuWeekdays()
+	if loaded, werr := s.loadBOMenuWeekdays(ctx, restaurantID, menuID); werr == nil {
+		weekdays = loaded
+	}
+
+	return map[string]any{
+		"menu_id":            menuID,
+		"title":              strings.TrimSpace(title),
+		"category":           menuType,
+		"category_label":     botMenuCategoryLabel(menuType),
+		"price":              price,
+		"subtitle":           anySliceToStringList(decodeJSONOrFallback(subtitleRaw, []any{})),
+		"settings":           settings,
+		"sections":           sections,
+		"weekdays":           weekdays,
+		"weekdays_available": botWeekdaysAvailable(weekdays),
+		"entrantes":          anySliceToStringList(decodeJSONOrFallback(entrantesRaw, []any{})),
 		"principales": map[string]any{
 			"title": principalesTitle,
 			"items": principalesItems,
 		},
 		"postre": anySliceToStringList(decodeJSONOrFallback(postreRaw, []any{})),
-	}), nil
+	}, nil
+}
+
+// botWeekdaysAvailable lists the canonical weekday keys flagged as available.
+func botWeekdaysAvailable(weekdays map[string]bool) []string {
+	out := make([]string, 0, len(boMenuWeekdayKeys))
+	for _, key := range boMenuWeekdayKeys {
+		if weekdays[key] {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 // botLoadMenuSections loads the v2 sections and their active dishes for a menu.
@@ -414,4 +451,103 @@ func (s *Server) botToolWinesMenu(ctx context.Context, restaurantID int) (string
 		wines = append(wines, wine)
 	}
 	return botJSON(map[string]any{"count": len(wines), "wines": wines}), nil
+}
+
+// botToolBookingMenu resolves which menu applies to one of the customer's
+// bookings. If the booking carries a menu de grupo it returns that menu's full
+// detail; otherwise it returns the "menú cerrado convencional" menus available
+// on the booking's weekday (the restaurant default menus).
+//
+// Coordination id: menu_weekday_availability_v1
+// (booking date -> weekday -> menu_weekday_availability -> default menus).
+func (s *Server) botToolBookingMenu(ctx context.Context, restaurantID int, phone string, input json.RawMessage) (string, error) {
+	var in struct {
+		BookingID int64  `json:"booking_id"`
+		Date      string `json:"date"`
+	}
+	if err := json.Unmarshal(input, &in); err != nil {
+		return botJSON(map[string]any{"error": "parámetros inválidos"}), nil
+	}
+
+	dateISO := ""
+	assigned := false
+	var assignedMenuID int64
+	var bookingExtras []string
+	bookingID := in.BookingID
+
+	if bookingID > 0 {
+		national, digits := botPhoneVariants(phone)
+		var (
+			menuAssignedInt int
+			menuDeGrupoID   sql.NullInt64
+			extrasRaw       sql.NullString
+		)
+		err := s.db.QueryRowContext(ctx, `
+			SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'),
+			       COALESCE(menu_de_grupo_assigned, 0), menu_de_grupo_id,
+			       COALESCE(extras_json, '')
+			FROM bookings
+			WHERE restaurant_id = ? AND id = ?
+				AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
+			LIMIT 1
+		`, restaurantID, bookingID, national, digits, digits).Scan(&dateISO, &menuAssignedInt, &menuDeGrupoID, &extrasRaw)
+		bookingExtras = bookingExtraNames(extrasRaw.String)
+		if errors.Is(err, sql.ErrNoRows) {
+			return botJSON(map[string]any{"error": "reserva no encontrada"}), nil
+		}
+		if err != nil {
+			return botJSON(map[string]any{"error": "error consultando la reserva"}), nil
+		}
+		assigned = menuAssignedInt != 0 || (menuDeGrupoID.Valid && menuDeGrupoID.Int64 > 0)
+		if menuDeGrupoID.Valid {
+			assignedMenuID = menuDeGrupoID.Int64
+		}
+	} else {
+		parsed, err := parseBotDate(in.Date)
+		if err != nil {
+			return botJSON(map[string]any{"error": "indica booking_id o date"}), nil
+		}
+		dateISO = parsed
+	}
+
+	when, terr := time.Parse("2006-01-02", dateISO)
+	if terr != nil {
+		return botJSON(map[string]any{"error": "fecha inválida"}), nil
+	}
+	weekday := boMenuWeekdayKeyForDate(when)
+
+	if assigned && assignedMenuID > 0 {
+		payload, err := s.botMenuDetailsPayload(ctx, restaurantID, assignedMenuID)
+		if errors.Is(err, errBotMenuNotFound) {
+			// Assigned menu was deleted/deactivated: fall back to the default
+			// menus available for that weekday instead of failing.
+			assigned = false
+		} else if err != nil {
+			return botJSON(map[string]any{"error": "error consultando el menú asignado"}), nil
+		} else {
+			return botJSON(map[string]any{
+				"source":     "assigned_group_menu",
+				"booking_id": bookingID,
+				"date":       dateISO,
+				"weekday":    weekday,
+				"extras":     bookingExtras,
+				"menu":       payload,
+			}), nil
+		}
+	}
+
+	menus, configured, err := s.botMenusAvailableOnWeekday(ctx, restaurantID, weekday, "closed_conventional")
+	if err != nil {
+		return botJSON(map[string]any{"error": "error consultando los menús por defecto"}), nil
+	}
+	return botJSON(map[string]any{
+		"source":             "default_closed_conventional",
+		"booking_id":         bookingID,
+		"date":               dateISO,
+		"weekday":            weekday,
+		"extras":             bookingExtras,
+		"weekday_configured": configured,
+		"default_menus":      menus,
+		"note":               "No hay menú de grupo asignado a esta reserva: se sirve por defecto el menú cerrado convencional disponible ese día de la semana.",
+	}), nil
 }

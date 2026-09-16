@@ -692,11 +692,12 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 			contact_email,
 			special_menu,
 			menu_de_grupo_id,
+			menu_de_grupo_assigned,
 			principales_json,
 			preferred_floor_number,
 			preferred_salon_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, p.PrincipalesJSON, p.PreferredFloorNum, p.PreferredSalonID)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, menuDeGrupoAssignedTinyint(p.MenuDeGrupoID), p.PrincipalesJSON, p.PreferredFloorNum, p.PreferredSalonID)
 	if err != nil {
 		return 0, err
 	}
