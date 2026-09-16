@@ -293,6 +293,16 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 		detailsHTML += tableRow("Mesa", htmlEscape(tableNumber))
 	}
 	detailsHTML += menuArrozHTML
+	// Coordination id: booking_extras_v1 - only rendered when at least one
+	// extra is selected.
+	if extras := bookingExtrasFromMap(booking); len(extras) > 0 {
+		extrasHTML := "<ul style=\"margin:5px 0 0 0;padding-left:20px;\">"
+		for _, extra := range extras {
+			extrasHTML += "<li>" + htmlEscape(extra) + "</li>"
+		}
+		extrasHTML += "</ul>"
+		detailsHTML += tableRow("Extras", extrasHTML)
+	}
 	if highChairs > 0 {
 		detailsHTML += tableRow("Tronas", strconv.Itoa(highChairs))
 	}

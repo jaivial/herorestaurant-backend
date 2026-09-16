@@ -460,9 +460,10 @@ func (s *Server) handleEditBooking(w http.ResponseWriter, r *http.Request) {
 			contact_email = ?,
 			special_menu = ?,
 			menu_de_grupo_id = ?,
+			menu_de_grupo_assigned = ?,
 			principales_json = ?
 		WHERE restaurant_id = ? AND id = ?
-	`, resDate, partySize, resTime, name, phoneDigits, commentary, babyStrollers, highChairs, arrozTypeJSON, arrozServingsJSON, contactEmail, specialMenu, menuID, principalesJSON, restaurantID, id)
+	`, resDate, partySize, resTime, name, phoneDigits, commentary, babyStrollers, highChairs, arrozTypeJSON, arrozServingsJSON, contactEmail, specialMenu, menuID, menuDeGrupoAssignedTinyint(menuID), principalesJSON, restaurantID, id)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": err.Error()})
 		return
@@ -932,12 +933,13 @@ func (s *Server) handleReactivateBooking(w http.ResponseWriter, r *http.Request)
 			arroz_servings,
 			special_menu,
 			menu_de_grupo_id,
+			menu_de_grupo_assigned,
 			principales_json,
 			status,
 			reminder_sent,
 			rice_reminder_sent
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 1, 1)
-	`, restaurantID, customerName, email.String, resDate, resTime, partySize, phone, comment.String, nullIntToInt(baby), nullIntToInt(chairs), nullStringOrNil(arrozType), nullStringOrNil(arrozServ), int64OrZero(specialMenu), nullInt64OrNil(menuID), nullStringOrNil(principales))
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 1, 1)
+	`, restaurantID, customerName, email.String, resDate, resTime, partySize, phone, comment.String, nullIntToInt(baby), nullIntToInt(chairs), nullStringOrNil(arrozType), nullStringOrNil(arrozServ), int64OrZero(specialMenu), nullInt64OrNil(menuID), menuDeGrupoAssignedTinyint(menuID), nullStringOrNil(principales))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reactivando reserva: " + err.Error()})
 		return

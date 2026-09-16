@@ -35,6 +35,8 @@ type dueBookingReminder struct {
 	BabyStrollers   sql.NullInt64
 	PreferredFloor  sql.NullInt64
 	SalonName       sql.NullString
+	// Coordination id: booking_extras_v1
+	ExtrasRaw sql.NullString
 }
 
 func bookingReminderDeliveryKey(restaurantID int, bookingID int64) string {
@@ -136,6 +138,7 @@ func (s *Server) deliverBookingReminders(ctx context.Context, restaurantID int, 
 			ArrozLine:     bookingReminderArrozLine(b.ArrozType, b.ArrozServings),
 			HighChairs:    int(b.HighChairs.Int64),
 			BabyStrollers: int(b.BabyStrollers.Int64),
+			Extras:        bookingExtraNames(b.ExtrasRaw.String),
 		}
 		msg := buildBookingReminderPayload(brandName, b.CustomerName, formatBookingDateDisplay(b.ReservationDate), formatHHMM(b.ReservationTime),
 			b.PartySize, bookingReminderFloorDisplay(b.PreferredFloor), strings.TrimSpace(b.SalonName.String), extras, b.ID, baseURL)
@@ -159,7 +162,7 @@ func (s *Server) dueBookingReminders(ctx context.Context, restaurantID int, from
 		       DATE_FORMAT(b.reservation_date, '%Y-%m-%d') AS reservation_date,
 		       TIME_FORMAT(b.reservation_time, '%H:%i:%s') AS reservation_time,
 		       b.party_size, b.arroz_type, b.arroz_servings, b.highChairs, b.babyStrollers,
-		       b.preferred_floor_number, sal.name
+		       b.preferred_floor_number, sal.name, COALESCE(b.extras_json, '')
 		FROM bookings b
 		LEFT JOIN restaurant_salons sal ON sal.id = b.preferred_salon_id AND sal.restaurant_id = b.restaurant_id
 		LEFT JOIN booking_reminder_deliveries d
@@ -179,7 +182,7 @@ func (s *Server) dueBookingReminders(ctx context.Context, restaurantID int, from
 	for rows.Next() {
 		var b dueBookingReminder
 		if err = rows.Scan(&b.ID, &b.CustomerName, &b.PhoneCC, &b.Phone, &b.ReservationDate, &b.ReservationTime,
-			&b.PartySize, &b.ArrozType, &b.ArrozServings, &b.HighChairs, &b.BabyStrollers, &b.PreferredFloor, &b.SalonName); err != nil {
+			&b.PartySize, &b.ArrozType, &b.ArrozServings, &b.HighChairs, &b.BabyStrollers, &b.PreferredFloor, &b.SalonName, &b.ExtrasRaw); err != nil {
 			return nil, err
 		}
 		out = append(out, b)

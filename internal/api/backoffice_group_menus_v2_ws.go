@@ -308,6 +308,14 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 		beverageOptions, beverageErr,
 		menuSlider, sliderErr,
 	)
+	// Coordination id: menu_weekday_availability_v1 (DB -> WS hello -> editor grid)
+	weekdays, weekdaysErr := s.loadBOMenuWeekdays(r.Context(), a.ActiveRestaurantID, menuID)
+	if weekdaysErr != nil {
+		s.logBOGroupMenuV2AITrace("ws hello weekdays load error restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, weekdaysErr)
+		weekdays = emptyBOMenuWeekdays()
+	}
+	helloPayload["menu_weekdays"] = weekdays
+	helloPayload["weekdays"] = weekdays
 	_ = client.writeJSON(helloPayload)
 	if trackerErr == nil {
 		s.logBOGroupMenuV2AITrace(
@@ -343,6 +351,10 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 			typ := strings.ToLower(strings.TrimSpace(msg.Type))
 			if strings.HasPrefix(typ, "beverage_") {
 				s.handleBOBeverageOptionsWSMessage(r, a.ActiveRestaurantID, menuID, client, raw)
+				continue
+			}
+			if strings.HasPrefix(typ, "weekday_") {
+				s.handleBOMenuWeekdayWSMessage(r, a.ActiveRestaurantID, menuID, client, raw)
 				continue
 			}
 			if typ != "sync" && typ != "refresh" && typ != "join" && typ != "join_menu" && typ != "join_group_menu" {

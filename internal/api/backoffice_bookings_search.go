@@ -81,7 +81,8 @@ func (s *Server) handleBOBookingsSearch(w http.ResponseWriter, r *http.Request) 
 			DATE_FORMAT(added_date, '%Y-%m-%d %H:%i:%s') AS added_date,
 			special_menu,
 			menu_de_grupo_id,
-			principales_json
+			principales_json,
+			COALESCE(extras_json, '')
 		FROM bookings
 	` + baseWhere + `
 		ORDER BY reservation_date DESC, reservation_time DESC, id DESC

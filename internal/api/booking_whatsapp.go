@@ -68,6 +68,15 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 		msg += formatArrozWhatsApp(booking)
 	}
 
+	// Coordination id: booking_extras_v1 - extras are only shown when at least
+	// one is selected, so bookings without extras keep the original message.
+	if extras := bookingExtrasFromMap(booking); len(extras) > 0 {
+		msg += "✨ *Extras:*\n"
+		for _, extra := range extras {
+			msg += "  • " + extra + "\n"
+		}
+	}
+
 	// Tronas and carritos are always listed, including 0, so the customer can
 	// verify at a glance that nothing was requested by mistake.
 	msg += fmt.Sprintf("👶 *Tronas:* %d\n", highChairs)
