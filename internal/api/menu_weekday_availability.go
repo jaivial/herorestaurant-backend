@@ -132,7 +132,9 @@ var errInvalidBOMenuWeekday = boInvalidMenuWeekdayError{}
 // (`weekday_refresh`) answer on the requesting client only; writes broadcast
 // the new snapshot to every editor watching that menu so two operators never
 // drift.
-func (s *Server) handleBOMenuWeekdayWSMessage(_ *http.Request, restaurantID int, menuID int64, client *boGroupMenuV2AIClient, raw []byte) {
+func (s *Server) handleBOMenuWeekdayWSMessage(r *http.Request, restaurantID int, menuID int64, client *boGroupMenuV2AIClient, raw []byte) {
+	ctx := r.Context()
+
 	var msg struct {
 		Type          string `json:"type"`
 		MenuID        int64  `json:"menu_id"`
@@ -149,7 +151,7 @@ func (s *Server) handleBOMenuWeekdayWSMessage(_ *http.Request, restaurantID int,
 	typ := strings.ToLower(strings.TrimSpace(msg.Type))
 
 	sendState := func(target *boGroupMenuV2AIClient, frameType string) {
-		weekdays, err := s.loadBOMenuWeekdays(context.Background(), restaurantID, menuID)
+		weekdays, err := s.loadBOMenuWeekdays(ctx, restaurantID, menuID)
 		if err != nil {
 			return
 		}
@@ -178,7 +180,7 @@ func (s *Server) handleBOMenuWeekdayWSMessage(_ *http.Request, restaurantID int,
 			})
 			return
 		}
-		if err := s.saveBOMenuWeekday(context.Background(), restaurantID, menuID, weekday, *msg.Available); err != nil {
+		if err := s.saveBOMenuWeekday(ctx, restaurantID, menuID, weekday, *msg.Available); err != nil {
 			_ = client.writeJSON(map[string]any{
 				"type":    "weekday_error",
 				"menu_id": menuID,
@@ -191,16 +193,23 @@ func (s *Server) handleBOMenuWeekdayWSMessage(_ *http.Request, restaurantID int,
 			"ws weekday saved restaurant=%d menu=%d weekday=%s available=%t",
 			restaurantID, menuID, weekday, *msg.Available,
 		)
+		// Broadcast the full calendar in the same frame so every editor watching
+		// this menu reconciles, not just the initiator (parity with beverage_*).
+		weekdays, werr := s.loadBOMenuWeekdays(ctx, restaurantID, menuID)
+		if werr != nil {
+			weekdays = emptyBOMenuWeekdays()
+		}
 		s.groupMenusV2AIHub.broadcast(restaurantID, menuID, map[string]any{
 			"type":           "weekday_saved",
 			"restaurant_id":  restaurantID,
 			"menu_id":        menuID,
 			"weekday":        weekday,
 			"available":      *msg.Available,
+			"menu_weekdays":  weekdays,
+			"weekdays":       weekdays,
 			"correlation_id": msg.CorrelationID,
 			"at":             time.Now().UTC().Format(time.RFC3339),
 		})
-		sendState(client, boMenuWeekdayStateFrame)
 	}
 }
 
