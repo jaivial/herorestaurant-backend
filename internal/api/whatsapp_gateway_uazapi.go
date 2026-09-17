@@ -51,8 +51,15 @@ func (g *uazapiGateway) SendLocation(ctx context.Context, to string, loc waLocat
 }
 
 func (g *uazapiGateway) SendContact(ctx context.Context, to string, c waContact) error {
+	// Same normalization as the Evolution gateway: providers expect the contact
+	// phone digits-only (no "+", spaces or dashes). Keeps both gateways shaping
+	// the identical callable vCard.
+	normalized := digitsOnly(c.Phone)
+	if normalized == "" {
+		normalized = c.Phone
+	}
 	return g.send(ctx, "contact", map[string]any{
-		"number": to, "fullName": c.FullName, "phoneNumber": c.Phone, "organization": c.Organization,
+		"number": to, "fullName": c.FullName, "phoneNumber": normalized, "organization": c.Organization,
 	})
 }
 

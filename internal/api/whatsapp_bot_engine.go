@@ -12,9 +12,16 @@ type botToolExecutor func(ctx context.Context, name string, input json.RawMessag
 // botTurnState carries per-turn delivery bookkeeping from the tool executor
 // back to botProcessMessage. noticeDelivered is set when a tool already sent a
 // deterministic server-side reply (e.g. the same-day notice) so the generic
-// fallback is not emitted on top of it.
+// fallback is not emitted on top of it. contactSent/contactPhone deduplicate
+// the human-handoff contact card: the LLM may call send_contact several times
+// (even inside one parallel tool_use block) and every extra call would deliver
+// another vCard to the customer (prod incident 2026-09-17: 5 cards in one turn
+// for sender 34679042882, iterations=8). Only the first call per turn sends;
+// later calls return the cached phone without a new delivery.
 type botTurnState struct {
 	noticeDelivered bool
+	contactSent     bool
+	contactPhone    string
 }
 
 // botLoopResult summarizes one agent run.

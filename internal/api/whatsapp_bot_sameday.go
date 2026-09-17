@@ -44,7 +44,7 @@ func botSameDayNoticeText(phone string) string {
 		"Soy un asistente de reservas generado con Inteligencia Artificial.\n" +
 		"No puedo crear, modificar ni cancelar reservas para el día de hoy: para cualquier gestión de una reserva de hoy, llame directamente al restaurante."
 	if p := strings.TrimSpace(phone); p != "" {
-		msg += "\n📞 " + p
+		msg += "\n📞 " + botFormatPhoneDisplay(p)
 	}
 	msg += "\nLe dejo la tarjeta de contacto del restaurante 👇"
 	return msg
@@ -142,6 +142,7 @@ func (s *Server) botSendContactCard(ctx context.Context, restaurantID int, msg b
 // and callers that resolve it from the tenant (send_contact tool) share one
 // delivery + recording path.
 func (s *Server) botSendContactCardWith(ctx context.Context, restaurantID int, msg botWebhookMessage, name, phone string) (string, error) {
+	phone = digitsOnly(phone)
 	if phone == "" {
 		return "", errors.New("el restaurante no tiene teléfono configurado")
 	}
