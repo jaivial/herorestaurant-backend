@@ -28,9 +28,14 @@ var boAdHexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 var boAdPublicRoutes = []string{"/", "/contacto", "/eventos", "/menufindesemana", "/menudeldia", "/menusdegrupos", "/postres", "/vinos", "/cafes", "/bebidas", "/reservas", "/reservas.php", "/avisolegal", "/avisolegal.html", "/booking-policies", "/booking_policies.php", "/confirm", "/cancel", "/update-rice", "/protecciondatos", "/protecciondatos.html", "/menusanvalentin", "/regala"}
 
 const (
-	boAdMaxTextElements = 5
-	boAdMaxCTAs         = 5
-	boAdMaxSteps        = 20
+	boAdMaxTextElements    = 5
+	boAdMaxCTAs            = 5
+	boAdElementMinWidthPct = 10.0
+	boAdElementMaxWidthPct = 100.0
+	// Image heights: a thumbnail stays readable and a hero never explodes the card.
+	boAdElementMinHeightPx = 40.0
+	boAdElementMaxHeightPx = 1200.0
+	boAdMaxSteps           = 20
 	// boAdMaxImageBytes is the single ads image budget: an upload within it is
 	// stored untouched, and a larger one is compressed down to it (never below).
 	boAdMaxImageBytes = 5 * 1024 * 1024
@@ -38,11 +43,21 @@ const (
 	boAdEnhanceModel  = "openai/gpt-image-2/edit"
 )
 
+// boAdElementSize is the operator-sized box of an element (coord id
+// ads_element_size_v1): width as a percentage of the card content width and,
+// for images, an explicit height in pixels. Absent fields keep the public
+// template's own size, so legacy content renders untouched.
+type boAdElementSize struct {
+	Width  *float64 `json:"width,omitempty"`
+	Height *float64 `json:"height,omitempty"`
+}
+
 type boAdContentElement struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`
-	Value string `json:"value"`
-	Align string `json:"align,omitempty"`
+	ID    string           `json:"id"`
+	Type  string           `json:"type"`
+	Value string           `json:"value"`
+	Align string           `json:"align,omitempty"`
+	Size  *boAdElementSize `json:"size,omitempty"`
 }
 
 type boAdCTA struct {
@@ -137,6 +152,13 @@ func normalizeBOAdContent(input []boAdContentElement) ([]boAdContentElement, err
 			return nil, errors.New("duplicate content item id")
 		}
 		seen[item.ID] = true
+		if item.Size != nil {
+			size, err := normalizeBOAdElementSize(item.Type, item.Size)
+			if err != nil {
+				return nil, err
+			}
+			item.Size = size
+		}
 		switch item.Type {
 		case "title", "subtitle", "text":
 			counts[item.Type]++
@@ -154,6 +176,35 @@ func normalizeBOAdContent(input []boAdContentElement) ([]boAdContentElement, err
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// normalizeBOAdElementSize clamps the operator box to sane bounds. A nil field
+// means "use the template default"; an empty box is dropped entirely so the
+// stored JSON stays free of no-op objects.
+func normalizeBOAdElementSize(elementType string, size *boAdElementSize) (*boAdElementSize, error) {
+	clamp := func(v *float64, min, max float64) *float64 {
+		if v == nil {
+			return nil
+		}
+		out := *v
+		if out < min {
+			out = min
+		}
+		if out > max {
+			out = max
+		}
+		return &out
+	}
+	width := clamp(size.Width, boAdElementMinWidthPct, boAdElementMaxWidthPct)
+	height := clamp(size.Height, boAdElementMinHeightPx, boAdElementMaxHeightPx)
+	if elementType != "image" {
+		// Text blocks grow with their content: only the width is operator-sized.
+		height = nil
+	}
+	if width == nil && height == nil {
+		return nil, nil
+	}
+	return &boAdElementSize{Width: width, Height: height}, nil
 }
 
 func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
