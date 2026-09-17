@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,11 +23,14 @@ import (
 	"preactvillacarmen/internal/lib/specialmenuimage"
 )
 
+var boAdHexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
 var boAdPublicRoutes = []string{"/", "/contacto", "/eventos", "/menufindesemana", "/menudeldia", "/menusdegrupos", "/postres", "/vinos", "/cafes", "/bebidas", "/reservas", "/reservas.php", "/avisolegal", "/avisolegal.html", "/booking-policies", "/booking_policies.php", "/confirm", "/cancel", "/update-rice", "/protecciondatos", "/protecciondatos.html", "/menusanvalentin", "/regala"}
 
 const (
 	boAdMaxTextElements = 5
 	boAdMaxCTAs         = 5
+	boAdMaxSteps        = 20
 	// boAdMaxImageBytes is the single ads image budget: an upload within it is
 	// stored untouched, and a larger one is compressed down to it (never below).
 	boAdMaxImageBytes = 5 * 1024 * 1024
@@ -48,6 +52,25 @@ type boAdCTA struct {
 	NavigationMode string `json:"navigation_mode"`
 	Route          string `json:"route,omitempty"`
 	CustomURL      string `json:"custom_url,omitempty"`
+}
+
+// Coordination id: ads_layout_v1 - a "multiple" anuncio renders a wizard: a
+// column of cards (one per step) where each card advances to its announcement.
+type boAdStep struct {
+	ID              string               `json:"id"`
+	Title           string               `json:"title"`
+	Description     string               `json:"description"`
+	BackgroundMode  string               `json:"background_mode"`
+	BackgroundColor string               `json:"background_color,omitempty"`
+	BackgroundImage string               `json:"background_image,omitempty"`
+	SeeMore         bool                 `json:"see_more"`
+	Buttons         []boAdCTA            `json:"buttons"`
+	Content         []boAdContentElement `json:"content"`
+}
+
+type boAdLayout struct {
+	Mode  string     `json:"mode"`
+	Steps []boAdStep `json:"steps,omitempty"`
 }
 
 type boAdImageGenerationStatus string
@@ -72,6 +95,7 @@ type boAd struct {
 	Active                   bool                      `json:"active"`
 	Content                  []boAdContentElement      `json:"content"`
 	CTAs                     []boAdCTA                 `json:"ctas"`
+	Layout                   *boAdLayout               `json:"layout,omitempty"`
 	ImageGenerationStatus    boAdImageGenerationStatus `json:"image_generation_status,omitempty"`
 	ImageGenerationStartedAt string                    `json:"image_generation_started_at,omitempty"`
 	StartsAt                 *string                   `json:"starts_at,omitempty"`
@@ -86,6 +110,7 @@ type boAdInput struct {
 	Active   bool                 `json:"active"`
 	Content  []boAdContentElement `json:"content"`
 	CTAs     []boAdCTA            `json:"ctas"`
+	Layout   *boAdLayout          `json:"layout,omitempty"`
 	StartsAt *string              `json:"starts_at,omitempty"`
 	EndsAt   *string              `json:"ends_at,omitempty"`
 }
@@ -179,6 +204,72 @@ func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
 	return out, nil
 }
 
+// normalizeBOAdLayout validates the wizard payload. Absent or "unico" layouts
+// come back as nil so the DB keeps storing a plain announcement.
+func normalizeBOAdLayout(input *boAdLayout) (*boAdLayout, error) {
+	if input == nil {
+		return nil, nil
+	}
+	input.Mode = strings.ToLower(strings.TrimSpace(input.Mode))
+	if input.Mode == "" {
+		input.Mode = "unico"
+	}
+	if input.Mode != "unico" && input.Mode != "multiple" {
+		return nil, errors.New("invalid ad layout mode")
+	}
+	if input.Mode != "multiple" {
+		return nil, nil
+	}
+	if len(input.Steps) == 0 {
+		return nil, errors.New("multiple layout requires at least one step")
+	}
+	if len(input.Steps) > boAdMaxSteps {
+		return nil, fmt.Errorf("maximum %d steps", boAdMaxSteps)
+	}
+	steps := make([]boAdStep, 0, len(input.Steps))
+	seen := map[string]bool{}
+	for _, step := range input.Steps {
+		step.ID = strings.TrimSpace(step.ID)
+		step.Title = strings.TrimSpace(step.Title)
+		step.Description = strings.TrimSpace(step.Description)
+		step.BackgroundMode = strings.ToLower(strings.TrimSpace(step.BackgroundMode))
+		step.BackgroundColor = strings.TrimSpace(step.BackgroundColor)
+		step.BackgroundImage = strings.TrimSpace(step.BackgroundImage)
+		if step.ID == "" || seen[step.ID] {
+			return nil, errors.New("invalid ad step id")
+		}
+		seen[step.ID] = true
+		switch step.BackgroundMode {
+		case "":
+			step.BackgroundMode = "transparent"
+		case "transparent", "color", "image":
+		default:
+			return nil, errors.New("invalid ad step background mode")
+		}
+		if step.BackgroundColor != "" && !boAdHexColor.MatchString(step.BackgroundColor) {
+			return nil, errors.New("invalid ad step background color")
+		}
+		if step.BackgroundImage != "" {
+			u, err := url.ParseRequestURI(step.BackgroundImage)
+			if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") {
+				return nil, errors.New("invalid ad step background image")
+			}
+		}
+		buttons, err := normalizeBOAdCTAs(step.Buttons)
+		if err != nil {
+			return nil, err
+		}
+		content, err := normalizeBOAdContent(step.Content)
+		if err != nil {
+			return nil, err
+		}
+		step.Buttons, step.Content = buttons, content
+		steps = append(steps, step)
+	}
+	input.Steps = steps
+	return input, nil
+}
+
 func boAdTextToImagePrompt(content []boAdContentElement) string {
 	parts := make([]string, 0, len(content))
 	for _, item := range content {
@@ -200,11 +291,11 @@ func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (bo
 	var ad boAd
 	var active int
 	var startsAt, endsAt sql.NullTime
-	var contentRaw, ctasRaw []byte
+	var contentRaw, ctasRaw, layoutRaw []byte
 	var statusRaw sql.NullString
 	var startedAt, createdAt, updatedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
-		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
+		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &layoutRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
 	if err != nil {
 		return ad, err
 	}
@@ -228,6 +319,11 @@ func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (bo
 	}
 	if err := json.Unmarshal(ctasRaw, &ad.CTAs); err != nil {
 		return ad, err
+	}
+	if len(layoutRaw) > 0 {
+		if err := json.Unmarshal(layoutRaw, &ad.Layout); err != nil {
+			return ad, err
+		}
 	}
 	if createdAt.Valid {
 		ad.CreatedAt = createdAt.Time.UTC().Format(time.RFC3339)
@@ -255,6 +351,11 @@ func validateBOAdInput(input boAdInput) (boAdInput, error) {
 		return input, err
 	}
 	input.Content, input.CTAs = content, ctas
+	layout, err := normalizeBOAdLayout(input.Layout)
+	if err != nil {
+		return input, err
+	}
+	input.Layout = layout
 	if (input.StartsAt == nil) != (input.EndsAt == nil) {
 		return input, errors.New("start and end dates must be provided together")
 	}
@@ -338,15 +439,19 @@ func (s *Server) updateBOAd(ctx context.Context, restaurantID int, adID int64, i
 	}
 	contentRaw, _ := json.Marshal(normalized.Content)
 	ctasRaw, _ := json.Marshal(normalized.CTAs)
+	var layoutRaw []byte
+	if normalized.Layout != nil {
+		layoutRaw, _ = json.Marshal(normalized.Layout)
+	}
 	if adID <= 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json) VALUES (?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw)
+		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw)
 		if err != nil {
 			return boAd{}, err
 		}
 		id, _ := res.LastInsertId()
 		return s.readBOAd(ctx, restaurantID, id)
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ? WHERE id = ? AND restaurant_id = ?`, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, adID, restaurantID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ? WHERE id = ? AND restaurant_id = ?`, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, adID, restaurantID); err != nil {
 		return boAd{}, err
 	}
 	return s.readBOAd(ctx, restaurantID, adID)
