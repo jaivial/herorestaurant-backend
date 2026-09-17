@@ -17,7 +17,8 @@ func (s *Server) botToolExecutorFor(restaurantID int, msg botWebhookMessage, ten
 }
 
 // botToolExecutorForTurn binds the executor to a per-turn state so server-side
-// replies (like the same-day notice) can suppress the generic fallback.
+// replies (like the same-day notice) can suppress the generic fallback and so
+// repeated send_contact calls collapse into a single vCard delivery.
 func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage, tenant botTenantConfig, state *botTurnState) botToolExecutor {
 	return func(ctx context.Context, name string, input json.RawMessage) (string, error) {
 		// Same-day policy is enforced before any mutation tool runs.
@@ -27,12 +28,45 @@ func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage,
 			}
 			return out, nil
 		}
+		// Deduplicate the contact card per turn: the model sometimes emits
+		// send_contact repeatedly (including several tool_use blocks in one
+		// iteration). Deliver once, then answer idempotently with the same
+		// phone so the loop can finish without spamming the customer.
+		if name == "send_contact" && state != nil && state.contactSent {
+			return botJSON(map[string]any{"sent": true, "phone": state.contactPhone, "deduped": true}), nil
+		}
 		out, err := s.botExecuteTool(ctx, restaurantID, msg, tenant, name, input)
 		if err != nil {
 			return "", err
 		}
+		if name == "send_contact" && state != nil && !state.contactSent {
+			if phone := botContactPhoneFromResult(out); phone != "" {
+				state.contactSent = true
+				state.contactPhone = phone
+			}
+		}
 		return out, nil
 	}
+}
+
+// botContactPhoneFromResult extracts the delivered phone from a send_contact
+// tool result ({"sent":true,"phone":"..."}). Empty when the tool failed, so a
+// failure does not poison the per-turn dedup and a retry may still deliver.
+func botContactPhoneFromResult(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	var decoded struct {
+		Sent  bool   `json:"sent"`
+		Phone string `json:"phone"`
+	}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return ""
+	}
+	if !decoded.Sent {
+		return ""
+	}
+	return decoded.Phone
 }
 
 func botJSON(v any) string {

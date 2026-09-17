@@ -140,10 +140,21 @@ func (g *evolutionGateway) SendLocation(ctx context.Context, to string, loc waLo
 }
 
 func (g *evolutionGateway) SendContact(ctx context.Context, to string, c waContact) error {
+	// Evolution builds the vCard as TEL;waid=<wuid>:<phoneNumber>. A leading "+"
+	// or spaces/formatting (e.g. waid=+34638857294 observed in prod 2026-09-17
+	// for sender 34679042882) produces a broken contact card that the customer
+	// cannot tap to chat. Normalize to digits-only (E.164 without "+") so the
+	// waid is always callable; the display name/organization still carry the
+	// brand. digitsOnly lives in restaurant_profile.go and is shared by every
+	// WhatsApp phone comparison.
+	normalized := digitsOnly(c.Phone)
+	if normalized == "" {
+		normalized = c.Phone
+	}
 	return g.post(ctx, g.msgPath("sendContact"), map[string]any{
 		"number": to,
 		"contact": []map[string]any{{
-			"fullName": c.FullName, "wuid": c.Phone, "phoneNumber": c.Phone, "organization": c.Organization,
+			"fullName": c.FullName, "wuid": normalized, "phoneNumber": normalized, "organization": c.Organization,
 		}},
 	})
 }
