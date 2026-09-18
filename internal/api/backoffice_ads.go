@@ -30,6 +30,7 @@ var boAdPublicRoutes = []string{"/", "/contacto", "/eventos", "/menufindesemana"
 const (
 	boAdMaxTextElements    = 5
 	boAdMaxCTAs            = 5
+	boAdMaxContentElements = boAdMaxTextElements*3 + 1
 	boAdElementMinWidthPct = 10.0
 	boAdElementMaxWidthPct = 100.0
 	// Image heights: a thumbnail stays readable and a hero never explodes the card.
@@ -97,20 +98,29 @@ type boAdCTA struct {
 	CustomURL      string `json:"custom_url,omitempty"`
 	// Operator-sized pill width as a percentage of the card (ads_button_width_v1).
 	Width *float64 `json:"width,omitempty"`
+	// Coordination id: ads_button_slot_v1 - position of the button inside the
+	// content flow (index before which it renders). Absent keeps the classic
+	// actions row under the content.
+	Slot *int `json:"slot,omitempty"`
 }
 
 // Coordination id: ads_layout_v1 - a "multiple" anuncio renders a wizard: a
 // column of cards (one per step) where each card advances to its announcement.
 type boAdStep struct {
-	ID              string               `json:"id"`
-	Title           string               `json:"title"`
-	Description     string               `json:"description"`
-	BackgroundMode  string               `json:"background_mode"`
-	BackgroundColor string               `json:"background_color,omitempty"`
-	BackgroundImage string               `json:"background_image,omitempty"`
-	SeeMore         bool                 `json:"see_more"`
-	Buttons         []boAdCTA            `json:"buttons"`
-	Content         []boAdContentElement `json:"content"`
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	Description     string `json:"description"`
+	BackgroundMode  string `json:"background_mode"`
+	BackgroundColor string `json:"background_color,omitempty"`
+	BackgroundImage string `json:"background_image,omitempty"`
+	// Coordination id: ads_step_detail_background_v1 - the opened announcement
+	// of a step has its own background, independent from the card above.
+	DetailBackgroundMode  string               `json:"detail_background_mode,omitempty"`
+	DetailBackgroundColor string               `json:"detail_background_color,omitempty"`
+	DetailBackgroundImage string               `json:"detail_background_image,omitempty"`
+	SeeMore               bool                 `json:"see_more"`
+	Buttons               []boAdCTA            `json:"buttons"`
+	Content               []boAdContentElement `json:"content"`
 }
 
 type boAdLayout struct {
@@ -356,9 +366,39 @@ func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
 			}
 			cta.Route = ""
 		}
+		if cta.Slot != nil {
+			// Bound by the largest possible content list: 3 text types x max
+			// elements + 1 image. Anything past it means "after all content".
+			slot := max(0, min(*cta.Slot, boAdMaxContentElements))
+			cta.Slot = &slot
+		}
 		out = append(out, cta)
 	}
 	return out, nil
+}
+
+// normalizeBOAdBackground validates one background triple (card or detail).
+func normalizeBOAdBackground(mode, color, image *string) error {
+	*mode = strings.ToLower(strings.TrimSpace(*mode))
+	*color = strings.TrimSpace(*color)
+	*image = strings.TrimSpace(*image)
+	switch *mode {
+	case "":
+		*mode = "transparent"
+	case "transparent", "color", "image":
+	default:
+		return errors.New("invalid ad step background mode")
+	}
+	if *color != "" && !boAdHexColor.MatchString(*color) {
+		return errors.New("invalid ad step background color")
+	}
+	if *image != "" {
+		u, err := url.ParseRequestURI(*image)
+		if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return errors.New("invalid ad step background image")
+		}
+	}
+	return nil
 }
 
 // normalizeBOAdLayout validates the wizard payload. Absent or "unico" layouts
@@ -389,27 +429,17 @@ func normalizeBOAdLayout(input *boAdLayout) (*boAdLayout, error) {
 		step.ID = strings.TrimSpace(step.ID)
 		step.Title = strings.TrimSpace(step.Title)
 		step.Description = strings.TrimSpace(step.Description)
-		step.BackgroundMode = strings.ToLower(strings.TrimSpace(step.BackgroundMode))
-		step.BackgroundColor = strings.TrimSpace(step.BackgroundColor)
-		step.BackgroundImage = strings.TrimSpace(step.BackgroundImage)
 		if step.ID == "" || seen[step.ID] {
 			return nil, errors.New("invalid ad step id")
 		}
 		seen[step.ID] = true
-		switch step.BackgroundMode {
-		case "":
-			step.BackgroundMode = "transparent"
-		case "transparent", "color", "image":
-		default:
-			return nil, errors.New("invalid ad step background mode")
+		if err := normalizeBOAdBackground(&step.BackgroundMode, &step.BackgroundColor, &step.BackgroundImage); err != nil {
+			return nil, err
 		}
-		if step.BackgroundColor != "" && !boAdHexColor.MatchString(step.BackgroundColor) {
-			return nil, errors.New("invalid ad step background color")
-		}
-		if step.BackgroundImage != "" {
-			u, err := url.ParseRequestURI(step.BackgroundImage)
-			if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") {
-				return nil, errors.New("invalid ad step background image")
+		// Detail background is optional: empty mode means "same as the card".
+		if step.DetailBackgroundMode != "" || step.DetailBackgroundColor != "" || step.DetailBackgroundImage != "" {
+			if err := normalizeBOAdBackground(&step.DetailBackgroundMode, &step.DetailBackgroundColor, &step.DetailBackgroundImage); err != nil {
+				return nil, err
 			}
 		}
 		buttons, err := normalizeBOAdCTAs(step.Buttons)
