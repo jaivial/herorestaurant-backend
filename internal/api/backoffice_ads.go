@@ -30,6 +30,7 @@ var boAdPublicRoutes = []string{"/", "/contacto", "/eventos", "/menufindesemana"
 const (
 	boAdMaxTextElements    = 5
 	boAdMaxCTAs            = 5
+	boAdMaxContentElements = boAdMaxTextElements*3 + 1
 	boAdElementMinWidthPct = 10.0
 	boAdElementMaxWidthPct = 100.0
 	// Image heights: a thumbnail stays readable and a hero never explodes the card.
@@ -366,13 +367,9 @@ func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
 			cta.Route = ""
 		}
 		if cta.Slot != nil {
-			slot := *cta.Slot
-			if slot < 0 {
-				slot = 0
-			}
-			if slot > boAdMaxTextElements*3+1 {
-				slot = boAdMaxTextElements*3 + 1
-			}
+			// Bound by the largest possible content list: 3 text types x max
+			// elements + 1 image. Anything past it means "after all content".
+			slot := max(0, min(*cta.Slot, boAdMaxContentElements))
 			cta.Slot = &slot
 		}
 		out = append(out, cta)
