@@ -35,6 +35,18 @@ const (
 	// Image heights: a thumbnail stays readable and a hero never explodes the card.
 	boAdElementMinHeightPx = 40.0
 	boAdElementMaxHeightPx = 1200.0
+	// Element look bounds (ads_element_style_v1).
+	boAdMinFontSizePx      = 8.0
+	boAdMaxFontSizePx      = 120.0
+	boAdMinFontWeight      = 100.0
+	boAdMaxFontWeight      = 900.0
+	boAdMinLetterSpacingPx = -5.0
+	boAdMaxLetterSpacingPx = 20.0
+	boAdMinLineHeight      = 0.8
+	boAdMaxLineHeight      = 3.0
+	boAdMaxRadiusPx        = 200.0
+	boAdMinOffsetPx        = -2000.0
+	boAdMaxOffsetPx        = 2000.0
 	boAdMaxSteps           = 20
 	// boAdMaxImageBytes is the single ads image budget: an upload within it is
 	// stored untouched, and a larger one is compressed down to it (never below).
@@ -52,12 +64,28 @@ type boAdElementSize struct {
 	Height *float64 `json:"height,omitempty"`
 }
 
+// boAdElementStyle carries the customisable look of an element (coord id
+// ads_element_style_v1): typography for texts, radius for images, opacity and
+// the horizontal offset produced by dragging inside the canvas.
+type boAdElementStyle struct {
+	FontSize      *float64 `json:"font_size,omitempty"`
+	FontWeight    *float64 `json:"font_weight,omitempty"`
+	LetterSpacing *float64 `json:"letter_spacing,omitempty"`
+	LineHeight    *float64 `json:"line_height,omitempty"`
+	Color         string   `json:"color,omitempty"`
+	Opacity       *float64 `json:"opacity,omitempty"`
+	Radius        *float64 `json:"radius,omitempty"`
+	OffsetX       *float64 `json:"offset_x,omitempty"`
+	OffsetY       *float64 `json:"offset_y,omitempty"`
+}
+
 type boAdContentElement struct {
-	ID    string           `json:"id"`
-	Type  string           `json:"type"`
-	Value string           `json:"value"`
-	Align string           `json:"align,omitempty"`
-	Size  *boAdElementSize `json:"size,omitempty"`
+	ID    string            `json:"id"`
+	Type  string            `json:"type"`
+	Value string            `json:"value"`
+	Align string            `json:"align,omitempty"`
+	Size  *boAdElementSize  `json:"size,omitempty"`
+	Style *boAdElementStyle `json:"style,omitempty"`
 }
 
 type boAdCTA struct {
@@ -159,6 +187,13 @@ func normalizeBOAdContent(input []boAdContentElement) ([]boAdContentElement, err
 			}
 			item.Size = size
 		}
+		if item.Style != nil {
+			style, err := normalizeBOAdElementStyle(item.Type, item.Style)
+			if err != nil {
+				return nil, err
+			}
+			item.Style = style
+		}
 		switch item.Type {
 		case "title", "subtitle", "text":
 			counts[item.Type]++
@@ -205,6 +240,58 @@ func normalizeBOAdElementSize(elementType string, size *boAdElementSize) (*boAdE
 		return nil, nil
 	}
 	return &boAdElementSize{Width: width, Height: height}, nil
+}
+
+// normalizeBOAdElementStyle clamps the operator look to readable bounds and
+// drops whatever the element type cannot use, so stored JSON stays minimal and
+// the public template keeps rendering untouched content identically.
+func normalizeBOAdElementStyle(elementType string, style *boAdElementStyle) (*boAdElementStyle, error) {
+	clamp := func(v *float64, min, max float64) *float64 {
+		if v == nil {
+			return nil
+		}
+		out := *v
+		if out < min {
+			out = min
+		}
+		if out > max {
+			out = max
+		}
+		return &out
+	}
+	isText := elementType == "title" || elementType == "subtitle" || elementType == "text"
+	isImage := elementType == "image"
+
+	fontSize := clamp(style.FontSize, boAdMinFontSizePx, boAdMaxFontSizePx)
+	fontWeight := clamp(style.FontWeight, boAdMinFontWeight, boAdMaxFontWeight)
+	letterSpacing := clamp(style.LetterSpacing, boAdMinLetterSpacingPx, boAdMaxLetterSpacingPx)
+	lineHeight := clamp(style.LineHeight, boAdMinLineHeight, boAdMaxLineHeight)
+	opacity := clamp(style.Opacity, 0, 1)
+	radius := clamp(style.Radius, 0, boAdMaxRadiusPx)
+	offsetX := clamp(style.OffsetX, boAdMinOffsetPx, boAdMaxOffsetPx)
+	offsetY := clamp(style.OffsetY, boAdMinOffsetPx, boAdMaxOffsetPx)
+
+	style.Color = strings.TrimSpace(style.Color)
+	if style.Color != "" && !boAdHexColor.MatchString(style.Color) && !strings.HasPrefix(style.Color, "rgb") {
+		return nil, errors.New("invalid element color")
+	}
+	if !isText {
+		fontSize, fontWeight, letterSpacing, lineHeight = nil, nil, nil, nil
+	}
+	if !isImage {
+		radius = nil
+	}
+	// Offsets only make sense where the operator can drag: texts and images.
+	if !isText && !isImage {
+		offsetX, offsetY = nil, nil
+	}
+	if style.Color == "" && fontSize == nil && fontWeight == nil && letterSpacing == nil && lineHeight == nil && opacity == nil && radius == nil && offsetX == nil && offsetY == nil {
+		return nil, nil
+	}
+	return &boAdElementStyle{
+		FontSize: fontSize, FontWeight: fontWeight, LetterSpacing: letterSpacing, LineHeight: lineHeight,
+		Color: style.Color, Opacity: opacity, Radius: radius, OffsetX: offsetX, OffsetY: offsetY,
+	}, nil
 }
 
 func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
