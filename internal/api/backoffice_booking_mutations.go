@@ -105,7 +105,7 @@ type boBookingUpsertReq struct {
 	MenuDeGrupoID  *int            `json:"menu_de_grupo_id,omitempty"`
 	PrincipalesRaw json.RawMessage `json:"principales_json,omitempty"`
 
-	// Coordination id: booking_extras_v1 (selected extras for non-group-menu bookings).
+	// Coordination id: booking_extras_v1 (selected extras, both modes).
 	Extras []int64 `json:"extras,omitempty"`
 }
 
@@ -415,11 +415,23 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Coordination id: booking_extras_v1 - keep the stored extras when the patch
-	// does not send the extras field.
-	if !input.ExtrasTouched && !next.SpecialMenu {
+	// does not send the extras field (both modes show the section).
+	if !input.ExtrasTouched {
 		if names := bookingExtraNames(anyToString(current["extras_json"])); len(names) > 0 {
 			next.ExtrasJSON = anyToString(current["extras_json"])
 			next.ExtrasNames = names
+			// Coordination id: booking_groupmenu_live_commentary_v1 - a
+			// group-menu patch that preserves extras must keep them in the
+			// stored commentary as well.
+			if next.SpecialMenu {
+				current := ""
+				if next.Commentary.Valid {
+					current = next.Commentary.String
+				}
+				if merged := mergeExtrasIntoCommentary(current, names); strings.TrimSpace(merged) != "" {
+					next.Commentary = sql.NullString{String: merged, Valid: true}
+				}
+			}
 		}
 	}
 
@@ -513,7 +525,7 @@ type boNormalizedBooking struct {
 	MenuDeGrupoID       any
 	PrincipalesJSON     any
 
-	// Coordination id: booking_extras_v1 (non-group-menu add-ons).
+	// Coordination id: booking_extras_v1 (booking add-ons, both modes).
 	ExtrasJSON  any
 	ExtrasNames []string
 }
@@ -672,8 +684,29 @@ func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaur
 		if err != nil {
 			return out, err
 		}
-		if strings.TrimSpace(summary) != "" {
-			out.Commentary = sql.NullString{String: summary, Valid: true}
+		// Coordination id: booking_extras_v1 - extras also apply with a group
+		// menu (the editor shows the section in both modes).
+		var extrasNames []string
+		if in.ExtrasTouched {
+			extras, err := s.resolveBookingExtras(restaurantID, in.Extras)
+			if err != nil {
+				return out, errors.New("No se pudieron validar los extras")
+			}
+			out.ExtrasJSON = bookingExtrasSnapshotJSON(extras)
+			extrasNames = make([]string, 0, len(extras))
+			for _, extra := range extras {
+				extrasNames = append(extrasNames, extra.Name)
+			}
+			out.ExtrasNames = extrasNames
+		}
+		// Coordination id: booking_groupmenu_live_commentary_v1 - the stored
+		// commentary mirrors the live preview: auto summary + extras + note.
+		var userNote string
+		if in.Commentary != nil {
+			userNote = strings.TrimSpace(*in.Commentary)
+		}
+		if commentary := buildGroupMenuCommentary(summary, extrasNames, userNote); strings.TrimSpace(commentary) != "" {
+			out.Commentary = sql.NullString{String: commentary, Valid: true}
 		} else {
 			out.Commentary = sql.NullString{}
 		}
@@ -686,9 +719,9 @@ func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaur
 		return out, nil
 	}
 
-	// Non group-menu extras. A group-menu booking does not carry extras (the UI
-	// hides the section), so any extras sent with a group menu are ignored.
-	if in.ExtrasTouched && !out.SpecialMenu {
+	// Extras apply with and without a group menu. A group-menu booking no
+	// longer drops them (the editor shows the section in both modes).
+	if in.ExtrasTouched {
 		extras, err := s.resolveBookingExtras(restaurantID, in.Extras)
 		if err != nil {
 			return out, errors.New("No se pudieron validar los extras")
@@ -713,6 +746,50 @@ func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaur
 	}
 
 	return out, nil
+}
+
+// Coordination id: booking_groupmenu_live_commentary_v1 - mirrors the editor
+// live preview: auto principales summary + extras + free-text note.
+func buildGroupMenuCommentary(summary string, extrasNames []string, userNote string) string {
+	parts := []string{}
+	if s := strings.TrimSpace(summary); s != "" {
+		parts = append(parts, s)
+	}
+	names := []string{}
+	for _, name := range extrasNames {
+		if s := strings.TrimSpace(name); s != "" {
+			names = append(names, s)
+		}
+	}
+	if len(names) > 0 {
+		parts = append(parts, "Extras: "+strings.Join(names, ", "))
+	}
+	if s := strings.TrimSpace(userNote); s != "" {
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// mergeExtrasIntoCommentary appends the "Extras: ..." suffix once, used when a
+// group-menu patch preserves stored extras without resending them.
+func mergeExtrasIntoCommentary(commentary string, extrasNames []string) string {
+	if strings.Contains(commentary, "Extras:") {
+		return commentary
+	}
+	names := []string{}
+	for _, name := range extrasNames {
+		if s := strings.TrimSpace(name); s != "" {
+			names = append(names, s)
+		}
+	}
+	if len(names) == 0 {
+		return commentary
+	}
+	suffix := "Extras: " + strings.Join(names, ", ")
+	if strings.TrimSpace(commentary) == "" {
+		return suffix
+	}
+	return strings.TrimSpace(commentary) + " · " + suffix
 }
 
 func parseArrozFromArrays(types []string, servs []int, partySize int) (arrozTypeJSON any, arrozServingsJSON any, err error) {
