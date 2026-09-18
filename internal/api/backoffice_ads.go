@@ -95,6 +95,8 @@ type boAdCTA struct {
 	NavigationMode string `json:"navigation_mode"`
 	Route          string `json:"route,omitempty"`
 	CustomURL      string `json:"custom_url,omitempty"`
+	// Operator-sized pill width as a percentage of the card (ads_button_width_v1).
+	Width *float64 `json:"width,omitempty"`
 }
 
 // Coordination id: ads_layout_v1 - a "multiple" anuncio renders a wizard: a
@@ -294,6 +296,21 @@ func normalizeBOAdElementStyle(elementType string, style *boAdElementStyle) (*bo
 	}, nil
 }
 
+// clampBOAdWidth keeps the pill between a readable sliver and the full card.
+func clampBOAdWidth(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	out := *v
+	if out < boAdElementMinWidthPct {
+		out = boAdElementMinWidthPct
+	}
+	if out > boAdElementMaxWidthPct {
+		out = boAdElementMaxWidthPct
+	}
+	return &out
+}
+
 func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
 	if len(input) > boAdMaxCTAs {
 		return nil, fmt.Errorf("maximum %d call to action buttons", boAdMaxCTAs)
@@ -330,6 +347,8 @@ func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
 			}
 			cta.CustomURL = ""
 		}
+		cta.Width = clampBOAdWidth(cta.Width)
+
 		if cta.NavigationMode == "custom" {
 			u, err := url.ParseRequestURI(cta.CustomURL)
 			if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
