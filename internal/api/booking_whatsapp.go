@@ -151,6 +151,12 @@ func restaurantBrandNameOrDefault(ctx context.Context, s *Server, restaurantID i
 // sendBookingWhatsAppToCustomer sends a WhatsApp confirmation to the customer
 // through the restaurant's provisioned gateway (UAZAPI or Evolution).
 // It tries the button message first and falls back to plain text.
+//
+// Every failure path (connection-state gate, button send, text send) hands
+// the same idempotent payload to the WhatsApp outbox so the outbox worker
+// retries it once the provider is healthy again. delivery_key
+// "booking_confirmation:{restaurant_id}:{booking_id}" keeps re-enqueue safe
+// across the gate path, the send path, and a future recovery tick.
 func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID int, booking map[string]any, bookingID int64) error {
 	// Operators can disable booking confirmations per restaurant from
 	// ConfigContacto → Notificaciones de reserva (bkg-wa-notif). A disabled
@@ -159,33 +165,50 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 		log.Printf("%s.confirmation.skipped restaurant=%d booking=%d", bookingNotifCoordinationID, restaurantID, bookingID)
 		return nil
 	}
-	if rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); err == nil && found && strings.EqualFold(rec.Provider, "evolution") {
-		if _, refreshErr := s.refreshRestaurantUAZAPIConnectionStatus(ctx, restaurantID); refreshErr != nil {
-			log.Printf("WhatsApp connection refresh failed for booking #%d: %v", bookingID, refreshErr)
-		} else if refreshed, ok, loadErr := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); loadErr == nil && ok && !isUAZAPIConnected(refreshed.Status) {
-			return fmt.Errorf("WhatsApp desconectado (estado: %s)", refreshed.Status)
-		}
-	}
 
-	gw, ok := s.botGatewayFor(ctx, restaurantID)
-	if !ok {
-		return fmt.Errorf("WhatsApp no configurado")
-	}
-
+	// Build the payload up front so every failure path can hand the same
+	// idempotent body to the outbox (gate-fail, button-fail, text-fail).
 	brandName := restaurantBrandNameOrDefault(ctx, s, restaurantID)
 	baseURL := resolveRestaurantPublicBaseURL(ctx, s, restaurantID)
-
 	msg, err := buildBookingWhatsAppButtonPayload(brandName, booking, bookingID, baseURL)
 	if err != nil {
 		return err
 	}
 
+	enqueueForRetry := func(cause error, gateTag string) error {
+		if qErr := s.enqueueWhatsAppDelivery(
+			ctx, restaurantID, "booking_confirmation",
+			fmt.Sprintf("booking_confirmation:%d:%d", restaurantID, bookingID),
+			msg.To, whatsappOutboxPayload{Text: msg.Text, Choices: msg.Choices}, cause,
+		); qErr != nil {
+			log.Printf("WhatsApp outbox enqueue failed for booking #%d (%s): %v", bookingID, gateTag, qErr)
+		}
+		return cause
+	}
+
+	if rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); err == nil && found && strings.EqualFold(rec.Provider, "evolution") {
+		if _, refreshErr := s.refreshRestaurantUAZAPIConnectionStatus(ctx, restaurantID); refreshErr != nil {
+			log.Printf("WhatsApp connection refresh failed for booking #%d: %v", bookingID, refreshErr)
+		} else if refreshed, ok, loadErr := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); loadErr == nil && ok && !isUAZAPIConnected(refreshed.Status) {
+			cause := fmt.Errorf("WhatsApp desconectado (estado: %s)", refreshed.Status)
+			log.Printf("%s.confirmation.queued_for_retry restaurant=%d booking=%d reason=%q",
+				bookingNotifCoordinationID, restaurantID, bookingID, refreshed.Status)
+			return enqueueForRetry(cause, "gate")
+		}
+	}
+
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		// No gateway at all: an outbox retry would hit the same lookup failure,
+		// so surface the configuration error upstream instead of queueing.
+		return fmt.Errorf("WhatsApp no configurado")
+	}
+
 	if err := s.sendWhatsAppMenuTracked(ctx, restaurantID, gw, msg.To, msg.Text, msg.Choices, "booking_confirmation"); err == nil {
 		log.Printf("WhatsApp button confirmation sent for booking #%d", bookingID)
 		return nil
-	} else {
-		log.Printf("WhatsApp button send failed for booking #%d (%v), falling back to text", bookingID, err)
 	}
+	log.Printf("WhatsApp button send failed for booking #%d (%v), falling back to text", bookingID, err)
 
 	sendErr := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.To, msg.Text, "booking_confirmation")
 	if sendErr == nil {
@@ -193,16 +216,9 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 		return nil
 	}
 
-	// A confirmation the customer never receives is worse than a late one, so
-	// hand it to the outbox before reporting the failure upstream.
-	if qErr := s.enqueueWhatsAppDelivery(
-		ctx, restaurantID, "booking_confirmation",
-		fmt.Sprintf("booking_confirmation:%d:%d", restaurantID, bookingID),
-		msg.To, whatsappOutboxPayload{Text: msg.Text, Choices: msg.Choices}, sendErr,
-	); qErr != nil {
-		log.Printf("WhatsApp outbox enqueue failed for booking #%d: %v", bookingID, qErr)
-	}
-	return fmt.Errorf("error enviando WhatsApp: %w", sendErr)
+	log.Printf("%s.confirmation.queued_for_retry restaurant=%d booking=%d reason=%q",
+		bookingNotifCoordinationID, restaurantID, bookingID, sendErr.Error())
+	return enqueueForRetry(fmt.Errorf("error enviando WhatsApp: %w", sendErr), "send")
 }
 
 // publicBaseURLFromContext resolves the public base URL for generating links.
