@@ -890,12 +890,16 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		menuPreviewPathRaw         sql.NullString
 		menuPreviewAIRequestedInt  int
 		menuPreviewAIGeneratingInt int
+		// Coordination id: special_menu_visibility_v1 - per-menu public visibility.
+		webPlacementRaw sql.NullString
+		menuPublicActiveInt int
 	)
 
 	err = s.db.QueryRowContext(r.Context(), `
 		SELECT menu_title, price, active, is_draft, menu_type, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, editor_preview_open, beverage, comments, important_info,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee, special_menu_image_url,
-		       menu_preview_image_path, menu_preview_ai_requested, menu_preview_ai_generating
+		       menu_preview_image_path, menu_preview_ai_requested, menu_preview_ai_generating,
+		       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1)
 		FROM menus
 		WHERE id = ? AND restaurant_id = ?
 		LIMIT 1
@@ -921,6 +925,8 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		&menuPreviewPathRaw,
 		&menuPreviewAIRequestedInt,
 		&menuPreviewAIGeneratingInt,
+		&webPlacementRaw,
+		&menuPublicActiveInt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -950,6 +956,15 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		menuPreviewAIGenerated = menuPreviewURL
 	}
 
+	// Special menu image sections (title + image + position). Only meaningful
+	// for menu_type='special' but the endpoint stays generic.
+	// Coordination id: special_menu_sections_v1
+	specialSections, err := s.loadSpecialMenuSections(r.Context(), a.ActiveRestaurantID, menuID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando secciones del menu especial")
+		return
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"menu": map[string]any{
@@ -964,6 +979,9 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 			"show_section_tabs":       showSectionTabsInt != 0,
 			"show_menu_preview_image": showMenuPreviewImage,
 			"editor_preview_open":     editorPreviewOpenInt != 0,
+			// Coordination id: special_menu_visibility_v1
+			"web_placement":       normalizedWebPlacement(webPlacementRaw.String),
+			"menu_public_active":  menuPublicActiveInt != 0,
 			"settings": map[string]any{
 				"included_coffee":          includedCoffeeInt != 0,
 				"beverage":                 decodeJSONOrFallback(beverageRaw.String, map[string]any{"type": "no_incluida", "price_per_person": nil, "has_supplement": false, "supplement_price": nil}),
@@ -977,6 +995,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 			"sections":                   sections,
 			"ai_images":                  aiImages,
 			"special_menu_image_url":     s.publicMenuMediaURL(r.Context(), a.ActiveRestaurantID, specialImageRaw.String),
+			"special_menu_sections":      specialSections,
 			"menu_preview_image_url":     menuPreviewURL,
 			"menu_preview_ai_requested":  menuPreviewAIRequested,
 			"menu_preview_ai_generating": menuPreviewAIGenerating,

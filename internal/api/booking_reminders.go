@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,7 +20,72 @@ const (
 	bookingReminderScanEvery    = time.Minute
 	bookingReminderQueryTimeout = 15 * time.Second
 	bookingReminderSource       = "booking_reconfirmation"
+
+	// reminderBreakerCooldown caps how long a single failed scan can silence
+	// the worker for one restaurant. Long enough that an Evolution instance
+	// stuck in a "disconnected" / HTTP 500 state does not get hammered every
+	// minute (observed prod: ~7 bookings × 60 / hour of HTTP 500 spam),
+	// short enough that a manually-reconnected instance recovers on the next
+	// tick after cooldown. Cooldown is reset on every new failure so a still-
+	// broken instance keeps backing off instead of looping.
+	reminderBreakerCooldown = 5 * time.Minute
 )
+
+type reminderBreaker struct {
+	nextAttempt time.Time
+	reason      string
+}
+
+var (
+	reminderBreakerMu    sync.Mutex
+	reminderBreakerByRid = map[int]reminderBreaker{}
+)
+
+func reminderBreakerActive(rid int) (time.Time, string, bool) {
+	reminderBreakerMu.Lock()
+	defer reminderBreakerMu.Unlock()
+	b, ok := reminderBreakerByRid[rid]
+	if !ok {
+		return time.Time{}, "", false
+	}
+	if time.Now().Before(b.nextAttempt) {
+		return b.nextAttempt, b.reason, true
+	}
+	return time.Time{}, "", false
+}
+
+func setReminderBreaker(rid int, reason string) {
+	reminderBreakerMu.Lock()
+	defer reminderBreakerMu.Unlock()
+	reminderBreakerByRid[rid] = reminderBreaker{
+		nextAttempt: time.Now().Add(reminderBreakerCooldown),
+		reason:      reason,
+	}
+}
+
+func clearReminderBreaker(rid int) {
+	reminderBreakerMu.Lock()
+	defer reminderBreakerMu.Unlock()
+	delete(reminderBreakerByRid, rid)
+}
+
+// isRetryableEvolutionFailure matches the error strings produced by the
+// Evolution gateway when the instance is in a state that will not recover on
+// the next attempt (HTTP 5xx, explicit disconnect). Caller uses it to open
+// the per-restaurant circuit breaker instead of retrying every minute.
+func isRetryableEvolutionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "evolution http 5") || strings.Contains(msg, "evolution http 4") {
+		return true
+	}
+	if strings.Contains(msg, "desconectado") || strings.Contains(msg, "disconnected") || strings.Contains(msg, "connection closed") {
+		return true
+	}
+	return false
+}
 
 type dueBookingReminder struct {
 	ID              int64
@@ -104,6 +170,41 @@ func (s *Server) deliverBookingReminders(ctx context.Context, restaurantID int, 
 	if err != nil || !entitled {
 		return err
 	}
+
+	// Circuit breaker: if a recent scan for this restaurant failed (Evolution
+	// disconnected or returning 5xx), skip the whole scan until cooldown
+	// expires. Without this gate the worker re-claims the same bookings and
+	// hammers Evolution with HTTP 500 every minute.
+	if until, reason, active := reminderBreakerActive(restaurantID); active {
+		log.Printf("%s.reminder.skipped_backoff restaurant=%d until=%s reason=%q",
+			bookingNotifCoordinationID, restaurantID, until.Format(time.RFC3339), reason)
+		return nil
+	}
+
+	// Connection-state pre-check, mirroring sendBookingWhatsAppToCustomer:
+	// refresh the cached status from the provider, and if the Evolution
+	// instance is in any non-connected state open the breaker and skip this
+	// scan. The breaker is what stops the per-minute HTTP 500 spam when the
+	// instance is in a permanent failure mode (e.g. LOGOUT 408, observed
+	// 2026-09-19 on restaurant 1 with instance nv-1-1786843888929367291).
+	if rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); err == nil && found && strings.EqualFold(rec.Provider, "evolution") {
+		if _, refreshErr := s.refreshRestaurantUAZAPIConnectionStatus(ctx, restaurantID); refreshErr != nil {
+			log.Printf("%s.reminder.connection_refresh_failed restaurant=%d %v",
+				bookingNotifCoordinationID, restaurantID, refreshErr)
+		} else if refreshed, ok, loadErr := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); loadErr == nil && ok && !isUAZAPIConnected(refreshed.Status) {
+			reason := "instance " + refreshed.Status
+			setReminderBreaker(restaurantID, reason)
+			log.Printf("%s.reminder.instance_disconnected restaurant=%d status=%s",
+				bookingNotifCoordinationID, restaurantID, refreshed.Status)
+			return nil
+		}
+	}
+
+	// The scan reached the active path: any stale breaker (cooldown elapsed
+	// without a fresh failure) is cleared here. New failures during the scan
+	// will re-open it before the next tick.
+	clearReminderBreaker(restaurantID)
+
 	gw, connected := s.botGatewayFor(ctx, restaurantID)
 	if !connected {
 		return nil
@@ -144,6 +245,11 @@ func (s *Server) deliverBookingReminders(ctx context.Context, restaurantID int, 
 			b.PartySize, bookingReminderFloorDisplay(b.PreferredFloor), strings.TrimSpace(b.SalonName.String), extras, b.ID, baseURL)
 
 		if sendErr := s.sendWhatsAppMenuTracked(ctx, restaurantID, gw, phone, msg.Text, msg.Choices, bookingReminderSource); sendErr != nil {
+			if isRetryableEvolutionFailure(sendErr) {
+				setReminderBreaker(restaurantID, sendErr.Error())
+				log.Printf("%s.reminder.circuit_open restaurant=%d booking=%d err=%q",
+					bookingNotifCoordinationID, restaurantID, b.ID, sendErr.Error())
+			}
 			s.markBookingReminderFailed(ctx, key, sendErr)
 			log.Printf("%s.reminder.failed restaurant=%d booking=%d %v", bookingNotifCoordinationID, restaurantID, b.ID, sendErr)
 			continue

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,11 +23,32 @@ import (
 	"preactvillacarmen/internal/lib/specialmenuimage"
 )
 
+var boAdHexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
 var boAdPublicRoutes = []string{"/", "/contacto", "/eventos", "/menufindesemana", "/menudeldia", "/menusdegrupos", "/postres", "/vinos", "/cafes", "/bebidas", "/reservas", "/reservas.php", "/avisolegal", "/avisolegal.html", "/booking-policies", "/booking_policies.php", "/confirm", "/cancel", "/update-rice", "/protecciondatos", "/protecciondatos.html", "/menusanvalentin", "/regala"}
 
 const (
-	boAdMaxTextElements = 5
-	boAdMaxCTAs         = 5
+	boAdMaxTextElements    = 5
+	boAdMaxCTAs            = 5
+	boAdMaxContentElements = boAdMaxTextElements*3 + 1
+	boAdElementMinWidthPct = 10.0
+	boAdElementMaxWidthPct = 100.0
+	// Image heights: a thumbnail stays readable and a hero never explodes the card.
+	boAdElementMinHeightPx = 40.0
+	boAdElementMaxHeightPx = 1200.0
+	// Element look bounds (ads_element_style_v1).
+	boAdMinFontSizePx      = 8.0
+	boAdMaxFontSizePx      = 120.0
+	boAdMinFontWeight      = 100.0
+	boAdMaxFontWeight      = 900.0
+	boAdMinLetterSpacingPx = -5.0
+	boAdMaxLetterSpacingPx = 20.0
+	boAdMinLineHeight      = 0.8
+	boAdMaxLineHeight      = 3.0
+	boAdMaxRadiusPx        = 200.0
+	boAdMinOffsetPx        = -2000.0
+	boAdMaxOffsetPx        = 2000.0
+	boAdMaxSteps           = 20
 	// boAdMaxImageBytes is the single ads image budget: an upload within it is
 	// stored untouched, and a larger one is compressed down to it (never below).
 	boAdMaxImageBytes = 5 * 1024 * 1024
@@ -34,11 +56,37 @@ const (
 	boAdEnhanceModel  = "openai/gpt-image-2/edit"
 )
 
+// boAdElementSize is the operator-sized box of an element (coord id
+// ads_element_size_v1): width as a percentage of the card content width and,
+// for images, an explicit height in pixels. Absent fields keep the public
+// template's own size, so legacy content renders untouched.
+type boAdElementSize struct {
+	Width  *float64 `json:"width,omitempty"`
+	Height *float64 `json:"height,omitempty"`
+}
+
+// boAdElementStyle carries the customisable look of an element (coord id
+// ads_element_style_v1): typography for texts, radius for images, opacity and
+// the horizontal offset produced by dragging inside the canvas.
+type boAdElementStyle struct {
+	FontSize      *float64 `json:"font_size,omitempty"`
+	FontWeight    *float64 `json:"font_weight,omitempty"`
+	LetterSpacing *float64 `json:"letter_spacing,omitempty"`
+	LineHeight    *float64 `json:"line_height,omitempty"`
+	Color         string   `json:"color,omitempty"`
+	Opacity       *float64 `json:"opacity,omitempty"`
+	Radius        *float64 `json:"radius,omitempty"`
+	OffsetX       *float64 `json:"offset_x,omitempty"`
+	OffsetY       *float64 `json:"offset_y,omitempty"`
+}
+
 type boAdContentElement struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`
-	Value string `json:"value"`
-	Align string `json:"align,omitempty"`
+	ID    string            `json:"id"`
+	Type  string            `json:"type"`
+	Value string            `json:"value"`
+	Align string            `json:"align,omitempty"`
+	Size  *boAdElementSize  `json:"size,omitempty"`
+	Style *boAdElementStyle `json:"style,omitempty"`
 }
 
 type boAdCTA struct {
@@ -48,6 +96,36 @@ type boAdCTA struct {
 	NavigationMode string `json:"navigation_mode"`
 	Route          string `json:"route,omitempty"`
 	CustomURL      string `json:"custom_url,omitempty"`
+	// Operator-sized pill width as a percentage of the card (ads_button_width_v1).
+	Width *float64 `json:"width,omitempty"`
+	// Coordination id: ads_button_slot_v1 - position of the button inside the
+	// content flow (index before which it renders). Absent keeps the classic
+	// actions row under the content.
+	Slot *int `json:"slot,omitempty"`
+}
+
+// Coordination id: ads_layout_v1 - a "multiple" anuncio renders a wizard: a
+// column of cards (one per step) where each card advances to its announcement.
+type boAdStep struct {
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	Description     string `json:"description"`
+	BackgroundMode  string `json:"background_mode"`
+	BackgroundColor string `json:"background_color,omitempty"`
+	BackgroundImage string `json:"background_image,omitempty"`
+	// Coordination id: ads_step_detail_background_v1 - the opened announcement
+	// of a step has its own background, independent from the card above.
+	DetailBackgroundMode  string               `json:"detail_background_mode,omitempty"`
+	DetailBackgroundColor string               `json:"detail_background_color,omitempty"`
+	DetailBackgroundImage string               `json:"detail_background_image,omitempty"`
+	SeeMore               bool                 `json:"see_more"`
+	Buttons               []boAdCTA            `json:"buttons"`
+	Content               []boAdContentElement `json:"content"`
+}
+
+type boAdLayout struct {
+	Mode  string     `json:"mode"`
+	Steps []boAdStep `json:"steps,omitempty"`
 }
 
 type boAdImageGenerationStatus string
@@ -72,6 +150,7 @@ type boAd struct {
 	Active                   bool                      `json:"active"`
 	Content                  []boAdContentElement      `json:"content"`
 	CTAs                     []boAdCTA                 `json:"ctas"`
+	Layout                   *boAdLayout               `json:"layout,omitempty"`
 	ImageGenerationStatus    boAdImageGenerationStatus `json:"image_generation_status,omitempty"`
 	ImageGenerationStartedAt string                    `json:"image_generation_started_at,omitempty"`
 	StartsAt                 *string                   `json:"starts_at,omitempty"`
@@ -86,6 +165,7 @@ type boAdInput struct {
 	Active   bool                 `json:"active"`
 	Content  []boAdContentElement `json:"content"`
 	CTAs     []boAdCTA            `json:"ctas"`
+	Layout   *boAdLayout          `json:"layout,omitempty"`
 	StartsAt *string              `json:"starts_at,omitempty"`
 	EndsAt   *string              `json:"ends_at,omitempty"`
 }
@@ -112,6 +192,20 @@ func normalizeBOAdContent(input []boAdContentElement) ([]boAdContentElement, err
 			return nil, errors.New("duplicate content item id")
 		}
 		seen[item.ID] = true
+		if item.Size != nil {
+			size, err := normalizeBOAdElementSize(item.Type, item.Size)
+			if err != nil {
+				return nil, err
+			}
+			item.Size = size
+		}
+		if item.Style != nil {
+			style, err := normalizeBOAdElementStyle(item.Type, item.Style)
+			if err != nil {
+				return nil, err
+			}
+			item.Style = style
+		}
 		switch item.Type {
 		case "title", "subtitle", "text":
 			counts[item.Type]++
@@ -129,6 +223,102 @@ func normalizeBOAdContent(input []boAdContentElement) ([]boAdContentElement, err
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// normalizeBOAdElementSize clamps the operator box to sane bounds. A nil field
+// means "use the template default"; an empty box is dropped entirely so the
+// stored JSON stays free of no-op objects.
+func normalizeBOAdElementSize(elementType string, size *boAdElementSize) (*boAdElementSize, error) {
+	clamp := func(v *float64, min, max float64) *float64 {
+		if v == nil {
+			return nil
+		}
+		out := *v
+		if out < min {
+			out = min
+		}
+		if out > max {
+			out = max
+		}
+		return &out
+	}
+	width := clamp(size.Width, boAdElementMinWidthPct, boAdElementMaxWidthPct)
+	height := clamp(size.Height, boAdElementMinHeightPx, boAdElementMaxHeightPx)
+	if elementType != "image" {
+		// Text blocks grow with their content: only the width is operator-sized.
+		height = nil
+	}
+	if width == nil && height == nil {
+		return nil, nil
+	}
+	return &boAdElementSize{Width: width, Height: height}, nil
+}
+
+// normalizeBOAdElementStyle clamps the operator look to readable bounds and
+// drops whatever the element type cannot use, so stored JSON stays minimal and
+// the public template keeps rendering untouched content identically.
+func normalizeBOAdElementStyle(elementType string, style *boAdElementStyle) (*boAdElementStyle, error) {
+	clamp := func(v *float64, min, max float64) *float64 {
+		if v == nil {
+			return nil
+		}
+		out := *v
+		if out < min {
+			out = min
+		}
+		if out > max {
+			out = max
+		}
+		return &out
+	}
+	isText := elementType == "title" || elementType == "subtitle" || elementType == "text"
+	isImage := elementType == "image"
+
+	fontSize := clamp(style.FontSize, boAdMinFontSizePx, boAdMaxFontSizePx)
+	fontWeight := clamp(style.FontWeight, boAdMinFontWeight, boAdMaxFontWeight)
+	letterSpacing := clamp(style.LetterSpacing, boAdMinLetterSpacingPx, boAdMaxLetterSpacingPx)
+	lineHeight := clamp(style.LineHeight, boAdMinLineHeight, boAdMaxLineHeight)
+	opacity := clamp(style.Opacity, 0, 1)
+	radius := clamp(style.Radius, 0, boAdMaxRadiusPx)
+	offsetX := clamp(style.OffsetX, boAdMinOffsetPx, boAdMaxOffsetPx)
+	offsetY := clamp(style.OffsetY, boAdMinOffsetPx, boAdMaxOffsetPx)
+
+	style.Color = strings.TrimSpace(style.Color)
+	if style.Color != "" && !boAdHexColor.MatchString(style.Color) && !strings.HasPrefix(style.Color, "rgb") {
+		return nil, errors.New("invalid element color")
+	}
+	if !isText {
+		fontSize, fontWeight, letterSpacing, lineHeight = nil, nil, nil, nil
+	}
+	if !isImage {
+		radius = nil
+	}
+	// Offsets only make sense where the operator can drag: texts and images.
+	if !isText && !isImage {
+		offsetX, offsetY = nil, nil
+	}
+	if style.Color == "" && fontSize == nil && fontWeight == nil && letterSpacing == nil && lineHeight == nil && opacity == nil && radius == nil && offsetX == nil && offsetY == nil {
+		return nil, nil
+	}
+	return &boAdElementStyle{
+		FontSize: fontSize, FontWeight: fontWeight, LetterSpacing: letterSpacing, LineHeight: lineHeight,
+		Color: style.Color, Opacity: opacity, Radius: radius, OffsetX: offsetX, OffsetY: offsetY,
+	}, nil
+}
+
+// clampBOAdWidth keeps the pill between a readable sliver and the full card.
+func clampBOAdWidth(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	out := *v
+	if out < boAdElementMinWidthPct {
+		out = boAdElementMinWidthPct
+	}
+	if out > boAdElementMaxWidthPct {
+		out = boAdElementMaxWidthPct
+	}
+	return &out
 }
 
 func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
@@ -167,6 +357,8 @@ func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
 			}
 			cta.CustomURL = ""
 		}
+		cta.Width = clampBOAdWidth(cta.Width)
+
 		if cta.NavigationMode == "custom" {
 			u, err := url.ParseRequestURI(cta.CustomURL)
 			if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -174,9 +366,95 @@ func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
 			}
 			cta.Route = ""
 		}
+		if cta.Slot != nil {
+			// Bound by the largest possible content list: 3 text types x max
+			// elements + 1 image. Anything past it means "after all content".
+			slot := max(0, min(*cta.Slot, boAdMaxContentElements))
+			cta.Slot = &slot
+		}
 		out = append(out, cta)
 	}
 	return out, nil
+}
+
+// normalizeBOAdBackground validates one background triple (card or detail).
+func normalizeBOAdBackground(mode, color, image *string) error {
+	*mode = strings.ToLower(strings.TrimSpace(*mode))
+	*color = strings.TrimSpace(*color)
+	*image = strings.TrimSpace(*image)
+	switch *mode {
+	case "":
+		*mode = "transparent"
+	case "transparent", "color", "image":
+	default:
+		return errors.New("invalid ad step background mode")
+	}
+	if *color != "" && !boAdHexColor.MatchString(*color) {
+		return errors.New("invalid ad step background color")
+	}
+	if *image != "" {
+		u, err := url.ParseRequestURI(*image)
+		if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return errors.New("invalid ad step background image")
+		}
+	}
+	return nil
+}
+
+// normalizeBOAdLayout validates the wizard payload. Absent or "unico" layouts
+// come back as nil so the DB keeps storing a plain announcement.
+func normalizeBOAdLayout(input *boAdLayout) (*boAdLayout, error) {
+	if input == nil {
+		return nil, nil
+	}
+	input.Mode = strings.ToLower(strings.TrimSpace(input.Mode))
+	if input.Mode == "" {
+		input.Mode = "unico"
+	}
+	if input.Mode != "unico" && input.Mode != "multiple" {
+		return nil, errors.New("invalid ad layout mode")
+	}
+	if input.Mode != "multiple" {
+		return nil, nil
+	}
+	if len(input.Steps) == 0 {
+		return nil, errors.New("multiple layout requires at least one step")
+	}
+	if len(input.Steps) > boAdMaxSteps {
+		return nil, fmt.Errorf("maximum %d steps", boAdMaxSteps)
+	}
+	steps := make([]boAdStep, 0, len(input.Steps))
+	seen := map[string]bool{}
+	for _, step := range input.Steps {
+		step.ID = strings.TrimSpace(step.ID)
+		step.Title = strings.TrimSpace(step.Title)
+		step.Description = strings.TrimSpace(step.Description)
+		if step.ID == "" || seen[step.ID] {
+			return nil, errors.New("invalid ad step id")
+		}
+		seen[step.ID] = true
+		if err := normalizeBOAdBackground(&step.BackgroundMode, &step.BackgroundColor, &step.BackgroundImage); err != nil {
+			return nil, err
+		}
+		// Detail background is optional: empty mode means "same as the card".
+		if step.DetailBackgroundMode != "" || step.DetailBackgroundColor != "" || step.DetailBackgroundImage != "" {
+			if err := normalizeBOAdBackground(&step.DetailBackgroundMode, &step.DetailBackgroundColor, &step.DetailBackgroundImage); err != nil {
+				return nil, err
+			}
+		}
+		buttons, err := normalizeBOAdCTAs(step.Buttons)
+		if err != nil {
+			return nil, err
+		}
+		content, err := normalizeBOAdContent(step.Content)
+		if err != nil {
+			return nil, err
+		}
+		step.Buttons, step.Content = buttons, content
+		steps = append(steps, step)
+	}
+	input.Steps = steps
+	return input, nil
 }
 
 func boAdTextToImagePrompt(content []boAdContentElement) string {
@@ -200,11 +478,11 @@ func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (bo
 	var ad boAd
 	var active int
 	var startsAt, endsAt sql.NullTime
-	var contentRaw, ctasRaw []byte
+	var contentRaw, ctasRaw, layoutRaw []byte
 	var statusRaw sql.NullString
 	var startedAt, createdAt, updatedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
-		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
+		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &layoutRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
 	if err != nil {
 		return ad, err
 	}
@@ -228,6 +506,11 @@ func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (bo
 	}
 	if err := json.Unmarshal(ctasRaw, &ad.CTAs); err != nil {
 		return ad, err
+	}
+	if len(layoutRaw) > 0 {
+		if err := json.Unmarshal(layoutRaw, &ad.Layout); err != nil {
+			return ad, err
+		}
 	}
 	if createdAt.Valid {
 		ad.CreatedAt = createdAt.Time.UTC().Format(time.RFC3339)
@@ -255,6 +538,11 @@ func validateBOAdInput(input boAdInput) (boAdInput, error) {
 		return input, err
 	}
 	input.Content, input.CTAs = content, ctas
+	layout, err := normalizeBOAdLayout(input.Layout)
+	if err != nil {
+		return input, err
+	}
+	input.Layout = layout
 	if (input.StartsAt == nil) != (input.EndsAt == nil) {
 		return input, errors.New("start and end dates must be provided together")
 	}
@@ -338,15 +626,19 @@ func (s *Server) updateBOAd(ctx context.Context, restaurantID int, adID int64, i
 	}
 	contentRaw, _ := json.Marshal(normalized.Content)
 	ctasRaw, _ := json.Marshal(normalized.CTAs)
+	var layoutRaw []byte
+	if normalized.Layout != nil {
+		layoutRaw, _ = json.Marshal(normalized.Layout)
+	}
 	if adID <= 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json) VALUES (?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw)
+		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw)
 		if err != nil {
 			return boAd{}, err
 		}
 		id, _ := res.LastInsertId()
 		return s.readBOAd(ctx, restaurantID, id)
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ? WHERE id = ? AND restaurant_id = ?`, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, adID, restaurantID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ? WHERE id = ? AND restaurant_id = ?`, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, adID, restaurantID); err != nil {
 		return boAd{}, err
 	}
 	return s.readBOAd(ctx, restaurantID, adID)
