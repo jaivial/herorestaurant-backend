@@ -224,7 +224,7 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 // enriches each one with the menu's title/price when it references a real menu.
 func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID int, specialDateID int64) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url, sdm.adelanto_amount,
+		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url, sdm.adelanto_amount, sdm.price,
 		       COALESCE(m.menu_title, '') AS menu_title,
 		       COALESCE(m.price, 0) AS menu_price
 		FROM special_date_menus sdm
@@ -244,10 +244,9 @@ func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID in
 		var id int64
 		var menuID sql.NullInt64
 		var customTitle, customImageURL sql.NullString
-		var adelantoAmount sql.NullFloat64
+		var adelantoAmount, customPrice, menuPrice sql.NullFloat64
 		var menuTitle string
-		var menuPrice float64
-		if err := rows.Scan(&id, &menuID, &customTitle, &customImageURL, &adelantoAmount, &menuTitle, &menuPrice); err != nil {
+		if err := rows.Scan(&id, &menuID, &customTitle, &customImageURL, &adelantoAmount, &customPrice, &menuTitle, &menuPrice); err != nil {
 			return nil, err
 		}
 		isCustom := !menuID.Valid
@@ -258,12 +257,23 @@ func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID in
 		if !isCustom {
 			row["menu_id"] = menuID.Int64
 			row["label"] = strings.TrimSpace(menuTitle)
+			// Prefer the operator-defined price when present; fall back to the
+			// catalogue price so old rows without a custom price keep working.
 			row["price"] = menuPrice
+			if customPrice.Valid {
+				row["price"] = customPrice.Float64
+			}
 		}
 		if customTitle.Valid {
 			row["custom_title"] = customTitle.String
 			if isCustom {
 				row["label"] = customTitle.String
+				// Custom uploaded menus: use the operator-defined price (0 by default).
+				if customPrice.Valid {
+					row["price"] = customPrice.Float64
+				} else {
+					row["price"] = 0.0
+				}
 			}
 		}
 		if customImageURL.Valid {
