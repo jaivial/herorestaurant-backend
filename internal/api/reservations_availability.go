@@ -655,7 +655,7 @@ func parseMonthYear(monthRaw string, yearRaw string) (int, int, error) {
 	return month, year, nil
 }
 
-func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, year int, month int) (map[string]map[string]int, error) {
+func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, year int, month int) (map[string]map[string]any, error) {
 	firstDay := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
 	lastDay := firstDay.AddDate(0, 1, -1)
 
@@ -737,7 +737,37 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 		return nil, err
 	}
 
-	availability := map[string]map[string]int{}
+	// Special dates for this month, one efficient query. Coordination id:
+	// special_dates_v1 — only the fields the calendar needs to render the
+	// marker (active state + prereserva flag + title) are pulled.
+	type specialMonthRow struct {
+		isActive      int
+		prereserva    int
+		title         string
+	}
+	specialByDate := map[string]specialMonthRow{}
+	specialRows, err := s.db.QueryContext(ctx, `
+		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, title
+		FROM special_dates
+		WHERE restaurant_id = ? AND date BETWEEN ? AND ? AND is_active = 1
+	`, restaurantID, firstDayStr, lastDayStr)
+	if err != nil {
+		return nil, err
+	}
+	defer specialRows.Close()
+	for specialRows.Next() {
+		var d string
+		var r specialMonthRow
+		if err := specialRows.Scan(&d, &r.isActive, &r.prereserva, &r.title); err != nil {
+			return nil, err
+		}
+		specialByDate[d] = r
+	}
+	if err := specialRows.Err(); err != nil {
+		return nil, err
+	}
+
+	availability := map[string]map[string]any{}
 	defaultLimit := 45
 	daysInMonth := lastDay.Day()
 	for day := 1; day <= daysInMonth; day++ {
@@ -758,10 +788,21 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 		if free < 0 {
 			free = 0
 		}
-		availability[dateISO] = map[string]int{
+		availability[dateISO] = map[string]any{
 			"dailyLimit":       lim,
 			"totalPeople":      total,
 			"freeBookingSeats": free,
+		}
+		// Special-date marker (Coordination id: special_dates_v1). Days without
+		// a row in `special_dates` get null so the front-end can branch cheaply.
+		if sr, ok := specialByDate[dateISO]; ok {
+			availability[dateISO]["special"] = map[string]any{
+				"is_active":          sr.isActive != 0,
+				"prereserva_enabled": sr.prereserva != 0,
+				"title":              sr.title,
+			}
+		} else {
+			availability[dateISO]["special"] = nil
 		}
 	}
 
