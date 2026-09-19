@@ -14,10 +14,12 @@ import (
 // fields on upsert (per-field, not per-request).
 const legalPageMaxFieldBytes = 4 << 20 // 4 MB
 
-// isValidLegalSlug restricts the slug to the three known legal pages.
+// isValidLegalSlug restricts the slug to the known legal pages.
+// special-booking-politics serves the editable politics for special-date
+// reservations (Coordination id: special_booking_politics_v1).
 func isValidLegalSlug(slug string) bool {
 	switch slug {
-	case "aviso-legal", "booking-policies", "proteccion-datos":
+	case "aviso-legal", "booking-policies", "proteccion-datos", "special-booking-politics":
 		return true
 	default:
 		return false
