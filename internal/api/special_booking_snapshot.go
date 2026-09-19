@@ -152,7 +152,7 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url,
-		       sdm.adelanto_amount, sdm.position,
+		       sdm.adelanto_amount, sdm.price, sdm.position,
 		       COALESCE(m.menu_title, '') AS menu_title,
 		       COALESCE(m.price, 0) AS menu_price
 		FROM special_date_menus sdm
@@ -170,12 +170,21 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 	out := make([]specialDateMenuRecord, 0, 4)
 	for rows.Next() {
 		var rec specialDateMenuRecord
+		var customPrice sql.NullFloat64
 		if err := rows.Scan(
 			&rec.ID, &rec.MenuID, &rec.CustomTitle, &rec.CustomImageURL,
-			&rec.AdelantoAmount, &rec.Position,
+			&rec.AdelantoAmount, &customPrice, &rec.Position,
 			&rec.MenuTitle, &rec.MenuPrice,
 		); err != nil {
 			return nil, nil, err
+		}
+		// Prefer the operator-defined price (customPrice) over the catalogue price
+		// (MenuPrice) when present so the booking snapshot reflects the deal.
+		if customPrice.Valid {
+			rec.MenuPrice = customPrice.Float64
+		} else if !rec.MenuID.Valid {
+			// Custom uploaded menus without an explicit price snap to 0.
+			rec.MenuPrice = 0
 		}
 		out = append(out, rec)
 	}

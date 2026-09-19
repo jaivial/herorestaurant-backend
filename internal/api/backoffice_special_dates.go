@@ -41,6 +41,7 @@ type boSpecialDateMenu struct {
 	CustomTitle    *string  `json:"custom_title,omitempty"`
 	CustomImageURL *string  `json:"custom_image_url,omitempty"`
 	AdelantoAmount *float64 `json:"adelanto_amount,omitempty"`
+	Price          *float64 `json:"price,omitempty"`
 	Position       int      `json:"position"`
 }
 
@@ -324,7 +325,7 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 // loadBOSpecialDateMenus reads the child rows for one special date.
 func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, specialDateID int64) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, menu_id, custom_title, custom_image_url, adelanto_amount, position
+		SELECT id, menu_id, custom_title, custom_image_url, adelanto_amount, price, position
 		FROM special_date_menus
 		WHERE restaurant_id = ? AND special_date_id = ?
 		ORDER BY position ASC, id ASC
@@ -339,9 +340,9 @@ func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, s
 		var id int64
 		var menuID sql.NullInt64
 		var customTitle, customImageURL sql.NullString
-		var adelantoAmount sql.NullFloat64
+		var adelantoAmount, price sql.NullFloat64
 		var position int
-		if err := rows.Scan(&id, &menuID, &customTitle, &customImageURL, &adelantoAmount, &position); err != nil {
+		if err := rows.Scan(&id, &menuID, &customTitle, &customImageURL, &adelantoAmount, &price, &position); err != nil {
 			return nil, err
 		}
 		row := map[string]any{
@@ -359,6 +360,9 @@ func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, s
 		}
 		if adelantoAmount.Valid {
 			row["adelanto_amount"] = adelantoAmount.Float64
+		}
+		if price.Valid {
+			row["price"] = price.Float64
 		}
 		out = append(out, row)
 	}
@@ -631,14 +635,18 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	}
 
 	for _, m := range cleanMenus {
-		var menuID, adelantoAmount any
+		var menuID, adelantoAmount, price any
 		menuID = nil
 		adelantoAmount = nil
+		price = nil
 		if m.MenuID != nil {
 			menuID = *m.MenuID
 		}
 		if m.AdelantoAmount != nil {
 			adelantoAmount = *m.AdelantoAmount
+		}
+		if m.Price != nil && *m.Price >= 0 {
+			price = *m.Price
 		}
 		customTitle := sql.NullString{}
 		if m.CustomTitle != nil && strings.TrimSpace(*m.CustomTitle) != "" {
@@ -650,9 +658,9 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 		}
 		if _, err := tx.ExecContext(r.Context(), `
 			INSERT INTO special_date_menus
-				(restaurant_id, special_date_id, menu_id, custom_title, custom_image_url, adelanto_amount, position)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, a.ActiveRestaurantID, specialDateID, menuID, customTitle, customImage, adelantoAmount, m.Position); err != nil {
+				(restaurant_id, special_date_id, menu_id, custom_title, custom_image_url, adelanto_amount, price, position)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, a.ActiveRestaurantID, specialDateID, menuID, customTitle, customImage, adelantoAmount, price, m.Position); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error insertando special_date_menus")
 			return
 		}
