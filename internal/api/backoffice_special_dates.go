@@ -72,7 +72,11 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	date := strings.TrimSpace(r.URL.Query().Get("date"))
-	if date == "" || !isValidISODate(date) {
+	if date == "" {
+		s.handleBOSpecialDatesList(w, r, a.ActiveRestaurantID)
+		return
+	}
+	if !isValidISODate(date) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "Invalid date",
@@ -150,6 +154,171 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 			"menus":                    menus,
 		},
 	})
+}
+
+// handleBOSpecialDatesList returns every active special date for the tenant
+// with its menu labels plus current occupancy (people vs daily limit), used by
+// the backoffice Especial tab card list. Coordination id: special_dates_v1.
+func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request, restaurantID int) {
+	ctx := r.Context()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, date, is_active, title, prereserva_enabled
+		FROM special_dates
+		WHERE restaurant_id = ?
+		ORDER BY date ASC
+	`, restaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando special_dates")
+		return
+	}
+	defer rows.Close()
+
+	type listEntry struct {
+		ID                int64
+		Date              string
+		IsActive          bool
+		Title             string
+		PrereservaEnabled bool
+	}
+	var entries []listEntry
+	for rows.Next() {
+		var e listEntry
+		var isActive, prereserva int
+		var d time.Time
+		if err := rows.Scan(&e.ID, &d, &isActive, &e.Title, &prereserva); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo special_dates")
+			return
+		}
+		e.Date = d.Format("2006-01-02")
+		e.IsActive = isActive != 0
+		e.PrereservaEnabled = prereserva != 0
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo special_dates")
+		return
+	}
+
+	out := make([]map[string]any, 0, len(entries))
+	if len(entries) == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "special_dates": out})
+		return
+	}
+
+	ids := make([]any, 0, len(entries)*2)
+	placeholders := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+		placeholders = append(placeholders, "?")
+	}
+
+	// Menu labels per special date (custom title wins over catalogue title).
+	labelsByDate := map[int64][]string{}
+	labelRows, err := s.db.QueryContext(ctx, `
+		SELECT sdm.special_date_id,
+		       COALESCE(NULLIF(sdm.custom_title, ''), m.menu_title, CONCAT('Menú #', sdm.menu_id))
+		FROM special_date_menus sdm
+		LEFT JOIN menus m ON m.id = sdm.menu_id
+		WHERE sdm.restaurant_id = ? AND sdm.special_date_id IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY sdm.position ASC, sdm.id ASC
+	`, append([]any{restaurantID}, ids...)...)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando special_date_menus")
+		return
+	}
+	for labelRows.Next() {
+		var sdID int64
+		var label string
+		if err := labelRows.Scan(&sdID, &label); err != nil {
+			labelRows.Close()
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo special_date_menus")
+			return
+		}
+		labelsByDate[sdID] = append(labelsByDate[sdID], label)
+	}
+	labelRows.Close()
+
+	// Occupancy: people booked per date.
+	dates := make([]any, 0, len(entries))
+	datePlaceholders := make([]string, 0, len(entries))
+	for _, e := range entries {
+		dates = append(dates, e.Date)
+		datePlaceholders = append(datePlaceholders, "?")
+	}
+	peopleByDate := map[string]int{}
+	peopleRows, err := s.db.QueryContext(ctx, `
+		SELECT reservation_date, COALESCE(SUM(party_size), 0)
+		FROM bookings
+		WHERE restaurant_id = ? AND reservation_date IN (`+strings.Join(datePlaceholders, ",")+`)
+		GROUP BY reservation_date
+	`, append([]any{restaurantID}, dates...)...)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando ocupación")
+		return
+	}
+	for peopleRows.Next() {
+		var d time.Time
+		var people int
+		if err := peopleRows.Scan(&d, &people); err != nil {
+			peopleRows.Close()
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo ocupación")
+			return
+		}
+		peopleByDate[d.Format("2006-01-02")] = people
+	}
+	peopleRows.Close()
+
+	// Daily limit per date (latest reservation_manager row, default 45 like availability).
+	limitByDate := map[string]int{}
+	limitRows, err := s.db.QueryContext(ctx, `
+		SELECT rm.reservationDate, rm.dailyLimit
+		FROM reservation_manager rm
+		INNER JOIN (
+			SELECT reservationDate, MAX(id) AS max_id
+			FROM reservation_manager
+			WHERE restaurant_id = ?
+			GROUP BY reservationDate
+		) latest ON latest.reservationDate = rm.reservationDate AND latest.max_id = rm.id
+		WHERE rm.restaurant_id = ?
+	`, restaurantID, restaurantID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando límites")
+		return
+	}
+	for limitRows.Next() {
+		var d time.Time
+		var lim int
+		if err := limitRows.Scan(&d, &lim); err != nil {
+			limitRows.Close()
+			httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo límites")
+			return
+		}
+		limitByDate[d.Format("2006-01-02")] = lim
+	}
+	limitRows.Close()
+
+	for _, e := range entries {
+		limit := limitByDate[e.Date]
+		if limit <= 0 {
+			limit = 45
+		}
+		labels := labelsByDate[e.ID]
+		if labels == nil {
+			labels = []string{}
+		}
+		out = append(out, map[string]any{
+			"date":               e.Date,
+			"title":              e.Title,
+			"is_active":          e.IsActive,
+			"prereserva_enabled": e.PrereservaEnabled,
+			"menus":              labels,
+			"people":             peopleByDate[e.Date],
+			"limit":              limit,
+		})
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "special_dates": out})
 }
 
 // loadBOSpecialDateMenus reads the child rows for one special date.
