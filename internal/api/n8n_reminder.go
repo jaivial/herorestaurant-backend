@@ -110,6 +110,10 @@ type bookingReminderExtras struct {
 	BabyStrollers int
 	// Coordination id: booking_extras_v1 - only rendered when non-empty.
 	Extras []string
+	// Coordination id: special_booking_v1 - precomputed special booking map
+	// (as returned by buildSpecialBookingResponse). When non-nil we render the
+	// menu lines + pending adelanto line.
+	Special map[string]any
 }
 
 func buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDisplay string, partySize int, floorDisplay, salonDisplay string, extras bookingReminderExtras) string {
@@ -131,6 +135,13 @@ func buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDispl
 	msg += arrozLine + "\n"
 	if len(extras.Extras) > 0 {
 		msg += "✨ Extras: " + strings.Join(extras.Extras, ", ") + "\n"
+	}
+	// Coordination id: special_booking_v1 - render the special menu summary
+	// (title, menus, pending adelanto) when the booking is a special booking.
+	if len(extras.Special) > 0 {
+		if extra := strings.TrimRight(formatSpecialBookingReminderLines(map[string]any{"special": extras.Special}), "\n"); extra != "" {
+			msg += extra + "\n"
+		}
 	}
 	msg += "👶 Tronas: " + strconv.Itoa(extras.HighChairs) + "\n"
 	msg += "🍼 Carros de bebé: " + strconv.Itoa(extras.BabyStrollers) + "\n"
@@ -207,7 +218,8 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 		       DATE_FORMAT(b.reservation_date, '%Y-%m-%d') AS reservation_date,
 		       TIME_FORMAT(b.reservation_time, '%H:%i:%s') AS reservation_time,
 		       b.party_size, b.arroz_type, b.arroz_servings, b.highChairs, b.babyStrollers,
-		       b.preferred_floor_number, sal.name
+		       b.preferred_floor_number, sal.name,
+		       COALESCE(b.is_special_booking, 0), COALESCE(b.is_prereserva, 0), COALESCE(b.special_json, '')
 		FROM bookings b
 		LEFT JOIN restaurant_salons sal ON sal.id = b.preferred_salon_id AND sal.restaurant_id = b.restaurant_id
 		WHERE b.restaurant_id = ?
@@ -229,26 +241,30 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type rowBooking struct {
-		ID              int
-		CustomerName    string
-		ContactPhoneCC  sql.NullString
-		ContactPhone    sql.NullString
-		ReservationDate string
-		ReservationTime string
-		PartySize       int
-		ArrozType       sql.NullString
-		ArrozServings   sql.NullString
-		HighChairs      sql.NullInt64
-		BabyStrollers   sql.NullInt64
-		PreferredFloor  sql.NullInt64
-		SalonName       sql.NullString
+		ID               int
+		CustomerName     string
+		ContactPhoneCC   sql.NullString
+		ContactPhone     sql.NullString
+		ReservationDate  string
+		ReservationTime  string
+		PartySize        int
+		ArrozType        sql.NullString
+		ArrozServings    sql.NullString
+		HighChairs       sql.NullInt64
+		BabyStrollers    sql.NullInt64
+		PreferredFloor   sql.NullInt64
+		SalonName        sql.NullString
+		IsSpecialBooking sql.NullInt64
+		IsPrereserva     sql.NullInt64
+		SpecialJSON      sql.NullString
 	}
 
 	var bookings []rowBooking
 	for rows.Next() {
 		var b rowBooking
 		if err := rows.Scan(&b.ID, &b.CustomerName, &b.ContactPhoneCC, &b.ContactPhone, &b.ReservationDate, &b.ReservationTime,
-			&b.PartySize, &b.ArrozType, &b.ArrozServings, &b.HighChairs, &b.BabyStrollers, &b.PreferredFloor, &b.SalonName); err != nil {
+			&b.PartySize, &b.ArrozType, &b.ArrozServings, &b.HighChairs, &b.BabyStrollers, &b.PreferredFloor, &b.SalonName,
+			&b.IsSpecialBooking, &b.IsPrereserva, &b.SpecialJSON); err != nil {
 			results["error"] = err.Error()
 			appendReminderLog(ts + " - ERROR: " + err.Error() + "\n")
 			httpx.WriteJSON(w, http.StatusOK, results)
@@ -353,6 +369,11 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 			ArrozLine:     bookingReminderArrozLine(booking.ArrozType, booking.ArrozServings),
 			HighChairs:    int(booking.HighChairs.Int64),
 			BabyStrollers: int(booking.BabyStrollers.Int64),
+		}
+		// Coordination id: special_booking_v1 - surface the precomputed block
+		// so the reminder includes the menu lines + pending adelanto.
+		if booking.IsSpecialBooking.Valid && booking.IsSpecialBooking.Int64 != 0 {
+			extras.Special = s.buildSpecialBookingResponse(r.Context(), restaurantID, true, booking.IsPrereserva.Valid && booking.IsPrereserva.Int64 != 0, booking.SpecialJSON.String)
 		}
 		reminder := buildBookingReminderPayload(brandName, customerName, bookingDateDisplay, bookingTimeDisplay, partySize, floorDisplay, strings.TrimSpace(booking.SalonName.String), extras, int64(bookingID), baseURL)
 

@@ -15,32 +15,35 @@ import (
 )
 
 type bookingRow struct {
-	ID              int
-	CustomerName    string
-	ContactEmail    string
-	ReservationDate string
-	ReservationTime string
-	PartySize       int
-	Children        int
-	ContactPhone    sql.NullString
-	ContactPhoneCC  sql.NullString
-	Status          sql.NullString
-	ArrozType       sql.NullString
-	ArrozServings   sql.NullString
-	Commentary      sql.NullString
-	BabyStrollers   sql.NullInt64
-	HighChairs      sql.NullInt64
-	TableNumber     sql.NullString
-	PreferredFloor  sql.NullInt64
-	PreferredSalon  sql.NullInt64
-	AddedDate       sql.NullString
-	SpecialMenu     sql.NullInt64
-	MenuDeGrupoID   sql.NullInt64
-	PrincipalesJSON sql.NullString
-	ExtrasJSON      sql.NullString
+	ID               int
+	CustomerName     string
+	ContactEmail     string
+	ReservationDate  string
+	ReservationTime  string
+	PartySize        int
+	Children         int
+	ContactPhone     sql.NullString
+	ContactPhoneCC   sql.NullString
+	Status           sql.NullString
+	ArrozType        sql.NullString
+	ArrozServings    sql.NullString
+	Commentary       sql.NullString
+	BabyStrollers    sql.NullInt64
+	HighChairs       sql.NullInt64
+	TableNumber      sql.NullString
+	PreferredFloor   sql.NullInt64
+	PreferredSalon   sql.NullInt64
+	AddedDate        sql.NullString
+	SpecialMenu      sql.NullInt64
+	MenuDeGrupoID    sql.NullInt64
+	PrincipalesJSON  sql.NullString
+	ExtrasJSON       sql.NullString
+	IsSpecialBooking sql.NullInt64
+	IsPrereserva     sql.NullInt64
+	SpecialJSON      sql.NullString
 }
 
-func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
+func (s *Server) scanBookingRow(ctx context.Context, restaurantID int, rows *sql.Rows) (map[string]any, bool) {
 	var b bookingRow
 	if err := rows.Scan(
 		&b.ID,
@@ -66,11 +69,16 @@ func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
 		&b.MenuDeGrupoID,
 		&b.PrincipalesJSON,
 		&b.ExtrasJSON,
+		&b.IsSpecialBooking,
+		&b.IsPrereserva,
+		&b.SpecialJSON,
 	); err != nil {
 		return nil, false
 	}
 
 	isSpecialMenu := b.SpecialMenu.Valid && b.SpecialMenu.Int64 != 0
+	isSpecialBooking := b.IsSpecialBooking.Valid && b.IsSpecialBooking.Int64 != 0
+	isPrereserva := b.IsPrereserva.Valid && b.IsPrereserva.Int64 != 0
 
 	return map[string]any{
 		"id":                         b.ID,
@@ -97,6 +105,10 @@ func scanBookingRow(rows *sql.Rows) (map[string]any, bool) {
 		"principales_json":           nullStringOrNil(b.PrincipalesJSON),
 		"extras_json":                nullStringOrNil(b.ExtrasJSON),
 		"extras":                     parseBookingExtrasSnapshot(b.ExtrasJSON.String),
+		"is_special_booking":         isSpecialBooking,
+		"is_prereserva":              isPrereserva,
+		"special_json":               nullStringOrNil(b.SpecialJSON),
+		"special":                    s.buildSpecialBookingResponse(ctx, restaurantID, isSpecialBooking, isPrereserva, b.SpecialJSON.String),
 	}, true
 }
 
@@ -267,7 +279,10 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 				special_menu,
 				menu_de_grupo_id,
 				principales_json,
-				COALESCE(extras_json, '')
+				COALESCE(extras_json, ''),
+				COALESCE(is_special_booking, 0),
+				COALESCE(is_prereserva, 0),
+				COALESCE(special_json, '')
 			FROM bookings
 		` + where + `
 			ORDER BY ` + orderBy + `
@@ -282,7 +297,7 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 
 		bookings := make([]map[string]any, 0)
 		for rows.Next() {
-			b, ok := scanBookingRow(rows)
+			b, ok := s.scanBookingRow(r.Context(), restaurantID, rows)
 			if !ok {
 				return nil, 0, rows.Err()
 			}

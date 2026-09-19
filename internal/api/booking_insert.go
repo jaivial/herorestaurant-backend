@@ -256,6 +256,49 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 
 	}
 
+	// Coordination id: special_booking_v1 - the front posts a JSON payload
+	// under "special_json". When present, validate against the date's active
+	// special_dates settings and snapshot into the booking row. Custom-menu
+	// items are not required (dish_id arrays validated when sent).
+	var (
+		isSpecialBooking bool
+		isPrereserva     bool
+		specialJSON      any
+	)
+	specialRaw := strings.TrimSpace(r.FormValue("special_json"))
+	if specialRaw != "" {
+		var req specialBookingReq
+		if err := json.Unmarshal([]byte(specialRaw), &req); err != nil {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"message": "JSON inválido en 'special_json'",
+			})
+			return
+		}
+		restaurantID, _ := restaurantIDFromContext(r.Context())
+		snap, prereserva, err := s.resolveSpecialBookingInput(r.Context(), restaurantID, resDate, partySize, &req)
+		if err != nil {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		snapBytes, mErr := json.Marshal(snap)
+		if mErr != nil {
+			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"message": "No se pudo serializar el menú especial",
+			})
+			return
+		}
+		isSpecialBooking = true
+		if prereserva != nil {
+			isPrereserva = *prereserva
+		}
+		specialJSON = string(snapBytes)
+	}
+
 	bookingID, err := s.insertBooking(r, bookingInsertParams{
 		ReservationDate:   resDate,
 		ReservationTime:   resTime,
@@ -275,6 +318,9 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		PrincipalesJSON:   principalesJSON,
 		PreferredFloorNum: preferredFloorNumber,
 		PreferredSalonID:  preferredSalonID,
+		IsSpecialBooking:  isSpecialBooking,
+		IsPrereserva:      isPrereserva,
+		SpecialJSON:       specialJSON,
 	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -307,6 +353,10 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		"principales_json":           principalesJSON,
 		"preferred_floor_number":     preferredFloorNumber,
 		"preferred_salon_id":         preferredSalonID,
+		"is_special_booking":         isSpecialBooking,
+		"is_prereserva":              isPrereserva,
+		"special_json":               specialJSON,
+		"special":                    s.buildSpecialBookingResponse(r.Context(), restaurantID, isSpecialBooking, isPrereserva, anyToString(specialJSON)),
 	}
 	s.enrichBookingLocationForNotifications(r.Context(), restaurantID, bookingData)
 
@@ -660,6 +710,12 @@ type bookingInsertParams struct {
 	PrincipalesJSON   any
 	PreferredFloorNum any
 	PreferredSalonID  any
+	// Coordination id: special_booking_v1 - pre-validated special booking
+	// snapshot payload. When non-nil the row is marked as a special booking
+	// with is_special_booking=1 and is_prereserva set from the date settings.
+	IsSpecialBooking bool
+	IsPrereserva     bool
+	SpecialJSON      any
 }
 
 func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, error) {
@@ -695,9 +751,12 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 			menu_de_grupo_assigned,
 			principales_json,
 			preferred_floor_number,
-			preferred_salon_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, menuDeGrupoAssignedTinyint(p.MenuDeGrupoID), p.PrincipalesJSON, p.PreferredFloorNum, p.PreferredSalonID)
+			preferred_salon_id,
+			is_special_booking,
+			is_prereserva,
+			special_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, menuDeGrupoAssignedTinyint(p.MenuDeGrupoID), p.PrincipalesJSON, p.PreferredFloorNum, p.PreferredSalonID, boolToTinyint(p.IsSpecialBooking), boolToTinyint(p.IsPrereserva), nullableStringOrNilFromAny(p.SpecialJSON))
 	if err != nil {
 		return 0, err
 	}

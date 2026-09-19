@@ -108,6 +108,10 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolDaySchedule(ctx, restaurantID, input)
 	case "check_day_capacity":
 		return s.botToolDayCapacity(ctx, restaurantID, input)
+	case "get_special_date_info":
+		return s.botToolGetSpecialDateInfo(ctx, restaurantID, input)
+	case "get_special_date_bookings":
+		return s.botToolGetSpecialDateBookings(ctx, restaurantID, input)
 	case "check_availability_for_party":
 		return s.botToolAvailabilityForParty(ctx, restaurantID, input)
 	case "get_bookings":
