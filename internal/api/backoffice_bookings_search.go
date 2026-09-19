@@ -82,7 +82,10 @@ func (s *Server) handleBOBookingsSearch(w http.ResponseWriter, r *http.Request) 
 			special_menu,
 			menu_de_grupo_id,
 			principales_json,
-			COALESCE(extras_json, '')
+			COALESCE(extras_json, ''),
+			COALESCE(is_special_booking, 0),
+			COALESCE(is_prereserva, 0),
+			COALESCE(special_json, '')
 		FROM bookings
 	` + baseWhere + `
 		ORDER BY reservation_date DESC, reservation_time DESC, id DESC
@@ -99,7 +102,7 @@ func (s *Server) handleBOBookingsSearch(w http.ResponseWriter, r *http.Request) 
 
 	bookings := make([]map[string]any, 0)
 	for rows.Next() {
-		b, ok := scanBookingRow(rows)
+		b, ok := s.scanBookingRow(r.Context(), restaurantID, rows)
 		if !ok {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error scanning booking row")
 			return

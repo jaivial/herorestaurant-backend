@@ -68,6 +68,12 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 		msg += formatArrozWhatsApp(booking)
 	}
 
+	// Coordination id: special_booking_v1 - special-date bookings render the
+	// title + per-menu lines + principales names per menu + adelanto totals.
+	if isSpecialBookingFlag(booking) {
+		msg += formatSpecialBookingWhatsApp(booking)
+	}
+
 	// Coordination id: booking_extras_v1 - extras are only shown when at least
 	// one is selected, so bookings without extras keep the original message.
 	if extras := bookingExtrasFromMap(booking); len(extras) > 0 {
