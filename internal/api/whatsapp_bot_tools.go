@@ -116,6 +116,22 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"}},"required":["date"]}`),
 		},
 		{
+			// Coordination id: special_booking_v1 - read-only special date
+			// inspector used by the WhatsApp bot to answer "¿qué menú especial
+			// hay el día X?" questions.
+			Name:        "get_special_date_info",
+			Description: "Devuelve la configuración de una fecha especial: título, si tiene pre-reserva habilitada, ventana de reserva, máximo por mesa y los menús disponibles con su configuración de adelanto (importe unitario y método de pago aceptado). Devuelve error si la fecha no es una fecha especial activa.",
+			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"}},"required":["date"]}`),
+		},
+		{
+			// Coordination id: special_booking_v1 - read-only special date
+			// bookings lookup used by the bot to summarise / lookup special
+			// date reservations.
+			Name:        "get_special_date_bookings",
+			Description: "Lista las reservas especiales de una fecha concreta con su bloque special (menús, principales y totales de adelanto) y el flag is_prereserva. ÚSALO cuando el cliente pida ver reservas especiales o para verificar pre-reservas.",
+			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"}},"required":["date"]}`),
+		},
+		{
 			Name:        "check_availability_for_party",
 			Description: "Verifica si un número de personas cabe en una fecha concreta.",
 			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"},"party_size":{"type":"integer","description":"Número de personas"}},"required":["date","party_size"]}`),

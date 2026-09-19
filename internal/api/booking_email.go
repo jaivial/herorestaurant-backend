@@ -293,6 +293,11 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 		detailsHTML += tableRow("Mesa", htmlEscape(tableNumber))
 	}
 	detailsHTML += menuArrozHTML
+	// Coordination id: special_booking_v1 - special-date booking rows (title,
+	// menus with counts + principales tree, adelanto total / pendiente).
+	if isSpecialBookingFlag(booking) {
+		detailsHTML += renderSpecialBookingEmailRows(booking)
+	}
 	// Coordination id: booking_extras_v1 - only rendered when at least one
 	// extra is selected.
 	if extras := bookingExtrasFromMap(booking); len(extras) > 0 {
