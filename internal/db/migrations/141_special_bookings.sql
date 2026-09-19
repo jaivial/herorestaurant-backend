@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS `special_date_menus` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `restaurant_id` INT NOT NULL DEFAULT 1,
   `special_date_id` BIGINT NOT NULL,
-  `menu_id` BIGINT NULL,
+  `menu_id` INT NULL,
   `custom_title` VARCHAR(190) NULL,
   `custom_image_url` TEXT NULL,
   `adelanto_amount` DECIMAL(10,2) NULL,
@@ -79,6 +79,17 @@ SET @fk_exists := (
 );
 SET @ddl := IF(@special_dates_exists = 1 AND @fk_exists = 0,
   'ALTER TABLE `special_date_menus` ADD CONSTRAINT `fk_special_date_menus_special_date` FOREIGN KEY (`special_date_id`) REFERENCES `special_dates`(`id`) ON DELETE CASCADE',
+  'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- Normalize menu_id to INT: menus.id is INT (see 140_special_menu_sections.sql)
+-- and an earlier partial apply of this file may have created it as BIGINT.
+SET @menu_id_type := (
+  SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'special_date_menus' AND COLUMN_NAME = 'menu_id'
+);
+SET @ddl := IF(@menu_id_type = 'bigint',
+  'ALTER TABLE `special_date_menus` MODIFY `menu_id` INT NULL',
   'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
