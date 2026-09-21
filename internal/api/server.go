@@ -589,7 +589,6 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/special-sections/{sectionId}", s.handleBOGroupMenusV2PatchSpecialSection)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/special-sections/{sectionId}", s.handleBOGroupMenusV2DeleteSpecialSection)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/special-sections/order", s.handleBOGroupMenusV2ReorderSpecialSections)
-		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/special-sections/{sectionId}/image", s.handleBOGroupMenusV2UploadSpecialSectionImage)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/special-sections/{sectionId}/image", s.handleBOGroupMenusV2DeleteSpecialSectionImage)
 		// Coordination id: special_menu_visibility_v1
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/visibility", s.handleBOGroupMenusV2PatchSpecialMenuVisibility)
