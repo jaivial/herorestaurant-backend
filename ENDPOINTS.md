@@ -2188,7 +2188,7 @@ El email de confirmación usa la misma resolución que `POST /api/bookings/front
 ### `POST /api/admin/branding/logo`
 Upload (or replace) the restaurant's email-header logo.
 
-- Auth: `bo_session` cookie + `ajustes` section (`requireBOSession` + `ajustesGate`).
+- Auth: `bo_session` cookie + `reservas` section (`requireBOSession` + `reservasGate`). The branding controls live on the Configuracion page (`/app/config`), which the backoffice navigation maps to the `reservas` section, so the API matches the page access.
 - Body: `multipart/form-data` with one field `image` (jpg/png/webp, max 8 MB raw upload).
 - Processing: ImageMagick normalizes to WebP, sweeping dimensions down to 460 px / quality 28 to enforce a hard 50 KB cap.
 - Storage: uploaded to BunnyCDN at `branding/{restaurantId}/logo.webp`; the resulting pull URL is upserted into `restaurant_branding.logo_url` (other columns preserved).

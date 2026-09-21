@@ -731,9 +731,14 @@ func (s *Server) Routes() http.Handler {
 		// Booking WhatsApp notifications (confirmation / reconfirmation) — bkg-wa-notif.
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/booking-notifications", s.handleBOBookingNotificationsGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Put("/booking-notifications", s.handleBOBookingNotificationsPut)
-		r.With(s.requireBOSession, ajustesGate).Get("/branding", s.handleBOBrandingGet)
-		r.With(s.requireBOSession, ajustesGate).Post("/branding", s.handleBOBrandingSet)
-		r.With(s.requireBOSession, ajustesGate).Post("/branding/logo", s.handleBOBrandingLogoUpload)
+		// Branding belongs to the Configuracion page (`/app/config`), which the
+		// backoffice navigation maps to the `reservas` section. Gating these
+		// endpoints under `ajustes` returned 403 for app-version 0.4 users (who
+		// are whitelisted for `reservas` but not for `ajustes`) and broke the
+		// logo upload from `/app/config?content=contacto`.
+		r.With(s.requireBOSession, reservasGate).Get("/branding", s.handleBOBrandingGet)
+		r.With(s.requireBOSession, reservasGate).Post("/branding", s.handleBOBrandingSet)
+		r.With(s.requireBOSession, reservasGate).Post("/branding/logo", s.handleBOBrandingLogoUpload)
 		r.With(s.requireBOSession, ajustesGate).Get("/website", s.handleBOPremiumWebsiteGet)
 		r.With(s.requireBOSession, ajustesGate).Put("/website", s.handleBOPremiumWebsiteUpsert)
 		r.With(s.requireBOSession, ajustesGate).Post("/website", s.handleBOPremiumWebsiteUpsert)
