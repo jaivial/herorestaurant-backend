@@ -36,6 +36,14 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Coordination id: mobility_day_override_v1 - resolved "problemas de
+	// movilidad" question flag for this date.
+	mobilityEnabled, err := s.resolveMobilityEnabled(restaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando configuración de movilidad")
+		return
+	}
+
 	openingMode := defaults.OpeningMode
 	morningHours := cloneStrings(defaults.MorningHours)
 	nightHours := cloneStrings(defaults.NightHours)
@@ -187,6 +195,8 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 		"nightHours":   nightHours,
 		"floors":       floorsOut,
 		"activeFloors": activeFloors,
+		// Coordination id: mobility_day_override_v1 (resolved value).
+		"mobility_enabled": mobilityEnabled,
 		"locationBooking": map[string]any{
 			"allowFloorReservation": flags.Floor.Value,
 			"allowSalonReservation": flags.Salon.Value,

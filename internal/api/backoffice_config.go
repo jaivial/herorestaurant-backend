@@ -62,6 +62,8 @@ type reservationDefaults struct {
 	DefaultHourPercentages map[string]float64
 	AllowFloorReservation  bool
 	AllowSalonReservation  bool
+	// Coordination id: mobility_day_override_v1 (global "problemas de movilidad" question).
+	MobilityEnabled bool
 }
 
 type boConfigFloor struct {
@@ -374,13 +376,14 @@ func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) 
 		defaultPercentRaw sql.NullString
 		allowFloorRaw     sql.NullInt64
 		allowSalonRaw     sql.NullInt64
+		mobilityRaw       sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit, hour_split_enabled, default_hour_percentages_json, allow_floor_reservation, allow_salon_reservation
+		SELECT opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit, hour_split_enabled, default_hour_percentages_json, allow_floor_reservation, allow_salon_reservation, mobility_enabled
 		FROM restaurant_reservation_defaults
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&modeRaw, &morningRaw, &nightRaw, &weekdayRaw, &dailyLimitRaw, &mesas2Raw, &mesas3Raw, &hourSplitRaw, &defaultPercentRaw, &allowFloorRaw, &allowSalonRaw)
+	`, restaurantID).Scan(&modeRaw, &morningRaw, &nightRaw, &weekdayRaw, &dailyLimitRaw, &mesas2Raw, &mesas3Raw, &hourSplitRaw, &defaultPercentRaw, &allowFloorRaw, &allowSalonRaw, &mobilityRaw)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return out, nil
@@ -418,6 +421,9 @@ func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) 
 	if allowSalonRaw.Valid {
 		out.AllowSalonReservation = allowSalonRaw.Int64 != 0
 	}
+	if mobilityRaw.Valid {
+		out.MobilityEnabled = mobilityRaw.Int64 != 0
+	}
 	if defaultPercentRaw.Valid && strings.TrimSpace(defaultPercentRaw.String) != "" {
 		var pcts map[string]float64
 		if err := json.Unmarshal([]byte(defaultPercentRaw.String), &pcts); err == nil {
@@ -454,12 +460,14 @@ func (s *Server) upsertReservationDefaults(ctx context.Context, restaurantID int
 	}
 	allowFloorFlag := boolToInt(next.AllowFloorReservation)
 	allowSalonFlag := boolToInt(next.AllowSalonReservation)
+	// Coordination id: mobility_day_override_v1
+	mobilityFlag := boolToInt(next.MobilityEnabled)
 
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO restaurant_reservation_defaults (
-			restaurant_id, opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit, hour_split_enabled, default_hour_percentages_json, allow_floor_reservation, allow_salon_reservation
+			restaurant_id, opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit, hour_split_enabled, default_hour_percentages_json, allow_floor_reservation, allow_salon_reservation, mobility_enabled
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			opening_mode = VALUES(opening_mode),
 			morning_hours_json = VALUES(morning_hours_json),
@@ -471,8 +479,9 @@ func (s *Server) upsertReservationDefaults(ctx context.Context, restaurantID int
 			hour_split_enabled = VALUES(hour_split_enabled),
 			default_hour_percentages_json = VALUES(default_hour_percentages_json),
 			allow_floor_reservation = VALUES(allow_floor_reservation),
-			allow_salon_reservation = VALUES(allow_salon_reservation)
-	`, restaurantID, mode, string(morningJSON), string(nightJSON), string(weekdayJSON), dailyLimit, mesas2, mesas3, hourSplitFlag, defaultPercentJSON, allowFloorFlag, allowSalonFlag)
+			allow_salon_reservation = VALUES(allow_salon_reservation),
+			mobility_enabled = VALUES(mobility_enabled)
+	`, restaurantID, mode, string(morningJSON), string(nightJSON), string(weekdayJSON), dailyLimit, mesas2, mesas3, hourSplitFlag, defaultPercentJSON, allowFloorFlag, allowSalonFlag, mobilityFlag)
 	return err
 }
 
@@ -1463,6 +1472,8 @@ type boConfigDefaultsSetRequest struct {
 	DefaultHourPercentages *map[string]float64 `json:"defaultHourPercentages,omitempty"`
 	AllowFloorReservation  *bool               `json:"allowFloorReservation,omitempty"`
 	AllowSalonReservation  *bool               `json:"allowSalonReservation,omitempty"`
+	// Coordination id: mobility_day_override_v1
+	MobilityEnabled *bool `json:"mobility_enabled,omitempty"`
 }
 
 func (s *Server) handleBOConfigDefaultsGet(w http.ResponseWriter, r *http.Request) {
@@ -1493,6 +1504,8 @@ func (s *Server) handleBOConfigDefaultsGet(w http.ResponseWriter, r *http.Reques
 		"defaultHourPercentages": defaults.DefaultHourPercentages,
 		"allowFloorReservation":  defaults.AllowFloorReservation,
 		"allowSalonReservation":  defaults.AllowSalonReservation,
+		// Coordination id: mobility_day_override_v1
+		"mobility_enabled": defaults.MobilityEnabled,
 	})
 }
 
@@ -1571,6 +1584,9 @@ func (s *Server) handleBOConfigDefaultsSet(w http.ResponseWriter, r *http.Reques
 	if req.AllowSalonReservation != nil {
 		current.AllowSalonReservation = *req.AllowSalonReservation
 	}
+	if req.MobilityEnabled != nil {
+		current.MobilityEnabled = *req.MobilityEnabled
+	}
 	if req.DefaultHourPercentages != nil {
 		cleaned := make(map[string]float64, len(*req.DefaultHourPercentages))
 		for k, v := range *req.DefaultHourPercentages {
@@ -1599,6 +1615,8 @@ func (s *Server) handleBOConfigDefaultsSet(w http.ResponseWriter, r *http.Reques
 		"defaultHourPercentages": current.DefaultHourPercentages,
 		"allowFloorReservation":  current.AllowFloorReservation,
 		"allowSalonReservation":  current.AllowSalonReservation,
+		// Coordination id: mobility_day_override_v1
+		"mobility_enabled": current.MobilityEnabled,
 	})
 }
 
