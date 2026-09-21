@@ -357,6 +357,12 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 				s.handleBOMenuWeekdayWSMessage(r, a.ActiveRestaurantID, menuID, client, raw)
 				continue
 			}
+			// Coordination id: menu_editor_preview_open_v1 (WS save of the
+			// per-user editor/preview split).
+			if strings.HasPrefix(typ, "editor_preview_") {
+				s.handleBOMenuEditorPrefWSMessage(r, a.ActiveRestaurantID, menuID, client, raw)
+				continue
+			}
 			if typ != "sync" && typ != "refresh" && typ != "join" && typ != "join_menu" && typ != "join_group_menu" {
 				s.logBOGroupMenuV2AITrace("ws message ignored type restaurant=%d menu=%d type=%q", a.ActiveRestaurantID, menuID, typ)
 				continue

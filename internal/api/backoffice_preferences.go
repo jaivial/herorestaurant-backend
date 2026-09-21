@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"preactvillacarmen/internal/httpx"
 )
@@ -25,7 +27,16 @@ var allowedBOPreferences = map[string]map[string]struct{}{
 	// Whether the /app/stock?tab=sheets grid renders each card's picture. The
 	// sheets list response carries it so the switcher hydrates on first load.
 	"stockSheetsShowImages": {"0": {}, "1": {}},
+	// Editor/preview split of /app/comida/menus/crear?menuId=. Stored per user
+	// and restaurant, written over the group-menus-v2 socket and hydrated from
+	// the session REST on the next page load.
+	// Coordination id: menu_editor_preview_open_v1
+	"menuEditorPreviewOpen": {"0": {}, "1": {}},
 }
+
+// boMenuEditorPreviewPrefKey is the user_preferences key of the editor/preview
+// split above. Coordination id: menu_editor_preview_open_v1
+const boMenuEditorPreviewPrefKey = "menuEditorPreviewOpen"
 
 // reservasColumnIDs is the canonical order of the bookings table columns. The
 // preference stores the visible subset as a CSV in this order so the value is
@@ -205,4 +216,68 @@ func (s *Server) handleBOPreferencesSet(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "preferences": prefs})
+}
+
+// handleBOMenuEditorPrefWSMessage persists the editor/preview split of
+// /app/comida/menus/crear?menuId= over the group-menus-v2 socket (socket
+// method), so the toggle never shares the menu autosave channel and never
+// touches the menu row. The value lives in user_preferences scoped by
+// (user_id, restaurant_id) and comes back through the session REST so the next
+// load hydrates with the right split.
+// Coordination id: menu_editor_preview_open_v1
+func (s *Server) handleBOMenuEditorPrefWSMessage(r *http.Request, restaurantID int, menuID int64, client *boGroupMenuV2AIClient, raw []byte) {
+	ctx := r.Context()
+	a, ok := boAuthFromContext(ctx)
+	if !ok {
+		return
+	}
+	var msg struct {
+		Type          string `json:"type"`
+		Open          *bool  `json:"open"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return
+	}
+	fail := func(code, message string) {
+		_ = client.writeJSON(map[string]any{
+			"type":    "editor_preview_error",
+			"menu_id": menuID,
+			"code":    code,
+			"message": message,
+		})
+	}
+	if strings.ToLower(strings.TrimSpace(msg.Type)) != "editor_preview_set" || msg.Open == nil {
+		fail("validation", "open es obligatorio")
+		return
+	}
+	value := "0"
+	if *msg.Open {
+		value = "1"
+	}
+	norm, ok := normalizeBOPreference(boMenuEditorPreviewPrefKey, value)
+	if !ok {
+		fail("validation", "Preferencia no válida")
+		return
+	}
+	if restaurantID == 0 {
+		fail("validation", "Sin restaurante activo")
+		return
+	}
+	if err := s.setUserPreference(ctx, a.User.ID, restaurantID, boMenuEditorPreviewPrefKey, norm); err != nil {
+		fail("server", "No se pudo guardar la vista del editor")
+		return
+	}
+	s.logBOGroupMenuV2AITrace(
+		"ws editor preview pref saved user=%d restaurant=%d menu=%d value=%s",
+		a.User.ID, restaurantID, menuID, norm,
+	)
+	_ = client.writeJSON(map[string]any{
+		"type":           "editor_preview_saved",
+		"restaurant_id":  restaurantID,
+		"menu_id":        menuID,
+		"open":           norm == "1",
+		"correlation_id": msg.CorrelationID,
+		"at":             time.Now().UTC().Format(time.RFC3339),
+	})
 }
