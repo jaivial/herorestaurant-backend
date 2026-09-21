@@ -85,7 +85,9 @@ func (s *Server) handleBOBookingsSearch(w http.ResponseWriter, r *http.Request) 
 			COALESCE(extras_json, ''),
 			COALESCE(is_special_booking, 0),
 			COALESCE(is_prereserva, 0),
-			COALESCE(special_json, '')
+			COALESCE(special_json, ''),
+			COALESCE(has_mobility_issues, 0),
+			COALESCE(mobility_people, 0)
 		FROM bookings
 	` + baseWhere + `
 		ORDER BY reservation_date DESC, reservation_time DESC, id DESC

@@ -159,6 +159,16 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Coordination id: mobility_issues_v1
+	hasMobilityIssues, mobilityPeople, err := parseMobilityFromForm(r, partySize)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
 	// Group menu (special menu) selection.
 	specialMenu := clampInt(r.FormValue("menu_de_grupo_selected"), 0, 1, 0) == 1
 	menuDeGrupoID := 0
@@ -321,6 +331,8 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		IsSpecialBooking:  isSpecialBooking,
 		IsPrereserva:      isPrereserva,
 		SpecialJSON:       specialJSON,
+		HasMobilityIssues: hasMobilityIssues,
+		MobilityPeople:    mobilityPeople,
 	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -356,6 +368,8 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		"is_special_booking":         isSpecialBooking,
 		"is_prereserva":              isPrereserva,
 		"special_json":               specialJSON,
+		"has_mobility_issues":        hasMobilityIssues,
+		"mobility_people":            mobilityPeople,
 		"special":                    s.buildSpecialBookingResponse(r.Context(), restaurantID, isSpecialBooking, isPrereserva, anyToString(specialJSON)),
 	}
 	s.enrichBookingLocationForNotifications(r.Context(), restaurantID, bookingData)
@@ -512,6 +526,16 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Coordination id: mobility_issues_v1
+	hasMobilityIssues, mobilityPeople, err := parseMobilityFromForm(r, partySize)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
 	specialMenu := strings.TrimSpace(r.FormValue("special_menu")) == "1"
 	menuDeGrupoID := 0
 	var principalesJSON any = nil
@@ -599,6 +623,9 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		PrincipalesJSON:   principalesJSON,
 		PreferredFloorNum: preferredFloorNumber,
 		PreferredSalonID:  preferredSalonID,
+		// Coordination id: mobility_issues_v1
+		HasMobilityIssues: hasMobilityIssues,
+		MobilityPeople:    mobilityPeople,
 	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -610,6 +637,8 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 
 	// Build booking data map for notifications.
 	adminBookingData := map[string]any{
+		"has_mobility_issues":        hasMobilityIssues,
+		"mobility_people":            mobilityPeople,
 		"booking_id":                 bookingID,
 		"reservation_date":           resDate,
 		"reservation_time":           resTime,
@@ -716,6 +745,11 @@ type bookingInsertParams struct {
 	IsSpecialBooking bool
 	IsPrereserva     bool
 	SpecialJSON      any
+	// Coordination id: mobility_issues_v1 - "problemas de movilidad" answer.
+	// Only asked when the date's special settings enable it; MobilityPeople
+	// is how many of PartySize are affected.
+	HasMobilityIssues bool
+	MobilityPeople    int
 }
 
 func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, error) {
@@ -754,9 +788,11 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 			preferred_salon_id,
 			is_special_booking,
 			is_prereserva,
-			special_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, menuDeGrupoAssignedTinyint(p.MenuDeGrupoID), p.PrincipalesJSON, p.PreferredFloorNum, p.PreferredSalonID, boolToTinyint(p.IsSpecialBooking), boolToTinyint(p.IsPrereserva), nullableStringOrNilFromAny(p.SpecialJSON))
+			special_json,
+			has_mobility_issues,
+			mobility_people
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, menuDeGrupoAssignedTinyint(p.MenuDeGrupoID), p.PrincipalesJSON, p.PreferredFloorNum, p.PreferredSalonID, boolToTinyint(p.IsSpecialBooking), boolToTinyint(p.IsPrereserva), nullableStringOrNilFromAny(p.SpecialJSON), boolToTinyint(p.HasMobilityIssues), p.MobilityPeople)
 	if err != nil {
 		return 0, err
 	}
@@ -856,6 +892,28 @@ func normalizePhoneParts(countryCodeRaw, phoneRaw string) (countryCode string, n
 		return "", "", "", false
 	}
 	return cc, phone, cc + phone, true
+}
+
+// parseMobilityFromForm reads the "problemas de movilidad" answer.
+// `mobility_people` is only meaningful when has_mobility_issues is true, and
+// can never exceed the party size.
+//
+// Coordination id: mobility_issues_v1
+func parseMobilityFromForm(r *http.Request, partySize int) (bool, int, error) {
+	raw := strings.TrimSpace(r.FormValue("has_mobility_issues"))
+	has := raw == "1" || strings.EqualFold(raw, "true")
+	if !has {
+		return false, 0, nil
+	}
+	peopleRaw := strings.TrimSpace(r.FormValue("mobility_people"))
+	if peopleRaw == "" {
+		return true, 0, nil
+	}
+	n, err := strconv.Atoi(peopleRaw)
+	if err != nil || n < 0 || n > partySize {
+		return false, 0, errors.New("Número de personas con problemas de movilidad inválido")
+	}
+	return true, n, nil
 }
 
 func parseChildrenFromForm(r *http.Request, partySize int) (int, error) {
