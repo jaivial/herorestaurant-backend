@@ -56,6 +56,7 @@ type boSpecialDateSaveRequest struct {
 	PrereservaEnabled      *bool               `json:"prereserva_enabled"`
 	MaxPerTableEnabled     *bool               `json:"max_per_table_enabled"`
 	MaxPerTable            *int                `json:"max_per_table"`
+	MobilityEnabled        *bool               `json:"mobility_enabled"`
 	RequiresAdelanto       *bool               `json:"requires_adelanto"`
 	AdelantoPaymentMethods []string            `json:"adelanto_payment_methods"`
 	AdelantoUnified        *bool               `json:"adelanto_unified"`
@@ -93,10 +94,11 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	var adelantoMethodsRaw sql.NullString
 	var adelantoUnifiedAmount sql.NullFloat64
 	var prereservaStartsOn, prereservaEndsOn sql.NullTime
+	var mobilityEnabled int
 
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT id, is_active, title, description, prereserva_enabled,
-		       max_per_table_enabled, max_per_table, requires_adelanto,
+		       max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount,
 		       prereserva_starts_on, prereserva_ends_on
 		FROM special_dates
@@ -104,7 +106,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 		LIMIT 1
 	`, a.ActiveRestaurantID, date).Scan(
 		&id, &isActive, &title, &description, &prereservaEnabled,
-		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
+		&maxPerTableEnabled, &maxPerTable, &mobilityEnabled, &requiresAdelanto,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
 		&prereservaStartsOn, &prereservaEndsOn,
 	)
@@ -146,6 +148,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 			"prereserva_enabled":       prereservaEnabled != 0,
 			"max_per_table_enabled":    maxPerTableEnabled != 0,
 			"max_per_table":            nullIfZero(maxPerTable.Valid, maxPerTable.Int64),
+			"mobility_enabled":         mobilityEnabled != 0,
 			"requires_adelanto":        requiresAdelanto != 0,
 			"adelanto_payment_methods": adelantoMethods,
 			"adelanto_unified":         adelantoUnified != 0,
@@ -586,6 +589,11 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	if req.AdelantoUnifiedAmount != nil {
 		adelantoUnifiedAmount = *req.AdelantoUnifiedAmount
 	}
+	// Coordination id: mobility_issues_v1
+	mobilityEnabledReq := false
+	if req.MobilityEnabled != nil {
+		mobilityEnabledReq = *req.MobilityEnabled
+	}
 	var maxPerTableVal any
 	maxPerTableVal = nil
 	if maxPerTableEnabled && maxPerTable > 0 {
@@ -595,9 +603,9 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO special_dates
 			(restaurant_id, date, is_active, title, description, prereserva_enabled,
-			 max_per_table_enabled, max_per_table, requires_adelanto, adelanto_payment_methods,
+			 max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto, adelanto_payment_methods,
 			 adelanto_unified, adelanto_unified_amount, prereserva_starts_on, prereserva_ends_on)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			is_active = VALUES(is_active),
 			title = VALUES(title),
@@ -605,6 +613,7 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			prereserva_enabled = VALUES(prereserva_enabled),
 			max_per_table_enabled = VALUES(max_per_table_enabled),
 			max_per_table = VALUES(max_per_table),
+			mobility_enabled = VALUES(mobility_enabled),
 			requires_adelanto = VALUES(requires_adelanto),
 			adelanto_payment_methods = VALUES(adelanto_payment_methods),
 			adelanto_unified = VALUES(adelanto_unified),
@@ -612,7 +621,7 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			prereserva_starts_on = VALUES(prereserva_starts_on),
 			prereserva_ends_on = VALUES(prereserva_ends_on)
 	`, a.ActiveRestaurantID, date, boolToInt(isActive), title, description, boolToInt(prereservaEnabled),
-		boolToInt(maxPerTableEnabled), maxPerTableVal, boolToInt(requiresAdelanto), string(adelantoMethodsJSON),
+		boolToInt(maxPerTableEnabled), maxPerTableVal, boolToInt(mobilityEnabledReq), boolToInt(requiresAdelanto), string(adelantoMethodsJSON),
 		boolToInt(adelantoUnified), normalizeAdelantoAmount(adelantoUnifiedAmount), prereservaStartsOn, prereservaEndsOn)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando special_dates")

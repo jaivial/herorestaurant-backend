@@ -41,6 +41,9 @@ type bookingRow struct {
 	IsSpecialBooking sql.NullInt64
 	IsPrereserva     sql.NullInt64
 	SpecialJSON      sql.NullString
+	// Coordination id: mobility_issues_v1
+	HasMobilityIssues sql.NullInt64
+	MobilityPeople    sql.NullInt64
 }
 
 func (s *Server) scanBookingRow(ctx context.Context, restaurantID int, rows *sql.Rows) (map[string]any, bool) {
@@ -72,6 +75,8 @@ func (s *Server) scanBookingRow(ctx context.Context, restaurantID int, rows *sql
 		&b.IsSpecialBooking,
 		&b.IsPrereserva,
 		&b.SpecialJSON,
+		&b.HasMobilityIssues,
+		&b.MobilityPeople,
 	); err != nil {
 		return nil, false
 	}
@@ -79,6 +84,11 @@ func (s *Server) scanBookingRow(ctx context.Context, restaurantID int, rows *sql
 	isSpecialMenu := b.SpecialMenu.Valid && b.SpecialMenu.Int64 != 0
 	isSpecialBooking := b.IsSpecialBooking.Valid && b.IsSpecialBooking.Int64 != 0
 	isPrereserva := b.IsPrereserva.Valid && b.IsPrereserva.Int64 != 0
+	hasMobilityIssues := b.HasMobilityIssues.Valid && b.HasMobilityIssues.Int64 != 0
+	mobilityPeople := int64(0)
+	if b.MobilityPeople.Valid {
+		mobilityPeople = b.MobilityPeople.Int64
+	}
 
 	return map[string]any{
 		"id":                         b.ID,
@@ -88,6 +98,8 @@ func (s *Server) scanBookingRow(ctx context.Context, restaurantID int, rows *sql
 		"reservation_time":           b.ReservationTime,
 		"party_size":                 b.PartySize,
 		"children":                   b.Children,
+		"has_mobility_issues":        hasMobilityIssues,
+		"mobility_people":            mobilityPeople,
 		"contact_phone":              nullStringOrNil(b.ContactPhone),
 		"contact_phone_country_code": defaultString(b.ContactPhoneCC, "34"),
 		"status":                     defaultString(b.Status, "pending"),
@@ -282,7 +294,9 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 				COALESCE(extras_json, ''),
 				COALESCE(is_special_booking, 0),
 				COALESCE(is_prereserva, 0),
-				COALESCE(special_json, '')
+				COALESCE(special_json, ''),
+				COALESCE(has_mobility_issues, 0),
+				COALESCE(mobility_people, 0)
 			FROM bookings
 		` + where + `
 			ORDER BY ` + orderBy + `

@@ -85,7 +85,7 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, title,
-		       max_per_table_enabled, max_per_table
+		       max_per_table_enabled, max_per_table, mobility_enabled
 		FROM special_dates
 		WHERE restaurant_id = ? AND is_active = 1 AND date BETWEEN ? AND ?
 		ORDER BY date ASC
@@ -103,7 +103,8 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 		var title string
 		var maxPerTableEnabled int
 		var maxPerTable sql.NullInt64
-		if err := rows.Scan(&date, &isActive, &prereserva, &title, &maxPerTableEnabled, &maxPerTable); err != nil {
+		var mobilityEnabled int
+		if err := rows.Scan(&date, &isActive, &prereserva, &title, &maxPerTableEnabled, &maxPerTable, &mobilityEnabled); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, "Error leyendo special_dates")
 			return
 		}
@@ -113,6 +114,8 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 			"prereserva_enabled":    prereserva != 0,
 			"title":                 title,
 			"max_per_table_enabled": maxPerTableEnabled != 0,
+			// Coordination id: mobility_issues_v1
+			"mobility_enabled": mobilityEnabled != 0,
 		}
 		if maxPerTable.Valid {
 			row["max_per_table"] = maxPerTable.Int64
@@ -158,17 +161,18 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	var maxPerTable sql.NullInt64
 	var adelantoMethodsRaw sql.NullString
 	var adelantoUnifiedAmount sql.NullFloat64
+	var mobilityEnabledDetail int
 
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT id, is_active, title, description, prereserva_enabled,
-		       max_per_table_enabled, max_per_table, requires_adelanto,
+		       max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
 	`, restaurantID, date).Scan(
 		&id, &isActive, &title, &description, &prereservaEnabled,
-		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
+		&maxPerTableEnabled, &maxPerTable, &mobilityEnabledDetail, &requiresAdelanto,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
 	)
 
@@ -199,12 +203,14 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	}
 
 	resp := map[string]any{
-		"date":                     date,
-		"is_active":                true,
-		"title":                    title,
-		"description":              description.String,
-		"prereserva_enabled":       prereservaEnabled != 0,
-		"max_per_table_enabled":    maxPerTableEnabled != 0,
+		"date":                  date,
+		"is_active":             true,
+		"title":                 title,
+		"description":           description.String,
+		"prereserva_enabled":    prereservaEnabled != 0,
+		"max_per_table_enabled": maxPerTableEnabled != 0,
+		// Coordination id: mobility_issues_v1
+		"mobility_enabled":         mobilityEnabledDetail != 0,
 		"requires_adelanto":        requiresAdelanto != 0,
 		"adelanto_payment_methods": adelantoMethods,
 		"adelanto_unified":         adelantoUnified != 0,
