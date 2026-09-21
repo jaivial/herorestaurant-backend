@@ -107,6 +107,13 @@ type boBookingUpsertReq struct {
 
 	// Coordination id: booking_extras_v1 (selected extras, both modes).
 	Extras []int64 `json:"extras,omitempty"`
+
+	// Coordination id: special_booking_v1 (per-date special booking block).
+	// When present (and non-null), the server validates against the date's
+	// active special_dates settings and snapshots into special_json + sets
+	// is_special_booking + is_prereserva. Pointer so we can distinguish
+	// "not provided" from "explicit null" (clears).
+	Special *specialBookingReq `json:"special,omitempty"`
 }
 
 func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +155,8 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		PrincipalesRaw:          req.PrincipalesRaw,
 		Extras:                  req.Extras,
 		ExtrasTouched:           req.Extras != nil,
+		Special:                 req.Special,
+		SpecialTouched:          req.Special != nil,
 	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -247,6 +256,12 @@ type boBookingPatchReq struct {
 
 	// Coordination id: booking_extras_v1
 	Extras *[]int64 `json:"extras,omitempty"`
+
+	// Coordination id: special_booking_v1 (special booking block on PATCH).
+	// SpecialPatch is the raw JSON for the `special` key: lets us
+	// distinguish "absent" (no key, leave stored untouched) from
+	// "explicit null" (clear special fields) from "object" (replace).
+	SpecialPatch json.RawMessage `json:"special,omitempty"`
 }
 
 func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
@@ -397,6 +412,29 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 		input.ExtrasTouched = true
 	}
 
+	// Coordination id: special_booking_v1 - PATCH semantics for `special`:
+	// - key absent in body: leave stored special untouched (SpecialTouched=false).
+	// - key present as null: clear (SpecialTouched=true, Special=nil).
+	// - key present as object: validate + replace atomically.
+	if len(req.SpecialPatch) > 0 {
+		trimmed := strings.TrimSpace(string(req.SpecialPatch))
+		if trimmed == "" || trimmed == "null" {
+			input.Special = nil
+			input.SpecialTouched = true
+		} else {
+			var sp specialBookingReq
+			if err := json.Unmarshal(req.SpecialPatch, &sp); err != nil {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+					"success": false,
+					"message": "JSON inválido en 'special'",
+				})
+				return
+			}
+			input.Special = &sp
+			input.SpecialTouched = true
+		}
+	}
+
 	next, err := s.boNormalizeAndValidateBookingInput(r.Context(), a.ActiveRestaurantID, input)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -431,6 +469,21 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 				if merged := mergeExtrasIntoCommentary(current, names); strings.TrimSpace(merged) != "" {
 					next.Commentary = sql.NullString{String: merged, Valid: true}
 				}
+			}
+		}
+	}
+
+	// Coordination id: special_booking_v1 - when the reservation_date moves to
+	// a non-special date and the booking still carries the special snapshot,
+	// clear is_special_booking/is_prereserva/special_json atomically.
+	if !input.SpecialTouched {
+		storedSpecial := strings.TrimSpace(anyToString(current["special_json"]))
+		if storedSpecial != "" {
+			settings, _, err := s.loadSpecialDateSettings(r.Context(), a.ActiveRestaurantID, next.ReservationDate)
+			if err == nil && settings == nil {
+				next.IsSpecialBooking = false
+				next.IsPrereserva = false
+				next.SpecialJSON = nil
 			}
 		}
 	}
@@ -528,6 +581,11 @@ type boNormalizedBooking struct {
 	// Coordination id: booking_extras_v1 (booking add-ons, both modes).
 	ExtrasJSON  any
 	ExtrasNames []string
+
+	// Coordination id: special_booking_v1 (special booking snapshot).
+	IsSpecialBooking bool
+	IsPrereserva     bool
+	SpecialJSON      any
 }
 
 type boNormalizeInput struct {
@@ -558,6 +616,11 @@ type boNormalizeInput struct {
 	// Coordination id: booking_extras_v1
 	Extras        []int64
 	ExtrasTouched bool
+
+	// Coordination id: special_booking_v1. When SpecialTouched is true the
+	// Special pointer carries the payload to validate (nil = explicit clear).
+	Special        *specialBookingReq
+	SpecialTouched bool
 }
 
 func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaurantID int, in boNormalizeInput) (boNormalizedBooking, error) {
@@ -745,6 +808,34 @@ func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaur
 		out.ArrozServingsJSON = arrozServJSON
 	}
 
+	// Coordination id: special_booking_v1 - when the patch sends `special`,
+	// we re-validate against the date's settings and snapshot atomically.
+	// When the caller clears it (`SpecialTouched && Special == nil`) we drop
+	// the special fields. Absent in PATCH means leave stored values intact;
+	// that branch is handled by the caller (it doesn't call this validator
+	// for the stored snapshot).
+	if in.SpecialTouched {
+		if in.Special == nil {
+			out.IsSpecialBooking = false
+			out.IsPrereserva = false
+			out.SpecialJSON = nil
+		} else {
+			snap, prereserva, err := s.resolveSpecialBookingInput(ctx, restaurantID, date, partySize, in.Special)
+			if err != nil {
+				return out, err
+			}
+			snapBytes, err := json.Marshal(snap)
+			if err != nil {
+				return out, errors.New("No se pudo serializar el menú especial")
+			}
+			out.IsSpecialBooking = true
+			if prereserva != nil {
+				out.IsPrereserva = *prereserva
+			}
+			out.SpecialJSON = string(snapBytes)
+		}
+	}
+
 	return out, nil
 }
 
@@ -880,8 +971,11 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 			principales_json,
 			extras_json,
 			table_number,
-			preferred_floor_number
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			preferred_floor_number,
+			is_special_booking,
+			is_prereserva,
+			special_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		restaurantID,
 		b.ReservationDate,
@@ -904,6 +998,9 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 		b.ExtrasJSON,
 		nullableStringOrNil(b.TableNumber),
 		nullableInt64OrNil(b.PreferredFloorNumber),
+		boolToTinyint(b.IsSpecialBooking),
+		boolToTinyint(b.IsPrereserva),
+		nullableStringOrNilFromAny(b.SpecialJSON),
 	)
 	if err != nil {
 		return 0, err
@@ -944,7 +1041,10 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 			menu_de_grupo_id = ?,
 			menu_de_grupo_assigned = ?,
 			principales_json = ?,
-			extras_json = ?
+			extras_json = ?,
+			is_special_booking = ?,
+			is_prereserva = ?,
+			special_json = ?
 		WHERE restaurant_id = ? AND id = ?
 	`,
 		b.ReservationDate,
@@ -967,6 +1067,9 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 		boolToTinyint(b.MenuDeGrupoAssigned),
 		b.PrincipalesJSON,
 		b.ExtrasJSON,
+		boolToTinyint(b.IsSpecialBooking),
+		boolToTinyint(b.IsPrereserva),
+		nullableStringOrNilFromAny(b.SpecialJSON),
 		restaurantID,
 		id,
 	)
@@ -999,7 +1102,10 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			menu_de_grupo_id,
 			COALESCE(menu_de_grupo_assigned, 0),
 			principales_json,
-			COALESCE(extras_json, '')
+			COALESCE(extras_json, ''),
+			COALESCE(is_special_booking, 0),
+			COALESCE(is_prereserva, 0),
+			COALESCE(special_json, '')
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
 		ORDER BY reservation_time ASC, id ASC
@@ -1034,6 +1140,9 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 		MenuDeGrupoAssigned sql.NullInt64
 		PrincipalesJSON     sql.NullString
 		ExtrasJSON          sql.NullString
+		IsSpecialBooking    sql.NullInt64
+		IsPrereserva        sql.NullInt64
+		SpecialJSON         sql.NullString
 	}
 
 	out := make([]map[string]any, 0)
@@ -1064,11 +1173,16 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			&b.MenuDeGrupoAssigned,
 			&b.PrincipalesJSON,
 			&b.ExtrasJSON,
+			&b.IsSpecialBooking,
+			&b.IsPrereserva,
+			&b.SpecialJSON,
 		); err != nil {
 			return nil, err
 		}
 
 		isSpecialMenu := b.SpecialMenu.Valid && b.SpecialMenu.Int64 != 0
+		isSpecialBooking := b.IsSpecialBooking.Valid && b.IsSpecialBooking.Int64 != 0
+		isPrereserva := b.IsPrereserva.Valid && b.IsPrereserva.Int64 != 0
 
 		out = append(out, map[string]any{
 			"id":                         b.ID,
@@ -1096,6 +1210,10 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			"principales_json":           nullStringOrNil(b.PrincipalesJSON),
 			"extras_json":                nullStringOrNil(b.ExtrasJSON),
 			"extras":                     parseBookingExtrasSnapshot(b.ExtrasJSON.String),
+			"is_special_booking":         isSpecialBooking,
+			"is_prereserva":              isPrereserva,
+			"special_json":               nullStringOrNil(b.SpecialJSON),
+			"special":                    s.buildSpecialBookingResponse(ctx, restaurantID, isSpecialBooking, isPrereserva, b.SpecialJSON.String),
 		})
 	}
 	return out, nil
@@ -1127,7 +1245,10 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 			menu_de_grupo_id,
 			COALESCE(menu_de_grupo_assigned, 0),
 			principales_json,
-			COALESCE(extras_json, '')
+			COALESCE(extras_json, ''),
+			COALESCE(is_special_booking, 0),
+			COALESCE(is_prereserva, 0),
+			COALESCE(special_json, '')
 		FROM bookings
 		WHERE restaurant_id = ? AND id = ?
 		LIMIT 1
@@ -1158,6 +1279,9 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		menuDeGrupoAssigned sql.NullInt64
 		principalesJSON     sql.NullString
 		extrasJSON          sql.NullString
+		isSpecialBooking    sql.NullInt64
+		isPrereserva        sql.NullInt64
+		specialJSON         sql.NullString
 	)
 	if err := row.Scan(
 		&bookingID,
@@ -1184,11 +1308,16 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		&menuDeGrupoAssigned,
 		&principalesJSON,
 		&extrasJSON,
+		&isSpecialBooking,
+		&isPrereserva,
+		&specialJSON,
 	); err != nil {
 		return nil, err
 	}
 
 	isSpecialMenu := specialMenu.Valid && specialMenu.Int64 != 0
+	isSpecialBookingFlag := isSpecialBooking.Valid && isSpecialBooking.Int64 != 0
+	isPrereservaFlag := isPrereserva.Valid && isPrereserva.Int64 != 0
 
 	return map[string]any{
 		"id":                         bookingID,
@@ -1216,6 +1345,10 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		"principales_json":           nullStringOrNil(principalesJSON),
 		"extras_json":                nullStringOrNil(extrasJSON),
 		"extras":                     parseBookingExtrasSnapshot(extrasJSON.String),
+		"is_special_booking":         isSpecialBookingFlag,
+		"is_prereserva":              isPrereservaFlag,
+		"special_json":               nullStringOrNil(specialJSON),
+		"special":                    s.buildSpecialBookingResponse(ctx, restaurantID, isSpecialBookingFlag, isPrereservaFlag, specialJSON.String),
 	}, nil
 }
 
@@ -1228,6 +1361,24 @@ func nullableStringOrNil(ns sql.NullString) any {
 		return nil
 	}
 	return v
+}
+
+// nullableStringOrNilFromAny collapses the special-booking snapshot into a
+// nullable string suitable for database/sql: nil / "" go in as NULL; a real
+// string is stored verbatim. Anything else is rendered via fmt.Sprint.
+func nullableStringOrNilFromAny(v any) any {
+	if v == nil {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		s = fmt.Sprint(v)
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func nullableInt64OrNil(n sql.NullInt64) any {
