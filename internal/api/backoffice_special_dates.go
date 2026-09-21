@@ -94,11 +94,10 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	var adelantoMethodsRaw sql.NullString
 	var adelantoUnifiedAmount sql.NullFloat64
 	var prereservaStartsOn, prereservaEndsOn sql.NullTime
-	var mobilityEnabled int
 
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT id, is_active, title, description, prereserva_enabled,
-		       max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto,
+		       max_per_table_enabled, max_per_table, requires_adelanto,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount,
 		       prereserva_starts_on, prereserva_ends_on
 		FROM special_dates
@@ -106,7 +105,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 		LIMIT 1
 	`, a.ActiveRestaurantID, date).Scan(
 		&id, &isActive, &title, &description, &prereservaEnabled,
-		&maxPerTableEnabled, &maxPerTable, &mobilityEnabled, &requiresAdelanto,
+		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
 		&prereservaStartsOn, &prereservaEndsOn,
 	)
@@ -138,6 +137,13 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Coordination id: mobility_day_override_v1 - resolved value for this date.
+	mobilityEnabled, err := s.resolveMobilityEnabled(a.ActiveRestaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando configuración de movilidad")
+		return
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"special_date": map[string]any{
@@ -148,7 +154,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 			"prereserva_enabled":       prereservaEnabled != 0,
 			"max_per_table_enabled":    maxPerTableEnabled != 0,
 			"max_per_table":            nullIfZero(maxPerTable.Valid, maxPerTable.Int64),
-			"mobility_enabled":         mobilityEnabled != 0,
+			"mobility_enabled":         mobilityEnabled,
 			"requires_adelanto":        requiresAdelanto != 0,
 			"adelanto_payment_methods": adelantoMethods,
 			"adelanto_unified":         adelantoUnified != 0,
@@ -311,11 +317,18 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 		if labels == nil {
 			labels = []string{}
 		}
+		// Coordination id: mobility_day_override_v1 - resolved value per date.
+		mobilityEnabled, err := s.resolveMobilityEnabled(restaurantID, e.Date)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error consultando configuración de movilidad")
+			return
+		}
 		out = append(out, map[string]any{
 			"date":               e.Date,
 			"title":              e.Title,
 			"is_active":          e.IsActive,
 			"prereserva_enabled": e.PrereservaEnabled,
+			"mobility_enabled":   mobilityEnabled,
 			"menus":              labels,
 			"people":             peopleByDate[e.Date],
 			"limit":              limit,
@@ -626,6 +639,20 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando special_dates")
 		return
+	}
+
+	// Coordination id: mobility_day_override_v1 - an explicit mobility_enabled
+	// in the request also upserts the per-day override (same transaction) so
+	// the resolved flag matches this choice.
+	if req.MobilityEnabled != nil {
+		if _, err := tx.ExecContext(r.Context(), `
+			INSERT INTO mobility_day_override (restaurant_id, reservationDate, mobility_enabled)
+			VALUES (?, ?, ?)
+			ON DUPLICATE KEY UPDATE mobility_enabled = VALUES(mobility_enabled)
+		`, a.ActiveRestaurantID, date, boolToInt(*req.MobilityEnabled)); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error guardando mobility_day_override")
+			return
+		}
 	}
 
 	var specialDateID int64

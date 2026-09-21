@@ -687,6 +687,11 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/config/location-booking", s.handleBOConfigLocationBookingGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/location-booking", s.handleBOConfigLocationBookingSet)
 
+		// Mobility question ("problemas de movilidad") per-day override over the global default.
+		// Coordination id: mobility_day_override_v1
+		r.With(s.requireBOSession, reservasGate).Get("/config/mobility-day", s.handleBOConfigMobilityDayGet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/mobility-day", s.handleBOConfigMobilityDaySet)
+
 		// Widget settings (booking manager embed).
 		r.With(s.requireBOSession, reservasGate).Get("/widget/settings", s.handleBOWidgetSettingsGet)
 		r.With(s.requireBOSession, reservasGate).Put("/widget/settings", s.handleBOWidgetSettingsPut)

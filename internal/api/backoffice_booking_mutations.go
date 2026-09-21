@@ -96,6 +96,10 @@ type boBookingUpsertReq struct {
 	BabyStrollers        *int    `json:"babyStrollers,omitempty"`
 	HighChairs           *int    `json:"highChairs,omitempty"`
 
+	// Coordination id: mobility_issues_v1 ("problemas de movilidad" answer).
+	HasMobilityIssues *bool `json:"has_mobility_issues,omitempty"`
+	MobilityPeople    *int  `json:"mobility_people,omitempty"`
+
 	// Multi-arroz (non group menu).
 	ArrozTypes    []string `json:"arroz_types,omitempty"`
 	ArrozServings []int    `json:"arroz_servings,omitempty"`
@@ -153,6 +157,8 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		SpecialMenu:             req.SpecialMenu,
 		MenuDeGrupoID:           req.MenuDeGrupoID,
 		PrincipalesRaw:          req.PrincipalesRaw,
+		HasMobilityIssues:       req.HasMobilityIssues,
+		MobilityPeople:          req.MobilityPeople,
 		Extras:                  req.Extras,
 		ExtrasTouched:           req.Extras != nil,
 		Special:                 req.Special,
@@ -247,6 +253,10 @@ type boBookingPatchReq struct {
 	BabyStrollers        *int    `json:"babyStrollers,omitempty"`
 	HighChairs           *int    `json:"highChairs,omitempty"`
 
+	// Coordination id: mobility_issues_v1 ("problemas de movilidad" answer).
+	HasMobilityIssues *bool `json:"has_mobility_issues,omitempty"`
+	MobilityPeople    *int  `json:"mobility_people,omitempty"`
+
 	ArrozTypes    *[]string `json:"arroz_types,omitempty"`
 	ArrozServings *[]int    `json:"arroz_servings,omitempty"`
 
@@ -338,6 +348,15 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 		n := int(v)
 		input.Children = &n
 	}
+	// Coordination id: mobility_issues_v1
+	if v, ok := current["has_mobility_issues"].(bool); ok {
+		has := v
+		input.HasMobilityIssues = &has
+	}
+	if v, ok := current["mobility_people"].(int64); ok {
+		n := int(v)
+		input.MobilityPeople = &n
+	}
 	if v, ok := current["special_menu"].(bool); ok {
 		input.SpecialMenu = v
 	}
@@ -388,6 +407,12 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Children != nil {
 		input.Children = req.Children
+	}
+	if req.HasMobilityIssues != nil {
+		input.HasMobilityIssues = req.HasMobilityIssues
+	}
+	if req.MobilityPeople != nil {
+		input.MobilityPeople = req.MobilityPeople
 	}
 	if req.SpecialMenu != nil {
 		input.SpecialMenu = *req.SpecialMenu
@@ -586,6 +611,10 @@ type boNormalizedBooking struct {
 	IsSpecialBooking bool
 	IsPrereserva     bool
 	SpecialJSON      any
+
+	// Coordination id: mobility_issues_v1 ("problemas de movilidad" answer).
+	HasMobilityIssues bool
+	MobilityPeople    int
 }
 
 type boNormalizeInput struct {
@@ -621,6 +650,30 @@ type boNormalizeInput struct {
 	// Special pointer carries the payload to validate (nil = explicit clear).
 	Special        *specialBookingReq
 	SpecialTouched bool
+
+	// Coordination id: mobility_issues_v1 ("problemas de movilidad" answer).
+	HasMobilityIssues *bool
+	MobilityPeople    *int
+}
+
+// normalizeMobilityValues mirrors parseMobilityFromForm (booking_insert.go) for
+// JSON payloads: mobility_people only counts with has_mobility_issues and is
+// clamped to 1..partySize (0 when absent or non-positive); when
+// has_mobility_issues is false it stores 0.
+//
+// Coordination id: mobility_issues_v1
+func normalizeMobilityValues(has *bool, people *int, partySize int) (bool, int) {
+	if has == nil || !*has {
+		return false, 0
+	}
+	if people == nil || *people <= 0 {
+		return true, 0
+	}
+	n := *people
+	if n > partySize {
+		n = partySize
+	}
+	return true, n
 }
 
 func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaurantID int, in boNormalizeInput) (boNormalizedBooking, error) {
@@ -714,6 +767,9 @@ func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaur
 	if in.HighChairs != nil && *in.HighChairs >= 0 {
 		out.HighChairs = *in.HighChairs
 	}
+
+	// Coordination id: mobility_issues_v1 - JSON twin of parseMobilityFromForm.
+	out.HasMobilityIssues, out.MobilityPeople = normalizeMobilityValues(in.HasMobilityIssues, in.MobilityPeople, partySize)
 
 	out.SpecialMenu = in.SpecialMenu
 
@@ -974,8 +1030,10 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 			preferred_floor_number,
 			is_special_booking,
 			is_prereserva,
-			special_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			special_json,
+			has_mobility_issues,
+			mobility_people
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		restaurantID,
 		b.ReservationDate,
@@ -1001,6 +1059,9 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 		boolToTinyint(b.IsSpecialBooking),
 		boolToTinyint(b.IsPrereserva),
 		nullableStringOrNilFromAny(b.SpecialJSON),
+		// Coordination id: mobility_issues_v1
+		boolToTinyint(b.HasMobilityIssues),
+		b.MobilityPeople,
 	)
 	if err != nil {
 		return 0, err
@@ -1044,7 +1105,9 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 			extras_json = ?,
 			is_special_booking = ?,
 			is_prereserva = ?,
-			special_json = ?
+			special_json = ?,
+			has_mobility_issues = ?,
+			mobility_people = ?
 		WHERE restaurant_id = ? AND id = ?
 	`,
 		b.ReservationDate,
@@ -1070,6 +1133,9 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 		boolToTinyint(b.IsSpecialBooking),
 		boolToTinyint(b.IsPrereserva),
 		nullableStringOrNilFromAny(b.SpecialJSON),
+		// Coordination id: mobility_issues_v1
+		boolToTinyint(b.HasMobilityIssues),
+		b.MobilityPeople,
 		restaurantID,
 		id,
 	)
@@ -1248,7 +1314,9 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 			COALESCE(extras_json, ''),
 			COALESCE(is_special_booking, 0),
 			COALESCE(is_prereserva, 0),
-			COALESCE(special_json, '')
+			COALESCE(special_json, ''),
+			COALESCE(has_mobility_issues, 0),
+			COALESCE(mobility_people, 0)
 		FROM bookings
 		WHERE restaurant_id = ? AND id = ?
 		LIMIT 1
@@ -1282,6 +1350,8 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		isSpecialBooking    sql.NullInt64
 		isPrereserva        sql.NullInt64
 		specialJSON         sql.NullString
+		hasMobilityIssues   int
+		mobilityPeople      int
 	)
 	if err := row.Scan(
 		&bookingID,
@@ -1311,6 +1381,8 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		&isSpecialBooking,
 		&isPrereserva,
 		&specialJSON,
+		&hasMobilityIssues,
+		&mobilityPeople,
 	); err != nil {
 		return nil, err
 	}
@@ -1320,13 +1392,16 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 	isPrereservaFlag := isPrereserva.Valid && isPrereserva.Int64 != 0
 
 	return map[string]any{
-		"id":                         bookingID,
-		"customer_name":              customerName,
-		"contact_email":              contactEmail,
-		"reservation_date":           resDate,
-		"reservation_time":           resTime,
-		"party_size":                 int64(partySize),
-		"children":                   int64(children),
+		"id":               bookingID,
+		"customer_name":    customerName,
+		"contact_email":    contactEmail,
+		"reservation_date": resDate,
+		"reservation_time": resTime,
+		"party_size":       int64(partySize),
+		"children":         int64(children),
+		// Coordination id: mobility_issues_v1
+		"has_mobility_issues":        hasMobilityIssues != 0,
+		"mobility_people":            int64(mobilityPeople),
 		"contact_phone":              nullStringOrNil(contactPhone),
 		"contact_phone_country_code": defaultString(contactPhoneCC, "34"),
 		"status":                     defaultString(status, "pending"),
