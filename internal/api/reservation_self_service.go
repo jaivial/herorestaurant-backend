@@ -18,11 +18,16 @@ import (
 // day" duplicate the phone team kept deleting by hand:
 //
 //	POST /reservations/contact-lookup -> duplicate? (+ modifiable? + summary)
-//	GET  /reservations/modify-context -> booking to prefill the modify form
+//	POST /reservations/modify-context -> booking to prefill the modify form
 //	POST /reservations/modify         -> apply the customer edit
 //
 // The modifiability rules live in one place (evaluateSelfModifiable) so the
 // modal copy, the modify page and the write path can never disagree.
+//
+// Ownership: booking ids are sequential, so the read and the write both require
+// a self-service proof (the guest's email OR phone, which the wizard already
+// captured). Without a matching contact detail a caller cannot read or touch a
+// booking, which keeps the new endpoint from becoming an open IDOR.
 const (
 	selfModifyReasonSameDay       = "same_day"
 	selfModifyReasonSpecialLocked = "special_date_locked"
@@ -45,6 +50,14 @@ type selfServiceBooking struct {
 	Status           string
 	SpecialTitle     string
 	IsSpecialBooking int
+}
+
+// selfServiceProof is the ownership proof a caller must present to read or
+// modify a booking. It mirrors exactly what the booking wizard captured.
+type selfServiceProof struct {
+	Email       string `json:"email"`
+	CountryCode string `json:"country_code"`
+	Phone       string `json:"phone"`
 }
 
 // selfServiceBookingSelect is the single projection shared by the lookup and
@@ -81,8 +94,8 @@ func scanSelfServiceBooking(row interface{ Scan(...any) error }) (selfServiceBoo
 	return b, err
 }
 
-// jsonView is the wire shape consumed by the preact client (camelCase, same as
-// the confirm/cancel pages).
+// jsonView is the full wire shape consumed by the prefill read (camelCase, same
+// as the confirm/cancel pages).
 func (b selfServiceBooking) jsonView() map[string]any {
 	return map[string]any{
 		"id":                      b.ID,
@@ -100,11 +113,50 @@ func (b selfServiceBooking) jsonView() map[string]any {
 	}
 }
 
+// summaryView is the reduced shape for the duplicate notice. It deliberately
+// omits the contact fields so a lookup cannot be used to cross-disclose an
+// email from a phone number (or the other way around).
+func (b selfServiceBooking) summaryView() map[string]any {
+	return map[string]any{
+		"id":               b.ID,
+		"reservationDate":  b.ReservationDate,
+		"reservationTime":  formatHHMM(b.ReservationTime),
+		"partySize":        b.PartySize,
+		"customerName":     b.CustomerName,
+		"specialDateTitle": b.SpecialTitle,
+	}
+}
+
 func (s *Server) fetchSelfServiceBooking(ctx context.Context, restaurantID, id int) (selfServiceBooking, error) {
 	row := s.db.QueryRowContext(ctx, selfServiceBookingSelect+`
 		WHERE b.restaurant_id = ? AND b.id = ?
 		LIMIT 1`, restaurantID, id)
 	return scanSelfServiceBooking(row)
+}
+
+// normalizedStoredCC keeps the stored country code comparable with
+// normalizePhoneParts, which defaults an empty country code to 34.
+func normalizedStoredCC(cc string) string {
+	cc = strings.TrimSpace(cc)
+	if cc == "" {
+		return "34"
+	}
+	return cc
+}
+
+// verifySelfServiceProof reports whether the supplied contact matches the
+// booking's stored email OR phone.
+func verifySelfServiceProof(b selfServiceBooking, proof selfServiceProof) bool {
+	if email := strings.TrimSpace(proof.Email); email != "" {
+		if strings.EqualFold(strings.TrimSpace(b.ContactEmail), email) {
+			return true
+		}
+	}
+	cc, national, _, ok := normalizePhoneParts(proof.CountryCode, proof.Phone)
+	if ok && national != "" && b.ContactPhone == national && normalizedStoredCC(b.ContactPhoneCC) == cc {
+		return true
+	}
+	return false
 }
 
 // findDuplicateContactBooking returns the newest live booking on `date` whose
@@ -180,12 +232,31 @@ func selfModifyReasonMessage(reason string) string {
 	}
 }
 
-// handleReservationContactLookup backs the personal-details step of the booking
-// wizard: it is called when the guest presses "Continuar".
-func (s *Server) handleReservationContactLookup(w http.ResponseWriter, r *http.Request) {
+const selfServiceUnverifiedMessage = "No se pudo verificar la reserva. Vuelve a reservas e intentalo de nuevo."
+
+// selfServiceGuard applies the shared abuse guard (per IP + restaurant rate
+// limit) and resolves the tenant in one step.
+func (s *Server) selfServiceGuard(w http.ResponseWriter, r *http.Request) (int, bool) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Unknown restaurant"})
+		return 0, false
+	}
+	if !s.checkRateLimit(httpx.ClientIP(r), restaurantID) {
+		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{
+			"success": false,
+			"message": "Demasiadas solicitudes. Intentalo de nuevo en un momento.",
+		})
+		return 0, false
+	}
+	return restaurantID, true
+}
+
+// handleReservationContactLookup backs the personal-details step of the booking
+// wizard: it is called when the guest presses "Continuar".
+func (s *Server) handleReservationContactLookup(w http.ResponseWriter, r *http.Request) {
+	restaurantID, ok := s.selfServiceGuard(w, r)
+	if !ok {
 		return
 	}
 
@@ -231,7 +302,7 @@ func (s *Server) handleReservationContactLookup(w http.ResponseWriter, r *http.R
 		"success":    true,
 		"duplicate":  true,
 		"modifiable": modifiable,
-		"booking":    b.jsonView(),
+		"booking":    b.summaryView(),
 	}
 	if modifiable {
 		resp["modifyUrl"] = "/reservas/modificar?id=" + strconv.Itoa(b.ID)
@@ -243,26 +314,35 @@ func (s *Server) handleReservationContactLookup(w http.ResponseWriter, r *http.R
 }
 
 // handleReservationModifyContext returns the booking prefill for the modify
-// route, plus whether it is still eligible.
+// route, plus whether it is still eligible. The ownership proof is mandatory.
 func (s *Server) handleReservationModifyContext(w http.ResponseWriter, r *http.Request) {
-	restaurantID, ok := restaurantIDFromContext(r.Context())
+	restaurantID, ok := s.selfServiceGuard(w, r)
 	if !ok {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Unknown restaurant"})
 		return
 	}
-	id, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("id")))
-	if id <= 0 {
+
+	var input struct {
+		ID          int    `json:"id"`
+		Email       string `json:"email"`
+		CountryCode string `json:"country_code"`
+		Phone       string `json:"phone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "JSON invalido"})
+		return
+	}
+	if input.ID <= 0 {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "ID de reserva invalido"})
 		return
 	}
 
-	b, err := s.fetchSelfServiceBooking(r.Context(), restaurantID, id)
-	if err == sql.ErrNoRows {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Reserva no encontrada"})
-		return
-	}
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error consultando la reserva"})
+	b, err := s.fetchSelfServiceBooking(r.Context(), restaurantID, input.ID)
+	if err != nil || !verifySelfServiceProof(b, selfServiceProof{
+		Email:       input.Email,
+		CountryCode: input.CountryCode,
+		Phone:       input.Phone,
+	}) {
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"success": false, "message": selfServiceUnverifiedMessage})
 		return
 	}
 
@@ -286,9 +366,8 @@ func (s *Server) handleReservationModifyContext(w http.ResponseWriter, r *http.R
 // handleReservationModify applies a customer edit and records it as a
 // "customer" modification so the backoffice Modificadas tab stays truthful.
 func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request) {
-	restaurantID, ok := restaurantIDFromContext(r.Context())
+	restaurantID, ok := s.selfServiceGuard(w, r)
 	if !ok {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Unknown restaurant"})
 		return
 	}
 
@@ -304,6 +383,9 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 		ContactPhone    string `json:"contact_phone"`
 		HighChairs      int    `json:"high_chairs"`
 		BabyStrollers   int    `json:"baby_strollers"`
+		VerifyEmail     string `json:"verify_email"`
+		VerifyCC        string `json:"verify_country_code"`
+		VerifyPhone     string `json:"verify_phone"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "JSON invalido"})
@@ -315,12 +397,12 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 	}
 
 	old, err := s.fetchSelfServiceBooking(r.Context(), restaurantID, input.BookingID)
-	if err == sql.ErrNoRows {
-		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Reserva no encontrada"})
-		return
-	}
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error consultando la reserva"})
+	if err != nil || !verifySelfServiceProof(old, selfServiceProof{
+		Email:       input.VerifyEmail,
+		CountryCode: input.VerifyCC,
+		Phone:       input.VerifyPhone,
+	}) {
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"success": false, "message": selfServiceUnverifiedMessage})
 		return
 	}
 
@@ -343,15 +425,37 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "La nueva fecha debe ser posterior a hoy"})
 		return
 	}
-	// Special-menu bookings keep their frozen menu / adelanto snapshot: the date
-	// is not editable through self-service, call the restaurant for a move.
-	if old.IsSpecialBooking == 1 && date != old.ReservationDate {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success": false,
-			"reason":  selfModifyReasonSpecialLocked,
-			"message": "Para cambiar de fecha una reserva de menu especial, contacta con el restaurante.",
-		})
-		return
+	if date != old.ReservationDate {
+		// Special-menu bookings keep their frozen menu / adelanto snapshot: the
+		// date is not editable through self-service, call the restaurant.
+		if old.IsSpecialBooking == 1 {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"reason":  selfModifyReasonSpecialLocked,
+				"message": "Para cambiar de fecha una reserva de menu especial, contacta con el restaurante.",
+			})
+			return
+		}
+		// Moving onto an active special date would create a special booking with
+		// no menu snapshot, so it stays a restaurant-side operation.
+		var activeSpecial int
+		if err := s.db.QueryRowContext(r.Context(), `
+			SELECT COUNT(*) FROM special_dates
+			WHERE restaurant_id = ? AND date = ? AND is_active = 1`, restaurantID, date).Scan(&activeSpecial); err == nil && activeSpecial > 0 {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Esa fecha es una fecha especial. Contacta con el restaurante para reservar ese dia.",
+			})
+			return
+		}
+		// Reuse the same closed-day rules the booking wizard applies.
+		if closed, opened, cErr := s.fetchClosedAndOpenedDays(r); cErr == nil && isDateClosed(date, closed, opened) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Ese dia el restaurante esta cerrado. Elige otra fecha o contacta con nosotros.",
+			})
+			return
+		}
 	}
 	resTime, err := ensureHHMMSS(strings.TrimSpace(input.ReservationTime))
 	if err != nil {

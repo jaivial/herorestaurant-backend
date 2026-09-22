@@ -966,7 +966,7 @@ func (s *Server) Routes() http.Handler {
 		// Customer self-service duplicate guard + modify-instead-of-rebook.
 		// Coordination id: reservation_self_modification_v1
 		r.Post("/reservations/contact-lookup", s.handleReservationContactLookup)
-		r.Get("/reservations/modify-context", s.handleReservationModifyContext)
+		r.Post("/reservations/modify-context", s.handleReservationModifyContext)
 		r.Post("/reservations/modify", s.handleReservationModify)
 		r.With(s.requireAdmin).Post("/menu-visibility", s.handleMenuVisibilityToggle)
 		r.Get("/menus/public", s.handlePublicMenus)
