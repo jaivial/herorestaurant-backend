@@ -101,6 +101,16 @@ func (s *Server) handleBOMembersWhatsAppConnect(w http.ResponseWriter, r *http.R
 		"connection": connection,
 		"connected":  anyToBool(connection["connected"]),
 	})
+	// Fast-path queue flush: a manual click from /app/config?content=contacto
+	// that returns connected (e.g. previously-paired phone comes back) must
+	// not wait for the webhook round-trip before parked messages fire.
+	if anyToBool(connection["connected"]) {
+		if rearmed, err := s.triggerWhatsAppQueueOnReconnect(r.Context(), a.ActiveRestaurantID); err != nil {
+			log.Printf("[whatsapp] restaurant=%d reconnect queue trigger (connect) failed: %v", a.ActiveRestaurantID, err)
+		} else if rearmed > 0 {
+			log.Printf("[whatsapp] restaurant=%d manual connect succeeded; outbox rearmed (%d rows)", a.ActiveRestaurantID, rearmed)
+		}
+	}
 	s.broadcastWhatsAppConnection(r.Context(), a.ActiveRestaurantID)
 }
 
@@ -178,6 +188,56 @@ func (s *Server) handleBOMembersWhatsAppDisconnect(w http.ResponseWriter, r *htt
 	})
 	s.broadcastWhatsAppConnection(r.Context(), a.ActiveRestaurantID)
 	s.disconnectWhatsAppProvider(rec, false)
+}
+
+// handleBOMembersWhatsAppFlushQueue is the operator-side "I just reconnected
+// WhatsApp, please drain the parked messages" button. It re-arms failed rows
+// + brings pending rows forward + clears the booking-reminder circuit
+// breaker so the per-minute reminder scanner re-engages immediately, and
+// returns a summary so the UI can show "X messages pending, Y failed will
+// retry now". No DB writes to the provisioning row, so this is safe to call
+// whenever the operator wants without disturbing the live connect state.
+func (s *Server) handleBOMembersWhatsAppFlushQueue(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	rearmed, err := s.triggerWhatsAppQueueOnReconnect(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "WHATSAPP_FLUSH_FAILED", "No se pudo drenar la cola de WhatsApp")
+		return
+	}
+
+	// Surface the count split (pending vs failed) so the UI can show a
+	// useful message. pending comes from the function above; failed was
+	// re-armed to pending so we surface the *prior* count via the same
+	// query for transparency.
+	var failed int
+	if r2, qErr := s.db.QueryContext(r.Context(), `
+		SELECT COUNT(*) FROM message_deliveries
+		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'pending'
+	`, a.ActiveRestaurantID); qErr == nil {
+		defer r2.Close()
+		if r2.Next() {
+			var p int
+			_ = r2.Scan(&p)
+			rearmed = p
+		}
+	}
+	_ = s.db.QueryRowContext(r.Context(), `
+		SELECT COUNT(*) FROM message_deliveries
+		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'failed'
+	`, a.ActiveRestaurantID).Scan(&failed)
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"message":  fmt.Sprintf("Cola drenada: %d mensajes en vuelo", rearmed),
+		"pending":  rearmed,
+		"failed":   failed,
+	})
+	s.broadcastWhatsAppConnection(r.Context(), a.ActiveRestaurantID)
 }
 
 func (s *Server) markRestaurantWhatsAppDisconnected(ctx context.Context, restaurantID int) error {

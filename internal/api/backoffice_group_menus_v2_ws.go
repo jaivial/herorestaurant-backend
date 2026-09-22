@@ -281,7 +281,9 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 		_ = client.close()
 	}()
 
-	conn.SetReadLimit(1 << 20)
+	// 16MB: section image uploads travel this socket as base64 frames.
+	// Coordination id: special_menu_sections_image_state_v1
+	conn.SetReadLimit(16 << 20)
 	_ = conn.SetReadDeadline(time.Now().Add(70 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(70 * time.Second))
@@ -355,6 +357,18 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 			}
 			if strings.HasPrefix(typ, "weekday_") {
 				s.handleBOMenuWeekdayWSMessage(r, a.ActiveRestaurantID, menuID, client, raw)
+				continue
+			}
+			// Coordination id: menu_editor_preview_open_v1 (WS save of the
+			// per-user editor/preview split).
+			if strings.HasPrefix(typ, "editor_preview_") {
+				s.handleBOMenuEditorPrefWSMessage(r, a.ActiveRestaurantID, menuID, client, raw)
+				continue
+			}
+			// Coordination id: special_menu_sections_image_state_v1 (socket
+			// upload -> DB state -> background task -> state broadcast).
+			if strings.HasPrefix(typ, "special_section_image_") {
+				s.handleBOSpecialSectionImageWSMessage(r, a.ActiveRestaurantID, menuID, client, raw)
 				continue
 			}
 			if typ != "sync" && typ != "refresh" && typ != "join" && typ != "join_menu" && typ != "join_group_menu" {

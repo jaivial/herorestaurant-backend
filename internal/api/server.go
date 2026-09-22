@@ -589,7 +589,6 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/special-sections/{sectionId}", s.handleBOGroupMenusV2PatchSpecialSection)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/special-sections/{sectionId}", s.handleBOGroupMenusV2DeleteSpecialSection)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/special-sections/order", s.handleBOGroupMenusV2ReorderSpecialSections)
-		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/special-sections/{sectionId}/image", s.handleBOGroupMenusV2UploadSpecialSectionImage)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/special-sections/{sectionId}/image", s.handleBOGroupMenusV2DeleteSpecialSectionImage)
 		// Coordination id: special_menu_visibility_v1
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/visibility", s.handleBOGroupMenusV2PatchSpecialMenuVisibility)
@@ -687,6 +686,11 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/config/location-booking", s.handleBOConfigLocationBookingGet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/location-booking", s.handleBOConfigLocationBookingSet)
 
+		// Mobility question ("problemas de movilidad") per-day override over the global default.
+		// Coordination id: mobility_day_override_v1
+		r.With(s.requireBOSession, reservasGate).Get("/config/mobility-day", s.handleBOConfigMobilityDayGet)
+		r.With(s.requireBOSession, reservasGate).Post("/config/mobility-day", s.handleBOConfigMobilityDaySet)
+
 		// Widget settings (booking manager embed).
 		r.With(s.requireBOSession, reservasGate).Get("/widget/settings", s.handleBOWidgetSettingsGet)
 		r.With(s.requireBOSession, reservasGate).Put("/widget/settings", s.handleBOWidgetSettingsPut)
@@ -709,9 +713,16 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/minimax", s.handleBOMiniMaxConfigSet)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
-		r.With(s.requireBOSession, ajustesGate).Get("/legal-pages", s.handleAdminLegalPageList)
-		r.With(s.requireBOSession, ajustesGate).Get("/legal-pages/{slug}", s.handleAdminLegalPageGet)
-		r.With(s.requireBOSession, ajustesGate).Post("/legal-pages/{slug}", s.handleAdminLegalPageUpsert)
+		// The editor lives on /app/config (Configuracion page), which the
+		// backoffice navigation maps to the `reservas` section (sectionForPath in
+		// lib/navigation.ts). Gating these endpoints under `ajustes` returned 403
+		// for app-version 0.4 users (whitelisted for `reservas` but not for
+		// `ajustes`, e.g. the owner admin after migration 131), breaking the tab
+		// with {"message":"Forbidden"}. Same alignment as #240 did for
+		// /branding: the API follows the page's RBAC section.
+		r.With(s.requireBOSession, reservasGate).Get("/legal-pages", s.handleAdminLegalPageList)
+		r.With(s.requireBOSession, reservasGate).Get("/legal-pages/{slug}", s.handleAdminLegalPageGet)
+		r.With(s.requireBOSession, reservasGate).Post("/legal-pages/{slug}", s.handleAdminLegalPageUpsert)
 
 		// Restaurant-level settings (integrations/branding).
 		r.With(s.requireBOSession, ajustesGate).Get("/integrations", s.handleBOIntegrationsGet)
@@ -831,6 +842,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/whatsapp/connection", s.handleBOMembersWhatsAppConnectionStatus)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/members/whatsapp/ws", s.handleBOMembersWhatsAppWS)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/disconnect", s.handleBOMembersWhatsAppDisconnect)
+		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Post("/members/whatsapp/flush-queue", s.handleBOMembersWhatsAppFlushQueue)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/members/whatsapp/cancel", s.handleBOMembersWhatsAppCancel)
 
 		// Fichaje and schedules.
@@ -951,6 +963,11 @@ func (s *Server) Routes() http.Handler {
 		// Coordination id: special_dates_v1
 		r.Get("/reservations/special-dates", s.handlePublicSpecialDatesList)
 		r.Get("/reservations/special-date", s.handlePublicSpecialDateGet)
+		// Customer self-service duplicate guard + modify-instead-of-rebook.
+		// Coordination id: reservation_self_modification_v1
+		r.Post("/reservations/contact-lookup", s.handleReservationContactLookup)
+		r.Post("/reservations/modify-context", s.handleReservationModifyContext)
+		r.Post("/reservations/modify", s.handleReservationModify)
 		r.With(s.requireAdmin).Post("/menu-visibility", s.handleMenuVisibilityToggle)
 		r.Get("/menus/public", s.handlePublicMenus)
 		r.Get("/menus/sidebar", s.handlePublicMenusSidebar)

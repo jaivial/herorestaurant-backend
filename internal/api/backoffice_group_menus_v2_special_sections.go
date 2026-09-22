@@ -2,13 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/lib/specialmenuimage"
@@ -25,11 +26,13 @@ import (
 // =============================================================================
 
 type boSpecialMenuSection struct {
-	ID        int64  `json:"id"`
-	Title     string `json:"title"`
-	ImageURL  string `json:"image_url"`
-	Position  int    `json:"position"`
-	CreatedAt string `json:"created_at"`
+	ID       int64  `json:"id"`
+	Title    string `json:"title"`
+	ImageURL string `json:"image_url"`
+	// Coordination id: special_menu_sections_image_state_v1
+	ImageState string `json:"image_state"`
+	Position   int    `json:"position"`
+	CreatedAt  string `json:"created_at"`
 }
 
 // handleBOGroupMenusV2ListSpecialSections returns every section for one menu.
@@ -128,9 +131,10 @@ func (s *Server) handleBOGroupMenusV2CreateSpecialSection(w http.ResponseWriter,
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"section": boSpecialMenuSection{
-			ID:       newID,
-			Title:    title,
-			Position: nextPos,
+			ID:         newID,
+			Title:      title,
+			ImageState: boSpecialSectionImageStateEmpty,
+			Position:   nextPos,
 		},
 	})
 }
@@ -238,8 +242,8 @@ func (s *Server) handleBOGroupMenusV2DeleteSpecialSection(w http.ResponseWriter,
 	}
 
 	if imagePath != "" {
-		objectPath := path.Join(strconv.Itoa(a.ActiveRestaurantID), "pictures", "menus_especiales", "sections", imagePath)
-		_ = s.bunnyDelete(r.Context(), a.ActiveRestaurantID, objectPath)
+		// image_path already is the full BunnyCDN object path.
+		_ = s.bunnyDelete(r.Context(), a.ActiveRestaurantID, imagePath)
 	}
 
 	// Re-pack positions so the remaining sections stay 0..N-1 in display order.
@@ -323,99 +327,213 @@ func (s *Server) handleBOGroupMenusV2ReorderSpecialSections(w http.ResponseWrite
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
-// handleBOGroupMenusV2UploadSpecialSectionImage stores an image for one section.
-// The body is a multipart/form-data with field "image"; we normalize it to WebP
-// on the server, push it to BunnyCDN under
-// {restaurant_id}/pictures/menus_especiales/sections/{section_id}.webp and
-// persist the public URL on the section row.
-func (s *Server) handleBOGroupMenusV2UploadSpecialSectionImage(w http.ResponseWriter, r *http.Request) {
-	echoCorrelationID(w, r)
+// =============================================================================
+// Section image uploads over the group-menus-v2 socket ("socket method").
+//
+// Coordination id: special_menu_sections_image_state_v1
+//
+// The upload is a WS frame carrying the image as base64. The row flips to
+// 'uploading' right away and the image is normalized and pushed to BunnyCDN by
+// a background task, so closing the page never cancels an upload. The stored
+// state (empty/uploading/ready) is what a reload renders: default dropzone,
+// skeleton or the final image.
+// =============================================================================
 
-	a, ok := boAuthFromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+const (
+	boSpecialSectionImageStateEmpty     = "empty"
+	boSpecialSectionImageStateUploading = "uploading"
+	boSpecialSectionImageStateReady     = "ready"
+)
+
+// maxSpecialSectionImageBytes matches the 10MB the editor accepts.
+const maxSpecialSectionImageBytes = 10 << 20
+
+// maxSpecialSectionImageStoreBytes: images under this size are stored untouched,
+// bigger ones are re-encoded down. Coordination id: special_menu_sections_image_state_v1
+const maxSpecialSectionImageStoreBytes = 5 << 20
+
+// boSpecialSectionImageExt maps a detected content type to the object extension.
+func boSpecialSectionImageExt(contentType string) string {
+	switch contentType {
+	case "image/jpeg":
+		return "jpg"
+	case "image/png":
+		return "png"
+	case "image/gif":
+		return "gif"
+	case "image/webp":
+		return "webp"
+	default:
+		return "webp"
+	}
+}
+
+type boSpecialSectionImageJob struct {
+	RestaurantID int
+	MenuID       int64
+	SectionID    int64
+	Filename     string
+	RawImage     []byte
+}
+
+// handleBOSpecialSectionImageWSMessage validates a special_section_image_upload
+// frame, persists the 'uploading' state and queues the background task.
+func (s *Server) handleBOSpecialSectionImageWSMessage(r *http.Request, restaurantID int, menuID int64, client *boGroupMenuV2AIClient, raw []byte) {
+	var msg struct {
+		Type          string `json:"type"`
+		SectionID     int64  `json:"section_id"`
+		Filename      string `json:"filename"`
+		Data          string `json:"data"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
 	}
-	menuID, err := parseChiPositiveInt64(r, "id")
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid menu id"})
+	fail := func(message string) {
+		_ = client.writeJSON(map[string]any{
+			"type":           "special_section_image_error",
+			"restaurant_id":  restaurantID,
+			"menu_id":        menuID,
+			"section_id":     msg.SectionID,
+			"image_state":    boSpecialSectionImageStateEmpty,
+			"message":        message,
+			"correlation_id": msg.CorrelationID,
+		})
+	}
+	if strings.ToLower(strings.TrimSpace(msg.Type)) != "special_section_image_upload" || msg.SectionID <= 0 {
+		fail("Seccion o imagen no validas")
 		return
 	}
-	sectionID, err := parseChiPositiveInt64(r, "sectionId")
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid section id"})
+	payload, err := base64.StdEncoding.DecodeString(msg.Data)
+	if err != nil || len(payload) == 0 {
+		fail("Imagen vacia o invalida")
 		return
 	}
-	owns, err := s.ensureBOMenuV2Belongs(a.ActiveRestaurantID, menuID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error checking menu")
+	if len(payload) > maxSpecialSectionImageBytes {
+		fail("Imagen demasiado grande (maximo 10MB)")
 		return
 	}
-	if !owns {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
-		return
-	}
-	var sectionExists int
+	var count int
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT 1 FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
-		sectionID, menuID, a.ActiveRestaurantID).Scan(&sectionExists); err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
+		`SELECT COUNT(*) FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		msg.SectionID, menuID, restaurantID).Scan(&count); err != nil || count == 0 {
+		fail("Section not found")
 		return
 	}
-
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error parsing form"})
+	if err := s.setBOSpecialSectionImageState(r.Context(), restaurantID, menuID, msg.SectionID, boSpecialSectionImageStateUploading); err != nil {
+		fail("No se pudo guardar el estado de la subida")
 		return
 	}
-	file, header, err := r.FormFile("image")
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No image file provided"})
-		return
-	}
-	defer file.Close()
-
-	imgData, err := io.ReadAll(file)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reading file"})
-		return
-	}
-
-	normalizedWebP, err := specialmenuimage.NormalizeToWebP(
-		r.Context(),
-		imgData,
-		header.Filename,
-		header.Header.Get("Content-Type"),
+	s.broadcastBOGroupMenuV2AIEvent(restaurantID, menuID, "special_section_image_started", map[string]any{
+		"section_id":     msg.SectionID,
+		"image_state":    boSpecialSectionImageStateUploading,
+		"correlation_id": msg.CorrelationID,
+	})
+	s.logBOGroupMenuV2AITrace(
+		"special section image upload queued restaurant=%d menu=%d section=%d bytes=%d",
+		restaurantID, menuID, msg.SectionID, len(payload),
 	)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error procesando imagen: " + err.Error()})
-		return
+	go s.runBOSpecialSectionImageJob(boSpecialSectionImageJob{
+		RestaurantID: restaurantID,
+		MenuID:       menuID,
+		SectionID:    msg.SectionID,
+		Filename:     msg.Filename,
+		RawImage:     payload,
+	})
+}
+
+// setBOSpecialSectionImageState writes the upload state the editor hydrates
+// from. Coordination id: special_menu_sections_image_state_v1
+func (s *Server) setBOSpecialSectionImageState(ctx context.Context, restaurantID int, menuID, sectionID int64, state string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE special_menu_sections
+		SET image_state = ?, image_state_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`, state, sectionID, menuID, restaurantID)
+	return err
+}
+
+// runBOSpecialSectionImageJob normalizes the uploaded bytes to WebP, pushes
+// them to BunnyCDN under a fresh object name and flips the section to 'ready'.
+// It runs as a background task, so closing the page keeps the upload going and
+// the state broadcast lands on whatever clients are connected by then.
+func (s *Server) runBOSpecialSectionImageJob(job boSpecialSectionImageJob) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	fail := func(message string) {
+		if err := s.setBOSpecialSectionImageState(ctx, job.RestaurantID, job.MenuID, job.SectionID, boSpecialSectionImageStateEmpty); err != nil {
+			s.logBOGroupMenuV2AITrace("special section image state reset error section=%d err=%v", job.SectionID, err)
+		}
+		s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "special_section_image_error", map[string]any{
+			"section_id":  job.SectionID,
+			"image_state": boSpecialSectionImageStateEmpty,
+			"message":     message,
+		})
 	}
 
+	// Coordination id: special_menu_sections_image_state_v1 - images under 5MB
+	// are stored untouched (same extension and bytes); only bigger payloads get
+	// re-encoded down.
+	payload := job.RawImage
+	contentType := http.DetectContentType(job.RawImage)
+	objectExt := boSpecialSectionImageExt(contentType)
+	if len(payload) > maxSpecialSectionImageStoreBytes {
+		normalized, err := specialmenuimage.NormalizeToWebP(ctx, payload, job.Filename, contentType)
+		if err != nil {
+			s.logBOGroupMenuV2AITrace("special section image normalize error section=%d err=%v", job.SectionID, err)
+			fail("No se pudo procesar la imagen")
+			return
+		}
+		payload = normalized
+		contentType = "image/webp"
+		objectExt = "webp"
+	}
+	_ = contentType
+
+	var prevImagePath string
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(image_path, '') FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		job.SectionID, job.MenuID, job.RestaurantID).Scan(&prevImagePath)
+
+	// Timestamped object name: a re-upload can never keep serving the
+	// previously cached image at the same path.
 	objectPath := path.Join(
-		strconv.Itoa(a.ActiveRestaurantID),
+		strconv.Itoa(job.RestaurantID),
 		"pictures",
 		"menus_especiales",
 		"sections",
-		fmt.Sprintf("%d.webp", sectionID),
+		fmt.Sprintf("%d-%d.%s", job.SectionID, time.Now().UnixMilli(), objectExt),
 	)
-	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalizedWebP, "image/webp"); err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error subiendo imagen: " + err.Error()})
+	if err := s.bunnyPut(ctx, job.RestaurantID, objectPath, payload, contentType); err != nil {
+		s.logBOGroupMenuV2AITrace("special section image put error section=%d err=%v", job.SectionID, err)
+		fail("No se pudo subir la imagen")
 		return
 	}
 
-	if _, err := s.db.ExecContext(r.Context(),
-		`UPDATE special_menu_sections SET image_path = ? WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
-		objectPath, sectionID, menuID, a.ActiveRestaurantID); err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error guardando imagen"})
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE special_menu_sections
+		SET image_path = ?, image_state = ?, image_state_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`, objectPath, boSpecialSectionImageStateReady, job.SectionID, job.MenuID, job.RestaurantID); err != nil {
+		fail("No se pudo guardar la imagen")
 		return
 	}
 
-	imageURL := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath)
-	logCheckpoint(r, "special_menu_section_image_uploaded",
-		"menu_id", strconv.FormatInt(menuID, 10),
-		"section_id", strconv.FormatInt(sectionID, 10))
+	// Best-effort cleanup of the object the row pointed at before this upload.
+	if prevImagePath != "" && prevImagePath != objectPath {
+		_ = s.bunnyDelete(ctx, job.RestaurantID, prevImagePath)
+	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "image_url": imageURL})
+	s.logBOGroupMenuV2AITrace(
+		"special section image uploaded restaurant=%d menu=%d section=%d",
+		job.RestaurantID, job.MenuID, job.SectionID,
+	)
+	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "special_section_image_ready", map[string]any{
+		"section_id":  job.SectionID,
+		"image_state": boSpecialSectionImageStateReady,
+		"image_url":   s.bunnyPullURL(ctx, job.RestaurantID, objectPath),
+	})
 }
 
 // handleBOGroupMenusV2DeleteSpecialSectionImage clears the image_path of a
@@ -459,7 +577,7 @@ func (s *Server) handleBOGroupMenusV2DeleteSpecialSectionImage(w http.ResponseWr
 	}
 
 	if _, err := s.db.ExecContext(r.Context(),
-		`UPDATE special_menu_sections SET image_path = NULL WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		`UPDATE special_menu_sections SET image_path = NULL, image_state = 'empty', image_state_at = CURRENT_TIMESTAMP WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
 		sectionID, menuID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando imagen")
 		return
@@ -547,9 +665,9 @@ func (s *Server) handleBOGroupMenusV2PatchSpecialMenuVisibility(w http.ResponseW
 		"web_placement", placement)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":             true,
-		"web_placement":       placement,
-		"menu_public_active":  req.Active,
+		"success":            true,
+		"web_placement":      placement,
+		"menu_public_active": req.Active,
 	})
 }
 
@@ -557,7 +675,12 @@ func (s *Server) handleBOGroupMenusV2PatchSpecialMenuVisibility(w http.ResponseW
 // position, with image_path resolved to the public BunnyCDN URL.
 func (s *Server) loadSpecialMenuSections(ctx context.Context, restaurantID int, menuID int64) ([]boSpecialMenuSection, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, COALESCE(image_path, ''), position, COALESCE(created_at, CURRENT_TIMESTAMP)
+		SELECT id, title, COALESCE(image_path, ''), position, COALESCE(created_at, CURRENT_TIMESTAMP),
+		       CASE
+		           WHEN image_state = 'uploading' AND image_state_at >= NOW() - INTERVAL 5 MINUTE THEN 'uploading'
+		           WHEN COALESCE(image_path, '') <> '' THEN 'ready'
+		           ELSE 'empty'
+		       END
 		FROM special_menu_sections
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
@@ -570,7 +693,7 @@ func (s *Server) loadSpecialMenuSections(ctx context.Context, restaurantID int, 
 	out := make([]boSpecialMenuSection, 0, 4)
 	for rows.Next() {
 		var sec boSpecialMenuSection
-		if err := rows.Scan(&sec.ID, &sec.Title, &sec.ImageURL, &sec.Position, &sec.CreatedAt); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.Title, &sec.ImageURL, &sec.Position, &sec.CreatedAt, &sec.ImageState); err != nil {
 			return nil, err
 		}
 		if sec.ImageURL != "" {
