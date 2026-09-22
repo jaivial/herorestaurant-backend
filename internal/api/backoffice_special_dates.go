@@ -49,21 +49,24 @@ type boSpecialDateMenu struct {
 // `Date` is the only required field; everything else is optional and falls
 // back to the safe defaults the form starts with.
 type boSpecialDateSaveRequest struct {
-	Date                   string              `json:"date"`
-	IsActive               *bool               `json:"is_active"`
-	Title                  *string             `json:"title"`
-	Description            *string             `json:"description"`
-	PrereservaEnabled      *bool               `json:"prereserva_enabled"`
-	MaxPerTableEnabled     *bool               `json:"max_per_table_enabled"`
-	MaxPerTable            *int                `json:"max_per_table"`
-	MobilityEnabled        *bool               `json:"mobility_enabled"`
-	RequiresAdelanto       *bool               `json:"requires_adelanto"`
-	AdelantoPaymentMethods []string            `json:"adelanto_payment_methods"`
-	AdelantoUnified        *bool               `json:"adelanto_unified"`
-	AdelantoUnifiedAmount  *float64            `json:"adelanto_unified_amount"`
-	PrereservaStartsOn     *string             `json:"prereserva_starts_on"`
-	PrereservaEndsOn       *string             `json:"prereserva_ends_on"`
-	Menus                  []boSpecialDateMenu `json:"menus"`
+	Date               string  `json:"date"`
+	IsActive           *bool   `json:"is_active"`
+	Title              *string `json:"title"`
+	Description        *string `json:"description"`
+	PrereservaEnabled  *bool   `json:"prereserva_enabled"`
+	MaxPerTableEnabled *bool   `json:"max_per_table_enabled"`
+	MaxPerTable        *int    `json:"max_per_table"`
+	MobilityEnabled    *bool   `json:"mobility_enabled"`
+	// Coordination id: reservation_self_modification_v1 - opt this concrete
+	// special date into the public "modify instead of rebook" self-service.
+	AllowCustomerModification *bool               `json:"allow_customer_modification"`
+	RequiresAdelanto          *bool               `json:"requires_adelanto"`
+	AdelantoPaymentMethods    []string            `json:"adelanto_payment_methods"`
+	AdelantoUnified           *bool               `json:"adelanto_unified"`
+	AdelantoUnifiedAmount     *float64            `json:"adelanto_unified_amount"`
+	PrereservaStartsOn        *string             `json:"prereserva_starts_on"`
+	PrereservaEndsOn          *string             `json:"prereserva_ends_on"`
+	Menus                     []boSpecialDateMenu `json:"menus"`
 }
 
 func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +91,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 
 	var id int64
 	var isActive, prereservaEnabled, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
+	var allowCustomerModification int
 	var title string
 	var description sql.NullString
 	var maxPerTable sql.NullInt64
@@ -98,6 +102,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT id, is_active, title, description, prereserva_enabled,
 		       max_per_table_enabled, max_per_table, requires_adelanto,
+		       allow_customer_modification,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount,
 		       prereserva_starts_on, prereserva_ends_on
 		FROM special_dates
@@ -106,6 +111,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	`, a.ActiveRestaurantID, date).Scan(
 		&id, &isActive, &title, &description, &prereservaEnabled,
 		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
+		&allowCustomerModification,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
 		&prereservaStartsOn, &prereservaEndsOn,
 	)
@@ -147,21 +153,23 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"special_date": map[string]any{
-			"date":                     date,
-			"is_active":                isActive != 0,
-			"title":                    title,
-			"description":              description.String,
-			"prereserva_enabled":       prereservaEnabled != 0,
-			"max_per_table_enabled":    maxPerTableEnabled != 0,
-			"max_per_table":            nullIfZero(maxPerTable.Valid, maxPerTable.Int64),
-			"mobility_enabled":         mobilityEnabled,
-			"requires_adelanto":        requiresAdelanto != 0,
-			"adelanto_payment_methods": adelantoMethods,
-			"adelanto_unified":         adelantoUnified != 0,
-			"adelanto_unified_amount":  nullIfZeroFloat(adelantoUnifiedAmount.Valid, adelantoUnifiedAmount.Float64),
-			"prereserva_starts_on":     nullIfEmptyTime(prereservaStartsOn),
-			"prereserva_ends_on":       nullIfEmptyTime(prereservaEndsOn),
-			"menus":                    menus,
+			"date":                  date,
+			"is_active":             isActive != 0,
+			"title":                 title,
+			"description":           description.String,
+			"prereserva_enabled":    prereservaEnabled != 0,
+			"max_per_table_enabled": maxPerTableEnabled != 0,
+			"max_per_table":         nullIfZero(maxPerTable.Valid, maxPerTable.Int64),
+			"mobility_enabled":      mobilityEnabled,
+			"requires_adelanto":     requiresAdelanto != 0,
+			// Coordination id: reservation_self_modification_v1
+			"allow_customer_modification": allowCustomerModification != 0,
+			"adelanto_payment_methods":    adelantoMethods,
+			"adelanto_unified":            adelantoUnified != 0,
+			"adelanto_unified_amount":     nullIfZeroFloat(adelantoUnifiedAmount.Valid, adelantoUnifiedAmount.Float64),
+			"prereserva_starts_on":        nullIfEmptyTime(prereservaStartsOn),
+			"prereserva_ends_on":          nullIfEmptyTime(prereservaEndsOn),
+			"menus":                       menus,
 		},
 	})
 }
@@ -602,6 +610,11 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	if req.AdelantoUnifiedAmount != nil {
 		adelantoUnifiedAmount = *req.AdelantoUnifiedAmount
 	}
+	// Coordination id: reservation_self_modification_v1
+	allowCustomerModificationReq := false
+	if req.AllowCustomerModification != nil {
+		allowCustomerModificationReq = *req.AllowCustomerModification
+	}
 	// Coordination id: mobility_issues_v1
 	mobilityEnabledReq := false
 	if req.MobilityEnabled != nil {
@@ -616,9 +629,9 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO special_dates
 			(restaurant_id, date, is_active, title, description, prereserva_enabled,
-			 max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto, adelanto_payment_methods,
+			 max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto, allow_customer_modification, adelanto_payment_methods,
 			 adelanto_unified, adelanto_unified_amount, prereserva_starts_on, prereserva_ends_on)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			is_active = VALUES(is_active),
 			title = VALUES(title),
@@ -628,13 +641,14 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			max_per_table = VALUES(max_per_table),
 			mobility_enabled = VALUES(mobility_enabled),
 			requires_adelanto = VALUES(requires_adelanto),
+			allow_customer_modification = VALUES(allow_customer_modification),
 			adelanto_payment_methods = VALUES(adelanto_payment_methods),
 			adelanto_unified = VALUES(adelanto_unified),
 			adelanto_unified_amount = VALUES(adelanto_unified_amount),
 			prereserva_starts_on = VALUES(prereserva_starts_on),
 			prereserva_ends_on = VALUES(prereserva_ends_on)
 	`, a.ActiveRestaurantID, date, boolToInt(isActive), title, description, boolToInt(prereservaEnabled),
-		boolToInt(maxPerTableEnabled), maxPerTableVal, boolToInt(mobilityEnabledReq), boolToInt(requiresAdelanto), string(adelantoMethodsJSON),
+		boolToInt(maxPerTableEnabled), maxPerTableVal, boolToInt(mobilityEnabledReq), boolToInt(requiresAdelanto), boolToInt(allowCustomerModificationReq), string(adelantoMethodsJSON),
 		boolToInt(adelantoUnified), normalizeAdelantoAmount(adelantoUnifiedAmount), prereservaStartsOn, prereservaEndsOn)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando special_dates")
