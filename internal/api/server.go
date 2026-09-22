@@ -713,9 +713,16 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/minimax", s.handleBOMiniMaxConfigSet)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
-		r.With(s.requireBOSession, ajustesGate).Get("/legal-pages", s.handleAdminLegalPageList)
-		r.With(s.requireBOSession, ajustesGate).Get("/legal-pages/{slug}", s.handleAdminLegalPageGet)
-		r.With(s.requireBOSession, ajustesGate).Post("/legal-pages/{slug}", s.handleAdminLegalPageUpsert)
+		// The editor lives on /app/config (Configuracion page), which the
+		// backoffice navigation maps to the `reservas` section (sectionForPath in
+		// lib/navigation.ts). Gating these endpoints under `ajustes` returned 403
+		// for app-version 0.4 users (whitelisted for `reservas` but not for
+		// `ajustes`, e.g. the owner admin after migration 131), breaking the tab
+		// with {"message":"Forbidden"}. Same alignment as #240 did for
+		// /branding: the API follows the page's RBAC section.
+		r.With(s.requireBOSession, reservasGate).Get("/legal-pages", s.handleAdminLegalPageList)
+		r.With(s.requireBOSession, reservasGate).Get("/legal-pages/{slug}", s.handleAdminLegalPageGet)
+		r.With(s.requireBOSession, reservasGate).Post("/legal-pages/{slug}", s.handleAdminLegalPageUpsert)
 
 		// Restaurant-level settings (integrations/branding).
 		r.With(s.requireBOSession, ajustesGate).Get("/integrations", s.handleBOIntegrationsGet)
