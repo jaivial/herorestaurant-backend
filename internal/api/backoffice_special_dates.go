@@ -332,6 +332,7 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 			return
 		}
 		out = append(out, map[string]any{
+			"id":                 e.ID, // special_menu_price_date_v1: menu link target
 			"date":               e.Date,
 			"title":              e.Title,
 			"is_active":          e.IsActive,

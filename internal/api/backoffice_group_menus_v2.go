@@ -1002,6 +1002,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 			"ai_images":                  aiImages,
 			"special_menu_image_url":     s.publicMenuMediaURL(r.Context(), a.ActiveRestaurantID, specialImageRaw.String),
 			"special_menu_sections":      specialSections,
+			"special_date":               s.loadMenuSpecialDate(r.Context(), a.ActiveRestaurantID, menuID),
 			"menu_preview_image_url":     menuPreviewURL,
 			"menu_preview_ai_requested":  menuPreviewAIRequested,
 			"menu_preview_ai_generating": menuPreviewAIGenerating,
