@@ -963,10 +963,19 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Coordination id: menu_editor_preview_open_v1 - the editor/preview split is
+	// a per-(user, restaurant, menu) preference written over the socket, so this
+	// hydration REST returns it for the requested menu id (any menu type).
+	editorPreviewOpen := true
+	if v, ok, err := s.getMenuUserPreference(r.Context(), a.User.ID, a.ActiveRestaurantID, menuID, boMenuEditorPreviewPrefKey); err == nil && ok {
+		editorPreviewOpen = v != "0"
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"menu": map[string]any{
 			"id":                      menuID,
+			"editor_preview_open":     editorPreviewOpen,
 			"menu_title":              title,
 			"price":                   price,
 			"active":                  activeInt != 0,
