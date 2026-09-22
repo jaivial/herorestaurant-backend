@@ -25,6 +25,10 @@ import (
 
 var boAdHexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
+// boAdMenuRoute accepts the public menu page (coord id ads_cta_menu_routes_v1):
+// `/menu/:id` with an optional slug, so buttons can link any active menu.
+var boAdMenuRoute = regexp.MustCompile(`^/menu/[1-9][0-9]*(/[a-z0-9-]+)?$`)
+
 var boAdPublicRoutes = []string{"/", "/contacto", "/eventos", "/menufindesemana", "/menudeldia", "/menusdegrupos", "/postres", "/vinos", "/cafes", "/bebidas", "/reservas", "/reservas.php", "/avisolegal", "/avisolegal.html", "/booking-policies", "/booking_policies.php", "/confirm", "/cancel", "/update-rice", "/protecciondatos", "/protecciondatos.html", "/menusanvalentin", "/regala"}
 
 const (
@@ -345,7 +349,7 @@ func normalizeBOAdCTAs(input []boAdCTA) ([]boAdCTA, error) {
 			return nil, errors.New("invalid call to action navigation mode")
 		}
 		if cta.NavigationMode == "route" {
-			allowed := false
+			allowed := boAdMenuRoute.MatchString(cta.Route)
 			for _, route := range boAdPublicRoutes {
 				if cta.Route == route {
 					allowed = true
