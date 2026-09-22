@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -93,6 +94,19 @@ type publicMenuSpecialSection struct {
 	Title    string `json:"title"`
 	ImageURL string `json:"image_url"`
 	Position int    `json:"position"`
+	// Coordination id: special_menu_price_date_v1 - nil when not priced.
+	Price *float64 `json:"price"`
+}
+
+// publicMenuSpecialDate is the special day a special menu belongs to.
+// Coordination id: special_menu_price_date_v1 (reservas button query +
+// prereserva notice in html preview, preactvillacarmen and the WhatsApp bot).
+type publicMenuSpecialDate struct {
+	ID                int64  `json:"id"`
+	Date              string `json:"date"`
+	Title             string `json:"title"`
+	IsActive          bool   `json:"is_active"`
+	PrereservaEnabled bool   `json:"prereserva_enabled"`
 }
 
 type publicMenuPrincipales struct {
@@ -135,6 +149,8 @@ type publicMenuItem struct {
 	// Ordered list of image sections rendered below the hero on a special
 	// menu. Each section has an optional title and an image URL.
 	SpecialMenuSections   []publicMenuSpecialSection `json:"special_menu_sections"`
+	// Coordination id: special_menu_price_date_v1
+	SpecialDate *publicMenuSpecialDate `json:"special_date,omitempty"`
 	// Coordination id: special_menu_visibility_v1
 	WebPlacement      string `json:"web_placement"`
 	MenuPublicActive  bool   `json:"menu_public_active"`
@@ -180,6 +196,8 @@ type publicMenuItemSpecial struct {
 	SpecialMenuImageURL string   `json:"special_menu_image_url"`
 	// Coordination id: special_menu_sections_v1
 	SpecialMenuSections []publicMenuSpecialSection `json:"special_menu_sections"`
+	// Coordination id: special_menu_price_date_v1
+	SpecialDate *publicMenuSpecialDate `json:"special_date"`
 	// Coordination id: special_menu_visibility_v1
 	WebPlacement     string `json:"web_placement"`
 	MenuPublicActive bool   `json:"menu_public_active"`
@@ -506,7 +524,7 @@ func (s *Server) loadPublicSliderImages(ctx context.Context, restaurantID int, m
 // Coordination id: special_menu_sections_v1
 func (s *Server) loadPublicSpecialMenuSections(ctx context.Context, restaurantID int, menuID int64) []publicMenuSpecialSection {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, COALESCE(image_path, ''), position
+		SELECT id, title, COALESCE(image_path, ''), position, price
 		FROM special_menu_sections
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
@@ -519,13 +537,34 @@ func (s *Server) loadPublicSpecialMenuSections(ctx context.Context, restaurantID
 	out := make([]publicMenuSpecialSection, 0, 4)
 	for rows.Next() {
 		var sec publicMenuSpecialSection
-		if err := rows.Scan(&sec.ID, &sec.Title, &sec.ImageURL, &sec.Position); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.Title, &sec.ImageURL, &sec.Position, &sec.Price); err != nil {
 			continue
 		}
 		sec.ImageURL = s.publicMenuMediaURL(ctx, restaurantID, sec.ImageURL)
 		out = append(out, sec)
 	}
 	return out
+}
+
+// loadMenuSpecialDate resolves the special day linked to a menu, or nil.
+// Coordination id: special_menu_price_date_v1
+func (s *Server) loadMenuSpecialDate(ctx context.Context, restaurantID int, menuID int64) *publicMenuSpecialDate {
+	var d publicMenuSpecialDate
+	var active, prereserva int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT sd.id, DATE_FORMAT(sd.date, '%Y-%m-%d'), COALESCE(sd.title, ''), sd.is_active, sd.prereserva_enabled
+		FROM menus m
+		JOIN special_dates sd ON sd.id = m.special_date_id AND sd.restaurant_id = m.restaurant_id
+		WHERE m.id = ? AND m.restaurant_id = ?
+	`, menuID, restaurantID).Scan(&d.ID, &d.Date, &d.Title, &active, &prereserva)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("[special_menu_price_date_v1] load special date menu=%d err=%v", menuID, err)
+		}
+		return nil
+	}
+	d.IsActive, d.PrereservaEnabled = active != 0, prereserva != 0
+	return &d
 }
 
 func buildFallbackPublicSectionDishes(items []string) []publicMenuDish {
@@ -1212,6 +1251,7 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 				SpecialMenuImageURL: s.publicMenuMediaURL(r.Context(), restaurantID, specialImageURL.String),
 				// Coordination id: special_menu_sections_v1
 				SpecialMenuSections: s.loadPublicSpecialMenuSections(r.Context(), restaurantID, menuID),
+				SpecialDate:         s.loadMenuSpecialDate(r.Context(), restaurantID, menuID),
 				// Coordination id: special_menu_visibility_v1
 				WebPlacement:        normalizedWebPlacement(webPlacementRaw.String),
 				MenuPublicActive:    menuPublicActiveIn != 0,
@@ -1381,6 +1421,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		SpecialMenuImageURL:  s.publicMenuMediaURL(r.Context(), int(restaurantID), specialImageURLRaw.String),
 		// Coordination id: special_menu_sections_v1 + special_menu_visibility_v1
 		SpecialMenuSections: s.loadPublicSpecialMenuSections(r.Context(), int(restaurantID), menuID),
+		SpecialDate:         s.loadMenuSpecialDate(r.Context(), int(restaurantID), menuID),
 		WebPlacement:        normalizedWebPlacement(webPlacementRaw.String),
 		MenuPublicActive:    menuPublicActiveInt != 0,
 		LegacySourceTable:   strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),

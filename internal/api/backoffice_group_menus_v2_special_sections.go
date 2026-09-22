@@ -33,6 +33,8 @@ type boSpecialMenuSection struct {
 	ImageState string `json:"image_state"`
 	Position   int    `json:"position"`
 	CreatedAt  string `json:"created_at"`
+	// Coordination id: special_menu_price_date_v1 - nil means "no price".
+	Price *float64 `json:"price"`
 }
 
 // handleBOGroupMenusV2ListSpecialSections returns every section for one menu.
@@ -171,27 +173,74 @@ func (s *Server) handleBOGroupMenusV2PatchSpecialSection(w http.ResponseWriter, 
 		return
 	}
 
+	// Price uses json.RawMessage so an explicit null clears it while an
+	// absent key leaves it untouched (coord id special_menu_price_date_v1).
 	var req struct {
-		Title *string `json:"title"`
+		Title *string         `json:"title"`
+		Price json.RawMessage `json:"price"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Invalid JSON"})
 		return
 	}
-	if req.Title == nil {
+	sets, args := []string{}, []any{}
+	if req.Title != nil {
+		sets, args = append(sets, "title = ?"), append(args, strings.TrimSpace(*req.Title))
+	}
+	if len(req.Price) > 0 {
+		price, err := parseBOSpecialSectionPrice(req.Price)
+		if err != nil {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		sets, args = append(sets, "price = ?"), append(args, price)
+	}
+	if len(sets) == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Nothing to update"})
 		return
 	}
-	title := strings.TrimSpace(*req.Title)
-
+	args = append(args, sectionID, menuID, a.ActiveRestaurantID)
 	if _, err := s.db.ExecContext(r.Context(),
-		`UPDATE special_menu_sections SET title = ? WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
-		title, sectionID, menuID, a.ActiveRestaurantID); err != nil {
+		`UPDATE special_menu_sections SET `+strings.Join(sets, ", ")+` WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		args...); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando seccion")
 		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// parseBOSpecialSectionPrice accepts null/"" (no price), a JSON number or a
+// numeric string with a comma or dot decimal separator.
+func parseBOSpecialSectionPrice(raw json.RawMessage) (*float64, error) {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("precio invalido")
+	}
+	var price float64
+	switch v := value.(type) {
+	case nil:
+		return nil, nil
+	case float64:
+		price = v
+	case string:
+		text := strings.ReplaceAll(strings.TrimSpace(v), ",", ".")
+		if text == "" {
+			return nil, nil
+		}
+		parsed, err := strconv.ParseFloat(text, 64)
+		if err != nil {
+			return nil, fmt.Errorf("precio invalido")
+		}
+		price = parsed
+	default:
+		return nil, fmt.Errorf("precio invalido")
+	}
+	if price < 0 || price > 100000 {
+		return nil, fmt.Errorf("precio invalido")
+	}
+	price = float64(int64(price*100+0.5)) / 100
+	return &price, nil
 }
 
 // handleBOGroupMenusV2DeleteSpecialSection removes a section row and any
@@ -600,6 +649,8 @@ func (s *Server) handleBOGroupMenusV2DeleteSpecialSectionImage(w http.ResponseWr
 type specialMenuVisibilityPatch struct {
 	WebPlacement *string `json:"web_placement,omitempty"`
 	Active       *bool   `json:"menu_public_active,omitempty"`
+	// Coordination id: special_menu_price_date_v1 - 0 unlinks the menu.
+	SpecialDateID *int64 `json:"special_date_id,omitempty"`
 }
 
 // handleBOGroupMenusV2PatchSpecialMenuVisibility persists the visibility pair
@@ -646,6 +697,21 @@ func (s *Server) handleBOGroupMenusV2PatchSpecialMenuVisibility(w http.ResponseW
 		sets = append(sets, "menu_public_active = ?")
 		args = append(args, boolToTinyint(*req.Active))
 	}
+	if req.SpecialDateID != nil {
+		var linked any
+		if *req.SpecialDateID > 0 {
+			var found int
+			if err := s.db.QueryRowContext(r.Context(),
+				`SELECT COUNT(*) FROM special_dates WHERE id = ? AND restaurant_id = ?`,
+				*req.SpecialDateID, a.ActiveRestaurantID).Scan(&found); err != nil || found == 0 {
+				httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Fecha especial no encontrada"})
+				return
+			}
+			linked = *req.SpecialDateID
+		}
+		sets = append(sets, "special_date_id = ?")
+		args = append(args, linked)
+	}
 	if len(sets) == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Nothing to update"})
 		return
@@ -675,7 +741,7 @@ func (s *Server) handleBOGroupMenusV2PatchSpecialMenuVisibility(w http.ResponseW
 // position, with image_path resolved to the public BunnyCDN URL.
 func (s *Server) loadSpecialMenuSections(ctx context.Context, restaurantID int, menuID int64) ([]boSpecialMenuSection, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, COALESCE(image_path, ''), position, COALESCE(created_at, CURRENT_TIMESTAMP),
+		SELECT id, title, COALESCE(image_path, ''), position, COALESCE(created_at, CURRENT_TIMESTAMP), price,
 		       CASE
 		           WHEN image_state = 'uploading' AND image_state_at >= NOW() - INTERVAL 5 MINUTE THEN 'uploading'
 		           WHEN COALESCE(image_path, '') <> '' THEN 'ready'
@@ -693,7 +759,7 @@ func (s *Server) loadSpecialMenuSections(ctx context.Context, restaurantID int, 
 	out := make([]boSpecialMenuSection, 0, 4)
 	for rows.Next() {
 		var sec boSpecialMenuSection
-		if err := rows.Scan(&sec.ID, &sec.Title, &sec.ImageURL, &sec.Position, &sec.CreatedAt, &sec.ImageState); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.Title, &sec.ImageURL, &sec.Position, &sec.CreatedAt, &sec.Price, &sec.ImageState); err != nil {
 			return nil, err
 		}
 		if sec.ImageURL != "" {
