@@ -601,13 +601,20 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 	// the Modificadas tab like any other edit. Coordination id:
 	// booking-modification-recorded.
 	if input.ToggleArroz != nil {
+		// "no rice" has to render the same on both sides, otherwise an empty
+		// booking ("" + "|" + "") looked like a change against the empty new
+		// value and every save recorded a phantom rice modification.
+		oldRice := ""
+		if strings.TrimSpace(old.ArrozTypeRaw) != "" || strings.TrimSpace(old.ArrozServingsRaw) != "" {
+			oldRice = old.ArrozTypeRaw + "|" + old.ArrozServingsRaw
+		}
 		newRice := ""
 		if arrozTypeArg != nil {
 			newRice = arrozTypeArg.(string) + "|" + arrozServingsArg.(string)
 		}
 		s.insertBookingModification(
 			r.Context(), restaurantID, input.BookingID, old.ReservationDate, "rice",
-			old.ArrozTypeRaw+"|"+old.ArrozServingsRaw, newRice,
+			oldRice, newRice,
 			"customer", nil, "", old.CustomerName, old.ContactPhoneCC+old.ContactPhone,
 		)
 	}
