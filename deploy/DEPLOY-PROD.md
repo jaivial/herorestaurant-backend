@@ -52,6 +52,9 @@ sudo docker compose -f /var/www/newvillacarmen/backend/deploy/docker-compose.pro
 
 # backoffice:
 sudo docker compose -f /var/www/newvillacarmen/backend/deploy/docker-compose.prod.yml up -d --build backoffice
+
+# limpieza post-deploy (dangling layers + build cache acotado a 20GB):
+sudo RECLAIM_RUN_ID="reclaim-deploy-$(date +%Y%m%d-%H%M%S)" /usr/local/bin/docker-reclaim.sh --quick
 ```
 
 ## Secuencia de deploy (orden estricto)
