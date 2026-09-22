@@ -221,7 +221,7 @@ func (s *Server) botMenuDetailsPayload(ctx context.Context, restaurantID int, me
 		weekdays = loaded
 	}
 
-	return map[string]any{
+	payload := map[string]any{
 		"menu_id":            menuID,
 		"title":              strings.TrimSpace(title),
 		"category":           menuType,
@@ -238,7 +238,18 @@ func (s *Server) botMenuDetailsPayload(ctx context.Context, restaurantID int, me
 			"items": principalesItems,
 		},
 		"postre": anySliceToStringList(decodeJSONOrFallback(postreRaw, []any{})),
-	}, nil
+	}
+	// Coordination id: special_menu_price_date_v1 - special menus expose the
+	// priced sections plus the special day (and whether it needs prereserva),
+	// so the bot quotes prices and routes guests to the right date.
+	if menuType == "special" {
+		payload["special_sections"] = s.loadPublicSpecialMenuSections(ctx, restaurantID, menuID)
+		if day := s.loadMenuSpecialDate(ctx, restaurantID, menuID); day != nil {
+			payload["special_date"] = day
+			payload["requires_prereserva"] = day.PrereservaEnabled
+		}
+	}
+	return payload, nil
 }
 
 // botWeekdaysAvailable lists the canonical weekday keys flagged as available.
