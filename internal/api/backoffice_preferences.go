@@ -173,6 +173,39 @@ func (s *Server) getUserPreference(ctx context.Context, userID, restaurantID int
 	}
 }
 
+// setMenuUserPreference upserts a single preference for
+// (userID, restaurantID, menuID). One row per user, restaurant and menu so the
+// editor/preview split is remembered for each menu id, whatever its type.
+// Coordination id: menu_editor_preview_open_v1
+func (s *Server) setMenuUserPreference(ctx context.Context, userID, restaurantID int, menuID int64, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO user_menu_preferences (user_id, restaurant_id, menu_id, pref_key, pref_value)
+		VALUES (?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE pref_value = VALUES(pref_value)
+	`, userID, restaurantID, menuID, key, value)
+	return err
+}
+
+// getMenuUserPreference reads a single per-menu preference. Returns
+// (value, ok=true) when a row exists for that menu, ("", false, nil) when the
+// key is unset and the underlying error otherwise.
+// Coordination id: menu_editor_preview_open_v1
+func (s *Server) getMenuUserPreference(ctx context.Context, userID, restaurantID int, menuID int64, key string) (string, bool, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT pref_value FROM user_menu_preferences WHERE user_id = ? AND restaurant_id = ? AND menu_id = ? AND pref_key = ?`,
+		userID, restaurantID, menuID, key,
+	).Scan(&value)
+	switch {
+	case err == nil:
+		return value, true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return "", false, nil
+	default:
+		return "", false, err
+	}
+}
+
 type boPreferencesSetRequest struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -221,9 +254,10 @@ func (s *Server) handleBOPreferencesSet(w http.ResponseWriter, r *http.Request) 
 // handleBOMenuEditorPrefWSMessage persists the editor/preview split of
 // /app/comida/menus/crear?menuId= over the group-menus-v2 socket (socket
 // method), so the toggle never shares the menu autosave channel and never
-// touches the menu row. The value lives in user_preferences scoped by
-// (user_id, restaurant_id) and comes back through the session REST so the next
-// load hydrates with the right split.
+// touches the menu row. The value lives in user_menu_preferences scoped by
+// (user_id, restaurant_id, menu_id) -one toggle per menu, whatever its type-
+// and comes back through the menu REST (GET /group-menus-v2/{id}) so the editor
+// hydrates with the saved split for that menu on the next load.
 // Coordination id: menu_editor_preview_open_v1
 func (s *Server) handleBOMenuEditorPrefWSMessage(r *http.Request, restaurantID int, menuID int64, client *boGroupMenuV2AIClient, raw []byte) {
 	ctx := r.Context()
@@ -264,7 +298,7 @@ func (s *Server) handleBOMenuEditorPrefWSMessage(r *http.Request, restaurantID i
 		fail("validation", "Sin restaurante activo")
 		return
 	}
-	if err := s.setUserPreference(ctx, a.User.ID, restaurantID, boMenuEditorPreviewPrefKey, norm); err != nil {
+	if err := s.setMenuUserPreference(ctx, a.User.ID, restaurantID, menuID, boMenuEditorPreviewPrefKey, norm); err != nil {
 		fail("server", "No se pudo guardar la vista del editor")
 		return
 	}
