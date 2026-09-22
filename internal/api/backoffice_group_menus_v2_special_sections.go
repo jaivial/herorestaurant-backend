@@ -348,6 +348,26 @@ const (
 // maxSpecialSectionImageBytes matches the 10MB the editor accepts.
 const maxSpecialSectionImageBytes = 10 << 20
 
+// maxSpecialSectionImageStoreBytes: images under this size are stored untouched,
+// bigger ones are re-encoded down. Coordination id: special_menu_sections_image_state_v1
+const maxSpecialSectionImageStoreBytes = 5 << 20
+
+// boSpecialSectionImageExt maps a detected content type to the object extension.
+func boSpecialSectionImageExt(contentType string) string {
+	switch contentType {
+	case "image/jpeg":
+		return "jpg"
+	case "image/png":
+		return "png"
+	case "image/gif":
+		return "gif"
+	case "image/webp":
+		return "webp"
+	default:
+		return "webp"
+	}
+}
+
 type boSpecialSectionImageJob struct {
 	RestaurantID int
 	MenuID       int64
@@ -452,12 +472,24 @@ func (s *Server) runBOSpecialSectionImageJob(job boSpecialSectionImageJob) {
 		})
 	}
 
-	normalizedWebP, err := specialmenuimage.NormalizeToWebP(ctx, job.RawImage, job.Filename, http.DetectContentType(job.RawImage))
-	if err != nil {
-		s.logBOGroupMenuV2AITrace("special section image normalize error section=%d err=%v", job.SectionID, err)
-		fail("No se pudo procesar la imagen")
-		return
+	// Coordination id: special_menu_sections_image_state_v1 - images under 5MB
+	// are stored untouched (same extension and bytes); only bigger payloads get
+	// re-encoded down.
+	payload := job.RawImage
+	contentType := http.DetectContentType(job.RawImage)
+	objectExt := boSpecialSectionImageExt(contentType)
+	if len(payload) > maxSpecialSectionImageStoreBytes {
+		normalized, err := specialmenuimage.NormalizeToWebP(ctx, payload, job.Filename, contentType)
+		if err != nil {
+			s.logBOGroupMenuV2AITrace("special section image normalize error section=%d err=%v", job.SectionID, err)
+			fail("No se pudo procesar la imagen")
+			return
+		}
+		payload = normalized
+		contentType = "image/webp"
+		objectExt = "webp"
 	}
+	_ = contentType
 
 	var prevImagePath string
 	_ = s.db.QueryRowContext(ctx,
@@ -471,9 +503,9 @@ func (s *Server) runBOSpecialSectionImageJob(job boSpecialSectionImageJob) {
 		"pictures",
 		"menus_especiales",
 		"sections",
-		fmt.Sprintf("%d-%d.webp", job.SectionID, time.Now().UnixMilli()),
+		fmt.Sprintf("%d-%d.%s", job.SectionID, time.Now().UnixMilli(), objectExt),
 	)
-	if err := s.bunnyPut(ctx, job.RestaurantID, objectPath, normalizedWebP, "image/webp"); err != nil {
+	if err := s.bunnyPut(ctx, job.RestaurantID, objectPath, payload, contentType); err != nil {
 		s.logBOGroupMenuV2AITrace("special section image put error section=%d err=%v", job.SectionID, err)
 		fail("No se pudo subir la imagen")
 		return
