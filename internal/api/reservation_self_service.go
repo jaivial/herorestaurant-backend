@@ -50,6 +50,12 @@ type selfServiceBooking struct {
 	Status           string
 	SpecialTitle     string
 	IsSpecialBooking int
+	// Rice + mobility are editable through self-service, so the prefill read
+	// exposes them and the write persists them.
+	ArrozTypeRaw      string
+	ArrozServingsRaw  string
+	HasMobilityIssues int
+	MobilityPeople    int
 }
 
 // selfServiceProof is the ownership proof a caller must present to read or
@@ -77,7 +83,11 @@ const selfServiceBookingSelect = `
 		COALESCE(b.babyStrollers, 0),
 		COALESCE(b.status, ''),
 		COALESCE(sd.title, ''),
-		COALESCE(b.is_special_booking, 0)
+		COALESCE(b.is_special_booking, 0),
+		COALESCE(b.arroz_type, ''),
+		COALESCE(b.arroz_servings, ''),
+		COALESCE(b.has_mobility_issues, 0),
+		COALESCE(b.mobility_people, 0)
 	FROM bookings b
 	LEFT JOIN special_dates sd
 	  ON sd.restaurant_id = b.restaurant_id
@@ -90,6 +100,7 @@ func scanSelfServiceBooking(row interface{ Scan(...any) error }) (selfServiceBoo
 		&b.ID, &b.ReservationDate, &b.ReservationTime, &b.PartySize, &b.Children,
 		&b.CustomerName, &b.ContactEmail, &b.ContactPhone, &b.ContactPhoneCC,
 		&b.HighChairs, &b.BabyStrollers, &b.Status, &b.SpecialTitle, &b.IsSpecialBooking,
+		&b.ArrozTypeRaw, &b.ArrozServingsRaw, &b.HasMobilityIssues, &b.MobilityPeople,
 	)
 	return b, err
 }
@@ -110,7 +121,29 @@ func (b selfServiceBooking) jsonView() map[string]any {
 		"highChairs":              b.HighChairs,
 		"babyStrollers":           b.BabyStrollers,
 		"specialDateTitle":        b.SpecialTitle,
+		"arrozType":               firstArrozValue(b.ArrozTypeRaw),
+		"arrozServings":           firstArrozInt(b.ArrozServingsRaw),
+		"hasMobilityIssues":       b.HasMobilityIssues == 1,
+		"mobilityPeople":          b.MobilityPeople,
 	}
+}
+
+// firstArrozValue / firstArrozInt read the leading entry of the legacy JSON
+// arrays stored in arroz_type / arroz_servings.
+func firstArrozValue(raw string) string {
+	values := parseJSONArrayOrScalarString(raw)
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[0])
+}
+
+func firstArrozInt(raw string) int {
+	values := parseJSONArrayOrScalarInt(raw)
+	if len(values) == 0 {
+		return 0
+	}
+	return values[0]
 }
 
 // summaryView is the reduced shape for the duplicate notice. It deliberately
@@ -347,10 +380,17 @@ func (s *Server) handleReservationModifyContext(w http.ResponseWriter, r *http.R
 	}
 
 	modifiable, reason := s.evaluateSelfModifiable(r.Context(), restaurantID, b)
+	// Coordination id: mobility_issues_v1 - the modify wizard only asks the
+	// mobility question when the date resolves to enabled.
+	mobilityEnabled, mErr := s.resolveMobilityEnabled(restaurantID, b.ReservationDate)
+	if mErr != nil {
+		mobilityEnabled = false
+	}
 	resp := map[string]any{
-		"success":    true,
-		"modifiable": modifiable,
-		"booking":    b.jsonView(),
+		"success":         true,
+		"modifiable":      modifiable,
+		"booking":         b.jsonView(),
+		"mobilityEnabled": mobilityEnabled,
 		// A special-menu booking carries a frozen menu / adelanto snapshot, so
 		// moving it to another day would leave that snapshot stale. Time, party
 		// and contact edits stay open, only the date is pinned.
@@ -386,6 +426,13 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 		VerifyEmail     string `json:"verify_email"`
 		VerifyCC        string `json:"verify_country_code"`
 		VerifyPhone     string `json:"verify_phone"`
+		// Optional edits. A nil toggle means "leave the booking as it is", so
+		// callers that predate the wizard keep their current rice / mobility.
+		ToggleArroz       *bool  `json:"toggle_arroz"`
+		ArrozType         string `json:"arroz_type"`
+		ArrozServings     int    `json:"arroz_servings"`
+		HasMobilityIssues *bool  `json:"has_mobility_issues"`
+		MobilityPeople    int    `json:"mobility_people"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "JSON invalido"})
@@ -487,24 +534,56 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 	highChairs := clampIntRange(input.HighChairs, 0, party)
 	strollers := clampIntRange(input.BabyStrollers, 0, party)
 
+	// Rice: arroz_type / arroz_servings keep the legacy JSON-array shape.
+	var arrozTypeArg, arrozServingsArg any
+	if input.ToggleArroz != nil {
+		if *input.ToggleArroz {
+			riceType := strings.TrimSpace(input.ArrozType)
+			if riceType == "" || input.ArrozServings < 2 || input.ArrozServings > party {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Seleccion de arroz incompleta"})
+				return
+			}
+			typesJSON, _ := json.Marshal([]string{riceType})
+			servingsJSON, _ := json.Marshal([]int{input.ArrozServings})
+			arrozTypeArg, arrozServingsArg = string(typesJSON), string(servingsJSON)
+		}
+	}
+
+	// Mobility: same optional contract as the rice toggle.
+	mobilityPeople := 0
+	if input.HasMobilityIssues != nil && *input.HasMobilityIssues {
+		mobilityPeople = clampIntRange(input.MobilityPeople, 1, party)
+	}
+
+	setClauses := []string{
+		"reservation_date = ?",
+		"reservation_time = ?",
+		"party_size = ?",
+		"children = ?",
+		"customer_name = ?",
+		"contact_email = ?",
+		"contact_phone = ?",
+		"contact_phone_country_code = ?",
+		"highChairs = ?",
+		"babyStrollers = ?",
+	}
+	args := []any{date, resTime, party, children, name, email, national, cc, highChairs, strollers}
+	if input.ToggleArroz != nil {
+		setClauses = append(setClauses, "arroz_type = ?", "arroz_servings = ?")
+		args = append(args, arrozTypeArg, arrozServingsArg)
+	}
+	if input.HasMobilityIssues != nil {
+		setClauses = append(setClauses, "has_mobility_issues = ?", "mobility_people = ?")
+		args = append(args, boolToTinyint(input.HasMobilityIssues != nil && *input.HasMobilityIssues), mobilityPeople)
+	}
+	args = append(args, restaurantID, input.BookingID)
+
 	// Reconcile the occupancy ledger when the date or party size changes.
 	oldDate, oldParty, oldFloor, oldSalon, locErr := s.bookingLocationSnapshot(r.Context(), restaurantID, input.BookingID)
 
-	if _, err := s.db.ExecContext(r.Context(), `
-		UPDATE bookings SET
-			reservation_date = ?,
-			reservation_time = ?,
-			party_size = ?,
-			children = ?,
-			customer_name = ?,
-			contact_email = ?,
-			contact_phone = ?,
-			contact_phone_country_code = ?,
-			highChairs = ?,
-			babyStrollers = ?
-		WHERE restaurant_id = ? AND id = ?`,
-		date, resTime, party, children, name, email, national, cc, highChairs, strollers,
-		restaurantID, input.BookingID,
+	if _, err := s.db.ExecContext(r.Context(),
+		"UPDATE bookings SET "+strings.Join(setClauses, ", ")+" WHERE restaurant_id = ? AND id = ?",
+		args...,
 	); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "No se pudo actualizar la reserva"})
 		return
@@ -517,6 +596,21 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.recordCustomerBookingModifications(r.Context(), restaurantID, input.BookingID, old, date, resTime, party, children, highChairs, strollers)
+
+	// The rice change is tracked with the shared "rice" field so it lands in
+	// the Modificadas tab like any other edit. Coordination id:
+	// booking-modification-recorded.
+	if input.ToggleArroz != nil {
+		newRice := ""
+		if arrozTypeArg != nil {
+			newRice = arrozTypeArg.(string) + "|" + arrozServingsArg.(string)
+		}
+		s.insertBookingModification(
+			r.Context(), restaurantID, input.BookingID, old.ReservationDate, "rice",
+			old.ArrozTypeRaw+"|"+old.ArrozServingsRaw, newRice,
+			"customer", nil, "", old.CustomerName, old.ContactPhoneCC+old.ContactPhone,
+		)
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "booking_id": input.BookingID})
 }
