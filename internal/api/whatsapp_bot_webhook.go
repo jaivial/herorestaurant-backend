@@ -183,12 +183,21 @@ func jsonStringField(root map[string]json.RawMessage, keys ...string) string {
 }
 
 // handleBotConnectionEvent maps the lifecycle event to a restaurant and updates
-// its provisioning row so the QR onboarding UI reflects the live state.
+// its provisioning row so the QR onboarding UI reflects the live state. On any
+// transition into the connected state it also flushes the outbox + reminder
+// queues so messages parked while the link was down fire on the next scan.
 func (s *Server) handleBotConnectionEvent(ctx context.Context, ev botConnectionEvent) bool {
 	restaurantID, ok := s.resolveBotRestaurant(ctx, ev.InstanceToken, ev.Owner)
 	if !ok {
 		return false
 	}
+
+	// Capture prior status to detect the disconnected -> connected transition.
+	prevStatus := ""
+	if rec, found, _ := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); found {
+		prevStatus = normalizeUAZAPIConnectionStatus(rec.Status)
+	}
+
 	status := normalizeUAZAPIConnectionStatus(ev.Status)
 	if status == "" && (ev.QR != "" || ev.PairCode != "") {
 		status = "pending"
@@ -201,6 +210,14 @@ func (s *Server) handleBotConnectionEvent(ctx context.Context, ev botConnectionE
 	if isUAZAPIConnected(status) {
 		if rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); err == nil && found {
 			_ = s.syncRestaurantUAZAPIIntegration(ctx, restaurantID, rec.ServerBaseURL, rec.InstanceToken)
+		}
+		// Only kick the queue on a true reconnect (not every connected refresh).
+		if !isUAZAPIConnected(prevStatus) {
+			if rearmed, err := s.triggerWhatsAppQueueOnReconnect(ctx, restaurantID); err != nil {
+				log.Printf("[bot] restaurant=%d reconnect queue trigger failed: %v", restaurantID, err)
+			} else if rearmed > 0 {
+				log.Printf("[bot] restaurant=%d reconnected; outbox rearmed (%d rows)", restaurantID, rearmed)
+			}
 		}
 	}
 	s.broadcastWhatsAppConnection(ctx, restaurantID)

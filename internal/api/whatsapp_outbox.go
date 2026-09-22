@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -219,6 +220,146 @@ func (s *Server) runWhatsAppOutboxLoop(ctx context.Context) {
 			if _, err := s.runWhatsAppOutboxOnce(ctx); err != nil {
 				log.Printf("whatsapp outbox: batch failed: %v", err)
 			}
+		}
+	}
+}
+
+// whatsappOutboxReconnectMinInterval throttles queue-on-reconnect triggers so
+// rapid-fire connection.update / refresh events do not flood the worker. The
+// first trigger always fires; subsequent triggers within this window are
+// coalesced into a single follow-up run.
+const whatsappOutboxReconnectMinInterval = 5 * time.Second
+
+// whatsappOutboxReconnectTrigger is the per-restaurant debounce state. Stored
+// in memory so the same process never floods itself with duplicates.
+var (
+	whatsappOutboxReconnectMu    sync.Mutex
+	whatsappOutboxReconnectLast = map[int]time.Time{}
+)
+
+// whatsappOutboxReconnectNotify wakes the outbox loop without waiting for the
+// 30s ticker. Channel is buffered so a missing receiver (race during startup
+// or shutdown) never blocks the caller.
+var whatsappOutboxReconnectNotifyCh = make(chan struct{}, 1)
+
+// triggerWhatsAppQueueOnReconnect is the single entry point every reconnect
+// path must call when a restaurant's WhatsApp instance transitions to a
+// healthy state. It:
+//
+//  1. re-arms every `failed` outbox row for this restaurant back to
+//     `pending` with `next_attempt_at = NOW()` (a clean retry budget, the
+//     previous 6 attempts are wiped because the transient outage is over),
+//  2. brings forward every `pending` row whose `next_attempt_at` is still
+//     in the future so we don't sleep through the backoff after a recovery,
+//  3. clears the booking-reminder circuit breaker so the per-minute
+//     reminder scanner re-engages immediately,
+//  4. fires a non-blocking ping into `whatsappOutboxReconnectNotifyCh` so the
+//     outbox loop wakes on the next iteration (no 30s wait),
+//  5. debounces by `whatsappOutboxReconnectMinInterval` per restaurant so a
+//     burst of webhook + refresh events does not pile up duplicate scans.
+//
+// Returns the number of outbox rows the call re-armed (for logging).
+func (s *Server) triggerWhatsAppQueueOnReconnect(ctx context.Context, restaurantID int) (int, error) {
+	if restaurantID <= 0 {
+		return 0, nil
+	}
+
+	// Debounce: first call wins, subsequent calls within the window are
+	// coalesced. The coalesced call still wakes the worker so a follow-up
+	// tick processes any rows added between the first and second event.
+	whatsappOutboxReconnectMu.Lock()
+	last := whatsappOutboxReconnectLast[restaurantID]
+	now := time.Now()
+	if !last.IsZero() && now.Sub(last) < whatsappOutboxReconnectMinInterval {
+		whatsappOutboxReconnectMu.Unlock()
+		select {
+		case whatsappOutboxReconnectNotifyCh <- struct{}{}:
+		default:
+		}
+		log.Printf("[whatsapp][obs][CP-RECONNECT-QUEUE-COALESCE] restaurant=%d since=%s", restaurantID, now.Sub(last).String())
+		return 0, nil
+	}
+	whatsappOutboxReconnectLast[restaurantID] = now
+	whatsappOutboxReconnectMu.Unlock()
+
+	rearmed := 0
+
+	// 1. failed -> pending. Reset attempts so the row gets a fresh 6-attempt
+	//    budget against the now-healthy provider; clear the locked-by token
+	//    defensively (should never be set for failed rows but cheap to set).
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE message_deliveries
+		SET status = 'pending',
+		    attempts = 0,
+		    next_attempt_at = NOW(),
+		    locked_at = NULL,
+		    locked_by = NULL,
+		    error = NULL
+		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'failed'
+	`, restaurantID); err != nil && !isSQLSchemaError(err) {
+		return rearmed, fmt.Errorf("re-arm failed rows: %w", err)
+	}
+
+	// 2. Bring pending rows whose backoff hasn't elapsed yet into the
+	//    immediate window. Capped at 1000 to keep the immediate scan
+	//    bounded even on a stale backlog.
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE message_deliveries
+		SET next_attempt_at = NOW()
+		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'pending'
+		  AND next_attempt_at IS NOT NULL AND next_attempt_at > NOW()
+		ORDER BY id
+		LIMIT 1000
+	`, restaurantID); err != nil && !isSQLSchemaError(err) {
+		return rearmed, fmt.Errorf("flush pending rows: %w", err)
+	}
+
+	// Count pending rows for observability.
+	if r2, err := s.db.QueryContext(ctx, `
+		SELECT COUNT(*) FROM message_deliveries
+		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'pending'
+	`, restaurantID); err == nil {
+		defer r2.Close()
+		if r2.Next() {
+			_ = r2.Scan(&rearmed)
+		}
+	}
+
+	// 3. Clear the booking-reminder breaker (cross-package helper in this
+	//    same package). Safe even when the breaker was never opened.
+	clearReminderBreaker(restaurantID)
+
+	// 4. Wake the outbox worker; non-blocking via buffered channel.
+	select {
+	case whatsappOutboxReconnectNotifyCh <- struct{}{}:
+	default:
+	}
+
+	log.Printf("[whatsapp][obs][CP-RECONNECT-QUEUE-RESUME] restaurant=%d pending=%d", restaurantID, rearmed)
+	return rearmed, nil
+}
+
+// runWhatsAppOutboxLoopWithNotify drains the queue. It still ticks every
+// `whatsappOutboxScanEvery`, but a notify channel short-circuits the wait so
+// `triggerWhatsAppQueueOnReconnect` does not have to wait up to 30s for the
+// next scan.
+func (s *Server) runWhatsAppOutboxLoopWithNotify(ctx context.Context) {
+	ticker := time.NewTicker(whatsappOutboxScanEvery)
+	defer ticker.Stop()
+	// Drain any initial trigger so a reconnect before the first tick still fires.
+	select {
+	case <-whatsappOutboxReconnectNotifyCh:
+	default:
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		case <-whatsappOutboxReconnectNotifyCh:
+		}
+		if _, err := s.runWhatsAppOutboxOnce(ctx); err != nil {
+			log.Printf("whatsapp outbox: batch failed: %v", err)
 		}
 	}
 }

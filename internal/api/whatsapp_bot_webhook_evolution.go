@@ -100,12 +100,25 @@ func (s *Server) resolveBotRestaurantByProviderInstance(ctx context.Context, ins
 
 // handleEvolutionConnectionEvent updates the provisioning row from an Evolution
 // connection.update / qrcode.updated event so the onboarding UI reflects live
-// state without polling.
+// state without polling. On any transition into the connected state it also
+// flushes the outbox + reminder queues so messages parked while the link was
+// down fire on the next scan.
 func (s *Server) handleEvolutionConnectionEvent(ctx context.Context, ev waConnEvent) bool {
 	restaurantID, ok := s.resolveBotRestaurantByProviderInstance(ctx, ev.SessionRef)
 	if !ok {
 		return false
 	}
+
+	// Capture the prior status BEFORE the runtime update so we can tell
+	// "transitioned from disconnected -> connected" apart from "stayed
+	// connected across a status refresh". Only the former should kick the
+	// queue; refreshing every successful status would create duplicate
+	// triggers (debounced, but wasteful).
+	prevStatus := ""
+	if rec, found, _ := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); found {
+		prevStatus = normalizeUAZAPIConnectionStatus(rec.Status)
+	}
+
 	status := ev.Status
 	if status == "" && (ev.QR != "" || ev.PairCode != "") {
 		status = "pending"
@@ -117,6 +130,14 @@ func (s *Server) handleEvolutionConnectionEvent(ctx context.Context, ev waConnEv
 	if isUAZAPIConnected(status) {
 		if rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID); err == nil && found {
 			_ = s.syncRestaurantUAZAPIIntegration(ctx, restaurantID, rec.ServerBaseURL, rec.InstanceToken)
+		}
+		// Reconnect transition only (not every connected-status refresh).
+		if !isUAZAPIConnected(prevStatus) {
+			if rearmed, err := s.triggerWhatsAppQueueOnReconnect(ctx, restaurantID); err != nil {
+				log.Printf("[bot] restaurant=%d reconnect queue trigger failed: %v", restaurantID, err)
+			} else if rearmed > 0 {
+				log.Printf("[bot] restaurant=%d evolution reconnected; outbox rearmed (%d rows)", restaurantID, rearmed)
+			}
 		}
 	}
 	s.broadcastWhatsAppConnection(ctx, restaurantID)
