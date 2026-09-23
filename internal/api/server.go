@@ -104,6 +104,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	go s.runStockDigestLoop(context.Background())
 	go s.runBookingReminderLoop(context.Background())
 	go s.runWhatsAppOutboxLoop(context.Background())
+	go s.runWhatsAppWatchdogLoop(context.Background()) // wa_connection_watchdog_v1
 	return s
 }
 
