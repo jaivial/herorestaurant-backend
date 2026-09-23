@@ -27,6 +27,29 @@ const (
 
 // rateLimit returns true if the request is allowed, false if rate-limited.
 // It uses a simple token-bucket per (IP, restaurantID) pair.
+// checkScopedRateLimit is a separate bucket (scope) with its own burst, e.g.
+// the checkout success page polling, so it never eats booking submissions.
+// Coordination id: stripe_connect_multitenant_v1
+func (s *Server) checkScopedRateLimit(scope, ip string, restaurantID int, burst int) bool {
+	if ip == "" {
+		ip = "unknown"
+	}
+	key := scope + ":" + ip + ":" + strconv.Itoa(restaurantID)
+	now := time.Now().Unix()
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+	entry, ok := s.rateLimit[key]
+	if !ok || now >= entry.windowEnd {
+		s.rateLimit[key] = &rateLimitState{windowEnd: now + rateLimitWindowSecs, tokens: burst - 1}
+		return true
+	}
+	if entry.tokens <= 0 {
+		return false
+	}
+	entry.tokens--
+	return true
+}
+
 func (s *Server) checkRateLimit(ip string, restaurantID int) bool {
 	// An empty/unknown IP must still be counted: it shares one "unknown"
 	// bucket instead of skipping (or collapsing into an empty) key.

@@ -133,7 +133,7 @@ func (s *Server) Routes() http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, X-Api-Token, X-Vault-Key")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, X-Api-Token, X-Vault-Key, X-Bearer-Token")
 			}
 
 			if r.Method == http.MethodOptions {
@@ -168,6 +168,8 @@ func (s *Server) Routes() http.Handler {
 		// Shared-secret layer for the whole admin API and its WebSockets, injected
 		// server-side by the backoffice SSR proxy. No-op when VAULT_KEY is unset.
 		r.Use(s.requireVaultKey)
+		// Coordination id: stripe_connect_multitenant_v1 - second secret.
+		r.Use(s.requireBearerToken)
 		reservasGate := s.requireBOSection(boSectionReservas)
 		menusGate := s.requireBOSection(boSectionMenus)
 		ajustesGate := s.requireBOSection(boSectionAjustes)
@@ -719,9 +721,12 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Get("/config/minimax", s.handleBOMiniMaxConfigGet)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/minimax", s.handleBOMiniMaxConfigSet)
 		// Coordination id: stripe_prereserva_adelanto_v1
-		r.With(s.requireBOSession, rootOnlyGate).Get("/config/stripe", s.handleBOStripeConfigGet)
-		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe", s.handleBOStripeConfigSet)
-		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe/test", s.handleBOStripeConfigTest)
+		// Coordination id: stripe_connect_multitenant_v1 - per-restaurant
+		// "Cobros online" (connected account); no keys per tenant.
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/stripe-connect", s.handleBOStripeConnectStatus)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/onboard", s.handleBOStripeConnectOnboard)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/dashboard", s.handleBOStripeConnectDashboard)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/disconnect", s.handleBOStripeConnectDisconnect)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
 		// The editor lives on /app/config (Configuracion page), which the
@@ -930,7 +935,8 @@ func (s *Server) Routes() http.Handler {
 
 	// Stripe webhook (signature-authenticated, not session).
 	r.Post("/stripe/webhook", s.handleStripeWebhook)
-	r.Post("/stripe/prereserva-webhook", s.handleStripePrereservaWebhook)
+	// Coordination id: stripe_connect_multitenant_v1 - one webhook for every tenant.
+	r.Post("/stripe/connect-webhook", s.handleStripeConnectWebhook)
 
 	// Public booking JSON API — uses own tenant resolution via DEFAULT_RESTAURANT_ID fallback.
 	r.Get("/public/booking", s.handlePublicBookingGet)

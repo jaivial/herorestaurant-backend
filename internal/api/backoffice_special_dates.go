@@ -492,10 +492,10 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
-		if cfg, err := s.loadStripeConfig(r.Context(), a.ActiveRestaurantID); err != nil || !cfg.enabled() {
+		if _, ready := s.connectReady(r.Context(), a.ActiveRestaurantID); !ready {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
-				"message": "Configura Stripe en Configuración → Stripe antes de usarlo como método de pago",
+				"message": "Activa los cobros online en Configuración → Cobros online antes de usar Stripe",
 			})
 			return
 		}
