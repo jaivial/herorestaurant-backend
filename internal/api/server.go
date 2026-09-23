@@ -593,6 +593,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/special-sections/{sectionId}/image", s.handleBOGroupMenusV2DeleteSpecialSectionImage)
 		// Coordination id: special_menu_visibility_v1
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/visibility", s.handleBOGroupMenusV2PatchSpecialMenuVisibility)
+		// Coordination id: special_menu_cta_v1
+		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/special-cta", s.handleBOGroupMenusV2PutSpecialMenuCta)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}", s.handleBOGroupMenusV2Delete)
 		r.With(s.requireBOSession, menusGate).Get("/menus/selector", s.handleBOMenuSelectorGet)
 		r.With(s.requireBOSession, menusGate).Get("/dishes-catalog/search", s.handleBODishesCatalogSearch)
