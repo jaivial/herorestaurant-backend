@@ -134,3 +134,27 @@ func hmacSHA256(key string, msg []byte) string {
 	mac.Write(msg)
 	return hex.EncodeToString(mac.Sum(nil))
 }
+
+// CheckoutSessionDetail is the subset read back when confirming a payment.
+type CheckoutSessionDetail struct {
+	ID            string            `json:"id"`
+	Status        string            `json:"status"`
+	PaymentStatus string            `json:"payment_status"`
+	AmountTotal   int64             `json:"amount_total"`
+	Currency      string            `json:"currency"`
+	PaymentIntent string            `json:"payment_intent"`
+	Metadata      map[string]string `json:"metadata"`
+}
+
+// RetrieveCheckoutSession reads a Checkout Session to confirm it was paid.
+func (s *StripeClient) RetrieveCheckoutSession(ctx context.Context, id string) (*CheckoutSessionDetail, error) {
+	var out CheckoutSessionDetail
+	err := s.do(ctx, http.MethodGet, "/checkout/sessions/"+url.PathEscape(id), nil, &out)
+	return &out, err
+}
+
+// CheckCredentials performs a read-only call to validate the key. Restricted
+// keys only need Checkout Sessions read permission.
+func (s *StripeClient) CheckCredentials(ctx context.Context) error {
+	return s.do(ctx, http.MethodGet, "/checkout/sessions?limit=1", nil, nil)
+}
