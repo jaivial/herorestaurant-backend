@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/integrations"
 )
 
 // =============================================================================
@@ -35,6 +36,10 @@ import (
 //
 // Coordination id: stripe_prereserva_adelanto_v1
 // =============================================================================
+
+// checkoutTTL: Stripe Checkout needs >= 30 min; a demo/pending checkout older
+// than this can no longer be paid.
+const checkoutTTL = 31 * time.Minute
 
 const (
 	checkoutStatusPending   = "pending"
@@ -77,6 +82,12 @@ type checkoutRow struct {
 	ReceiptURL        string
 	ErrorMessage      string
 	PaidAt            sql.NullTime
+	DestinationHash   string
+	ExpiresAt         sql.NullTime
+}
+
+func (c *checkoutRow) expired() bool {
+	return c.ExpiresAt.Valid && time.Now().After(c.ExpiresAt.Time)
 }
 
 func (s *Server) loadCheckout(ctx context.Context, restaurantID int, publicID string) (*checkoutRow, error) {
@@ -88,10 +99,11 @@ func (s *Server) loadCheckout(ctx context.Context, restaurantID int, publicID st
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, restaurant_id, public_id, provider, provider_session_id, status, amount_cents, currency,
-		       form_json, booking_id, payment_intent_id, receipt_url, error_message, paid_at
+		       form_json, booking_id, payment_intent_id, receipt_url, error_message, paid_at,
+		       COALESCE(destination_hash, ''), expires_at
 		FROM booking_checkouts WHERE public_id = ? AND restaurant_id = ?`, publicID, restaurantID).
 		Scan(&row.ID, &row.RestaurantID, &row.PublicID, &row.Provider, &sessionID, &row.Status, &row.AmountCents, &row.Currency,
-			&formJSON, &bookingID, &intent, &receipt, &errMsg, &row.PaidAt)
+			&formJSON, &bookingID, &intent, &receipt, &errMsg, &row.PaidAt, &row.DestinationHash, &row.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}
@@ -152,21 +164,28 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "El adelanto de esta prereserva es 0 €; revisa la configuración de la fecha especial"})
 		return
 	}
-	cfg, err := s.loadStripeConfig(r.Context(), restaurantID)
-	if err != nil || !cfg.enabled() {
+	// Coordination id: stripe_connect_multitenant_v1 - the platform account
+	// charges; funds go to the restaurant's connected account.
+	connect, ready := s.connectReady(r.Context(), restaurantID)
+	if !ready {
 		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "El pago online no está disponible en este momento", "error_code": "STRIPE_NOT_CONFIGURED"})
 		return
 	}
+	demo := connect.Demo
+	const currency = "eur"
+	fee := int64(math.Round(float64(amount) * s.cfg.StripePlatformFeePercent / 100))
 
 	publicID := newCheckoutPublicID()
 	formJSON, _ := json.Marshal(r.Form)
 	provider := "stripe"
-	if cfg.DemoMode {
+	if demo {
 		provider = "demo"
 	}
+	expires := time.Now().Add(checkoutTTL)
 	if _, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO booking_checkouts (restaurant_id, public_id, provider, status, amount_cents, currency, form_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, restaurantID, publicID, provider, checkoutStatusPending, amount, cfg.Currency, string(formJSON)); err != nil {
+		INSERT INTO booking_checkouts (restaurant_id, public_id, provider, status, amount_cents, currency, form_json, destination_hash, application_fee_cents, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, restaurantID, publicID, provider, checkoutStatusPending, amount, currency, string(formJSON),
+		s.connectAccountHash(connect.AccountID), fee, expires); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "No se pudo iniciar el pago"})
 		return
 	}
@@ -176,16 +195,25 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 	cancelURL := baseURL + "/reservas?date=" + url.QueryEscape(pb.params.ReservationDate) + "&pago=cancelado"
 
 	var redirectURL string
-	if cfg.DemoMode {
+	if demo {
 		redirectURL = "/api/bookings/checkout/demo/" + publicID
 	} else {
+		cli, err := s.platformStripe()
+		if err != nil {
+			httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "El pago online no está disponible en este momento", "error_code": "STRIPE_NOT_CONFIGURED"})
+			return
+		}
 		title := "Adelanto prereserva"
 		if pb.specialSnapshot != nil && pb.specialSnapshot.Title != "" {
 			title += " · " + pb.specialSnapshot.Title
 		}
 		title += " · " + pb.params.ReservationDate
-		sess, err := cfg.client().CreateCheckoutSession(r.Context(), amount, cfg.Currency, title, "", successURL, cancelURL,
-			map[string]string{"checkout_public_id": publicID, "restaurant_id": fmt.Sprint(restaurantID), "coordination_id": "stripe_prereserva_adelanto_v1"})
+		sess, err := cli.CreateDestinationCheckout(r.Context(), integrations.DestinationCheckout{
+			AmountCents: amount, FeeCents: fee, Currency: currency, Description: title,
+			Destination: connect.AccountID, SuccessURL: successURL, CancelURL: cancelURL,
+			CustomerEmail: pb.params.ContactEmail, ExpiresAtUnix: expires.Unix(), IdempotencyKey: publicID,
+			Metadata: map[string]string{"checkout_public_id": publicID, "restaurant_id": fmt.Sprint(restaurantID), "coordination_id": "stripe_connect_multitenant_v1"},
+		})
 		if err != nil || sess.URL == "" {
 			logStripeFlow("session_create_failed", restaurantID, publicID, fmt.Sprint(err))
 			_, _ = s.db.ExecContext(r.Context(), `UPDATE booking_checkouts SET status = ?, error_message = ? WHERE public_id = ?`, checkoutStatusFailed, "stripe session create failed", publicID)
@@ -201,8 +229,8 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 		"checkout_id":  publicID,
 		"checkout_url": redirectURL,
 		"amount":       float64(amount) / 100,
-		"currency":     cfg.Currency,
-		"demo":         cfg.DemoMode,
+		"currency":     currency,
+		"demo":         demo,
 	})
 }
 
@@ -214,9 +242,19 @@ func (s *Server) handleBookingCheckoutDemoPage(w http.ResponseWriter, r *http.Re
 		http.NotFound(w, r)
 		return
 	}
+	if !s.checkScopedRateLimit("checkout_view", httpx.ClientIP(r), restaurantID, 30) {
+		http.Error(w, "Demasiadas solicitudes", http.StatusTooManyRequests)
+		return
+	}
 	row, err := s.loadCheckout(r.Context(), restaurantID, chi.URLParam(r, "id"))
 	if err != nil || row.Provider != "demo" {
 		http.NotFound(w, r)
+		return
+	}
+	// S1: a demo checkout only pays while the restaurant is still in demo mode
+	// and before it expires; otherwise it is dead.
+	if connect, _ := s.connectReady(r.Context(), restaurantID); connect == nil || !connect.Demo || row.expired() {
+		http.Error(w, "Este pago de demostración ya no es válido", http.StatusGone)
 		return
 	}
 	baseURL := strings.TrimRight(resolveRestaurantPublicBaseURL(r.Context(), s, restaurantID), "/")
@@ -273,20 +311,26 @@ func (s *Server) completeCheckout(r *http.Request, restaurantID int, publicID st
 		if row.Provider != "stripe" || row.ProviderSessionID == "" {
 			return row, nil, errors.New("El pago todavía no se ha completado")
 		}
-		cfg, err := s.loadStripeConfig(ctx, restaurantID)
-		if err != nil || cfg.SecretKey == "" {
+		cli, err := s.platformStripe()
+		if err != nil {
 			return row, nil, errors.New("Stripe no configurado")
 		}
-		sess, err := cfg.client().RetrieveCheckoutSession(ctx, row.ProviderSessionID)
+		sess, err := cli.RetrieveConnectCheckout(ctx, row.ProviderSessionID)
 		if err != nil {
 			logStripeFlow("session_retrieve_failed", restaurantID, publicID, err.Error())
 			return row, nil, errors.New("No se pudo verificar el pago con Stripe")
 		}
-		if sess.PaymentStatus != "paid" || sess.AmountTotal != row.AmountCents || sess.Metadata["checkout_public_id"] != publicID {
+		// S5: paid, same amount, same checkout, and the money went to THIS
+		// restaurant's connected account.
+		if sess.PaymentStatus != "paid" || sess.AmountTotal != row.AmountCents ||
+			sess.Metadata["checkout_public_id"] != publicID || sess.Metadata["restaurant_id"] != fmt.Sprint(restaurantID) ||
+			row.DestinationHash == "" || s.connectAccountHash(sess.PaymentIntent.TransferData.Destination) != row.DestinationHash {
+			logStripeFlow("session_mismatch", restaurantID, publicID, sess.PaymentStatus)
 			return row, nil, errors.New("El pago todavía no se ha completado")
 		}
+		sessPaymentIntent := sess.PaymentIntent.ID
 		_, _ = s.db.ExecContext(ctx, `UPDATE booking_checkouts SET status = ?, paid_at = NOW(), payment_intent_id = ? WHERE id = ? AND status = ?`,
-			checkoutStatusPaid, sess.PaymentIntent, row.ID, checkoutStatusPending)
+			checkoutStatusPaid, sessPaymentIntent, row.ID, checkoutStatusPending)
 	}
 
 	// 2) Claim the insert: only one caller moves paid -> completed.
@@ -372,7 +416,7 @@ func (s *Server) buildCheckoutReceipt(ctx context.Context, restaurantID int, row
 	in := receiptInput{
 		Reference: row.PublicID, PaymentRef: row.PaymentIntentID, PaidAt: paidAt, Demo: row.Provider == "demo",
 		BrandName: firstNonEmpty(branding.BrandName, "Restaurante"), Address: branding.Address, Phone: branding.Phone, Email: branding.Email,
-		Customer: pb.params.CustomerName, CustomerMail: pb.params.ContactEmail, CustomerTel: "+" + strings.TrimPrefix(pb.phoneE164, "+"),
+		Customer: pb.params.CustomerName, CustomerMail: pb.params.ContactEmail, CustomerTel: maskPhone(pb.phoneE164),
 		Date: pb.params.ReservationDate, Time: strings.TrimSuffix(anyToString(pb.params.ReservationTime), ":00"), PartySize: pb.params.PartySize,
 		BookingID: bookingID, Total: float64(row.AmountCents) / 100, Currency: row.Currency,
 	}
@@ -425,6 +469,10 @@ func (s *Server) handleBookingCheckoutComplete(w http.ResponseWriter, r *http.Re
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Unknown restaurant"})
 		return
 	}
+	if !s.checkScopedRateLimit("checkout_view", httpx.ClientIP(r), restaurantID, 30) {
+		httpx.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"success": false, "message": "Demasiadas solicitudes. Inténtalo de nuevo en un momento."})
+		return
+	}
 	row, resp, err := s.completeCheckout(r, restaurantID, chi.URLParam(r, "id"))
 	if row == nil {
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Pago no encontrado"})
@@ -444,48 +492,77 @@ func (s *Server) handleBookingCheckoutComplete(w http.ResponseWriter, r *http.Re
 	httpx.WriteJSON(w, http.StatusOK, body)
 }
 
-// handleStripePrereservaWebhook completes a checkout when Stripe reports it
-// paid. The restaurant comes from the session metadata; its own webhook secret
-// verifies the signature.
-func (s *Server) handleStripePrereservaWebhook(w http.ResponseWriter, r *http.Request) {
+// handleStripeConnectWebhook is the ONE platform webhook for every tenant
+// (Connect endpoint). Signature is checked with STRIPE_CONNECT_WEBHOOK_SECRET
+// and a 5-minute replay window; events are processed once (stripe_events).
+//   checkout.session.completed -> complete the prereserva of that checkout
+//   account.updated            -> refresh the tenant's onboarding status
+// Coordination id: stripe_connect_multitenant_v1
+func (s *Server) handleStripeConnectWebhook(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.StripeConnectWebhookSecret == "" || s.cfg.StripePlatformSecretKey == "" {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "webhook no configurado"})
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false})
 		return
 	}
-	var peek struct {
-		Type string `json:"type"`
-		Data struct {
-			Object struct {
-				Metadata map[string]string `json:"metadata"`
-			} `json:"object"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &peek); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false})
-		return
-	}
-	var restaurantID int
-	_, _ = fmt.Sscan(peek.Data.Object.Metadata["restaurant_id"], &restaurantID)
-	publicID := peek.Data.Object.Metadata["checkout_public_id"]
-	if restaurantID <= 0 || publicID == "" {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ignored": true})
-		return
-	}
-	cfg, err := s.loadStripeConfig(r.Context(), restaurantID)
-	if err != nil || cfg.WebhookSecret == "" {
-		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "webhook no configurado"})
-		return
-	}
-	if _, err := cfg.client().VerifyWebhookSignature(body, r.Header.Get("Stripe-Signature")); err != nil {
+	cli := integrations.NewStripeClient(s.cfg.StripePlatformSecretKey, s.cfg.StripeConnectWebhookSecret)
+	ev, err := cli.VerifyWebhookSignatureWithTolerance(body, r.Header.Get("Stripe-Signature"), 5*time.Minute)
+	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "firma inválida"})
 		return
 	}
-	if peek.Type == "checkout.session.completed" {
-		ctx := withRestaurantID(r.Context(), restaurantID)
-		if _, _, err := s.completeCheckout(r.WithContext(ctx), restaurantID, publicID); err != nil {
-			logStripeFlow("webhook_complete_error", restaurantID, publicID, err.Error())
+	res, err := s.db.ExecContext(r.Context(), `INSERT IGNORE INTO stripe_events (event_id, type, payload, processed_at) VALUES (?, ?, ?, NOW())`, ev.ID, ev.Type, "{}")
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false})
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true})
+		return
+	}
+	switch ev.Type {
+	case "checkout.session.completed":
+		var obj struct {
+			Metadata map[string]string `json:"metadata"`
+		}
+		_ = json.Unmarshal(ev.Data.Object, &obj)
+		var restaurantID int
+		_, _ = fmt.Sscan(obj.Metadata["restaurant_id"], &restaurantID)
+		if publicID := obj.Metadata["checkout_public_id"]; restaurantID > 0 && publicID != "" {
+			ctx := withRestaurantID(r.Context(), restaurantID)
+			// completeCheckout re-reads the session from Stripe and checks the
+			// destination account, so forged metadata cannot complete anything.
+			if _, _, err := s.completeCheckout(r.WithContext(ctx), restaurantID, publicID); err != nil {
+				logStripeFlow("webhook_complete_error", restaurantID, publicID, err.Error())
+			}
+		}
+	case "account.updated":
+		var obj struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(ev.Data.Object, &obj)
+		var restaurantID int
+		if obj.ID != "" && s.db.QueryRowContext(r.Context(), `SELECT restaurant_id FROM restaurant_stripe_connect WHERE account_hash = ?`, s.connectAccountHash(obj.ID)).Scan(&restaurantID) == nil {
+			if row, err := s.loadConnectAccount(r.Context(), restaurantID); err == nil && row != nil && row.AccountID == obj.ID {
+				if _, err := s.refreshConnectAccount(r.Context(), row); err != nil {
+					log.Printf("[stripe_connect_multitenant_v1] restaurant=%d account.updated refresh: %v", restaurantID, err)
+				} else {
+					log.Printf("[stripe_connect_multitenant_v1] restaurant=%d account status=%s", restaurantID, row.Status)
+				}
+			}
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// maskPhone keeps the last 3 digits: the receipt is a public CDN file.
+func maskPhone(e164 string) string {
+	digits := strings.TrimPrefix(e164, "+")
+	if len(digits) <= 3 {
+		return "***"
+	}
+	return "+" + strings.Repeat("*", len(digits)-3) + digits[len(digits)-3:]
 }
