@@ -454,8 +454,9 @@ func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool)
 		Status     string `json:"status"`
 		StatusCode int    `json:"statusCode"`
 		QRCode     struct {
-			Base64 string `json:"base64"`
-			Code   string `json:"code"`
+			Base64      string `json:"base64"`
+			Code        string `json:"code"`
+			PairingCode string `json:"pairingCode"`
 		} `json:"qrcode"`
 	}
 	_ = json.Unmarshal(env.Data, &d)
@@ -478,6 +479,13 @@ func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool)
 		ConnectedPhone: uazapiPickString(raw, "number", "phone", "owner", "wuid"),
 		QR:             qr,
 		PairCode:       formatEvolutionPairingCode(uazapiPickString(raw, "pairingCode", "pairCode")),
+	}
+	// Coordination id: wa_pair_code_fresh_v1 - Evolution's QRCODE_UPDATED
+	// nests the phone-linking code under qrcode.pairingCode. Every reconnected
+	// socket issues a new one; reading it keeps the panel code valid instead
+	// of showing the previous (now rejected) code.
+	if out.PairCode == "" && d.QRCode.PairingCode != "" {
+		out.PairCode = formatEvolutionPairingCode(d.QRCode.PairingCode)
 	}
 	if out.Status == "" && qr != "" {
 		out.Status = "pending"
