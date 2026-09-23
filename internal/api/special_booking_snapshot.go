@@ -39,6 +39,9 @@ type specialBookingSnapshotMenu struct {
 	AdelantoPerUnit       float64                      `json:"adelanto_per_unit"`
 	AdelantoPaymentMethod *string                      `json:"adelanto_payment_method,omitempty"`
 	Items                 []specialBookingSnapshotItem `json:"items,omitempty"`
+	// Coordination id: special_date_section_menus_v1 - set when this line is
+	// one section of a special-type menu.
+	SectionID *int64 `json:"section_id,omitempty"`
 }
 
 // specialBookingSnapshotItem is one dish selection inside a special menu.
@@ -73,6 +76,16 @@ type specialBookingMenuReq struct {
 	Count                 int                   `json:"count"`
 	AdelantoPaymentMethod *string               `json:"adelanto_payment_method,omitempty"`
 	Items                 specialBookingItemIDs `json:"items,omitempty"`
+	// Coordination id: special_date_section_menus_v1 - guests per section of a
+	// special-type menu (then Count is the sum of the section counts).
+	Sections []specialBookingSectionReq `json:"sections,omitempty"`
+}
+
+// specialBookingSectionReq is one section of a special-type menu in a booking.
+type specialBookingSectionReq struct {
+	SectionID int64                 `json:"section_id"`
+	Count     int                   `json:"count"`
+	Items     specialBookingItemIDs `json:"items,omitempty"`
 }
 
 // specialBookingItemIDs accepts both [12, 13] and [{"dish_id": 12}, ...]: the
@@ -328,6 +341,22 @@ func (s *Server) resolveSpecialBookingInput(
 		if !ok {
 			return nil, nil, fmt.Errorf("Menú especial %d no disponible", m.SpecialDateMenuID)
 		}
+		// Coordination id: special_date_section_menus_v1 - a special-type menu
+		// is booked per section: one snapshot line per section, priced and
+		// charged with that section's price and adelanto.
+		if rec.MenuID.Valid && rec.MenuType == "special" {
+			var unified *float64
+			if settings.AdelantoUnified && settings.AdelantoUnifiedAmount != nil {
+				unified = settings.AdelantoUnifiedAmount
+			}
+			lines, count, err := s.specialMenuSectionSnapshotLines(ctx, restaurantID, rec, m, acceptedMethods, unified)
+			if err != nil {
+				return nil, nil, err
+			}
+			totalCount += count
+			snapshotMenus = append(snapshotMenus, lines...)
+			continue
+		}
 		if m.Count <= 0 {
 			return nil, nil, fmt.Errorf("La cantidad del menú %d debe ser mayor que 0", m.SpecialDateMenuID)
 		}
@@ -531,6 +560,10 @@ func (s *Server) buildSpecialBookingResponse(ctx context.Context, restaurantID i
 		}
 		if m.MenuID != nil {
 			menuOut["menu_id"] = *m.MenuID
+		}
+		// Coordination id: special_date_section_menus_v1
+		if m.SectionID != nil {
+			menuOut["section_id"] = *m.SectionID
 		}
 		if m.AdelantoPaymentMethod != nil {
 			menuOut["adelanto_payment_method"] = *m.AdelantoPaymentMethod
