@@ -151,6 +151,8 @@ type publicMenuItem struct {
 	SpecialMenuSections   []publicMenuSpecialSection `json:"special_menu_sections"`
 	// Coordination id: special_menu_price_date_v1
 	SpecialDate *publicMenuSpecialDate `json:"special_date,omitempty"`
+	// Coordination id: special_menu_cta_v1
+	SpecialCta *specialMenuCta `json:"special_cta,omitempty"`
 	// Coordination id: special_menu_visibility_v1
 	WebPlacement      string `json:"web_placement"`
 	MenuPublicActive  bool   `json:"menu_public_active"`
@@ -198,6 +200,8 @@ type publicMenuItemSpecial struct {
 	SpecialMenuSections []publicMenuSpecialSection `json:"special_menu_sections"`
 	// Coordination id: special_menu_price_date_v1
 	SpecialDate *publicMenuSpecialDate `json:"special_date"`
+	// Coordination id: special_menu_cta_v1
+	SpecialCta *specialMenuCta `json:"special_cta"`
 	// Coordination id: special_menu_visibility_v1
 	WebPlacement     string `json:"web_placement"`
 	MenuPublicActive bool   `json:"menu_public_active"`
@@ -1252,6 +1256,7 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 				// Coordination id: special_menu_sections_v1
 				SpecialMenuSections: s.loadPublicSpecialMenuSections(r.Context(), restaurantID, menuID),
 				SpecialDate:         s.loadMenuSpecialDate(r.Context(), restaurantID, menuID),
+				SpecialCta:          s.loadPublicSpecialMenuCta(r.Context(), restaurantID, menuID),
 				// Coordination id: special_menu_visibility_v1
 				WebPlacement:        normalizedWebPlacement(webPlacementRaw.String),
 				MenuPublicActive:    menuPublicActiveIn != 0,
@@ -1422,6 +1427,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		// Coordination id: special_menu_sections_v1 + special_menu_visibility_v1
 		SpecialMenuSections: s.loadPublicSpecialMenuSections(r.Context(), int(restaurantID), menuID),
 		SpecialDate:         s.loadMenuSpecialDate(r.Context(), int(restaurantID), menuID),
+		SpecialCta:          s.loadPublicSpecialMenuCta(r.Context(), int(restaurantID), menuID),
 		WebPlacement:        normalizedWebPlacement(webPlacementRaw.String),
 		MenuPublicActive:    menuPublicActiveInt != 0,
 		LegacySourceTable:   strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),
