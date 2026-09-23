@@ -43,6 +43,9 @@ type boSpecialDateMenu struct {
 	AdelantoAmount *float64 `json:"adelanto_amount,omitempty"`
 	Price          *float64 `json:"price,omitempty"`
 	Position       int      `json:"position"`
+	// Coordination id: special_date_section_menus_v1 - per-section adelanto
+	// when menu_id is a special-type menu.
+	Sections []specialDateSectionAdelanto `json:"sections,omitempty"`
 }
 
 // boSpecialDateSaveRequest is the POST body for /admin/config/special-dates.
@@ -391,7 +394,21 @@ func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, s
 		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	// Coordination id: special_date_section_menus_v1 - special-type menus
+	// carry their sections (title, price, per-section adelanto).
+	for _, row := range out {
+		menuID, ok := row["menu_id"].(int64)
+		if !ok || !s.specialDateMenuIsSpecialType(ctx, restaurantID, menuID) {
+			continue
+		}
+		row["is_special_menu"] = true
+		row["sections"] = s.loadSpecialDateMenuSections(ctx, restaurantID, row["id"].(int64), menuID, false)
+	}
+	return out, nil
 }
 
 func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request) {
@@ -707,13 +724,22 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 		if m.CustomImageURL != nil && strings.TrimSpace(*m.CustomImageURL) != "" {
 			customImage = sql.NullString{String: strings.TrimSpace(*m.CustomImageURL), Valid: true}
 		}
-		if _, err := tx.ExecContext(r.Context(), `
+		res, err := tx.ExecContext(r.Context(), `
 			INSERT INTO special_date_menus
 				(restaurant_id, special_date_id, menu_id, custom_title, custom_image_url, adelanto_amount, price, position)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, a.ActiveRestaurantID, specialDateID, menuID, customTitle, customImage, adelantoAmount, price, m.Position); err != nil {
+		`, a.ActiveRestaurantID, specialDateID, menuID, customTitle, customImage, adelantoAmount, price, m.Position)
+		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error insertando special_date_menus")
 			return
+		}
+		// Coordination id: special_date_section_menus_v1
+		if m.MenuID != nil && len(m.Sections) > 0 {
+			sdmID, _ := res.LastInsertId()
+			if err := saveSpecialDateMenuSections(r.Context(), tx, a.ActiveRestaurantID, sdmID, *m.MenuID, m.Sections); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error guardando adelantos por seccion")
+				return
+			}
 		}
 	}
 
