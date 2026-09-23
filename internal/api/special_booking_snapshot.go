@@ -69,10 +69,40 @@ type specialBookingSnapshot struct {
 // the admin / public form. Server fields like label / unit_price are NOT
 // accepted from the client (the server snapshots them from special_dates).
 type specialBookingMenuReq struct {
-	SpecialDateMenuID     int64    `json:"special_date_menu_id"`
-	Count                 int      `json:"count"`
-	AdelantoPaymentMethod *string  `json:"adelanto_payment_method,omitempty"`
-	Items                 []int64  `json:"items,omitempty"`
+	SpecialDateMenuID     int64                 `json:"special_date_menu_id"`
+	Count                 int                   `json:"count"`
+	AdelantoPaymentMethod *string               `json:"adelanto_payment_method,omitempty"`
+	Items                 specialBookingItemIDs `json:"items,omitempty"`
+}
+
+// specialBookingItemIDs accepts both [12, 13] and [{"dish_id": 12}, ...]: the
+// public wizard and the backoffice editor send the object form.
+// Coordination id: special_menu_principales_v1
+type specialBookingItemIDs []int64
+
+func (ids *specialBookingItemIDs) UnmarshalJSON(raw []byte) error {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return err
+	}
+	out := make([]int64, 0, len(entries))
+	for _, e := range entries {
+		var id int64
+		if json.Unmarshal(e, &id) != nil {
+			var obj struct {
+				DishID int64 `json:"dish_id"`
+			}
+			if err := json.Unmarshal(e, &obj); err != nil {
+				return err
+			}
+			id = obj.DishID
+		}
+		if id > 0 {
+			out = append(out, id)
+		}
+	}
+	*ids = out
+	return nil
 }
 
 // specialBookingReq is the shape of the optional `special` block on
@@ -97,6 +127,9 @@ type specialDateMenuRecord struct {
 	Position       int
 	MenuTitle      string
 	MenuPrice      float64
+	// Coordination id: special_menu_principales_v1 - special-type menus take
+	// their principales from special_menu_section_principales.
+	MenuType string
 }
 
 // specialDateSettings carries the fields the snapshot helper needs from a
@@ -154,7 +187,8 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url,
 		       sdm.adelanto_amount, sdm.price, sdm.position,
 		       COALESCE(m.menu_title, '') AS menu_title,
-		       COALESCE(m.price, 0) AS menu_price
+		       COALESCE(m.price, 0) AS menu_price,
+		       COALESCE(m.menu_type, '') AS menu_type
 		FROM special_date_menus sdm
 		LEFT JOIN menus m
 		  ON m.id = sdm.menu_id AND m.restaurant_id = sdm.restaurant_id
@@ -174,7 +208,7 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 		if err := rows.Scan(
 			&rec.ID, &rec.MenuID, &rec.CustomTitle, &rec.CustomImageURL,
 			&rec.AdelantoAmount, &customPrice, &rec.Position,
-			&rec.MenuTitle, &rec.MenuPrice,
+			&rec.MenuTitle, &rec.MenuPrice, &rec.MenuType,
 		); err != nil {
 			return nil, nil, err
 		}
@@ -318,6 +352,12 @@ func (s *Server) resolveSpecialBookingInput(
 					name, _ := s.loadDishNameForTenant(ctx, restaurantID, id)
 					snapItems = append(snapItems, specialBookingSnapshotItem{DishID: id, Name: name})
 				}
+			} else if rec.MenuType == "special" {
+				items, ok := s.validateSpecialMenuPrincipalItems(ctx, restaurantID, rec.MenuID.Int64, m.Items)
+				if !ok {
+					return nil, nil, errors.New("Algunos platos seleccionados no pertenecen al menú")
+				}
+				snapItems = items
 			} else {
 				if !s.allMenuDishesExist(ctx, restaurantID, rec.MenuID.Int64, m.Items) {
 					return nil, nil, errors.New("Algunos platos seleccionados no pertenecen al menú")

@@ -1019,6 +1019,8 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 				"ai_generating_img":          menuPreviewAIGenerating,
 				"ai_generated_img":           menuPreviewAIGenerated,
 			},
+			// Coordination id: special_menu_principales_v1
+			"special_principales_enabled": s.specialMenuPrincipalesEnabled(r.Context(), a.ActiveRestaurantID, menuID),
 		},
 	})
 }

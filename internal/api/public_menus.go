@@ -96,6 +96,9 @@ type publicMenuSpecialSection struct {
 	Position int    `json:"position"`
 	// Coordination id: special_menu_price_date_v1 - nil when not priced.
 	Price *float64 `json:"price"`
+	// Coordination id: special_menu_principales_v1 - empty when the menu toggle
+	// is off or no dish was added (both mean "no principales").
+	Principales []specialMenuPrincipal `json:"principales"`
 }
 
 // publicMenuSpecialDate is the special day a special menu belongs to.
@@ -546,6 +549,14 @@ func (s *Server) loadPublicSpecialMenuSections(ctx context.Context, restaurantID
 		}
 		sec.ImageURL = s.publicMenuMediaURL(ctx, restaurantID, sec.ImageURL)
 		out = append(out, sec)
+	}
+	rows.Close()
+	principales := s.loadPublicSpecialMenuPrincipales(ctx, restaurantID, menuID)
+	for i := range out {
+		out[i].Principales = principales[out[i].ID]
+		if out[i].Principales == nil {
+			out[i].Principales = []specialMenuPrincipal{}
+		}
 	}
 	return out
 }
