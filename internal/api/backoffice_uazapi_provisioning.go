@@ -509,8 +509,14 @@ func (s *Server) refreshRestaurantUAZAPIConnectionStatus(ctx context.Context, re
 	// Evolution emits QR refresh events without always including the current
 	// device-linking code. Re-fetch the pairing response while connecting so a
 	// stale code is never persisted/displayed after a QR rotation.
+	//
+	// Coordination id: wa_reconnect_supervisor_v1 - only while a pairing is
+	// actually in progress. This function is a status READ used by the
+	// reminders worker and every booking; calling /instance/connect on a
+	// closed/logged-out instance opened a brand-new Baileys socket (and a new
+	// pairing request) each time, racing the live session into 428/401.
 	if strings.EqualFold(rec.Provider, "evolution") &&
-		!isUAZAPIConnected(status) && pairCode == "" && connectedPhone != "" {
+		normalizeUAZAPIConnectionStatus(status) == "connecting" && pairCode == "" && connectedPhone != "" {
 		if refreshed, connectErr := s.gatewayForInstance(rec).Connect(ctx, connectedPhone); connectErr == nil {
 			if refreshed.PairCode != "" {
 				pairCode = refreshed.PairCode
