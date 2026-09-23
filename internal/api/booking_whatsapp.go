@@ -210,8 +210,21 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 		return fmt.Errorf("WhatsApp no configurado")
 	}
 
+	// Coordination id: stripe_prereserva_adelanto_v1 - the paid prereserva
+	// receipt follows the confirmation as a PDF document.
+	sendReceipt := func() {
+		receipt, ok := booking[bookingReceiptKey].(*bookingReceipt)
+		if !ok || receipt == nil || receipt.URL == "" {
+			return
+		}
+		if err := gw.SendMedia(ctx, msg.To, waMedia{Kind: "document", URL: receipt.URL, Filename: receipt.Filename, Caption: "Comprobante de pago del adelanto"}); err != nil {
+			log.Printf("[stripe_prereserva_adelanto_v1] WhatsApp receipt failed for booking #%d: %v", bookingID, err)
+		}
+	}
+
 	if err := s.sendWhatsAppMenuTracked(ctx, restaurantID, gw, msg.To, msg.Text, msg.Choices, "booking_confirmation"); err == nil {
 		log.Printf("WhatsApp button confirmation sent for booking #%d", bookingID)
+		sendReceipt()
 		return nil
 	}
 	log.Printf("WhatsApp button send failed for booking #%d (%v), falling back to text", bookingID, err)
@@ -219,6 +232,7 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 	sendErr := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.To, msg.Text, "booking_confirmation")
 	if sendErr == nil {
 		log.Printf("WhatsApp text confirmation sent for booking #%d", bookingID)
+		sendReceipt()
 		return nil
 	}
 

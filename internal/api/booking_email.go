@@ -507,10 +507,18 @@ func sendBookingConfirmationEmails(ctx context.Context, s *Server, restaurantID 
 	subject := "Confirmación de Reserva - " + brandName
 	html := buildBookingEmailHTML(brandName, logoURL, info.Telefono, info.Email, info.Direccion, booking, bookingID, baseURL, info.Website)
 
+	// Coordination id: stripe_prereserva_adelanto_v1 - a paid prereserva
+	// carries its payment receipt; it goes attached to both emails.
+	var attachments []emailAttachment
+	if receipt, ok := booking[bookingReceiptKey].(*bookingReceipt); ok && receipt != nil && len(receipt.PDF) > 0 {
+		attachments = []emailAttachment{receipt.emailAttachment()}
+		subject = "Prereserva confirmada y pago recibido - " + brandName
+	}
+
 	// Send to customer.
 	customerEmail := strings.TrimSpace(anyToString(booking["contact_email"]))
 	if customerEmail != "" && customerEmail != fromAddr {
-		if e := sendViaConfig(ctx, cfg, fromName, fromAddr, customerEmail, subject, html); e != nil {
+		if e := sendViaConfigWithAttachments(ctx, cfg, fromName, fromAddr, customerEmail, subject, html, attachments); e != nil {
 			log.Printf("Failed to send booking email to customer %s: %v", customerEmail, e)
 		} else {
 			customerSent = true
@@ -519,7 +527,7 @@ func sendBookingConfirmationEmails(ctx context.Context, s *Server, restaurantID 
 	}
 
 	// Send to restaurant (required).
-	if e := sendViaConfig(ctx, cfg, fromName, fromAddr, fromAddr, subject, html); e != nil {
+	if e := sendViaConfigWithAttachments(ctx, cfg, fromName, fromAddr, fromAddr, subject, html, attachments); e != nil {
 		log.Printf("Failed to send booking email to restaurant %s: %v", fromAddr, e)
 		return customerSent, false, fmt.Errorf("error enviando email al restaurante: %v", e)
 	}

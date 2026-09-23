@@ -718,6 +718,10 @@ func (s *Server) Routes() http.Handler {
 		// MiniMax AI config (api key + model) — root only.
 		r.With(s.requireBOSession, rootOnlyGate).Get("/config/minimax", s.handleBOMiniMaxConfigGet)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/minimax", s.handleBOMiniMaxConfigSet)
+		// Coordination id: stripe_prereserva_adelanto_v1
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/stripe", s.handleBOStripeConfigGet)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe", s.handleBOStripeConfigSet)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe/test", s.handleBOStripeConfigTest)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
 		// The editor lives on /app/config (Configuracion page), which the
@@ -926,6 +930,7 @@ func (s *Server) Routes() http.Handler {
 
 	// Stripe webhook (signature-authenticated, not session).
 	r.Post("/stripe/webhook", s.handleStripeWebhook)
+	r.Post("/stripe/prereserva-webhook", s.handleStripePrereservaWebhook)
 
 	// Public booking JSON API — uses own tenant resolution via DEFAULT_RESTAURANT_ID fallback.
 	r.Get("/public/booking", s.handlePublicBookingGet)
@@ -1100,6 +1105,11 @@ func (s *Server) Routes() http.Handler {
 
 		// Public booking creation (canonical route + legacy alias).
 		r.Post("/bookings/front", s.handleInsertBookingFront)
+		// Coordination id: stripe_prereserva_adelanto_v1
+		r.Post("/bookings/front/checkout", s.handleBookingCheckoutCreate)
+		r.Get("/bookings/checkout/demo/{id}", s.handleBookingCheckoutDemoPage)
+		r.Post("/bookings/checkout/demo/{id}", s.handleBookingCheckoutDemoPage)
+		r.Post("/bookings/checkout/{id}/complete", s.handleBookingCheckoutComplete)
 		r.Post("/insert_booking_front.php", s.handleInsertBookingFront)
 
 		// Admin booking management (confreservas.php).
