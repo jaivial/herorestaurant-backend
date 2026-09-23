@@ -276,7 +276,7 @@ func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID in
 			row["label"] = strings.TrimSpace(menuTitle)
 			// Prefer the operator-defined price when present; fall back to the
 			// catalogue price so old rows without a custom price keep working.
-			row["price"] = menuPrice
+			row["price"] = menuPrice.Float64
 			if customPrice.Valid {
 				row["price"] = customPrice.Float64
 			}
@@ -301,5 +301,20 @@ func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID in
 		}
 		out = append(out, row)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	// Coordination id: special_date_section_menus_v1 - a special-type menu is
+	// booked per section: expose the sections with price, adelanto and the
+	// principales guests pick from.
+	for _, row := range out {
+		menuID, ok := row["menu_id"].(int64)
+		if !ok || !s.specialDateMenuIsSpecialType(ctx, restaurantID, menuID) {
+			continue
+		}
+		row["is_special_menu"] = true
+		row["sections"] = s.loadSpecialDateMenuSections(ctx, restaurantID, row["id"].(int64), menuID, true)
+	}
+	return out, nil
 }

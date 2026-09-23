@@ -58,6 +58,13 @@ func (s *Server) botToolGetSpecialDateInfo(ctx context.Context, restaurantID int
 		if m.CustomImageURL.Valid && strings.TrimSpace(m.CustomImageURL.String) != "" {
 			entry["image_url"] = strings.TrimSpace(m.CustomImageURL.String)
 		}
+		// Coordination id: special_date_section_menus_v1 - special menus are
+		// priced and charged per section, not with a menu-level price.
+		if m.MenuID.Valid && m.MenuType == "special" {
+			delete(entry, "unit_price")
+			delete(entry, "adelanto_amount")
+			entry["sections"] = s.loadSpecialDateMenuSections(ctx, restaurantID, m.ID, m.MenuID.Int64, true)
+		}
 		menuPayload = append(menuPayload, entry)
 	}
 	payload := map[string]any{
