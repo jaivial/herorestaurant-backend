@@ -390,6 +390,14 @@ func (s *Server) provisionAndConnectRestaurantWhatsApp(ctx context.Context, rest
 		}
 	}
 
+	// Coordination id: wa_pair_code_fresh_v1 - a connect starts a NEW device
+	// link: any stored pair code/QR belongs to a dead socket and WhatsApp
+	// rejects it ("no se puede vincular dispositivo"). Drop them first so the
+	// UI only ever shows what this socket generated (a QR-only connect must not
+	// keep showing the previous phone-code).
+	if err := s.clearRestaurantWhatsAppPairing(ctx, restaurantID); err != nil {
+		log.Printf("[whatsapp][obs][CP-PAIR-CLEAR-FAILED] restaurant=%d %v", restaurantID, err)
+	}
 	if err := s.updateRestaurantUAZAPIInstanceRuntime(ctx, restaurantID, status, connectedPhone, qr, pairCode); err != nil {
 		return nil, err
 	}
@@ -826,6 +834,13 @@ func (s *Server) whatsappConnectionPayload(rec uazapiInstanceRecord) map[string]
 		"pair_code": emptyStringToNil(rec.PairCode),
 	}
 	return out
+}
+
+// clearRestaurantWhatsAppPairing forgets the stored pair code and QR of the
+// previous device-link attempt (coord id wa_pair_code_fresh_v1).
+func (s *Server) clearRestaurantWhatsAppPairing(ctx context.Context, restaurantID int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE restaurant_uazapi_instances SET pair_code = NULL, qr_payload = NULL WHERE restaurant_id = ?`, restaurantID)
+	return err
 }
 
 func (s *Server) updateRestaurantUAZAPIInstanceRuntime(ctx context.Context, restaurantID int, status string, connectedPhone string, qrPayload string, pairCode string) error {
