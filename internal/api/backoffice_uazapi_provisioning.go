@@ -331,8 +331,10 @@ func (s *Server) provisionAndConnectRestaurantWhatsApp(ctx context.Context, rest
 	}
 
 	// Defensive: ensure the inbound webhook is registered before pairing so the
-	// very first messages after connect are routed to this tenant.
-	if whErr := s.ensureUAZAPIInstanceWebhook(ctx, restaurantID, rec); whErr != nil {
+	// very first messages after connect are routed to this tenant. An explicit
+	// operator connect is the only path allowed to claim the webhook from
+	// another backend (coord id wa_webhook_ownership_v1).
+	if whErr := s.ensureUAZAPIInstanceWebhook(withWebhookClaim(ctx), restaurantID, rec); whErr != nil {
 		log.Printf("[uazapi] restaurant=%d webhook register (connect) failed: %v", restaurantID, whErr)
 	}
 

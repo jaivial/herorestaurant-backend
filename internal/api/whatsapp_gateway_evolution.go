@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -353,7 +355,45 @@ func (g *evolutionGateway) Delete(ctx context.Context) error {
 	return err
 }
 
+// errWebhookOwnedElsewhere means the provider instance already delivers to a
+// different backend host. Coordination id: wa_webhook_ownership_v1.
+var errWebhookOwnedElsewhere = errors.New("evolution webhook pertenece a otro backend; no se sobrescribe")
+
+type webhookClaimKey struct{}
+
+// withWebhookClaim marks an explicit operator connect: only that path may take
+// the webhook over from another host; background refreshes never do.
+func withWebhookClaim(ctx context.Context) context.Context {
+	return context.WithValue(ctx, webhookClaimKey{}, true)
+}
+
+func webhookClaimed(ctx context.Context) bool {
+	v, _ := ctx.Value(webhookClaimKey{}).(bool)
+	return v
+}
+
+func webhookHost(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
 func (g *evolutionGateway) RegisterWebhook(ctx context.Context, callbackURL string, events []string) error {
+	// Coordination id: wa_webhook_ownership_v1 - dev and prod share the same
+	// Evolution server and, before this guard, both re-registered the webhook
+	// on every status refresh: whichever ran last stole the customers'
+	// messages (on 2026-09-23 the dev backend, with its own empty DB and
+	// transcript, answered a real customer without her booking or the
+	// confirmation it had just been sent). Never overwrite another host.
+	if resp, code, err := g.request(ctx, http.MethodGet, "/webhook/find/"+g.instanceName, nil); err == nil && code >= 200 && code < 300 {
+		current, _ := resp["url"].(string)
+		if cur, want := webhookHost(current), webhookHost(callbackURL); cur != "" && want != "" && cur != want && !webhookClaimed(ctx) {
+			log.Printf("[whatsapp][obs][CP-WEBHOOK-OWNERSHIP-CONFLICT] instance=%s current_host=%s own_host=%s", g.instanceName, cur, want)
+			return errWebhookOwnedElsewhere
+		}
+	}
 	evoEvents := []string{"MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"}
 	return g.post(ctx, "/webhook/set/"+g.instanceName, map[string]any{
 		"webhook": map[string]any{
