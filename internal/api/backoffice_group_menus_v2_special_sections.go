@@ -35,6 +35,8 @@ type boSpecialMenuSection struct {
 	CreatedAt  string `json:"created_at"`
 	// Coordination id: special_menu_price_date_v1 - nil means "no price".
 	Price *float64 `json:"price"`
+	// Coordination id: special_menu_principales_v1
+	Principales []specialMenuPrincipal `json:"principales"`
 }
 
 // handleBOGroupMenusV2ListSpecialSections returns every section for one menu.
@@ -767,7 +769,18 @@ func (s *Server) loadSpecialMenuSections(ctx context.Context, restaurantID int, 
 		}
 		out = append(out, sec)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	principales := s.loadSpecialMenuPrincipales(ctx, restaurantID, menuID)
+	for i := range out {
+		out[i].Principales = principales[out[i].ID]
+		if out[i].Principales == nil {
+			out[i].Principales = []specialMenuPrincipal{}
+		}
+	}
+	return out, nil
 }
 
 // repackSpecialMenuSections rewrites the position column to 0..N-1 so any
