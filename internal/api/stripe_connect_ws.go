@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/integrations"
 )
 
 // =============================================================================
@@ -21,7 +22,7 @@ import (
 
 // broadcastStripeConnectStatus sends the fresh status DTO of a restaurant to
 // every open Cobros online socket of that restaurant. Best effort.
-func (s *Server) broadcastStripeConnectStatus(ctx context.Context, restaurantID int, row *connectAccountRow) {
+func (s *Server) broadcastStripeConnectStatus(ctx context.Context, restaurantID int, row *connectAccountRow, acct *integrations.ConnectAccount) {
 	if s == nil || s.stripeConnectHub == nil || restaurantID <= 0 {
 		return
 	}
@@ -29,7 +30,7 @@ func (s *Server) broadcastStripeConnectStatus(ctx context.Context, restaurantID 
 		"type":         "stripe_connect_status",
 		"restaurantId": restaurantID,
 		"at":           time.Now().UTC().Format(time.RFC3339),
-		"connect":      s.connectDTO(ctx, restaurantID, row, nil),
+		"connect":      s.connectDTO(ctx, restaurantID, row, acct),
 	})
 	log.Printf("[stripe_connect_multitenant_v1.ws] restaurant=%d status=%v pushed", restaurantID, statusOf(row))
 }
@@ -63,9 +64,20 @@ func (s *Server) handleBOStripeConnectWS(w http.ResponseWriter, r *http.Request)
 	_ = conn.SetReadDeadline(time.Now().Add(70 * time.Second))
 	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(70 * time.Second)) })
 
-	// hello carries the current status so the client never needs a first GET.
+	// hello carries the full current status (re-read from Stripe: IBAN, due
+	// items) so the socket is the only source the client needs. A changed status
+	// is also pushed to the restaurant's other open tabs.
 	if row, err := s.loadConnectAccount(r.Context(), rid); err == nil {
-		_ = client.writeJSON(map[string]any{"type": "hello", "restaurantId": rid, "connect": s.connectDTO(r.Context(), rid, row, nil)})
+		var acct *integrations.ConnectAccount
+		if row != nil && !row.Demo {
+			before := row.Status
+			if acct, err = s.refreshConnectAccount(r.Context(), row); err != nil {
+				log.Printf("[stripe_connect_multitenant_v1.ws] restaurant=%d hello refresh failed: %v", rid, err)
+			} else if row.Status != before {
+				s.broadcastStripeConnectStatus(r.Context(), rid, row, acct)
+			}
+		}
+		_ = client.writeJSON(map[string]any{"type": "hello", "restaurantId": rid, "connect": s.connectDTO(r.Context(), rid, row, acct)})
 	}
 
 	readDone := make(chan struct{})

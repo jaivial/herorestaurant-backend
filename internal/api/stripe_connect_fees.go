@@ -53,7 +53,6 @@ type connectFee struct {
 	TotalPercent float64 `json:"total_percent"`
 }
 
-
 func (s *Server) loadConnectFeeSettings(ctx context.Context) connectFeeSettings {
 	out := connectFeeSettings{
 		PlatformFeePercent:   s.cfg.StripePlatformFeePercent,

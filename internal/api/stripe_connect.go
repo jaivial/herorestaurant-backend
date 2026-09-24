@@ -251,7 +251,7 @@ func (s *Server) handleBOStripeConnectOnboard(w http.ResponseWriter, r *http.Req
 			return
 		}
 		logCheckpoint(r, "stripe_connect_demo_enabled", "restaurant", fmt.Sprint(rid))
-		s.broadcastStripeConnectStatus(ctx, rid, &demo)
+		s.broadcastStripeConnectStatus(ctx, rid, &demo, nil)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "connect": s.connectDTO(ctx, rid, &demo, nil)})
 		return
 	}
@@ -281,7 +281,7 @@ func (s *Server) handleBOStripeConnectOnboard(w http.ResponseWriter, r *http.Req
 			return
 		}
 		logCheckpoint(r, "stripe_connect_account_created", "restaurant", fmt.Sprint(rid))
-		s.broadcastStripeConnectStatus(ctx, rid, row)
+		s.broadcastStripeConnectStatus(ctx, rid, row, acct)
 	}
 	base := s.backofficePublicBaseURL()
 	if base == "" {
@@ -443,7 +443,7 @@ func (s *Server) handleBOStripeConnectDisconnect(w http.ResponseWriter, r *http.
 		return
 	}
 	log.Printf("[stripe_connect_multitenant_v1.delete] restaurant=%d demo=%v deleted by user=%d", rid, row.Demo, a.User.ID)
-	s.broadcastStripeConnectStatus(ctx, rid, nil)
+	s.broadcastStripeConnectStatus(ctx, rid, nil, nil)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "connect": s.connectDTO(ctx, rid, nil, nil)})
 }
 
