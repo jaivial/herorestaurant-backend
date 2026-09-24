@@ -27,6 +27,29 @@ const (
 
 // rateLimit returns true if the request is allowed, false if rate-limited.
 // It uses a simple token-bucket per (IP, restaurantID) pair.
+// checkScopedRateLimit is a separate bucket (scope) with its own burst, e.g.
+// the checkout success page polling, so it never eats booking submissions.
+// Coordination id: stripe_connect_multitenant_v1
+func (s *Server) checkScopedRateLimit(scope, ip string, restaurantID int, burst int) bool {
+	if ip == "" {
+		ip = "unknown"
+	}
+	key := scope + ":" + ip + ":" + strconv.Itoa(restaurantID)
+	now := time.Now().Unix()
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+	entry, ok := s.rateLimit[key]
+	if !ok || now >= entry.windowEnd {
+		s.rateLimit[key] = &rateLimitState{windowEnd: now + rateLimitWindowSecs, tokens: burst - 1}
+		return true
+	}
+	if entry.tokens <= 0 {
+		return false
+	}
+	entry.tokens--
+	return true
+}
+
 func (s *Server) checkRateLimit(ip string, restaurantID int) bool {
 	// An empty/unknown IP must still be counted: it shares one "unknown"
 	// bucket instead of skipping (or collapsing into an empty) key.
@@ -110,6 +133,54 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	pb, err := s.prepareFrontBooking(r, restaurantID)
+	if err != nil {
+		var fe *frontBookingError
+		if errors.As(err, &fe) {
+			httpx.WriteJSON(w, fe.Status, fe.Body)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	// Coordination id: stripe_prereserva_adelanto_v1 - a stripe-only
+	// adelanto can only be booked through the checkout (paid first).
+	if pb.requiresStripe {
+		httpx.WriteJSON(w, http.StatusPaymentRequired, map[string]any{
+			"success":    false,
+			"message":    "Esta prereserva requiere el pago del adelanto con tarjeta",
+			"error_code": "STRIPE_PAYMENT_REQUIRED",
+		})
+		return
+	}
+	_, status, resp := s.commitFrontBooking(r, pb, nil)
+	httpx.WriteJSON(w, status, resp)
+}
+
+// frontBookingError carries the exact HTTP answer a failed validation gives,
+// so the checkout path and the direct insert reply identically.
+type frontBookingError struct {
+	Status int
+	Body   map[string]any
+}
+
+func (e *frontBookingError) Error() string { return anyToString(e.Body["message"]) }
+
+// preparedFrontBooking is a fully validated public booking, ready to insert.
+// Coordination id: stripe_prereserva_adelanto_v1 - shared by the direct
+// insert and the Stripe checkout (which inserts only after payment).
+type preparedFrontBooking struct {
+	restaurantID    int
+	params          bookingInsertParams
+	toggleArroz     string
+	phoneE164       string
+	menuDeGrupoID   int
+	specialSnapshot *specialBookingSnapshot
+	requiresStripe  bool
+}
+
+// prepareFrontBooking validates a parsed public booking form. No writes.
+func (s *Server) prepareFrontBooking(r *http.Request, restaurantID int) (*preparedFrontBooking, error) {
 	resDate := strings.TrimSpace(r.FormValue("reservation_date"))
 	partySize := clampInt(r.FormValue("party_size"), 1, 10_000, 0)
 	resTimeRaw := strings.TrimSpace(r.FormValue("reservation_time"))
@@ -119,27 +190,24 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 
 	cc, nationalPhone, phoneE164, ok := normalizePhoneParts(countryCodeRaw, contactPhoneRaw)
 	if !ok {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+		return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 			"success": false,
 			"message": "Teléfono inválido",
-		})
-		return
+		}}
 	}
 
 	if resDate == "" || !isValidISODate(resDate) || partySize < 2 || resTimeRaw == "" || customerName == "" {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+		return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 			"success": false,
 			"message": "Faltan campos requeridos",
-		})
-		return
+		}}
 	}
 	resTime, err := ensureHHMMSS(resTimeRaw)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+		return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 			"success": false,
 			"message": "Hora inválida",
-		})
-		return
+		}}
 	}
 
 	commentary := strings.TrimSpace(r.FormValue("commentary"))
@@ -152,21 +220,19 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 
 	children, err := parseChildrenFromForm(r, partySize)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+		return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 			"success": false,
 			"message": err.Error(),
-		})
-		return
+		}}
 	}
 
 	// Coordination id: mobility_issues_v1
 	hasMobilityIssues, mobilityPeople, err := parseMobilityFromForm(r, partySize)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+		return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 			"success": false,
 			"message": err.Error(),
-		})
-		return
+		}}
 	}
 
 	// Group menu (special menu) selection.
@@ -179,46 +245,41 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 	var arrozServingsJSON any = nil
 	locationFlags, err := s.resolveLocationBooking(r.Context(), restaurantID, resDate)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+		return nil, &frontBookingError{Status: http.StatusInternalServerError, Body: map[string]any{
 			"success": false,
 			"message": "No se pudo consultar la configuración de ubicación",
-		})
-		return
+		}}
 	}
 	preferredFloorNumber, err := s.resolvePreferredFloorNumberForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_floor_number")), locationFlags.Floor.Value)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+		return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 			"success": false,
 			"message": err.Error(),
-		})
-		return
+		}}
 	}
 	preferredSalonID, err := s.resolvePreferredSalonIDForFront(r.Context(), restaurantID, resDate, strings.TrimSpace(r.FormValue("preferred_salon_id")), preferredFloorNumber, locationFlags.Salon.Value)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+		return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 			"success": false,
 			"message": err.Error(),
-		})
-		return
+		}}
 	}
 
 	if specialMenu {
 		menuDeGrupoID = clampInt(r.FormValue("menu_de_grupo_id"), 1, 1_000_000_000, 0)
 		if menuDeGrupoID <= 0 {
-			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 				"success": false,
 				"message": "Debe seleccionar un menú de grupo",
-			})
-			return
+			}}
 		}
 
 		menuTitle, menuPrincipalesRaw, err := s.fetchActiveGroupMenuTitleAndPrincipales(r, menuDeGrupoID)
 		if err != nil || strings.TrimSpace(menuTitle) == "" {
-			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 				"success": false,
 				"message": "Menú de grupo no válido o inactivo",
-			})
-			return
+			}}
 		}
 
 		// Store menu title and party size in arroz_* JSON arrays (legacy behavior).
@@ -240,11 +301,10 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		if principalesEnabled {
 			summary, storedJSON, err := buildPrincipalesSummaryAndJSON(menuPrincipalesRaw, rowsRaw, partySize)
 			if err != nil {
-				httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 					"success": false,
 					"message": err.Error(),
-				})
-				return
+				}}
 			}
 			commentary = summary
 			if storedJSON != "" {
@@ -256,11 +316,10 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		if strings.TrimSpace(toggleArroz) == "true" {
 			arrozTypeJSON, arrozServingsJSON, err = parseArrozFromForm(r, partySize)
 			if err != nil {
-				httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 					"success": false,
 					"message": err.Error(),
-				})
-				return
+				}}
 			}
 		}
 
@@ -270,6 +329,9 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 	// under "special_json". When present, validate against the date's active
 	// special_dates settings and snapshot into the booking row. Custom-menu
 	// items are not required (dish_id arrays validated when sent).
+	// Coordination id: stripe_prereserva_adelanto_v1
+	var specialSnapshot *specialBookingSnapshot
+	requiresStripe := false
 	var (
 		isSpecialBooking bool
 		isPrereserva     bool
@@ -279,105 +341,134 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 	if specialRaw != "" {
 		var req specialBookingReq
 		if err := json.Unmarshal([]byte(specialRaw), &req); err != nil {
-			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 				"success": false,
 				"message": "JSON inválido en 'special_json'",
-			})
-			return
+			}}
 		}
-		restaurantID, _ := restaurantIDFromContext(r.Context())
+		// The public form never declares payments: only the backoffice and a
+		// verified Stripe checkout record adelantos as paid.
+		req.AdelantosPaid = nil
+		// Coordination id: stripe_prereserva_adelanto_v1 - a stripe-only
+		// adelanto date is paid online: the method is forced to stripe.
+		if settings, _, sErr := s.loadSpecialDateSettings(r.Context(), restaurantID, resDate); sErr == nil && specialDateRequiresStripe(settings) {
+			requiresStripe = true
+			method := adelantoMethodStripe
+			req.PaymentMethod = &method
+			for i := range req.Menus {
+				req.Menus[i].AdelantoPaymentMethod = &method
+			}
+		}
 		snap, prereserva, err := s.resolveSpecialBookingInput(r.Context(), restaurantID, resDate, partySize, &req)
 		if err != nil {
-			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 				"success": false,
 				"message": err.Error(),
-			})
-			return
+			}}
 		}
 		snapBytes, mErr := json.Marshal(snap)
 		if mErr != nil {
-			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+			return nil, &frontBookingError{Status: http.StatusInternalServerError, Body: map[string]any{
 				"success": false,
 				"message": "No se pudo serializar el menú especial",
-			})
-			return
+			}}
 		}
 		isSpecialBooking = true
 		if prereserva != nil {
 			isPrereserva = *prereserva
 		}
 		specialJSON = string(snapBytes)
+		specialSnapshot = snap
 	}
 
-	bookingID, err := s.insertBooking(r, bookingInsertParams{
-		ReservationDate:   resDate,
-		ReservationTime:   resTime,
-		PartySize:         partySize,
-		Children:          children,
-		CustomerName:      customerName,
-		ContactPhone:      nationalPhone,
-		ContactPhoneCC:    cc,
-		ContactEmail:      contactEmail,
-		Commentary:        commentary,
-		BabyStrollers:     babyStrollers,
-		HighChairs:        highChairs,
-		ArrozTypeJSON:     arrozTypeJSON,
-		ArrozServingsJSON: arrozServingsJSON,
-		SpecialMenu:       boolToTinyint(specialMenu),
-		MenuDeGrupoID:     nullIntOrNil(menuDeGrupoID),
-		PrincipalesJSON:   principalesJSON,
-		PreferredFloorNum: preferredFloorNumber,
-		PreferredSalonID:  preferredSalonID,
-		IsSpecialBooking:  isSpecialBooking,
-		IsPrereserva:      isPrereserva,
-		SpecialJSON:       specialJSON,
-		HasMobilityIssues: hasMobilityIssues,
-		MobilityPeople:    mobilityPeople,
-	})
+	return &preparedFrontBooking{
+		restaurantID: restaurantID,
+		params: bookingInsertParams{
+			ReservationDate:   resDate,
+			ReservationTime:   resTime,
+			PartySize:         partySize,
+			Children:          children,
+			CustomerName:      customerName,
+			ContactPhone:      nationalPhone,
+			ContactPhoneCC:    cc,
+			ContactEmail:      contactEmail,
+			Commentary:        commentary,
+			BabyStrollers:     babyStrollers,
+			HighChairs:        highChairs,
+			ArrozTypeJSON:     arrozTypeJSON,
+			ArrozServingsJSON: arrozServingsJSON,
+			SpecialMenu:       boolToTinyint(specialMenu),
+			MenuDeGrupoID:     nullIntOrNil(menuDeGrupoID),
+			PrincipalesJSON:   principalesJSON,
+			PreferredFloorNum: preferredFloorNumber,
+			PreferredSalonID:  preferredSalonID,
+			IsSpecialBooking:  isSpecialBooking,
+			IsPrereserva:      isPrereserva,
+			SpecialJSON:       specialJSON,
+			HasMobilityIssues: hasMobilityIssues,
+			MobilityPeople:    mobilityPeople,
+		},
+		toggleArroz:     toggleArroz,
+		phoneE164:       phoneE164,
+		menuDeGrupoID:   menuDeGrupoID,
+		specialSnapshot: specialSnapshot,
+		requiresStripe:  requiresStripe,
+	}, nil
+}
+
+// commitFrontBooking inserts a prepared booking and sends the customer and
+// restaurant notifications. attachments (e.g. the Stripe receipt) go with the
+// confirmation email and WhatsApp.
+// Coordination id: stripe_prereserva_adelanto_v1
+func (s *Server) commitFrontBooking(r *http.Request, pb *preparedFrontBooking, receipt *bookingReceipt) (int64, int, map[string]any) {
+	p := pb.params
+	bookingID, err := s.insertBooking(r, p)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
+		return 0, http.StatusInternalServerError, map[string]any{
 			"success":    false,
 			"message":    "Error: " + err.Error(),
 			"error_code": "BOOKING_INSERT_FAILED",
-		})
-		return
+		}
 	}
 
 	// Build booking data map for notifications.
 	bookingData := map[string]any{
 		"booking_id":                 bookingID,
-		"reservation_date":           resDate,
-		"reservation_time":           resTime,
-		"party_size":                 partySize,
-		"children":                   children,
-		"customer_name":              customerName,
-		"contact_phone":              nationalPhone,
-		"contact_phone_country_code": cc,
-		"contact_email":              contactEmail,
-		"commentary":                 commentary,
-		"arroz_type":                 arrozTypeJSON,
-		"arroz_servings":             arrozServingsJSON,
-		"baby_strollers":             babyStrollers,
-		"high_chairs":                highChairs,
-		"toggleArroz":                toggleArroz,
-		"special_menu":               specialMenu,
-		"menu_de_grupo_id":           menuDeGrupoID,
-		"principales_json":           principalesJSON,
-		"preferred_floor_number":     preferredFloorNumber,
-		"preferred_salon_id":         preferredSalonID,
-		"is_special_booking":         isSpecialBooking,
-		"is_prereserva":              isPrereserva,
-		"special_json":               specialJSON,
-		"has_mobility_issues":        hasMobilityIssues,
-		"mobility_people":            mobilityPeople,
-		"special":                    s.buildSpecialBookingResponse(r.Context(), restaurantID, isSpecialBooking, isPrereserva, anyToString(specialJSON)),
+		"reservation_date":           p.ReservationDate,
+		"reservation_time":           p.ReservationTime,
+		"party_size":                 p.PartySize,
+		"children":                   p.Children,
+		"customer_name":              p.CustomerName,
+		"contact_phone":              p.ContactPhone,
+		"contact_phone_country_code": p.ContactPhoneCC,
+		"contact_email":              p.ContactEmail,
+		"commentary":                 p.Commentary,
+		"arroz_type":                 p.ArrozTypeJSON,
+		"arroz_servings":             p.ArrozServingsJSON,
+		"baby_strollers":             p.BabyStrollers,
+		"high_chairs":                p.HighChairs,
+		"toggleArroz":                pb.toggleArroz,
+		"special_menu":               (p.SpecialMenu != 0),
+		"menu_de_grupo_id":           pb.menuDeGrupoID,
+		"principales_json":           p.PrincipalesJSON,
+		"preferred_floor_number":     p.PreferredFloorNum,
+		"preferred_salon_id":         p.PreferredSalonID,
+		"is_special_booking":         p.IsSpecialBooking,
+		"is_prereserva":              p.IsPrereserva,
+		"special_json":               p.SpecialJSON,
+		"has_mobility_issues":        p.HasMobilityIssues,
+		"mobility_people":            p.MobilityPeople,
+		"special":                    s.buildSpecialBookingResponse(r.Context(), pb.restaurantID, p.IsSpecialBooking, p.IsPrereserva, anyToString(p.SpecialJSON)),
 	}
-	s.enrichBookingLocationForNotifications(r.Context(), restaurantID, bookingData)
+	s.enrichBookingLocationForNotifications(r.Context(), pb.restaurantID, bookingData)
+	if receipt != nil {
+		bookingData[bookingReceiptKey] = receipt
+	}
 
 	// Send WhatsApp confirmation to customer (best-effort).
 	var whatsappSent bool
 	var whatsappWarning string
-	if err := sendBookingWhatsAppToCustomer(r.Context(), s, restaurantID, bookingData, bookingID); err != nil {
+	if err := sendBookingWhatsAppToCustomer(r.Context(), s, pb.restaurantID, bookingData, bookingID); err != nil {
 		log.Printf("WhatsApp failed for booking #%d: %v", bookingID, err)
 		if strings.Contains(err.Error(), "is not on WhatsApp") {
 			whatsappWarning = "El número de teléfono no tiene servicio de WhatsApp."
@@ -389,18 +480,19 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 	}
 
 	// Send confirmation emails (synchronous, required).
-	customerSent, restaurantSent, emailErr := sendBookingConfirmationEmails(r.Context(), s, restaurantID, bookingData, bookingID)
+	customerSent, restaurantSent, emailErr := sendBookingConfirmationEmails(r.Context(), s, pb.restaurantID, bookingData, bookingID)
 	if emailErr != nil {
 		log.Printf("Email failed for booking #%d: %v", bookingID, emailErr)
-		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
+		// The row exists: return its id so callers (Stripe checkout) never
+		// treat a stored, paid booking as failed.
+		return bookingID, http.StatusServiceUnavailable, map[string]any{
 			"success":          false,
 			"message":          "Error enviando confirmación por email: " + emailErr.Error(),
 			"error_code":       "EMAIL_FAILED",
 			"booking_id":       bookingID,
 			"whatsapp_sent":    whatsappSent,
 			"whatsapp_warning": whatsappWarning,
-		})
-		return
+		}
 	}
 
 	// Update response with actual notification status.
@@ -415,24 +507,24 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 	if whatsappWarning != "" {
 		resp["whatsapp_warning"] = whatsappWarning
 	}
-	httpx.WriteJSON(w, http.StatusOK, resp)
 
-	s.emitN8nWebhookAsync(restaurantID, "booking.created", map[string]any{
+	s.emitN8nWebhookAsync(pb.restaurantID, "booking.created", map[string]any{
 		"source":                  "front",
 		"bookingId":               bookingID,
-		"reservationDate":         resDate,
-		"reservationTime":         resTime,
-		"partySize":               partySize,
-		"children":                children,
-		"customerName":            customerName,
-		"contactPhone":            nationalPhone,
-		"contactPhoneCountryCode": cc,
-		"contactPhoneE164":        phoneE164,
-		"contactEmail":            contactEmail,
-		"specialMenu":             specialMenu,
-		"menuDeGrupoId":           menuDeGrupoID,
-		"preferredFloorNumber":    preferredFloorNumber,
+		"reservationDate":         p.ReservationDate,
+		"reservationTime":         p.ReservationTime,
+		"partySize":               p.PartySize,
+		"children":                p.Children,
+		"customerName":            p.CustomerName,
+		"contactPhone":            p.ContactPhone,
+		"contactPhoneCountryCode": p.ContactPhoneCC,
+		"contactPhoneE164":        pb.phoneE164,
+		"contactEmail":            p.ContactEmail,
+		"specialMenu":             (p.SpecialMenu != 0),
+		"menuDeGrupoId":           pb.menuDeGrupoID,
+		"preferredFloorNumber":    p.PreferredFloorNum,
 	})
+	return bookingID, http.StatusOK, resp
 }
 
 func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request) {

@@ -32,7 +32,12 @@ var validAdelantoPaymentMethods = map[string]bool{
 	"bizum":         true,
 	"transferencia": true,
 	"efectivo":      true,
+	// Coordination id: stripe_prereserva_adelanto_v1 - online payment,
+	// exclusive: when chosen it is the only accepted method.
+	"stripe": true,
 }
+
+const adelantoMethodStripe = "stripe"
 
 // boSpecialDateMenu is one row of the special_dates.menus array.
 type boSpecialDateMenu struct {
@@ -473,6 +478,27 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			return
 		}
 		cleanMethods = append(cleanMethods, m)
+	}
+	// Coordination id: stripe_prereserva_adelanto_v1 - stripe is exclusive and
+	// needs the restaurant's Stripe config (demo or live).
+	for _, m := range cleanMethods {
+		if m != adelantoMethodStripe {
+			continue
+		}
+		if len(cleanMethods) > 1 {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Stripe no se puede combinar con otros métodos de pago",
+			})
+			return
+		}
+		if _, ready := s.connectReady(r.Context(), a.ActiveRestaurantID); !ready {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"message": "Activa los cobros online en Configuración → Cobros online antes de usar Stripe",
+			})
+			return
+		}
 	}
 	adelantoMethodsJSON, _ := json.Marshal(cleanMethods)
 

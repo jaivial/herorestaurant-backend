@@ -27,6 +27,7 @@ type Server struct {
 	cfg                   config.Config
 	tenantCache           tenantDomainCache
 	fichajeHub            *boFichajeHub
+	stripeConnectHub      *boFichajeHub // stripe_connect_multitenant_v1.ws
 	tablesHub             *boTablesHub
 	sheetHub              *sheetWSHub
 	groupMenusV2AIHub     *boGroupMenuV2AIHub
@@ -81,6 +82,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		db:                    db,
 		cfg:                   cfg,
 		fichajeHub:            newBOFichajeHub(),
+		stripeConnectHub:      newBOFichajeHub(),
 		tablesHub:             newBOTablesHub(),
 		sheetHub:              newSheetWSHub(),
 		groupMenusV2AIHub:     newBOGroupMenuV2AIHub(),
@@ -133,7 +135,7 @@ func (s *Server) Routes() http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, X-Api-Token, X-Vault-Key")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token, X-Api-Token, X-Vault-Key, X-Bearer-Token")
 			}
 
 			if r.Method == http.MethodOptions {
@@ -168,6 +170,8 @@ func (s *Server) Routes() http.Handler {
 		// Shared-secret layer for the whole admin API and its WebSockets, injected
 		// server-side by the backoffice SSR proxy. No-op when VAULT_KEY is unset.
 		r.Use(s.requireVaultKey)
+		// Coordination id: stripe_connect_multitenant_v1 - second secret.
+		r.Use(s.requireBearerToken)
 		reservasGate := s.requireBOSection(boSectionReservas)
 		menusGate := s.requireBOSection(boSectionMenus)
 		ajustesGate := s.requireBOSection(boSectionAjustes)
@@ -718,6 +722,15 @@ func (s *Server) Routes() http.Handler {
 		// MiniMax AI config (api key + model) — root only.
 		r.With(s.requireBOSession, rootOnlyGate).Get("/config/minimax", s.handleBOMiniMaxConfigGet)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/minimax", s.handleBOMiniMaxConfigSet)
+		// Coordination id: stripe_prereserva_adelanto_v1
+		// Coordination id: stripe_connect_multitenant_v1 - per-restaurant
+		// "Cobros online" (connected account); no keys per tenant.
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/stripe-connect", s.handleBOStripeConnectStatus)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/onboard", s.handleBOStripeConnectOnboard)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/dashboard", s.handleBOStripeConnectDashboard)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/disconnect", s.handleBOStripeConnectDisconnect)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/stripe-connect/delete-precheck", s.handleBOStripeConnectDeletePrecheck)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/stripe-connect/ws", s.handleBOStripeConnectWS)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
 		// The editor lives on /app/config (Configuracion page), which the
@@ -920,12 +933,18 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/domains", s.handlePlatformDomainsList)
 		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/stripe/payments", s.handlePlatformStripePaymentsList)
 		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/stripe/refund", s.handlePlatformStripeRefund)
+		// Coordination id: stripe_connect_fees_v1 - connected accounts + commissions (root).
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/stripe-connect", s.handlePlatformStripeConnectList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Put("/platform/stripe-connect/settings", s.handlePlatformStripeConnectSettings)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Put("/platform/stripe-connect/restaurants/{id}/fee", s.handlePlatformStripeConnectRestaurantFee)
 	})
 
 	r.Get("/public/website-builder/render/{kind}", s.handleWebsiteBuilderRenderFragment)
 
 	// Stripe webhook (signature-authenticated, not session).
 	r.Post("/stripe/webhook", s.handleStripeWebhook)
+	// Coordination id: stripe_connect_multitenant_v1 - one webhook for every tenant.
+	r.Post("/stripe/connect-webhook", s.handleStripeConnectWebhook)
 
 	// Public booking JSON API — uses own tenant resolution via DEFAULT_RESTAURANT_ID fallback.
 	r.Get("/public/booking", s.handlePublicBookingGet)
@@ -1100,6 +1119,11 @@ func (s *Server) Routes() http.Handler {
 
 		// Public booking creation (canonical route + legacy alias).
 		r.Post("/bookings/front", s.handleInsertBookingFront)
+		// Coordination id: stripe_prereserva_adelanto_v1
+		r.Post("/bookings/front/checkout", s.handleBookingCheckoutCreate)
+		r.Get("/bookings/checkout/demo/{id}", s.handleBookingCheckoutDemoPage)
+		r.Post("/bookings/checkout/demo/{id}", s.handleBookingCheckoutDemoPage)
+		r.Post("/bookings/checkout/{id}/complete", s.handleBookingCheckoutComplete)
 		r.Post("/insert_booking_front.php", s.handleInsertBookingFront)
 
 		// Admin booking management (confreservas.php).

@@ -92,3 +92,49 @@ func Decrypt(token, encoded string) (string, error) {
 	}
 	return string(plain), nil
 }
+
+// EncryptBound seals plaintext bound to a context string (AAD), e.g.
+// "restaurant:12:stripe_connect". The same ciphertext cannot be moved to
+// another row/tenant: DecryptBound with a different context fails.
+// Coordination id: stripe_connect_multitenant_v1
+func EncryptBound(token, context, plaintext string) (string, error) {
+	gcm, err := newGCM(token)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", fmt.Errorf("vault: read nonce: %w", err)
+	}
+	sealed := gcm.Seal(nil, nonce, []byte(plaintext), []byte(context))
+	return "v2:" + base64.StdEncoding.EncodeToString(append(nonce, sealed...)), nil
+}
+
+// DecryptBound opens a payload produced by EncryptBound with the same context.
+func DecryptBound(token, context, encoded string) (string, error) {
+	gcm, err := newGCM(token)
+	if err != nil {
+		return "", err
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(encoded, "v2:"))
+	if err != nil || !strings.HasPrefix(encoded, "v2:") || len(raw) < gcm.NonceSize() {
+		return "", ErrDecrypt
+	}
+	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], []byte(context))
+	if err != nil {
+		return "", ErrDecrypt
+	}
+	return string(plain), nil
+}
+
+func newGCM(token string) (cipher.AEAD, error) {
+	key, err := deriveKey(token)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, fmt.Errorf("vault: aes new cipher: %w", err)
+	}
+	return cipher.NewGCM(block)
+}

@@ -63,7 +63,20 @@ type Config struct {
 	// WebSockets. Unlike VaultToken (encryption at rest) this authenticates
 	// requests; it is injected server-side by the backoffice SSR proxy so it
 	// never reaches the browser.
-	VaultKey                    string
+	VaultKey string
+	// Coordination id: stripe_connect_multitenant_v1
+	// BearerTokenKey is a second server-to-server secret the backoffice SSR
+	// sends on every /admin request (X-Bearer-Token), independent from
+	// VaultKey, so leaking one does not open the admin API.
+	BearerTokenKey string
+	// BackofficeVaultKey encrypts tenant payment data at rest (connected
+	// Stripe account, onboarding snapshot). Separate from VaultToken so a
+	// dump of the DB plus the older key reveals nothing.
+	BackofficeVaultKey string
+	// Platform Stripe account (Connect). Tenants never hold Stripe keys.
+	StripePlatformSecretKey     string
+	StripeConnectWebhookSecret  string
+	StripePlatformFeePercent    float64
 	MiniMaxTranslateTimeout     time.Duration
 	MiniMaxTranslateConcurrency int
 	StockOCRProvider            string
@@ -144,6 +157,11 @@ func Load() Config {
 		MiniMaxModel:                getenv("MINIMAX_MODEL", "MiniMax-M3"),
 		VaultToken:                  strings.TrimSpace(os.Getenv("VAULT_TOKEN")),
 		VaultKey:                    strings.TrimSpace(os.Getenv("VAULT_KEY")),
+		BearerTokenKey:              strings.TrimSpace(os.Getenv("BEARER_TOKEN_KEY")),
+		BackofficeVaultKey:          strings.TrimSpace(os.Getenv("BACKOFFICE_VAULT_KEY")),
+		StripePlatformSecretKey:     strings.TrimSpace(getenvFirst([]string{"STRIPE_PLATFORM_SECRET_KEY", "STRIPE_RESTRICTED_KEY"}, "")),
+		StripeConnectWebhookSecret:  strings.TrimSpace(os.Getenv("STRIPE_CONNECT_WEBHOOK_SECRET")),
+		StripePlatformFeePercent:    getenvFloat("STRIPE_PLATFORM_FEE_PERCENT", 0, 0, 30),
 		MiniMaxTranslateTimeout:     time.Duration(getenvInt("MINIMAX_TRANSLATE_TIMEOUT_SECONDS", 20, 5, 120)) * time.Second,
 		MiniMaxTranslateConcurrency: getenvInt("MINIMAX_TRANSLATE_CONCURRENCY", 4, 1, 32),
 		StockOCRProvider:            strings.ToLower(strings.TrimSpace(getenv("STOCK_OCR_PROVIDER", "minimax"))),
@@ -201,6 +219,12 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.AdminToken) == "" {
 		missing = append(missing, "ADMIN_TOKEN")
 	}
+	if strings.TrimSpace(c.BearerTokenKey) == "" {
+		missing = append(missing, "BEARER_TOKEN_KEY")
+	}
+	if strings.TrimSpace(c.BackofficeVaultKey) == "" {
+		missing = append(missing, "BACKOFFICE_VAULT_KEY")
+	}
 	if len(missing) == 0 {
 		return nil
 	}
@@ -227,6 +251,18 @@ func getenvFirst(keys []string, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func getenvFloat(key string, fallback, min, max float64) float64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v < min || v > max {
+		return fallback
+	}
+	return v
 }
 
 func getenvInt(key string, fallback int, min int, max int) int {
