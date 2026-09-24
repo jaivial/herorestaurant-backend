@@ -28,6 +28,7 @@ type Server struct {
 	tenantCache           tenantDomainCache
 	fichajeHub            *boFichajeHub
 	stripeConnectHub      *boFichajeHub // stripe_connect_multitenant_v1.ws
+	globalHub             *boFichajeHub // global_socket_v1: /admin/ws
 	tablesHub             *boTablesHub
 	sheetHub              *sheetWSHub
 	groupMenusV2AIHub     *boGroupMenuV2AIHub
@@ -83,6 +84,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		cfg:                   cfg,
 		fichajeHub:            newBOFichajeHub(),
 		stripeConnectHub:      newBOFichajeHub(),
+		globalHub:             newBOFichajeHub(),
 		tablesHub:             newBOTablesHub(),
 		sheetHub:              newSheetWSHub(),
 		groupMenusV2AIHub:     newBOGroupMenuV2AIHub(),
@@ -816,6 +818,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/tables/ws", s.handleBOPremiumTablesWS)
 		// Realtime column-visibility sync for the reservations table.
 		r.With(s.requireBOSession, reservasGate).Get("/reservas/ws", s.handleBOReservasColumnsWS)
+		// Single global backoffice WebSocket (GlobalSocketProvider). Coordination id: global_socket_v1
+		r.With(s.requireBOSession).Get("/ws", s.handleBOGlobalWS)
 		// Layout template (cross-day). Owns limit_area_template_points and
 		// draw_elements_template for the given floor.
 		r.With(s.requireBOSession, reservasGate).Get("/tables/template/{floorNumber}", s.handleBOPremiumTablesTemplateGet)
