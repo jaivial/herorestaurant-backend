@@ -26,6 +26,9 @@ type botTenantConfig struct {
 	// Rules overrides the default critical rules block of the system prompt.
 	// Empty means use botDefaultRules.
 	Rules string `json:"rules"`
+	// HumanTakeoverMinutes pauses the bot for a conversation after staff write
+	// manually from the phone. nil = default (120), 0 = disabled.
+	HumanTakeoverMinutes *int `json:"human_takeover_minutes"`
 }
 
 func parseBotTenantConfig(raw string) botTenantConfig {
@@ -219,8 +222,8 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 			},
 			botToolDef{
 				Name:        "send_contact",
-				Description: "Envía una tarjeta de contacto del restaurante para que el cliente pueda llamar (escalada a humano).",
-				InputSchema: botSchema(`{"type":"object","properties":{}}`),
+				Description: "Envía un mensaje explicativo seguido de la tarjeta de contacto del restaurante para que el cliente pueda llamar (escalada a humano). La tarjeta nunca se envía sola: indica siempre en 'message' por qué le pasas el contacto.",
+				InputSchema: botSchema(`{"type":"object","properties":{"message":{"type":"string","description":"Texto breve que se envía ANTES de la tarjeta explicando al cliente por qué debe contactar con el restaurante."}},"required":["message"]}`),
 			},
 		)
 	}

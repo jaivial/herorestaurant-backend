@@ -46,12 +46,19 @@ func (g *evolutionGateway) request(ctx context.Context, method, path string, pay
 
 // post issues a message send and treats non-2xx as an error.
 func (g *evolutionGateway) post(ctx context.Context, path string, payload any) error {
-	_, code, err := g.request(ctx, http.MethodPost, path, payload)
+	resp, code, err := g.request(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return err
 	}
 	if code < 200 || code >= 300 {
 		return fmt.Errorf("evolution http %d for %s", code, path)
+	}
+	// Remember the sent message id so its fromMe webhook echo is not taken for
+	// a manual staff message (wa_bot_human_handoff_v1).
+	if key, ok := resp["key"].(map[string]any); ok {
+		if id, ok := key["id"].(string); ok {
+			botRememberOutboundID(id)
+		}
 	}
 	return nil
 }
@@ -423,8 +430,9 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 			FromMe       bool   `json:"fromMe"`
 			ID           string `json:"id"`
 		} `json:"key"`
-		PushName string `json:"pushName"`
-		Message  struct {
+		PushName    string `json:"pushName"`
+		MessageType string `json:"messageType"`
+		Message     struct {
 			Conversation    string `json:"conversation"`
 			ExtendedTextMsg struct {
 				Text string `json:"text"`
@@ -435,8 +443,10 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 					SelectedRowID string `json:"selectedRowId"`
 				} `json:"singleSelectReply"`
 			} `json:"listResponseMessage"`
-			AudioMessage json.RawMessage `json:"audioMessage"`
-			PtvMessage   json.RawMessage `json:"ptvMessage"`
+			AudioMessage    json.RawMessage `json:"audioMessage"`
+			PtvMessage      json.RawMessage `json:"ptvMessage"`
+			ReactionMessage json.RawMessage `json:"reactionMessage"`
+			ProtocolMessage json.RawMessage `json:"protocolMessage"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(env.Data, &d); err != nil {
@@ -477,6 +487,8 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		FromMe:     d.Key.FromMe,
 		SessionRef: strings.TrimSpace(env.Instance),
 		IsAudio:    d.Message.AudioMessage != nil || d.Message.PtvMessage != nil,
+		Ignored:    botIsIgnoredMessageType(d.MessageType) || d.Message.ReactionMessage != nil || d.Message.ProtocolMessage != nil,
+		MediaKind:  botMediaKindLabel(d.MessageType),
 	}, true
 }
 
