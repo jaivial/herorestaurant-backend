@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -532,7 +533,12 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// customer is never left in silence. A server-side notice (same-day policy)
 	// counts as delivered and must not be duplicated.
 	if !botDeliveredReply(result.ToolCalls) && !turn.noticeDelivered {
-		if text := botFinalAssistantText(result.Messages); text != "" {
+		if text := botFinalAssistantText(result.Messages); botPlainTextLeaksInternal(text) {
+			// The model typed a contact card or pasted a staff notification as
+			// text: deliver the real intro + vCard instead (wa_bot_context_hygiene_v1).
+			log.Printf("[bot] checkpoint wa_bot_plain_text_rewritten restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+			_, _ = s.botToolSendContact(ctx, restaurantID, msg, tenant, nil)
+		} else if text != "" {
 			log.Printf("[bot] checkpoint wa_bot_plain_text_fallback restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
 			}
@@ -543,6 +549,14 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	log.Printf("[bot] restaurant=%d sender=%s iterations=%d tools=%s",
 		restaurantID, msg.Sender, result.Iterations, strings.Join(result.ToolCalls, ","))
 	return nil
+}
+
+// botPlainTextLeakRe matches plain-text replies that imitate a contact card or
+// a staff-only booking notification instead of answering the customer.
+var botPlainTextLeakRe = regexp.MustCompile(`(?i)(^|\n)\s*contacto:|🚨|cancelada por:|hora cancelaci`)
+
+func botPlainTextLeaksInternal(text string) bool {
+	return text != "" && botPlainTextLeakRe.MatchString(text)
 }
 
 // botDeliveryTools are the tools that actually push a message to the customer.
