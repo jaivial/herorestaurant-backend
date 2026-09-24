@@ -269,8 +269,12 @@ func (s *Server) handleBOStripeConnectOnboard(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			log.Printf("[stripe_connect_multitenant_v1] restaurant=%d create account failed: %v", rid, err)
 			msg, code := "Stripe no pudo crear la cuenta de cobros", "STRIPE_CONNECT_CREATE_FAILED"
-			if strings.Contains(err.Error(), "signed up for Connect") {
+			switch e := err.Error(); {
+			case strings.Contains(e, "signed up for Connect"):
 				msg, code = "La plataforma todavía no tiene Stripe Connect activado. El administrador debe activarlo en dashboard.stripe.com/connect.", "STRIPE_CONNECT_NOT_ENABLED"
+			case strings.Contains(e, "platform profile"):
+				// Live mode only: Stripe requires the platform questionnaire first.
+				msg, code = "La plataforma aún no ha completado su perfil de Stripe Connect en modo real. El administrador debe responder el cuestionario en dashboard.stripe.com/connect/accounts/overview.", "STRIPE_CONNECT_PLATFORM_PROFILE"
 			}
 			httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": msg, "error_code": code})
 			return
