@@ -564,11 +564,11 @@ func (s *Server) handleStripeConnectWebhook(w http.ResponseWriter, r *http.Reque
 		var restaurantID int
 		if obj.ID != "" && s.db.QueryRowContext(r.Context(), `SELECT restaurant_id FROM restaurant_stripe_connect WHERE account_hash = ?`, s.connectAccountHash(obj.ID)).Scan(&restaurantID) == nil {
 			if row, err := s.loadConnectAccount(r.Context(), restaurantID); err == nil && row != nil && row.AccountID == obj.ID {
-				if _, err := s.refreshConnectAccount(r.Context(), row); err != nil {
+				if acct, err := s.refreshConnectAccount(r.Context(), row); err != nil {
 					log.Printf("[stripe_connect_multitenant_v1] restaurant=%d account.updated refresh: %v", restaurantID, err)
 				} else {
 					log.Printf("[stripe_connect_multitenant_v1] restaurant=%d account status=%s", restaurantID, row.Status)
-					s.broadcastStripeConnectStatus(r.Context(), restaurantID, row)
+					s.broadcastStripeConnectStatus(r.Context(), restaurantID, row, acct)
 				}
 			}
 		}
