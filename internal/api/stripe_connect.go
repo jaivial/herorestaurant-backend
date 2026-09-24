@@ -32,6 +32,7 @@ import (
 
 const (
 	connectStatusPending    = "pending"    // created, onboarding not finished
+	connectStatusVerifying  = "verifying"  // submitted, nothing due, Stripe is verifying
 	connectStatusRestricted = "restricted" // submitted but Stripe needs more info
 	connectStatusActive     = "active"     // charges + payouts enabled
 	connectDemoAccountID    = "acct_demo"
@@ -125,6 +126,10 @@ func connectStatusFor(a *integrations.ConnectAccount) string {
 	switch {
 	case a.ChargesEnabled && a.PayoutsEnabled:
 		return connectStatusActive
+	case a.DetailsSubmitted && len(a.Requirements.CurrentlyDue) == 0 && len(a.Requirements.PastDue) == 0:
+		// Nothing asked of the restaurant: Stripe is still verifying
+		// (requirements.pending_verification). Not "needs more data".
+		return connectStatusVerifying
 	case a.DetailsSubmitted:
 		return connectStatusRestricted
 	default:
@@ -166,13 +171,15 @@ type connectStatusDTO struct {
 	PayoutsEnabled   bool     `json:"payouts_enabled"`
 	DetailsSubmitted bool     `json:"details_submitted"`
 	CurrentlyDue     []string `json:"currently_due"`
+	Verifying        []string `json:"pending_verification"`
+	DisabledReason   string   `json:"disabled_reason"`
 	BankLast4        string   `json:"bank_last4"`
 	PlatformReady    bool     `json:"platform_ready"`
 	FeePercent       float64  `json:"fee_percent"`
 }
 
 func (s *Server) connectDTO(row *connectAccountRow, acct *integrations.ConnectAccount) connectStatusDTO {
-	out := connectStatusDTO{PlatformReady: s.cfg.StripePlatformSecretKey != "", FeePercent: s.cfg.StripePlatformFeePercent, CurrentlyDue: []string{}}
+	out := connectStatusDTO{PlatformReady: s.cfg.StripePlatformSecretKey != "", FeePercent: s.cfg.StripePlatformFeePercent, CurrentlyDue: []string{}, Verifying: []string{}}
 	if row == nil {
 		out.Status = "not_connected"
 		return out
@@ -180,7 +187,9 @@ func (s *Server) connectDTO(row *connectAccountRow, acct *integrations.ConnectAc
 	out.Connected, out.Demo, out.Status = true, row.Demo, row.Status
 	out.ChargesEnabled, out.PayoutsEnabled, out.DetailsSubmitted = row.ChargesEnabled, row.PayoutsEnabled, row.DetailsSubmitted
 	if acct != nil {
-		out.CurrentlyDue = acct.Requirements.CurrentlyDue
+		out.CurrentlyDue = append(append([]string{}, acct.Requirements.PastDue...), acct.Requirements.CurrentlyDue...)
+		out.Verifying = append(out.Verifying, acct.Requirements.PendingVerification...)
+		out.DisabledReason = acct.Requirements.DisabledReason
 		if len(acct.ExternalAccounts.Data) > 0 {
 			out.BankLast4 = acct.ExternalAccounts.Data[0].Last4
 		}
