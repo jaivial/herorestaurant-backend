@@ -264,8 +264,8 @@ func (s *Server) handleBOStripeConnectOnboard(w http.ResponseWriter, r *http.Req
 	if row == nil || row.Demo {
 		branding, _ := s.loadRestaurantBranding(ctx, rid)
 		info, _ := s.loadRestaurantInfo(ctx, rid)
-		acct, err := cli.CreateExpressAccount(ctx, "ES", strings.TrimSpace(info.Email), branding.BrandName, branding.Website,
-			map[string]string{"restaurant_id": fmt.Sprint(rid), "coordination_id": "stripe_connect_multitenant_v1"})
+		acct, err := cli.CreateManagedRiskAccount(ctx, "ES", strings.TrimSpace(info.Email), branding.BrandName, branding.Website,
+			map[string]string{"restaurant_id": fmt.Sprint(rid), "coordination_id": "stripe_connect_managed_risk_v1"})
 		if err != nil {
 			log.Printf("[stripe_connect_multitenant_v1] restaurant=%d create account failed: %v", rid, err)
 			msg, code := "Stripe no pudo crear la cuenta de cobros", "STRIPE_CONNECT_CREATE_FAILED"

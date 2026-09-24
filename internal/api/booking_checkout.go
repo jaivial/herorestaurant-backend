@@ -213,9 +213,9 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 			title += " · " + pb.specialSnapshot.Title
 		}
 		title += " · " + pb.params.ReservationDate
-		sess, err := cli.CreateDestinationCheckout(r.Context(), integrations.DestinationCheckout{
-			AmountCents: amount, FeeCents: fee, Currency: currency, Description: title,
-			Destination: connect.AccountID, SuccessURL: successURL, CancelURL: cancelURL,
+		sess, err := cli.CreateConnectCheckout(r.Context(), integrations.ConnectCheckout{
+			Account: connect.AccountID, AmountCents: amount, FeeCents: fee, Currency: currency, Description: title,
+			SuccessURL: successURL, CancelURL: cancelURL,
 			CustomerEmail: pb.params.ContactEmail, ExpiresAtUnix: expires.Unix(), IdempotencyKey: publicID,
 			Metadata: map[string]string{"checkout_public_id": publicID, "restaurant_id": fmt.Sprint(restaurantID), "coordination_id": "stripe_connect_multitenant_v1"},
 		})
@@ -320,16 +320,21 @@ func (s *Server) completeCheckout(r *http.Request, restaurantID int, publicID st
 		if err != nil {
 			return row, nil, errors.New("Stripe no configurado")
 		}
-		sess, err := cli.RetrieveConnectCheckout(ctx, row.ProviderSessionID)
+		// S5 (direct charge): the session is read ON this restaurant's
+		// connected account — the same one the checkout was created for — so
+		// finding it there proves the money went to THIS restaurant.
+		connect, _ := s.loadConnectAccount(ctx, restaurantID)
+		if connect == nil || connect.Demo || row.DestinationHash == "" || s.connectAccountHash(connect.AccountID) != row.DestinationHash {
+			logStripeFlow("session_account_mismatch", restaurantID, publicID, "")
+			return row, nil, errors.New("El pago todavía no se ha completado")
+		}
+		sess, err := cli.RetrieveConnectCheckout(ctx, connect.AccountID, row.ProviderSessionID)
 		if err != nil {
 			logStripeFlow("session_retrieve_failed", restaurantID, publicID, err.Error())
 			return row, nil, errors.New("No se pudo verificar el pago con Stripe")
 		}
-		// S5: paid, same amount, same checkout, and the money went to THIS
-		// restaurant's connected account.
 		if sess.PaymentStatus != "paid" || sess.AmountTotal != row.AmountCents ||
-			sess.Metadata["checkout_public_id"] != publicID || sess.Metadata["restaurant_id"] != fmt.Sprint(restaurantID) ||
-			row.DestinationHash == "" || s.connectAccountHash(sess.PaymentIntent.TransferData.Destination) != row.DestinationHash {
+			sess.Metadata["checkout_public_id"] != publicID || sess.Metadata["restaurant_id"] != fmt.Sprint(restaurantID) {
 			logStripeFlow("session_mismatch", restaurantID, publicID, sess.PaymentStatus)
 			return row, nil, errors.New("El pago todavía no se ha completado")
 		}
