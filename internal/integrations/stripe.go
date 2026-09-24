@@ -168,8 +168,10 @@ type ConnectAccount struct {
 	PayoutsEnabled   bool   `json:"payouts_enabled"`
 	DetailsSubmitted bool   `json:"details_submitted"`
 	Requirements     struct {
-		CurrentlyDue   []string `json:"currently_due"`
-		DisabledReason string   `json:"disabled_reason"`
+		CurrentlyDue        []string `json:"currently_due"`
+		PastDue             []string `json:"past_due"`
+		PendingVerification []string `json:"pending_verification"`
+		DisabledReason      string   `json:"disabled_reason"`
 	} `json:"requirements"`
 	ExternalAccounts struct {
 		Data []struct {
