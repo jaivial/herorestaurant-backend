@@ -508,9 +508,21 @@ func (s *Server) handleStripeConnectWebhook(w http.ResponseWriter, r *http.Reque
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false})
 		return
 	}
-	cli := integrations.NewStripeClient(s.cfg.StripePlatformSecretKey, s.cfg.StripeConnectWebhookSecret)
-	ev, err := cli.VerifyWebhookSignatureWithTolerance(body, r.Header.Get("Stripe-Signature"), 5*time.Minute)
-	if err != nil {
+	// Destination charges emit checkout.session.completed on the platform while
+	// account.updated comes from connected accounts: Stripe needs two endpoints
+	// (platform + connect=true), each with its own secret. The env holds them
+	// comma-separated; any one verifying is enough.
+	var ev *integrations.Event
+	for _, secret := range strings.Split(s.cfg.StripeConnectWebhookSecret, ",") {
+		if secret = strings.TrimSpace(secret); secret == "" {
+			continue
+		}
+		cli := integrations.NewStripeClient(s.cfg.StripePlatformSecretKey, secret)
+		if ev, err = cli.VerifyWebhookSignatureWithTolerance(body, r.Header.Get("Stripe-Signature"), 5*time.Minute); err == nil {
+			break
+		}
+	}
+	if ev == nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "firma inválida"})
 		return
 	}
