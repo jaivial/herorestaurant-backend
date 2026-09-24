@@ -27,6 +27,7 @@ type Server struct {
 	cfg                   config.Config
 	tenantCache           tenantDomainCache
 	fichajeHub            *boFichajeHub
+	stripeConnectHub      *boFichajeHub // stripe_connect_multitenant_v1.ws
 	tablesHub             *boTablesHub
 	sheetHub              *sheetWSHub
 	groupMenusV2AIHub     *boGroupMenuV2AIHub
@@ -81,6 +82,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		db:                    db,
 		cfg:                   cfg,
 		fichajeHub:            newBOFichajeHub(),
+		stripeConnectHub:      newBOFichajeHub(),
 		tablesHub:             newBOTablesHub(),
 		sheetHub:              newSheetWSHub(),
 		groupMenusV2AIHub:     newBOGroupMenuV2AIHub(),
@@ -728,6 +730,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/dashboard", s.handleBOStripeConnectDashboard)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/disconnect", s.handleBOStripeConnectDisconnect)
 		r.With(s.requireBOSession, rootOnlyGate).Get("/config/stripe-connect/delete-precheck", s.handleBOStripeConnectDeletePrecheck)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/stripe-connect/ws", s.handleBOStripeConnectWS)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
 		// The editor lives on /app/config (Configuracion page), which the

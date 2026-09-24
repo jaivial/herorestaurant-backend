@@ -568,6 +568,7 @@ func (s *Server) handleStripeConnectWebhook(w http.ResponseWriter, r *http.Reque
 					log.Printf("[stripe_connect_multitenant_v1] restaurant=%d account.updated refresh: %v", restaurantID, err)
 				} else {
 					log.Printf("[stripe_connect_multitenant_v1] restaurant=%d account status=%s", restaurantID, row.Status)
+					s.broadcastStripeConnectStatus(r.Context(), restaurantID, row)
 				}
 			}
 		}
