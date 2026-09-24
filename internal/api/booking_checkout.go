@@ -190,7 +190,7 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	baseURL := strings.TrimRight(resolveRestaurantPublicBaseURL(r.Context(), s, restaurantID), "/")
+	baseURL := s.checkoutReturnBaseURL(r, restaurantID)
 	successURL := baseURL + "/reservas/pago-completado?checkout=" + publicID
 	cancelURL := baseURL + "/reservas?date=" + url.QueryEscape(pb.params.ReservationDate) + "&pago=cancelado"
 
@@ -257,7 +257,7 @@ func (s *Server) handleBookingCheckoutDemoPage(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Este pago de demostración ya no es válido", http.StatusGone)
 		return
 	}
-	baseURL := strings.TrimRight(resolveRestaurantPublicBaseURL(r.Context(), s, restaurantID), "/")
+	baseURL := s.checkoutReturnBaseURL(r, restaurantID)
 	success := baseURL + "/reservas/pago-completado?checkout=" + row.PublicID
 	cancel := baseURL + "/reservas?date=" + url.QueryEscape(row.Form.Get("reservation_date")) + "&pago=cancelado"
 	if r.Method == http.MethodPost {
@@ -565,4 +565,19 @@ func maskPhone(e164 string) string {
 		return "***"
 	}
 	return "+" + strings.Repeat("*", len(digits)-3) + digits[len(digits)-3:]
+}
+
+// checkoutReturnBaseURL is where Stripe/demo send the payer back. The site that
+// started the checkout wins when its Origin is explicitly allow-listed
+// (CORS_ALLOW_ORIGINS, never "*"), so dev/preview sites and tenants whose
+// public website is not live yet keep the payer on the same site. Otherwise the
+// restaurant's public website is used.
+// Coordination id: stripe_connect_multitenant_v1.return_url
+func (s *Server) checkoutReturnBaseURL(r *http.Request, restaurantID int) string {
+	origin := strings.TrimRight(strings.TrimSpace(r.Header.Get("Origin")), "/")
+	if origin != "" && s.resolveAllowedOrigin(origin) == origin {
+		log.Printf("stripe_connect_multitenant_v1.return_url restaurant=%d source=origin base=%s", restaurantID, origin)
+		return origin
+	}
+	return strings.TrimRight(resolveRestaurantPublicBaseURL(r.Context(), s, restaurantID), "/")
 }
