@@ -320,11 +320,81 @@ func (s *Server) handleBOStripeConnectDashboard(w http.ResponseWriter, r *http.R
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "dashboard_url": link})
 }
 
+// connectDeleteBlock explains why a real connected account cannot be deleted
+// yet. Code is stable for the UI; amounts in cents.
+type connectDeleteBlock struct {
+	Code           string `json:"code"` // CHECKOUTS_OPEN | BALANCE_NOT_ZERO | BALANCE_UNKNOWN
+	Message        string `json:"message"`
+	OpenCheckouts  int    `json:"open_checkouts,omitempty"`
+	AvailableCents int64  `json:"available_cents,omitempty"`
+	PendingCents   int64  `json:"pending_cents,omitempty"`
+}
+
+// connectDeleteBlockers runs every safety check before deleting a live
+// connected account: guest payments in flight and, on live keys, money not
+// yet paid out (Stripe refuses deletion with a non-zero balance). Used by the
+// precheck endpoint (UI warning) and by the delete itself (enforcement).
+// Coordination id: stripe_connect_multitenant_v1.delete
+func (s *Server) connectDeleteBlockers(ctx context.Context, rid int, row *connectAccountRow) []connectDeleteBlock {
+	var out []connectDeleteBlock
+	if row == nil || row.Demo {
+		return out
+	}
+	var open int
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM booking_checkouts WHERE restaurant_id = ? AND provider = 'stripe' AND status IN (?, ?) AND (expires_at IS NULL OR expires_at > NOW())`,
+		rid, checkoutStatusPending, checkoutStatusPaid).Scan(&open)
+	if open > 0 {
+		out = append(out, connectDeleteBlock{Code: "CHECKOUTS_OPEN", OpenCheckouts: open,
+			Message: "Hay pagos de clientes en curso. Espera unos minutos a que terminen y vuelve a intentarlo."})
+	}
+	cli, err := s.platformStripe()
+	if err != nil {
+		return out
+	}
+	// Sandbox: Stripe deletes test accounts with any balance, so the balance
+	// rule only applies on live keys. STRIPE_CONNECT_ENFORCE_BALANCE=1 turns it
+	// on in sandbox to exercise the live behaviour (QA only).
+	if !cli.Live() && os.Getenv("STRIPE_CONNECT_ENFORCE_BALANCE") != "1" {
+		return out
+	}
+	bal, err := cli.ConnectedBalanceOf(ctx, row.AccountID)
+	if err != nil {
+		log.Printf("[stripe_connect_multitenant_v1.delete] restaurant=%d balance check failed: %v", rid, err)
+		return append(out, connectDeleteBlock{Code: "BALANCE_UNKNOWN", Message: "No se pudo comprobar el saldo en Stripe. Inténtalo más tarde."})
+	}
+	if bal.Total() != 0 {
+		out = append(out, connectDeleteBlock{Code: "BALANCE_NOT_ZERO", AvailableCents: bal.AvailableCents, PendingCents: bal.PendingCents,
+			Message: fmt.Sprintf("La cuenta todavía tiene %s pendientes de transferir a tu banco. Podrás eliminarla cuando el saldo sea 0.", formatMoney(float64(bal.Total())/100, "eur"))})
+	}
+	return out
+}
+
+// handleBOStripeConnectDeletePrecheck tells the UI, before asking for the
+// confirmation, whether the account can be deleted right now.
+func (s *Server) handleBOStripeConnectDeletePrecheck(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
+		return
+	}
+	row, err := s.loadConnectAccount(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	blockers := s.connectDeleteBlockers(r.Context(), a.ActiveRestaurantID, row)
+	if blockers == nil {
+		blockers = []connectDeleteBlock{}
+	}
+	log.Printf("[stripe_connect_multitenant_v1.delete] restaurant=%d precheck blockers=%d", a.ActiveRestaurantID, len(blockers))
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "can_delete": len(blockers) == 0, "blockers": blockers,
+		"payout_schedule": "daily"})
+}
+
 // handleBOStripeConnectDisconnect removes the restaurant's payment account so
-// onboarding can start again. Demo: just the local row. Live: the connected
-// account is deleted in Stripe first, refusing while money or payments are in
-// flight (open checkouts, non-zero balance on live keys) so nothing is orphaned.
-// Body {"confirm": "ELIMINAR"} is required for real accounts.
+// onboarding can start again. Demo: just the local row. Live: every blocker of
+// connectDeleteBlockers must be clear, then the connected account is deleted
+// in Stripe. Body {"confirm": "ELIMINAR"} is required for real accounts.
 // Coordination id: stripe_connect_multitenant_v1.delete
 func (s *Server) handleBOStripeConnectDisconnect(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
@@ -347,29 +417,14 @@ func (s *Server) handleBOStripeConnectDisconnect(w http.ResponseWriter, r *http.
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Escribe ELIMINAR para confirmar", "error_code": "CONFIRM_REQUIRED"})
 			return
 		}
-		var open int
-		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM booking_checkouts WHERE restaurant_id = ? AND provider = 'stripe' AND status IN (?, ?) AND (expires_at IS NULL OR expires_at > NOW())`,
-			rid, checkoutStatusPending, checkoutStatusPaid).Scan(&open)
-		if open > 0 {
-			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Hay pagos de clientes en curso. Espera unos minutos a que terminen y vuelve a intentarlo.", "error_code": "CHECKOUTS_OPEN"})
+		if blockers := s.connectDeleteBlockers(ctx, rid, row); len(blockers) > 0 {
+			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": blockers[0].Message, "error_code": blockers[0].Code, "blockers": blockers})
 			return
 		}
 		cli, err := s.platformStripe()
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": err.Error()})
 			return
-		}
-		if cli.Live() {
-			bal, err := cli.ConnectedBalanceCents(ctx, row.AccountID)
-			if err != nil {
-				log.Printf("[stripe_connect_multitenant_v1.delete] restaurant=%d balance check failed: %v", rid, err)
-				httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": "No se pudo comprobar el saldo en Stripe. Inténtalo más tarde."})
-				return
-			}
-			if bal != 0 {
-				httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": fmt.Sprintf("La cuenta todavía tiene %s pendientes de transferir a tu banco. Podrás eliminarla cuando el saldo sea 0.", formatMoney(float64(bal)/100, "eur")), "error_code": "BALANCE_NOT_ZERO"})
-				return
-			}
 		}
 		if err := cli.DeleteAccount(ctx, row.AccountID); err != nil && !strings.Contains(err.Error(), "resource_missing") {
 			log.Printf("[stripe_connect_multitenant_v1.delete] restaurant=%d stripe delete failed: %v", rid, err)
