@@ -780,6 +780,7 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 		"date", date,
 		"menus", len(cleanMenus),
 	)
+	s.broadcastBOSpecialDateChange(a.ActiveRestaurantID, "special_date_changed", date, isActive, title)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
