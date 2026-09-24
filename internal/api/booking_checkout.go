@@ -173,7 +173,12 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 	}
 	demo := connect.Demo
 	const currency = "eur"
-	fee := int64(math.Round(float64(amount) * s.cfg.StripePlatformFeePercent / 100))
+	// stripe_connect_fees_v1: Stripe base (billed to the platform) + platform
+	// commission, per restaurant override or global. Demo charges nothing.
+	var fee int64
+	if !demo {
+		fee = s.connectFeeFor(r.Context(), restaurantID).applicationFeeCents(amount)
+	}
 
 	publicID := newCheckoutPublicID()
 	formJSON, _ := json.Marshal(r.Form)

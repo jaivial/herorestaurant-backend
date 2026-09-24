@@ -164,22 +164,24 @@ func (s *Server) connectReady(ctx context.Context, restaurantID int) (*connectAc
 }
 
 type connectStatusDTO struct {
-	Connected        bool     `json:"connected"`
-	Demo             bool     `json:"demo"`
-	Status           string   `json:"status"`
-	ChargesEnabled   bool     `json:"charges_enabled"`
-	PayoutsEnabled   bool     `json:"payouts_enabled"`
-	DetailsSubmitted bool     `json:"details_submitted"`
-	CurrentlyDue     []string `json:"currently_due"`
-	Verifying        []string `json:"pending_verification"`
-	DisabledReason   string   `json:"disabled_reason"`
-	BankLast4        string   `json:"bank_last4"`
-	PlatformReady    bool     `json:"platform_ready"`
-	FeePercent       float64  `json:"fee_percent"`
+	Connected        bool       `json:"connected"`
+	Demo             bool       `json:"demo"`
+	Status           string     `json:"status"`
+	ChargesEnabled   bool       `json:"charges_enabled"`
+	PayoutsEnabled   bool       `json:"payouts_enabled"`
+	DetailsSubmitted bool       `json:"details_submitted"`
+	CurrentlyDue     []string   `json:"currently_due"`
+	Verifying        []string   `json:"pending_verification"`
+	DisabledReason   string     `json:"disabled_reason"`
+	BankLast4        string     `json:"bank_last4"`
+	PlatformReady    bool       `json:"platform_ready"`
+	FeePercent       float64    `json:"fee_percent"`
+	Fee              connectFee `json:"fee"`
 }
 
-func (s *Server) connectDTO(row *connectAccountRow, acct *integrations.ConnectAccount) connectStatusDTO {
-	out := connectStatusDTO{PlatformReady: s.cfg.StripePlatformSecretKey != "", FeePercent: s.cfg.StripePlatformFeePercent, CurrentlyDue: []string{}, Verifying: []string{}}
+func (s *Server) connectDTO(ctx context.Context, restaurantID int, row *connectAccountRow, acct *integrations.ConnectAccount) connectStatusDTO {
+	fee := s.connectFeeFor(ctx, restaurantID)
+	out := connectStatusDTO{PlatformReady: s.cfg.StripePlatformSecretKey != "", FeePercent: fee.PlatformFeePercent, Fee: fee, CurrentlyDue: []string{}, Verifying: []string{}}
 	if row == nil {
 		out.Status = "not_connected"
 		return out
@@ -216,7 +218,7 @@ func (s *Server) handleBOStripeConnectStatus(w http.ResponseWriter, r *http.Requ
 			log.Printf("[stripe_connect_multitenant_v1] restaurant=%d refresh failed: %v", a.ActiveRestaurantID, err)
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "connect": s.connectDTO(row, acct)})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "connect": s.connectDTO(r.Context(), a.ActiveRestaurantID, row, acct)})
 }
 
 // handleBOStripeConnectOnboard creates the tenant's connected account (once)
@@ -249,7 +251,7 @@ func (s *Server) handleBOStripeConnectOnboard(w http.ResponseWriter, r *http.Req
 			return
 		}
 		logCheckpoint(r, "stripe_connect_demo_enabled", "restaurant", fmt.Sprint(rid))
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "connect": s.connectDTO(&demo, nil)})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "connect": s.connectDTO(ctx, rid, &demo, nil)})
 		return
 	}
 
