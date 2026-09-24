@@ -929,6 +929,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/domains", s.handlePlatformDomainsList)
 		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/stripe/payments", s.handlePlatformStripePaymentsList)
 		r.With(s.requireBOSession, s.requireBOSuperadmin).Post("/platform/stripe/refund", s.handlePlatformStripeRefund)
+		// Coordination id: stripe_connect_fees_v1 - connected accounts + commissions (root).
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/stripe-connect", s.handlePlatformStripeConnectList)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Put("/platform/stripe-connect/settings", s.handlePlatformStripeConnectSettings)
+		r.With(s.requireBOSession, s.requireBOSuperadmin).Put("/platform/stripe-connect/restaurants/{id}/fee", s.handlePlatformStripeConnectRestaurantFee)
 	})
 
 	r.Get("/public/website-builder/render/{kind}", s.handleWebsiteBuilderRenderFragment)
