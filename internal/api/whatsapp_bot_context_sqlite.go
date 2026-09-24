@@ -89,7 +89,7 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT role, content FROM conversation_messages
+	rows, err := s.db.QueryContext(ctx, `SELECT role, content, source FROM conversation_messages
         WHERE restaurant_id=? AND user_phone=? AND include_in_context=1 ORDER BY id ASC`, restaurantID, digitsOnly(userPhone))
 	if err != nil {
 		return nil, err
@@ -97,9 +97,15 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 	defer rows.Close()
 	raw := make([]botMessage, 0, 32)
 	for rows.Next() {
-		var role, content string
-		if err := rows.Scan(&role, &content); err != nil {
+		var role, content, source string
+		if err := rows.Scan(&role, &content, &source); err != nil {
 			return nil, err
+		}
+		// Staff interventions must stay distinguishable from the bot's own
+		// replies, otherwise they merge into the assistant turn and the model
+		// never defers to them (wa_bot_human_handoff_v1).
+		if source == "manual_whatsapp" {
+			content = botStaffMessagePrefix + content
 		}
 		raw = append(raw, botMessage{Role: role, Content: []botBlock{{Type: "text", Text: content}}})
 	}
@@ -108,6 +114,9 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 	}
 	return normalizeBotConversationHistory(raw), nil
 }
+
+// botStaffMessagePrefix labels messages typed manually by restaurant staff.
+const botStaffMessagePrefix = "[Mensaje escrito por el personal del restaurante]: "
 
 func normalizeBotConversationHistory(raw []botMessage) []botMessage {
 	out := make([]botMessage, 0, len(raw)+1)
