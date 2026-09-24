@@ -227,6 +227,50 @@ func (s *StripeClient) CreateAccountLink(ctx context.Context, accountID, refresh
 	return out.URL, err
 }
 
+// DeleteAccount removes a connected account. Stripe allows it for test
+// accounts at any time and for live Express accounts once balances are zero.
+func (s *StripeClient) DeleteAccount(ctx context.Context, accountID string) error {
+	return s.do(ctx, http.MethodDelete, "/accounts/"+url.PathEscape(accountID), nil, nil)
+}
+
+// ConnectedBalanceCents sums available + pending balance of a connected account.
+func (s *StripeClient) ConnectedBalanceCents(ctx context.Context, accountID string) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.stripe.com/v1/balance", nil)
+	if err != nil {
+		return 0, err
+	}
+	req.SetBasicAuth(s.SecretKey, "")
+	req.Header.Set("Stripe-Account", accountID)
+	resp, err := s.HTTP.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 400 {
+		return 0, fmt.Errorf("stripe GET /balance: %d %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	var out struct {
+		Available []struct {
+			Amount int64 `json:"amount"`
+		} `json:"available"`
+		Pending []struct {
+			Amount int64 `json:"amount"`
+		} `json:"pending"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, x := range append(out.Available, out.Pending...) {
+		total += x.Amount
+	}
+	return total, nil
+}
+
+// Live reports whether the key operates on live money.
+func (s *StripeClient) Live() bool { return strings.Contains(s.SecretKey, "_live_") }
+
 // CreateLoginLink returns a one-time link to the tenant's Express dashboard.
 func (s *StripeClient) CreateLoginLink(ctx context.Context, accountID string) (string, error) {
 	var out struct {

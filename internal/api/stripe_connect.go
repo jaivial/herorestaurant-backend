@@ -320,25 +320,73 @@ func (s *Server) handleBOStripeConnectDashboard(w http.ResponseWriter, r *http.R
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "dashboard_url": link})
 }
 
-// handleBOStripeConnectDisconnect removes a demo link (live accounts are kept
-// so pending payouts are never orphaned; they are closed from Stripe).
+// handleBOStripeConnectDisconnect removes the restaurant's payment account so
+// onboarding can start again. Demo: just the local row. Live: the connected
+// account is deleted in Stripe first, refusing while money or payments are in
+// flight (open checkouts, non-zero balance on live keys) so nothing is orphaned.
+// Body {"confirm": "ELIMINAR"} is required for real accounts.
+// Coordination id: stripe_connect_multitenant_v1.delete
 func (s *Server) handleBOStripeConnectDisconnect(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
 		return
 	}
-	row, err := s.loadConnectAccount(r.Context(), a.ActiveRestaurantID)
+	ctx, rid := r.Context(), a.ActiveRestaurantID
+	row, err := s.loadConnectAccount(ctx, rid)
 	if err != nil || row == nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 		return
 	}
 	if !row.Demo {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Una cuenta real solo se puede cerrar desde Stripe"})
+		var req struct {
+			Confirm string `json:"confirm"`
+		}
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req)
+		if strings.TrimSpace(strings.ToUpper(req.Confirm)) != "ELIMINAR" {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Escribe ELIMINAR para confirmar", "error_code": "CONFIRM_REQUIRED"})
+			return
+		}
+		var open int
+		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM booking_checkouts WHERE restaurant_id = ? AND provider = 'stripe' AND status IN (?, ?) AND (expires_at IS NULL OR expires_at > NOW())`,
+			rid, checkoutStatusPending, checkoutStatusPaid).Scan(&open)
+		if open > 0 {
+			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Hay pagos de clientes en curso. Espera unos minutos a que terminen y vuelve a intentarlo.", "error_code": "CHECKOUTS_OPEN"})
+			return
+		}
+		cli, err := s.platformStripe()
+		if err != nil {
+			httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": err.Error()})
+			return
+		}
+		if cli.Live() {
+			bal, err := cli.ConnectedBalanceCents(ctx, row.AccountID)
+			if err != nil {
+				log.Printf("[stripe_connect_multitenant_v1.delete] restaurant=%d balance check failed: %v", rid, err)
+				httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": "No se pudo comprobar el saldo en Stripe. Inténtalo más tarde."})
+				return
+			}
+			if bal != 0 {
+				httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": fmt.Sprintf("La cuenta todavía tiene %s pendientes de transferir a tu banco. Podrás eliminarla cuando el saldo sea 0.", formatMoney(float64(bal)/100, "eur")), "error_code": "BALANCE_NOT_ZERO"})
+				return
+			}
+		}
+		if err := cli.DeleteAccount(ctx, row.AccountID); err != nil && !strings.Contains(err.Error(), "resource_missing") {
+			log.Printf("[stripe_connect_multitenant_v1.delete] restaurant=%d stripe delete failed: %v", rid, err)
+			msg := "Stripe no permitió eliminar la cuenta. Inténtalo más tarde."
+			if strings.Contains(err.Error(), "balance") {
+				msg = "Stripe no permite eliminar la cuenta mientras tenga saldo. Espera a que se transfiera a tu banco."
+			}
+			httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": msg})
+			return
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM restaurant_stripe_connect WHERE restaurant_id = ?`, rid); err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "No se pudo eliminar la cuenta de cobros"})
 		return
 	}
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM restaurant_stripe_connect WHERE restaurant_id = ?`, a.ActiveRestaurantID)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+	log.Printf("[stripe_connect_multitenant_v1.delete] restaurant=%d demo=%v deleted by user=%d", rid, row.Demo, a.User.ID)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "connect": s.connectDTO(ctx, rid, nil, nil)})
 }
 
 // backofficePublicBaseURL comes from env only: the request Host is the
