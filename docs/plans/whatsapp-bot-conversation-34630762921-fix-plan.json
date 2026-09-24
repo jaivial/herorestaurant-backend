@@ -1,0 +1,169 @@
+{
+  "id": "wa_bot_human_handoff_v1",
+  "title": "WhatsApp bot: contact card without text, replies to reactions, ignores manual staff messages, invents recipe/allergen info",
+  "branch": "dev",
+  "created": "2026-09-24",
+  "incident": {
+    "environment": "prod (newvillacarmen-backend-prod + evolution-api-baileys-qr-fix)",
+    "restaurant_id": 1,
+    "customer_phone": "34630762921",
+    "customer_name": "Cristina",
+    "booking_id": 3058,
+    "sources": [
+      "SQLite /var/lib/herorestaurant/whatsapp-bot-context.sqlite (table conversation_messages, rows 243-253)",
+      "docker logs newvillacarmen-backend-prod ([bot] lines 19:42:03, 20:08:16, 20:31:31 UTC)",
+      "docker logs evolution-api-baileys-qr-fix (messages.upsert payloads 20:08-20:32 UTC)"
+    ],
+    "timeline_local_time": [
+      {"id": 243, "t": "21:41:28", "source": "booking_confirmation", "event": "Automatic booking confirmation sent"},
+      {"id": 244, "t": "21:41:57", "source": "inbound", "event": "Customer: 'Gracias'"},
+      {"id": 245, "t": "21:42:00", "source": "agent", "event": "Bot replies via send_message (OK)"},
+      {"id": 246, "t": "21:42:11", "source": "booking_reconfirmation", "event": "Reminder sent"},
+      {"id": 247, "t": "22:08:11", "source": "inbound", "event": "Customer asks whether the 'arroz seco de secreto con ajetes' is made with beef stock (cow-protein intolerance)"},
+      {"id": 248, "t": "22:08:15", "source": "agent/send_contact", "event": "Bot calls get_rice_menu then send_contact; ONLY a vCard is delivered, with no text at all"},
+      {"id": 249, "t": "22:26:20", "source": "manual_whatsapp", "event": "Staff types manually from the restaurant phone: 'Hola cualquier consulta pregunte a gerencia del restaurante a este número' (fromMe=true, stored correctly)"},
+      {"id": 250, "t": "22:31:01", "source": "unsupported_content", "event": "Customer reacts 👍 (reactionMessage). Bot replies 'Ahora mismo solo puedo gestionar mensajes de texto...'"},
+      {"id": 251, "t": "22:31:24", "source": "inbound", "event": "Customer re-sends the same question (new message id 3AD17D809386E88D6118)"},
+      {"id": 252, "t": "22:31:31", "source": "agent_plain_text", "event": "Bot answers 'SÍ se elabora con caldo de carne (generalmente de ternera...)' and recommends alternatives. INVENTED: get_rice_menu only returns names, with no ingredients/stock/allergens"},
+      {"id": 253, "t": "22:31:50", "source": "manual_whatsapp", "event": "Staff types again manually (stored). Staff also forwards a contact card manually (contactMessage fromMe=true, 22:31:57), which is NOT stored because it has no text"}
+    ]
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "symptom": "First reply was a contact card with no text",
+      "root_cause": [
+        "The LLM had no grounded answer for an ingredient/allergen question, so it followed rule 8 (human escalation) and called send_contact only; it never called send_message.",
+        "botProcessMessage (internal/api/whatsapp_bot_webhook.go) treats send_contact as a 'delivery tool' (botDeliveryTools), so botDeliveredReply() returns true and the final assistant text or fallback is never sent. A bare vCard counts as a complete reply.",
+        "The send_contact tool (whatsapp_bot_tools.go) has no 'message' parameter, and nothing makes the model explain the card. Only the same-day and extras guards pair a card with a notice text."
+      ],
+      "evidence": "log: 'iterations=3 tools=get_rice_menu,send_contact'; SQLite row 248 is the only assistant output for row 247"
+    },
+    {
+      "id": "F2",
+      "symptom": "Bot answered after the customer reacted to a message",
+      "root_cause": [
+        "Evolution delivers reactions as messages.upsert with messageType 'reactionMessage'. evolutionGateway.ParseInboundMessage (whatsapp_gateway_evolution.go) does not inspect messageType. It returns ok=true with Text=''.",
+        "processInboundBotMessage then treats any empty-text message as 'unsupported media' and sends the fallback 'Ahora mismo solo puedo gestionar mensajes de texto...' (source unsupported_content).",
+        "The same path would also fire for protocolMessage (deletes/edits), stickers, pollUpdate, receipts etc. The UAZAPI parser has the same weakness."
+      ],
+      "evidence": "Evolution log: key.id 3AA270D59B90310EB6FD messageType 'reactionMessage' text '👍' at 1790281861 (22:31:01) -> SQLite row 250 at 22:31:01"
+    },
+    {
+      "id": "F3",
+      "symptom": "Bot kept answering after staff wrote manually",
+      "root_cause": [
+        "Manual messages ARE registered in the session DB: rows 249 and 253 have role=assistant, source=manual_whatsapp (handleBotWebhookEvolution FromMe branch). botTouchSession also updates MySQL whatsapp_bot_sessions.last_message_at.",
+        "But nothing uses that intervention as a signal. There is no human-takeover/pause state, so the next inbound customer message (row 251) runs the full agent loop again.",
+        "In the history, manual messages are merged into the neighbouring assistant turn (normalizeBotConversationHistory concatenates same-role messages), and the prompt has no rule about staff interventions. The model sees them as its own previous text and does not defer to staff.",
+        "Manual non-text messages (the vCard staff sent at 22:31:57, images, audio) have Text='' and are dropped silently, so neither the history nor a pause trigger records them."
+      ],
+      "evidence": "SQLite rows 249/253 source=manual_whatsapp; the bot still answered row 251 at 22:31:31; Evolution contactMessage fromMe=true id 2A7AD4DC7BB99A82103A not in SQLite"
+    },
+    {
+      "id": "F4",
+      "symptom": "Bot answered confidently about the recipe (beef stock) with no data",
+      "root_cause": [
+        "get_rice_menu (whatsapp_bot_rice_menu.go) returns only rice names, kind, supplement and advance_order. It has no ingredients, stock base or allergens. The LLM invented 'sí se elabora con caldo de carne (generalmente de ternera)' and 'Meloso de secreto ... sin ternera'.",
+        "The prompt forbids inventing availability, hours, prices and rices (rules 4 and 12), but says nothing about ingredients, recipes, allergens or intolerances. This is a food-safety risk.",
+        "The final plain-text answer was delivered via the agent_plain_text path even though rule 1 says to use send_message, so no guard ever reviews the content."
+      ],
+      "evidence": "log 'iterations=2 tools=get_rice_menu' -> SQLite row 252 source=agent_plain_text"
+    }
+  ],
+  "plan": [
+    {
+      "step": 1,
+      "fixes": ["F2"],
+      "title": "Ignore reactions and non-conversational events at parse time",
+      "files": ["internal/api/whatsapp_gateway_evolution.go", "internal/api/whatsapp_bot_webhook.go"],
+      "changes": [
+        "Add 'messageType' (top-level field of data) plus ReactionMessage/ProtocolMessage/StickerMessage/PollUpdateMessage/EditedMessage raw fields to the Evolution inbound struct.",
+        "Add a field IsIgnorable bool to waInbound / botWebhookMessage. Set it to true for messageType in {reactionMessage, protocolMessage, pollUpdateMessage, editedMessage, senderKeyDistributionMessage, messageContextInfo-only} or when the reactionMessage raw is present.",
+        "In handleBotWebhookEvolution and handleBotWebhook, return 200 {processed:false, ignored:'reaction'} BEFORE processInboundBotMessage (no fallback, no daily-cap consumption).",
+        "Apply the same check in parseBotWebhookMessage for UAZAPI (messageType contains 'reaction' or 'protocol').",
+        "Log checkpoint: '[bot] restaurant=%d sender=%s ignored messageType=%s' (coordination id wa_bot_ignore_non_conversational_v1)."
+      ],
+      "acceptance": "A reactionMessage payload never produces an outbound message or a conversation_messages row"
+    },
+    {
+      "step": 2,
+      "fixes": ["F3"],
+      "title": "Human takeover: pause the bot for a conversation after a manual staff message",
+      "files": ["internal/db/migrations/NNN_whatsapp_bot_human_takeover.sql", "internal/api/whatsapp_bot_webhook_evolution.go", "internal/api/whatsapp_bot_webhook.go", "internal/api/whatsapp_bot_history.go", "internal/api/whatsapp_bot_config (tenant config)"],
+      "changes": [
+        "Migration: ALTER TABLE whatsapp_bot_sessions ADD COLUMN bot_paused_until DATETIME(3) NULL.",
+        "In the FromMe branch (Evolution and UAZAPI): for ANY manual message (text or not) that was not sent by the backend itself, set bot_paused_until = NOW() + tenant.HumanTakeoverMinutes (default 120, configurable in whatsapp_bot_config.config_json 'human_takeover_minutes'; 0 disables).",
+        "Tell backend-originated sends apart from phone-typed ones: record outbound message ids returned by gw.SendText/SendContact/SendMenu (Evolution returns key.id) in an in-memory TTL set (reuse the botSeenBefore pattern). A FromMe webhook whose id is in the set is our own echo and must NOT pause the bot. Only unknown FromMe ids count as manual staff messages.",
+        "Record manual non-text messages too, as descriptive placeholders (e.g. '[Personal envió una tarjeta de contacto: Alqueria Villa Carmen 34638857294]', '[Personal envió una imagen]') so the history is complete.",
+        "In processInboundBotMessage, after dedup: if bot_paused_until > NOW(), record the inbound message (source 'inbound_paused'), touch the session and return {processed:true, paused:true} without running the agent or sending any fallback (unsupported_content included).",
+        "Backoffice follow-up (optional, same PR if trivial): expose pause state plus a 'Reactivar bot' action on the conversation view (data-testid='wa-bot-conversation-resume-button')."
+      ],
+      "acceptance": "After staff types from the phone, the customer's next messages within the takeover window get no bot reply, but they are stored in SQLite"
+    },
+    {
+      "step": 3,
+      "fixes": ["F3"],
+      "title": "Make staff interventions visible and authoritative in the LLM context",
+      "files": ["internal/api/whatsapp_bot_context_sqlite.go", "internal/api/whatsapp_bot_prompt.go"],
+      "changes": [
+        "History(): also select source. When source='manual_whatsapp', prefix the text with '[Mensaje escrito por el personal del restaurante]: ' so it is not merged anonymously into the bot's own turn.",
+        "Add a default rule: 'Si en el historial hay mensajes del personal del restaurante, respétalos: no los contradigas ni repitas información que el personal ya ha dado; si el personal ha indicado que el cliente contacte con gerencia, no respondas por tu cuenta a esa consulta.'"
+      ],
+      "acceptance": "Prompt/history given to the model clearly labels staff messages"
+    },
+    {
+      "step": 4,
+      "fixes": ["F1"],
+      "title": "A contact card must never be sent alone",
+      "files": ["internal/api/whatsapp_bot_tools.go", "internal/api/whatsapp_bot_executor.go", "internal/api/whatsapp_bot_webhook.go", "internal/api/whatsapp_bot_prompt.go"],
+      "changes": [
+        "Add a required 'message' string to the send_contact tool schema (the explanation shown to the customer). The executor sends that text via sendWhatsAppTextTracked BEFORE the vCard (source 'agent_contact_intro').",
+        "Server-side safety net: if the model omits or empties 'message', send a default intro reusing the extras/same-day notice style: 'Soy un asistente de reservas con Inteligencia Artificial y no dispongo de esa información. Para esta consulta, contacte con el restaurante 👇' plus botFormatPhoneDisplay(phone).",
+        "Remove 'send_contact' from botDeliveryTools, or keep it but still deliver botFinalAssistantText when a turn delivered only a contact card and the final text is non-empty and was not already sent.",
+        "Update rule 8: whenever you send the contact card, explain briefly why in the same reply."
+      ],
+      "acceptance": "Every send_contact delivery in conversation_messages is preceded by an assistant text row in the same turn"
+    },
+    {
+      "step": 5,
+      "fixes": ["F4"],
+      "title": "Stop inventing ingredients/recipes/allergens: deterministic handoff",
+      "files": ["internal/api/whatsapp_bot_prompt.go", "internal/api/whatsapp_bot_extras_guard.go (reuse pattern) -> new internal/api/whatsapp_bot_allergen_guard.go"],
+      "changes": [
+        "Prompt rule 13 (default rules): 'INGREDIENTES, ELABORACIÓN, CALDOS, ALÉRGENOS E INTOLERANCIAS: no dispones de esta información salvo que una herramienta la devuelva literalmente. NUNCA supongas ni digas \"generalmente\"/\"normalmente\". Indica que eres un asistente de IA y que por seguridad alimentaria debe confirmarlo el restaurante, y envía send_contact con esa explicación. Ofrece anotar la intolerancia en los comentarios de la reserva.'",
+        "Deterministic pre-LLM guard (same shape as botExtrasIntentGuard): normalizeBotIntentText + regex for {alerg*, intoleran*, celiac*, gluten, lactosa, proteina de (la )?(vaca|leche), caldo, ingrediente*, lleva*, elabora*, vegano, vegetariano}. On match, send a fixed notice text and the management contact card (botSendContactCardWith with ManagementPhone), record both, return true. Coordination id: wa_bot_allergen_handoff_v1.",
+        "Keep 'add allergy note to booking' possible afterwards: the guard notice ends with '¿Quiere que anote la intolerancia en su reserva?', and the next customer turn goes to the LLM as usual.",
+        "Future (out of scope): expose dish allergens from comida/allergens_json through a get_dish_allergens tool. Only then may the bot answer allergen questions, and only from tool data."
+      ],
+      "acceptance": "Message 'El arroz seco de secreto con ajetes lo hacéis con caldo de ternera? ... intolerancia a la proteína de la vaca' produces notice text + contact card and no ingredient claims"
+    },
+    {
+      "step": 6,
+      "fixes": ["F1", "F4"],
+      "title": "Enforce rule 1 (send_message) consistently",
+      "files": ["internal/api/whatsapp_bot_webhook.go"],
+      "changes": [
+        "Keep the agent_plain_text safety net but log a checkpoint '[bot] plain_text_fallback restaurant=%d sender=%s' so prompt drift is observable.",
+        "When a turn ends with plain text AND already sent a contact card, send the text first (see step 4). Never drop it."
+      ]
+    },
+    {
+      "step": 7,
+      "title": "Verification on dev (manual, per CLAUDE.md: no automated tests)",
+      "checks": [
+        "Deploy to newvillacarmen-backend-dev and send a 👍 reaction to a bot message: no reply, no SQLite row.",
+        "Type a message manually from the restaurant phone, then write as the customer: no bot reply until bot_paused_until expires; inbound rows are stored with source inbound_paused.",
+        "Send a bot-originated message: its FromMe echo must NOT pause the bot.",
+        "Ask an allergen/ingredient question: notice text + contact card, no invented recipe.",
+        "Ask to talk to a person: intro text + contact card (never a bare card).",
+        "Inspect SQLite: docker cp newvillacarmen-backend-dev:/var/lib/herorestaurant/. /tmp/devbotdb && sqlite3 ... \"select id,role,source,content from conversation_messages where user_phone='<test>' order by id\""
+      ]
+    }
+  ],
+  "rollout": {
+    "order": ["step 1 (reactions, lowest risk)", "step 5 (allergen guard, safety)", "step 4 (contact intro)", "steps 2-3 (human takeover, needs migration)", "step 6"],
+    "flags": "human_takeover_minutes in whatsapp_bot_config.config_json (default 120, 0 = disabled)",
+    "merge": "dev -> PR -> main -> prod deploy"
+  }
+}
