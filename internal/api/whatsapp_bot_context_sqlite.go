@@ -89,7 +89,7 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT role, content, source FROM conversation_messages
+	rows, err := s.db.QueryContext(ctx, `SELECT role, content, source, tool_name FROM conversation_messages
         WHERE restaurant_id=? AND user_phone=? AND include_in_context=1 ORDER BY id ASC`, restaurantID, digitsOnly(userPhone))
 	if err != nil {
 		return nil, err
@@ -97,15 +97,23 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 	defer rows.Close()
 	raw := make([]botMessage, 0, 32)
 	for rows.Next() {
-		var role, content, source string
-		if err := rows.Scan(&role, &content, &source); err != nil {
+		var role, content, source, toolName string
+		if err := rows.Scan(&role, &content, &source, &toolName); err != nil {
 			return nil, err
 		}
 		// Staff interventions must stay distinguishable from the bot's own
 		// replies, otherwise they merge into the assistant turn and the model
 		// never defers to them (wa_bot_human_handoff_v1).
-		if source == "manual_whatsapp" {
+		if botContextExcludedSources[source] {
+			continue
+		}
+		switch {
+		case source == "manual_whatsapp":
 			content = botStaffMessagePrefix + content
+		case toolName == "send_contact":
+			// Rendered as an event, not as text: a literal "Contacto: ..." line
+			// taught the model to type the card instead of calling send_contact.
+			content = "[Tarjeta de contacto enviada al cliente: " + strings.TrimSpace(strings.TrimPrefix(content, "Contacto:")) + "]"
 		}
 		raw = append(raw, botMessage{Role: role, Content: []botBlock{{Type: "text", Text: content}}})
 	}
@@ -113,6 +121,17 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 		return nil, err
 	}
 	return normalizeBotConversationHistory(raw), nil
+}
+
+// botContextExcludedSources are messages delivered to this phone because it
+// belongs to restaurant staff (booking alerts, shift reminders, attendance,
+// member messages). They are not part of a customer conversation and, when fed
+// to the model, get copied into customer replies (wa_bot_context_hygiene_v1).
+var botContextExcludedSources = map[string]bool{
+	"restaurant_notification":   true,
+	"pre_shift_reminder":        true,
+	"attendance":                true,
+	"backoffice_member_message": true,
 }
 
 // botStaffMessagePrefix labels messages typed manually by restaurant staff.

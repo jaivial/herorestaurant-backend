@@ -273,7 +273,7 @@ func (s *Server) botToolSendContact(ctx context.Context, restaurantID int, msg b
 
 // botContactIntroText is the default explanation sent before a contact card.
 func botContactIntroText(phone string) string {
-	msg := "Soy un asistente de reservas con Inteligencia Artificial y no dispongo de esa información.\nPara esta consulta, contacte directamente con el restaurante"
+	msg := "Soy un asistente de reservas con Inteligencia Artificial.\nPara que le atienda una persona, contacte directamente con el restaurante"
 	if p := strings.TrimSpace(phone); p != "" {
 		msg += ": 📞 " + botFormatPhoneDisplay(p)
 	}
