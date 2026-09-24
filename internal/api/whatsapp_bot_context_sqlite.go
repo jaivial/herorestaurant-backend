@@ -110,6 +110,10 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 		switch {
 		case source == "manual_whatsapp":
 			content = botStaffMessagePrefix + content
+		case botContextTemplateSources[source] != "":
+			// Fixed server-side texts are shown as events: verbatim they get
+			// parroted as the answer to unrelated questions.
+			content = botContextTemplateSources[source]
 		case toolName == "send_contact":
 			// Rendered as an event, not as text: a literal "Contacto: ..." line
 			// taught the model to type the card instead of calling send_contact.
@@ -132,6 +136,17 @@ var botContextExcludedSources = map[string]bool{
 	"pre_shift_reminder":        true,
 	"attendance":                true,
 	"backoffice_member_message": true,
+}
+
+// botContextTemplateSources maps fixed server-side messages to the marker the
+// model sees instead of their literal text (wa_bot_context_hygiene_v1).
+var botContextTemplateSources = map[string]string{
+	"agent_contact_intro": "[Aviso automático enviado: se indicó al cliente que contacte con el restaurante]",
+	"allergen_notice":     "[Aviso automático enviado: consulta de alérgenos/ingredientes derivada al restaurante]",
+	"extras_notice":       "[Aviso automático enviado: cambio de extras derivado al restaurante]",
+	"same_day_notice":     "[Aviso automático enviado: gestión del mismo día derivada al restaurante]",
+	"unsupported_content": "[Aviso automático enviado: solo se admiten mensajes de texto]",
+	"agent_fallback":      "[Aviso automático enviado: error temporal del asistente]",
 }
 
 // botStaffMessagePrefix labels messages typed manually by restaurant staff.
