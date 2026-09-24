@@ -29,7 +29,9 @@ type botWebhookMessage struct {
 	FromMe        bool
 	InstanceToken string
 	Owner         string
-	IsAudio       bool // voice note (audioMessage/ptvMessage); the bot cannot transcribe it
+	IsAudio       bool   // voice note (audioMessage/ptvMessage); the bot cannot transcribe it
+	Ignored       bool   // reaction/edit/delete/poll event: never a customer turn
+	MediaKind     string // label of a non-text message, for the transcript
 }
 
 // parseBotWebhookMessage extracts the message from a UAZAPI webhook body.
@@ -91,6 +93,8 @@ func parseBotWebhookMessage(body []byte) (botWebhookMessage, bool) {
 		MessageID: messageID,
 		FromMe:    msg.FromMe,
 		IsAudio:   strings.Contains(strings.ToLower(msg.MessageType), "audio"),
+		Ignored:   botIsIgnoredMessageType(msg.MessageType),
+		MediaKind: botMediaKindLabel(msg.MessageType),
 	}
 
 	var tokenField struct {
@@ -313,8 +317,13 @@ func (s *Server) handleBotWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg, ok := parseBotWebhookMessage(body)
-	if !ok || msg.FromMe {
+	if !ok {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false})
+		return
+	}
+	if msg.Ignored {
+		log.Printf("[bot] checkpoint wa_bot_ignore_non_conversational_v1 sender=%s", msg.Sender)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "ignored": true})
 		return
 	}
 
@@ -360,6 +369,20 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 	// (incl. the unsupported-media fallback) nor bypass the per-tenant cap.
 	if s.botSeenBefore(msg.Sender, msg.MessageID) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "duplicate": true})
+		return
+	}
+	// Human takeover: staff wrote manually to this customer recently, so the
+	// bot stays silent (no agent turn, no media fallback) but keeps the
+	// transcript complete. Coordination id: wa_bot_human_handoff_v1
+	if s.botIsPausedForHuman(r.Context(), restaurantID, msg.Sender) {
+		content := msg.Text
+		if content == "" && msg.MediaKind != "" {
+			content = "[El cliente envió " + msg.MediaKind + "]"
+		}
+		s.botRecordConversationMessage(r.Context(), restaurantID, msg.Sender, "user", content, "", "inbound_paused")
+		s.botTouchSession(r.Context(), restaurantID, msg.Sender, msg.PushName)
+		log.Printf("[bot] checkpoint wa_bot_human_takeover_skip restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "paused": true})
 		return
 	}
 	if !s.botCheckDailyCap(restaurantID) {
@@ -486,6 +509,12 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		return nil
 	}
 
+	// Coordination id: wa_bot_allergen_handoff_v1 - never let the model guess
+	// ingredients/allergens; hand over to the restaurant instead.
+	if s.botAllergenIntentGuard(ctx, restaurantID, msg, tenant) {
+		return nil
+	}
+
 	system := s.buildBotSystemPrompt(ctx, restaurantID, msg.PushName, msg.Sender, tenant)
 	messages := s.botLoadHistory(ctx, restaurantID, msg.Sender)
 	tools := botToolDefs(tenant)
@@ -504,6 +533,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// counts as delivered and must not be duplicated.
 	if !botDeliveredReply(result.ToolCalls) && !turn.noticeDelivered {
 		if text := botFinalAssistantText(result.Messages); text != "" {
+			log.Printf("[bot] checkpoint wa_bot_plain_text_fallback restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
 			}
 		} else {

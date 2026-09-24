@@ -144,7 +144,7 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		if tenant.DisableAttachments {
 			return botJSON(map[string]any{"error": "los adjuntos están desactivados para este restaurante"}), nil
 		}
-		return s.botToolSendContact(ctx, restaurantID, msg, tenant)
+		return s.botToolSendContact(ctx, restaurantID, msg, tenant, input)
 	default:
 		return botJSON(map[string]any{"error": "herramienta desconocida: " + name}), nil
 	}
@@ -247,12 +247,37 @@ func (s *Server) botToolSendLocation(ctx context.Context, restaurantID int, msg 
 	return botJSON(map[string]any{"sent": true, "address": address}), nil
 }
 
-func (s *Server) botToolSendContact(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) (string, error) {
+func (s *Server) botToolSendContact(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, input json.RawMessage) (string, error) {
+	var in struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(input, &in)
+	_, phone := s.botContactDetails(ctx, restaurantID, tenant)
+	// A bare vCard confuses the customer: always explain it first
+	// (wa_bot_human_handoff_v1). The model's text wins; otherwise a safe default.
+	intro := strings.TrimSpace(in.Message)
+	if intro == "" {
+		intro = botContactIntroText(phone)
+	}
+	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
+		if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, intro, "agent_contact_intro"); err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+	}
 	phone, err := s.botSendContactCard(ctx, restaurantID, msg, tenant)
 	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-	return botJSON(map[string]any{"sent": true, "phone": phone}), nil
+	return botJSON(map[string]any{"sent": true, "phone": phone, "intro_sent": true}), nil
+}
+
+// botContactIntroText is the default explanation sent before a contact card.
+func botContactIntroText(phone string) string {
+	msg := "Soy un asistente de reservas con Inteligencia Artificial y no dispongo de esa información.\nPara esta consulta, contacte directamente con el restaurante"
+	if p := strings.TrimSpace(phone); p != "" {
+		msg += ": 📞 " + botFormatPhoneDisplay(p)
+	}
+	return msg + "\nLe dejo la tarjeta de contacto 👇"
 }
 
 func (s *Server) botBrandName(ctx context.Context, restaurantID int) string {

@@ -1,6 +1,9 @@
 package api
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // WhatsAppGateway isolates the provider-varying operations behind the
 // multi-tenant WhatsApp bot so UAZAPI can be swapped for another gateway
@@ -78,6 +81,53 @@ type waInbound struct {
 	FromMe     bool
 	SessionRef string // instance token (uazapi) or instance name (evolution) for tenant routing
 	IsAudio    bool   // voice note; the bot cannot transcribe it
+	// Ignored marks non-conversational events (reactions, edits, deletes, poll
+	// votes) that must never reach the bot pipeline nor trigger a fallback.
+	// Coordination id: wa_bot_ignore_non_conversational_v1
+	Ignored bool
+	// MediaKind is a human label for a non-text message ("una tarjeta de
+	// contacto", "una imagen", ...), used to record staff-sent media.
+	MediaKind string
+}
+
+// botIgnoredMessageTypes are provider message types that are not a customer
+// turn: answering them (e.g. a 👍 reaction) makes the bot look broken.
+var botIgnoredMessageTypes = map[string]bool{
+	"reactionmessage": true, "protocolmessage": true, "pollupdatemessage": true,
+	"editedmessage": true, "senderkeydistributionmessage": true, "keepinchatmessage": true,
+	"pininchatmessage": true, "encreactionmessage": true,
+}
+
+// botIsIgnoredMessageType reports whether a provider messageType is a
+// non-conversational event (matches Evolution and UAZAPI spellings).
+func botIsIgnoredMessageType(messageType string) bool {
+	t := strings.ToLower(strings.TrimSpace(messageType))
+	return botIgnoredMessageTypes[t] || strings.Contains(t, "reaction")
+}
+
+// botMediaKindLabel maps a provider messageType to a Spanish label for the
+// conversation transcript. Empty for text/unknown types.
+func botMediaKindLabel(messageType string) string {
+	t := strings.ToLower(messageType)
+	switch {
+	case strings.Contains(t, "contact"):
+		return "una tarjeta de contacto"
+	case strings.Contains(t, "image"):
+		return "una imagen"
+	case strings.Contains(t, "video") || strings.Contains(t, "ptv"):
+		return "un vídeo"
+	case strings.Contains(t, "audio"):
+		return "un audio"
+	case strings.Contains(t, "document"):
+		return "un documento"
+	case strings.Contains(t, "sticker"):
+		return "un sticker"
+	case strings.Contains(t, "location"):
+		return "una ubicación"
+	case t == "":
+		return ""
+	}
+	return "un archivo"
 }
 
 // waConnEvent is a normalized connection lifecycle event.
