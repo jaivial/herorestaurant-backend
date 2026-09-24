@@ -168,7 +168,7 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 	// charges; funds go to the restaurant's connected account.
 	connect, ready := s.connectReady(r.Context(), restaurantID)
 	if !ready {
-		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "El pago online no está disponible en este momento", "error_code": "STRIPE_NOT_CONFIGURED"})
+		httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": "El pago online no está disponible en este momento", "error_code": "STRIPE_NOT_CONFIGURED"})
 		return
 	}
 	demo := connect.Demo
@@ -200,7 +200,7 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 	} else {
 		cli, err := s.platformStripe()
 		if err != nil {
-			httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "El pago online no está disponible en este momento", "error_code": "STRIPE_NOT_CONFIGURED"})
+			httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": "El pago online no está disponible en este momento", "error_code": "STRIPE_NOT_CONFIGURED"})
 			return
 		}
 		title := "Adelanto prereserva"
@@ -217,7 +217,7 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 		if err != nil || sess.URL == "" {
 			logStripeFlow("session_create_failed", restaurantID, publicID, fmt.Sprint(err))
 			_, _ = s.db.ExecContext(r.Context(), `UPDATE booking_checkouts SET status = ?, error_message = ? WHERE public_id = ?`, checkoutStatusFailed, "stripe session create failed", publicID)
-			httpx.WriteJSON(w, http.StatusBadGateway, map[string]any{"success": false, "message": "No se pudo abrir el pago con tarjeta. Inténtalo de nuevo."})
+			httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": "No se pudo abrir el pago con tarjeta. Inténtalo de nuevo."})
 			return
 		}
 		_, _ = s.db.ExecContext(r.Context(), `UPDATE booking_checkouts SET provider_session_id = ? WHERE public_id = ?`, sess.ID, publicID)

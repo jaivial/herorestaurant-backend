@@ -188,6 +188,8 @@ func (s *Server) connectDTO(row *connectAccountRow, acct *integrations.ConnectAc
 	return out
 }
 
+// User-facing Stripe failures answer 424: the CDN edge rewrites 502/503 bodies,
+// which would hide the actionable message from the backoffice and the site.
 func (s *Server) handleBOStripeConnectStatus(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -244,7 +246,7 @@ func (s *Server) handleBOStripeConnectOnboard(w http.ResponseWriter, r *http.Req
 
 	cli, err := s.platformStripe()
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": err.Error()})
+		httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
 	if row == nil || row.Demo {
@@ -258,7 +260,7 @@ func (s *Server) handleBOStripeConnectOnboard(w http.ResponseWriter, r *http.Req
 			if strings.Contains(err.Error(), "signed up for Connect") {
 				msg, code = "La plataforma todavía no tiene Stripe Connect activado. El administrador debe activarlo en dashboard.stripe.com/connect.", "STRIPE_CONNECT_NOT_ENABLED"
 			}
-			httpx.WriteJSON(w, http.StatusBadGateway, map[string]any{"success": false, "message": msg, "error_code": code})
+			httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": msg, "error_code": code})
 			return
 		}
 		row = &connectAccountRow{RestaurantID: rid, AccountID: acct.ID, Status: connectStatusFor(acct)}
@@ -270,13 +272,13 @@ func (s *Server) handleBOStripeConnectOnboard(w http.ResponseWriter, r *http.Req
 	}
 	base := s.backofficePublicBaseURL()
 	if base == "" {
-		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "BACKOFFICE_PUBLIC_BASE_URL no configurado"})
+		httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": "BACKOFFICE_PUBLIC_BASE_URL no configurado"})
 		return
 	}
 	link, err := cli.CreateAccountLink(ctx, row.AccountID, base+"/app/config?content=stripe&onboarding=refresh", base+"/app/config?content=stripe&onboarding=return")
 	if err != nil {
 		log.Printf("[stripe_connect_multitenant_v1] restaurant=%d account link failed: %v", rid, err)
-		httpx.WriteJSON(w, http.StatusBadGateway, map[string]any{"success": false, "message": "Stripe no pudo abrir el alta"})
+		httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": "Stripe no pudo abrir el alta"})
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "onboarding_url": link})
@@ -296,12 +298,12 @@ func (s *Server) handleBOStripeConnectDashboard(w http.ResponseWriter, r *http.R
 	}
 	cli, err := s.platformStripe()
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": err.Error()})
+		httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
 	link, err := cli.CreateLoginLink(r.Context(), row.AccountID)
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadGateway, map[string]any{"success": false, "message": "Stripe no pudo abrir el panel"})
+		httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": "Stripe no pudo abrir el panel"})
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "dashboard_url": link})
