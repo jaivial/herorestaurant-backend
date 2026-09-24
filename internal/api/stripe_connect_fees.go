@@ -99,9 +99,12 @@ func (s *Server) connectFeeFor(ctx context.Context, restaurantID int) connectFee
 }
 
 // applicationFeeCents is what the platform keeps from a charge of amount
-// cents. Never reaches the full amount (Stripe rejects fee >= amount).
+// cents. Managed Risk direct charges: Stripe takes its own fee from the
+// restaurant's account, so the application fee is ONLY the platform
+// commission (0% -> no application fee). Never reaches the full amount.
+// Coordination id: stripe_connect_managed_risk_v1
 func (f connectFee) applicationFeeCents(amount int64) int64 {
-	fee := int64(math.Round(float64(amount)*f.TotalPercent/100)) + f.StripeBaseFixedCents
+	fee := int64(math.Round(float64(amount) * f.PlatformFeePercent / 100))
 	if fee >= amount {
 		fee = amount - 1
 	}

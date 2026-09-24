@@ -180,30 +180,63 @@ type ConnectAccount struct {
 	} `json:"external_accounts"`
 }
 
-// CreateExpressAccount creates an Express connected account for a tenant.
-// The platform stays the owner; the tenant only completes hosted onboarding.
-func (s *StripeClient) CreateExpressAccount(ctx context.Context, country, email, businessName, website string, metadata map[string]string) (*ConnectAccount, error) {
-	form := url.Values{}
-	form.Set("type", "express")
-	form.Set("country", country)
-	if email != "" {
-		form.Set("email", email)
+// managedRiskAPIVersion: Express dashboard + Stripe as losses collector is a
+// public preview of Accounts v2 (docs: connected-accounts-with-managed-risk).
+const managedRiskAPIVersion = "2026-08-26.preview"
+
+// CreateManagedRiskAccount creates the tenant's connected account with Accounts
+// v2: Express dashboard, Stripe collects its fees from the account and assumes
+// losses (Managed Risk). Stripe requires this model for new live platforms;
+// charges must then be direct charges on the account. v1 endpoints (account
+// links, login links, retrieve, delete, balance) keep working with the id.
+// Coordination id: stripe_connect_managed_risk_v1
+func (s *StripeClient) CreateManagedRiskAccount(ctx context.Context, country, email, businessName, website string, metadata map[string]string) (*ConnectAccount, error) {
+	body := map[string]any{
+		"dashboard": "express",
+		"identity":  map[string]any{"country": strings.ToLower(country)},
+		"defaults": map[string]any{
+			"currency":         "eur",
+			"responsibilities": map[string]any{"fees_collector": "stripe", "losses_collector": "stripe"},
+		},
+		"configuration": map[string]any{"merchant": map[string]any{
+			"mcc":          "5812", // eating places & restaurants
+			"capabilities": map[string]any{"card_payments": map[string]any{"requested": true}},
+		}},
+		"metadata": metadata,
 	}
-	form.Set("capabilities[card_payments][requested]", "true")
-	form.Set("capabilities[transfers][requested]", "true")
+	if email != "" {
+		body["contact_email"] = email
+	}
 	if businessName != "" {
-		form.Set("business_profile[name]", businessName)
+		body["display_name"] = businessName
 	}
 	if website != "" {
-		form.Set("business_profile[url]", website)
+		body["defaults"].(map[string]any)["profile"] = map[string]any{"business_url": website}
 	}
-	form.Set("business_profile[mcc]", "5812") // eating places & restaurants
-	form.Set("settings[payouts][schedule][interval]", "daily")
-	for k, v := range metadata {
-		form.Set("metadata["+k+"]", v)
+	raw, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.stripe.com/v2/core/accounts", strings.NewReader(string(raw)))
+	if err != nil {
+		return nil, err
 	}
-	var out ConnectAccount
-	return &out, s.do(ctx, http.MethodPost, "/accounts", form, &out)
+	req.SetBasicAuth(s.SecretKey, "")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Stripe-Version", managedRiskAPIVersion)
+	resp, err := s.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("stripe POST /v2/core/accounts: %d %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(b, &created); err != nil || created.ID == "" {
+		return nil, fmt.Errorf("stripe POST /v2/core/accounts: no id")
+	}
+	return s.RetrieveAccount(ctx, created.ID)
 }
 
 // RetrieveAccount reads a connected account's onboarding state.
@@ -291,14 +324,16 @@ func (s *StripeClient) CreateLoginLink(ctx context.Context, accountID string) (s
 	return out.URL, err
 }
 
-// DestinationCheckout is a platform Checkout Session whose funds go to a
-// connected account (destination charge, tenant as merchant of record).
-type DestinationCheckout struct {
+// ConnectCheckout is a Checkout Session created ON the connected account
+// (direct charge: the restaurant is merchant of record and pays Stripe's fee;
+// the platform keeps FeeCents as application fee). Required by Managed Risk.
+// Coordination id: stripe_connect_managed_risk_v1
+type ConnectCheckout struct {
+	Account        string
 	AmountCents    int64
 	FeeCents       int64
 	Currency       string
 	Description    string
-	Destination    string
 	SuccessURL     string
 	CancelURL      string
 	CustomerEmail  string
@@ -307,7 +342,7 @@ type DestinationCheckout struct {
 	Metadata       map[string]string
 }
 
-func (s *StripeClient) CreateDestinationCheckout(ctx context.Context, in DestinationCheckout) (*CheckoutSession, error) {
+func (s *StripeClient) CreateConnectCheckout(ctx context.Context, in ConnectCheckout) (*CheckoutSession, error) {
 	form := url.Values{}
 	form.Set("mode", "payment")
 	form.Set("success_url", in.SuccessURL)
@@ -316,8 +351,6 @@ func (s *StripeClient) CreateDestinationCheckout(ctx context.Context, in Destina
 	form.Set("line_items[0][price_data][currency]", in.Currency)
 	form.Set("line_items[0][price_data][unit_amount]", fmt.Sprintf("%d", in.AmountCents))
 	form.Set("line_items[0][price_data][product_data][name]", in.Description)
-	form.Set("payment_intent_data[transfer_data][destination]", in.Destination)
-	form.Set("payment_intent_data[on_behalf_of]", in.Destination)
 	if in.FeeCents > 0 {
 		form.Set("payment_intent_data[application_fee_amount]", fmt.Sprintf("%d", in.FeeCents))
 	}
@@ -332,7 +365,7 @@ func (s *StripeClient) CreateDestinationCheckout(ctx context.Context, in Destina
 		form.Set("payment_intent_data[metadata]["+k+"]", v)
 	}
 	var out CheckoutSession
-	err := s.doIdempotent(ctx, http.MethodPost, "/checkout/sessions", form, &out, in.IdempotencyKey)
+	err := s.doAs(ctx, http.MethodPost, "/checkout/sessions", form, &out, in.IdempotencyKey, in.Account)
 	return &out, err
 }
 
@@ -353,9 +386,11 @@ type ConnectCheckoutDetail struct {
 	} `json:"payment_intent"`
 }
 
-func (s *StripeClient) RetrieveConnectCheckout(ctx context.Context, id string) (*ConnectCheckoutDetail, error) {
+// RetrieveConnectCheckout reads a session that lives on the connected account.
+// Finding it under that account is itself proof the money went to it.
+func (s *StripeClient) RetrieveConnectCheckout(ctx context.Context, account, id string) (*ConnectCheckoutDetail, error) {
 	var out ConnectCheckoutDetail
-	err := s.do(ctx, http.MethodGet, "/checkout/sessions/"+url.PathEscape(id)+"?expand[]=payment_intent", nil, &out)
+	err := s.doAs(ctx, http.MethodGet, "/checkout/sessions/"+url.PathEscape(id)+"?expand[]=payment_intent", nil, &out, "", account)
 	return &out, err
 }
 
@@ -412,16 +447,33 @@ func (s *StripeClient) VerifyWebhookSignatureWithTolerance(payload []byte, sigHe
 }
 
 func (s *StripeClient) doIdempotent(ctx context.Context, method, path string, form url.Values, out any, key string) error {
-	if key == "" {
+	return s.doAs(ctx, method, path, form, out, key, "")
+}
+
+// doAs is do() with an optional Idempotency-Key and an optional connected
+// account (Stripe-Account header: the request runs on that account).
+func (s *StripeClient) doAs(ctx context.Context, method, path string, form url.Values, out any, key, account string) error {
+	if key == "" && account == "" {
 		return s.do(ctx, method, path, form, out)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "https://api.stripe.com/v1"+path, strings.NewReader(form.Encode()))
+	var body io.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "https://api.stripe.com/v1"+path, body)
 	if err != nil {
 		return err
 	}
 	req.SetBasicAuth(s.SecretKey, "")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Idempotency-Key", key)
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
+	if account != "" {
+		req.Header.Set("Stripe-Account", account)
+	}
 	resp, err := s.HTTP.Do(req)
 	if err != nil {
 		return err
