@@ -233,24 +233,33 @@ func (s *StripeClient) DeleteAccount(ctx context.Context, accountID string) erro
 	return s.do(ctx, http.MethodDelete, "/accounts/"+url.PathEscape(accountID), nil, nil)
 }
 
-// ConnectedBalanceCents sums available + pending balance of a connected account.
-func (s *StripeClient) ConnectedBalanceCents(ctx context.Context, accountID string) (int64, error) {
+// ConnectedBalance is the connected account's money not yet paid out.
+type ConnectedBalance struct {
+	AvailableCents int64 // ready to be paid out to the bank
+	PendingCents   int64 // recent charges Stripe has not released yet
+}
+
+func (b ConnectedBalance) Total() int64 { return b.AvailableCents + b.PendingCents }
+
+// ConnectedBalanceOf reads the balance of a connected account.
+func (s *StripeClient) ConnectedBalanceOf(ctx context.Context, accountID string) (ConnectedBalance, error) {
+	var out ConnectedBalance
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.stripe.com/v1/balance", nil)
 	if err != nil {
-		return 0, err
+		return out, err
 	}
 	req.SetBasicAuth(s.SecretKey, "")
 	req.Header.Set("Stripe-Account", accountID)
 	resp, err := s.HTTP.Do(req)
 	if err != nil {
-		return 0, err
+		return out, err
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return 0, fmt.Errorf("stripe GET /balance: %d %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return out, fmt.Errorf("stripe GET /balance: %d %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
-	var out struct {
+	var raw struct {
 		Available []struct {
 			Amount int64 `json:"amount"`
 		} `json:"available"`
@@ -258,14 +267,16 @@ func (s *StripeClient) ConnectedBalanceCents(ctx context.Context, accountID stri
 			Amount int64 `json:"amount"`
 		} `json:"pending"`
 	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return 0, err
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return out, err
 	}
-	var total int64
-	for _, x := range append(out.Available, out.Pending...) {
-		total += x.Amount
+	for _, x := range raw.Available {
+		out.AvailableCents += x.Amount
 	}
-	return total, nil
+	for _, x := range raw.Pending {
+		out.PendingCents += x.Amount
+	}
+	return out, nil
 }
 
 // Live reports whether the key operates on live money.

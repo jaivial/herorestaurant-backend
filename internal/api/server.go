@@ -727,6 +727,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/onboard", s.handleBOStripeConnectOnboard)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/dashboard", s.handleBOStripeConnectDashboard)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/stripe-connect/disconnect", s.handleBOStripeConnectDisconnect)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/stripe-connect/delete-precheck", s.handleBOStripeConnectDeletePrecheck)
 
 		// Legal pages CMS (aviso-legal, booking-policies, proteccion-datos).
 		// The editor lives on /app/config (Configuracion page), which the
