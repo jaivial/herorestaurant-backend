@@ -255,6 +255,12 @@ func (m *instaticManager) ensureBootstrapped(ctx context.Context, restaurantID i
 		return nil
 	}
 
+	// Coordination id: instatic_seed_password_v1 - no hardcoded default: the
+	// seed/login password must come from INSTATIC_SEED_ADMIN_PASSWORD.
+	if strings.TrimSpace(m.cfg.InstaticSeedAdminPassword) == "" {
+		return fmt.Errorf("instatic: INSTATIC_SEED_ADMIN_PASSWORD is not set")
+	}
+
 	// Setup status.
 	status := map[string]any{}
 	if err := m.call(ctx, base, http.MethodGet, "/admin/api/cms/setup/status", nil, &status); err != nil {
