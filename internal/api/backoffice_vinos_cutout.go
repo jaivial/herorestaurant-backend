@@ -32,6 +32,7 @@ const (
 	cutoutAlphaThreshold    = 8
 	cutoutPollInterval      = 1500 * time.Millisecond
 	cutoutTimeout           = 90 * time.Second
+	cutoutMaxPixels         = 40_000_000
 )
 
 func (s *Server) handleBOVinoImageCutout(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +158,13 @@ func (s *Server) callWaveSpeedBgRemover(ctx context.Context, baseURL, apiKey str
 // trimTransparentPNG crops an image to the bounding box of its non-transparent
 // pixels so no empty margin is left between the object and the file edges.
 func trimTransparentPNG(raw []byte) ([]byte, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width*cfg.Height > cutoutMaxPixels {
+		return nil, fmt.Errorf("cutout image too large: %dx%d", cfg.Width, cfg.Height)
+	}
 	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
