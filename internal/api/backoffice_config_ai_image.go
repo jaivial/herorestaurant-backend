@@ -261,7 +261,7 @@ func (s *Server) handleBOAIImageConfigSet(w http.ResponseWriter, r *http.Request
 	}
 
 	ctx := r.Context()
-	current, currentKey, err := s.loadAIImageConfig(ctx, a.ActiveRestaurantID)
+	current, _, err := s.loadAIImageConfig(ctx, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error cargando configuracion"})
 		return
@@ -272,8 +272,9 @@ func (s *Server) handleBOAIImageConfigSet(w http.ResponseWriter, r *http.Request
 		providerSlug = strings.TrimSpace(*req.ProviderSlug)
 	}
 
-	// Blank/absent key = keep existing.
-	apiKey := currentKey
+	// Blank/absent key = keep the stored ciphertext untouched (never rewrite
+	// it from the decrypted value: a row that fails to decrypt would be wiped).
+	apiKey := ""
 	if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
 		apiKey = strings.TrimSpace(*req.APIKey)
 	}
@@ -325,7 +326,7 @@ func (s *Server) handleBOAIImageConfigSet(w http.ResponseWriter, r *http.Request
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			provider_slug = VALUES(provider_slug),
-			api_key = VALUES(api_key),
+			api_key = COALESCE(VALUES(api_key), api_key),
 			t2i_model_slug = VALUES(t2i_model_slug),
 			i2i_model_slug = VALUES(i2i_model_slug),
 			is_active = VALUES(is_active),
