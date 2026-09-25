@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/lib/specialmenuimage"
 )
 
 const (
@@ -93,7 +94,15 @@ func (s *Server) handleBOVinoImageCutout(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No se detectó ningún objeto en la imagen"})
 		return
 	}
-	objectPath, err := s.UploadWineImageV2(r.Context(), a.ActiveRestaurantID, wineTipo, wineNum, trimmed, "image/png")
+	// UploadWineImageV2 stores under a .webp path, so encode to WebP (alpha is
+	// preserved) to keep the object's bytes, extension and content type aligned.
+	webp, err := specialmenuimage.NormalizeToWebP(r.Context(), trimmed, "cutout.png", "image/png")
+	if err != nil {
+		log.Printf("[wine_image_cutout_v2] restaurant=%d wine=%d webp_error=%v", a.ActiveRestaurantID, wineNum, err)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error procesando la imagen"})
+		return
+	}
+	objectPath, err := s.UploadWineImageV2(r.Context(), a.ActiveRestaurantID, wineTipo, wineNum, webp, "image/webp")
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image"})
 		return
@@ -102,7 +111,7 @@ func (s *Server) handleBOVinoImageCutout(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error saving image path"})
 		return
 	}
-	log.Printf("[wine_image_cutout_v2] restaurant=%d wine=%d ok ms=%d bytes=%d", a.ActiveRestaurantID, wineNum, time.Since(started).Milliseconds(), len(trimmed))
+	log.Printf("[wine_image_cutout_v2] restaurant=%d wine=%d ok ms=%d bytes=%d", a.ActiveRestaurantID, wineNum, time.Since(started).Milliseconds(), len(webp))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
 		"foto_url": s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath),
