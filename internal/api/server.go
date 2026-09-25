@@ -287,6 +287,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Get("/vinos/{id}", s.handleBOVinoGet)
 		r.With(s.requireBOSession, menusGate).Post("/vinos/{id}/image", s.handleBOVinoImageUpload)
 		r.With(s.requireBOSession, menusGate).Post("/vinos/{id}/image/ai", s.handleBOVinoAIImageGenerate)
+		r.With(s.requireBOSession, menusGate).Post("/vinos/{id}/image/cutout", s.handleBOVinoImageCutout)
 		r.With(s.requireBOSession, menusGate).Get("/vinos/ws", s.handleBOVinosAIWS)
 
 		// Comida AI image enhancement.
