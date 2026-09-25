@@ -5,11 +5,36 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/vault"
 )
+
+// Coordination id: ai_image_key_vault_v1 - the provider API key is stored in
+// ai_image_provider_config.api_key encrypted with VAULT_KEY (AES-256-GCM, bound
+// to the restaurant so a ciphertext cannot be moved to another tenant).
+// Legacy plaintext rows are still read and re-encrypted in place on first load.
+func aiImageKeyAAD(restaurantID int) string {
+	return fmt.Sprintf("restaurant:%d:ai_image_api_key", restaurantID)
+}
+
+func (s *Server) encryptAIImageKey(restaurantID int, plain string) (string, error) {
+	return vault.EncryptBound(s.cfg.VaultKey, aiImageKeyAAD(restaurantID), plain)
+}
+
+// decryptAIImageKey returns the plaintext key and whether the stored value was
+// legacy plaintext (still needing encryption).
+func (s *Server) decryptAIImageKey(restaurantID int, stored string) (string, bool, error) {
+	if !strings.HasPrefix(stored, "v2:") {
+		return stored, true, nil
+	}
+	plain, err := vault.DecryptBound(s.cfg.VaultKey, aiImageKeyAAD(restaurantID), stored)
+	return plain, false, err
+}
 
 // AI image provider configuration (root-only). DB-backed replacement for the
 // env-only WAVESPEED_API_KEY. The raw API key is never returned to clients:
@@ -121,8 +146,20 @@ func (s *Server) loadAIImageConfig(ctx context.Context, restaurantID int) (boAII
 		out.ProviderSlug = strings.TrimSpace(providerSlug.String)
 	}
 	rawKey := ""
-	if apiKey.Valid {
-		rawKey = strings.TrimSpace(apiKey.String)
+	if apiKey.Valid && strings.TrimSpace(apiKey.String) != "" {
+		plain, legacy, derr := s.decryptAIImageKey(restaurantID, strings.TrimSpace(apiKey.String))
+		if derr != nil {
+			log.Printf("[ai_image_key_vault_v1] restaurant=%d decrypt_failed", restaurantID)
+		} else {
+			rawKey = strings.TrimSpace(plain)
+			if legacy {
+				if enc, eerr := s.encryptAIImageKey(restaurantID, rawKey); eerr == nil {
+					if _, uerr := s.db.ExecContext(ctx, `UPDATE ai_image_provider_config SET api_key = ? WHERE restaurant_id = ? AND api_key = ?`, enc, restaurantID, apiKey.String); uerr == nil {
+						log.Printf("[ai_image_key_vault_v1] restaurant=%d legacy_key_encrypted", restaurantID)
+					}
+				}
+			}
+		}
 	}
 	out.HasAPIKey = rawKey != ""
 	out.APIKeyMask = maskAPIKey(rawKey)
@@ -224,7 +261,7 @@ func (s *Server) handleBOAIImageConfigSet(w http.ResponseWriter, r *http.Request
 	}
 
 	ctx := r.Context()
-	current, currentKey, err := s.loadAIImageConfig(ctx, a.ActiveRestaurantID)
+	current, _, err := s.loadAIImageConfig(ctx, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error cargando configuracion"})
 		return
@@ -235,8 +272,9 @@ func (s *Server) handleBOAIImageConfigSet(w http.ResponseWriter, r *http.Request
 		providerSlug = strings.TrimSpace(*req.ProviderSlug)
 	}
 
-	// Blank/absent key = keep existing.
-	apiKey := currentKey
+	// Blank/absent key = keep the stored ciphertext untouched (never rewrite
+	// it from the decrypted value: a row that fails to decrypt would be wiped).
+	apiKey := ""
 	if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
 		apiKey = strings.TrimSpace(*req.APIKey)
 	}
@@ -272,18 +310,28 @@ func (s *Server) handleBOAIImageConfigSet(w http.ResponseWriter, r *http.Request
 	if isActive {
 		activeInt = 1
 	}
+	storedKey := ""
+	if apiKey != "" {
+		enc, eerr := s.encryptAIImageKey(a.ActiveRestaurantID, apiKey)
+		if eerr != nil {
+			log.Printf("[ai_image_key_vault_v1] restaurant=%d encrypt_failed err=%v", a.ActiveRestaurantID, eerr)
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No se pudo cifrar la clave"})
+			return
+		}
+		storedKey = enc
+	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO ai_image_provider_config
 			(restaurant_id, provider_slug, api_key, t2i_model_slug, i2i_model_slug, is_active, updated_by_user_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			provider_slug = VALUES(provider_slug),
-			api_key = VALUES(api_key),
+			api_key = COALESCE(VALUES(api_key), api_key),
 			t2i_model_slug = VALUES(t2i_model_slug),
 			i2i_model_slug = VALUES(i2i_model_slug),
 			is_active = VALUES(is_active),
 			updated_by_user_id = VALUES(updated_by_user_id)
-	`, a.ActiveRestaurantID, providerSlug, nullIfEmpty(apiKey), nullIfEmpty(t2i), nullIfEmpty(i2i), activeInt, a.User.ID)
+	`, a.ActiveRestaurantID, providerSlug, nullIfEmpty(storedKey), nullIfEmpty(t2i), nullIfEmpty(i2i), activeInt, a.User.ID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error guardando configuracion"})
 		return
