@@ -21,14 +21,17 @@ type botPromptData struct {
 	Email           string
 	Website         string
 	MenuURL         string
-	TodayES         string
-	TodayISO        string
-	PushName        string
-	UserPhone       string
-	RiceTypes       []string
-	Hours           string
-	DailyLimit      int
-	Tenant          botTenantConfig
+	// BookingURL is the public online-booking page (website + "/reservas").
+	// Coordination id: wa_bot_web_booking_invite_v1
+	BookingURL string
+	TodayES    string
+	TodayISO   string
+	PushName   string
+	UserPhone  string
+	RiceTypes  []string
+	Hours      string
+	DailyLimit int
+	Tenant     botTenantConfig
 }
 
 // botDefaultRules is the critical-rules block used when the tenant has not
@@ -47,7 +50,8 @@ const botDefaultRules = `1. USA SIEMPRE la herramienta send_message para respond
 12. ARROCES (REGLA ESTRICTA): antes de hablar de arroces llama a get_rice_menu con la fecha de la reserva y compara lo que pide el cliente con la lista EXACTA devuelta. Si coincide exactamente, úsalo tal cual. Si coincide parcialmente con varias opciones, pregúntale cuál de ellas quiere. Si el arroz pedido NO está en la lista, dile que no disponemos de ese arroz y ofrécele alternativas de la lista. Si insiste, dile educadamente que ese arroz no está en la carta y no podemos cocinarlo. NUNCA inventes, traduzcas ni confirmes un arroz que no aparezca en la lista. Reglas del arroz: mínimo 2 raciones, al menos 2 personas de la mesa con arroz, y solo UNA variedad de arroz/paella por mesa en mesas de menos de 8 personas. Si el cliente dice "no", "sin arroz" o "no gracias", significa SIN ARROZ.
 13. INGREDIENTES, ELABORACIÓN, CALDOS, ALÉRGENOS E INTOLERANCIAS: no dispones de esta información salvo que una herramienta la devuelva literalmente. NUNCA supongas ni uses "generalmente" o "normalmente", ni recomiendes platos como aptos. Explica que eres un asistente de Inteligencia Artificial, que por seguridad alimentaria debe confirmarlo el restaurante y envía send_contact con esa explicación. Puedes ofrecer anotar la alergia o intolerancia en los comentarios de la reserva.
 14. MENSAJES DEL PERSONAL: los mensajes del historial marcados como "[Mensaje escrito por el personal del restaurante]" los escribió una persona del restaurante. Respétalos: no los contradigas ni repitas lo que ya dijo el personal, y si el personal indicó que el cliente contacte con el restaurante o gerencia, no respondas por tu cuenta a esa consulta.
-15. EVENTOS DEL HISTORIAL: los textos entre corchetes como "[Aviso automático enviado: ...]" o "[Tarjeta de contacto enviada ...]" describen acciones ya realizadas por el sistema. NUNCA los copies ni repitas su contenido: responde siempre a lo que pregunta ahora el cliente, usando las herramientas.`
+15. EVENTOS DEL HISTORIAL: los textos entre corchetes como "[Aviso automático enviado: ...]" o "[Tarjeta de contacto enviada ...]" describen acciones ya realizadas por el sistema. NUNCA los copies ni repitas su contenido: responde siempre a lo que pregunta ahora el cliente, usando las herramientas.
+16. FECHAS: cuando el cliente diga solo un número de día ("el día 3", "el 3") interprétalo como la PRÓXIMA fecha futura con ese número (si ya pasó este mes, es el mes siguiente) y compruébalo con get_day_schedule. Si menciona día de la semana y número ("el sábado 3"), verifica que coinciden; si no coinciden o hay duda, confirma la fecha completa antes de responder. Nunca sustituyas la fecha pedida por otra distinta.`
 
 var botSpanishDays = []string{"domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"}
 var botSpanishMonths = []string{"", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"}
@@ -111,6 +115,9 @@ func renderBotSystemPrompt(d botPromptData) string {
 	if d.MenuURL != "" {
 		fmt.Fprintf(&b, "- Carta (URL): %s\n", d.MenuURL)
 	}
+	if d.BookingURL != "" {
+		fmt.Fprintf(&b, "- Reservas online (disponibilidad en tiempo real): %s\n", d.BookingURL)
+	}
 	if d.ManagementPhone != "" {
 		fmt.Fprintf(&b, "- Teléfono de gestión (persona del restaurante): %s\n", d.ManagementPhone)
 	}
@@ -142,6 +149,16 @@ func renderBotSystemPrompt(d botPromptData) string {
 	b.WriteString("- Horario general y qué días de la semana abre el restaurante: usa `get_default_schedule`.\n")
 	b.WriteString("- Horario real de una fecha concreta (y si tiene una configuración especial que sobreescribe el horario general): usa `get_day_schedule` antes de aceptar cualquier fecha.\n")
 	b.WriteString("- Disponibilidad de plazas de un día: usa `check_day_capacity` o `check_availability_for_party`.\n\n")
+
+	if d.BookingURL != "" {
+		// Coordination id: wa_bot_web_booking_invite_v1 - always-on (not part
+		// of the overridable rules) so every tenant with a website invites
+		// the customer to check live availability online.
+		b.WriteString("## RESERVA ONLINE\n")
+		fmt.Fprintf(&b, "- Siempre que no haya disponibilidad para la fecha, hora o número de personas pedidos, además de proponer alternativas con las herramientas, invita al cliente a comprobar la disponibilidad en tiempo real y reservar en la web: %s\n", d.BookingURL)
+		b.WriteString("- Menciona también el enlace cuando el cliente pregunte por huecos u horarios libres, y al despedirte si no se ha llegado a crear la reserva. Como máximo una vez por respuesta, y sin repetirlo si ya lo diste en el mensaje anterior.\n")
+		b.WriteString("- El enlace es un complemento: sigue ayudando por WhatsApp (consultar otros días, horas o crear la reserva) si el cliente lo prefiere.\n\n")
+	}
 
 	b.WriteString("## IDIOMA Y TONO\n")
 	fmt.Fprintf(&b, "- Idioma por defecto: %s\n", lang)
@@ -194,6 +211,7 @@ func (s *Server) loadBotPromptData(ctx context.Context, restaurantID int, pushNa
 		data.Email = branding.Email
 		data.Website = branding.Website
 		data.MenuURL = branding.MenuURL
+		data.BookingURL = botBookingURL(branding.Website)
 		data.ManagementPhone = branding.ManagementPhone
 	}
 	if data.BrandName == "" {
@@ -223,4 +241,17 @@ func (s *Server) loadBotPromptData(ctx context.Context, restaurantID int, pushNa
 // the personalized prompt.
 func (s *Server) buildBotSystemPrompt(ctx context.Context, restaurantID int, pushName string, userPhone string, tenant botTenantConfig) string {
 	return renderBotSystemPrompt(s.loadBotPromptData(ctx, restaurantID, pushName, userPhone, tenant))
+}
+
+// botBookingURL derives the public booking page from the restaurant website.
+// Empty website -> empty URL, so the prompt never invents a link.
+func botBookingURL(website string) string {
+	base := strings.TrimRight(strings.TrimSpace(website), "/")
+	if base == "" {
+		return ""
+	}
+	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+		base = "https://" + base
+	}
+	return base + "/reservas"
 }

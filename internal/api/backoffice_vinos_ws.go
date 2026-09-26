@@ -44,6 +44,9 @@ type boVinoAIImageJob struct {
 	WineNum      int
 	RawImage     []byte
 	ContentType  string
+	// DB-resolved provider (ai_image_key_vault_v1); empty = env fallback.
+	APIKey  string
+	EditURL string
 }
 
 func (s *Server) logBOVinoAITrace(format string, args ...any) {
@@ -316,7 +319,8 @@ func (s *Server) handleBOVinoAIImageGenerate(w http.ResponseWriter, r *http.Requ
 	}
 	s.logBOVinoAITrace("generate request received restaurant=%d path=%s remote=%s", a.ActiveRestaurantID, r.URL.Path, r.RemoteAddr)
 
-	if strings.TrimSpace(s.cfg.OpenAIAPIKey) == "" {
+	resolvedAI := s.resolveAIImageProvider(r.Context(), a.ActiveRestaurantID)
+	if strings.TrimSpace(resolvedAI.APIKey) == "" {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "AI provider not configured"})
 		return
 	}
@@ -397,6 +401,8 @@ func (s *Server) handleBOVinoAIImageGenerate(w http.ResponseWriter, r *http.Requ
 		WineNum:      wineNum,
 		RawImage:     raw,
 		ContentType:  contentType,
+		APIKey:       resolvedAI.APIKey,
+		EditURL:      aiImageEditURLForModel(resolvedAI.BaseURL, resolvedAI.I2IModelSlug),
 	})
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -407,7 +413,11 @@ func (s *Server) handleBOVinoAIImageGenerate(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) runBOVinoAIImageJob(job boVinoAIImageJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.openAIRequestTimeout())
+	base := context.Background()
+	if strings.TrimSpace(job.APIKey) != "" || strings.TrimSpace(job.EditURL) != "" {
+		base = withAIProviderOverride(base, aiProviderOverride{APIKey: job.APIKey, EditURL: job.EditURL})
+	}
+	ctx, cancel := context.WithTimeout(base, s.openAIRequestTimeout())
 	defer cancel()
 	s.logBOVinoAITrace("job start restaurant=%d wine=%d inputBytes=%d inputType=%s", job.RestaurantID, job.WineNum, len(job.RawImage), job.ContentType)
 
