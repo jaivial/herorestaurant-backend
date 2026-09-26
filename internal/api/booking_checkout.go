@@ -377,13 +377,24 @@ func (s *Server) completeCheckout(r *http.Request, restaurantID int, publicID st
 		paidAt = row.PaidAt.Time
 	}
 	fresh, _ := s.loadCheckout(ctx, restaurantID, publicID)
-	pdfBytes, perr := s.buildCheckoutReceipt(ctx, restaurantID, fresh, pb, paidAt, 0)
+	// The final receipt carries the booking number + QR and is uploaded before
+	// the notifications so WhatsApp can send it as a document.
 	var receipt *bookingReceipt
-	if perr == nil {
-		receipt = &bookingReceipt{Filename: "comprobante-prereserva-" + publicID + ".pdf", PDF: pdfBytes}
+	buildReceipt := func(bookingID int64, qr *bookingQR) *bookingReceipt {
+		var qrPNG []byte
+		if qr != nil {
+			qrPNG = qr.PNG
+		}
+		pdfBytes, perr := s.buildCheckoutReceipt(ctx, restaurantID, fresh, pb, paidAt, bookingID, qrPNG)
+		if perr != nil {
+			logStripeFlow("receipt_build_failed", restaurantID, publicID, perr.Error())
+			return nil
+		}
+		receipt = s.storeReceipt(ctx, restaurantID, publicID, pdfBytes)
+		return receipt
 	}
 
-	bookingID, status, resp := s.commitFrontBooking(replay, pb, receipt)
+	bookingID, status, resp := s.commitFrontBooking(replay, pb, buildReceipt)
 	if bookingID > 0 && status != http.StatusOK {
 		// Stored and paid; only a notification failed. Keep it completed.
 		logStripeFlow("notification_failed", restaurantID, publicID, anyToString(resp["message"]))
@@ -395,10 +406,6 @@ func (s *Server) completeCheckout(r *http.Request, restaurantID int, publicID st
 			row = fresh
 		}
 		return row, resp, fmt.Errorf("%s", anyToString(resp["message"]))
-	}
-	// Final receipt carries the booking number; upload that one.
-	if pdfBytes, perr = s.buildCheckoutReceipt(ctx, restaurantID, fresh, pb, paidAt, bookingID); perr == nil {
-		receipt = s.storeReceipt(ctx, restaurantID, publicID, pdfBytes)
 	}
 	receiptURL := ""
 	if receipt != nil {
@@ -421,14 +428,14 @@ func markSnapshotPaidByStripe(pb *preparedFrontBooking, amount float64) {
 	}
 }
 
-func (s *Server) buildCheckoutReceipt(ctx context.Context, restaurantID int, row *checkoutRow, pb *preparedFrontBooking, paidAt time.Time, bookingID int64) ([]byte, error) {
+func (s *Server) buildCheckoutReceipt(ctx context.Context, restaurantID int, row *checkoutRow, pb *preparedFrontBooking, paidAt time.Time, bookingID int64, qrPNG []byte) ([]byte, error) {
 	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
 	in := receiptInput{
 		Reference: row.PublicID, PaymentRef: row.PaymentIntentID, PaidAt: paidAt, Demo: row.Provider == "demo",
 		BrandName: firstNonEmpty(branding.BrandName, "Restaurante"), Address: branding.Address, Phone: branding.Phone, Email: branding.Email,
 		Customer: pb.params.CustomerName, CustomerMail: pb.params.ContactEmail, CustomerTel: maskPhone(pb.phoneE164),
 		Date: pb.params.ReservationDate, Time: strings.TrimSuffix(anyToString(pb.params.ReservationTime), ":00"), PartySize: pb.params.PartySize,
-		BookingID: bookingID, Total: float64(row.AmountCents) / 100, Currency: row.Currency,
+		BookingID: bookingID, Total: float64(row.AmountCents) / 100, Currency: row.Currency, QRPNG: qrPNG,
 	}
 	if pb.specialSnapshot != nil {
 		in.DateTitle = pb.specialSnapshot.Title

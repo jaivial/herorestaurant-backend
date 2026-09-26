@@ -40,109 +40,200 @@ func specialBookingRenderModels(booking map[string]any) (map[string]any, bool) {
 	return nil, false
 }
 
-// formatSpecialBookingWhatsApp renders the special-booking lines used by
-// buildBookingWhatsAppMessage (per-menu, principales names, adelanto totals).
-func formatSpecialBookingWhatsApp(booking map[string]any) string {
+// specialSummaryDish is one chosen principal with how many guests picked it.
+type specialSummaryDish struct {
+	Name  string
+	Count int
+}
+
+// specialSummaryMenu is one booked menu line with its grouped principales and
+// adelanto (per unit x count).
+type specialSummaryMenu struct {
+	Label       string
+	Count       int
+	Principales []specialSummaryDish
+	Adelanto    float64
+}
+
+// specialBookingSummary is the channel-neutral view shared by the email and
+// the WhatsApp confirmation. Coordination id: festive_prereserva_notifications_v1
+type specialBookingSummary struct {
+	Title          string
+	IsPrereserva   bool
+	Menus          []specialSummaryMenu
+	HasPrincipales bool
+	AdelantoTotal  float64
+	AdelantoPaid   float64
+	AdelantoStatus string
+	QRURL          string
+}
+
+// buildSpecialBookingSummary resolves the summary from the booking `special`
+// block. ok=false when the booking is not a special booking.
+func buildSpecialBookingSummary(booking map[string]any) (specialBookingSummary, bool) {
 	block, ok := specialBookingRenderModels(booking)
-	if !ok {
-		return ""
+	if !ok || !isSpecialBookingFlag(booking) {
+		return specialBookingSummary{}, false
 	}
-	var b strings.Builder
-	title := strings.TrimSpace(anyToString(block["title"]))
-	if title != "" {
-		fmt.Fprintf(&b, "🎉 *Menú especial:* %s\n", title)
+	out := specialBookingSummary{
+		Title:          strings.TrimSpace(anyToString(block["title"])),
+		IsPrereserva:   isPrereservaFlag(booking),
+		AdelantoStatus: strings.TrimSpace(anyToString(block["adelanto_status"])),
 	}
-	menus, _ := block["menus"].([]any)
-	for _, raw := range menus {
-		menu, _ := raw.(map[string]any)
-		if menu == nil {
-			continue
-		}
-		label := strings.TrimSpace(anyToString(menu["label"]))
-		count, _ := anyToInt(menu["count"])
-		if label != "" && count > 0 {
-			fmt.Fprintf(&b, "  • %s x%d\n", label, count)
-		}
-		if items, _ := menu["items"].([]any); len(items) > 0 {
-			for _, itemRaw := range items {
-				item, _ := itemRaw.(map[string]any)
-				if item == nil {
-					continue
-				}
-				name := strings.TrimSpace(anyToString(item["name"]))
-				if name != "" {
-					fmt.Fprintf(&b, "    – %s\n", name)
+	if qr, ok := booking[bookingQRKey].(*bookingQR); ok && qr != nil {
+		out.QRURL = qr.URL
+	}
+	if out.QRURL == "" {
+		out.QRURL = strings.TrimSpace(anyToString(booking["qr_url"]))
+	}
+	out.AdelantoPaid, _ = numericField(block, "adelanto_paid_total")
+	menus, _ := block["menus"].([]map[string]any)
+	if menus == nil {
+		if raw, ok := block["menus"].([]any); ok {
+			for _, m := range raw {
+				if mm, ok := m.(map[string]any); ok {
+					menus = append(menus, mm)
 				}
 			}
 		}
 	}
-	if req, ok := numericField(block, "adelanto_required_total"); ok && req > 0 {
-		pending := 0.0
-		if p, ok := numericField(block, "adelanto_pending_total"); ok {
-			pending = p
+	for _, menu := range menus {
+		label := strings.TrimSpace(anyToString(menu["label"]))
+		count, _ := anyToInt(menu["count"])
+		if label == "" || count <= 0 {
+			continue
 		}
-		fmt.Fprintf(&b, "💶 *Adelanto:* %.2f€\n", req)
-		if pending > 0 {
-			fmt.Fprintf(&b, "   Pendiente: %.2f€\n", pending)
-		} else {
-			fmt.Fprintf(&b, "   Pagado\n")
+		perUnit, _ := numericField(menu, "adelanto_per_unit")
+		line := specialSummaryMenu{Label: label, Count: count, Adelanto: round2(perUnit * float64(count))}
+		idx := map[string]int{}
+		for _, item := range specialMenuItems(menu["items"]) {
+			name := strings.TrimSpace(anyToString(item["name"]))
+			if name == "" {
+				continue
+			}
+			if i, seen := idx[name]; seen {
+				line.Principales[i].Count++
+				continue
+			}
+			idx[name] = len(line.Principales)
+			line.Principales = append(line.Principales, specialSummaryDish{Name: name, Count: 1})
+		}
+		if len(line.Principales) > 0 {
+			out.HasPrincipales = true
+		}
+		out.AdelantoTotal += line.Adelanto
+		out.Menus = append(out.Menus, line)
+	}
+	out.AdelantoTotal = round2(out.AdelantoTotal)
+	return out, true
+}
+
+// specialMenuItems accepts both []map[string]any (in-process response) and
+// []any (JSON round-trip) item lists.
+func specialMenuItems(v any) []map[string]any {
+	if items, ok := v.([]map[string]any); ok {
+		return items
+	}
+	raw, _ := v.([]any)
+	out := make([]map[string]any, 0, len(raw))
+	for _, it := range raw {
+		if m, ok := it.(map[string]any); ok {
+			out = append(out, m)
 		}
 	}
-	if isPrereservaFlag(booking) {
-		b.WriteString("ℹ️ *Pre-reserva:* se confirmará al abrirse el calendario regular\n")
+	return out
+}
+
+// hideArrozForSpecialBooking: special-date menus with principales replace the
+// rice choice, so the Arroz row is omitted in email and WhatsApp.
+func hideArrozForSpecialBooking(booking map[string]any) bool {
+	sum, ok := buildSpecialBookingSummary(booking)
+	return ok && sum.HasPrincipales
+}
+
+// bookingConfirmationTitle is "Confirmación de prereserva" for prereservas.
+func bookingConfirmationTitle(booking map[string]any) string {
+	if isSpecialBookingFlag(booking) && isPrereservaFlag(booking) {
+		return "Confirmación de prereserva"
+	}
+	return "Confirmación de reserva"
+}
+
+// formatSpecialBookingWhatsApp renders the special-booking section used by
+// buildBookingWhatsAppMessage: paid adelanto (total + per menu), booked menus
+// and the principales chosen per menu.
+func formatSpecialBookingWhatsApp(booking map[string]any) string {
+	sum, ok := buildSpecialBookingSummary(booking)
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	if sum.AdelantoPaid > 0 {
+		fmt.Fprintf(&b, "\n💶 *Adelanto pagado:* %.2f€\n", sum.AdelantoPaid)
+		for _, m := range sum.Menus {
+			if m.Adelanto > 0 {
+				fmt.Fprintf(&b, "  • %s x%d: %.2f€\n", m.Label, m.Count, m.Adelanto)
+			}
+		}
+	}
+	if len(sum.Menus) > 0 {
+		heading := "Reserva"
+		if sum.IsPrereserva {
+			heading = "Prereserva"
+		}
+		fmt.Fprintf(&b, "\n🎉 *%s %s*\n", heading, sum.Title)
+		for _, m := range sum.Menus {
+			fmt.Fprintf(&b, "  • %s x%d\n", m.Label, m.Count)
+			for _, d := range m.Principales {
+				fmt.Fprintf(&b, "    – %s x%d\n", d.Name, d.Count)
+			}
+		}
 	}
 	return b.String()
 }
 
-// renderSpecialBookingEmailRows returns the HTML <tr> rows used by
-// buildBookingEmailHTML when is_special_booking is true.
-func renderSpecialBookingEmailRows(booking map[string]any) string {
-	block, ok := specialBookingRenderModels(booking)
+// renderSpecialBookingEmailBlock returns the centered container rendered below
+// the details table: "Prereserva|Reserva {title}", booked menus with counts and
+// principales, then the adelanto summary (total + per menu) and the QR.
+func renderSpecialBookingEmailBlock(booking map[string]any) string {
+	sum, ok := buildSpecialBookingSummary(booking)
 	if !ok {
 		return ""
 	}
-	var b strings.Builder
-	title := strings.TrimSpace(anyToString(block["title"]))
-	if title != "" {
-		fmt.Fprintf(&b, `<tr><td colspan="2" style="padding-top:14px;font-size:16px;font-weight:600;color:#7c3aed;">🎉 %s</td></tr>`, htmlEscape(title))
+	heading := "Reserva"
+	if sum.IsPrereserva {
+		heading = "Prereserva"
 	}
-	menus, _ := block["menus"].([]any)
-	for _, raw := range menus {
-		menu, _ := raw.(map[string]any)
-		if menu == nil {
-			continue
+	var b strings.Builder
+	b.WriteString(`<div data-testid="email-special-summary" style="background-color:#f8f9fa;border:1px solid #e9ecef;border-radius:8px;padding:20px;margin-bottom:30px;">` + "\n")
+	fmt.Fprintf(&b, `<h2 style="margin:0 0 14px 0;text-align:center;color:#097969;font-size:20px;">%s</h2>`+"\n", htmlEscape(strings.TrimSpace(heading+" "+sum.Title)))
+	b.WriteString(`<table role="presentation" style="width:100%;border-collapse:collapse;">` + "\n")
+	for _, m := range sum.Menus {
+		fmt.Fprintf(&b, `<tr><td style="padding:8px 0;font-weight:bold;">%s</td><td style="padding:8px 0;text-align:right;font-weight:bold;">x%d</td></tr>`+"\n", htmlEscape(m.Label), m.Count)
+		for _, d := range m.Principales {
+			fmt.Fprintf(&b, `<tr><td style="padding:2px 0 2px 18px;color:#555;">%s</td><td style="padding:2px 0;text-align:right;color:#555;">x%d</td></tr>`+"\n", htmlEscape(d.Name), d.Count)
 		}
-		label := strings.TrimSpace(anyToString(menu["label"]))
-		count, _ := anyToInt(menu["count"])
-		if label != "" && count > 0 {
-			fmt.Fprintf(&b, `<tr><td style="padding:4px 0;color:#555;">%s</td><td style="padding:4px 0;text-align:right;font-weight:600;">x%d</td></tr>`, htmlEscape(label), count)
+	}
+	b.WriteString("</table>\n")
+	if sum.AdelantoTotal > 0 {
+		label := "Adelanto pagado"
+		if sum.AdelantoStatus != "paid" {
+			label = "Adelanto"
 		}
-		if items, _ := menu["items"].([]any); len(items) > 0 {
-			for _, itemRaw := range items {
-				item, _ := itemRaw.(map[string]any)
-				if item == nil {
-					continue
-				}
-				name := strings.TrimSpace(anyToString(item["name"]))
-				if name != "" {
-					fmt.Fprintf(&b, `<tr><td style="padding:2px 0 2px 18px;color:#888;font-size:13px;">– %s</td><td></td></tr>`, htmlEscape(name))
-				}
+		fmt.Fprintf(&b, `<h3 style="margin:18px 0 8px 0;text-align:center;color:#097969;font-size:16px;">%s</h3>`+"\n", label)
+		b.WriteString(`<table role="presentation" style="width:100%;border-collapse:collapse;">` + "\n")
+		for _, m := range sum.Menus {
+			if m.Adelanto > 0 {
+				fmt.Fprintf(&b, `<tr><td style="padding:4px 0;">%s x%d</td><td style="padding:4px 0;text-align:right;">%.2f€</td></tr>`+"\n", htmlEscape(m.Label), m.Count, m.Adelanto)
 			}
 		}
+		fmt.Fprintf(&b, `<tr><td style="padding:8px 0;border-top:1px solid #ddd;font-weight:bold;">Total</td><td style="padding:8px 0;border-top:1px solid #ddd;text-align:right;font-weight:bold;">%.2f€</td></tr>`+"\n", sum.AdelantoTotal)
+		b.WriteString("</table>\n")
 	}
-	if req, ok := numericField(block, "adelanto_required_total"); ok && req > 0 {
-		pending := 0.0
-		if p, ok := numericField(block, "adelanto_pending_total"); ok {
-			pending = p
-		}
-		fmt.Fprintf(&b, `<tr><td style="padding-top:10px;color:#555;">Adelanto</td><td style="padding-top:10px;text-align:right;font-weight:600;">%.2f€</td></tr>`, req)
-		if pending > 0 {
-			fmt.Fprintf(&b, `<tr><td style="color:#c2410c;">Pendiente</td><td style="text-align:right;color:#c2410c;font-weight:600;">%.2f€</td></tr>`, pending)
-		}
+	if sum.QRURL != "" {
+		fmt.Fprintf(&b, `<div style="text-align:center;margin-top:18px;"><img src="%s" alt="QR de la reserva" width="180" height="180" style="width:180px;height:180px;"><p style="margin:6px 0 0 0;font-size:12px;color:#666;">Presente este QR al llegar al restaurante.</p></div>`+"\n", htmlEscape(sum.QRURL))
 	}
-	if isPrereservaFlag(booking) {
-		b.WriteString(`<tr><td colspan="2" style="padding-top:8px;color:#7c3aed;font-size:13px;">Pre-reserva: se confirmará al abrirse el calendario regular.</td></tr>`)
-	}
+	b.WriteString("</div>\n")
 	return b.String()
 }
 

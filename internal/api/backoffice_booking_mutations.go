@@ -190,6 +190,17 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 	// Send notifications (WhatsApp + Email). Booking is already committed.
 	// For backoffice, notification failure is reported as a warning in the response.
 	notifData := boBookingToNotificationData(booking, id)
+	// Coordination id: special_booking_qr_v1 - special-date bookings created
+	// from the backoffice carry the same summary + QR as the public flow.
+	if toBool(out["is_special_booking"]) {
+		notifData["is_special_booking"] = true
+		notifData["is_prereserva"] = out["is_prereserva"]
+		notifData["special"] = out["special"]
+		if qr := s.ensureBookingQR(r.Context(), a.ActiveRestaurantID, int64(id), anyToString(out["reservation_date"])); qr != nil {
+			notifData[bookingQRKey] = qr
+		}
+	}
+	s.broadcastBookingChanged(a.ActiveRestaurantID, int64(id), "booking_created")
 	var whatsappSent, emailSent bool
 	var notificationWarning string
 
@@ -526,6 +537,7 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 	// Record tracked field modifications for Modificadas tab.
 	s.recordBookingModificationsAfterPatch(r.Context(), a.ActiveRestaurantID, id, current, next, a)
 
+	s.broadcastBookingChanged(a.ActiveRestaurantID, int64(id), "booking_updated")
 	out, err := s.boFetchBookingByID(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
@@ -1316,7 +1328,9 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 			COALESCE(is_prereserva, 0),
 			COALESCE(special_json, ''),
 			COALESCE(has_mobility_issues, 0),
-			COALESCE(mobility_people, 0)
+			COALESCE(mobility_people, 0),
+			qr_url,
+			receipt_url
 		FROM bookings
 		WHERE restaurant_id = ? AND id = ?
 		LIMIT 1
@@ -1352,6 +1366,8 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		specialJSON         sql.NullString
 		hasMobilityIssues   int
 		mobilityPeople      int
+		qrURL               sql.NullString
+		receiptURL          sql.NullString
 	)
 	if err := row.Scan(
 		&bookingID,
@@ -1383,6 +1399,8 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		&specialJSON,
 		&hasMobilityIssues,
 		&mobilityPeople,
+		&qrURL,
+		&receiptURL,
 	); err != nil {
 		return nil, err
 	}
@@ -1424,6 +1442,9 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		"is_prereserva":              isPrereservaFlag,
 		"special_json":               nullStringOrNil(specialJSON),
 		"special":                    s.buildSpecialBookingResponse(ctx, restaurantID, isSpecialBookingFlag, isPrereservaFlag, specialJSON.String),
+		// Coordination id: special_booking_qr_v1
+		"qr_url":      nullStringOrNil(qrURL),
+		"receipt_url": nullStringOrNil(receiptURL),
 	}, nil
 }
 

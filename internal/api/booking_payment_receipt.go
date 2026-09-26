@@ -57,6 +57,7 @@ type receiptInput struct {
 	Lines        []receiptLine
 	Total        float64
 	Currency     string
+	QRPNG        []byte // special_booking_qr_v1: booking QR printed on the receipt
 }
 
 func buildReceiptPDF(in receiptInput) ([]byte, error) {
@@ -121,6 +122,15 @@ func buildReceiptPDF(in receiptInput) ([]byte, error) {
 	pdf.CellFormat(134, 9, tr("Total pagado"), "T", 0, "R", false, 0, "")
 	pdf.CellFormat(0, 9, tr(formatMoney(in.Total, in.Currency)), "T", 1, "R", false, 0, "")
 	pdf.Ln(8)
+	if len(in.QRPNG) > 0 {
+		pdf.RegisterImageOptionsReader("booking-qr", fpdf.ImageOptions{ImageType: "PNG"}, bytes.NewReader(in.QRPNG))
+		x := (210 - 45) / 2.0
+		pdf.ImageOptions("booking-qr", x, pdf.GetY(), 45, 45, false, fpdf.ImageOptions{ImageType: "PNG"}, 0, "")
+		pdf.SetY(pdf.GetY() + 47)
+		pdf.SetFont("Helvetica", "", 8)
+		pdf.CellFormat(0, 4, tr("Presente este QR al llegar al restaurante"), "", 1, "C", false, 0, "")
+		pdf.Ln(4)
+	}
 	pdf.SetFont("Helvetica", "", 8)
 	pdf.MultiCell(0, 4, tr("Este documento acredita el pago del adelanto de la prereserva indicada. El importe se descontará de la cuenta final del día de la reserva."), "", "L", false)
 
