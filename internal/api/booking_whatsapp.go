@@ -42,7 +42,8 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 	// Format time HH:MM.
 	timeDisplay := formatHHMM(resTime)
 
-	msg := fmt.Sprintf("*Confirmación de Reserva - %s*\n\n", brandName)
+	// Coordination id: festive_prereserva_notifications_v1
+	msg := fmt.Sprintf("*%s - %s*\n\n", bookingConfirmationTitle(booking), brandName)
 	msg += fmt.Sprintf("Hola %s,\n\n", customerName)
 	msg += fmt.Sprintf("Gracias por elegir %s. Su reserva ha sido confirmada:\n\n", brandName)
 	msg += fmt.Sprintf("📅 *Fecha:* %s\n", dateDisplay)
@@ -64,14 +65,8 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 		if principales != "" {
 			msg += formatPrincipalesWhatsApp(principales)
 		}
-	} else {
+	} else if !hideArrozForSpecialBooking(booking) {
 		msg += formatArrozWhatsApp(booking)
-	}
-
-	// Coordination id: special_booking_v1 - special-date bookings render the
-	// title + per-menu lines + principales names per menu + adelanto totals.
-	if isSpecialBookingFlag(booking) {
-		msg += formatSpecialBookingWhatsApp(booking)
 	}
 
 	// Coordination id: booking_extras_v1 - extras are only shown when at least
@@ -87,6 +82,10 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 	// verify at a glance that nothing was requested by mistake.
 	msg += fmt.Sprintf("👶 *Tronas:* %d\n", highChairs)
 	msg += fmt.Sprintf("🍼 *Carros de bebé:* %d\n", babyStrollers)
+
+	// Coordination id: special_booking_v1 - special-date bookings append the
+	// paid adelanto (total + per menu), booked menus and principales per menu.
+	msg += formatSpecialBookingWhatsApp(booking)
 
 	msg += "\nAl hacer esta reserva, usted ha confirmado y aceptado las condiciones de reserva y políticas del restaurante, las cuales puede consultar en el botón de abajo."
 
@@ -212,13 +211,17 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 
 	// Coordination id: stripe_prereserva_adelanto_v1 - the paid prereserva
 	// receipt follows the confirmation as a PDF document.
+	// Coordination id: special_booking_qr_v1 - then the booking QR image.
 	sendReceipt := func() {
-		receipt, ok := booking[bookingReceiptKey].(*bookingReceipt)
-		if !ok || receipt == nil || receipt.URL == "" {
-			return
+		if receipt, ok := booking[bookingReceiptKey].(*bookingReceipt); ok && receipt != nil && receipt.URL != "" {
+			if err := gw.SendMedia(ctx, msg.To, waMedia{Kind: "document", URL: receipt.URL, Filename: receipt.Filename, Caption: "Comprobante de pago del adelanto"}); err != nil {
+				log.Printf("[stripe_prereserva_adelanto_v1] WhatsApp receipt failed for booking #%d: %v", bookingID, err)
+			}
 		}
-		if err := gw.SendMedia(ctx, msg.To, waMedia{Kind: "document", URL: receipt.URL, Filename: receipt.Filename, Caption: "Comprobante de pago del adelanto"}); err != nil {
-			log.Printf("[stripe_prereserva_adelanto_v1] WhatsApp receipt failed for booking #%d: %v", bookingID, err)
+		if qr, ok := booking[bookingQRKey].(*bookingQR); ok && qr != nil && qr.URL != "" {
+			if err := gw.SendMedia(ctx, msg.To, waMedia{Kind: "image", URL: qr.URL, Caption: "QR de su reserva: preséntelo al llegar al restaurante"}); err != nil {
+				log.Printf("[special_booking_qr_v1] WhatsApp QR failed for booking #%d: %v", bookingID, err)
+			}
 		}
 	}
 

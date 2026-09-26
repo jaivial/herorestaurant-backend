@@ -44,6 +44,9 @@ type bookingRow struct {
 	// Coordination id: mobility_issues_v1
 	HasMobilityIssues sql.NullInt64
 	MobilityPeople    sql.NullInt64
+	// Coordination id: special_booking_qr_v1
+	QRURL      sql.NullString
+	ReceiptURL sql.NullString
 }
 
 func (s *Server) scanBookingRow(ctx context.Context, restaurantID int, rows *sql.Rows) (map[string]any, bool) {
@@ -77,6 +80,8 @@ func (s *Server) scanBookingRow(ctx context.Context, restaurantID int, rows *sql
 		&b.SpecialJSON,
 		&b.HasMobilityIssues,
 		&b.MobilityPeople,
+		&b.QRURL,
+		&b.ReceiptURL,
 	); err != nil {
 		return nil, false
 	}
@@ -121,6 +126,8 @@ func (s *Server) scanBookingRow(ctx context.Context, restaurantID int, rows *sql
 		"is_prereserva":              isPrereserva,
 		"special_json":               nullStringOrNil(b.SpecialJSON),
 		"special":                    s.buildSpecialBookingResponse(ctx, restaurantID, isSpecialBooking, isPrereserva, b.SpecialJSON.String),
+		"qr_url":                     nullStringOrNil(b.QRURL),
+		"receipt_url":                nullStringOrNil(b.ReceiptURL),
 	}, true
 }
 
@@ -296,7 +303,9 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 				COALESCE(is_prereserva, 0),
 				COALESCE(special_json, ''),
 				COALESCE(has_mobility_issues, 0),
-				COALESCE(mobility_people, 0)
+				COALESCE(mobility_people, 0),
+				qr_url,
+				receipt_url
 			FROM bookings
 		` + where + `
 			ORDER BY ` + orderBy + `
@@ -548,6 +557,7 @@ func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.broadcastBookingChanged(restaurantID, int64(bookingID), "booking_cancelled")
 	s.emitN8nWebhookAsync(restaurantID, "booking.cancelled", map[string]any{
 		"source":            "backoffice_cancel",
 		"cancelledBy":       "staff",

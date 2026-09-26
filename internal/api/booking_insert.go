@@ -416,11 +416,15 @@ func (s *Server) prepareFrontBooking(r *http.Request, restaurantID int) (*prepar
 	}, nil
 }
 
+// receiptBuilder builds + uploads the final payment receipt once the booking
+// id and QR exist, so the WhatsApp document has a CDN URL before sending.
+type receiptBuilder func(bookingID int64, qr *bookingQR) *bookingReceipt
+
 // commitFrontBooking inserts a prepared booking and sends the customer and
-// restaurant notifications. attachments (e.g. the Stripe receipt) go with the
-// confirmation email and WhatsApp.
-// Coordination id: stripe_prereserva_adelanto_v1
-func (s *Server) commitFrontBooking(r *http.Request, pb *preparedFrontBooking, receipt *bookingReceipt) (int64, int, map[string]any) {
+// restaurant notifications. The receipt (Stripe adelanto) and the booking QR
+// go with the confirmation email and WhatsApp.
+// Coordination id: stripe_prereserva_adelanto_v1, special_booking_qr_v1
+func (s *Server) commitFrontBooking(r *http.Request, pb *preparedFrontBooking, buildReceipt receiptBuilder) (int64, int, map[string]any) {
 	p := pb.params
 	bookingID, err := s.insertBooking(r, p)
 	if err != nil {
@@ -430,6 +434,18 @@ func (s *Server) commitFrontBooking(r *http.Request, pb *preparedFrontBooking, r
 			"error_code": "BOOKING_INSERT_FAILED",
 		}
 	}
+	var qr *bookingQR
+	if p.IsSpecialBooking {
+		qr = s.ensureBookingQR(r.Context(), pb.restaurantID, bookingID, p.ReservationDate)
+	}
+	var receipt *bookingReceipt
+	if buildReceipt != nil {
+		receipt = buildReceipt(bookingID, qr)
+		if receipt != nil {
+			s.setBookingReceiptURL(r.Context(), pb.restaurantID, bookingID, receipt.URL)
+		}
+	}
+	s.broadcastBookingChanged(pb.restaurantID, bookingID, "booking_created")
 
 	// Build booking data map for notifications.
 	bookingData := map[string]any{
@@ -463,6 +479,9 @@ func (s *Server) commitFrontBooking(r *http.Request, pb *preparedFrontBooking, r
 	s.enrichBookingLocationForNotifications(r.Context(), pb.restaurantID, bookingData)
 	if receipt != nil {
 		bookingData[bookingReceiptKey] = receipt
+	}
+	if qr != nil {
+		bookingData[bookingQRKey] = qr
 	}
 
 	// Send WhatsApp confirmation to customer (best-effort).

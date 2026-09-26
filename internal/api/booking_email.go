@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"mime/quotedprintable"
 	"net/mail"
 	"net/smtp"
 	"strconv"
@@ -65,10 +66,7 @@ func buildEmailMessage(from, to, subject, htmlBody string, attachments []emailAt
 	buf.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
 
 	if len(attachments) == 0 {
-		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
-		buf.WriteString("Content-Transfer-Encoding: 8bit\r\n")
-		buf.WriteString("\r\n")
-		buf.WriteString(htmlBody)
+		writeQuotedPrintableHTML(&buf, htmlBody)
 		return buf.Bytes()
 	}
 
@@ -78,10 +76,7 @@ func buildEmailMessage(from, to, subject, htmlBody string, attachments []emailAt
 
 	// HTML part
 	buf.WriteString("--" + boundary + "\r\n")
-	buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
-	buf.WriteString("Content-Transfer-Encoding: 8bit\r\n")
-	buf.WriteString("\r\n")
-	buf.WriteString(htmlBody)
+	writeQuotedPrintableHTML(&buf, htmlBody)
 	buf.WriteString("\r\n")
 
 	// Attachment parts
@@ -110,6 +105,19 @@ func buildEmailMessage(from, to, subject, htmlBody string, attachments []emailAt
 	}
 	buf.WriteString("--" + boundary + "--\r\n")
 	return buf.Bytes()
+}
+
+// writeQuotedPrintableHTML writes an HTML part as quoted-printable so no line
+// exceeds the SMTP 998-char limit: relays used to hard-wrap the long details
+// line and break tags (the visible "< strong>Niños" row).
+// Coordination id: festive_prereserva_notifications_v1
+func writeQuotedPrintableHTML(buf *bytes.Buffer, htmlBody string) {
+	buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n")
+	buf.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+	buf.WriteString("\r\n")
+	qp := quotedprintable.NewWriter(buf)
+	_, _ = qp.Write([]byte(htmlBody))
+	_ = qp.Close()
 }
 
 // smtpDeliver opens the SMTP connection (honoring encryption) and writes the
@@ -262,7 +270,7 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 			menuArrozHTML += tableRow("Principales", htmlEscape(commentary))
 		}
 		commentary = ""
-	} else {
+	} else if !hideArrozForSpecialBooking(booking) {
 		arrozText := formatArrozEmail(booking)
 		menuArrozHTML = tableRow("Arroz", htmlEscape(arrozText))
 	}
@@ -270,8 +278,7 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 	if children < 0 || children > partySize {
 		children = 0
 	}
-	detailsHTML := tableRow("Referencia", "#"+strconv.FormatInt(bookingID, 10)) +
-		tableRow("Fecha", htmlEscape(dateDisplay)) +
+	detailsHTML := tableRow("Fecha", htmlEscape(dateDisplay)) +
 		tableRow("Hora", htmlEscape(timeDisplay)) +
 		tableRow("Comensales", strconv.Itoa(partySize)) +
 		tableRow("Adultos", strconv.Itoa(partySize-children)) +
@@ -293,11 +300,6 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 		detailsHTML += tableRow("Mesa", htmlEscape(tableNumber))
 	}
 	detailsHTML += menuArrozHTML
-	// Coordination id: special_booking_v1 - special-date booking rows (title,
-	// menus with counts + principales tree, adelanto total / pendiente).
-	if isSpecialBookingFlag(booking) {
-		detailsHTML += renderSpecialBookingEmailRows(booking)
-	}
 	// Coordination id: booking_extras_v1 - only rendered when at least one
 	// extra is selected.
 	if extras := bookingExtrasFromMap(booking); len(extras) > 0 {
@@ -318,12 +320,17 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 		detailsHTML += tableRow("Observaciones", htmlEscape(commentary))
 	}
 
+	// Coordination id: festive_prereserva_notifications_v1 - prereserva title
+	// and the centered special-date summary (menus, principales, adelanto, QR).
+	title := bookingConfirmationTitle(booking)
+	specialBlockHTML := renderSpecialBookingEmailBlock(booking)
+
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Confirmación de Reserva - %s</title>
+<title>%s - %s</title>
 </head>
 <body style="margin:0;padding:0;font-family:Arial,sans-serif;line-height:1.6;background-color:#f4f4f4;">
 <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
@@ -334,13 +341,13 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 </tr>
 <tr>
 <td style="padding:30px 20px;">
-<h1 style="color:#097969;margin-bottom:20px;text-align:center;">Confirmación de Reserva</h1>
+<h1 style="color:#097969;margin-bottom:20px;text-align:center;">%s</h1>
 <p style="margin-bottom:20px;">Estimado/a <strong>%s</strong>,</p>
 <p style="margin-bottom:20px;">Gracias por elegir %s. Le confirmamos que su reserva ha sido registrada con éxito con los siguientes detalles:</p>
 <table role="presentation" style="width:100%%;margin-bottom:30px;border-collapse:collapse;">
 %s
 </table>
-`+contactBlockHTML+`
+%s`+contactBlockHTML+`
 <div style="background-color:#f8f9fa;border-radius:8px;padding:20px;margin-bottom:30px;border:1px solid #e9ecef;text-align:center;">
 <p style="margin:0 0 15px 0;font-size:14px;color:#666;line-height:1.6;">Al hacer esta reserva, usted ha confirmado y aceptado las condiciones de reserva y políticas del restaurante.</p>
 <a href="%s/booking-policies" style="display:inline-block;padding:10px 25px;background-color:#097969;color:white;text-decoration:none;border-radius:5px;font-weight:bold;font-size:14px;">CONDICIONES</a>
@@ -357,12 +364,15 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 </table>
 </body>
 </html>`,
+		title,
 		htmlEscape(brandName),
 		htmlEscape(logoURL),
 		htmlEscape(brandName),
+		title,
 		htmlEscape(customerName),
 		htmlEscape(brandName),
 		detailsHTML,
+		specialBlockHTML,
 		base,
 		base,
 		bookingID,
@@ -371,7 +381,7 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 }
 
 func tableRow(label, value string) string {
-	return fmt.Sprintf(`<tr><td style="padding:10px;background-color:#f8f8f8;border-bottom:1px solid #eee;"><strong>%s</strong></td><td style="padding:10px;border-bottom:1px solid #eee;">%s</td></tr>`, label, value)
+	return fmt.Sprintf("\n"+`<tr><td style="padding:10px;background-color:#f8f8f8;border-bottom:1px solid #eee;"><strong>%s</strong></td><td style="padding:10px;border-bottom:1px solid #eee;">%s</td></tr>`, label, value)
 }
 
 func htmlEscape(s string) string {
@@ -504,7 +514,7 @@ func sendBookingConfirmationEmails(ctx context.Context, s *Server, restaurantID 
 
 	info, _ := s.loadRestaurantInfo(ctx, restaurantID)
 
-	subject := "Confirmación de Reserva - " + brandName
+	subject := bookingConfirmationTitle(booking) + " - " + brandName
 	html := buildBookingEmailHTML(brandName, logoURL, info.Telefono, info.Email, info.Direccion, booking, bookingID, baseURL, info.Website)
 
 	// Coordination id: stripe_prereserva_adelanto_v1 - a paid prereserva
@@ -515,24 +525,58 @@ func sendBookingConfirmationEmails(ctx context.Context, s *Server, restaurantID 
 		subject = "Prereserva confirmada y pago recibido - " + brandName
 	}
 
-	// Send to customer.
+	// Coordination id: festive_prereserva_notifications_v1 - the restaurant
+	// copy goes to the restaurant email (Ajustes) and the sending mailbox; the
+	// customer always gets its own copy. Duplicates are sent once.
 	customerEmail := strings.TrimSpace(anyToString(booking["contact_email"]))
-	if customerEmail != "" && customerEmail != fromAddr {
+	restaurantRecipients := uniqueEmails(info.Email, fromAddr)
+	sent := map[string]bool{}
+	if customerEmail != "" {
+		sent[strings.ToLower(customerEmail)] = true
 		if e := sendViaConfigWithAttachments(ctx, cfg, fromName, fromAddr, customerEmail, subject, html, attachments); e != nil {
-			log.Printf("Failed to send booking email to customer %s: %v", customerEmail, e)
+			log.Printf("[festive_prereserva_notifications_v1] customer email failed %s booking=%d: %v", customerEmail, bookingID, e)
 		} else {
 			customerSent = true
-			log.Printf("Booking confirmation email sent to customer %s for booking #%d", customerEmail, bookingID)
+			log.Printf("[festive_prereserva_notifications_v1] customer email sent %s booking=%d", customerEmail, bookingID)
 		}
 	}
 
-	// Send to restaurant (required).
-	if e := sendViaConfigWithAttachments(ctx, cfg, fromName, fromAddr, fromAddr, subject, html, attachments); e != nil {
-		log.Printf("Failed to send booking email to restaurant %s: %v", fromAddr, e)
-		return customerSent, false, fmt.Errorf("error enviando email al restaurante: %v", e)
+	lastErr := fmt.Errorf("sin email de restaurante válido")
+	for _, to := range restaurantRecipients {
+		if sent[strings.ToLower(to)] {
+			restaurantSent = restaurantSent || customerSent
+			continue
+		}
+		sent[strings.ToLower(to)] = true
+		if e := sendViaConfigWithAttachments(ctx, cfg, fromName, fromAddr, to, subject, html, attachments); e != nil {
+			log.Printf("[festive_prereserva_notifications_v1] restaurant email failed %s booking=%d: %v", to, bookingID, e)
+			lastErr = e
+			continue
+		}
+		restaurantSent = true
+		log.Printf("[festive_prereserva_notifications_v1] restaurant email sent %s booking=%d", to, bookingID)
 	}
-	restaurantSent = true
-	log.Printf("Booking confirmation email sent to restaurant %s for booking #%d", fromAddr, bookingID)
+	if !restaurantSent {
+		return customerSent, false, fmt.Errorf("error enviando email al restaurante: %v", lastErr)
+	}
 
 	return customerSent, restaurantSent, nil
+}
+
+// uniqueEmails keeps valid, non-empty addresses once, in order.
+func uniqueEmails(addrs ...string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		a = strings.TrimSpace(a)
+		if a == "" || seen[strings.ToLower(a)] {
+			continue
+		}
+		if _, err := mail.ParseAddress(a); err != nil {
+			continue
+		}
+		seen[strings.ToLower(a)] = true
+		out = append(out, a)
+	}
+	return out
 }
