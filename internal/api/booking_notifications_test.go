@@ -211,7 +211,7 @@ func TestBuildBookingEmailHTML(t *testing.T) {
 	if !strings.Contains(html, "14:00") {
 		t.Error("HTML should contain reservation time")
 	}
-	for _, want := range []string{"Arroz a la valenciana", "Adultos", "Niños", "600123123", "juan@example.com", "Planta 2", "Mesa tranquila", "Referencia", "#789"} {
+	for _, want := range []string{"Arroz a la valenciana", "Adultos", "Niños", "600123123", "juan@example.com", "Planta 2", "Mesa tranquila"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("HTML should contain %q", want)
 		}

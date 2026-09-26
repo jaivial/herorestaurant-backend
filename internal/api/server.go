@@ -246,6 +246,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/search", s.handleBOBookingsSearch)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/export", s.handleBOBookingsExport)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/{id}", s.handleBOBookingGet)
+		// Coordination id: special_booking_qr_v1
+		r.With(s.requireBOSession, reservasGate).Get("/bookings/{id}/qr", s.handleBOBookingQR)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings", s.handleBOBookingCreate)
 		r.With(s.requireBOSession, reservasGate).Patch("/bookings/{id}", s.handleBOBookingPatch)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings/{id}/cancel", s.handleBOBookingCancel)
@@ -688,6 +690,8 @@ func (s *Server) Routes() http.Handler {
 		// Special dates (reservas especiales) — per-date settings CRUD.
 		// Coordination id: special_dates_v1
 		r.With(s.requireBOSession, reservasGate).Get("/config/special-dates", s.handleBOSpecialDatesGet)
+		// Coordination id: special_date_stats_v1
+		r.With(s.requireBOSession, reservasGate).Get("/config/special-dates/stats", s.handleBOSpecialDateStats)
 		r.With(s.requireBOSession, reservasGate).Post("/config/special-dates", s.handleBOSpecialDatesSave)
 		r.With(s.requireBOSession, reservasGate).Post("/config/special-dates/menu-image", s.handleBOSpecialDateMenuImageUpload)
 
