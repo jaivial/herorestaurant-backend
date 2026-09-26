@@ -248,6 +248,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/{id}", s.handleBOBookingGet)
 		// Coordination id: special_booking_qr_v1
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/{id}/qr", s.handleBOBookingQR)
+		// Coordination id: special_booking_receipt_proxy_v1
+		r.With(s.requireBOSession, reservasGate).Get("/bookings/{id}/receipt.pdf", s.handleBOBookingReceiptPDF)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings", s.handleBOBookingCreate)
 		r.With(s.requireBOSession, reservasGate).Patch("/bookings/{id}", s.handleBOBookingPatch)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings/{id}/cancel", s.handleBOBookingCancel)

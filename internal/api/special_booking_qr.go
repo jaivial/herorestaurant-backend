@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	qrcode "github.com/skip2/go-qrcode"
@@ -128,4 +130,56 @@ func (s *Server) broadcastBookingChanged(restaurantID int, bookingID int64, acti
 		"restaurant_id": restaurantID,
 		"booking_id":    bookingID,
 	})
+}
+
+// handleBOBookingReceiptPDF streams the booking's receipt PDF same-origin.
+// BunnyCDN answers PDFs without Access-Control-Allow-Origin, so pdf.js in the
+// backoffice cannot fetch the CDN URL directly. Tenant-scoped: only the
+// receipt stored on this restaurant's booking row is fetched, and only from the
+// restaurant's own pull zone (no open proxy).
+// GET /api/admin/bookings/{id}/receipt.pdf
+// Coordination id: special_booking_receipt_proxy_v1
+func (s *Server) handleBOBookingReceiptPDF(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(chi.URLParam(r, "id")), 10, 64)
+	if err != nil || id <= 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid booking id")
+		return
+	}
+	rid := a.ActiveRestaurantID
+	var receiptURL sql.NullString
+	if err := s.db.QueryRowContext(r.Context(), `SELECT receipt_url FROM bookings WHERE id = ? AND restaurant_id = ? LIMIT 1`, id, rid).Scan(&receiptURL); err != nil || strings.TrimSpace(receiptURL.String) == "" {
+		httpx.WriteError(w, http.StatusNotFound, "Comprobante no disponible")
+		return
+	}
+	pullBase := strings.TrimRight(s.bunnyCreds(r.Context(), rid).PullBaseURL, "/")
+	src := strings.TrimSpace(receiptURL.String)
+	if pullBase == "" || !strings.HasPrefix(src, pullBase+"/") {
+		log.Printf("[special_booking_receipt_proxy_v1] refused non-tenant url booking=%d", id)
+		httpx.WriteError(w, http.StatusNotFound, "Comprobante no disponible")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, src, nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error preparando comprobante")
+		return
+	}
+	res, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, "No se pudo obtener el comprobante")
+		return
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		httpx.WriteError(w, http.StatusBadGateway, "No se pudo obtener el comprobante")
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="comprobante-reserva-%d.pdf"`, id))
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	_, _ = io.Copy(w, io.LimitReader(res.Body, 20<<20))
 }
