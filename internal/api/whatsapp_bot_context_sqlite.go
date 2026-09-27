@@ -59,6 +59,19 @@ func newBotConversationStore(path string) (*botConversationStore, error) {
         )`,
 		`CREATE INDEX IF NOT EXISTS idx_pipeline_decisions_restaurant
             ON pipeline_decisions(restaurant_id, id)`,
+		// Requests forwarded to the management WhatsApp group
+		// (wa_bot_management_group_v1): one row per customer issue.
+		`CREATE TABLE IF NOT EXISTS management_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            user_phone TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            group_sent INTEGER NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL
+        )`,
+		`CREATE INDEX IF NOT EXISTS idx_management_requests_thread
+            ON management_requests(restaurant_id, user_phone, id)`,
 		// Sticky human handoff per conversation (wa_bot_sticky_handoff_v1).
 		`CREATE TABLE IF NOT EXISTS handoff_state (
             restaurant_id INTEGER NOT NULL,
@@ -186,7 +199,10 @@ var botContextTemplateSources = map[string]string{
 	"unsupported_content": "[Aviso automático enviado: solo se admiten mensajes de texto]",
 	"agent_fallback":      "[Aviso automático enviado: error temporal del asistente]",
 	// wa_bot_special_date_policy_v1 / wa_bot_sticky_handoff_v1
-	"management_handoff_notice":    "[Aviso automático enviado: consulta derivada a la gestión del restaurante con tarjeta de contacto]",
+	"management_handoff_notice": "[Aviso automático enviado: consulta derivada a la gestión del restaurante con tarjeta de contacto]",
+	// wa_bot_management_group_v1
+	"management_forwarded":         "[Aviso automático enviado: la solicitud se trasladó al equipo de gestión, que contactará al cliente]",
+	"management_already_forwarded": "[Aviso automático enviado: se recordó al cliente que el equipo de gestión ya tiene su solicitud]",
 	"special_date_prereserva_link": "[Aviso automático enviado: fecha especial, se envió el enlace de la web para reservar/pre-reservar]",
 }
 
@@ -320,5 +336,52 @@ func (s *botConversationStore) ClearHandoff(ctx context.Context, restaurantID in
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM handoff_state WHERE restaurant_id=? AND user_phone=?`, restaurantID, digitsOnly(userPhone))
+	return err
+}
+
+// botManagementRequest is one issue already forwarded to management.
+type botManagementRequest struct {
+	ID        int64  `json:"id"`
+	Reason    string `json:"reason"`
+	Summary   string `json:"summary"`
+	GroupSent bool   `json:"group_sent"`
+	CreatedAt int64  `json:"created_at_ms"`
+}
+
+// RecentManagementRequests returns the customer's forwarded issues newer
+// than since (newest first).
+func (s *botConversationStore) RecentManagementRequests(ctx context.Context, restaurantID int, userPhone string, since time.Time) ([]botManagementRequest, error) {
+	out := []botManagementRequest{}
+	if s == nil || s.db == nil {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, reason, summary, group_sent, created_at_ms FROM management_requests
+		WHERE restaurant_id=? AND user_phone=? AND created_at_ms>=? ORDER BY id DESC LIMIT 10`, restaurantID, digitsOnly(userPhone), since.UnixMilli())
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r botManagementRequest
+		var sent int
+		if err := rows.Scan(&r.ID, &r.Reason, &r.Summary, &sent, &r.CreatedAt); err != nil {
+			return out, err
+		}
+		r.GroupSent = sent != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *botConversationStore) AddManagementRequest(ctx context.Context, restaurantID int, userPhone, reason, summary string, groupSent bool) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	sent := 0
+	if groupSent {
+		sent = 1
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO management_requests (restaurant_id,user_phone,reason,summary,group_sent,created_at_ms) VALUES (?,?,?,?,?,?)`,
+		restaurantID, digitsOnly(userPhone), reason, truncate(summary, 500), sent, time.Now().UnixMilli())
 	return err
 }

@@ -34,8 +34,13 @@ type botWebhookMessage struct {
 	AudioB64      string // inline voice note for transcription (wa_bot_audio_transcription_v1)
 	Transcribed   bool   // Text comes from a voice-note transcription
 	Burst         int    // number of coalesced messages (wa_bot_burst_coalesce_v1)
-	Ignored       bool   // reaction/edit/delete/poll event: never a customer turn
-	MediaKind     string // label of a non-text message, for the transcript
+	// Per-turn pipeline verdicts used by every management handoff
+	// (wa_bot_management_group_v1): customer language and whether Jev judged
+	// this message the same issue as one already forwarded.
+	Language         string
+	DuplicateRequest bool
+	Ignored          bool   // reaction/edit/delete/poll event: never a customer turn
+	MediaKind        string // label of a non-text message, for the transcript
 }
 
 // parseBotWebhookMessage extracts the message from a UAZAPI webhook body.
@@ -536,6 +541,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			}
 			decisionID = id
 		}
+		msg.Language, msg.DuplicateRequest = decision.Language, decision.DuplicateRequest
 		if decision.HandoffCleared {
 			_ = s.botConversation.ClearHandoff(ctx, restaurantID, msg.Sender)
 			log.Printf("[bot] checkpoint wa_bot_sticky_handoff_v1 restaurant_id=%d sender=%s cleared new_topic", restaurantID, msg.Sender)

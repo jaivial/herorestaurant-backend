@@ -266,26 +266,15 @@ func (s *Server) botToolSendLocation(ctx context.Context, restaurantID int, msg 
 
 func (s *Server) botToolSendContact(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, input json.RawMessage) (string, error) {
 	var in struct {
-		Message string `json:"message"`
+		Message        string `json:"message"`
+		RequestSummary string `json:"request_summary"`
 	}
 	_ = json.Unmarshal(input, &in)
-	_, phone := s.botContactDetails(ctx, restaurantID, tenant)
-	// A bare vCard confuses the customer: always explain it first
-	// (wa_bot_human_handoff_v1). The model's text wins; otherwise a safe default.
-	intro := strings.TrimSpace(in.Message)
-	if intro == "" {
-		intro = botContactIntroText(phone)
-	}
-	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-		if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, intro, "agent_contact_intro"); err != nil {
-			return botJSON(map[string]any{"error": err.Error()}), nil
-		}
-	}
-	phone, err := s.botSendContactCard(ctx, restaurantID, msg, tenant)
-	if err != nil {
-		return botJSON(map[string]any{"error": err.Error()}), nil
-	}
-	return botJSON(map[string]any{"sent": true, "phone": phone, "intro_sent": true}), nil
+	// Coordination id: wa_bot_management_group_v1 - the agent's escalation
+	// forwards to the management group instead of sending the contact card.
+	sent := s.botForwardToManagement(ctx, restaurantID, msg, tenant, "agent_contact", strings.TrimSpace(in.RequestSummary), strings.TrimSpace(in.Message), msg.Language, s.botIsDuplicateRequest(msg))
+	return botJSON(map[string]any{"sent": true, "forwarded_to_management": sent, "phone": "management_group",
+		"instruction": "El cliente ya ha recibido la confirmación de que el equipo de gestión le contactará. No envíes otro mensaje salvo que pregunte algo distinto."}), nil
 }
 
 // botContactIntroText is the default explanation sent before a contact card.
