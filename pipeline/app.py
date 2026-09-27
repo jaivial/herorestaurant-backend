@@ -199,6 +199,13 @@ HANDOFF_TEXTS = {
     "repeat": "Entiendo tu insistencia y lo siento de verdad, pero este tema no lo puedo resolver yo por aquí. Te recomiendo llamar o escribir a la gestión del restaurante, que podrá ayudarte personalmente en el teléfono que te dejo de nuevo 👇. Si necesitas cualquier otra cosa distinta, aquí estoy.",
 }
 
+# English variants for non-Spanish customers (wa_bot_language_v1).
+HANDOFF_TEXTS_EN = {
+    "anger": "I'm really sorry I couldn't help you as you expected 🙏. I'm an AI booking assistant, and it's best that a person from the restaurant management helps you directly. Here is their contact 👇",
+    "cannot": "I'm an AI booking assistant and I can't answer this safely; I'd rather not give you a wrong answer. Please contact the restaurant management directly by calling or writing to the phone number below 👇",
+    "repeat": "I understand, and I'm sorry, but I can't solve this topic here. Please call or write to the restaurant management, who can help you personally, at the phone number I'm sharing again below 👇. If you need anything else, I'm here.",
+}
+
 # ----------------------------------------------------------------- Jev -----
 
 
@@ -211,6 +218,7 @@ def jev_classify(api_key: str, state: str, handoff_topic: str, special_dates: di
         "event": {"type": "noul", "instructions": "El cliente habla de organizar o negociar un evento o celebración (boda, comunión, bautizo, empresa, banquete, cumpleaños de grupo) o pide condiciones especiales de precio o menú"},
         "special_needs": {"type": "noul", "instructions": "El último mensaje menciona una necesidad especial: niños o bebés, tronas o carritos, movilidad reducida o silla de ruedas, alergia o intolerancia, embarazo, mascota o celebración"},
         "wants_note": {"type": "noul", "instructions": "El cliente pide anotar o apuntar algo (por ejemplo una alergia) en los comentarios de su reserva"},
+        "language": {"type": "choice", "instructions": "Idioma en el que escribe el cliente su último mensaje", "criteria": {"es": "Español o valenciano/catalán", "en": "Inglés", "other": "Otro idioma"}},
     }
     if handoff_topic:
         questions["same_topic"] = {"type": "noul", "instructions": "El último mensaje del cliente sigue tratando, insistiendo o preguntando sobre este mismo asunto: " + handoff_topic}
@@ -226,6 +234,7 @@ def jev_classify(api_key: str, state: str, handoff_topic: str, special_dates: di
         "intent": a["intent"]["choice"], "confidence": float(a["intent"].get("confidence", 0)),
         "anger": float(a["anger"]["score"]), "can_handle": float(a["can_handle"]["noul"]), "event": float(a["event"]["noul"]),
         "special_needs": float(a["special_needs"]["noul"]), "wants_note": float(a["wants_note"]["noul"]),
+        "language": a.get("language", {}).get("choice", "es"),
     }
     if "same_topic" in a:
         out["same_topic"] = float(a["same_topic"]["noul"])
@@ -332,8 +341,14 @@ class BotPipeline(dspy.Module):
         result: dict[str, Any] = {"intent": intent, "confidence": confidence, "classifier": classifier, "jev": jev,
                                   "anger": anger, "can_handle": can_handle}
 
+        lang = str(jev.get("language") or "es")
+        texts = HANDOFF_TEXTS_EN if lang in ("en", "other") else HANDOFF_TEXTS
+        result["language"] = lang
+
         def done(action: str, node: str, routes: list[str], directive: str = "", **extra: Any) -> dict[str, Any]:
             path.append(node)
+            if extra.get("handoff_reason") in texts:
+                extra["handoff_text"] = texts[extra["handoff_reason"]]
             result.update(action=action, node=node, routes=routes, directive=directive, path=path, **extra)
             return result
 
@@ -394,7 +409,10 @@ class BotPipeline(dspy.Module):
         path.append("extras_change")
         # Deterministic only: Jev's "extras" intent cannot tell a question
         # ("¿qué extras tenéis?") from a change request.
-        if facts.get("regex_extras_mutation"):
+        # A customer negotiating an event (staff commentary) asking about a
+        # tarta/cava gets the friendly, open answer instead of the rigid
+        # extras notice; the agent still cannot change extras.
+        if facts.get("regex_extras_mutation") and not negotiating:
             return done("handoff_extras", "handoff_extras", [])
 
         path.append("allergen_question")

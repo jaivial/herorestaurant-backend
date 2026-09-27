@@ -175,6 +175,19 @@ const botEventHandoffText = "Para el caso de vuestra reserva, como se trata de u
 
 const botSpecialBookingHandoffText = "Vuestra reserva es para una fecha especial y, como asistente de reservas con Inteligencia Artificial, no puedo modificarla ni cancelarla. Para cualquier cambio, contactad directamente con la gestión del restaurante en el teléfono que os dejo a continuación 👇"
 
+const botEventHandoffTextEN = "As yours is a special booking, I recommend agreeing the details directly with the restaurant management by calling or writing to the phone number below 👇"
+
+const botSpecialBookingHandoffTextEN = "Your booking is for a special date and, as an AI booking assistant, I can't change or cancel it. For any change, please contact the restaurant management at the phone number below 👇"
+
+// botLocalizedHandoff picks the English text for non-Spanish customers
+// (wa_bot_language_v1).
+func botLocalizedHandoff(es, en, lang string) string {
+	if lang == "en" || lang == "other" {
+		return en
+	}
+	return es
+}
+
 // botManagementHandoff sends a fixed notice + the management contact card.
 func (s *Server) botManagementHandoff(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, text, reason, operation string) string {
 	name, phone := s.botSameDayContactDetails(ctx, restaurantID, tenant)

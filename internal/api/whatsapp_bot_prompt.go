@@ -153,6 +153,19 @@ func renderBotSystemPrompt(d botPromptData) string {
 	b.WriteString("## FECHA ACTUAL\n")
 	if d.TodayES != "" {
 		fmt.Fprintf(&b, "- HOY ES: %s (%s)\n", d.TodayES, d.TodayISO)
+		// Next 14 days so the model never miscomputes "el sábado" / "el día 3"
+		// (live case: "el día 3" was read as "domingo 27"). wa_bot_madrid_time_v1
+		if t, err := time.Parse("2006-01-02", d.TodayISO); err == nil {
+			b.WriteString("- PRÓXIMOS DÍAS: ")
+			for i := 1; i <= 14; i++ {
+				day := t.AddDate(0, 0, i)
+				if i > 1 {
+					b.WriteString(", ")
+				}
+				fmt.Fprintf(&b, "%s %d/%d=%s", botSpanishDays[int(day.Weekday())], day.Day(), int(day.Month()), day.Format("2006-01-02"))
+			}
+			b.WriteString("\n")
+		}
 	}
 	b.WriteString("\n")
 
@@ -229,7 +242,7 @@ func (s *Server) loadBotPromptData(ctx context.Context, restaurantID int, pushNa
 		Tenant:    tenant,
 	}
 
-	now := time.Now()
+	now := time.Now().In(boMadridTZ) // container runs in UTC (wa_bot_madrid_time_v1)
 	data.TodayES = botFormatSpanishDate(now)
 	data.TodayISO = now.Format("2006-01-02")
 

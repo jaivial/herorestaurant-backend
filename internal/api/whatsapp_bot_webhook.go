@@ -33,6 +33,7 @@ type botWebhookMessage struct {
 	IsAudio       bool   // voice note (audioMessage/ptvMessage)
 	AudioB64      string // inline voice note for transcription (wa_bot_audio_transcription_v1)
 	Transcribed   bool   // Text comes from a voice-note transcription
+	Burst         int    // number of coalesced messages (wa_bot_burst_coalesce_v1)
 	Ignored       bool   // reaction/edit/delete/poll event: never a customer turn
 	MediaKind     string // label of a non-text message, for the transcript
 }
@@ -419,39 +420,24 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Process in background (bounded): provider webhooks time out quickly. A
-	// recover() keeps one bad turn from crashing the whole multi-tenant process.
-	select {
-	case s.botSem <- struct{}{}:
-	default:
-		// At capacity: shed load rather than pile up unbounded goroutines.
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "code": "BUSY"})
-		return
-	}
-	go func() {
-		defer func() {
-			<-s.botSem
-			if rec := recover(); rec != nil {
-				log.Printf("[bot] restaurant=%d sender=%s PANIC recovered: %v", restaurantID, msg.Sender, rec)
-			}
+	// Process in background (bounded): provider webhooks time out quickly.
+	// Messages of one conversation are serialized and coalesced into bursts
+	// (wa_bot_burst_coalesce_v1); the semaphore bounds concurrent workers.
+	burstKey := botBurstKey(restaurantID, msg.Sender)
+	if s.botBursts.enqueue(burstKey, msg) {
+		select {
+		case s.botSem <- struct{}{}:
+		default:
+			// At capacity: shed load rather than pile up unbounded goroutines.
+			s.botBursts.release(burstKey)
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "code": "BUSY"})
+			return
+		}
+		go func() {
+			defer func() { <-s.botSem }()
+			s.botRunConversationWorker(restaurantID, msg.Sender)
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
-		if transcribe {
-			text := s.botTranscribeAudio(ctx, restaurantID, msg)
-			msg.AudioB64 = ""
-			if text == "" {
-				if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-					_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, "Perdona, no he podido entender bien el audio. ¿Me lo puedes escribir por aquí, por favor?", "unsupported_content")
-				}
-				return
-			}
-			msg.Text, msg.Transcribed = text, true
-		}
-		if err := s.botProcessMessage(ctx, restaurantID, msg); err != nil {
-			log.Printf("[bot] restaurant=%d sender=%s error: %v", restaurantID, msg.Sender, err)
-		}
-	}()
+	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true})
 }
@@ -507,14 +493,21 @@ func sanitizeBotPushName(name string) string {
 }
 
 // botProcessMessage runs the full agent turn for an inbound message.
-func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg botWebhookMessage) error {
+func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg botWebhookMessage, parts ...botWebhookMessage) error {
+	turnStarted := time.Now()
 	tenant := s.loadBotTenantConfig(ctx, restaurantID)
-
-	stored := msg.Text
-	if msg.Transcribed {
-		stored = botAudioTranscriptPrefix + msg.Text
+	if len(parts) == 0 {
+		parts = []botWebhookMessage{msg}
 	}
-	s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "user", stored, "", "inbound")
+
+	// Each message of a coalesced burst is stored as sent.
+	for _, p := range parts {
+		stored := p.Text
+		if p.Transcribed {
+			stored = botAudioTranscriptPrefix + p.Text
+		}
+		s.botRecordConversationMessage(ctx, restaurantID, p.Sender, "user", stored, "", "inbound")
+	}
 	s.botTouchSession(ctx, restaurantID, msg.Sender, msg.PushName)
 
 	routing := s.loadBotAIRouting(ctx, restaurantID)
@@ -585,7 +578,8 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	promptData.RouteDirective = decision.Directive
 	promptData.RouteNode = decision.Node
 	system := renderBotSystemPrompt(promptData)
-	tools := botToolDefs(tenant)
+	_, _, memberErr := s.botMemberForPhone(ctx, restaurantID, msg.Sender)
+	tools := botCustomerToolDefs(botToolDefs(tenant), memberErr == nil)
 	turn := &botTurnState{}
 	exec := s.botToolExecutorForTurn(restaurantID, msg, tenant, turn)
 	sessionID := botSessionID(restaurantID, msg.Sender)
@@ -595,7 +589,10 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 
 	result, err := s.botRunAgentLoopWith(ctx, caller, system, messages, tools, exec)
 	if decisionID > 0 {
-		s.botConversation.SetDecisionModel(ctx, decisionID, result.ModelUsed)
+		s.botConversation.SetDecisionModel(ctx, decisionID, result.ModelUsed, map[string]any{
+			"total_ms": time.Since(turnStarted).Milliseconds(), "iterations": result.Iterations,
+			"tools": result.ToolCalls, "burst": max(1, msg.Burst), "transcribed": msg.Transcribed,
+		})
 	}
 	if err != nil {
 		// Never ghost the customer: send a graceful fallback on any LLM failure.

@@ -648,7 +648,7 @@ func (s *Server) botToolCreateBooking(ctx context.Context, restaurantID int, msg
 	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-	today := time.Now().Format("2006-01-02")
+	today := botTodayISO() // Madrid, not container UTC (wa_bot_madrid_time_v1)
 	if dateISO <= today {
 		return botJSON(map[string]any{"error": "no se aceptan reservas para hoy ni fechas pasadas; el cliente debe llamar por teléfono"}), nil
 	}
@@ -836,7 +836,7 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 		if err != nil {
 			return botJSON(map[string]any{"error": err.Error()}), nil
 		}
-		if dateISO <= time.Now().Format("2006-01-02") {
+		if dateISO <= botTodayISO() {
 			return botJSON(map[string]any{"error": "la nueva fecha debe ser futura"}), nil
 		}
 		newDateISO = dateISO
