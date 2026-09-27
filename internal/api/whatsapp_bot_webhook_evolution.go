@@ -27,7 +27,9 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	// 12 MB: voice notes arrive inline as base64 (webhookBase64=true), which a
+	// 1 MB cap truncated into invalid JSON. wa_bot_audio_transcription_v1
+	body, err := io.ReadAll(io.LimitReader(r.Body, 12<<20))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false})
 		return
