@@ -5,6 +5,9 @@ import "context"
 // sendWhatsAppTextTracked records an outbound text in the SQLite conversation
 // only after the provider accepts it.
 func (s *Server) sendWhatsAppTextTracked(ctx context.Context, restaurantID int, gw WhatsAppGateway, to, text, source string) error {
+	if botModelAuthoredSources[source] {
+		text = botWhatsAppFormat(text) // wa_bot_whatsapp_format_v1
+	}
 	if err := gw.SendText(ctx, to, text); err != nil {
 		return err
 	}

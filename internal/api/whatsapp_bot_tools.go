@@ -242,3 +242,21 @@ func parseBotDate(raw string) (string, error) {
 	}
 	return "", fmt.Errorf("fecha inválida: %q (usa dd/MM/yyyy o YYYY-MM-DD)", raw)
 }
+
+// botMemberToolNames are only useful when the sender is restaurant staff.
+var botMemberToolNames = map[string]bool{"get_member_schedule": true, "get_member_attendance": true, "get_member_access": true}
+
+// botCustomerToolDefs drops staff-only tools for customers: ~1.5 KB less
+// schema per model call and no confusing options (wa_bot_tools_v2).
+func botCustomerToolDefs(defs []botToolDef, isMember bool) []botToolDef {
+	if isMember {
+		return defs
+	}
+	out := make([]botToolDef, 0, len(defs))
+	for _, d := range defs {
+		if !botMemberToolNames[d.Name] {
+			out = append(out, d)
+		}
+	}
+	return out
+}

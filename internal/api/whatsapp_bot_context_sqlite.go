@@ -121,8 +121,14 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT role, content, source, tool_name FROM conversation_messages
-        WHERE restaurant_id=? AND user_phone=? AND include_in_context=1 ORDER BY id ASC`, restaurantID, digitsOnly(userPhone))
+	// Coordination id: wa_bot_context_window_v1 - the full transcript stays in
+	// SQLite, but the model only sees the most recent 40 messages. That bounds
+	// tokens per call; older booking confirmations are recovered with
+	// get_bookings.
+	rows, err := s.db.QueryContext(ctx, `SELECT role, content, source, tool_name FROM (
+            SELECT id, role, content, source, tool_name, created_at_ms FROM conversation_messages
+            WHERE restaurant_id=? AND user_phone=? AND include_in_context=1
+            ORDER BY id DESC LIMIT 40) ORDER BY id ASC`, restaurantID, digitsOnly(userPhone))
 	if err != nil {
 		return nil, err
 	}
@@ -231,12 +237,18 @@ func (s *botConversationStore) AppendDecision(ctx context.Context, restaurantID 
 	return res.LastInsertId()
 }
 
-// SetDecisionModel records which provider/model answered the turn.
-func (s *botConversationStore) SetDecisionModel(ctx context.Context, id int64, modelUsed string) {
+// SetDecisionModel records which provider/model answered the turn plus the
+// turn metrics (wa_bot_turn_metrics_v1), merged into decision_json.
+func (s *botConversationStore) SetDecisionModel(ctx context.Context, id int64, modelUsed string, metrics ...map[string]any) {
 	if s == nil || s.db == nil || id <= 0 {
 		return
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE pipeline_decisions SET model_used = ? WHERE id = ?`, modelUsed, id)
+	if len(metrics) > 0 && metrics[0] != nil {
+		if raw, err := json.Marshal(metrics[0]); err == nil {
+			_, _ = s.db.ExecContext(ctx, `UPDATE pipeline_decisions SET decision_json = json_set(decision_json, '$.turn', json(?)) WHERE id = ?`, string(raw), id)
+		}
+	}
 }
 
 func (s *botConversationStore) RecentDecisions(ctx context.Context, restaurantID int, limit int) ([]botDecisionRecord, error) {
