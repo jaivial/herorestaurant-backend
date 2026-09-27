@@ -37,6 +37,10 @@ type botKnowledgeChunk struct {
 // botDefaultKnowledge seeds a tenant with no custom knowledge. It holds the
 // natural-language rules that used to be pasted in full into every prompt.
 func botDefaultKnowledge() []botKnowledgeChunk {
+	return botMergeKnowledgeV2(botDefaultKnowledgeV1())
+}
+
+func botDefaultKnowledgeV1() []botKnowledgeChunk {
 	return []botKnowledgeChunk{
 		{ID: "menu_cerrado", Title: "Menú cerrado obligatorio", Tags: []string{"menu_policy", "create_booking", "rice"},
 			Body: "El restaurante SOLO funciona con menú cerrado: menú del día (lunes a viernes) o menú de fin de semana (sábado y domingo). No existe carta libre ni platos sueltos. Cada comensal elige 1 entrante y 1 principal; el principal puede ser un plato principal o una ración de arroz. Si el cliente no quiere menú, explícalo con amabilidad y ofrece las opciones del menú."},
@@ -67,6 +71,37 @@ func botDefaultKnowledge() []botKnowledgeChunk {
 		{ID: "personal", Title: "Mensajes del personal", Tags: []string{"always"},
 			Body: "Los mensajes marcados '[Mensaje escrito por el personal del restaurante]' los escribió una persona: respétalos, no los contradigas ni repitas. Los textos entre corchetes '[Aviso automático enviado: ...]' son acciones ya realizadas: nunca los copies."},
 	}
+}
+
+// botKnowledgeV2 are chunks introduced with wa_bot_dspy_pipeline_v2. They are
+// appended to tenants whose saved knowledge predates them (by id), so an
+// existing restaurant gets the new rules without losing its edits.
+func botKnowledgeV2() []botKnowledgeChunk {
+	return []botKnowledgeChunk{
+		{ID: "fechas_especiales", Title: "Fechas especiales", Tags: []string{"special_date", "create_booking", "availability"},
+			Body: "Antes de hablar de una fecha usa get_date_overview. Si es FECHA ESPECIAL (Navidad, Nochevieja...) no se reserva por WhatsApp aunque haya plazas: explica el título, los menús y condiciones (pre-reserva, adelanto) y da el enlace booking_url de la web. Si el cliente ya tiene reserva en una fecha especial, no la modifiques ni canceles: gestión del restaurante con la tarjeta de contacto."},
+		{ID: "eventos", Title: "Eventos y reservas especiales", Tags: []string{"event", "group_booking", "friendly_negotiation"},
+			Body: "Bodas, comuniones, bautizos, empresas o banquetes y las reservas marcadas como evento se acuerdan siempre con la gestión del restaurante. No negocies precios, menús ni condiciones: recomienda llamar o escribir al teléfono de contacto."},
+		{ID: "negociacion_cercana", Title: "Clientes valorando un evento", Tags: []string{"friendly_negotiation"},
+			Body: "Si los comentarios de su reserva indican que viene a informarse de un evento o a una prueba de menú, sé cercano y abierto ('sin problema existiría la posibilidad de añadir un menú infantil para vosotros'), pero aclara siempre que tiene que confirmarlo con la dirección del restaurante en el teléfono de abajo y que tú no lo puedes asegurar al 100%."},
+		{ID: "notas_reserva", Title: "Anotar en la reserva", Tags: []string{"special_needs", "allergens", "modify_booking"},
+			Body: "Para dejar anotada una alergia, celebración, bebé o movilidad en una reserva normal usa add_booking_note tras confirmarlo con el cliente. No borra los comentarios del personal."},
+		{ID: "audios", Title: "Audios", Tags: []string{"always"},
+			Body: "Los mensajes que empiezan por '🎤 (audio transcrito)' son notas de voz transcritas automáticamente: respóndelas con normalidad; si algo no se entiende, pide que lo confirme por escrito."},
+	}
+}
+
+func botMergeKnowledgeV2(chunks []botKnowledgeChunk) []botKnowledgeChunk {
+	have := map[string]bool{}
+	for _, c := range chunks {
+		have[c.ID] = true
+	}
+	for _, c := range botKnowledgeV2() {
+		if !have[c.ID] {
+			chunks = append(chunks, c)
+		}
+	}
+	return chunks
 }
 
 func botCleanKnowledge(in []botKnowledgeChunk) []botKnowledgeChunk {
@@ -226,6 +261,8 @@ func (s *Server) botRetrieveKnowledge(ctx context.Context, restaurantID int, rou
 	chunks := routing.Knowledge
 	if len(chunks) == 0 {
 		chunks = botDefaultKnowledge()
+	} else {
+		chunks = botMergeKnowledgeV2(chunks)
 	}
 	if s.botKnowledge != nil && s.botKnowledge.db != nil {
 		if err := s.botKnowledge.ensure(ctx, restaurantID, chunks); err == nil {

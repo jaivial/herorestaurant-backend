@@ -38,6 +38,14 @@ type botPipelineDecision struct {
 	Directive  string          `json:"directive"`
 	Path       []string        `json:"path"`
 	ElapsedMS  int             `json:"elapsed_ms"`
+	// v2 meters and handoff metadata (wa_bot_dspy_pipeline_v2).
+	Anger          float64 `json:"anger"`
+	CanHandle      float64 `json:"can_handle"`
+	HandoffReason  string  `json:"handoff_reason,omitempty"`
+	HandoffText    string  `json:"handoff_text,omitempty"`
+	HandoffTopic   string  `json:"handoff_topic,omitempty"`
+	HandoffCleared bool    `json:"handoff_cleared,omitempty"`
+	SpecialDate    string  `json:"special_date,omitempty"`
 }
 
 type botPipelineLM struct {
@@ -71,7 +79,52 @@ func (s *Server) botPipelineFacts(ctx context.Context, restaurantID int, msg bot
 		"regex_allergen":        normalized != "" && botAllergenIntentRe.MatchString(normalized),
 		"regex_booking_note":    botBookingNoteRe.MatchString(normalized),
 		"regex_intent":          botBookingIntentFromText(msg.Text),
+		"bookings":              s.botPipelineBookingFacts(ctx, restaurantID, msg.Sender),
+		"special_dates":         s.botPipelineSpecialDateFacts(ctx, restaurantID),
+		"handoff":               s.botPipelineHandoffFact(ctx, restaurantID, msg.Sender),
 	}
+}
+
+// botPipelineBookingFacts: the customer's upcoming bookings with the staff
+// commentary signals, event and special-date flags (wa_bot_booking_context_v2).
+func (s *Server) botPipelineBookingFacts(ctx context.Context, restaurantID int, sender string) []map[string]any {
+	bookings, err := s.botFindBookings(ctx, restaurantID, sender)
+	if err != nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(bookings))
+	for _, b := range bookings {
+		out = append(out, map[string]any{
+			"booking_id": b.ID, "date": b.Date, "time": b.Time, "people": b.People,
+			"is_event": b.IsEvent, "is_special_booking": b.IsSpecialBooking || b.SpecialDateTitle != "",
+			"special_date_title": b.SpecialDateTitle, "commentary_signals": botCommentarySignals(b.Commentary),
+		})
+	}
+	return out
+}
+
+func (s *Server) botPipelineSpecialDateFacts(ctx context.Context, restaurantID int) []map[string]any {
+	dates := s.botUpcomingSpecialDates(ctx, restaurantID)
+	out := make([]map[string]any, 0, len(dates))
+	for _, d := range dates {
+		out = append(out, map[string]any{
+			"key": "sd_" + strings.ReplaceAll(d.Date, "-", "_"), "date": d.Date,
+			"label": d.Title + " (" + botFormatISODateES(d.Date) + ")", "prereserva": d.PrereservaEnabled,
+		})
+	}
+	return out
+}
+
+// botHandoffTTL: an open human topic expires after 7 days of silence, so an
+// old conversation resumed with a new topic is not blocked forever.
+const botHandoffTTL = 7 * 24 * time.Hour
+
+func (s *Server) botPipelineHandoffFact(ctx context.Context, restaurantID int, sender string) map[string]any {
+	h, err := s.botConversation.GetHandoff(ctx, restaurantID, sender)
+	if err != nil || h == nil || time.Since(time.UnixMilli(h.UpdatedAt)) > botHandoffTTL {
+		return nil
+	}
+	return map[string]any{"topic": h.Topic, "reason": h.Reason, "repeats": h.Repeats}
 }
 
 // botPipelineHistory renders the last turns as short "Rol: texto" lines.
@@ -175,4 +228,49 @@ func (s *Server) handleBOBotPipelineGet(w http.ResponseWriter, r *http.Request) 
 		log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v1 restaurant_id=%d decisions_error=%v", rid, err)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "online": online, "graph": graph, "decisions": decisions})
+}
+
+// botApplyPipelineHandoff executes the handoff actions of the decision tree.
+// Every human handoff opens (or refreshes) the sticky topic so consecutive
+// messages on the same topic keep getting the contact card
+// (wa_bot_sticky_handoff_v1). Returns true when the turn is fully handled.
+func (s *Server) botApplyPipelineHandoff(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, d botPipelineDecision) bool {
+	topic := strings.TrimSpace(d.HandoffTopic)
+	open := func(reason string) {
+		if topic == "" {
+			topic = truncate(msg.Text, 160)
+		}
+		_ = s.botConversation.SetHandoff(ctx, restaurantID, msg.Sender, topic, reason, d.HandoffReason == "repeat")
+		log.Printf("[bot] checkpoint wa_bot_sticky_handoff_v1 restaurant_id=%d sender=%s reason=%s repeat=%t", restaurantID, msg.Sender, reason, d.HandoffReason == "repeat")
+	}
+	switch d.Action {
+	case "handoff_same_day":
+		return s.botSameDayIntentGuard(ctx, restaurantID, msg, tenant)
+	case "handoff_extras":
+		log.Printf("[bot] checkpoint booking_extras_change_blocked restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+		s.botBlockExtrasChange(ctx, restaurantID, msg, tenant)
+		open("extras")
+		return true
+	case "handoff_allergens":
+		s.botSendAllergenNotice(ctx, restaurantID, msg, tenant)
+		open("allergens")
+		return true
+	case "handoff_event":
+		s.botManagementHandoff(ctx, restaurantID, msg, tenant, botEventHandoffText, "event_booking", d.Intent)
+		open("event")
+		return true
+	case "handoff_special_booking":
+		s.botManagementHandoff(ctx, restaurantID, msg, tenant, botSpecialBookingHandoffText, "special_date_booking", d.Intent)
+		open("special_date_booking")
+		return true
+	case "handoff_human":
+		text := strings.TrimSpace(d.HandoffText)
+		if text == "" {
+			text = botContactIntroText("")
+		}
+		s.botManagementHandoff(ctx, restaurantID, msg, tenant, text, "human_"+d.HandoffReason, d.Intent)
+		open(d.HandoffReason)
+		return true
+	}
+	return false
 }

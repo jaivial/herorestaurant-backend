@@ -100,6 +100,9 @@ type boBookingUpsertReq struct {
 	HasMobilityIssues *bool `json:"has_mobility_issues,omitempty"`
 	MobilityPeople    *int  `json:"mobility_people,omitempty"`
 
+	// Coordination id: booking_is_event_v1 - event/negotiation booking flag.
+	IsEvent *bool `json:"is_event,omitempty"`
+
 	// Multi-arroz (non group menu).
 	ArrozTypes    []string `json:"arroz_types,omitempty"`
 	ArrozServings []int    `json:"arroz_servings,omitempty"`
@@ -177,6 +180,7 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando booking")
 		return
 	}
+	s.boSetBookingIsEvent(r.Context(), a.ActiveRestaurantID, int64(id), req.IsEvent)
 
 	out, err := s.boFetchBookingByID(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
@@ -267,6 +271,9 @@ type boBookingPatchReq struct {
 	// Coordination id: mobility_issues_v1 ("problemas de movilidad" answer).
 	HasMobilityIssues *bool `json:"has_mobility_issues,omitempty"`
 	MobilityPeople    *int  `json:"mobility_people,omitempty"`
+
+	// Coordination id: booking_is_event_v1 - event/negotiation booking flag.
+	IsEvent *bool `json:"is_event,omitempty"`
 
 	ArrozTypes    *[]string `json:"arroz_types,omitempty"`
 	ArrozServings *[]int    `json:"arroz_servings,omitempty"`
@@ -538,6 +545,7 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 	s.recordBookingModificationsAfterPatch(r.Context(), a.ActiveRestaurantID, id, current, next, a)
 
 	s.broadcastBookingChanged(a.ActiveRestaurantID, int64(id), "booking_updated")
+	s.boSetBookingIsEvent(r.Context(), a.ActiveRestaurantID, int64(id), req.IsEvent)
 	out, err := s.boFetchBookingByID(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
@@ -1445,6 +1453,8 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		// Coordination id: special_booking_qr_v1
 		"qr_url":      nullStringOrNil(qrURL),
 		"receipt_url": nullStringOrNil(receiptURL),
+		// Coordination id: booking_is_event_v1
+		"is_event": s.boBookingIsEvent(ctx, restaurantID, int64(bookingID)),
 	}, nil
 }
 
@@ -1592,4 +1602,25 @@ func (s *Server) recordBookingModificationsAfterPatch(ctx context.Context, resta
 	if oldRice != newRice {
 		maybe("rice", oldRice, newRice)
 	}
+}
+
+// boSetBookingIsEvent stores the event flag when the request carries it (nil
+// keeps the stored value) and mirrors it into the fetched booking payload.
+// Coordination id: booking_is_event_v1
+func (s *Server) boSetBookingIsEvent(ctx context.Context, restaurantID int, bookingID int64, isEvent *bool) {
+	if isEvent == nil || bookingID <= 0 {
+		return
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE bookings SET is_event = ? WHERE restaurant_id = ? AND id = ?`, boolToTinyint(*isEvent), restaurantID, bookingID); err != nil {
+		log.Printf("[booking_is_event_v1] restaurant=%d booking=%d update_error=%v", restaurantID, bookingID, err)
+	}
+}
+
+// boBookingIsEvent reads the event flag (false on any error / missing column).
+func (s *Server) boBookingIsEvent(ctx context.Context, restaurantID int, bookingID int64) bool {
+	var v int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(is_event,0) FROM bookings WHERE restaurant_id = ? AND id = ?`, restaurantID, bookingID).Scan(&v); err != nil {
+		return false
+	}
+	return v != 0
 }

@@ -228,6 +228,7 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 		)
 	}
 
+	defs = append(defs, botToolDefsV2()...)
 	return defs
 }
 
