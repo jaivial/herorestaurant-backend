@@ -452,6 +452,18 @@ func botTextLooksLikeAttendanceConfirmation(text string) bool {
 // are delivered immediately and the agent turn is skipped. Returns true when the
 // message was handled here.
 func (s *Server) botSameDayIntentGuard(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) bool {
+	intent := s.botSameDayIntentApplies(ctx, restaurantID, msg)
+	if intent == "" {
+		return false
+	}
+	return s.botBlockSameDayIntent(ctx, restaurantID, msg, tenant, intent)
+}
+
+// botSameDayIntentApplies returns the blocked same-day operation for the
+// message ("create_booking", "modify_booking", "cancel_booking") or "" when
+// the same-day policy does not apply. Pure check: nothing is sent. Shared by
+// the legacy guard and the DSPy pipeline facts (wa_bot_dspy_pipeline_v1).
+func (s *Server) botSameDayIntentApplies(ctx context.Context, restaurantID int, msg botWebhookMessage) string {
 	intent := botBookingIntentFromText(msg.Text)
 	today, upcoming := s.botSenderUpcomingBookingStats(ctx, restaurantID, msg.Sender)
 	mentionsToday := botTextMentionsToday(msg.Text)
@@ -459,23 +471,23 @@ func (s *Server) botSameDayIntentGuard(ctx context.Context, restaurantID int, ms
 	// A brand-new reservation for today is blocked even with no existing booking.
 	if !today {
 		if intent == "create_booking" && mentionsToday {
-			return s.botBlockSameDayIntent(ctx, restaurantID, msg, tenant, "create_booking")
+			return "create_booking"
 		}
-		return false
+		return ""
 	}
 
 	// The customer already owns a booking for today. Only act when it is their
 	// sole upcoming booking or when they explicitly mention today, so a future
 	// booking request is never mistaken for a same-day operation.
 	if upcoming != 1 && !mentionsToday {
-		return false
+		return ""
 	}
 
 	if intent == "modify_booking" || intent == "cancel_booking" {
-		return s.botBlockSameDayIntent(ctx, restaurantID, msg, tenant, intent)
+		return intent
 	}
 	if intent == "create_booking" && mentionsToday {
-		return s.botBlockSameDayIntent(ctx, restaurantID, msg, tenant, "create_booking")
+		return "create_booking"
 	}
 
 	// No explicit operation verb: a correction that states a different time
@@ -486,15 +498,15 @@ func (s *Server) botSameDayIntentGuard(ctx context.Context, restaurantID int, ms
 	if bookingTime := s.botSenderTodayBookingTime(ctx, restaurantID, msg.Sender); bookingTime != "" {
 		times := botTextClockTimes(msg.Text)
 		if botTextLooksLikeAttendanceConfirmation(msg.Text) || botIsArrivalEstimate(times, bookingTime) {
-			return false
+			return ""
 		}
 		for _, t := range times {
 			if t != bookingTime {
-				return s.botBlockSameDayIntent(ctx, restaurantID, msg, tenant, "modify_booking")
+				return "modify_booking"
 			}
 		}
 	}
-	return false
+	return ""
 }
 
 // botBlockSameDayIntent logs the coordination checkpoint and delivers the

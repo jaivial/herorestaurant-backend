@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +47,18 @@ func newBotConversationStore(path string) (*botConversationStore, error) {
         )`,
 		`CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread
             ON conversation_messages(restaurant_id, user_phone, id)`,
+		// Pipeline decision trace per turn (wa_bot_dspy_pipeline_v1).
+		`CREATE TABLE IF NOT EXISTS pipeline_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            user_phone TEXT NOT NULL,
+            message TEXT NOT NULL,
+            decision_json TEXT NOT NULL,
+            model_used TEXT NOT NULL DEFAULT '',
+            created_at_ms INTEGER NOT NULL
+        )`,
+		`CREATE INDEX IF NOT EXISTS idx_pipeline_decisions_restaurant
+            ON pipeline_decisions(restaurant_id, id)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			_ = db.Close()
@@ -59,6 +72,15 @@ func newBotConversationStore(path string) (*botConversationStore, error) {
 		return nil, fmt.Errorf("migrate bot context sqlite: %w", err)
 	}
 	return &botConversationStore{db: db}, nil
+}
+
+// DB exposes the shared SQLite handle (knowledge FTS index lives beside the
+// transcript). Nil-safe.
+func (s *botConversationStore) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
 }
 
 func (s *botConversationStore) Close() error {
@@ -168,4 +190,60 @@ func normalizeBotConversationHistory(raw []botMessage) []botMessage {
 		out = append(out, m)
 	}
 	return out
+}
+
+// botDecisionRecord is one stored pipeline decision, exposed to the backoffice.
+type botDecisionRecord struct {
+	ID        int64           `json:"id"`
+	UserPhone string          `json:"userPhone"`
+	Message   string          `json:"message"`
+	Decision  json.RawMessage `json:"decision"`
+	ModelUsed string          `json:"modelUsed"`
+	CreatedAt int64           `json:"createdAtMs"`
+}
+
+func (s *botConversationStore) AppendDecision(ctx context.Context, restaurantID int, userPhone, message string, decision any, modelUsed string) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+	raw, err := json.Marshal(decision)
+	if err != nil {
+		return 0, err
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO pipeline_decisions (restaurant_id,user_phone,message,decision_json,model_used,created_at_ms) VALUES (?,?,?,?,?,?)`,
+		restaurantID, digitsOnly(userPhone), truncate(message, 500), string(raw), modelUsed, time.Now().UnixMilli())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// SetDecisionModel records which provider/model answered the turn.
+func (s *botConversationStore) SetDecisionModel(ctx context.Context, id int64, modelUsed string) {
+	if s == nil || s.db == nil || id <= 0 {
+		return
+	}
+	_, _ = s.db.ExecContext(ctx, `UPDATE pipeline_decisions SET model_used = ? WHERE id = ?`, modelUsed, id)
+}
+
+func (s *botConversationStore) RecentDecisions(ctx context.Context, restaurantID int, limit int) ([]botDecisionRecord, error) {
+	out := []botDecisionRecord{}
+	if s == nil || s.db == nil {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,user_phone,message,decision_json,model_used,created_at_ms FROM pipeline_decisions WHERE restaurant_id=? ORDER BY id DESC LIMIT ?`, restaurantID, limit)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r botDecisionRecord
+		var raw string
+		if err := rows.Scan(&r.ID, &r.UserPhone, &r.Message, &raw, &r.ModelUsed, &r.CreatedAt); err != nil {
+			return out, err
+		}
+		r.Decision = json.RawMessage(raw)
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

@@ -88,12 +88,14 @@ type Config struct {
 	// booking operation has to be refused: it overrides the tenant contact
 	// phone so the number that actually answers during service is the one
 	// shown in the notice and in the contact card.
-	BotSameDayContactPhone   string
-	BotTimeout               time.Duration
-	BotMaxTokens             int
-	BotMaxIterations         int
-	BotContextSQLitePath     string
-	BotDailyTurnsCap         int
+	BotSameDayContactPhone string
+	BotTimeout             time.Duration
+	BotMaxTokens           int
+	BotMaxIterations       int
+	BotContextSQLitePath   string
+	BotDailyTurnsCap       int
+	// BotPipelineURL is the DSPy decision pipeline sidecar (wa_bot_dspy_pipeline_v1).
+	BotPipelineURL           string
 	AssistantModel           string
 	AssistantTimeout         time.Duration
 	AssistantMaxTokens       int
@@ -174,6 +176,7 @@ func Load() Config {
 		BotMaxTokens:                getenvInt("BOT_MINIMAX_MAX_TOKENS", 1024, 128, 8192),
 		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 8, 1, 20),
 		BotContextSQLitePath:        strings.TrimSpace(getenv("BOT_CONTEXT_SQLITE_PATH", "./data/whatsapp-bot-context.sqlite")),
+		BotPipelineURL:              strings.TrimSpace(getenv("BOT_PIPELINE_URL", "http://127.0.0.1:18195")),
 		BotDailyTurnsCap:            getenvInt("BOT_DAILY_TURNS_CAP", 2000, 1, 1000000),
 		AssistantModel:              getenv("ASSISTANT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3")),
 		AssistantTimeout:            time.Duration(getenvInt("ASSISTANT_TIMEOUT_SECONDS", 60, 5, 600)) * time.Second,

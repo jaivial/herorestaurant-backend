@@ -496,33 +496,92 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "user", msg.Text, "", "inbound")
 	s.botTouchSession(ctx, restaurantID, msg.Sender, msg.PushName)
 
-	// Same-day policy is resolved from the raw message before the model runs, so
-	// a same-day create/modify/cancel gets the AI notice + contact card instead
-	// of a clarifying question the model would ask first.
-	if s.botSameDayIntentGuard(ctx, restaurantID, msg, tenant) {
-		return nil
+	routing := s.loadBotAIRouting(ctx, restaurantID)
+	// A tenant-level model override (legacy BotTenantConfig.Model) still wins
+	// as the primary model; the routing fallback stays in place.
+	if m := strings.TrimSpace(tenant.Model); m != "" {
+		if !strings.Contains(m, "/") {
+			m = botProviderMiniMax + "/" + m
+		}
+		if botValidModelRef(m) {
+			routing.PrimaryModel = m
+		}
 	}
-
-	// Coordination id: booking-extras-handoff - extras are managed by the
-	// restaurant; the guard answers with the AI notice + contact card before the
-	// model runs so it can never promise an extras change.
-	if s.botExtrasIntentGuard(ctx, restaurantID, msg, tenant) {
-		return nil
-	}
-
-	// Coordination id: wa_bot_allergen_handoff_v1 - never let the model guess
-	// ingredients/allergens; hand over to the restaurant instead.
-	if s.botAllergenIntentGuard(ctx, restaurantID, msg, tenant) {
-		return nil
-	}
-
-	system := s.buildBotSystemPrompt(ctx, restaurantID, msg.PushName, msg.Sender, tenant)
 	messages := s.botLoadHistory(ctx, restaurantID, msg.Sender)
+
+	// Coordination id: wa_bot_dspy_pipeline_v1 - the decision tree picks the
+	// handoff guard or the agent route. Unreachable pipeline -> legacy guards.
+	facts := s.botPipelineFacts(ctx, restaurantID, msg)
+	decision, pipelineOK := s.botRunPipeline(ctx, restaurantID, msg, routing, messages, facts)
+	var decisionID int64
+	if pipelineOK {
+		if s.botConversation != nil {
+			id, err := s.botConversation.AppendDecision(ctx, restaurantID, msg.Sender, msg.Text, decision, "")
+			if err != nil {
+				log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v1 restaurant_id=%d store_error=%v", restaurantID, err)
+			}
+			decisionID = id
+		}
+		switch decision.Action {
+		case "handoff_same_day":
+			if s.botSameDayIntentGuard(ctx, restaurantID, msg, tenant) {
+				return nil
+			}
+		case "handoff_extras":
+			log.Printf("[bot] checkpoint booking_extras_change_blocked restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+			s.botBlockExtrasChange(ctx, restaurantID, msg, tenant)
+			return nil
+		case "handoff_allergens":
+			s.botSendAllergenNotice(ctx, restaurantID, msg, tenant)
+			return nil
+		}
+	} else {
+		// Same-day policy is resolved from the raw message before the model runs, so
+		// a same-day create/modify/cancel gets the AI notice + contact card instead
+		// of a clarifying question the model would ask first.
+		if s.botSameDayIntentGuard(ctx, restaurantID, msg, tenant) {
+			return nil
+		}
+		// Coordination id: booking-extras-handoff - extras are managed by the
+		// restaurant; the guard answers with the AI notice + contact card before the
+		// model runs so it can never promise an extras change.
+		if s.botExtrasIntentGuard(ctx, restaurantID, msg, tenant) {
+			return nil
+		}
+		// Coordination id: wa_bot_allergen_handoff_v1 - never let the model guess
+		// ingredients/allergens; hand over to the restaurant instead.
+		if s.botAllergenIntentGuard(ctx, restaurantID, msg, tenant) {
+			return nil
+		}
+	}
+
+	// Coordination id: wa_bot_rag_fts_v1 - only the rules relevant to this
+	// message and route reach the prompt. A tenant with custom rules keeps them.
+	promptData := s.loadBotPromptData(ctx, restaurantID, msg.PushName, msg.Sender, tenant)
+	if strings.TrimSpace(tenant.Rules) == "" {
+		routes := decision.Routes
+		if !pipelineOK {
+			if intent := botBookingIntentFromText(msg.Text); intent != "" {
+				routes = []string{intent}
+			}
+		}
+		promptData.Knowledge = s.botRetrieveKnowledge(ctx, restaurantID, routing, routes, msg.Text)
+	}
+	promptData.RouteDirective = decision.Directive
+	promptData.RouteNode = decision.Node
+	system := renderBotSystemPrompt(promptData)
 	tools := botToolDefs(tenant)
 	turn := &botTurnState{}
 	exec := s.botToolExecutorForTurn(restaurantID, msg, tenant, turn)
+	sessionID := botSessionID(restaurantID, msg.Sender)
+	caller := func(ctx context.Context, system string, msgs []botMessage, tools []botToolDef) (botLLMResponse, string, error) {
+		return s.botLLMCallRouted(ctx, restaurantID, routing, sessionID, system, msgs, tools)
+	}
 
-	result, err := s.botRunAgentLoop(ctx, restaurantID, tenant.Model, system, messages, tools, exec)
+	result, err := s.botRunAgentLoopWith(ctx, caller, system, messages, tools, exec)
+	if decisionID > 0 {
+		s.botConversation.SetDecisionModel(ctx, decisionID, result.ModelUsed)
+	}
 	if err != nil {
 		// Never ghost the customer: send a graceful fallback on any LLM failure.
 		s.botSendFallback(ctx, restaurantID, msg.Sender)
@@ -546,8 +605,8 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			s.botSendFallback(ctx, restaurantID, msg.Sender)
 		}
 	}
-	log.Printf("[bot] restaurant=%d sender=%s iterations=%d tools=%s",
-		restaurantID, msg.Sender, result.Iterations, strings.Join(result.ToolCalls, ","))
+	log.Printf("[bot] restaurant=%d sender=%s iterations=%d model=%s node=%s tools=%s",
+		restaurantID, msg.Sender, result.Iterations, result.ModelUsed, decision.Node, strings.Join(result.ToolCalls, ","))
 	return nil
 }
 
