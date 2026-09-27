@@ -741,9 +741,9 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	// special_dates_v1 — only the fields the calendar needs to render the
 	// marker (active state + prereserva flag + title) are pulled.
 	type specialMonthRow struct {
-		isActive      int
-		prereserva    int
-		title         string
+		isActive   int
+		prereserva int
+		title      string
 	}
 	specialByDate := map[string]specialMonthRow{}
 	specialRows, err := s.db.QueryContext(ctx, `

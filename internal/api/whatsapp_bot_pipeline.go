@@ -222,25 +222,15 @@ func (s *Server) handleBOBotPipelineGet(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusBadRequest, "restaurantId inválido")
 		return
 	}
-	var graph json.RawMessage
-	online := false
-	reqCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	if req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, s.botPipelineURL()+"/graph", nil); err == nil {
-		if resp, err := http.DefaultClient.Do(req); err == nil {
-			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK && json.Valid(raw) {
-				graph, online = raw, true
-			}
-		}
-	}
+	graph := s.botPipelineGetJSON(r.Context(), "/graph")
+	online := graph != nil
 	decisions, err := s.botConversation.RecentDecisions(r.Context(), rid, 200)
 	if err != nil {
 		log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v1 restaurant_id=%d decisions_error=%v", rid, err)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "online": online, "graph": graph, "decisions": decisions,
-		"stats": botPipelineStats(decisions), "management": s.botConversation.ManagementRequestStats(r.Context(), rid)})
+		"stats": botPipelineStats(decisions), "management": s.botConversation.ManagementRequestStats(r.Context(), rid),
+		"dspy": s.botPipelineGetJSON(r.Context(), fmt.Sprintf("/dspy?restaurant_id=%d", rid))})
 }
 
 // botApplyPipelineHandoff executes the handoff actions of the decision tree.
@@ -404,4 +394,83 @@ func botPercentiles(v []int) map[string]int {
 	c := append([]int(nil), v...)
 	sort.Ints(c)
 	return map[string]int{"p50": c[len(c)/2], "p90": c[int(float64(len(c))*0.9)], "max": c[len(c)-1]}
+}
+
+// runBotPipelineDemoLoop keeps the DSPy few-shot demos of the pipeline
+// sidecar fed with real high-confidence Jev decisions: at start-up (once the
+// sidecar answers) and every hour (wa_bot_dspy_compiled_v4).
+func (s *Server) runBotPipelineDemoLoop(ctx context.Context) {
+	timer := time.NewTimer(20 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		next := time.Hour
+		if err := s.botPushPipelineDemos(ctx); err != nil {
+			log.Printf("[bot] checkpoint wa_bot_dspy_compiled_v4 demos_push_error=%v", err)
+			next = time.Minute
+		}
+		timer.Reset(next)
+	}
+}
+
+func (s *Server) botPushPipelineDemos(ctx context.Context) error {
+	ids, err := s.botConversation.DecisionRestaurants(ctx)
+	if err != nil {
+		return err
+	}
+	for _, rid := range ids {
+		if err := s.botPushPipelineDemosFor(ctx, rid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) botPushPipelineDemosFor(ctx context.Context, restaurantID int) error {
+	demos, err := s.botConversation.DSPyDemoCandidates(ctx, restaurantID, 0.9, 200)
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]any{"restaurant_id": restaurantID, "demos": demos, "source": "pipeline_decisions (jev ≥ 0.9)"})
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, s.botPipelineURL()+"/demos", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	log.Printf("[bot] checkpoint wa_bot_dspy_compiled_v4 restaurant_id=%d demos_pushed=%d", restaurantID, len(demos))
+	return nil
+}
+
+// botPipelineGetJSON fetches a JSON document from the sidecar (nil if offline).
+func (s *Server) botPipelineGetJSON(ctx context.Context, path string) json.RawMessage {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, s.botPipelineURL()+path, nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK || !json.Valid(raw) {
+		return nil
+	}
+	return raw
 }

@@ -151,21 +151,21 @@ type publicMenuItem struct {
 	// Coordination id: special_menu_sections_v1
 	// Ordered list of image sections rendered below the hero on a special
 	// menu. Each section has an optional title and an image URL.
-	SpecialMenuSections   []publicMenuSpecialSection `json:"special_menu_sections"`
+	SpecialMenuSections []publicMenuSpecialSection `json:"special_menu_sections"`
 	// Coordination id: special_menu_price_date_v1
 	SpecialDate *publicMenuSpecialDate `json:"special_date,omitempty"`
 	// Coordination id: special_menu_cta_v1
 	SpecialCta *specialMenuCta `json:"special_cta,omitempty"`
 	// Coordination id: special_menu_visibility_v1
-	WebPlacement      string `json:"web_placement"`
-	MenuPublicActive  bool   `json:"menu_public_active"`
-	LegacySourceTable string `json:"legacy_source_table,omitempty"`
-	CreatedAt            string                `json:"created_at"`
-	ModifiedAt           string                `json:"modified_at"`
-	MenuTitleEnglish     string                `json:"menu_title_english,omitempty"`
-	MenuSubtitleEnglish  []string              `json:"menu_subtitle_english,omitempty"`
-	SliderMode           string                `json:"slider_mode"`
-	SliderImages         []string              `json:"slider_images"`
+	WebPlacement        string   `json:"web_placement"`
+	MenuPublicActive    bool     `json:"menu_public_active"`
+	LegacySourceTable   string   `json:"legacy_source_table,omitempty"`
+	CreatedAt           string   `json:"created_at"`
+	ModifiedAt          string   `json:"modified_at"`
+	MenuTitleEnglish    string   `json:"menu_title_english,omitempty"`
+	MenuSubtitleEnglish []string `json:"menu_subtitle_english,omitempty"`
+	SliderMode          string   `json:"slider_mode"`
+	SliderImages        []string `json:"slider_images"`
 	// Coordination id: menu_weekday_availability_v1
 	// (menu_weekday_availability -> public API -> client SDK).
 	Weekdays          map[string]bool `json:"weekdays,omitempty"`
@@ -1269,8 +1269,8 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 				SpecialDate:         s.loadMenuSpecialDate(r.Context(), restaurantID, menuID),
 				SpecialCta:          s.loadPublicSpecialMenuCta(r.Context(), restaurantID, menuID),
 				// Coordination id: special_menu_visibility_v1
-				WebPlacement:        normalizedWebPlacement(webPlacementRaw.String),
-				MenuPublicActive:    menuPublicActiveIn != 0,
+				WebPlacement:     normalizedWebPlacement(webPlacementRaw.String),
+				MenuPublicActive: menuPublicActiveIn != 0,
 			},
 		})
 		return
@@ -1631,11 +1631,11 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 
 // publicMenuSidebarItem is a minimal representation for the burger nav sidebar.
 type publicMenuSidebarItem struct {
-	ID                int64  `json:"id"`
-	Slug              string `json:"slug"`
-	MenuTitle         string `json:"menu_title"`
-	MenuType          string `json:"menu_type"`
-	Active            bool   `json:"active"`
+	ID        int64  `json:"id"`
+	Slug      string `json:"slug"`
+	MenuTitle string `json:"menu_title"`
+	MenuType  string `json:"menu_type"`
+	Active    bool   `json:"active"`
 	// Coordination id: special_menu_visibility_v1
 	WebPlacement      string `json:"web_placement"`
 	LegacySourceTable string `json:"legacy_source_table,omitempty"`
