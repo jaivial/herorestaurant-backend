@@ -28,6 +28,14 @@ func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage,
 			}
 			return out, nil
 		}
+		// Special-date pre-reserva / special-date and event bookings policy
+		// (wa_bot_special_date_policy_v1), server-side like the same-day one.
+		if blocked, out := s.botSpecialPolicyOperation(ctx, restaurantID, msg, tenant, name, input); blocked {
+			if state != nil {
+				state.noticeDelivered = true
+			}
+			return out, nil
+		}
 		// Deduplicate the contact card per turn: the model sometimes emits
 		// send_contact repeatedly (including several tool_use blocks in one
 		// iteration). Deliver once, then answer idempotently with the same
@@ -43,6 +51,9 @@ func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage,
 			if phone := botContactPhoneFromResult(out); phone != "" {
 				state.contactSent = true
 				state.contactPhone = phone
+				// The agent decided this topic needs a human: keep redirecting
+				// while the customer stays on it (wa_bot_sticky_handoff_v1).
+				_ = s.botConversation.SetHandoff(ctx, restaurantID, msg.Sender, truncate(msg.Text, 160), "agent_contact", false)
 			}
 		}
 		return out, nil
@@ -108,6 +119,12 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolDaySchedule(ctx, restaurantID, input)
 	case "check_day_capacity":
 		return s.botToolDayCapacity(ctx, restaurantID, input)
+	case "get_date_overview":
+		return s.botToolDateOverview(ctx, restaurantID, input)
+	case "get_booking_details":
+		return s.botToolBookingDetails(ctx, restaurantID, msg.Sender, input)
+	case "add_booking_note":
+		return s.botToolAddBookingNote(ctx, restaurantID, msg, tenant, input)
 	case "get_special_date_info":
 		return s.botToolGetSpecialDateInfo(ctx, restaurantID, input)
 	case "get_special_date_bookings":
@@ -533,6 +550,15 @@ type botBookingRow struct {
 	Weekday             string `json:"weekday,omitempty"`
 	// Coordination id: booking_extras_v1 - extras selected for the booking.
 	Extras []string `json:"extras,omitempty"`
+	// Coordination id: wa_bot_booking_context_v2 - staff notes, event flag and
+	// special-date status drive the pipeline (handoff / friendlier tone).
+	Commentary        string `json:"commentary,omitempty"`
+	IsEvent           bool   `json:"is_event"`
+	IsSpecialBooking  bool   `json:"is_special_booking"`
+	IsPrereserva      bool   `json:"is_prereserva"`
+	SpecialDateTitle  string `json:"special_date_title,omitempty"`
+	Children          int    `json:"children,omitempty"`
+	HasMobilityIssues bool   `json:"has_mobility_issues,omitempty"`
 }
 
 func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone string) ([]botBookingRow, error) {
@@ -545,7 +571,11 @@ func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone st
 			COALESCE(arroz_type, ''), COALESCE(arroz_servings, ''),
 			COALESCE(highChairs, 0), COALESCE(babyStrollers, 0),
 			COALESCE(menu_de_grupo_assigned, 0), menu_de_grupo_id,
-			COALESCE(extras_json, '')
+			COALESCE(extras_json, ''),
+			COALESCE(commentary, ''), COALESCE(is_event, 0),
+			COALESCE(is_special_booking, 0), COALESCE(is_prereserva, 0),
+			COALESCE((SELECT sd.title FROM special_dates sd WHERE sd.restaurant_id = bookings.restaurant_id AND sd.date = bookings.reservation_date AND sd.is_active = 1 LIMIT 1), ''),
+			COALESCE(children, 0), COALESCE(has_mobility_issues, 0)
 		FROM bookings
 		WHERE restaurant_id = ?
 			AND reservation_date >= CURDATE()
@@ -561,14 +591,18 @@ func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone st
 	out := []botBookingRow{}
 	for rows.Next() {
 		var (
-			b               botBookingRow
-			menuAssignedInt int
-			menuDeGrupoID   sql.NullInt64
-			extrasRaw       sql.NullString
+			b                                   botBookingRow
+			menuAssignedInt                     int
+			menuDeGrupoID                       sql.NullInt64
+			extrasRaw                           sql.NullString
+			isEvent, isSpecial, isPre, mobility int
 		)
-		if err := rows.Scan(&b.ID, &b.Date, &b.Time, &b.People, &b.Name, &b.RiceType, &b.RiceServings, &b.HighChairs, &b.BabyStrollers, &menuAssignedInt, &menuDeGrupoID, &extrasRaw); err != nil {
+		if err := rows.Scan(&b.ID, &b.Date, &b.Time, &b.People, &b.Name, &b.RiceType, &b.RiceServings, &b.HighChairs, &b.BabyStrollers, &menuAssignedInt, &menuDeGrupoID, &extrasRaw,
+			&b.Commentary, &isEvent, &isSpecial, &isPre, &b.SpecialDateTitle, &b.Children, &mobility); err != nil {
 			return nil, err
 		}
+		b.Commentary = strings.TrimSpace(b.Commentary)
+		b.IsEvent, b.IsSpecialBooking, b.IsPrereserva, b.HasMobilityIssues = isEvent != 0, isSpecial != 0, isPre != 0, mobility != 0
 		b.Extras = bookingExtraNames(extrasRaw.String)
 		b.MenuDeGrupoAssigned = menuAssignedInt != 0 || (menuDeGrupoID.Valid && menuDeGrupoID.Int64 > 0)
 		if menuDeGrupoID.Valid && menuDeGrupoID.Int64 > 0 {

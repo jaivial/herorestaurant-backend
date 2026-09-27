@@ -30,7 +30,9 @@ type botWebhookMessage struct {
 	FromMe        bool
 	InstanceToken string
 	Owner         string
-	IsAudio       bool   // voice note (audioMessage/ptvMessage); the bot cannot transcribe it
+	IsAudio       bool   // voice note (audioMessage/ptvMessage)
+	AudioB64      string // inline voice note for transcription (wa_bot_audio_transcription_v1)
+	Transcribed   bool   // Text comes from a voice-note transcription
 	Ignored       bool   // reaction/edit/delete/poll event: never a customer turn
 	MediaKind     string // label of a non-text message, for the transcript
 }
@@ -391,7 +393,11 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if msg.Text == "" {
+	// Coordination id: wa_bot_audio_transcription_v1 - voice notes with an
+	// inline payload are transcribed in the background turn below and then
+	// handled like text; only audios without payload get the fallback here.
+	transcribe := msg.Text == "" && msg.IsAudio && msg.AudioB64 != ""
+	if msg.Text == "" && !transcribe {
 		// Unsupported media: polite fallback. Voice notes get a specific reply:
 		// the bot is a reservation assistant and cannot listen to audio.
 		fallback := "Ahora mismo solo puedo gestionar mensajes de texto. ¿Me lo puedes escribir por aquí?"
@@ -408,7 +414,7 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 	// Attendance commands are handled locally and never sent to the LLM. This
 	// prevents prompt injection and guarantees that clock operations are scoped
 	// to the sender's active member record and this restaurant.
-	if handled := s.botHandleAttendanceCommand(r.Context(), restaurantID, msg); handled {
+	if handled := !transcribe && s.botHandleAttendanceCommand(r.Context(), restaurantID, msg); handled {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "attendanceCommand": true})
 		return
 	}
@@ -431,6 +437,17 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
+		if transcribe {
+			text := s.botTranscribeAudio(ctx, restaurantID, msg)
+			msg.AudioB64 = ""
+			if text == "" {
+				if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
+					_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, "Perdona, no he podido entender bien el audio. ¿Me lo puedes escribir por aquí, por favor?", "unsupported_content")
+				}
+				return
+			}
+			msg.Text, msg.Transcribed = text, true
+		}
 		if err := s.botProcessMessage(ctx, restaurantID, msg); err != nil {
 			log.Printf("[bot] restaurant=%d sender=%s error: %v", restaurantID, msg.Sender, err)
 		}
@@ -493,7 +510,11 @@ func sanitizeBotPushName(name string) string {
 func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg botWebhookMessage) error {
 	tenant := s.loadBotTenantConfig(ctx, restaurantID)
 
-	s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "user", msg.Text, "", "inbound")
+	stored := msg.Text
+	if msg.Transcribed {
+		stored = botAudioTranscriptPrefix + msg.Text
+	}
+	s.botRecordConversationMessage(ctx, restaurantID, msg.Sender, "user", stored, "", "inbound")
 	s.botTouchSession(ctx, restaurantID, msg.Sender, msg.PushName)
 
 	routing := s.loadBotAIRouting(ctx, restaurantID)
@@ -522,17 +543,11 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			}
 			decisionID = id
 		}
-		switch decision.Action {
-		case "handoff_same_day":
-			if s.botSameDayIntentGuard(ctx, restaurantID, msg, tenant) {
-				return nil
-			}
-		case "handoff_extras":
-			log.Printf("[bot] checkpoint booking_extras_change_blocked restaurant_id=%d sender=%s", restaurantID, msg.Sender)
-			s.botBlockExtrasChange(ctx, restaurantID, msg, tenant)
-			return nil
-		case "handoff_allergens":
-			s.botSendAllergenNotice(ctx, restaurantID, msg, tenant)
+		if decision.HandoffCleared {
+			_ = s.botConversation.ClearHandoff(ctx, restaurantID, msg.Sender)
+			log.Printf("[bot] checkpoint wa_bot_sticky_handoff_v1 restaurant_id=%d sender=%s cleared new_topic", restaurantID, msg.Sender)
+		}
+		if s.botApplyPipelineHandoff(ctx, restaurantID, msg, tenant, decision) {
 			return nil
 		}
 	} else {
