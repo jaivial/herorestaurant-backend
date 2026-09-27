@@ -233,7 +233,7 @@ const whatsappOutboxReconnectMinInterval = 5 * time.Second
 // whatsappOutboxReconnectTrigger is the per-restaurant debounce state. Stored
 // in memory so the same process never floods itself with duplicates.
 var (
-	whatsappOutboxReconnectMu    sync.Mutex
+	whatsappOutboxReconnectMu   sync.Mutex
 	whatsappOutboxReconnectLast = map[int]time.Time{}
 )
 

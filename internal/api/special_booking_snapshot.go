@@ -122,9 +122,9 @@ func (ids *specialBookingItemIDs) UnmarshalJSON(raw []byte) error {
 // admin booking upsert/patch and on the public booking insert. title is NOT
 // accepted — the server snapshots it from the date's settings.
 type specialBookingReq struct {
-	Menus         []specialBookingMenuReq       `json:"menus"`
-	PaymentMethod *string                       `json:"payment_method,omitempty"`
-	AdelantosPaid []specialBookingAdelantoPaid  `json:"adelantos_paid,omitempty"`
+	Menus         []specialBookingMenuReq      `json:"menus"`
+	PaymentMethod *string                      `json:"payment_method,omitempty"`
+	AdelantosPaid []specialBookingAdelantoPaid `json:"adelantos_paid,omitempty"`
 }
 
 // --- server-side loaders -----------------------------------------------------
@@ -163,11 +163,11 @@ type specialDateSettings struct {
 // no row or is_active is 0.
 func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, date string) (*specialDateSettings, []specialDateMenuRecord, error) {
 	var (
-		id                                                          int64
+		id                                                             int64
 		isActive, prereservaEnabled, requiresAdelanto, adelantoUnified int
-		title                                                       string
-		adelantoMethodsRaw                                          sql.NullString
-		adelantoUnifiedAmount                                       sql.NullFloat64
+		title                                                          string
+		adelantoMethodsRaw                                             sql.NullString
+		adelantoUnifiedAmount                                          sql.NullFloat64
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, is_active, title, prereserva_enabled, requires_adelanto,
@@ -552,11 +552,11 @@ func (s *Server) buildSpecialBookingResponse(ctx context.Context, restaurantID i
 	for _, m := range snap.Menus {
 		isCustom := m.MenuID == nil
 		menuOut := map[string]any{
-			"special_date_menu_id":  m.SpecialDateMenuID,
-			"label":                 m.Label,
-			"unit_price":            round2(m.UnitPrice),
-			"count":                 m.Count,
-			"adelanto_per_unit":     round2(m.AdelantoPerUnit),
+			"special_date_menu_id": m.SpecialDateMenuID,
+			"label":                m.Label,
+			"unit_price":           round2(m.UnitPrice),
+			"count":                m.Count,
+			"adelanto_per_unit":    round2(m.AdelantoPerUnit),
 		}
 		if m.MenuID != nil {
 			menuOut["menu_id"] = *m.MenuID

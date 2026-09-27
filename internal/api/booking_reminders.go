@@ -88,19 +88,19 @@ func isRetryableEvolutionFailure(err error) bool {
 }
 
 type dueBookingReminder struct {
-	ID               int64
-	CustomerName     string
-	PhoneCC          sql.NullString
-	Phone            sql.NullString
-	ReservationDate  string
-	ReservationTime  string
-	PartySize        int
-	ArrozType        sql.NullString
-	ArrozServings    sql.NullString
-	HighChairs       sql.NullInt64
-	BabyStrollers    sql.NullInt64
-	PreferredFloor   sql.NullInt64
-	SalonName        sql.NullString
+	ID              int64
+	CustomerName    string
+	PhoneCC         sql.NullString
+	Phone           sql.NullString
+	ReservationDate string
+	ReservationTime string
+	PartySize       int
+	ArrozType       sql.NullString
+	ArrozServings   sql.NullString
+	HighChairs      sql.NullInt64
+	BabyStrollers   sql.NullInt64
+	PreferredFloor  sql.NullInt64
+	SalonName       sql.NullString
 	// Coordination id: booking_extras_v1
 	ExtrasRaw sql.NullString
 	// Coordination id: special_booking_v1

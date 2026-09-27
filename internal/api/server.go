@@ -113,6 +113,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	go s.runBookingReminderLoop(context.Background())
 	go s.runWhatsAppOutboxLoop(context.Background())
 	go s.runWhatsAppWatchdogLoop(context.Background()) // wa_connection_watchdog_v1
+	go s.runBotPipelineDemoLoop(context.Background())  // wa_bot_dspy_compiled_v4
 	return s
 }
 
