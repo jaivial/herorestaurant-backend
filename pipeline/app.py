@@ -785,7 +785,9 @@ def graph() -> dict[str, Any]:
     nodes = [dict(n, help=NODE_HELP.get(n["id"], "")) for n in GRAPH["nodes"]]
     return {"nodes": nodes, "edges": GRAPH["edges"], "thresholds": {
         "confidence_min": CONFIDENCE_MIN, "anger_handoff": ANGER_HANDOFF, "can_handle_min": CAN_HANDLE_MIN,
-        "same_topic_min": SAME_TOPIC_MIN, "same_request_min": SAME_REQUEST_MIN, "event_min": EVENT_MIN}}
+        "same_topic_min": SAME_TOPIC_MIN, "same_request_min": SAME_REQUEST_MIN, "event_min": EVENT_MIN,
+        "injection_min": INJECTION_MIN, "off_topic_min": OFF_TOPIC_MIN, "multi_min": MULTI_MIN, "slot_min": SLOT_MIN,
+        "formal_min": FORMAL_MIN, "urgency_high": URGENCY_HIGH}}
 
 
 @app.post("/decide")
