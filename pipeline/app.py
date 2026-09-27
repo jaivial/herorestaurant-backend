@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import logging
 import os
 import tempfile
@@ -90,6 +91,10 @@ INTENTS: dict[str, str] = {
 CORE_INTENTS = {"greeting", "acknowledgement", "farewell", "feedback", "info_hours", "availability", "create_booking",
                 "modify_booking", "cancel_booking", "booking_status", "arrival_notice", "rice", "menu_policy", "menu_content", "group_booking",
                 "special_needs_request"}
+
+# Facility facts the assistant cannot verify (pets, wheelchair access,
+# parking, terrace...): even inside special_needs_request they go to a human.
+FACILITY_RE = re.compile(r"perr|mascota|gato|animal|silla de ruedas|accesib|acceso|rampa|escalon|escaler|ascensor|aparca|parking|terraza|enchufe|cargador|wifi|\bpets?\b|\bdogs?\b|wheelchair", re.I)
 
 # Intents the assistant can never resolve by itself: always a human.
 HUMAN_ONLY = {"invoice_payment", "lost_item", "job_application", "supplier", "gift_voucher", "event_inquiry", "human", "complaint"}
@@ -433,7 +438,9 @@ class BotPipeline(dspy.Module):
         # Bare fragments ("No", "Vale y?") carry too little text for the meter to
         # mean "out of scope": let the agent answer them with the history.
         fragment = len(req.text.split()) <= 3
-        if intent in HUMAN_ONLY or (jev and not soft_ok and not fragment and can_handle < CAN_HANDLE_MIN and intent not in CORE_INTENTS):
+        facility = bool(FACILITY_RE.search(req.text)) and intent in ("special_needs_request", "info_location", "other", "availability")
+        core = intent in CORE_INTENTS and not facility
+        if intent in HUMAN_ONLY or (jev and not soft_ok and not fragment and can_handle < CAN_HANDLE_MIN and not core):
             return done("handoff_human", "handoff_human", [], handoff_reason="cannot", handoff_text=HANDOFF_TEXTS["cannot"],
                         handoff_topic=INTENTS.get(intent, intent) + ": " + req.text[:160])
 
