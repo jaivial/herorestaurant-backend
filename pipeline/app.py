@@ -50,6 +50,7 @@ ANGER_HANDOFF = 1.6        # score 0..3 (content, annoyed, clearly unhappy, very
 CAN_HANDLE_MIN = 0.30      # below -> human before giving a wrong answer
 SAME_TOPIC_MIN = 0.55      # sticky handoff continues while the topic is the same
 EVENT_MIN = 0.75
+SAME_REQUEST_MIN = 0.6     # Jev noul: same issue as one already forwarded
 
 INTENTS: dict[str, str] = {
     "greeting": "Saludo sin petición concreta",
@@ -109,26 +110,26 @@ ROUTE_TAGS: dict[str, list[str]] = {
 GRAPH: dict[str, Any] = {
     "nodes": [
         {"id": "inbound", "label": "Mensaje entrante (texto o audio transcrito)", "kind": "start"},
-        {"id": "jev_classify", "label": "Jev (1 llamada): intención · enfado · ¿puede resolverlo? · evento · fecha especial · mismo tema", "kind": "classifier"},
+        {"id": "jev_classify", "label": "Jev (1 llamada): intención · enfado · ¿puede resolverlo? · evento · fecha especial · mismo tema · ¿solicitud ya enviada?", "kind": "classifier"},
         {"id": "confident", "label": "¿Confianza Jev ≥ 0.55?", "kind": "decision"},
         {"id": "dspy_disambiguate", "label": "DSPy Predict: desambiguar con historial", "kind": "classifier"},
         {"id": "sticky_handoff", "label": "¿Tema derivado a humano abierto y el cliente sigue en el mismo tema?", "kind": "decision"},
-        {"id": "handoff_repeat", "label": "Repetir con amabilidad: llamar a gestión + tarjeta", "kind": "handoff"},
+        {"id": "handoff_repeat", "label": "Mismo tema: 'el equipo de gestión ya tiene tu solicitud' (sin reenviar al grupo)", "kind": "handoff"},
         {"id": "same_day", "label": "¿Operación sobre reserva de HOY?", "kind": "decision"},
-        {"id": "handoff_same_day", "label": "Aviso mismo día + tarjeta", "kind": "handoff"},
+        {"id": "handoff_same_day", "label": "Mismo día: solicitud al grupo de gestión", "kind": "handoff"},
         {"id": "event_booking", "label": "¿Reserva marcada como EVENTO o negociación de evento?", "kind": "decision"},
-        {"id": "handoff_event", "label": "Reserva especial: acordar con gestión + tarjeta", "kind": "handoff"},
+        {"id": "handoff_event", "label": "Reserva especial: solicitud al grupo de gestión", "kind": "handoff"},
         {"id": "special_date_check", "label": "¿Habla de una FECHA ESPECIAL?", "kind": "decision"},
         {"id": "special_date_booking", "label": "¿Ya tiene reserva esa fecha y quiere cambiarla/cancelarla?", "kind": "decision"},
-        {"id": "handoff_special_booking", "label": "Fecha especial: no se modifica por WhatsApp + tarjeta gestión", "kind": "handoff"},
+        {"id": "handoff_special_booking", "label": "Fecha especial: solicitud al grupo de gestión", "kind": "handoff"},
         {"id": "agent_special_date", "label": "Agente: info fecha especial + enlace pre-reserva web", "kind": "agent"},
         {"id": "extras_change", "label": "¿Pide cambiar extras?", "kind": "decision"},
-        {"id": "handoff_extras", "label": "Aviso extras + tarjeta gestión", "kind": "handoff"},
+        {"id": "handoff_extras", "label": "Extras: solicitud al grupo de gestión", "kind": "handoff"},
         {"id": "allergen_question", "label": "¿Pregunta alérgenos/ingredientes (no pide anotarlo)?", "kind": "decision"},
-        {"id": "handoff_allergens", "label": "Aviso seguridad alimentaria + tarjeta", "kind": "handoff"},
+        {"id": "handoff_allergens", "label": "Alérgenos: solicitud al grupo de gestión", "kind": "handoff"},
         {"id": "anger_meter", "label": "¿Enfado / insatisfacción alta?", "kind": "decision"},
         {"id": "can_handle", "label": "¿El asistente puede resolverlo con seguridad?", "kind": "decision"},
-        {"id": "handoff_human", "label": "Disculpa breve + tarjeta de contacto (tema queda abierto)", "kind": "handoff"},
+        {"id": "handoff_human", "label": "Disculpa breve + solicitud al grupo de gestión (1 por tema)", "kind": "handoff"},
         {"id": "commentary_check", "label": "¿Comentarios de la reserva con evento/prueba de menú?", "kind": "decision"},
         {"id": "tag_friendly", "label": "Tono cercano y abierto, sin prometer (confirmar con gestión)", "kind": "enrich"},
         {"id": "special_needs", "label": "¿Necesidad especial (niños, movilidad, alergia…)?", "kind": "decision"},
@@ -194,8 +195,8 @@ DIRECTIVES: dict[str, str] = {
 }
 FRIENDLY_DIRECTIVE = ("EXCEPCIÓN A LAS REGLAS GENERALES DEL MENÚ: los comentarios del personal indican que este cliente está valorando un evento o una prueba de menú: sé especialmente cercano y abierto "
                       "(p. ej. 'sin problema existiría la posibilidad de…'), pero NUNCA lo asegures: indica siempre que debe confirmarlo con la dirección del "
-                      "restaurante en el teléfono de contacto y que tú no lo puedes garantizar al 100%. No digas que algo 'no se puede' o 'no existe' (menú infantil, cambios de menú, tarta): "
-                      "preséntalo como una posibilidad a confirmar con la dirección y envía la tarjeta con send_contact.")
+                      "restaurante (usa send_contact para trasladarlo) y que tú no lo puedes garantizar al 100%. No digas que algo 'no se puede' o 'no existe' (menú infantil, cambios de menú, tarta): "
+                      "preséntalo como una posibilidad a confirmar con la dirección y usa send_contact para trasladar la solicitud al equipo de gestión.")
 SPECIAL_NEEDS_DIRECTIVE = "El cliente ha mencionado una necesidad especial: reconócela expresamente y ofrece anotarla en la reserva con add_booking_note."
 
 HANDOFF_TEXTS = {
@@ -214,7 +215,7 @@ HANDOFF_TEXTS_EN = {
 # ----------------------------------------------------------------- Jev -----
 
 
-def jev_classify(api_key: str, state: str, handoff_topic: str, special_dates: dict[str, str]) -> dict[str, Any]:
+def jev_classify(api_key: str, state: str, handoff_topic: str, special_dates: dict[str, str], forwarded: list[str] | None = None) -> dict[str, Any]:
     questions: dict[str, Any] = {
         "intent": {"type": "choice", "instructions": "Intención principal del ÚLTIMO mensaje del cliente a un restaurante por WhatsApp (el historial es solo contexto)", "criteria": INTENTS},
         "anger": {"type": "score", "instructions": "Enfado o insatisfacción del cliente con el restaurante o con las respuestas del asistente en el último mensaje (teniendo en cuenta si insiste o repite)",
@@ -225,6 +226,10 @@ def jev_classify(api_key: str, state: str, handoff_topic: str, special_dates: di
         "wants_note": {"type": "noul", "instructions": "El cliente pide anotar o apuntar algo (por ejemplo una alergia) en los comentarios de su reserva"},
         "language": {"type": "choice", "instructions": "Idioma en el que escribe el cliente su último mensaje", "criteria": {"es": "Español o valenciano/catalán", "en": "Inglés", "other": "Otro idioma"}},
     }
+    if forwarded:
+        # wa_bot_management_group_v1: dedup against issues already sent to the
+        # management group, so one issue produces one group message.
+        questions["same_request"] = {"type": "noul", "instructions": "El último mensaje del cliente trata, insiste o pregunta por el MISMO asunto que alguna de estas solicitudes que ya se enviaron al equipo de gestión (no un asunto nuevo): " + " | ".join(forwarded[:5])}
     if handoff_topic:
         questions["same_topic"] = {"type": "noul", "instructions": "El último mensaje del cliente sigue tratando, insistiendo o preguntando sobre este mismo asunto: " + handoff_topic}
     if special_dates:
@@ -241,6 +246,8 @@ def jev_classify(api_key: str, state: str, handoff_topic: str, special_dates: di
         "special_needs": float(a["special_needs"]["noul"]), "wants_note": float(a["wants_note"]["noul"]),
         "language": a.get("language", {}).get("choice", "es"),
     }
+    if "same_request" in a:
+        out["same_request"] = float(a["same_request"]["noul"])
     if "same_topic" in a:
         out["same_topic"] = float(a["same_topic"]["noul"])
     if "special_date" in a:
@@ -252,8 +259,8 @@ def jev_classify(api_key: str, state: str, handoff_topic: str, special_dates: di
 class JevCategorizer(dspy.Module):
     """DSPy module wrapping one batched Jev System One call."""
 
-    def forward(self, api_key: str, state: str, handoff_topic: str, special_dates: dict[str, str]) -> dspy.Prediction:
-        return dspy.Prediction(**jev_classify(api_key, state, handoff_topic, special_dates))
+    def forward(self, api_key: str, state: str, handoff_topic: str, special_dates: dict[str, str], forwarded: list[str] | None = None) -> dspy.Prediction:
+        return dspy.Prediction(**jev_classify(api_key, state, handoff_topic, special_dates, forwarded))
 
 
 class Disambiguate(dspy.Signature):
@@ -311,12 +318,13 @@ class BotPipeline(dspy.Module):
         handoff_topic = str(handoff.get("topic") or "")
         special_dates = {d["key"]: d["label"] for d in facts.get("special_dates") or [] if d.get("key")}
         bookings = facts.get("bookings") or []
+        forwarded = [str(r.get("summary") or "") for r in facts.get("forwarded_requests") or [] if r.get("summary")]
 
         path.append("jev_classify")
         jev: dict[str, Any] = {}
         try:
             if req.jev_api_key:
-                jev = self.jev(api_key=req.jev_api_key, state=state, handoff_topic=handoff_topic, special_dates=special_dates).toDict()
+                jev = self.jev(api_key=req.jev_api_key, state=state, handoff_topic=handoff_topic, special_dates=special_dates, forwarded=forwarded).toDict()
         except Exception as exc:  # noqa: BLE001 - never block the turn on Jev
             log.warning("jev_failed restaurant_id=%s err=%s", req.restaurant_id, exc)
         intent = jev.get("intent") or {"create_booking": "create_booking", "modify_booking": "modify_booking", "cancel_booking": "cancel_booking"}.get(facts.get("regex_intent") or "", "other")
@@ -346,6 +354,8 @@ class BotPipeline(dspy.Module):
         result: dict[str, Any] = {"intent": intent, "confidence": confidence, "classifier": classifier, "jev": jev,
                                   "anger": anger, "can_handle": can_handle}
 
+        # Same issue already forwarded to management -> no second group message.
+        result["duplicate_request"] = bool(forwarded) and float(jev.get("same_request", 0)) >= SAME_REQUEST_MIN
         lang = str(jev.get("language") or "es")
         texts = HANDOFF_TEXTS_EN if lang in ("en", "other") else HANDOFF_TEXTS
         result["language"] = lang
@@ -363,6 +373,8 @@ class BotPipeline(dspy.Module):
             same = float(jev.get("same_topic", 1.0 if not jev else 0.0))
             closing = intent in ("acknowledgement", "farewell", "greeting") and same < 0.8
             if same >= SAME_TOPIC_MIN and not closing:
+                if forwarded:
+                    result["duplicate_request"] = True
                 return done("handoff_human", "handoff_repeat", [], handoff_reason="repeat", handoff_text=HANDOFF_TEXTS["repeat"], handoff_topic=handoff_topic)
             result["handoff_cleared"] = True
 

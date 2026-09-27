@@ -54,20 +54,10 @@ func (s *Server) botAllergenIntentGuard(ctx context.Context, restaurantID int, m
 
 // botSendAllergenNotice delivers the food-safety notice + contact card.
 func (s *Server) botSendAllergenNotice(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) {
-	name, phone := s.botContactDetails(ctx, restaurantID, tenant)
-	if phone == "" {
-		name, phone = s.botSameDayContactDetails(ctx, restaurantID, tenant)
+	prefix := botManagementPrefixFor("allergens", msg.Language)
+	if msg.Language != "en" && msg.Language != "other" {
+		prefix += " Si lo desea, también puedo anotar la alergia o intolerancia en los comentarios de su reserva."
 	}
-	noticeSent, cardSent := false, false
-	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-		noticeSent = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, botAllergenNoticeText(phone), "allergen_notice") == nil
-	}
-	if phone != "" {
-		if _, err := s.botSendContactCardWith(ctx, restaurantID, msg, name, phone); err != nil {
-			log.Printf("[bot] restaurant=%d allergen contact card failed: %v", restaurantID, err)
-		} else {
-			cardSent = true
-		}
-	}
-	log.Printf("[bot] checkpoint wa_bot_allergen_handoff_v1 restaurant_id=%d sender=%s notice_sent=%t card_sent=%t", restaurantID, msg.Sender, noticeSent, cardSent)
+	s.botForwardToManagement(ctx, restaurantID, msg, tenant, "allergens", "", prefix, msg.Language, s.botIsDuplicateRequest(msg))
+	log.Printf("[bot] checkpoint wa_bot_allergen_handoff_v1 restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 }

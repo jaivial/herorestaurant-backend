@@ -133,24 +133,6 @@ func (s *Server) botExtrasIntentGuard(ctx context.Context, restaurantID int, msg
 // botBlockExtrasChange delivers the AI notice + management contact card for an
 // extras change request. The requested change is never performed.
 func (s *Server) botBlockExtrasChange(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) {
-	_, phone := s.botContactDetails(ctx, restaurantID, tenant)
-	if phone == "" {
-		_, phone = s.botSameDayContactDetails(ctx, restaurantID, tenant)
-	}
-
-	noticeSent := false
-	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-		if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, botExtrasNoticeText(phone), "extras_notice"); err == nil {
-			noticeSent = true
-		}
-	}
-	cardSent := false
-	if phone != "" {
-		if _, err := s.botSendContactCardWith(ctx, restaurantID, msg, botExtrasContactName, phone); err != nil {
-			log.Printf("[bot] restaurant=%d extras contact card failed: %v", restaurantID, err)
-		} else {
-			cardSent = true
-		}
-	}
-	log.Printf("[bot] checkpoint booking_extras_change_notified restaurant_id=%d sender=%s notice_sent=%t card_sent=%t", restaurantID, msg.Sender, noticeSent, cardSent)
+	s.botForwardToManagement(ctx, restaurantID, msg, tenant, "extras", "", botManagementPrefixFor("extras", msg.Language), msg.Language, s.botIsDuplicateRequest(msg))
+	log.Printf("[bot] checkpoint booking_extras_change_notified restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 }
