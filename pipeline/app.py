@@ -381,7 +381,9 @@ class BotPipeline(dspy.Module):
                         DIRECTIVES["agent_special_date"] + f" Fecha: {special.get('date')} ({special.get('label')}).", special_date=special.get("date"))
 
         path.append("extras_change")
-        if facts.get("regex_extras_mutation") or (intent == "extras" and confidence >= 0.7 and facts.get("mentions_extras")):
+        # Deterministic only: Jev's "extras" intent cannot tell a question
+        # ("¿qué extras tenéis?") from a change request.
+        if facts.get("regex_extras_mutation"):
             return done("handoff_extras", "handoff_extras", [])
 
         path.append("allergen_question")
