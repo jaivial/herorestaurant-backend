@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -228,11 +229,12 @@ func (s *Server) handleBOBotPipelineGet(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	decisions, err := s.botConversation.RecentDecisions(r.Context(), rid, 50)
+	decisions, err := s.botConversation.RecentDecisions(r.Context(), rid, 200)
 	if err != nil {
 		log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v1 restaurant_id=%d decisions_error=%v", rid, err)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "online": online, "graph": graph, "decisions": decisions})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "online": online, "graph": graph, "decisions": decisions,
+		"stats": botPipelineStats(decisions), "management": s.botConversation.ManagementRequestStats(r.Context(), rid)})
 }
 
 // botApplyPipelineHandoff executes the handoff actions of the decision tree.
@@ -297,4 +299,92 @@ func (s *Server) botPipelineForwardedFact(ctx context.Context, restaurantID int,
 // botIsDuplicateRequest is the per-turn dedup verdict (set from the pipeline).
 func (s *Server) botIsDuplicateRequest(msg botWebhookMessage) bool {
 	return msg.DuplicateRequest
+}
+
+// botPipelineStats aggregates recent decisions for the backoffice graph:
+// visits and average latency per node, terminal node counts, intents,
+// classifiers, models and the Jev meters (wa_bot_pipeline_visual_v2).
+func botPipelineStats(decisions []botDecisionRecord) map[string]any {
+	type acc struct{ n, ms int }
+	nodeVisits := map[string]int{}
+	terminal := map[string]*acc{}
+	intents := map[string]int{}
+	classifiers := map[string]int{}
+	models := map[string]int{}
+	languages := map[string]int{}
+	var pipeMS, turnMS []int
+	angry, cannot, duplicates := 0, 0, 0
+	for _, d := range decisions {
+		var dec struct {
+			Intent           string   `json:"intent"`
+			Classifier       string   `json:"classifier"`
+			Node             string   `json:"node"`
+			Path             []string `json:"path"`
+			ElapsedMS        int      `json:"elapsed_ms"`
+			Anger            float64  `json:"anger"`
+			CanHandle        float64  `json:"can_handle"`
+			Language         string   `json:"language"`
+			DuplicateRequest bool     `json:"duplicate_request"`
+			Turn             struct {
+				TotalMS int `json:"total_ms"`
+			} `json:"turn"`
+		}
+		if json.Unmarshal(d.Decision, &dec) != nil {
+			continue
+		}
+		for _, n := range dec.Path {
+			nodeVisits[n]++
+		}
+		a := terminal[dec.Node]
+		if a == nil {
+			a = &acc{}
+			terminal[dec.Node] = a
+		}
+		a.n++
+		a.ms += dec.Turn.TotalMS
+		intents[dec.Intent]++
+		classifiers[dec.Classifier]++
+		if d.ModelUsed != "" {
+			models[d.ModelUsed]++
+		}
+		if dec.Language != "" {
+			languages[dec.Language]++
+		}
+		pipeMS = append(pipeMS, dec.ElapsedMS)
+		if dec.Turn.TotalMS > 0 {
+			turnMS = append(turnMS, dec.Turn.TotalMS)
+		}
+		if dec.Anger >= 1.6 {
+			angry++
+		}
+		if dec.CanHandle > 0 && dec.CanHandle < 0.3 {
+			cannot++
+		}
+		if dec.DuplicateRequest {
+			duplicates++
+		}
+	}
+	term := map[string]map[string]int{}
+	for k, a := range terminal {
+		avg := 0
+		if a.n > 0 {
+			avg = a.ms / a.n
+		}
+		term[k] = map[string]int{"count": a.n, "avg_turn_ms": avg}
+	}
+	return map[string]any{
+		"total": len(decisions), "node_visits": nodeVisits, "terminal": term, "intents": intents,
+		"classifiers": classifiers, "models": models, "languages": languages,
+		"pipeline_ms": botPercentiles(pipeMS), "turn_ms": botPercentiles(turnMS),
+		"angry": angry, "cannot_handle": cannot, "duplicates": duplicates,
+	}
+}
+
+func botPercentiles(v []int) map[string]int {
+	if len(v) == 0 {
+		return map[string]int{"p50": 0, "p90": 0, "max": 0}
+	}
+	c := append([]int(nil), v...)
+	sort.Ints(c)
+	return map[string]int{"p50": c[len(c)/2], "p90": c[int(float64(len(c))*0.9)], "max": c[len(c)-1]}
 }
