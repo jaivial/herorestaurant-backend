@@ -22,7 +22,14 @@ import (
 const botAudioTranscriptPrefix = "🎤 (audio transcrito) "
 
 func (s *Server) botTranscribeAudio(ctx context.Context, restaurantID int, msg botWebhookMessage) string {
-	body, _ := json.Marshal(map[string]any{"audio_b64": msg.AudioB64, "restaurant_id": restaurantID})
+	audio := msg.AudioB64
+	if audio == "" {
+		audio = s.botFetchAudioBase64(ctx, restaurantID, msg.MessageID)
+	}
+	if audio == "" {
+		return ""
+	}
+	body, _ := json.Marshal(map[string]any{"audio_b64": audio, "restaurant_id": restaurantID})
 	reqCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, s.botPipelineURL()+"/transcribe", bytes.NewReader(body))
@@ -50,4 +57,29 @@ func (s *Server) botTranscribeAudio(ctx context.Context, restaurantID int, msg b
 	log.Printf("[bot] checkpoint wa_bot_audio_transcription_v1 restaurant_id=%d sender=%s lang=%s chars=%d ms=%d",
 		restaurantID, msg.Sender, out.Language, len(text), time.Since(started).Milliseconds())
 	return text
+}
+
+// botFetchAudioBase64 downloads a voice note from Evolution when the webhook
+// did not inline it (instances registered with webhookBase64=false).
+func (s *Server) botFetchAudioBase64(ctx context.Context, restaurantID int, messageID string) string {
+	if strings.TrimSpace(messageID) == "" {
+		return ""
+	}
+	gw, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return ""
+	}
+	evo, ok := gw.(*evolutionGateway)
+	if !ok {
+		return ""
+	}
+	resp, code, err := evo.request(ctx, http.MethodPost, "/chat/getBase64FromMediaMessage/"+evo.instanceName, map[string]any{
+		"message": map[string]any{"key": map[string]any{"id": messageID}}, "convertToMp4": false,
+	})
+	if err != nil || code < 200 || code >= 300 {
+		log.Printf("[bot] checkpoint wa_bot_audio_transcription_v1 restaurant_id=%d fetch_failed code=%d err=%v", restaurantID, code, err)
+		return ""
+	}
+	b64, _ := resp["base64"].(string)
+	return strings.TrimSpace(b64)
 }
