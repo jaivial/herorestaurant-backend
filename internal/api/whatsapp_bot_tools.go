@@ -229,7 +229,7 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 			botToolDef{
 				Name:        "send_contact",
 				Description: "Escala a una persona: envía la solicitud del cliente al equipo de gestión del restaurante (grupo interno de WhatsApp) y le confirma al cliente que le contactarán pronto. Úsala UNA vez por tema cuando algo lo debe decidir el restaurante. No envíes tú otro mensaje de confirmación.",
-				InputSchema: botSchema(`{"type":"object","properties":{"message":{"type":"string","description":"Frase breve y opcional de contexto para el cliente (en su idioma) antes de la confirmación automática."},"request_summary":{"type":"string","description":"Resumen en español para el equipo de gestión: qué pide el cliente y datos relevantes."}},"required":["request_summary"]}`),
+				InputSchema: botSchema(`{"type":"object","properties":{"message":{"type":"string","description":"Frase breve y opcional de contexto para el cliente (en su idioma) antes de la confirmación automática."},"request_summary":{"type":"string","description":"Resumen breve en español (1-3 frases) para el equipo de gestión: qué pide el cliente y el dato clave. No repitas nombre, teléfono ni datos de la reserva: el sistema ya los añade."}},"required":["request_summary"]}`),
 			},
 		)
 	}
