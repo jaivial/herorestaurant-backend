@@ -118,7 +118,9 @@ func splitMenuTitleAndDescription(text string) (title, description string) {
 		title = strings.TrimSpace(text[:idx])
 		description = strings.TrimSpace(text[idx+1:])
 	}
-	return strings.Trim(title, "*"), description
+	// Evolution wraps the title as "*<title>*": strip every bold marker so a
+	// title with inner *bold* does not break WhatsApp's formatting.
+	return strings.ReplaceAll(title, "*", ""), description
 }
 
 func isHTTPURL(v string) bool {
