@@ -366,6 +366,17 @@ class BotPipeline(dspy.Module):
             return done("handoff_event", "handoff_event", [], handoff_topic="Organización o negociación de un evento")
 
         # special_date_check
+        # Deterministic guard first: a change/cancel while the customer owns a
+        # special-date booking goes to management even if Jev did not pick the
+        # date ("mover mi reserva de Navidad al 26" scores special_date=none).
+        special_bookings = [b for b in bookings if b.get("is_special_booking")]
+        if special_bookings and intent in ("modify_booking", "cancel_booking") and not any(not b.get("is_special_booking") for b in bookings):
+            path.append("special_date_check")
+            path.append("special_date_booking")
+            sb = special_bookings[0]
+            return done("handoff_special_booking", "handoff_special_booking", [], special_date=sb.get("date"),
+                        handoff_topic="Cambios en la reserva de la fecha especial " + str(sb.get("special_date_title") or sb.get("date")))
+
         path.append("special_date_check")
         sd_key = str(jev.get("special_date") or "none")
         special = next((d for d in facts.get("special_dates") or [] if d.get("key") == sd_key), None)
