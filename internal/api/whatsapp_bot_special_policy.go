@@ -196,7 +196,7 @@ func (s *Server) botManagementHandoff(ctx context.Context, restaurantID int, msg
 	if prefix == "" {
 		prefix = text
 	}
-	sent := s.botForwardToManagement(ctx, restaurantID, msg, tenant, reason, "Operación: "+operation, prefix, msg.Language, s.botIsDuplicateRequest(msg))
+	sent := s.botForwardToManagement(ctx, restaurantID, msg, tenant, reason, botOperationLabel(operation), prefix, msg.Language, s.botIsDuplicateRequest(msg))
 	log.Printf("[bot] checkpoint wa_bot_special_date_policy_v1 restaurant_id=%d sender=%s reason=%s operation=%s forwarded=%t", restaurantID, msg.Sender, reason, operation, sent)
 	return botJSON(map[string]any{
 		"blocked": true, "reason": reason, "operation": operation, "forwarded": sent,
