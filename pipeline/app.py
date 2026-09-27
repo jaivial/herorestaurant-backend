@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import logging
 import os
 import tempfile
@@ -90,6 +91,10 @@ INTENTS: dict[str, str] = {
 CORE_INTENTS = {"greeting", "acknowledgement", "farewell", "feedback", "info_hours", "availability", "create_booking",
                 "modify_booking", "cancel_booking", "booking_status", "arrival_notice", "rice", "menu_policy", "menu_content", "group_booking",
                 "special_needs_request"}
+
+# Facility facts the assistant cannot verify (pets, wheelchair access,
+# parking, terrace...): even inside special_needs_request they go to a human.
+FACILITY_RE = re.compile(r"perr|mascota|gato|animal|silla de ruedas|accesib|acceso|rampa|escalon|escaler|ascensor|aparca|parking|terraza|enchufe|cargador|wifi|\bpets?\b|\bdogs?\b|wheelchair", re.I)
 
 # Intents the assistant can never resolve by itself: always a human.
 HUMAN_ONLY = {"invoice_payment", "lost_item", "job_application", "supplier", "gift_voucher", "event_inquiry", "human", "complaint"}
@@ -368,8 +373,11 @@ class BotPipeline(dspy.Module):
         # event_booking: staff flag (is_event) or an event negotiation.
         path.append("event_booking")
         event_booking = next((b for b in bookings if b.get("is_event")), None)
-        mentions_booking = intent in ("modify_booking", "cancel_booking", "booking_status", "menu_policy", "menu_content", "prices", "rice",
-                                      "special_needs_request", "extras", "group_booking", "event_inquiry", "allergens")
+        # Mandatory check (booking_is_event_v1): any booking-related question
+        # while the customer owns an event booking goes to management;
+        # only pleasantries and general info stay with the agent.
+        mentions_booking = intent not in ("greeting", "acknowledgement", "farewell", "feedback", "info_location", "info_contact", "info_hours",
+                                          "job_application", "supplier", "lost_item")
         if event_booking and mentions_booking and (len(bookings) == 1 or float(jev.get("event", 0)) >= 0.5 or intent in ("modify_booking", "cancel_booking")):
             return done("handoff_event", "handoff_event", [], handoff_topic="Detalles de la reserva de evento del " + str(event_booking.get("date")))
         # Staff commentary says the customer is evaluating an event / menu
@@ -395,7 +403,10 @@ class BotPipeline(dspy.Module):
         path.append("special_date_check")
         sd_key = str(jev.get("special_date") or "none")
         special = next((d for d in facts.get("special_dates") or [] if d.get("key") == sd_key), None)
-        if special is None and intent == "special_date" and len(facts.get("special_dates") or []) == 1:
+        # Single-special-date fallback only when Jev did not explicitly say
+        # "none" (a birthday is a celebration, not the Navidad special date).
+        sd_none_sure = sd_key == "none" and float(jev.get("special_date_confidence", 0)) >= 0.8
+        if special is None and intent == "special_date" and not sd_none_sure and len(facts.get("special_dates") or []) == 1:
             special = facts["special_dates"][0]
         if special is not None:
             path.append("special_date_booking")
@@ -430,7 +441,9 @@ class BotPipeline(dspy.Module):
         # Bare fragments ("No", "Vale y?") carry too little text for the meter to
         # mean "out of scope": let the agent answer them with the history.
         fragment = len(req.text.split()) <= 3
-        if intent in HUMAN_ONLY or (jev and not soft_ok and not fragment and can_handle < CAN_HANDLE_MIN and intent not in CORE_INTENTS):
+        facility = bool(FACILITY_RE.search(req.text)) and intent in ("special_needs_request", "info_location", "other", "availability")
+        core = intent in CORE_INTENTS and not facility
+        if intent in HUMAN_ONLY or (jev and not soft_ok and not fragment and can_handle < CAN_HANDLE_MIN and not core):
             return done("handoff_human", "handoff_human", [], handoff_reason="cannot", handoff_text=HANDOFF_TEXTS["cannot"],
                         handoff_topic=INTENTS.get(intent, intent) + ": " + req.text[:160])
 
