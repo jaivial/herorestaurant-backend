@@ -25,9 +25,24 @@ services:
       PORT: "8080"
       STATIC_DIR: /app/static
       BOT_CONTEXT_SQLITE_PATH: /var/lib/herorestaurant/whatsapp-bot-context.sqlite
+      BOT_PIPELINE_URL: http://127.0.0.1:18195
     volumes:
       - whatsapp-bot-context:/var/lib/herorestaurant
     # Public frontend dist is baked into the image (no bind mounts in prod).
+    depends_on:
+      - bot-pipeline
+
+  # DSPy + Jev decision pipeline for the WhatsApp bot (wa_bot_dspy_pipeline_v1).
+  # Stateless, localhost-only; provider keys arrive per request from backend.
+  bot-pipeline:
+    build:
+      context: ../pipeline
+      dockerfile: Dockerfile
+    container_name: newvillacarmen-bot-pipeline-prod
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      BOT_PIPELINE_PORT: "18195"
 
   backoffice:
     build:
