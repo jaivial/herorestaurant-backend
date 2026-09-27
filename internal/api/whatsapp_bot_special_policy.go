@@ -219,7 +219,7 @@ func (s *Server) botSendPrereservaLink(ctx context.Context, restaurantID int, ms
 		b.WriteString("Las reservas de esta fecha se gestionan desde nuestra web, no por WhatsApp.")
 	}
 	if p.BookingURL != "" {
-		b.WriteString("\nPuedes hacerla aquí: " + p.BookingURL)
+		b.WriteString("\nPuedes hacerla desde el botón de abajo 👇\n" + p.BookingURL)
 	}
 	if p.PrereservaEnabled && !p.PrereservaOpenNow && p.PrereservaStartsOn != "" {
 		b.WriteString("\nLa pre-reserva estará disponible desde el " + botFormatISODateES(p.PrereservaStartsOn) + ".")
