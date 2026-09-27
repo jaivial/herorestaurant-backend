@@ -105,60 +105,136 @@ func botFindGroupJID(raw, name string) string {
 	return ""
 }
 
-// botManagementReasonLabel is the human label of the handoff reason shown to
-// the management team.
+// botManagementReasonLabel is the human title of the request shown to the
+// management team (icon + text, no internal codes).
 var botManagementReasonLabel = map[string]string{
-	"same_day":             "Gestión de una reserva para HOY",
-	"extras":               "Cambio de extras de la reserva",
-	"allergens":            "Consulta de alérgenos / ingredientes",
-	"event_booking":        "Reserva de evento / negociación",
-	"special_date_booking": "Cambio en reserva de fecha especial",
-	"human_anger":          "Cliente molesto / pide una persona",
-	"human_cannot":         "Consulta que el asistente no puede resolver",
-	"human_repeat":         "El cliente insiste en un tema derivado",
-	"agent_contact":        "Derivado por el asistente",
+	"same_day":             "📅 Gestión de una reserva para HOY",
+	"extras":               "🍾 Cambio de extras de la reserva",
+	"allergens":            "⚠️ Consulta de alérgenos o ingredientes",
+	"event_booking":        "🎉 Reserva de evento",
+	"special_date_booking": "🎄 Cambio en una reserva de fecha especial",
+	"human_anger":          "😠 Cliente molesto o que pide hablar con alguien",
+	"human_cannot":         "❓ Consulta que el asistente no puede resolver",
+	"human_repeat":         "🔁 El cliente insiste en un tema ya derivado",
+	"agent_contact":        "🙋 El cliente necesita que le atienda una persona",
 }
 
-// botManagementGroupText renders the group message.
+// botOperationLabel turns the internal operation / intent code into plain
+// Spanish for the group message; unknown codes are dropped (never shown raw).
+func botOperationLabel(op string) string {
+	switch strings.TrimSpace(op) {
+	case "create_booking":
+		return "Quiere hacer una reserva nueva"
+	case "modify_booking":
+		return "Quiere modificar su reserva"
+	case "cancel_booking":
+		return "Quiere cancelar su reserva"
+	case "special_needs_request":
+		return "Pide una necesidad especial para la reserva"
+	case "extras":
+		return "Pide cambiar los extras de la reserva"
+	case "rice":
+		return "Consulta sobre el arroz de la reserva"
+	case "booking_status":
+		return "Pregunta por su reserva"
+	case "invoice_payment":
+		return "Factura, pago o devolución"
+	case "lost_item":
+		return "Ha perdido u olvidado un objeto"
+	case "gift_voucher":
+		return "Pregunta por tarjetas o vales regalo"
+	case "job_application":
+		return "Busca trabajo"
+	case "supplier":
+		return "Proveedor o comercial"
+	case "event_inquiry", "group_booking":
+		return "Quiere organizar un evento o grupo"
+	case "complaint":
+		return "Queja"
+	case "human":
+		return "Quiere hablar con una persona"
+	}
+	return ""
+}
+
+// botGroupDivider separates the blocks of the group message.
+const botGroupDivider = "━━━━━━━━━━━━━━━"
+
+// botManagementGroupText renders a readable, WhatsApp-formatted group
+// message: title, customer, request, bookings and time, in separate blocks.
 func (s *Server) botManagementGroupText(ctx context.Context, restaurantID int, msg botWebhookMessage, reason, detail string) string {
 	var b strings.Builder
-	b.WriteString("🔔 *Nueva solicitud de cliente (WhatsApp bot)*\n")
 	label := botManagementReasonLabel[reason]
 	if label == "" {
-		label = reason
+		label = "🙋 Solicitud de cliente"
 	}
-	fmt.Fprintf(&b, "*Motivo:* %s\n", label)
-	fmt.Fprintf(&b, "*Cliente:* %s\n", strings.TrimSpace(msg.PushName))
-	fmt.Fprintf(&b, "*Teléfono:* +%s (wa.me/%s)\n", digitsOnly(msg.Sender), digitsOnly(msg.Sender))
-	fmt.Fprintf(&b, "*Fecha y hora:* %s\n", time.Now().In(boMadridTZ).Format("02/01/2006 15:04"))
+	b.WriteString("🔔 *NUEVA SOLICITUD DE CLIENTE*\n")
+	b.WriteString(label + "\n")
+	b.WriteString(botGroupDivider + "\n\n")
+
+	b.WriteString("👤 *Cliente*\n")
+	name := strings.TrimSpace(msg.PushName)
+	if name == "" || name == "Cliente" {
+		name = "Sin nombre en WhatsApp"
+	}
+	fmt.Fprintf(&b, "%s\n", name)
+	fmt.Fprintf(&b, "📞 %s\n\n", botFormatPhoneDisplay(msg.Sender))
+
+	b.WriteString("💬 *Lo que pide*\n")
 	req := strings.TrimSpace(msg.Text)
 	if msg.Transcribed {
-		req = "🎤 " + req
+		b.WriteString("_(nota de voz transcrita)_\n")
 	}
-	fmt.Fprintf(&b, "*Petición:* %s\n", truncate(req, 700))
+	fmt.Fprintf(&b, "“%s”\n", truncate(req, 700))
 	if d := strings.TrimSpace(detail); d != "" {
-		fmt.Fprintf(&b, "*Detalle:* %s\n", truncate(d, 300))
+		fmt.Fprintf(&b, "\n📝 %s\n", truncate(d, 300))
 	}
+	b.WriteString("\n")
+
 	bookings, _ := s.botFindBookings(ctx, restaurantID, msg.Sender)
 	if len(bookings) == 0 {
-		b.WriteString("*Reservas:* sin reservas futuras con este teléfono\n")
+		b.WriteString("📋 *Reservas*\nNo tiene reservas próximas con este teléfono.\n\n")
 	} else {
-		b.WriteString("*Reservas:*\n")
-		for _, bk := range bookings {
-			fmt.Fprintf(&b, "  • #%d %s %s · %d pax · %s", bk.ID, botFormatISODateES(bk.Date), bk.Time, bk.People, strings.TrimSpace(bk.Name))
+		if len(bookings) == 1 {
+			b.WriteString("📋 *Su reserva*\n")
+		} else {
+			fmt.Fprintf(&b, "📋 *Sus reservas (%d)*\n", len(bookings))
+		}
+		for i, bk := range bookings {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			fmt.Fprintf(&b, "▫️ *%s* a las *%s*\n", botCapitalize(botFormatISODateES(bk.Date)), bk.Time)
+			people := fmt.Sprintf("%d personas", bk.People)
+			if bk.People == 1 {
+				people = "1 persona"
+			}
+			fmt.Fprintf(&b, "      👥 %s · a nombre de %s\n", people, strings.TrimSpace(bk.Name))
 			if bk.SpecialDateTitle != "" {
-				fmt.Fprintf(&b, " · %s", bk.SpecialDateTitle)
+				fmt.Fprintf(&b, "      🎄 %s\n", bk.SpecialDateTitle)
 			}
 			if bk.IsEvent {
-				b.WriteString(" · EVENTO")
+				b.WriteString("      🎉 Reserva de evento\n")
 			}
 			if c := strings.TrimSpace(bk.Commentary); c != "" {
-				fmt.Fprintf(&b, " · Nota: %s", truncate(strings.ReplaceAll(c, "\n", " "), 160))
+				fmt.Fprintf(&b, "      🗒️ %s\n", truncate(strings.Join(strings.Fields(c), " "), 160))
 			}
-			b.WriteString("\n")
 		}
+		b.WriteString("\n")
 	}
-	return strings.TrimSpace(b.String())
+
+	b.WriteString(botGroupDivider + "\n")
+	fmt.Fprintf(&b, "🕐 %s\n", botCapitalize(time.Now().In(boMadridTZ).Format("02/01/2006 · 15:04")))
+	b.WriteString("_Os dejo su tarjeta de contacto a continuación 👇_")
+	return b.String()
+}
+
+func botCapitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	return strings.ToUpper(string(r[0])) + string(r[1:])
 }
 
 // Contextual first sentence per reason, before the acknowledgement.
@@ -218,6 +294,15 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 			log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d group_send_failed err=%v", restaurantID, err)
 		} else {
 			groupSent = true
+			// The customer's own contact card, so the team can call or save
+			// the number with one tap.
+			cardName := strings.TrimSpace(msg.PushName)
+			if cardName == "" || cardName == "Cliente" {
+				cardName = "Cliente " + botFormatPhoneDisplay(msg.Sender)
+			}
+			if err := gw.SendContact(ctx, jid, waContact{FullName: cardName, Phone: digitsOnly(msg.Sender), Organization: "Cliente · WhatsApp bot"}); err != nil {
+				log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d customer_card_failed err=%v", restaurantID, err)
+			}
 		}
 	}
 	summary := strings.TrimSpace(msg.Text)
