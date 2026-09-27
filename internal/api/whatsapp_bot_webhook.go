@@ -396,7 +396,7 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 	// Coordination id: wa_bot_audio_transcription_v1 - voice notes with an
 	// inline payload are transcribed in the background turn below and then
 	// handled like text; only audios without payload get the fallback here.
-	transcribe := msg.Text == "" && msg.IsAudio && msg.AudioB64 != ""
+	transcribe := msg.Text == "" && msg.IsAudio && (msg.AudioB64 != "" || msg.MessageID != "")
 	if msg.Text == "" && !transcribe {
 		// Unsupported media: polite fallback. Voice notes get a specific reply:
 		// the bot is a reservation assistant and cannot listen to audio.
