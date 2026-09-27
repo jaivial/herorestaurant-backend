@@ -403,7 +403,10 @@ class BotPipeline(dspy.Module):
         path.append("special_date_check")
         sd_key = str(jev.get("special_date") or "none")
         special = next((d for d in facts.get("special_dates") or [] if d.get("key") == sd_key), None)
-        if special is None and intent == "special_date" and len(facts.get("special_dates") or []) == 1:
+        # Single-special-date fallback only when Jev did not explicitly say
+        # "none" (a birthday is a celebration, not the Navidad special date).
+        sd_none_sure = sd_key == "none" and float(jev.get("special_date_confidence", 0)) >= 0.8
+        if special is None and intent == "special_date" and not sd_none_sure and len(facts.get("special_dates") or []) == 1:
             special = facts["special_dates"][0]
         if special is not None:
             path.append("special_date_booking")
