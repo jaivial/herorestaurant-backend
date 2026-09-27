@@ -51,6 +51,12 @@ type botPipelineDecision struct {
 	// DuplicateRequest: Jev judged the message the same issue as one already
 	// forwarded to management (wa_bot_management_group_v1).
 	DuplicateRequest bool `json:"duplicate_request,omitempty"`
+	// v3 (wa_bot_dspy_pipeline_v3): fixed reply for off-topic / manipulation
+	// messages, conversation stage, booking operation and missing slots.
+	ReplyText    string   `json:"reply_text,omitempty"`
+	Stage        string   `json:"stage,omitempty"`
+	BookingOp    string   `json:"booking_op,omitempty"`
+	MissingSlots []string `json:"missing_slots,omitempty"`
 }
 
 type botPipelineLM struct {
@@ -251,6 +257,17 @@ func (s *Server) botApplyPipelineHandoff(ctx context.Context, restaurantID int, 
 		log.Printf("[bot] checkpoint wa_bot_sticky_handoff_v1 restaurant_id=%d sender=%s reason=%s repeat=%t", restaurantID, msg.Sender, reason, d.HandoffReason == "repeat")
 	}
 	switch d.Action {
+	case "reply":
+		// Deterministic answer (spam / wrong chat / manipulation attempt): no
+		// agent turn and no management request (wa_bot_dspy_pipeline_v3).
+		if text := strings.TrimSpace(d.ReplyText); text != "" {
+			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
+				_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "pipeline_fixed_reply")
+			}
+			log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v3 restaurant_id=%d sender=%s node=%s fixed_reply=true", restaurantID, msg.Sender, d.Node)
+			return true
+		}
+		return false
 	case "handoff_same_day":
 		return s.botSameDayIntentGuard(ctx, restaurantID, msg, tenant)
 	case "handoff_extras":
