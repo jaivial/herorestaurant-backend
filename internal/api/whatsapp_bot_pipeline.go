@@ -46,6 +46,7 @@ type botPipelineDecision struct {
 	HandoffTopic   string  `json:"handoff_topic,omitempty"`
 	HandoffCleared bool    `json:"handoff_cleared,omitempty"`
 	SpecialDate    string  `json:"special_date,omitempty"`
+	Language       string  `json:"language,omitempty"`
 }
 
 type botPipelineLM struct {
@@ -256,11 +257,11 @@ func (s *Server) botApplyPipelineHandoff(ctx context.Context, restaurantID int, 
 		open("allergens")
 		return true
 	case "handoff_event":
-		s.botManagementHandoff(ctx, restaurantID, msg, tenant, botEventHandoffText, "event_booking", d.Intent)
+		s.botManagementHandoff(ctx, restaurantID, msg, tenant, botLocalizedHandoff(botEventHandoffText, botEventHandoffTextEN, d.Language), "event_booking", d.Intent)
 		open("event")
 		return true
 	case "handoff_special_booking":
-		s.botManagementHandoff(ctx, restaurantID, msg, tenant, botSpecialBookingHandoffText, "special_date_booking", d.Intent)
+		s.botManagementHandoff(ctx, restaurantID, msg, tenant, botLocalizedHandoff(botSpecialBookingHandoffText, botSpecialBookingHandoffTextEN, d.Language), "special_date_booking", d.Intent)
 		open("special_date_booking")
 		return true
 	case "handoff_human":

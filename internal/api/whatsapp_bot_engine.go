@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"strings"
 )
 
 // botToolExecutor executes a named tool with JSON input and returns a JSON
@@ -93,6 +94,15 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		}
 
 		msgs = append(msgs, assistant, botMessage{Role: "user", Content: toolResults})
+
+		// Coordination id: wa_bot_early_stop_v1 - when every tool of this
+		// response was a successful customer delivery (send_message,
+		// send_contact...), the reply is out: skip the extra model call that
+		// only produces end_turn (2-5 s per turn) and cannot double-send.
+		if botAllDelivered(resp.Content, toolResults) {
+			result.Messages = msgs
+			return result, nil
+		}
 	}
 
 	result.Messages = msgs
@@ -102,4 +112,28 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 func jsonQuote(s string) string {
 	raw, _ := json.Marshal(s)
 	return string(raw)
+}
+
+// botAllDelivered reports whether every tool_use in the response is a
+// delivery tool whose result did not report an error.
+func botAllDelivered(content []botBlock, results []botBlock) bool {
+	n := 0
+	for _, b := range content {
+		if b.Type != "tool_use" {
+			continue
+		}
+		n++
+		if !botDeliveryTools[b.Name] {
+			return false
+		}
+	}
+	if n == 0 {
+		return false
+	}
+	for _, r := range results {
+		if strings.Contains(r.Content, `"error"`) {
+			return false
+		}
+	}
+	return true
 }

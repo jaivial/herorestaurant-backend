@@ -51,6 +51,7 @@ type Server struct {
 	botSem               chan struct{} // bounds concurrent inbound agent turns
 	botConversation      *botConversationStore
 	botKnowledge         *botKnowledgeIndex
+	botBursts            *botBurstCoalescer
 	provisionMu          sync.Mutex // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
 	instatic             *instaticManager
 	siteBuilderHub       *siteBuilderWSHub
@@ -97,6 +98,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		botSem:                make(chan struct{}, botMaxConcurrentTurns),
 		botConversation:       botConversation,
 		botKnowledge:          newBotKnowledgeIndex(botConversation.DB()),
+		botBursts:             newBotBurstCoalescer(),
 		confirmationStore:     newConfirmationStore(db),
 		sessionCache:          newBOSessionCache(30 * time.Second),
 		bunnyCredsCache:       newBunnyCredentialsCache(),
