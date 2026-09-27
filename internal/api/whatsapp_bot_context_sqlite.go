@@ -59,6 +59,16 @@ func newBotConversationStore(path string) (*botConversationStore, error) {
         )`,
 		`CREATE INDEX IF NOT EXISTS idx_pipeline_decisions_restaurant
             ON pipeline_decisions(restaurant_id, id)`,
+		// Sticky human handoff per conversation (wa_bot_sticky_handoff_v1).
+		`CREATE TABLE IF NOT EXISTS handoff_state (
+            restaurant_id INTEGER NOT NULL,
+            user_phone TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            repeats INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL,
+            PRIMARY KEY (restaurant_id, user_phone)
+        )`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			_ = db.Close()
@@ -169,6 +179,9 @@ var botContextTemplateSources = map[string]string{
 	"same_day_notice":     "[Aviso automático enviado: gestión del mismo día derivada al restaurante]",
 	"unsupported_content": "[Aviso automático enviado: solo se admiten mensajes de texto]",
 	"agent_fallback":      "[Aviso automático enviado: error temporal del asistente]",
+	// wa_bot_special_date_policy_v1 / wa_bot_sticky_handoff_v1
+	"management_handoff_notice":    "[Aviso automático enviado: consulta derivada a la gestión del restaurante con tarjeta de contacto]",
+	"special_date_prereserva_link": "[Aviso automático enviado: fecha especial, se envió el enlace de la web para reservar/pre-reservar]",
 }
 
 // botStaffMessagePrefix labels messages typed manually by restaurant staff.
@@ -246,4 +259,54 @@ func (s *botConversationStore) RecentDecisions(ctx context.Context, restaurantID
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// botHandoffState is the open "this topic belongs to a human" marker for a
+// conversation (wa_bot_sticky_handoff_v1).
+type botHandoffState struct {
+	Topic     string `json:"topic"`
+	Reason    string `json:"reason"`
+	Repeats   int    `json:"repeats"`
+	UpdatedAt int64  `json:"updated_at_ms"`
+}
+
+func (s *botConversationStore) GetHandoff(ctx context.Context, restaurantID int, userPhone string) (*botHandoffState, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	var h botHandoffState
+	err := s.db.QueryRowContext(ctx, `SELECT topic, reason, repeats, updated_at_ms FROM handoff_state WHERE restaurant_id=? AND user_phone=?`,
+		restaurantID, digitsOnly(userPhone)).Scan(&h.Topic, &h.Reason, &h.Repeats, &h.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &h, nil
+}
+
+// SetHandoff opens (or refreshes) the handoff. repeat=true increments the
+// counter for a repeated redirect on the same topic.
+func (s *botConversationStore) SetHandoff(ctx context.Context, restaurantID int, userPhone, topic, reason string, repeat bool) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	now := time.Now().UnixMilli()
+	if repeat {
+		_, err := s.db.ExecContext(ctx, `UPDATE handoff_state SET repeats = repeats + 1, updated_at_ms = ? WHERE restaurant_id=? AND user_phone=?`, now, restaurantID, digitsOnly(userPhone))
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO handoff_state (restaurant_id,user_phone,topic,reason,repeats,updated_at_ms) VALUES (?,?,?,?,0,?)
+		ON CONFLICT(restaurant_id,user_phone) DO UPDATE SET topic=excluded.topic, reason=excluded.reason, repeats=0, updated_at_ms=excluded.updated_at_ms`,
+		restaurantID, digitsOnly(userPhone), truncate(topic, 300), reason, now)
+	return err
+}
+
+func (s *botConversationStore) ClearHandoff(ctx context.Context, restaurantID int, userPhone string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM handoff_state WHERE restaurant_id=? AND user_phone=?`, restaurantID, digitsOnly(userPhone))
+	return err
 }

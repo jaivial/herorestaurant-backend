@@ -443,7 +443,10 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 					SelectedRowID string `json:"selectedRowId"`
 				} `json:"singleSelectReply"`
 			} `json:"listResponseMessage"`
-			AudioMessage    json.RawMessage `json:"audioMessage"`
+			AudioMessage json.RawMessage `json:"audioMessage"`
+			// Base64 of the media, present because the webhook is registered
+			// with webhookBase64=true (wa_bot_audio_transcription_v1).
+			Base64          string          `json:"base64"`
 			PtvMessage      json.RawMessage `json:"ptvMessage"`
 			ReactionMessage json.RawMessage `json:"reactionMessage"`
 			ProtocolMessage json.RawMessage `json:"protocolMessage"`
@@ -489,7 +492,16 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		IsAudio:    d.Message.AudioMessage != nil || d.Message.PtvMessage != nil,
 		Ignored:    botIsIgnoredMessageType(d.MessageType) || d.Message.ReactionMessage != nil || d.Message.ProtocolMessage != nil,
 		MediaKind:  botMediaKindLabel(d.MessageType),
+		AudioB64:   botAudioBase64(d.Message.AudioMessage != nil || d.Message.PtvMessage != nil, d.Message.Base64),
 	}, true
+}
+
+// botAudioBase64 keeps the inline media only for voice notes (bounded ~8 MB).
+func botAudioBase64(isAudio bool, b64 string) string {
+	if !isAudio || len(b64) > 11<<20 {
+		return ""
+	}
+	return strings.TrimSpace(b64)
 }
 
 func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool) {

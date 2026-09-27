@@ -75,6 +75,7 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		FromMe:        in.FromMe,
 		InstanceToken: in.SessionRef,
 		IsAudio:       in.IsAudio,
+		AudioB64:      in.AudioB64,
 	}
 	s.processInboundBotMessage(w, r, restaurantID, msg)
 }

@@ -80,7 +80,10 @@ type waInbound struct {
 	MessageID  string
 	FromMe     bool
 	SessionRef string // instance token (uazapi) or instance name (evolution) for tenant routing
-	IsAudio    bool   // voice note; the bot cannot transcribe it
+	IsAudio    bool   // voice note
+	// AudioB64 is the inline voice-note payload (Evolution webhookBase64) used
+	// for transcription. Coordination id: wa_bot_audio_transcription_v1
+	AudioB64 string
 	// Ignored marks non-conversational events (reactions, edits, deletes, poll
 	// votes) that must never reach the bot pipeline nor trigger a fallback.
 	// Coordination id: wa_bot_ignore_non_conversational_v1
