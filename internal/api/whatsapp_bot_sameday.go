@@ -185,7 +185,7 @@ func (s *Server) botOwnedBookingDate(ctx context.Context, restaurantID int, book
 // never performed.
 func (s *Server) botBlockSameDay(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, operation string) string {
 	log.Printf("[bot] checkpoint booking_same_day_blocked restaurant_id=%d operation=%s sender=%s date=%s", restaurantID, operation, msg.Sender, botTodayISO())
-	sent := s.botForwardToManagement(ctx, restaurantID, msg, tenant, "same_day", "Operación solicitada: "+operation, botManagementPrefixFor("same_day", msg.Language), msg.Language, s.botIsDuplicateRequest(msg))
+	sent := s.botForwardToManagement(ctx, restaurantID, msg, tenant, "same_day", botOperationLabel(operation), botManagementPrefixFor("same_day", msg.Language), msg.Language, s.botIsDuplicateRequest(msg))
 	return botJSON(map[string]any{
 		"blocked":     true,
 		"reason":      "same_day",
