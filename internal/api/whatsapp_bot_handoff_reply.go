@@ -45,6 +45,18 @@ var botAlreadyVariantsEN = []string{
 	"No worries, the management team already has your message and will reach out as soon as possible. There's nothing more I can do on this topic, but I'm happy to help with anything different 😊.",
 }
 
+// Same-day variants: the restaurant card is sent right after (wa_bot_same_day_card_v1).
+var botSameDayVariantsES = []string{
+	"Soy un asistente de reservas con IA y las gestiones de reservas para hoy no las puedo hacer por aquí. Ya he avisado al equipo del restaurante; para resolverlo hoy mismo, llámales con la tarjeta de contacto que te dejo justo debajo 👇. ¿Te ayudo con algo más?",
+	"Las reservas del mismo día se gestionan por teléfono. He trasladado tu solicitud al equipo y te dejo aquí abajo la tarjeta del restaurante para que llames hoy 📞. ¿Necesitas algo más?",
+	"Para cualquier cambio en una reserva de hoy lo más rápido es llamar al restaurante. Ya les he avisado y te paso su tarjeta de contacto a continuación 👇. ¿Puedo ayudarte con otra cosa?",
+}
+
+var botSameDayVariantsEN = []string{
+	"I'm an AI booking assistant and I can't handle today's bookings here. I've let the restaurant team know; to sort it out today, please call them using the contact card below 👇. Anything else I can help with?",
+	"Same-day bookings are handled by phone. I've passed your request to the team and here is the restaurant's contact card so you can call today 📞. Anything else?",
+}
+
 // botPickVariant chooses a variant from the pool, deterministic per request
 // text + minute, so retries are stable but consecutive requests differ.
 func botPickVariant(pool []string, seed string) string {
@@ -66,6 +78,13 @@ func (s *Server) botHandoffReplyText(ctx context.Context, restaurantID int, msg 
 			pool = botAlreadyVariantsEN
 		}
 	}
+	if reason == "same_day" {
+		pool = botSameDayVariantsES
+		if en {
+			pool = botSameDayVariantsEN
+		}
+		prefix = ""
+	}
 	fallback := botPickVariant(pool, msg.Sender+msg.Text+reason)
 	if !duplicate && strings.TrimSpace(prefix) != "" {
 		fallback = strings.TrimSpace(prefix) + "\n\n" + fallback
@@ -73,7 +92,14 @@ func (s *Server) botHandoffReplyText(ctx context.Context, restaurantID int, msg 
 
 	var sys strings.Builder
 	sys.WriteString("Eres el asistente de reservas por WhatsApp de un restaurante. Escribe UN solo mensaje breve (2-3 frases, máximo 60 palabras) para el cliente.\n")
-	if duplicate {
+	if reason == "same_day" {
+		// wa_bot_same_day_card_v1: same-day operations are solved by phone.
+		if duplicate {
+			sys.WriteString("Situación: el cliente insiste en crear, modificar o cancelar una reserva para HOY. El equipo del restaurante ya tiene su solicitud y ahora le vuelves a enviar la tarjeta de contacto del restaurante. Pídele con amabilidad que llame hoy mismo al restaurante usando la tarjeta que le dejas debajo, porque tú no puedes gestionar reservas del mismo día.\n")
+		} else {
+			sys.WriteString("Situación: el cliente quiere crear, modificar o cancelar una reserva para HOY, y eso no se puede hacer por WhatsApp. Has avisado al equipo del restaurante y le envías justo debajo la tarjeta de contacto del restaurante. Explícale brevemente que para gestiones del mismo día tiene que llamar hoy al restaurante usando esa tarjeta, y termina ofreciendo ayuda con cualquier otra cosa.\n")
+		}
+	} else if duplicate {
 		sys.WriteString("Situación: el cliente vuelve a preguntar o insiste sobre un asunto que YA se trasladó al equipo de gestión del restaurante. Dile con amabilidad y empatía que el equipo ya tiene su solicitud y le contactará pronto, que sobre ese tema tú ya no puedes hacer nada más, y ofrécele ayuda con cualquier otra cosa.\n")
 	} else {
 		sys.WriteString("Situación: acabas de trasladar su solicitud al equipo de gestión del restaurante, que se pondrá en contacto con él lo antes posible. Confírmaselo mencionando brevemente el tema concreto de su petición y termina preguntando si puedes ayudarle con algo más.\n")

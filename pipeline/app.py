@@ -116,7 +116,7 @@ GRAPH: dict[str, Any] = {
         {"id": "sticky_handoff", "label": "¿Tema derivado a humano abierto y el cliente sigue en el mismo tema?", "kind": "decision"},
         {"id": "handoff_repeat", "label": "Mismo tema: 'el equipo de gestión ya tiene tu solicitud' (sin reenviar al grupo)", "kind": "handoff"},
         {"id": "same_day", "label": "¿Operación sobre reserva de HOY?", "kind": "decision"},
-        {"id": "handoff_same_day", "label": "Mismo día: solicitud al grupo de gestión", "kind": "handoff"},
+        {"id": "handoff_same_day", "label": "Mismo día: solicitud al grupo + tarjeta del restaurante al cliente", "kind": "handoff"},
         {"id": "event_booking", "label": "¿Reserva marcada como EVENTO o negociación de evento?", "kind": "decision"},
         {"id": "handoff_event", "label": "Reserva especial: solicitud al grupo de gestión", "kind": "handoff"},
         {"id": "special_date_check", "label": "¿Habla de una FECHA ESPECIAL?", "kind": "decision"},
@@ -492,9 +492,50 @@ def healthz() -> dict[str, Any]:
     return {"ok": True, "dspy": dspy.__version__, "whisper_model": WHISPER_MODEL_NAME}
 
 
+# Human explanations shown in /app/config -> Pipeline IA (node inspector).
+NODE_HELP: dict[str, str] = {
+    "inbound": "Mensaje del cliente (texto o nota de voz transcrita). Los mensajes seguidos en 2,5 s se juntan en uno.",
+    "jev_classify": "Una sola llamada a Jev (TypeSafe) con todas las preguntas tipadas: intención (31 clases), enfado 0-3, ¿puede resolverlo el asistente?, evento, fecha especial, idioma, mismo tema abierto y ¿solicitud ya enviada a gestión?",
+    "confident": f"Si la confianza de Jev en la intención es menor que {CONFIDENCE_MIN}, se desambigua con DSPy usando el historial.",
+    "dspy_disambiguate": "DSPy Predict con el modelo principal/respaldo del restaurante elige la intención con el contexto de la conversación.",
+    "sticky_handoff": f"Si hay un tema ya derivado a una persona (últimos 7 días) y Jev dice que el cliente sigue en él (≥ {SAME_TOPIC_MIN}), no se vuelve a resolver: se le recuerda que el equipo le contactará.",
+    "handoff_repeat": "Respuesta variada: 'el equipo de gestión ya tiene tu solicitud'. No se reenvía al grupo si Jev dice que es la misma solicitud.",
+    "same_day": "Comprobación determinista en base de datos: ¿quiere crear, modificar o cancelar una reserva de HOY?",
+    "handoff_same_day": "Excepción: se envía la solicitud al grupo 'Bot Alquería' Y la tarjeta de contacto del restaurante al cliente para que llame hoy.",
+    "event_booking": "Si el cliente tiene una reserva marcada como EVENTO (is_event) o pregunta por organizar un evento, siempre lo gestiona el equipo.",
+    "handoff_event": "Solicitud al grupo de gestión; al cliente se le dice que le contactarán.",
+    "special_date_check": "¿Habla de una fecha especial activa (p. ej. Navidad)? Jev elige la fecha entre las configuradas.",
+    "special_date_booking": "Si ya tiene reserva esa fecha y quiere cambiarla o cancelarla, no se hace por WhatsApp.",
+    "handoff_special_booking": "Solicitud al grupo de gestión con los datos de la reserva especial.",
+    "agent_special_date": "El agente explica la fecha especial (menús, adelanto, pre-reserva) y manda el botón de la web para reservar.",
+    "extras_change": "Solo si el mensaje pide cambiar extras (regex determinista: verbo + extra). Las preguntas sobre extras las contesta el agente.",
+    "handoff_extras": "Solicitud al grupo de gestión; el agente nunca modifica extras.",
+    "allergen_question": "Preguntas de ingredientes o alérgenos (Jev + regex), salvo que pida anotarlo en la reserva.",
+    "handoff_allergens": "Por seguridad alimentaria: solicitud al grupo de gestión y ofrecimiento de anotar la alergia.",
+    "anger_meter": f"Medidor de enfado de Jev (0-3). Desde {ANGER_HANDOFF} o si pide una persona / se queja, pasa a gestión.",
+    "can_handle": f"Medidor de Jev: ¿puede el asistente resolverlo con datos reales? Por debajo de {CAN_HANDLE_MIN} (salvo intenciones básicas de reserva) pasa a gestión antes de dar una respuesta equivocada.",
+    "handoff_human": "Solicitud al grupo de gestión (1 por tema) y respuesta variada al cliente en su idioma.",
+    "commentary_check": "Lee los comentarios del personal en sus reservas: si indican que valora un evento o una prueba de menú, tono más cercano.",
+    "tag_friendly": "Instrucción extra: abierto y cercano, pero siempre 'a confirmar con la dirección'.",
+    "special_needs": "Niños, tronas, movilidad, alergias, celebraciones… se añaden sus reglas y se ofrece anotarlo en la reserva.",
+    "tag_special_needs": "Reglas de necesidades especiales añadidas al prompt (RAG).",
+    "route_intent": "Elige el agente especializado según la intención; solo sus reglas llegan al modelo (SQLite FTS5).",
+    "agent_booking": "Agente de reservas: consulta la fecha, confirma datos y crea/modifica/cancela con confirmación explícita.",
+    "agent_rice": "Agente de arroces: usa el menú de arroces real de la fecha.",
+    "agent_menu": "Agente de menú, platos y precios con las herramientas de carta.",
+    "agent_availability": "Agente de disponibilidad: horario del día y plazas libres.",
+    "agent_status": "Agente de reserva existente y avisos de llegada.",
+    "agent_short_reply": "Respuesta corta de cierre (gracias, vale, adiós).",
+    "agent_general": "Agente general con todas las herramientas.",
+}
+
+
 @app.get("/graph")
 def graph() -> dict[str, Any]:
-    return GRAPH
+    nodes = [dict(n, help=NODE_HELP.get(n["id"], "")) for n in GRAPH["nodes"]]
+    return {"nodes": nodes, "edges": GRAPH["edges"], "thresholds": {
+        "confidence_min": CONFIDENCE_MIN, "anger_handoff": ANGER_HANDOFF, "can_handle_min": CAN_HANDLE_MIN,
+        "same_topic_min": SAME_TOPIC_MIN, "same_request_min": SAME_REQUEST_MIN, "event_min": EVENT_MIN}}
 
 
 @app.post("/decide")

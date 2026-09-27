@@ -385,3 +385,40 @@ func (s *botConversationStore) AddManagementRequest(ctx context.Context, restaur
 		restaurantID, digitsOnly(userPhone), reason, truncate(summary, 500), sent, time.Now().UnixMilli())
 	return err
 }
+
+// ManagementRequestStats summarises what was forwarded to the management
+// group in the last 30 days, by reason, plus the latest 10 requests.
+func (s *botConversationStore) ManagementRequestStats(ctx context.Context, restaurantID int) map[string]any {
+	out := map[string]any{"by_reason": map[string]int{}, "recent": []map[string]any{}, "total": 0}
+	if s == nil || s.db == nil {
+		return out
+	}
+	since := time.Now().Add(-30 * 24 * time.Hour).UnixMilli()
+	byReason := map[string]int{}
+	total := 0
+	if rows, err := s.db.QueryContext(ctx, `SELECT reason, COUNT(*) FROM management_requests WHERE restaurant_id=? AND created_at_ms>=? GROUP BY reason`, restaurantID, since); err == nil {
+		for rows.Next() {
+			var r string
+			var n int
+			if rows.Scan(&r, &n) == nil {
+				byReason[r] = n
+				total += n
+			}
+		}
+		rows.Close()
+	}
+	recent := []map[string]any{}
+	if rows, err := s.db.QueryContext(ctx, `SELECT user_phone, reason, summary, group_sent, created_at_ms FROM management_requests WHERE restaurant_id=? ORDER BY id DESC LIMIT 10`, restaurantID); err == nil {
+		for rows.Next() {
+			var phone, reason, summary string
+			var sent int
+			var at int64
+			if rows.Scan(&phone, &reason, &summary, &sent, &at) == nil {
+				recent = append(recent, map[string]any{"userPhone": phone, "reason": reason, "summary": summary, "groupSent": sent != 0, "createdAtMs": at})
+			}
+		}
+		rows.Close()
+	}
+	out["by_reason"], out["recent"], out["total"] = byReason, recent, total
+	return out
+}

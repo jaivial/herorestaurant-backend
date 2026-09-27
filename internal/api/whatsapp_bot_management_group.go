@@ -230,6 +230,10 @@ func (s *Server) botManagementGroupText(ctx context.Context, restaurantID int, m
 		b.WriteString("\n")
 	}
 
+	if reason == "same_day" {
+		// Coordination id: wa_bot_same_day_card_v1
+		b.WriteString("📞 *Aviso:* como la gestión es para HOY, al cliente se le ha enviado la tarjeta de contacto del restaurante para que llame hoy mismo.\n\n")
+	}
 	b.WriteString(botGroupDivider + "\n")
 	fmt.Fprintf(&b, "🕐 %s\n", botCapitalize(time.Now().In(boMadridTZ).Format("02/01/2006 · 15:04")))
 	b.WriteString("_Os dejo su tarjeta de contacto a continuación 👇_")
@@ -297,6 +301,9 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 	if duplicate {
 		text := s.botHandoffReplyText(ctx, restaurantID, msg, reason, detail, "", lang, true)
 		_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "management_already_forwarded")
+		if reason == "same_day" {
+			s.botSendSameDayManagementCard(ctx, restaurantID, msg, tenant)
+		}
 		log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d sender=%s reason=%s duplicate=true", restaurantID, msg.Sender, reason)
 		return true
 	}
@@ -334,6 +341,22 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 	}
 	text = s.botHandoffReplyText(ctx, restaurantID, msg, reason, detail, prefix, lang, false)
 	_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "management_forwarded")
+	if reason == "same_day" {
+		s.botSendSameDayManagementCard(ctx, restaurantID, msg, tenant)
+	}
 	log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d sender=%s reason=%s forwarded=true", restaurantID, msg.Sender, reason)
 	return true
+}
+
+// botSendSameDayManagementCard is the only exception to "no manager card":
+// a booking operation for TODAY must be solved by phone today, so the
+// customer also gets the restaurant's same-day contact card.
+// Coordination id: wa_bot_same_day_card_v1
+func (s *Server) botSendSameDayManagementCard(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) {
+	name, phone := s.botSameDayContactDetails(ctx, restaurantID, tenant)
+	if _, err := s.botSendContactCardWith(ctx, restaurantID, msg, name, phone); err != nil {
+		log.Printf("[bot] checkpoint wa_bot_same_day_card_v1 restaurant_id=%d sender=%s card_failed err=%v", restaurantID, msg.Sender, err)
+		return
+	}
+	log.Printf("[bot] checkpoint wa_bot_same_day_card_v1 restaurant_id=%d sender=%s card_sent=true", restaurantID, msg.Sender)
 }
