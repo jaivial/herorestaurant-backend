@@ -426,7 +426,7 @@ class BotPipeline(dspy.Module):
                         handoff_topic="Cliente insatisfecho o que pide una persona: " + req.text[:160])
 
         path.append("can_handle")
-        soft_ok = negotiating and intent in ("menu_policy", "menu_content", "prices", "rice", "special_needs_request", "booking_status", "availability")
+        soft_ok = negotiating and intent in ("menu_policy", "menu_content", "prices", "rice", "special_needs_request", "booking_status", "availability", "extras")
         # Bare fragments ("No", "Vale y?") carry too little text for the meter to
         # mean "out of scope": let the agent answer them with the history.
         fragment = len(req.text.split()) <= 3
