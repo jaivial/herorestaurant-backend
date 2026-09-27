@@ -202,6 +202,7 @@ var botContextTemplateSources = map[string]string{
 	"management_handoff_notice": "[Aviso automático enviado: consulta derivada a la gestión del restaurante con tarjeta de contacto]",
 	// wa_bot_management_group_v1
 	"management_forwarded":         "[Aviso automático enviado: la solicitud se trasladó al equipo de gestión, que contactará al cliente]",
+	"pipeline_fixed_reply":         "[Respuesta automática: el mensaje no era para el restaurante o intentaba cambiar las reglas del asistente]",
 	"management_already_forwarded": "[Aviso automático enviado: se recordó al cliente que el equipo de gestión ya tiene su solicitud]",
 	"special_date_prereserva_link": "[Aviso automático enviado: fecha especial, se envió el enlace de la web para reservar/pre-reservar]",
 }
