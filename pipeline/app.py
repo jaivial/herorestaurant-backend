@@ -84,6 +84,12 @@ INTENTS: dict[str, str] = {
     "other": "Cualquier otra cosa",
 }
 
+# Core intents the assistant is built for: the can-handle meter never vetoes
+# them (Jev under-scores short follow-ups like "El sábado día 3"); the server
+# policies (same day, special date, event) still guard the risky cases.
+CORE_INTENTS = {"greeting", "acknowledgement", "farewell", "feedback", "info_hours", "availability", "create_booking",
+                "modify_booking", "cancel_booking", "booking_status", "arrival_notice", "rice", "menu_policy", "menu_content", "group_booking"}
+
 # Intents the assistant can never resolve by itself: always a human.
 HUMAN_ONLY = {"invoice_payment", "lost_item", "job_application", "supplier", "gift_voucher", "event_inquiry", "human", "complaint"}
 
@@ -388,7 +394,7 @@ class BotPipeline(dspy.Module):
 
         path.append("can_handle")
         soft_ok = negotiating and intent in ("menu_policy", "menu_content", "prices", "rice", "special_needs_request", "booking_status", "availability")
-        if intent in HUMAN_ONLY or (jev and not soft_ok and can_handle < CAN_HANDLE_MIN and intent not in ("greeting", "acknowledgement", "farewell", "feedback")):
+        if intent in HUMAN_ONLY or (jev and not soft_ok and can_handle < CAN_HANDLE_MIN and intent not in CORE_INTENTS):
             return done("handoff_human", "handoff_human", [], handoff_reason="cannot", handoff_text=HANDOFF_TEXTS["cannot"],
                         handoff_topic=INTENTS.get(intent, intent) + ": " + req.text[:160])
 
