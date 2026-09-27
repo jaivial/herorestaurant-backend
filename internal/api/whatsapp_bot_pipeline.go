@@ -47,6 +47,9 @@ type botPipelineDecision struct {
 	HandoffCleared bool    `json:"handoff_cleared,omitempty"`
 	SpecialDate    string  `json:"special_date,omitempty"`
 	Language       string  `json:"language,omitempty"`
+	// DuplicateRequest: Jev judged the message the same issue as one already
+	// forwarded to management (wa_bot_management_group_v1).
+	DuplicateRequest bool `json:"duplicate_request,omitempty"`
 }
 
 type botPipelineLM struct {
@@ -83,6 +86,7 @@ func (s *Server) botPipelineFacts(ctx context.Context, restaurantID int, msg bot
 		"bookings":              s.botPipelineBookingFacts(ctx, restaurantID, msg.Sender),
 		"special_dates":         s.botPipelineSpecialDateFacts(ctx, restaurantID),
 		"handoff":               s.botPipelineHandoffFact(ctx, restaurantID, msg.Sender),
+		"forwarded_requests":    s.botPipelineForwardedFact(ctx, restaurantID, msg.Sender),
 	}
 }
 
@@ -274,4 +278,23 @@ func (s *Server) botApplyPipelineHandoff(ctx context.Context, restaurantID int, 
 		return true
 	}
 	return false
+}
+
+// botPipelineForwardedFact lists the issues already forwarded to management
+// in the dedup window, for Jev's "same issue" question.
+func (s *Server) botPipelineForwardedFact(ctx context.Context, restaurantID int, sender string) []map[string]any {
+	reqs, err := s.botConversation.RecentManagementRequests(ctx, restaurantID, sender, time.Now().Add(-botManagementDedupWindow))
+	if err != nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(reqs))
+	for _, r := range reqs {
+		out = append(out, map[string]any{"id": r.ID, "reason": r.Reason, "summary": r.Summary})
+	}
+	return out
+}
+
+// botIsDuplicateRequest is the per-turn dedup verdict (set from the pipeline).
+func (s *Server) botIsDuplicateRequest(msg botWebhookMessage) bool {
+	return msg.DuplicateRequest
 }

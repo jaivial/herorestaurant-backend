@@ -29,6 +29,12 @@ type botTenantConfig struct {
 	// HumanTakeoverMinutes pauses the bot for a conversation after staff write
 	// manually from the phone. nil = default (120), 0 = disabled.
 	HumanTakeoverMinutes *int `json:"human_takeover_minutes"`
+	// ManagementGroupName is the WhatsApp group the bot forwards requests to
+	// instead of sending the manager's contact card. Default "Bot Alquería".
+	// ManagementGroupJID pins the group id (resolved by name when empty).
+	// Coordination id: wa_bot_management_group_v1
+	ManagementGroupName string `json:"management_group_name"`
+	ManagementGroupJID  string `json:"management_group_jid"`
 }
 
 func parseBotTenantConfig(raw string) botTenantConfig {
@@ -222,8 +228,8 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 			},
 			botToolDef{
 				Name:        "send_contact",
-				Description: "Envía un mensaje explicativo seguido de la tarjeta de contacto del restaurante para que el cliente pueda llamar (escalada a humano). La tarjeta nunca se envía sola: indica siempre en 'message' por qué le pasas el contacto.",
-				InputSchema: botSchema(`{"type":"object","properties":{"message":{"type":"string","description":"Texto breve que se envía ANTES de la tarjeta explicando al cliente por qué debe contactar con el restaurante."}},"required":["message"]}`),
+				Description: "Escala a una persona: envía la solicitud del cliente al equipo de gestión del restaurante (grupo interno de WhatsApp) y le confirma al cliente que le contactarán pronto. Úsala UNA vez por tema cuando algo lo debe decidir el restaurante. No envíes tú otro mensaje de confirmación.",
+				InputSchema: botSchema(`{"type":"object","properties":{"message":{"type":"string","description":"Frase breve y opcional de contexto para el cliente (en su idioma) antes de la confirmación automática."},"request_summary":{"type":"string","description":"Resumen en español para el equipo de gestión: qué pide el cliente y datos relevantes."}},"required":["request_summary"]}`),
 			},
 		)
 	}

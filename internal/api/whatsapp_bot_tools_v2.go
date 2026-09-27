@@ -106,7 +106,7 @@ func (s *Server) botToolBookingDetails(ctx context.Context, restaurantID int, ph
 		}
 		out := map[string]any{"booking": b, "commentary_signals": botCommentarySignals(b.Commentary)}
 		if b.IsEvent {
-			out["instruction"] = "Reserva de EVENTO: sé muy prudente, no negocies ni prometas nada; recomienda acordar los detalles con la gestión del restaurante y envía la tarjeta de contacto."
+			out["instruction"] = "Reserva de EVENTO: sé muy prudente, no negocies ni prometas nada; usa send_contact para trasladar la solicitud al equipo de gestión, que le contactará."
 		} else if b.IsSpecialBooking || b.SpecialDateTitle != "" {
 			out["instruction"] = "Reserva de FECHA ESPECIAL: no se puede modificar ni cancelar por WhatsApp; para cambios, gestión del restaurante."
 		}

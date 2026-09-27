@@ -188,20 +188,19 @@ func botLocalizedHandoff(es, en, lang string) string {
 	return es
 }
 
-// botManagementHandoff sends a fixed notice + the management contact card.
+// botManagementHandoff forwards the issue to the management group and tells
+// the customer (wa_bot_management_group_v1). text is kept as an optional
+// explicit prefix; empty uses the per-reason default.
 func (s *Server) botManagementHandoff(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, text, reason, operation string) string {
-	name, phone := s.botSameDayContactDetails(ctx, restaurantID, tenant)
-	noticeSent := false
-	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-		noticeSent = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "management_handoff_notice") == nil
+	prefix := botManagementPrefixFor(reason, msg.Language)
+	if prefix == "" {
+		prefix = text
 	}
-	cardPhone, cardErr := s.botSendContactCardWith(ctx, restaurantID, msg, name, phone)
-	log.Printf("[bot] checkpoint wa_bot_special_date_policy_v1 restaurant_id=%d sender=%s reason=%s operation=%s notice_sent=%t card_sent=%t",
-		restaurantID, msg.Sender, reason, operation, noticeSent, cardErr == nil)
+	sent := s.botForwardToManagement(ctx, restaurantID, msg, tenant, reason, "Operación: "+operation, prefix, msg.Language, s.botIsDuplicateRequest(msg))
+	log.Printf("[bot] checkpoint wa_bot_special_date_policy_v1 restaurant_id=%d sender=%s reason=%s operation=%s forwarded=%t", restaurantID, msg.Sender, reason, operation, sent)
 	return botJSON(map[string]any{
-		"blocked": true, "reason": reason, "operation": operation, "notice_sent": noticeSent,
-		"contact_card_sent": cardErr == nil, "contact_phone": cardPhone,
-		"instruction": "La operación NO se ha realizado. Ya se ha avisado al cliente y se ha enviado la tarjeta de contacto de gestión. No envíes ningún mensaje adicional.",
+		"blocked": true, "reason": reason, "operation": operation, "forwarded": sent,
+		"instruction": "La operación NO se ha realizado. La solicitud ya se ha enviado al equipo de gestión y el cliente ha sido avisado. No envíes ningún mensaje adicional.",
 	})
 }
 

@@ -184,28 +184,14 @@ func (s *Server) botOwnedBookingDate(ctx context.Context, restaurantID int, book
 // contact card) and returns the JSON tool result. The requested mutation is
 // never performed.
 func (s *Server) botBlockSameDay(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, operation string) string {
-	name, phone := s.botSameDayContactDetails(ctx, restaurantID, tenant)
 	log.Printf("[bot] checkpoint booking_same_day_blocked restaurant_id=%d operation=%s sender=%s date=%s", restaurantID, operation, msg.Sender, botTodayISO())
-
-	noticeSent := false
-	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-		if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, botSameDayNoticeText(phone), "same_day_notice"); err == nil {
-			noticeSent = true
-		}
-	}
-	cardPhone, cardErr := s.botSendContactCardWith(ctx, restaurantID, msg, name, phone)
-	if cardErr != nil {
-		log.Printf("[bot] restaurant=%d same-day contact card failed: %v", restaurantID, cardErr)
-	}
-
+	sent := s.botForwardToManagement(ctx, restaurantID, msg, tenant, "same_day", "Operación solicitada: "+operation, botManagementPrefixFor("same_day", msg.Language), msg.Language, s.botIsDuplicateRequest(msg))
 	return botJSON(map[string]any{
-		"blocked":           true,
-		"reason":            "same_day",
-		"operation":         operation,
-		"notice_sent":       noticeSent,
-		"contact_card_sent": cardErr == nil,
-		"contact_phone":     cardPhone,
-		"instruction":       "La operación para HOY no se ha realizado. Ya se ha avisado al cliente y se ha enviado la tarjeta de contacto. No envíes ningún mensaje adicional ni repitas la información.",
+		"blocked":     true,
+		"reason":      "same_day",
+		"operation":   operation,
+		"forwarded":   sent,
+		"instruction": "La operación para HOY no se ha realizado. La solicitud ya se ha enviado al equipo de gestión y el cliente ha sido avisado. No envíes ningún mensaje adicional.",
 	})
 }
 
