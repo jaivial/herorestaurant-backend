@@ -186,9 +186,10 @@ DIRECTIVES: dict[str, str] = {
     "agent_general": "Responde con precisión usando las herramientas; no inventes datos.",
     "agent_special_date": "El cliente pregunta por una FECHA ESPECIAL: usa get_date_overview con esa fecha, explica título, menús y condiciones (pre-reserva, adelanto) y da SIEMPRE el enlace booking_url de la web para reservar. Nunca crees la reserva por WhatsApp.",
 }
-FRIENDLY_DIRECTIVE = ("Los comentarios del personal indican que este cliente está valorando un evento o una prueba de menú: sé especialmente cercano y abierto "
+FRIENDLY_DIRECTIVE = ("EXCEPCIÓN A LAS REGLAS GENERALES DEL MENÚ: los comentarios del personal indican que este cliente está valorando un evento o una prueba de menú: sé especialmente cercano y abierto "
                       "(p. ej. 'sin problema existiría la posibilidad de…'), pero NUNCA lo asegures: indica siempre que debe confirmarlo con la dirección del "
-                      "restaurante en el teléfono de contacto y que tú no lo puedes garantizar al 100%.")
+                      "restaurante en el teléfono de contacto y que tú no lo puedes garantizar al 100%. No digas que algo 'no se puede' o 'no existe' (menú infantil, cambios de menú, tarta): "
+                      "preséntalo como una posibilidad a confirmar con la dirección y envía la tarjeta con send_contact.")
 SPECIAL_NEEDS_DIRECTIVE = "El cliente ha mencionado una necesidad especial: reconócela expresamente y ofrece anotarla en la reserva con add_booking_note."
 
 HANDOFF_TEXTS = {
