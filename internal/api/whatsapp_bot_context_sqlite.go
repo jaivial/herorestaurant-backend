@@ -423,3 +423,52 @@ func (s *botConversationStore) ManagementRequestStats(ctx context.Context, resta
 	out["by_reason"], out["recent"], out["total"] = byReason, recent, total
 	return out
 }
+
+// DSPyDemoCandidates returns distinct customer messages Jev classified with
+// high confidence (and without DSPy): the few-shot demos of the pipeline's
+// DSPy disambiguator (wa_bot_dspy_compiled_v4). Only the latest label of each
+// message is kept.
+func (s *botConversationStore) DSPyDemoCandidates(ctx context.Context, restaurantID int, minConfidence float64, limit int) ([]map[string]string, error) {
+	out := []map[string]string{}
+	if s == nil || s.db == nil {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT message, json_extract(decision_json,'$.intent') FROM pipeline_decisions
+		WHERE restaurant_id = ? AND json_extract(decision_json,'$.classifier')='jev' AND json_extract(decision_json,'$.confidence') >= ?
+		  AND length(message) BETWEEN 2 AND 240
+		  AND id IN (SELECT MAX(id) FROM pipeline_decisions WHERE restaurant_id = ? GROUP BY message)
+		ORDER BY id DESC LIMIT ?`, restaurantID, minConfidence, restaurantID, limit)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var msg, intent string
+		if err := rows.Scan(&msg, &intent); err != nil {
+			return out, err
+		}
+		out = append(out, map[string]string{"message": msg, "intent": intent})
+	}
+	return out, rows.Err()
+}
+
+// DecisionRestaurants lists the restaurants that have pipeline decisions.
+func (s *botConversationStore) DecisionRestaurants(ctx context.Context) ([]int, error) {
+	out := []int{}
+	if s == nil || s.db == nil {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT restaurant_id FROM pipeline_decisions`)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return out, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

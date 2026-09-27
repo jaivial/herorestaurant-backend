@@ -512,8 +512,10 @@ func (s *Server) handleBookingCheckoutComplete(w http.ResponseWriter, r *http.Re
 // handleStripeConnectWebhook is the ONE platform webhook for every tenant
 // (Connect endpoint). Signature is checked with STRIPE_CONNECT_WEBHOOK_SECRET
 // and a 5-minute replay window; events are processed once (stripe_events).
-//   checkout.session.completed -> complete the prereserva of that checkout
-//   account.updated            -> refresh the tenant's onboarding status
+//
+//	checkout.session.completed -> complete the prereserva of that checkout
+//	account.updated            -> refresh the tenant's onboarding status
+//
 // Coordination id: stripe_connect_multitenant_v1
 func (s *Server) handleStripeConnectWebhook(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.StripeConnectWebhookSecret == "" || s.cfg.StripePlatformSecretKey == "" {

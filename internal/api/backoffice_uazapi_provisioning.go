@@ -232,10 +232,10 @@ func (s *Server) handleBOMembersWhatsAppFlushQueue(w http.ResponseWriter, r *htt
 	`, a.ActiveRestaurantID).Scan(&failed)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":  true,
-		"message":  fmt.Sprintf("Cola drenada: %d mensajes en vuelo", rearmed),
-		"pending":  rearmed,
-		"failed":   failed,
+		"success": true,
+		"message": fmt.Sprintf("Cola drenada: %d mensajes en vuelo", rearmed),
+		"pending": rearmed,
+		"failed":  failed,
 	})
 	s.broadcastWhatsAppConnection(r.Context(), a.ActiveRestaurantID)
 }
