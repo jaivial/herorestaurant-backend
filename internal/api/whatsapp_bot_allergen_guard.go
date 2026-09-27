@@ -48,6 +48,12 @@ func (s *Server) botAllergenIntentGuard(ctx context.Context, restaurantID int, m
 	if !botAllergenIntent(msg.Text) {
 		return false
 	}
+	s.botSendAllergenNotice(ctx, restaurantID, msg, tenant)
+	return true
+}
+
+// botSendAllergenNotice delivers the food-safety notice + contact card.
+func (s *Server) botSendAllergenNotice(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) {
 	name, phone := s.botContactDetails(ctx, restaurantID, tenant)
 	if phone == "" {
 		name, phone = s.botSameDayContactDetails(ctx, restaurantID, tenant)
@@ -64,5 +70,4 @@ func (s *Server) botAllergenIntentGuard(ctx context.Context, restaurantID int, m
 		}
 	}
 	log.Printf("[bot] checkpoint wa_bot_allergen_handoff_v1 restaurant_id=%d sender=%s notice_sent=%t card_sent=%t", restaurantID, msg.Sender, noticeSent, cardSent)
-	return true
 }

@@ -50,6 +50,7 @@ type Server struct {
 	botCapCount          map[int]int
 	botSem               chan struct{} // bounds concurrent inbound agent turns
 	botConversation      *botConversationStore
+	botKnowledge         *botKnowledgeIndex
 	provisionMu          sync.Mutex // ponytail: serializes UAZAPI provisioning; single-instance only — use a DB lock if you run multiple backend replicas
 	instatic             *instaticManager
 	siteBuilderHub       *siteBuilderWSHub
@@ -95,6 +96,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		rateLimit:             make(map[string]*rateLimitState),
 		botSem:                make(chan struct{}, botMaxConcurrentTurns),
 		botConversation:       botConversation,
+		botKnowledge:          newBotKnowledgeIndex(botConversation.DB()),
 		confirmationStore:     newConfirmationStore(db),
 		sessionCache:          newBOSessionCache(30 * time.Second),
 		bunnyCredsCache:       newBunnyCredentialsCache(),
@@ -768,6 +770,11 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/settings/{restaurantId}", s.handleBOBotSettingsGet)
 		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/settings/{restaurantId}", s.handleBOBotSettingsPut)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/bot/settings/{restaurantId}/preview", s.handleBOBotSettingsPreview)
+		// Bot AI routing, provider keys, RAG knowledge and DSPy pipeline graph
+		// (wa_bot_ai_providers_v1 / wa_bot_dspy_pipeline_v1).
+		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/ai/{restaurantId}", s.handleBOBotAIGet)
+		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/ai/{restaurantId}", s.handleBOBotAIPut)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/pipeline/{restaurantId}", s.handleBOBotPipelineGet)
 		// Booking WhatsApp notifications (confirmation / reconfirmation) — bkg-wa-notif.
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/booking-notifications", s.handleBOBookingNotificationsGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Put("/booking-notifications", s.handleBOBookingNotificationsPut)

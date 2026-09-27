@@ -29,12 +29,25 @@ type botLoopResult struct {
 	Iterations int
 	ToolCalls  []string
 	Messages   []botMessage // full transcript including tool turns
+	ModelUsed  string       // provider/model that produced the last response
 }
+
+// botModelCaller performs one model call for the loop and reports which
+// provider/model answered (routing + fallback live behind it).
+type botModelCaller func(ctx context.Context, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, string, error)
 
 // botRunAgentLoop drives the LLM tool-use loop: call the model, execute any
 // tool_use blocks, feed tool_result back, repeat until end_turn or the
 // iteration cap.
 func (s *Server) botRunAgentLoop(ctx context.Context, restaurantID int, model string, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
+	return s.botRunAgentLoopWith(ctx, func(ctx context.Context, system string, msgs []botMessage, tools []botToolDef) (botLLMResponse, string, error) {
+		resp, err := s.botLLMCall(ctx, restaurantID, model, system, msgs, tools)
+		return resp, model, err
+	}, system, messages, tools, exec)
+}
+
+// botRunAgentLoopWith is the provider-agnostic loop used by every caller.
+func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
 	maxIter := s.cfg.BotMaxIterations
 	if maxIter <= 0 {
 		maxIter = 8
@@ -46,11 +59,12 @@ func (s *Server) botRunAgentLoop(ctx context.Context, restaurantID int, model st
 	for i := 0; i < maxIter; i++ {
 		result.Iterations = i + 1
 
-		resp, err := s.botLLMCall(ctx, restaurantID, model, system, msgs, tools)
+		resp, used, err := call(ctx, system, msgs, tools)
 		if err != nil {
 			result.Messages = msgs
 			return result, err
 		}
+		result.ModelUsed = used
 
 		// Append the assistant turn as-is (text + tool_use blocks).
 		assistant := botMessage{Role: "assistant", Content: resp.Content}

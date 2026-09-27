@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -62,6 +63,8 @@ func botToolResult(toolUseID string, content string) botMessage {
 // botLLMCall performs one Messages API request with tools against MiniMax
 // using the same credentials as the translation system. modelOverride, when
 // non-empty, takes precedence over the configured BotModel (per-tenant knob).
+// Kept for the legacy MiniMax-only call sites; the WhatsApp agent loop uses
+// botLLMCallRouted (primary + fallback providers).
 func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride string, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, error) {
 	apiKey := s.resolveMiniMaxKey(ctx, restaurantID)
 	if apiKey == "" {
@@ -82,6 +85,11 @@ func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride
 		}
 		model = m
 	}
+	return s.botAnthropicCall(ctx, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/"), apiKey, model, system, messages, tools)
+}
+
+// botAnthropicCall performs one Anthropic-compatible Messages API request.
+func (s *Server) botAnthropicCall(ctx context.Context, baseURL, apiKey, model, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, error) {
 	maxTokens := s.cfg.BotMaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 1024
@@ -101,7 +109,7 @@ func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride
 		return botLLMResponse{}, err
 	}
 
-	url := strings.TrimRight(s.cfg.MiniMaxBaseURL, "/") + "/v1/messages"
+	url := baseURL + "/v1/messages"
 	timeout := s.cfg.BotTimeout
 	if timeout <= 0 {
 		timeout = 45 * time.Second
@@ -140,5 +148,55 @@ func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride
 	if parsed.Error != nil {
 		return botLLMResponse{}, fmt.Errorf("minimax bot error: %s", parsed.Error.Type)
 	}
+	kept := parsed.Content[:0]
+	for _, b := range parsed.Content {
+		if b.Type == "text" || b.Type == "tool_use" {
+			kept = append(kept, b)
+		}
+	}
+	parsed.Content = kept
+	if parsed.StopReason == "max_tokens" && len(kept) == 0 {
+		return botLLMResponse{}, errors.New("minimax bot: token limit reached")
+	}
 	return parsed, nil
+}
+
+// botLLMCallRouted calls the restaurant's primary model and, when it fails
+// (HTTP error, quota/token limit, timeout, missing key), retries the same turn
+// on the fallback model so the customer always gets an answer.
+// Coordination id: wa_bot_ai_providers_v1
+func (s *Server) botLLMCallRouted(ctx context.Context, restaurantID int, routing botAIRouting, sessionID, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, string, error) {
+	refs := []string{routing.PrimaryModel}
+	if routing.FallbackModel != "" && routing.FallbackModel != routing.PrimaryModel {
+		refs = append(refs, routing.FallbackModel)
+	}
+	var lastErr error
+	for i, ref := range refs {
+		resp, err := s.botCallModelRef(ctx, restaurantID, ref, sessionID, system, messages, tools)
+		if err == nil {
+			if i > 0 {
+				log.Printf("[bot] checkpoint wa_bot_llm_fallback_used restaurant_id=%d model=%s", restaurantID, ref)
+			}
+			return resp, ref, nil
+		}
+		log.Printf("[bot] checkpoint wa_bot_llm_call_failed restaurant_id=%d model=%s err=%v", restaurantID, ref, err)
+		lastErr = err
+	}
+	return botLLMResponse{}, "", lastErr
+}
+
+func (s *Server) botCallModelRef(ctx context.Context, restaurantID int, ref, sessionID, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, error) {
+	providerID, model := botSplitModelRef(ref)
+	p, ok := botFindProvider(providerID)
+	if !ok {
+		return botLLMResponse{}, fmt.Errorf("unknown provider %q", providerID)
+	}
+	key := s.botProviderKey(ctx, restaurantID, p.ID)
+	if key == "" {
+		return botLLMResponse{}, fmt.Errorf("%s api key not configured", p.ID)
+	}
+	if p.Wire == "openai" {
+		return s.botOpenAICall(ctx, p, key, model, sessionID, system, messages, tools)
+	}
+	return s.botAnthropicCall(ctx, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/"), key, model, system, messages, tools)
 }
