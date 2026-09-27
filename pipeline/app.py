@@ -88,7 +88,8 @@ INTENTS: dict[str, str] = {
 # them (Jev under-scores short follow-ups like "El sábado día 3"); the server
 # policies (same day, special date, event) still guard the risky cases.
 CORE_INTENTS = {"greeting", "acknowledgement", "farewell", "feedback", "info_hours", "availability", "create_booking",
-                "modify_booking", "cancel_booking", "booking_status", "arrival_notice", "rice", "menu_policy", "menu_content", "group_booking"}
+                "modify_booking", "cancel_booking", "booking_status", "arrival_notice", "rice", "menu_policy", "menu_content", "group_booking",
+                "special_needs_request"}
 
 # Intents the assistant can never resolve by itself: always a human.
 HUMAN_ONLY = {"invoice_payment", "lost_item", "job_application", "supplier", "gift_voucher", "event_inquiry", "human", "complaint"}
