@@ -368,8 +368,11 @@ class BotPipeline(dspy.Module):
         # event_booking: staff flag (is_event) or an event negotiation.
         path.append("event_booking")
         event_booking = next((b for b in bookings if b.get("is_event")), None)
-        mentions_booking = intent in ("modify_booking", "cancel_booking", "booking_status", "menu_policy", "menu_content", "prices", "rice",
-                                      "special_needs_request", "extras", "group_booking", "event_inquiry", "allergens")
+        # Mandatory check (booking_is_event_v1): any booking-related question
+        # while the customer owns an event booking goes to management;
+        # only pleasantries and general info stay with the agent.
+        mentions_booking = intent not in ("greeting", "acknowledgement", "farewell", "feedback", "info_location", "info_contact", "info_hours",
+                                          "job_application", "supplier", "lost_item")
         if event_booking and mentions_booking and (len(bookings) == 1 or float(jev.get("event", 0)) >= 0.5 or intent in ("modify_booking", "cancel_booking")):
             return done("handoff_event", "handoff_event", [], handoff_topic="Detalles de la reserva de evento del " + str(event_booking.get("date")))
         # Staff commentary says the customer is evaluating an event / menu
