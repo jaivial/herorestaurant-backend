@@ -185,9 +185,12 @@ func (s *Server) botManagementGroupText(ctx context.Context, restaurantID int, m
 	if msg.Transcribed {
 		b.WriteString("_(nota de voz transcrita)_\n")
 	}
-	fmt.Fprintf(&b, "“%s”\n", truncate(req, 700))
+	// Full texts: the group is for staff and WhatsApp allows 65k chars; the
+	// old 300-byte cut ended the AI summary with "..." mid-sentence (and could
+	// split a UTF-8 letter). Only a very generous rune-safe cap remains.
+	fmt.Fprintf(&b, "“%s”\n", botClipRunes(req, 2000))
 	if d := strings.TrimSpace(detail); d != "" {
-		fmt.Fprintf(&b, "\n📝 %s\n", truncate(d, 300))
+		fmt.Fprintf(&b, "\n📝 %s\n", botClipRunes(d, 2000))
 	}
 	b.WriteString("\n")
 
@@ -196,29 +199,33 @@ func (s *Server) botManagementGroupText(ctx context.Context, restaurantID int, m
 		b.WriteString("📋 *Reservas*\nNo tiene reservas próximas con este teléfono.\n\n")
 	} else {
 		if len(bookings) == 1 {
-			b.WriteString("📋 *Su reserva*\n")
+			b.WriteString("📋 *Su reserva:*\n")
 		} else {
-			fmt.Fprintf(&b, "📋 *Sus reservas (%d)*\n", len(bookings))
+			fmt.Fprintf(&b, "📋 *Sus reservas (%d):*\n", len(bookings))
 		}
 		for i, bk := range bookings {
-			if i > 0 {
-				b.WriteString("\n")
+			if len(bookings) > 1 {
+				fmt.Fprintf(&b, "\n*Reserva %d*\n", i+1)
 			}
-			fmt.Fprintf(&b, "▫️ *%s* a las *%s*\n", botCapitalize(botFormatISODateES(bk.Date)), bk.Time)
+			botWriteBookingField(&b, "Fecha", botCapitalize(botFormatISODateES(bk.Date)))
+			botWriteBookingField(&b, "Hora", bk.Time)
 			people := fmt.Sprintf("%d personas", bk.People)
 			if bk.People == 1 {
 				people = "1 persona"
 			}
-			fmt.Fprintf(&b, "      👥 %s · a nombre de %s\n", people, strings.TrimSpace(bk.Name))
+			botWriteBookingField(&b, "Comensales", people)
+			botWriteBookingField(&b, "A nombre de", strings.TrimSpace(bk.Name))
 			if bk.SpecialDateTitle != "" {
-				fmt.Fprintf(&b, "      🎄 %s\n", bk.SpecialDateTitle)
+				botWriteBookingField(&b, "Fecha especial", bk.SpecialDateTitle)
 			}
 			if bk.IsEvent {
-				b.WriteString("      🎉 Reserva de evento\n")
+				botWriteBookingField(&b, "Tipo", "Reserva de evento")
 			}
-			if c := strings.TrimSpace(bk.Commentary); c != "" {
-				fmt.Fprintf(&b, "      🗒️ %s\n", truncate(strings.Join(strings.Fields(c), " "), 160))
+			comment := strings.TrimSpace(bk.Commentary)
+			if comment == "" {
+				comment = "Sin comentarios"
 			}
+			botWriteBookingField(&b, "Comentarios", botClipRunes(comment, 1000))
 		}
 		b.WriteString("\n")
 	}
@@ -227,6 +234,21 @@ func (s *Server) botManagementGroupText(ctx context.Context, restaurantID int, m
 	fmt.Fprintf(&b, "🕐 %s\n", botCapitalize(time.Now().In(boMadridTZ).Format("02/01/2006 · 15:04")))
 	b.WriteString("_Os dejo su tarjeta de contacto a continuación 👇_")
 	return b.String()
+}
+
+// botWriteBookingField writes one "- Label:\nvalue" list item.
+func botWriteBookingField(b *strings.Builder, label, value string) {
+	fmt.Fprintf(b, "- %s:\n%s\n", label, strings.TrimSpace(value))
+}
+
+// botClipRunes caps a text at max characters without splitting a letter,
+// ending with "…" only when something was actually removed.
+func botClipRunes(t string, max int) string {
+	r := []rune(t)
+	if len(r) <= max {
+		return t
+	}
+	return strings.TrimSpace(string(r[:max])) + "…"
 }
 
 func botCapitalize(s string) string {
