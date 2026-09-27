@@ -394,7 +394,10 @@ class BotPipeline(dspy.Module):
 
         path.append("can_handle")
         soft_ok = negotiating and intent in ("menu_policy", "menu_content", "prices", "rice", "special_needs_request", "booking_status", "availability")
-        if intent in HUMAN_ONLY or (jev and not soft_ok and can_handle < CAN_HANDLE_MIN and intent not in CORE_INTENTS):
+        # Bare fragments ("No", "Vale y?") carry too little text for the meter to
+        # mean "out of scope": let the agent answer them with the history.
+        fragment = len(req.text.split()) <= 3
+        if intent in HUMAN_ONLY or (jev and not soft_ok and not fragment and can_handle < CAN_HANDLE_MIN and intent not in CORE_INTENTS):
             return done("handoff_human", "handoff_human", [], handoff_reason="cannot", handoff_text=HANDOFF_TEXTS["cannot"],
                         handoff_topic=INTENTS.get(intent, intent) + ": " + req.text[:160])
 
