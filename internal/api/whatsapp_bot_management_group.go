@@ -259,13 +259,8 @@ func botManagementPrefixFor(reason, lang string) string {
 	return p[0]
 }
 
-// Customer-facing replies (wa_bot_management_group_v1).
-const (
-	botForwardedTextES = "Perfecto, he trasladado tu solicitud al equipo de gestión del restaurante y se pondrán en contacto contigo lo antes posible 🙌. Mientras tanto, ¿hay algo más en lo que pueda ayudarte?"
-	botForwardedTextEN = "Done! I've passed your request on to the restaurant management team and they will get in touch with you as soon as possible 🙌. In the meantime, is there anything else I can help you with?"
-	botAlreadyTextES   = "Tu solicitud ya está en manos del equipo de gestión del restaurante y se pondrán en contacto contigo muy pronto 😊. Sobre este tema yo ya no puedo hacer nada más, pero si necesitas otra cosa, aquí estoy."
-	botAlreadyTextEN   = "Your request is already with the restaurant management team and they will contact you very soon 😊. There's nothing more I can do about this topic myself, but if you need anything else, I'm here."
-)
+// Customer-facing replies: see whatsapp_bot_handoff_reply.go
+// (wa_bot_varied_handoff_reply_v1).
 
 // botForwardToManagement is the single replacement of the contact card.
 // prefix is an optional contextual sentence (e.g. the same-day or allergen
@@ -277,12 +272,8 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 	if !ok {
 		return false
 	}
-	en := lang == "en" || lang == "other"
 	if duplicate {
-		text := botAlreadyTextES
-		if en {
-			text = botAlreadyTextEN
-		}
+		text := s.botHandoffReplyText(ctx, restaurantID, msg, reason, detail, "", lang, true)
 		_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "management_already_forwarded")
 		log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d sender=%s reason=%s duplicate=true", restaurantID, msg.Sender, reason)
 		return true
@@ -310,13 +301,7 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 		summary = d + ": " + summary
 	}
 	_ = s.botConversation.AddManagementRequest(ctx, restaurantID, msg.Sender, reason, summary, groupSent)
-	text := botForwardedTextES
-	if en {
-		text = botForwardedTextEN
-	}
-	if p := strings.TrimSpace(prefix); p != "" {
-		text = p + "\n\n" + text
-	}
+	text := ""
 	if !groupSent {
 		// Never leave the customer without a human path.
 		_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, botContactIntroText(""), "management_handoff_notice")
@@ -325,6 +310,7 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 		log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d sender=%s reason=%s group_unavailable card_fallback=true", restaurantID, msg.Sender, reason)
 		return false
 	}
+	text = s.botHandoffReplyText(ctx, restaurantID, msg, reason, detail, prefix, lang, false)
 	_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "management_forwarded")
 	log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d sender=%s reason=%s forwarded=true", restaurantID, msg.Sender, reason)
 	return true
