@@ -30,7 +30,7 @@ func (s *Server) loadPOSProducts(ctx context.Context, restaurantID int, activeOn
 	if activeOnly {
 		where += " AND p.is_active=1"
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,COALESCE(p.sku,''),p.category_id,COALESCE(c.name,''),p.price_gross_cents,p.vat_rate_id,COALESCE(v.rate,0),p.is_active FROM pos_products p LEFT JOIN pos_product_categories c ON c.restaurant_id=p.restaurant_id AND c.id=p.category_id LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE `+where+` ORDER BY c.sort_order,c.name,p.name`, restaurantID)
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,COALESCE(p.sku,''),p.category_id,COALESCE(c.name,''),p.price_gross_cents,p.vat_rate_id,`+posProductVATRateSQL+`,p.is_active FROM pos_products p LEFT JOIN pos_product_categories c ON c.restaurant_id=p.restaurant_id AND c.id=p.category_id LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE `+where+` ORDER BY c.sort_order,c.name,p.name`, restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -325,3 +325,9 @@ func (s *Server) handleBOPOSStockReadiness(w http.ResponseWriter, r *http.Reques
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "activeProducts": active, "mappedProducts": mapped, "unmappedProducts": unmapped, "untrackedProducts": untracked, "invalidMappings": invalid, "salesCoveragePct": coverage})
 }
+
+// posProductVATRateSQL resolves a POS product's VAT: its own rate when set,
+// otherwise the restaurant's default active rate, so imported Carta products
+// never ring up with 0% tax. Expects aliases p (pos_products) and v (its rate).
+// Coordination id: pos_vat_default_fallback_v1
+const posProductVATRateSQL = `COALESCE(v.rate,(SELECT d.rate FROM stock_vat_rates d WHERE d.restaurant_id=p.restaurant_id AND d.is_default=1 AND d.is_active=1 ORDER BY d.id LIMIT 1),0)`
