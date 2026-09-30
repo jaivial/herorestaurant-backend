@@ -484,6 +484,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/cash-days", s.handleBOPOSCashDaysRange)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/cash-days/current", s.handleBOPOSCashDayCurrent)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/cash-days/{date}/tables", s.handleBOPOSCashDayTables)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/cash-days/{date}/billing", s.handleBOPOSCashDayBilling)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posShiftGate).Post("/pos/cash-days", s.handleBOPOSCashDayOpen)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posShiftGate).Post("/pos/cash-days/{id}/close", s.handleBOPOSCashDayClose)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCheckoutGate).Post("/pos/cash-days/{date}/bulk-checkout", s.handleBOPOSCashDayBulkCheckout)
