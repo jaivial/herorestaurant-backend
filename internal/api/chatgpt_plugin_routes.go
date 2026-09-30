@@ -132,7 +132,7 @@ func (s *Server) handleChatGPTPluginTools(w http.ResponseWriter, r *http.Request
 		if !assistantToolAllowed(auth, t.Name) {
 			continue
 		}
-		params, _ := chatgptPluginParameters(t.Schema)
+		params := chatgptPluginParameters(t.Schema)
 		tools = append(tools, map[string]any{
 			"name":        t.Name,
 			"description": t.Description,
