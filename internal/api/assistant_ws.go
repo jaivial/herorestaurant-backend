@@ -103,6 +103,11 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 		// Without this, tool authorization sees an anonymous context even though
 		// the WebSocket handshake was authenticated.
 		wsCtx = withBOAuth(wsCtx, a)
+		// The person's own session cookie, for admin_call to replay panel routes AS them
+		// through the real gates. Server-side only: never sent to the model. [FORKY-ADMIN-TOOLS-S01]
+		if c, err := r.Cookie(boSessionCookieName); err == nil && strings.TrimSpace(c.Value) != "" {
+			wsCtx = withBOSessionToken(wsCtx, strings.TrimSpace(c.Value))
+		}
 	}
 
 	upgrader := websocket.Upgrader{
@@ -400,9 +405,12 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: blocks})
 		results := make([]map[string]any, 0, len(result.ToolUses))
 		for _, use := range result.ToolUses {
+			// Live trace for the chat (ThinkingState rows): the tool name only, never the
+			// input (it can carry customer data). [FORKY-ADMIN-TOOLS-S01]
+			_ = c.writeJSON(map[string]any{"type": "status", "state": "tool", "tool": use.Name})
 			// Bound every tool independently so a slow catalog/analytics query cannot
 			// consume the whole conversation or hold the websocket indefinitely.
-			toolCtx, cancelTool := context.WithTimeout(ctx, 5*time.Second)
+			toolCtx, cancelTool := context.WithTimeout(ctx, assistantToolTimeout(use.Name))
 			out, toolErr := c.s.assistantExecuteTool(toolCtx, restaurantID, use.Name, use.Input)
 			cancelTool()
 			if toolErr != nil {
