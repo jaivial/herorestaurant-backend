@@ -372,6 +372,12 @@ func assistantToolAllowed(a boAuth, tool string) bool {
 		return false
 	}
 	section, write := t.Section, t.Write
+	if section == assistantSessionSection {
+		// The admin trio [FORKY-ADMIN-TOOLS-S01] is open to any backoffice session: each
+		// operation it runs is filtered per section in the catalog and re-checked by the
+		// route's own gates when admin_call replays it through the router.
+		return true
+	}
 	role := strings.ToLower(strings.TrimSpace(a.Role))
 	if role == "" {
 		role = strings.ToLower(strings.TrimSpace(a.User.Role))

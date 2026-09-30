@@ -103,6 +103,11 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 		// Without this, tool authorization sees an anonymous context even though
 		// the WebSocket handshake was authenticated.
 		wsCtx = withBOAuth(wsCtx, a)
+		// The person's own session cookie, for admin_call to replay panel routes AS them
+		// through the real gates. Server-side only: never sent to the model. [FORKY-ADMIN-TOOLS-S01]
+		if c, err := r.Cookie(boSessionCookieName); err == nil && strings.TrimSpace(c.Value) != "" {
+			wsCtx = withBOSessionToken(wsCtx, strings.TrimSpace(c.Value))
+		}
 	}
 
 	upgrader := websocket.Upgrader{
