@@ -37,6 +37,16 @@ const forkyAdminCoord = "FORKY-ADMIN-TOOLS-S01"
 // what they reach is enforced per operation (see assistantToolAllowed).
 const assistantSessionSection = "session"
 
+// assistantToolTimeout is the per-tool budget of a WS turn: admin_call replays panel
+// routes (exports, POS/stock reports) that legitimately take longer than the 5s the
+// hand-written tools get.
+func assistantToolTimeout(name string) time.Duration {
+	if name == "admin_call" {
+		return 20 * time.Second
+	}
+	return 5 * time.Second
+}
+
 // forkyAdminMaxResult caps a tool_result: the model's context is the budget.
 const forkyAdminMaxResult = 24 * 1024
 
@@ -295,7 +305,9 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	} else {
 		body = strings.NewReader("")
 	}
-	callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	// Inherits the caller's deadline (assistantToolTimeout): a slow route is cancelled
+	// with the turn instead of running on after the model gave up on it.
+	callCtx, cancel := context.WithTimeout(ctx, assistantToolTimeout("admin_call"))
 	defer cancel()
 	req := httptest.NewRequest(op.Method, target, body).WithContext(callCtx)
 	req.Header.Set("Content-Type", "application/json")

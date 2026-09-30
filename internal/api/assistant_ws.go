@@ -407,7 +407,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		for _, use := range result.ToolUses {
 			// Bound every tool independently so a slow catalog/analytics query cannot
 			// consume the whole conversation or hold the websocket indefinitely.
-			toolCtx, cancelTool := context.WithTimeout(ctx, 5*time.Second)
+			toolCtx, cancelTool := context.WithTimeout(ctx, assistantToolTimeout(use.Name))
 			out, toolErr := c.s.assistantExecuteTool(toolCtx, restaurantID, use.Name, use.Input)
 			cancelTool()
 			if toolErr != nil {
