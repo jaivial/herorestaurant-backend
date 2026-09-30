@@ -18,8 +18,8 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `bookings_summary` | reservas | read | no | `{"type":"object","properties":{"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"}}}` |
 | `bookings_list` | reservas | read | no | `{"type":"object","properties":{"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"limit":{"type":"integer"}}}` |
 | `restaurant_query` | reservas | read | no | `{"type":"object","properties":{"resource":{"type":"string","enum":["bookings","menus","wines"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["resource"]}` |
-| `create_booking` | reservas | write | sí | `{"type":"object","properties":{"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","time","people","name","confirmed"]}` |
-| `update_booking` | reservas | write | sí | `{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}` |
+| `create_booking` | reservas | write | sí | `{"type":"object","properties":{"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","time","people","name","confirmed"]}` |
+| `update_booking` | reservas | write | sí | `{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}` |
 | `delete_booking` | reservas | write | sí | `{"type":"object","properties":{"booking_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}` |
 | `customers_list` | reservas | read | no | `{"type":"object","properties":{"search":{"type":"string"},"limit":{"type":"integer"}}}` |
 | `booking_limits_update` | reservas | write | sí | `{"type":"object","properties":{"date":{"type":"string"},"daily_limit":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","daily_limit","confirmed"]}` |
@@ -64,8 +64,8 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `pos_visit_create` | pos | write | sí | `{"type":"object","properties":{"channel":{"type":"string"},"covers":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["channel","covers","confirmed"]}` |
 | `pos_ticket_create` | pos | write | sí | `{"type":"object","properties":{"visit_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["visit_id","confirmed"]}` |
 | `pos_ticket_line_add` | pos | write | sí | `{"type":"object","properties":{"ticket_id":{"type":"integer"},"product_id":{"type":"integer"},"quantity":{"type":"number"},"notes":{"type":"string"},"idempotency_key":{"type":"string"},"unit_price_override_cents":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","product_id","quantity","idempotency_key","confirmed"]}` |
-| `pos_payment_create` | pos | write | sí | `{"type":"object","properties":{"ticket_id":{"type":"integer"},"method":{"type":"string","enum":["CASH","CARD","BANK","OTHER"]},"amount_cents":{"type":"integer"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","method","amount_cents","idempotency_key","confirmed"]}` |
-| `pos_refund_create` | pos | write | sí | `{"type":"object","properties":{"ticket_id":{"type":"integer"},"amount_cents":{"type":"integer"},"reason":{"type":"string"},"payment_method":{"type":"string","enum":["CASH","CARD","BANK","OTHER"]},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","amount_cents","reason","payment_method","idempotency_key","confirmed"]}` |
+| `pos_payment_create` | pos | write | sí | `{"type":"object","properties":{"ticket_id":{"type":"integer"},"method":{"type":"string","enum":["CASH","CARD","BIZUM","BANK","OTHER"]},"amount_cents":{"type":"integer"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","method","amount_cents","idempotency_key","confirmed"]}` |
+| `pos_refund_create` | pos | write | sí | `{"type":"object","properties":{"ticket_id":{"type":"integer"},"amount_cents":{"type":"integer"},"reason":{"type":"string"},"payment_method":{"type":"string","enum":["CASH","CARD","BIZUM","BANK","OTHER"]},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","amount_cents","reason","payment_method","idempotency_key","confirmed"]}` |
 | `members_list` | miembros | read | no | `{"type":"object","properties":{}}` |
 | `member_get` | miembros | read | no | `{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}` |
 | `member_balance_get` | estado_cuenta | read | no | `{"type":"object","properties":{"id":{"type":"integer"},"date":{"type":"string"}},"required":["id"]}` |
@@ -79,6 +79,28 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `whatsapp_bot_config_update` | plataforma | write | sí | `{"type":"object","properties":{"model":{"type":"string"},"language_default":{"type":"string"},"tone":{"type":"string"},"greeting_style":{"type":"string"},"disable_attachments":{"type":"boolean"},"custom_instructions":{"type":"string"},"contact_phone":{"type":"string"},"rules":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["confirmed"]}` |
 | `site_published_content_get` | plataforma | read | no | `{"type":"object","properties":{}}` |
 | `site_publish` | website | write | sí | `{"type":"object","properties":{"site_id":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["site_id","confirmed"]}` |
+| `admin_catalog` | session | read | no | `{"type":"object","properties":{"q":{"type":"string"},"section":{"type":"string"},"writes_only":{"type":"boolean"},"limit":{"type":"integer"},"offset":{"type":"integer"}}}` |
+| `admin_describe` | session | read | no | `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"name":{"type":"string"}}}` |
+| `admin_call` | session | read | no | `{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["name"]}` |
+
+
+## Trío admin (todas las operaciones del backoffice) [FORKY-ADMIN-TOOLS-S01]
+
+`admin_catalog` / `admin_describe` / `admin_call` exponen las 516 operaciones de la API `/admin`
+del backoffice (mapa generado `internal/api/forky_admin_ops.json`, con la pantalla del backoffice
+que usa cada ruta). Regenerar tras cambiar rutas en `server.go`:
+
+```sh
+go run ./cmd/forky-admin-map -server internal/api/server.go -pages ../backoffice -o internal/api/forky_admin_ops.json
+```
+
+ACL: el catálogo sólo lista las secciones que la persona abre en el panel (`boAuthCanAccessSection`,
+importancia de rol para `rolesAdminGate`/root, superadmin), y `admin_call` repite la petición por el
+router real (`s.Routes()`) con la cookie `bo_session` de la propia persona (tomada del handshake del
+WebSocket, nunca del modelo) y los secretos del servidor: deciden los mismos gates de la ruta
+(sección, permisos de TPV/stock, plan, root). Las escrituras requieren `confirmed=true` +
+`confirmation_token`. Excluidas: login/logout, WebSockets, subidas de ficheros, `/assistant/*` y las
+rutas públicas.
 
 ## Convenciones
 

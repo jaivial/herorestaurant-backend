@@ -217,6 +217,9 @@ func (s *Server) loadPOSCashSummaryScoped(ctx context.Context, q posCashQueryer,
 			out.CardSales, out.CardTips = amount, tips
 		case "BANK":
 			out.BankSales, out.BankTips = amount, tips
+		// BIZUM is folded into OTHER on purpose: pos_cash_closures has no
+		// bizum_sales_cents column, so the printed X/Y/Z closure keeps the
+		// four legacy tenders. The day-billing endpoint reports it separately.
 		default:
 			out.OtherSales, out.OtherTips = amount, tips
 		}

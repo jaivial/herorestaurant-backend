@@ -80,6 +80,7 @@ func TestAssistantToolRegistrySectionsValid(t *testing.T) {
 		"ajustes": true, "miembros": true, "fichaje": true, "horarios": true,
 		"facturas": true, "reportes": true, "estadisticas": true,
 		"estado_cuenta": true, "website": true, "site-builder": true, "plataforma": true,
+		assistantSessionSection: true, // admin trio: ACL per operation [FORKY-ADMIN-TOOLS-S01]
 	}
 	for _, tool := range assistantToolRegistry {
 		if !known[tool.Section] {
@@ -116,7 +117,8 @@ func TestAssistantToolAllowedCoversEveryTool(t *testing.T) {
 	jefe := boAuth{Role: "jefe_cocina", User: boUser{ID: 2}}
 	for _, tool := range assistantToolRegistry {
 		allowed := assistantToolAllowed(jefe, tool.Name)
-		if tool.Section == "comida" {
+		if tool.Section == "comida" || tool.Section == assistantSessionSection {
+			// session = the admin trio: open to every backoffice user, ACL per operation.
 			if !allowed {
 				t.Errorf("jefe_cocina denied comida tool %s", tool.Name)
 			}
