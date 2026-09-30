@@ -13,16 +13,23 @@ import (
 // Coordination id: reservas_columns_realtime_v1
 
 type boReservasColumnsEvent struct {
-	Type         string   `json:"type"`
-	RestaurantID int      `json:"restaurant_id"`
-	UserID       int      `json:"user_id"`
-	Columns      []string `json:"columns"`
+	Type         string `json:"type"`
+	RestaurantID int    `json:"restaurant_id"`
+	UserID       int    `json:"user_id"`
+	// Scope is "normal" or "special" (coordination id: reservas_special_columns_v1).
+	Scope   string   `json:"scope"`
+	Columns []string `json:"columns"`
 }
+
+const (
+	reservasColumnsScopeNormal  = "normal"
+	reservasColumnsScopeSpecial = "special"
+)
 
 // broadcastReservasColumns notifies the restaurant's connected backoffice
 // clients that a user changed the visible columns. Reuses the shared
 // restaurant presence hub so there is one broadcast primitive, not a second one.
-func (s *Server) broadcastReservasColumns(restaurantID, userID int, columns []string) {
+func (s *Server) broadcastReservasColumns(restaurantID, userID int, scope string, columns []string) {
 	if s == nil || s.tablesHub == nil || restaurantID <= 0 {
 		return
 	}
@@ -30,6 +37,7 @@ func (s *Server) broadcastReservasColumns(restaurantID, userID int, columns []st
 		Type:         "reservas_columns",
 		RestaurantID: restaurantID,
 		UserID:       userID,
+		Scope:        scope,
 		Columns:      columns,
 	})
 }

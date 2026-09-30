@@ -64,7 +64,10 @@ var facturasColumnIDs = []string{
 
 const (
 	boPrefReservasVisibleColumns = "reservasVisibleColumns"
-	boPrefFacturasVisibleColumns = "facturasVisibleColumns"
+	// Coordination id: reservas_special_columns_v1 - special-date days keep
+	// their own column selection, independent from normal days.
+	boPrefReservasSpecialVisibleColumns = "reservasSpecialVisibleColumns"
+	boPrefFacturasVisibleColumns        = "facturasVisibleColumns"
 )
 
 // normalizeVisibleColumnsCSV validates a CSV of column ids against the given
@@ -110,7 +113,7 @@ func normalizeBOPreference(key, value string) (string, bool) {
 	// Column visibility is a validated list, not a fixed enum, so it does not
 	// fit the value-set map below.
 	switch key {
-	case boPrefReservasVisibleColumns:
+	case boPrefReservasVisibleColumns, boPrefReservasSpecialVisibleColumns:
 		return normalizeVisibleColumnsCSV(reservasColumnIDs, value)
 	case boPrefFacturasVisibleColumns:
 		return normalizeVisibleColumnsCSV(facturasColumnIDs, value)
@@ -245,8 +248,11 @@ func (s *Server) handleBOPreferencesSet(w http.ResponseWriter, r *http.Request) 
 	}
 	// Fan the new column selection out to every open tab of this user in
 	// real time, without waiting for the next page load.
-	if strings.TrimSpace(req.Key) == boPrefReservasVisibleColumns {
-		s.broadcastReservasColumns(restaurantID, a.User.ID, parseReservasVisibleColumns(normValue))
+	switch strings.TrimSpace(req.Key) {
+	case boPrefReservasVisibleColumns:
+		s.broadcastReservasColumns(restaurantID, a.User.ID, reservasColumnsScopeNormal, parseReservasVisibleColumns(normValue))
+	case boPrefReservasSpecialVisibleColumns:
+		s.broadcastReservasColumns(restaurantID, a.User.ID, reservasColumnsScopeSpecial, parseReservasVisibleColumns(normValue))
 	}
 	prefs, err := s.getUserPreferences(r.Context(), a.User.ID, restaurantID)
 	if err != nil {
