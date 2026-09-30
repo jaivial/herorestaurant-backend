@@ -797,7 +797,10 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,'') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
+	// updated_at is sent so clients can order lines by most recent change
+	// (quantity edit, comp/uncomp, note). It rides along with the existing
+	// fields, so no extra query is needed.
+	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -811,7 +814,8 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 		var unitPrice, lineDiscount, lineTotal int64
 		var compedAt sql.NullTime
 		var compReason string
-		if err = rows.Scan(&id, &productID, &name, &quantity, &unitPrice, &vat, &lineDiscount, &lineTotal, &notes, &lineStatus, &compedAt, &compReason); err != nil {
+		var updatedAt time.Time
+		if err = rows.Scan(&id, &productID, &name, &quantity, &unitPrice, &vat, &lineDiscount, &lineTotal, &notes, &lineStatus, &compedAt, &compReason, &updatedAt); err != nil {
 			return nil, err
 		}
 		tagRows, tagErr := s.db.QueryContext(ctx, `SELECT tag_id FROM pos_ticket_line_tags WHERE restaurant_id=? AND ticket_line_id=? ORDER BY tag_id`, restaurantID, id)
@@ -828,7 +832,7 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 			tagIDs = append(tagIDs, tagID)
 		}
 		tagRows.Close()
-		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs})
+		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "updatedAt": updatedAt})
 	}
 	return map[string]any{"id": ticketID, "ticketNumber": number, "status": status, "subtotalGrossCents": subtotal, "discountCents": discount, "surchargeCents": surcharge, "tipCents": tip, "taxCents": tax, "totalGrossCents": total, "paidCents": paid, "refundedCents": refunded, "version": version, "operatorMemberId": stockNullableDBInt(operator), "note": ticketNote, "lines": lines}, rows.Err()
 }
