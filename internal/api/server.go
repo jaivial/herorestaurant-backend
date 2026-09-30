@@ -155,9 +155,15 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	// Backoffice (new React SSR dashboard).
-	// Strip /api prefix for /api/admin/* routes to make them work with /admin handlers
+	// Strip /api prefix for /api/admin/* routes to make them work with /admin handlers.
+	// /api/plugin/* is exempted: the ChatGPT plugin publishes absolute
+	// connector URLs in its manifest, so its prefix must survive intact.
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/plugin") {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if strings.HasPrefix(r.URL.Path, "/api/admin") {
 				r.URL.Path = strings.Replace(r.URL.Path, "/api/admin", "/admin", 1)
 			} else if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -172,6 +178,11 @@ func (s *Server) Routes() http.Handler {
 	r.Use(s.spaNavigationSplit)
 
 	r.Get("/healthz", s.handleHealthz)
+
+	// ChatGPT plugin (chatgpt_plugin_v1). Registered after the middleware
+	// stack so the public manifest endpoints and the authenticated
+	// /api/plugin surface coexist with the backoffice routes.
+	s.MountChatGPTPlugin(r)
 
 	r.Route("/admin", func(r chi.Router) {
 		// Shared-secret layer for the whole admin API and its WebSockets, injected
