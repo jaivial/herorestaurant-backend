@@ -5,6 +5,8 @@
 --     -> GET /admin/pos/cash-days/{date}/billing byMethod.BIZUM
 --     -> pos_refunds.payment_method accepts 'BIZUM' so a Bizum sale can be refunded
 -- BANK stays "Transferencia" and OTHER keeps absorbing unknown tenders.
+-- Source of truth for the tender list is the ENUM in 065_pos_sales.sql: update
+-- both together when a tender is added or removed.
 
 SET @dbname := DATABASE();
 
