@@ -274,7 +274,8 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 // onlineOnly is true for the public booking form: special-menu sections the
 // backoffice disabled for online booking are rejected (coordination id:
 // special_date_section_online_v1). Backoffice edits pass false and may still
-// book any section.
+// book any section, and they may also record a deposit under any canonical
+// method of the SPEC Â§2 enum (see adelantoAcceptedMethods).
 func (s *Server) resolveSpecialBookingInput(
 	ctx context.Context,
 	restaurantID int,
@@ -306,13 +307,7 @@ func (s *Server) resolveSpecialBookingInput(
 		menusByID[m.ID] = m
 	}
 
-	acceptedMethods := make(map[string]bool, len(settings.AdelantoPaymentMethods))
-	for _, m := range settings.AdelantoPaymentMethods {
-		m = strings.TrimSpace(m)
-		if m != "" {
-			acceptedMethods[m] = true
-		}
-	}
+	acceptedMethods := adelantoAcceptedMethods(settings, onlineOnly)
 
 	// payment_method (public booking single choice) subset of accepted methods.
 	if req.PaymentMethod != nil {
@@ -465,6 +460,31 @@ func (s *Server) resolveSpecialBookingInput(
 		snap.AdelantosPaid = append([]specialBookingAdelantoPaid(nil), req.AdelantosPaid...)
 	}
 	return snap, &prereserva, nil
+}
+
+// adelantoAcceptedMethods returns the deposit payment methods a caller may use
+// for a special date. Online bookings (public form) are restricted to the
+// methods configured on the date row; backoffice edits accept every method of
+// the canonical SPEC Â§2 enum, because the operator records what was actually
+// collected at the restaurant even when the date only advertises a subset
+// (coordination id: booking_editor_special_adelanto_ui_v2).
+func adelantoAcceptedMethods(settings *specialDateSettings, onlineOnly bool) map[string]bool {
+	methods := make(map[string]bool)
+	if settings == nil {
+		return methods
+	}
+	for _, m := range settings.AdelantoPaymentMethods {
+		if m = strings.TrimSpace(m); m != "" {
+			methods[m] = true
+		}
+	}
+	if onlineOnly {
+		return methods
+	}
+	for m := range validAdelantoPaymentMethods {
+		methods[m] = true
+	}
+	return methods
 }
 
 // --- response helpers --------------------------------------------------------
