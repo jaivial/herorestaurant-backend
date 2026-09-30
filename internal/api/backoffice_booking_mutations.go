@@ -896,7 +896,7 @@ func (s *Server) boNormalizeAndValidateBookingInput(ctx context.Context, restaur
 			out.IsPrereserva = false
 			out.SpecialJSON = nil
 		} else {
-			snap, prereserva, err := s.resolveSpecialBookingInput(ctx, restaurantID, date, partySize, in.Special)
+			snap, prereserva, err := s.resolveSpecialBookingInput(ctx, restaurantID, date, partySize, in.Special, false)
 			if err != nil {
 				return out, err
 			}

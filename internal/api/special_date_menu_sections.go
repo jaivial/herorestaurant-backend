@@ -22,12 +22,26 @@ import (
 
 // specialDateMenuSection is one bookable section of a special-type menu.
 type specialDateMenuSection struct {
-	ID             int64                  `json:"id"`
-	Title          string                 `json:"title"`
-	Price          *float64               `json:"price"`
-	AdelantoAmount *float64               `json:"adelanto_amount"`
-	Position       int                    `json:"position"`
-	Principales    []specialMenuPrincipal `json:"principales"`
+	ID             int64    `json:"id"`
+	Title          string   `json:"title"`
+	Price          *float64 `json:"price"`
+	AdelantoAmount *float64 `json:"adelanto_amount"`
+	Position       int      `json:"position"`
+	// Coordination id: special_date_section_online_v1 - false hides the
+	// section from online booking (no guest count, principales or adelanto).
+	OnlineEnabled bool                   `json:"online_enabled"`
+	Principales   []specialMenuPrincipal `json:"principales"`
+}
+
+// onlineSpecialDateMenuSections keeps only the sections bookable online.
+func onlineSpecialDateMenuSections(sections []specialDateMenuSection) []specialDateMenuSection {
+	out := make([]specialDateMenuSection, 0, len(sections))
+	for _, sec := range sections {
+		if sec.OnlineEnabled {
+			out = append(out, sec)
+		}
+	}
+	return out
 }
 
 // specialDateMenuIsSpecialType reports whether a catalogue menu is special.
@@ -46,7 +60,8 @@ func (s *Server) specialDateMenuIsSpecialType(ctx context.Context, restaurantID 
 func (s *Server) loadSpecialDateMenuSections(ctx context.Context, restaurantID int, specialDateMenuID, menuID int64, publicPrincipales bool) []specialDateMenuSection {
 	out := []specialDateMenuSection{}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT sms.id, sms.title, sms.price, sdms.adelanto_amount, sms.position
+		SELECT sms.id, sms.title, sms.price, sdms.adelanto_amount, sms.position,
+		       COALESCE(sdms.online_enabled, 1)
 		FROM special_menu_sections sms
 		LEFT JOIN special_date_menu_sections sdms
 		  ON sdms.section_id = sms.id AND sdms.special_date_menu_id = ? AND sdms.restaurant_id = sms.restaurant_id
@@ -63,8 +78,9 @@ func (s *Server) loadSpecialDateMenuSections(ctx context.Context, restaurantID i
 			sec      specialDateMenuSection
 			price    sql.NullFloat64
 			adelanto sql.NullFloat64
+			online   int
 		)
-		if err := rows.Scan(&sec.ID, &sec.Title, &price, &adelanto, &sec.Position); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.Title, &price, &adelanto, &sec.Position, &online); err != nil {
 			continue
 		}
 		if price.Valid {
@@ -73,6 +89,7 @@ func (s *Server) loadSpecialDateMenuSections(ctx context.Context, restaurantID i
 		if adelanto.Valid {
 			sec.AdelantoAmount = &adelanto.Float64
 		}
+		sec.OnlineEnabled = online != 0
 		out = append(out, sec)
 	}
 	rows.Close()
@@ -96,6 +113,9 @@ func (s *Server) loadSpecialDateMenuSections(ctx context.Context, restaurantID i
 type specialDateSectionAdelanto struct {
 	SectionID      int64    `json:"section_id"`
 	AdelantoAmount *float64 `json:"adelanto_amount"`
+	// Coordination id: special_date_section_online_v1 - nil keeps the
+	// section bookable online (default).
+	OnlineEnabled *bool `json:"online_enabled,omitempty"`
 }
 
 // saveSpecialDateMenuSections stores the per-section adelantos for one
@@ -109,12 +129,13 @@ func saveSpecialDateMenuSections(ctx context.Context, tx *sql.Tx, restaurantID i
 		if sec.AdelantoAmount != nil && *sec.AdelantoAmount >= 0 {
 			amount = *sec.AdelantoAmount
 		}
+		online := sec.OnlineEnabled == nil || *sec.OnlineEnabled
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO special_date_menu_sections (restaurant_id, special_date_menu_id, section_id, adelanto_amount)
-			SELECT ?, ?, sms.id, ?
+			INSERT INTO special_date_menu_sections (restaurant_id, special_date_menu_id, section_id, adelanto_amount, online_enabled)
+			SELECT ?, ?, sms.id, ?, ?
 			FROM special_menu_sections sms
 			WHERE sms.id = ? AND sms.menu_id = ? AND sms.restaurant_id = ?
-		`, restaurantID, specialDateMenuID, amount, sec.SectionID, menuID, restaurantID); err != nil {
+		`, restaurantID, specialDateMenuID, amount, boolToInt(online), sec.SectionID, menuID, restaurantID); err != nil {
 			return err
 		}
 	}
@@ -130,6 +151,7 @@ func (s *Server) specialMenuSectionSnapshotLines(
 	m specialBookingMenuReq,
 	acceptedMethods map[string]bool,
 	unifiedAdelanto *float64,
+	onlineOnly bool,
 ) ([]specialBookingSnapshotMenu, int, error) {
 	if len(m.Sections) == 0 {
 		return nil, 0, fmt.Errorf("Indica los comensales de cada sección del menú %s", strings.TrimSpace(rec.MenuTitle))
@@ -137,6 +159,11 @@ func (s *Server) specialMenuSectionSnapshotLines(
 	menuID := rec.MenuID.Int64
 	byID := map[int64]specialDateMenuSection{}
 	for _, sec := range s.loadSpecialDateMenuSections(ctx, restaurantID, rec.ID, menuID, true) {
+		// Coordination id: special_date_section_online_v1 - online bookings
+		// can not book a section the backoffice disabled for online booking.
+		if onlineOnly && !sec.OnlineEnabled {
+			continue
+		}
 		byID[sec.ID] = sec
 	}
 
