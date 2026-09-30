@@ -898,7 +898,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 	var sku sql.NullString
 	var price int64
 	var vat float64
-	if err = tx.QueryRowContext(r.Context(), `SELECT p.name,p.sku,p.price_gross_cents,COALESCE(v.rate,0) FROM pos_products p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE p.restaurant_id=? AND p.id=? AND p.is_active=1 AND p.deleted_at IS NULL`, a.ActiveRestaurantID, in.ProductID).Scan(&name, &sku, &price, &vat); err != nil {
+	if err = tx.QueryRowContext(r.Context(), `SELECT p.name,p.sku,p.price_gross_cents,`+posProductVATRateSQL+` FROM pos_products p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE p.restaurant_id=? AND p.id=? AND p.is_active=1 AND p.deleted_at IS NULL`, a.ActiveRestaurantID, in.ProductID).Scan(&name, &sku, &price, &vat); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "POS product not found")
 		return
 	}

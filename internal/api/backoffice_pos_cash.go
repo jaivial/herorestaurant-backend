@@ -40,12 +40,35 @@ type posCashScope struct {
 	// Monday while Monday's tables are open.
 	visitWhere string
 	visitArgs  []any
+	// refundSince, when set, counts refunds by when they were made (on any
+	// ticket of the shift) instead of by the scoped tickets. A partial Y cut
+	// needs this: a refund today on a ticket paid before the last Y belongs to
+	// today's period.
+	refundShiftID int64
+	refundSince   *time.Time
 }
 
 func posCashShiftScope(shiftID int64) posCashScope {
 	return posCashScope{
 		ticketWhere: "t.shift_id=?", ticketArgs: []any{shiftID},
 		movementWhere: "m.shift_id=?", movementArgs: []any{shiftID},
+	}
+}
+
+// posCashShiftPeriodScope narrows a shift scope to activity after `since`.
+// A Cierre Y is a partial cut: it reports only what happened since the
+// previous Y (or since the shift opened), while X stays cumulative. Tickets
+// fall in the period by the moment they settled (paid or voided); still-open
+// tickets always count so the operator sees what is pending.
+// Coordination id: pos_cash_closure_y_period_v1
+func posCashShiftPeriodScope(shiftID int64, since time.Time) posCashScope {
+	return posCashScope{
+		ticketWhere:   "t.shift_id=? AND COALESCE(t.paid_at,t.voided_at,NOW())>?",
+		ticketArgs:    []any{shiftID, since},
+		movementWhere: "m.shift_id=? AND m.created_at>?",
+		movementArgs:  []any{shiftID, since},
+		refundShiftID: shiftID,
+		refundSince:   &since,
 	}
 }
 
@@ -130,6 +153,31 @@ func (s *Server) loadPOSCashSummary(ctx context.Context, q posCashQueryer, resta
 // loadPOSCashSummaryScoped fills the money side of a summary for the given
 // scope. The caller supplies the header fields (terminal, status, opened_at and
 // the opening float) because those come from the shift or the cash day row.
+// loadPOSCashClosureSummary returns the figures a closure of the given type
+// reports. X and Z are cumulative for the shift. Y starts where the previous Y
+// ended: its opening float is that Y's counted cash (or expected cash when it
+// was not counted) and OpenedAt is the period start.
+func (s *Server) loadPOSCashClosureSummary(ctx context.Context, q posCashQueryer, restaurantID int, shiftID int64, closureType string) (posCashSummary, error) {
+	if closureType != "Y" {
+		return s.loadPOSCashSummary(ctx, q, restaurantID, shiftID)
+	}
+	var out posCashSummary
+	out.ShiftID = shiftID
+	if err := q.QueryRowContext(ctx, `SELECT terminal_key,status,opening_cash_cents,opened_at,closed_at FROM pos_shifts WHERE restaurant_id=? AND id=?`, restaurantID, shiftID).Scan(&out.TerminalKey, &out.Status, &out.OpeningCash, &out.OpenedAt, &out.ClosedAt); err != nil {
+		return out, err
+	}
+	var lastAt time.Time
+	var lastFloat int64
+	err := q.QueryRowContext(ctx, `SELECT generated_at,COALESCE(counted_cash_cents,expected_cash_cents) FROM pos_cash_closures WHERE restaurant_id=? AND shift_id=? AND closure_type='Y' ORDER BY generated_at DESC,id DESC LIMIT 1`, restaurantID, shiftID).Scan(&lastAt, &lastFloat)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return out, err
+	}
+	if err == nil {
+		out.OpenedAt, out.OpeningCash = lastAt, lastFloat
+	}
+	return s.loadPOSCashSummaryScoped(ctx, q, restaurantID, posCashShiftPeriodScope(shiftID, out.OpenedAt), out)
+}
+
 func (s *Server) loadPOSCashSummaryScoped(ctx context.Context, q posCashQueryer, restaurantID int, scope posCashScope, out posCashSummary) (posCashSummary, error) {
 	// Every ticket belongs to a visit (pos_tickets.visit_id is NOT NULL), so the
 	// join is lossless and lets a scope filter on either side.
@@ -178,8 +226,17 @@ func (s *Server) loadPOSCashSummaryScoped(ctx context.Context, q posCashQueryer,
 		return out, err
 	}
 	rows.Close()
-	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN payment_method='CASH' THEN amount_cents ELSE 0 END),0),COALESCE(SUM(amount_cents),0) FROM pos_refunds WHERE restaurant_id=? AND status='COMPLETED' AND ticket_id IN (`+scopedTicketIDs+`)`, subqueryArgs...).Scan(&out.CashRefunds, new(int64)); err != nil {
+	refundSQL, refundArgs := `SELECT COALESCE(SUM(CASE WHEN payment_method='CASH' THEN amount_cents ELSE 0 END),0),COALESCE(SUM(amount_cents),0) FROM pos_refunds WHERE restaurant_id=? AND status='COMPLETED' AND ticket_id IN (`+scopedTicketIDs+`)`, subqueryArgs
+	if scope.refundSince != nil {
+		refundSQL = `SELECT COALESCE(SUM(CASE WHEN r.payment_method='CASH' THEN r.amount_cents ELSE 0 END),0),COALESCE(SUM(r.amount_cents),0) FROM pos_refunds r JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id WHERE r.restaurant_id=? AND r.status='COMPLETED' AND t.shift_id=? AND r.created_at>?`
+		refundArgs = []any{restaurantID, scope.refundShiftID, *scope.refundSince}
+	}
+	var periodRefunds int64
+	if err = q.QueryRowContext(ctx, refundSQL, refundArgs...).Scan(&out.CashRefunds, &periodRefunds); err != nil {
 		return out, err
+	}
+	if scope.refundSince != nil {
+		out.Refunds = periodRefunds
 	}
 	movementArgs := append([]any{restaurantID}, scope.movementArgs...)
 	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN m.movement_type='IN' THEN m.amount_cents ELSE 0 END),0),COALESCE(SUM(CASE WHEN m.movement_type='OUT' THEN m.amount_cents ELSE 0 END),0) FROM pos_cash_movements m JOIN pos_shifts sh ON sh.restaurant_id=m.restaurant_id AND sh.id=m.shift_id WHERE m.restaurant_id=? AND `+scope.movementWhere, movementArgs...).Scan(&out.CashIn, &out.CashOut); err != nil {
@@ -227,7 +284,8 @@ func (s *Server) handleBOPOSCashSummary(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusNotFound, "Shift not found")
 		return
 	}
-	summary, err := s.loadPOSCashSummary(r.Context(), s.db, a.ActiveRestaurantID, shiftID)
+	closureType := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("closureType")))
+	summary, err := s.loadPOSCashClosureSummary(r.Context(), s.db, a.ActiveRestaurantID, shiftID, closureType)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash summary")
 		return
@@ -406,7 +464,7 @@ func (s *Server) handleBOPOSCashClosureCreate(w http.ResponseWriter, r *http.Req
 		httpx.WriteError(w, http.StatusConflict, "Shift is already closed")
 		return
 	}
-	summary, err := s.loadPOSCashSummary(r.Context(), tx, a.ActiveRestaurantID, shiftID)
+	summary, err := s.loadPOSCashClosureSummary(r.Context(), tx, a.ActiveRestaurantID, shiftID, in.ClosureType)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error calculating cash closure")
 		return

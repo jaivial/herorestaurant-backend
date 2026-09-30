@@ -63,7 +63,14 @@ func (s *Server) botToolGetSpecialDateInfo(ctx context.Context, restaurantID int
 		if m.MenuID.Valid && m.MenuType == "special" {
 			delete(entry, "unit_price")
 			delete(entry, "adelanto_amount")
-			entry["sections"] = s.loadSpecialDateMenuSections(ctx, restaurantID, m.ID, m.MenuID.Int64, true)
+			// Coordination id: special_date_section_online_v1 - the bot books
+			// online, so it only offers sections enabled for online booking.
+			all := s.loadSpecialDateMenuSections(ctx, restaurantID, m.ID, m.MenuID.Int64, true)
+			online := onlineSpecialDateMenuSections(all)
+			if len(all) > 0 && len(online) == 0 {
+				continue
+			}
+			entry["sections"] = online
 		}
 		menuPayload = append(menuPayload, entry)
 	}

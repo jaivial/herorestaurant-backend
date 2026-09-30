@@ -433,14 +433,10 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	// The open shift is locked once for this ticket; the bulk day-close checkout
 	// resolves it a single time for the whole batch.
-	var shiftID *int64
-	if settings.RequireOpenShift {
-		var currentShift int64
-		if err = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1 FOR UPDATE`, a.ActiveRestaurantID).Scan(&currentShift); err != nil {
-			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Open POS shift required", "code": "SHIFT_REQUIRED"})
-			return
-		}
-		shiftID = &currentShift
+	shiftID, shiftErr := posCheckoutShift(r.Context(), tx, a.ActiveRestaurantID, settings.RequireOpenShift)
+	if shiftErr != nil {
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Open POS shift required", "code": "SHIFT_REQUIRED"})
+		return
 	}
 	result, cerr := s.checkoutTicketInTx(r.Context(), tx, a.ActiveRestaurantID, ticketID, in.Payments, in.IdempotencyKey, in.ExpectedVersion, in.CloseVisit, settings, shiftID, a.User.ID)
 	if cerr != nil {
@@ -518,14 +514,10 @@ func (s *Server) handleBOPOSCashDayBulkCheckout(w http.ResponseWriter, r *http.R
 		return
 	}
 	defer tx.Rollback()
-	var shiftID *int64
-	if settings.RequireOpenShift {
-		var currentShift int64
-		if err = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1 FOR UPDATE`, a.ActiveRestaurantID).Scan(&currentShift); err != nil {
-			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Open POS shift required", "code": "SHIFT_REQUIRED"})
-			return
-		}
-		shiftID = &currentShift
+	shiftID, shiftErr := posCheckoutShift(r.Context(), tx, a.ActiveRestaurantID, settings.RequireOpenShift)
+	if shiftErr != nil {
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Open POS shift required", "code": "SHIFT_REQUIRED"})
+		return
 	}
 	rows, err := tx.QueryContext(r.Context(), `SELECT t.id, t.total_gross_cents FROM pos_tickets t JOIN pos_visits v ON v.id=t.visit_id WHERE v.restaurant_id=? AND v.service_date=? AND v.status='OPEN' AND t.status='OPEN' ORDER BY t.id FOR UPDATE`, a.ActiveRestaurantID, date)
 	if err != nil {
@@ -886,7 +878,7 @@ func (s *Server) handleBOPOSCoversReport(w http.ResponseWriter, r *http.Request)
 	if to == "" {
 		to = time.Now().Format("2006-01-02")
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT keys.service_date,keys.service_type,keys.pos_covers,keys.adjustments,COALESCE(a.covers,0),COALESCE(a.source,'') FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END) pos_covers,COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND c.service_type=v.service_type),0) adjustments FROM pos_visits v WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date,v.service_type) keys LEFT JOIN stock_affluence_daily a ON a.restaurant_id=? AND a.service_date=keys.service_date AND a.service_type=keys.service_type ORDER BY keys.service_date DESC,keys.service_type`, a.ActiveRestaurantID, from, to, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT ck.service_date,ck.service_type,ck.pos_covers,ck.adjustments,COALESCE(a.covers,0),COALESCE(a.source,'') FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END) pos_covers,COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND c.service_type=v.service_type),0) adjustments FROM pos_visits v WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date,v.service_type) ck LEFT JOIN stock_affluence_daily a ON a.restaurant_id=? AND a.service_date=ck.service_date AND a.service_type=ck.service_type ORDER BY ck.service_date DESC,ck.service_type`, a.ActiveRestaurantID, from, to, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading covers")
 		return
@@ -903,4 +895,22 @@ func (s *Server) handleBOPOSCoversReport(w http.ResponseWriter, r *http.Request)
 		items = append(items, map[string]any{"date": normalizePOSDate(date), "serviceType": service, "posCovers": pos, "adjustments": adjustments, "computedCovers": aggregatePOSCovers(nil, pos+adjustments), "aggregateCovers": aggregate, "source": source})
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
+}
+
+// posCheckoutShift returns the open shift a sale is attributed to. The shift is
+// attached whenever one is open, so Cierre X/Y/Z always include the sales rung
+// up during it; requireOpenShift only decides whether a missing shift blocks
+// the sale. Before this, sales were attributed only when the setting was on,
+// so every closure reported 0 sales on restaurants with it off.
+// Coordination id: pos_checkout_shift_attribution_v1
+func posCheckoutShift(ctx context.Context, tx *sql.Tx, restaurantID int, required bool) (*int64, error) {
+	var currentShift int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1 FOR UPDATE`, restaurantID).Scan(&currentShift)
+	if err == nil {
+		return &currentShift, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) && !required {
+		return nil, nil
+	}
+	return nil, err
 }

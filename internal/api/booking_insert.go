@@ -359,7 +359,7 @@ func (s *Server) prepareFrontBooking(r *http.Request, restaurantID int) (*prepar
 				req.Menus[i].AdelantoPaymentMethod = &method
 			}
 		}
-		snap, prereserva, err := s.resolveSpecialBookingInput(r.Context(), restaurantID, resDate, partySize, &req)
+		snap, prereserva, err := s.resolveSpecialBookingInput(r.Context(), restaurantID, resDate, partySize, &req, true)
 		if err != nil {
 			return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
 				"success": false,

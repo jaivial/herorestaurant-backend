@@ -270,12 +270,18 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 //
 // When the caller passes nil `req`, the function returns nil, nil, nil — the
 // caller should treat the booking as a regular non-special one.
+//
+// onlineOnly is true for the public booking form: special-menu sections the
+// backoffice disabled for online booking are rejected (coordination id:
+// special_date_section_online_v1). Backoffice edits pass false and may still
+// book any section.
 func (s *Server) resolveSpecialBookingInput(
 	ctx context.Context,
 	restaurantID int,
 	date string,
 	partySize int,
 	req *specialBookingReq,
+	onlineOnly bool,
 ) (*specialBookingSnapshot, *bool, error) {
 	if req == nil {
 		return nil, nil, nil
@@ -349,7 +355,7 @@ func (s *Server) resolveSpecialBookingInput(
 			if settings.AdelantoUnified && settings.AdelantoUnifiedAmount != nil {
 				unified = settings.AdelantoUnifiedAmount
 			}
-			lines, count, err := s.specialMenuSectionSnapshotLines(ctx, restaurantID, rec, m, acceptedMethods, unified)
+			lines, count, err := s.specialMenuSectionSnapshotLines(ctx, restaurantID, rec, m, acceptedMethods, unified, onlineOnly)
 			if err != nil {
 				return nil, nil, err
 			}

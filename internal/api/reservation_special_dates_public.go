@@ -162,20 +162,20 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	var id int64
 	var isActive, prereservaEnabled, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
 	var title string
-	var description sql.NullString
+	var description, customNotice sql.NullString
 	var maxPerTable sql.NullInt64
 	var adelantoMethodsRaw sql.NullString
 	var adelantoUnifiedAmount sql.NullFloat64
 
 	err := s.db.QueryRowContext(r.Context(), `
-		SELECT id, is_active, title, description, prereserva_enabled,
+		SELECT id, is_active, title, description, custom_notice, prereserva_enabled,
 		       max_per_table_enabled, max_per_table, requires_adelanto,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
 	`, restaurantID, date).Scan(
-		&id, &isActive, &title, &description, &prereservaEnabled,
+		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled,
 		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
 	)
@@ -214,10 +214,13 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	}
 
 	resp := map[string]any{
-		"date":                  date,
-		"is_active":             true,
-		"title":                 title,
-		"description":           description.String,
+		"date":        date,
+		"is_active":   true,
+		"title":       title,
+		"description": description.String,
+		// Coordination id: special_date_custom_notice_v1 - warn notice
+		// shown on step 2 of the special-date booking wizard.
+		"custom_notice":         strings.TrimSpace(customNotice.String),
 		"prereserva_enabled":    prereservaEnabled != 0,
 		"max_per_table_enabled": maxPerTableEnabled != 0,
 		// Coordination id: mobility_issues_v1
@@ -308,13 +311,24 @@ func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID in
 	// Coordination id: special_date_section_menus_v1 - a special-type menu is
 	// booked per section: expose the sections with price, adelanto and the
 	// principales guests pick from.
+	bookable := out[:0]
 	for _, row := range out {
 		menuID, ok := row["menu_id"].(int64)
 		if !ok || !s.specialDateMenuIsSpecialType(ctx, restaurantID, menuID) {
+			bookable = append(bookable, row)
 			continue
 		}
 		row["is_special_menu"] = true
-		row["sections"] = s.loadSpecialDateMenuSections(ctx, restaurantID, row["id"].(int64), menuID, true)
+		// Coordination id: special_date_section_online_v1 - sections disabled
+		// for online booking never reach the public wizard, and a special
+		// menu whose sections are all disabled is not offered online.
+		all := s.loadSpecialDateMenuSections(ctx, restaurantID, row["id"].(int64), menuID, true)
+		online := onlineSpecialDateMenuSections(all)
+		if len(all) > 0 && len(online) == 0 {
+			continue
+		}
+		row["sections"] = online
+		bookable = append(bookable, row)
 	}
-	return out, nil
+	return bookable, nil
 }
