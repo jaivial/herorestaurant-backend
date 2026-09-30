@@ -3,7 +3,7 @@ package api
 import "testing"
 
 // The backoffice booking editor lists every canonical payment method of the
-// SPEC ÃÂ¢ÃÃ2 enum, so an operator can record a deposit collected by card, bizum,
+// SPEC 2 enum, so an operator can record a deposit collected by card, bizum,
 // transferencia, efectivo or stripe even when the special date only advertises
 // a subset. The snapshot validator must therefore accept the whole enum for
 // backoffice edits while the public booking form stays restricted to the
