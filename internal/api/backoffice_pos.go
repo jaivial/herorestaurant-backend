@@ -799,7 +799,9 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	}
 	// updated_at is sent so clients can order lines by most recent change
 	// (quantity edit, comp/uncomp, note). It rides along with the existing
-	// fields, so no extra query is needed.
+	// fields, so no extra query is needed. The ORDER BY id is deliberate and
+	// stays: the client owns the display order, and a stable server order keeps
+	// this payload deterministic.
 	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
 	if err != nil {
 		return nil, err
