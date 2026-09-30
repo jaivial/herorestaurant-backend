@@ -11,7 +11,7 @@ import (
 
 // posBillingMethods is the fixed order of tenders in the day billing summary,
 // so the UI never has to guess which methods exist.
-var posBillingMethods = []string{"CASH", "CARD", "BANK", "OTHER"}
+var posBillingMethods = []string{"CASH", "CARD", "BIZUM", "BANK", "OTHER"}
 
 // handleBOPOSCashDayBilling answers "how much has this day invoiced so far".
 //
@@ -160,11 +160,11 @@ func (s *Server) handleBOPOSCashDayBilling(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// posBillingMethodKey folds any unknown tender into OTHER so the four buckets
+// posBillingMethodKey folds any unknown tender into OTHER so the five buckets
 // always add up to the closed amount.
 func posBillingMethodKey(method string) string {
 	switch method {
-	case "CASH", "CARD", "BANK":
+	case "CASH", "CARD", "BIZUM", "BANK":
 		return method
 	default:
 		return "OTHER"

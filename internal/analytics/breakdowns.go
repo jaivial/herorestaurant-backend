@@ -60,6 +60,8 @@ func paymentMethodLabel(method string) string {
 		return "Efectivo"
 	case "CARD":
 		return "Tarjeta"
+	case "BIZUM":
+		return "Bizum"
 	case "BANK":
 		return "Transferencia"
 	default:
