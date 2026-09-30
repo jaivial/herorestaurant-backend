@@ -46,7 +46,7 @@ type posStockSnapshot struct {
 }
 
 func validPOSPaymentMethod(value string) bool {
-	return validPOSMode(strings.ToUpper(strings.TrimSpace(value)), "CASH", "CARD", "BANK", "OTHER")
+	return validPOSMode(strings.ToUpper(strings.TrimSpace(value)), "CASH", "CARD", "BIZUM", "BANK", "OTHER")
 }
 
 func (s *Server) rebuildPOSAffluenceKey(ctx context.Context, tx *sql.Tx, restaurantID int, date, serviceType string) (int, error) {

@@ -391,13 +391,13 @@ var assistantToolRegistry = []assistantTool{
 	},
 	{
 		Name: "pos_payment_create", Description: "Registra un pago POS en ticket del restaurante activo. Requiere confirmación.", Write: true, Confirm: true,
-		Schema:         json.RawMessage(`{"type":"object","properties":{"ticket_id":{"type":"integer"},"method":{"type":"string","enum":["CASH","CARD","BANK","OTHER"]},"amount_cents":{"type":"integer"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","method","amount_cents","idempotency_key","confirmed"]}`),
+		Schema:         json.RawMessage(`{"type":"object","properties":{"ticket_id":{"type":"integer"},"method":{"type":"string","enum":["CASH","CARD","BIZUM","BANK","OTHER"]},"amount_cents":{"type":"integer"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","method","amount_cents","idempotency_key","confirmed"]}`),
 		BackofficeOnly: true, Section: "pos",
 		Handler: posMutationHandler("pos_payment_create"),
 	},
 	{
 		Name: "pos_refund_create", Description: "Reembolsa un ticket POS. Requiere confirmación.", Write: true, Confirm: true,
-		Schema:         json.RawMessage(`{"type":"object","properties":{"ticket_id":{"type":"integer"},"amount_cents":{"type":"integer"},"reason":{"type":"string"},"payment_method":{"type":"string","enum":["CASH","CARD","BANK","OTHER"]},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","amount_cents","reason","payment_method","idempotency_key","confirmed"]}`),
+		Schema:         json.RawMessage(`{"type":"object","properties":{"ticket_id":{"type":"integer"},"amount_cents":{"type":"integer"},"reason":{"type":"string"},"payment_method":{"type":"string","enum":["CASH","CARD","BIZUM","BANK","OTHER"]},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ticket_id","amount_cents","reason","payment_method","idempotency_key","confirmed"]}`),
 		BackofficeOnly: true, Section: "pos",
 		Handler: posMutationHandler("pos_refund_create"),
 	},
