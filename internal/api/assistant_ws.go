@@ -405,6 +405,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: blocks})
 		results := make([]map[string]any, 0, len(result.ToolUses))
 		for _, use := range result.ToolUses {
+			// Live trace for the chat (ThinkingState rows): the tool name only, never the
+			// input (it can carry customer data). [FORKY-ADMIN-TOOLS-S01]
+			_ = c.writeJSON(map[string]any{"type": "status", "state": "tool", "tool": use.Name})
 			// Bound every tool independently so a slow catalog/analytics query cannot
 			// consume the whole conversation or hold the websocket indefinitely.
 			toolCtx, cancelTool := context.WithTimeout(ctx, assistantToolTimeout(use.Name))
