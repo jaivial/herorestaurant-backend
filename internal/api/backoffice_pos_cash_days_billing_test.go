@@ -33,6 +33,10 @@ func posCashDayBillingSeed(t *testing.T, s *Server) {
 		// Cancelled visit: never counts.
 		`INSERT INTO pos_visits(id,restaurant_id,cash_day_id,channel,table_id,service_date,service_type,covers,status,opened_by,open_idempotency_key,opened_at) VALUES(63,1,910,'DINE_IN',5,'2024-04-10','DINNER',2,'CANCELLED',7,'b63','2024-04-10 20:00:00')`,
 		`INSERT INTO pos_tickets(id,restaurant_id,visit_id,ticket_number,creation_idempotency_key,subtotal_gross_cents,total_gross_cents,refunded_cents,status,opened_by) VALUES(75,1,63,'B-6','bt75',4000,4000,0,'OPEN',7)`,
+		// ...even when it holds a paid ticket with a payment and a refund.
+		`INSERT INTO pos_tickets(id,restaurant_id,visit_id,ticket_number,creation_idempotency_key,subtotal_gross_cents,total_gross_cents,refunded_cents,status,opened_by) VALUES(77,1,63,'B-8','bt77',3000,3000,1000,'PARTIALLY_REFUNDED',7)`,
+		`INSERT INTO pos_payments(restaurant_id,ticket_id,method,amount_cents,tip_cents,idempotency_key,received_by) VALUES(1,77,'CASH',3000,200,'bp5',7)`,
+		`INSERT INTO pos_refunds(restaurant_id,ticket_id,amount_cents,reason,payment_method,idempotency_key,created_by) VALUES(1,77,1000,'Error','CASH','br2',7)`,
 		// Another day must not leak in.
 		`INSERT INTO pos_visits(id,restaurant_id,channel,table_id,service_date,service_type,covers,status,opened_by,open_idempotency_key,opened_at) VALUES(64,1,'DINE_IN',5,'2024-04-11','LUNCH',2,'OPEN',7,'b64','2024-04-11 13:00:00')`,
 		`INSERT INTO pos_tickets(id,restaurant_id,visit_id,ticket_number,creation_idempotency_key,subtotal_gross_cents,total_gross_cents,refunded_cents,status,opened_by) VALUES(76,1,64,'B-7','bt76',7777,7777,0,'OPEN',7)`,

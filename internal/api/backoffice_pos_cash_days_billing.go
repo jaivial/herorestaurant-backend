@@ -88,12 +88,15 @@ func (s *Server) handleBOPOSCashDayBilling(w http.ResponseWriter, r *http.Reques
 		byMethod[method] = 0
 	}
 	var tipsCents int64
+	// Same visit/ticket scope as closedCents, so the four tenders always add up
+	// to it: payments on a still-OPEN ticket stay under openCents, and a
+	// cancelled visit never counts on either side.
 	payRows, err := s.db.QueryContext(ctx, `
 		SELECT p.method,COALESCE(SUM(p.amount_cents),0),COALESCE(SUM(p.tip_cents),0)
 		FROM pos_payments p
 		JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id
 		JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id
-		WHERE p.restaurant_id=? AND v.service_date=? AND p.status='CAPTURED'
+		WHERE p.restaurant_id=? AND v.service_date=? AND v.status<>'CANCELLED' AND p.status='CAPTURED'
 		  AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')
 		GROUP BY p.method`, restaurantID, date)
 	if err != nil {
@@ -121,7 +124,7 @@ func (s *Server) handleBOPOSCashDayBilling(w http.ResponseWriter, r *http.Reques
 		FROM pos_refunds r
 		JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id
 		JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id
-		WHERE r.restaurant_id=? AND v.service_date=? AND r.status='COMPLETED'
+		WHERE r.restaurant_id=? AND v.service_date=? AND v.status<>'CANCELLED' AND r.status='COMPLETED'
 		GROUP BY r.payment_method`, restaurantID, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading day refunds")
