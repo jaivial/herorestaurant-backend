@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,6 +35,11 @@ func (s *Server) ChatGPTPluginRoutes() http.Handler {
 	r.Post("/tools/{name}", s.handleChatGPTPluginInvoke)
 	return r
 }
+
+// chatgptPluginMaxBodyBytes bounds an optional POST body. The manifest only
+// publishes query parameters, so a body is a convenience for richer clients and
+// must never be able to grow without limit.
+const chatgptPluginMaxBodyBytes = 64 << 10
 
 // chatgptPluginRateLimitBurst caps the per-credential request rate on the
 // authenticated surface, so a leaked or runaway token cannot hammer the
@@ -229,10 +235,11 @@ func chatgptPluginInputFromRequest(r *http.Request) (json.RawMessage, error) {
 	}
 
 	// A POST body (when present) wins over query parameters, so clients that
-	// send richer payloads are not truncated by the flat manifest schema.
-	if r.Method == http.MethodPost && r.ContentLength > 0 {
+	// send richer payloads are not truncated by the flat manifest schema. The
+	// reader is bounded so a large or endless body cannot exhaust memory.
+	if r.Method == http.MethodPost && r.Body != nil {
 		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, chatgptPluginMaxBodyBytes)).Decode(&body); err == nil {
 			for k, v := range body {
 				input[k] = v
 			}
