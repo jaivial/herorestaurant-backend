@@ -121,18 +121,18 @@ func chatgptPluginSpec(baseURL string) map[string]any {
 func chatgptPluginOperations() map[string]map[string]any {
 	ops := make(map[string]map[string]any, len(assistantToolRegistry))
 	for _, t := range assistantToolRegistry {
-		params, required := chatgptPluginParameters(t.Schema)
-		summary := t.Description
-		operationID := t.Name
+		params := chatgptPluginParameters(t.Schema)
+		// The summary states the confirmation contract, so the model knows a
+		// write is two-step before it ever calls the operation.
+		summary := firstNonEmpty(t.Description, t.Name)
 		doc := "Read operation. The response is the tool result JSON."
 		if t.Write {
 			doc = "Write operation. Call it without confirmed to receive a confirmation_token, then call it again with confirmed=true and that token to apply the change."
-			operationID = t.Name
-			summary = strings.TrimSpace(t.Description + " (requiere confirmación)")
+			summary = firstNonEmpty(strings.TrimSpace(t.Description+" (requiere confirmaci\u00f3n)"), t.Name)
 		}
 		ops["/tools/"+t.Name] = map[string]any{
-			"operationId": operationID,
-			"summary":     firstNonEmpty(summary, t.Name),
+			"operationId": t.Name,
+			"summary":     summary,
 			"description": doc,
 			"tags":        []any{chatgptPluginTag(t.Section)},
 			"parameters":  params,
@@ -150,17 +150,14 @@ func chatgptPluginOperations() map[string]map[string]any {
 				"403": chatgptPluginErrorResponse("The token's role does not grant this section"),
 			},
 		}
-		_ = required
 	}
 	return ops
 }
 
 // chatgptPluginParameters flattens a tool's JSON schema into OpenAPI query
-// parameters. The required list is returned alongside so the runtime can tell
-// a missing mandatory argument apart from an omitted optional one.
-func chatgptPluginParameters(schema json.RawMessage) ([]any, []string) {
+// parameters, marking the mandatory ones as required.
+func chatgptPluginParameters(schema json.RawMessage) []any {
 	params := []any{}
-	requiredNames := []string{}
 
 	var parsed struct {
 		Properties map[string]struct {
@@ -171,14 +168,12 @@ func chatgptPluginParameters(schema json.RawMessage) ([]any, []string) {
 		Required []string `json:"required"`
 	}
 	if err := json.Unmarshal(schema, &parsed); err != nil {
-		return params, requiredNames
+		return params
 	}
-	required := map[string]bool{}
+	required := make(map[string]bool, len(parsed.Required))
 	for _, name := range parsed.Required {
 		required[name] = true
-		requiredNames = append(requiredNames, name)
 	}
-	sort.Strings(requiredNames)
 
 	names := make([]string, 0, len(parsed.Properties))
 	for name := range parsed.Properties {
@@ -200,7 +195,7 @@ func chatgptPluginParameters(schema json.RawMessage) ([]any, []string) {
 		}
 		params = append(params, param)
 	}
-	return params, requiredNames
+	return params
 }
 
 // chatgptPluginParamType maps a JSON-schema type to the OpenAPI scalar types
