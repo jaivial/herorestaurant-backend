@@ -36,11 +36,18 @@ func mcpOAuthError(w http.ResponseWriter, status int, code, desc string) {
 	httpx.WriteJSON(w, status, map[string]any{"error": code, "error_description": desc})
 }
 
+// mcpIssuerSuffix is the path every MCP document is served under. The issuer
+// must be the full public URL of the document that declares it, not the bare
+// origin: an MCP client resolves the metadata and registration endpoints
+// relative to the issuer, so a bare origin sends it to a path this server does
+// not serve and dynamic client registration fails.
+const mcpIssuerSuffix = "/mcp"
+
 // HandleMCPProtectedResourceMetadata publishes the metadata an MCP client needs
 // to discover where to authenticate. This is what points ChatGPT at the
 // authorization and token endpoints.
 func (s *Server) HandleMCPProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
-	base := s.chatgptPluginBaseURL(r)
+	base := s.chatgptPluginBaseURL(r) + mcpIssuerSuffix
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"resource":                 base,
 		"authorization_servers":    []string{base},
@@ -52,12 +59,12 @@ func (s *Server) HandleMCPProtectedResourceMetadata(w http.ResponseWriter, r *ht
 // HandleMCPAuthorizationServerMetadata publishes the AS capabilities, including
 // the PKCE methods this server will accept.
 func (s *Server) HandleMCPAuthorizationServerMetadata(w http.ResponseWriter, r *http.Request) {
-	base := s.chatgptPluginBaseURL(r)
+	base := s.chatgptPluginBaseURL(r) + mcpIssuerSuffix
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"issuer":                                base,
-		"authorization_endpoint":                base + "/mcp/oauth/authorize",
-		"token_endpoint":                        base + "/mcp/oauth/token",
-		"registration_endpoint":                 base + "/mcp/oauth/register",
+		"authorization_endpoint":                base + "/oauth/authorize",
+		"token_endpoint":                        base + "/oauth/token",
+		"registration_endpoint":                 base + "/oauth/register",
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"authorization_code"},
 		"code_challenge_methods_supported":      []string{"S256"},
@@ -226,7 +233,24 @@ func (s *Server) MountMCP(r chi.Router) {
 		mr.Post("/", s.HandleMCP)
 	})
 
-	// Standard discovery documents at the root, where MCP clients look first.
-	r.Get("/.well-known/oauth-authorization-server", s.HandleMCPAuthorizationServerMetadata)
-	r.Get("/.well-known/oauth-authorization-server/mcp", s.HandleMCPAuthorizationServerMetadata)
+	// Discovery documents at the root, where MCP clients look first. They serve
+	// the same handler, so both spellings of the document stay in agreement.
+	//
+	// On the backoffice origin the root path is owned by the SSR app, so a miss
+	// there would answer with an HTML 404 that a client cannot parse as
+	// metadata. A permanent redirect to the canonical /mcp location turns that
+	// miss into a working discovery hop.
+	for _, pattern := range []string{
+		"/.well-known/oauth-authorization-server",
+		"/.well-known/oauth-protected-resource",
+		"/.well-known/oauth-authorization-server/mcp",
+		"/.well-known/oauth-protected-resource/mcp",
+	} {
+		r.Get(pattern, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, mcpIssuerSuffix+r.URL.Path, http.StatusPermanentRedirect)
+		})
+		r.Post(pattern, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, mcpIssuerSuffix+r.URL.Path, http.StatusPermanentRedirect)
+		})
+	}
 }
