@@ -81,7 +81,7 @@ func (s *Server) HandleMCP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "Use POST")
 		return
 	}
-	auth, err := s.mcpRequireAuth(r)
+	auth, authedCtx, err := s.mcpRequireAuth(r)
 	if err != nil {
 		// OAuth 2.1: a 401 carrying WWW-Authenticate is what tells an MCP client
 		// to start the authorization flow rather than retrying blindly.
@@ -89,6 +89,7 @@ func (s *Server) HandleMCP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	r = r.WithContext(authedCtx)
 
 	var req mcpJSONRPCRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, chatgptPluginMaxBodyBytes)).Decode(&req); err != nil {

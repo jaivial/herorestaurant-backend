@@ -295,6 +295,10 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	for k, v := range in.Query {
 		q.Set(k, fmt.Sprint(v))
 	}
+	// The admin subrouter is mounted at /admin, and the /api prefix rewrite runs
+	// after chi has already matched the route, so the replay must address the
+	// mounted path directly. Addressing /api/admin here is matched against the
+	// tree as-is and answers 404.
 	target := "/admin" + path
 	if len(q) > 0 {
 		target += "?" + q.Encode()
@@ -305,9 +309,11 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	} else {
 		body = strings.NewReader("")
 	}
-	// Inherits the caller's deadline (assistantToolTimeout): a slow route is cancelled
-	// with the turn instead of running on after the model gave up on it.
-	callCtx, cancel := context.WithTimeout(ctx, assistantToolTimeout("admin_call"))
+	// The replay must not inherit the caller's request context: it carries the
+	// inbound connection's routing state and cancellation, which make the router
+	// answer 404 instead of dispatching. The panel session identity travels
+	// through the cookie, and the deadline keeps the call bounded.
+	callCtx, cancel := context.WithTimeout(context.Background(), assistantToolTimeout("admin_call"))
 	defer cancel()
 	req := httptest.NewRequest(op.Method, target, body).WithContext(callCtx)
 	req.Header.Set("Content-Type", "application/json")
