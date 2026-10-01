@@ -218,6 +218,7 @@ func (s *Server) MountMCP(r chi.Router) {
 	r.Route("/mcp", func(mr chi.Router) {
 		mr.Get("/.well-known/oauth-protected-resource", s.HandleMCPProtectedResourceMetadata)
 		mr.Post("/.well-known/oauth-protected-resource", s.HandleMCPProtectedResourceMetadata)
+		mr.Get("/.well-known/oauth-authorization-server", s.HandleMCPAuthorizationServerMetadata)
 		mr.Post("/oauth/register", s.HandleMCPRegister)
 		mr.Get("/oauth/authorize", s.HandleMCPAuthorize)
 		mr.Post("/oauth/token", s.HandleMCPToken)
