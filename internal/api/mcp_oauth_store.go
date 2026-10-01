@@ -114,15 +114,28 @@ func (s *Server) mcpRedeemCode(ctx context.Context, code, clientID, verifier str
 // mcpIssueToken mints an access token bound to the authorized user and
 // restaurant. Only the digest is stored.
 func (s *Server) mcpIssueToken(ctx context.Context, clientID string, userID, restaurantID int, scope string) (string, error) {
-	token, _, err := newBOSessionToken()
+	token, tokenSHA, err := newBOSessionToken()
 	if err != nil {
 		return "", err
 	}
+	expires := time.Now().Add(mcpTokenTTL)
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO mcp_oauth_tokens (token_hash, client_id, user_id, restaurant_id, scope, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, sha256Hex(token), clientID, userID, restaurantID, nullString(scope), time.Now().Add(mcpTokenTTL))
+	`, tokenSHA, clientID, userID, restaurantID, nullString(scope), expires)
 	if err != nil {
+		return "", err
+	}
+	// The access token doubles as a server-side panel session. admin_call
+	// replays a panel route through the real router, and those routes
+	// authenticate on the session cookie, so without a session row the whole
+	// admin catalogue would be unreachable over MCP. It is bound to the same
+	// user and restaurant, carries the same expiry, and is removed whenever the
+	// access token is revoked, so it can never outlive the grant.
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO bo_sessions (token_sha256, user_id, active_restaurant_id, expires_at)
+		VALUES (?, ?, ?, ?)
+	`, tokenSHA, userID, restaurantID, expires); err != nil {
 		return "", err
 	}
 	return token, nil

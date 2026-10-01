@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -24,12 +25,24 @@ import (
 // mcpRequireAuth resolves the bearer access token into a boAuth. It reuses the
 // plugin's own semantics so an MCP session is indistinguishable from a plugin
 // or backoffice session once authorized.
-func (s *Server) mcpRequireAuth(r *http.Request) (boAuth, error) {
+//
+// The access token is also placed in the request context as the panel session
+// token. admin_call replays a panel route through the real router, and that route
+// authenticates on the session cookie, so without this the whole admin catalogue
+// was unreachable over MCP. The token is already scoped to one user and one
+// restaurant, and every gate the replayed route applies is re-evaluated, so
+// carrying it grants nothing the authorization did not already grant.
+func (s *Server) mcpRequireAuth(r *http.Request) (boAuth, context.Context, error) {
 	raw := strings.TrimSpace(r.Header.Get("Authorization"))
 	if len(raw) < 7 || !strings.EqualFold(raw[:7], "Bearer ") {
-		return boAuth{}, errChatGPTPluginUnauthorized
+		return boAuth{}, r.Context(), errChatGPTPluginUnauthorized
 	}
-	return s.mcpResolveToken(r.Context(), raw[7:])
+	token := raw[7:]
+	auth, err := s.mcpResolveToken(r.Context(), token)
+	if err != nil {
+		return auth, r.Context(), err
+	}
+	return auth, withBOSessionToken(r.Context(), token), nil
 }
 
 func mcpOAuthError(w http.ResponseWriter, status int, code, desc string) {
@@ -207,7 +220,10 @@ func (s *Server) HandleMCPToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleMCPRevoke(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	if raw := r.PostFormValue("token"); raw != "" {
-		_, _ = s.db.ExecContext(r.Context(), `UPDATE mcp_oauth_tokens SET revoked_at = NOW() WHERE token_hash = ?`, sha256Hex(raw))
+		hash := sha256Hex(raw)
+		_, _ = s.db.ExecContext(r.Context(), `UPDATE mcp_oauth_tokens SET revoked_at = NOW() WHERE token_hash = ?`, hash)
+		// The panel session shares the token hash, so it dies with it.
+		_, _ = s.db.ExecContext(r.Context(), `DELETE FROM bo_sessions WHERE token_sha256 = ?`, hash)
 	}
 	// RFC 7009 requires 200 even for an unknown token.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": true})
