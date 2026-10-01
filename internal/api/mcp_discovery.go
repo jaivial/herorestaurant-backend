@@ -1,7 +1,5 @@
 package api
 
-import "strings"
-
 // Coordination id: mcp_server_v1
 //
 // One table describing where the OAuth discovery documents live, so the root
@@ -46,18 +44,4 @@ var mcpDiscoveryPaths = []mcpDiscoveryRedirect{
 	// /mcp/.well-known/.../mcp target — cannot happen.
 	{from: mcpPRPath + mcpIssuerSuffix, to: mcpIssuerSuffix + mcpPRPath},
 	{from: mcpASPath + mcpIssuerSuffix, to: mcpIssuerSuffix + mcpASPath},
-}
-
-// mcpDiscoveryTarget resolves the canonical document URL for a root spelling,
-// falling back to the issuer-prefixed path for any spelling not in the table.
-func mcpDiscoveryTarget(path string) string {
-	for _, d := range mcpDiscoveryPaths {
-		if d.from == path {
-			return d.to
-		}
-	}
-	if strings.HasSuffix(strings.TrimSuffix(path, "/"), mcpIssuerSuffix) {
-		return path
-	}
-	return mcpIssuerSuffix + path
 }
