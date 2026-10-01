@@ -137,18 +137,29 @@ func (s *Server) mcpRegistrationResponse(w http.ResponseWriter, r *http.Request)
 		"grant_types":                []string{"authorization_code"},
 		"response_types":             []string{"code"},
 		"scope":                      firstNonEmpty(strings.TrimSpace(in.Scope), mcpScopeName),
-		"redirect_uris":              mcpRedirectURIList(in.RedirectURIs),
+		"redirect_uris":              s.mcpRedirectURIResponse(r, in.RedirectURIs),
 		// RFC 7592 de-registration, so a client can withdraw its registration
 		// without an operator action.
 		"registration_client_uri": s.chatgptPluginBaseURL(r) + mcpIssuerSuffix + "/oauth/register/" + clientID,
 	})
 }
 
+// mcpRedirectURIResponse is the client-facing view of the registered
+// callbacks. The SELF sentinel is resolved to this deployment's own callback
+// here, so the URI echoed to the client is one it can actually be redirected
+// to, while the stored value stays origin independent.
+func (s *Server) mcpRedirectURIResponse(r *http.Request, uris []string) []string {
+	out := mcpRedirectURIList(uris)
+	if len(out) == 1 && out[0] == mcpRedirectURISentinel {
+		return []string{s.chatgptPluginBaseURL(r) + mcpIssuerSuffix + "/oauth/callback"}
+	}
+	return out
+}
+
 // mcpRedirectURIList normalises the registered callbacks. A client that sends
-// none is answered with its own authorization endpoint, which is the single
-// callback this server can always complete: the consent screen redirects the
-// code back through Instatic itself, so the flow works even for a client that
-// never declared a callback of its own.
+// none is recorded as SELF, the single callback this server can always
+// complete: the consent screen redirects the code back through Instatic
+// itself, so the flow works even for a client that never declared a callback.
 func mcpRedirectURIList(uris []string) []string {
 	out := make([]string, 0, len(uris))
 	for _, u := range uris {

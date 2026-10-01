@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -49,13 +48,10 @@ type mcpOAuthCode struct {
 
 // mcpRedirectURISentinel marks a client that declared no callback of its own.
 // The consent screen then redirects the code through Instatic itself, which is
-// the only callback this server can always complete.
+// the only callback this server can always complete. The stored value stays the
+// sentinel so a client registered on one host is not pinned to that host's
+// origin; the concrete URL is resolved per request when the document is built.
 const mcpRedirectURISentinel = "SELF"
-
-// mcpSelfRedirectURI is the callback used for a client with no registered one.
-func (s *Server) mcpSelfRedirectURI(r *http.Request) string {
-	return s.chatgptPluginBaseURL(r) + mcpIssuerSuffix + "/oauth/callback"
-}
 
 // mcpEnsureClient registers the public client an MCP app uses. Public clients
 // have no secret; PKCE S256 is what protects the code exchange. The registered
