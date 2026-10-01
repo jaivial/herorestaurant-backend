@@ -20,7 +20,11 @@ import (
 //
 // Coordination id: mcp_server_v1
 
-const mcpProtocolVersion = "2025-06-18"
+const (
+	mcpProtocolVersion = "2025-06-18"
+	mcpServerName      = "villacarmen"
+	mcpServerVersion   = "1.0.0"
+)
 
 // errMCPToolForbidden is returned when a token is valid but the caller's role
 // does not grant the requested tool.
@@ -90,6 +94,13 @@ func (s *Server) HandleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(authedCtx)
+	s.handleMCPFramed(w, r, auth)
+}
+
+// handleMCPFramed dispatches one authenticated JSON-RPC request. Split out from
+// the auth gate so the protocol framing is one unit: which methods exist, and
+// which of them are answered with a body.
+func (s *Server) handleMCPFramed(w http.ResponseWriter, r *http.Request, auth boAuth) {
 
 	var req mcpJSONRPCRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, chatgptPluginMaxBodyBytes)).Decode(&req); err != nil {
@@ -101,14 +112,21 @@ func (s *Server) HandleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A JSON-RPC notification carries no id and expects no response body: the
+	// handshake notification every MCP client sends after initialize is exactly
+	// that. Answering one with a JSON-RPC result is a protocol violation, and
+	// clients that validate the reply treat it as a failed handshake and drop
+	// the session instead of proceeding to tools/list. 204 is the only reply
+	// that satisfies both an id-less notification and a keepalive ping.
+	if len(req.ID) == 0 || string(req.ID) == "null" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	switch req.Method {
 	case "initialize":
-		mcpWrite(w, http.StatusOK, req.ID, map[string]any{
-			"protocolVersion": mcpProtocolVersion,
-			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo":      map[string]any{"name": "villacarmen", "version": "1.0.0"},
-		}, nil)
-	case "notifications/initialized", "ping":
+		mcpWrite(w, http.StatusOK, req.ID, mcpInitializeResult(), nil)
+	case "ping":
 		mcpWrite(w, http.StatusOK, req.ID, map[string]any{}, nil)
 	case "tools/list":
 		mcpWrite(w, http.StatusOK, req.ID, map[string]any{"tools": s.mcpToolDefinitions(auth)}, nil)
@@ -116,6 +134,21 @@ func (s *Server) HandleMCP(w http.ResponseWriter, r *http.Request) {
 		s.mcpToolsCall(w, r, req, auth)
 	default:
 		mcpWrite(w, http.StatusNotFound, req.ID, nil, &mcpJSONRPCError{Code: mcpErrMethodNotFound, Message: "unknown method: " + req.Method})
+	}
+}
+
+// mcpInitializeResult is the server half of the MCP handshake. capabilities
+// only advertises tools: this server implements no resources, prompts or
+// logging, so advertising nothing else keeps a client from probing for
+// features that do not exist.
+func mcpInitializeResult() map[string]any {
+	return map[string]any{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
+		"serverInfo":      map[string]any{"name": mcpServerName, "version": mcpServerVersion},
+		// Echoed so a client can correlate the session across its own retries
+		// and across the backoffice connection list.
+		"instructions": "Villa Carmen backoffice tools. Every call runs against the restaurant and role bound to this access token; write tools return a confirmation token that must be passed back with confirmed=true.",
 	}
 }
 

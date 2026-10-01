@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -45,14 +47,60 @@ type mcpOAuthCode struct {
 	Scope        string
 }
 
-// mcpEnsureClient registers the public client ChatGPT uses. Public clients
-// have no secret; PKCE S256 is what protects the code exchange.
-func (s *Server) mcpEnsureClient(ctx context.Context, clientID, name string) error {
+// mcpRedirectURISentinel marks a client that declared no callback of its own.
+// The consent screen then redirects the code through Instatic itself, which is
+// the only callback this server can always complete.
+const mcpRedirectURISentinel = "SELF"
+
+// mcpSelfRedirectURI is the callback used for a client with no registered one.
+func (s *Server) mcpSelfRedirectURI(r *http.Request) string {
+	return s.chatgptPluginBaseURL(r) + mcpIssuerSuffix + "/oauth/callback"
+}
+
+// mcpEnsureClient registers the public client an MCP app uses. Public clients
+// have no secret; PKCE S256 is what protects the code exchange. The registered
+// callbacks are stored so the authorization step can refuse to redirect a code
+// to a URI the client never declared.
+func (s *Server) mcpEnsureClient(ctx context.Context, clientID, name string, redirectURIs []string) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO mcp_oauth_clients (client_id, name) VALUES (?, ?)
-		ON DUPLICATE KEY UPDATE name = VALUES(name)
-	`, clientID, nullString(name))
+		INSERT INTO mcp_oauth_clients (client_id, name, redirect_uris) VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE name = VALUES(name), redirect_uris = VALUES(redirect_uris)
+	`, clientID, nullString(name), nullString(strings.Join(redirectURIs, " ")))
 	return err
+}
+
+// mcpRedirectURIAllowed reports whether a callback may be used for a client.
+// An unregistered client is allowed: dynamic registration is optional and a
+// static client_id from configuration must keep working. A registered client
+// is held to exactly the callbacks it declared, so a stolen or hijacked
+// redirect_uri cannot harvest an authorization code.
+func (s *Server) mcpRedirectURIAllowed(ctx context.Context, clientID, redirectURI string) bool {
+	if s.db == nil {
+		return true
+	}
+	var registered sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT redirect_uris FROM mcp_oauth_clients WHERE client_id = ? LIMIT 1`, clientID).Scan(&registered)
+	// A failed lookup is not a rejection: the client may still be legitimate,
+	// and PKCE already binds the code to the client that started the flow, so
+	// breaking an approval the user is in the middle of granting helps nobody.
+	if err != nil {
+		return mcpRedirectURIPermitted(nil, false, redirectURI)
+	}
+	return mcpRedirectURIPermitted(strings.Fields(registered.String), true, redirectURI)
+}
+
+// mcpRedirectURIPermitted is the pure decision behind the guard, so the
+// registry states are one readable table.
+func mcpRedirectURIPermitted(registered []string, known bool, redirectURI string) bool {
+	if !known || len(registered) == 0 {
+		// No registration, so no redirect_uri can contradict one.
+		return true
+	}
+	if slices.Contains(registered, mcpRedirectURISentinel) {
+		return true
+	}
+	return slices.Contains(registered, redirectURI)
 }
 
 // mcpStoreCode persists a single-use authorization code, returning the
