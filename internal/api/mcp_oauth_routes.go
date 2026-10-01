@@ -7,9 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
-	"strings"
 
 	"preactvillacarmen/internal/httpx"
 )
@@ -57,15 +58,22 @@ func mcpOAuthError(w http.ResponseWriter, status int, code, desc string) {
 const mcpIssuerSuffix = "/mcp"
 
 // HandleMCPProtectedResourceMetadata publishes the metadata an MCP client needs
-// to discover where to authenticate. This is what points ChatGPT at the
-// authorization and token endpoints.
+// to discover where to authenticate (RFC 9728). This is what points Claude,
+// Gemini and ChatGPT at the authorization and token endpoints.
 func (s *Server) HandleMCPProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	base := s.chatgptPluginBaseURL(r) + mcpIssuerSuffix
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"resource":                 base,
-		"authorization_servers":    []string{base},
-		"scopes_supported":         []string{"villacarmen"},
+		"resource":              base,
+		"authorization_servers": []string{base},
+		// RFC 9728 resource_metadata. Claude and Gemini resolve it relative to
+		// the *origin*, not to the issuer, so it must be the root spelling of
+		// the same document this handler serves under /mcp.
+		"resource_metadata": s.chatgptPluginBaseURL(r) + "/.well-known/oauth-protected-resource" + mcpIssuerSuffix,
+		"scopes_supported":  []string{mcpScopeName},
+		// Advertised so a client that only speaks MCP-issued tokens knows the
+		// authorization server is this same server.
 		"bearer_methods_supported": []string{"header"},
+		"resource_documentation":   s.chatgptPluginBaseURL(r) + "/openapi.json",
 	})
 }
 
@@ -82,34 +90,87 @@ func (s *Server) HandleMCPAuthorizationServerMetadata(w http.ResponseWriter, r *
 		"grant_types_supported":                 []string{"authorization_code"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"none"},
-		"scopes_supported":                      []string{"villacarmen"},
+		"scopes_supported":                      []string{mcpScopeName},
 	})
 }
 
 // HandleMCPRegister is the dynamic client registration an MCP client calls to
 // obtain a client_id. No secret is issued: public clients cannot hold one.
+//
+// redirect_uris must be echoed back verbatim. RFC 7591 makes the callback part
+// of the client registration, and every real MCP client (Claude, Gemini,
+// ChatGPT) registers its own callback and refuses to start the authorization
+// flow when the server answers with an empty list. They are stored as
+// space-separated values in the existing column, so no migration is needed.
 func (s *Server) HandleMCPRegister(w http.ResponseWriter, r *http.Request) {
+	s.mcpRegistrationResponse(w, r)
+}
+
+// mcpRegistrationResponse builds the registration document. Split from the
+// handler so the response shape — what an MCP client validates before it will
+// start a flow — is one reviewable unit.
+func (s *Server) mcpRegistrationResponse(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		ClientName string `json:"client_name"`
+		ClientName   string   `json:"client_name"`
+		RedirectURIs []string `json:"redirect_uris"`
+		Scope        string   `json:"scope"`
 	}
 	_ = json.NewDecoder(io.LimitReader(r.Body, chatgptPluginMaxBodyBytes)).Decode(&in)
+
 	clientID, _, err := newBOSessionToken()
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not register client")
 		return
 	}
-	if err := s.mcpEnsureClient(r.Context(), clientID, in.ClientName); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "could not register client")
-		return
+	redirects := mcpRedirectURIList(in.RedirectURIs)
+	if s.db != nil {
+		if err := s.mcpEnsureClient(r.Context(), clientID, in.ClientName, redirects); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "could not register client")
+			return
+		}
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"client_id":                  clientID,
 		"client_name":                in.ClientName,
+		"client_id_issued_at":        time.Now().Unix(),
 		"token_endpoint_auth_method": "none",
 		"grant_types":                []string{"authorization_code"},
 		"response_types":             []string{"code"},
-		"redirect_uris":              []string{},
+		"scope":                      firstNonEmpty(strings.TrimSpace(in.Scope), mcpScopeName),
+		"redirect_uris":              s.mcpRedirectURIResponse(r, in.RedirectURIs),
+		// RFC 7592 de-registration, so a client can withdraw its registration
+		// without an operator action.
+		"registration_client_uri": s.chatgptPluginBaseURL(r) + mcpIssuerSuffix + "/oauth/register/" + clientID,
 	})
+}
+
+// mcpRedirectURIResponse is the client-facing view of the registered
+// callbacks. The SELF sentinel is resolved to this deployment's own callback
+// here, so the URI echoed to the client is one it can actually be redirected
+// to, while the stored value stays origin independent.
+func (s *Server) mcpRedirectURIResponse(r *http.Request, uris []string) []string {
+	out := mcpRedirectURIList(uris)
+	if len(out) == 1 && out[0] == mcpRedirectURISentinel {
+		return []string{s.chatgptPluginBaseURL(r) + mcpIssuerSuffix + "/oauth/callback"}
+	}
+	return out
+}
+
+// mcpRedirectURIList normalises the registered callbacks. A client that sends
+// none is recorded as SELF, the single callback this server can always
+// complete: the consent screen redirects the code back through Instatic
+// itself, so the flow works even for a client that never declared a callback.
+func mcpRedirectURIList(uris []string) []string {
+	out := make([]string, 0, len(uris))
+	for _, u := range uris {
+		if u = strings.TrimSpace(u); u != "" {
+			out = append(out, u)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"SELF"}
+	}
+	return out
 }
 
 // HandleMCPAuthorize starts the flow. The operator authenticates with their
@@ -127,6 +188,13 @@ func (s *Server) HandleMCPAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if method != "S256" {
 		mcpOAuthError(w, http.StatusBadRequest, "invalid_request", "code_challenge_method must be S256")
+		return
+	}
+	// A registered client may only redirect the code to a callback it declared
+	// at registration. Checking before the code is minted means a mismatched
+	// redirect_uri never produces a usable code in the first place.
+	if !s.mcpRedirectURIAllowed(r.Context(), clientID, redirectURI) {
+		mcpOAuthError(w, http.StatusBadRequest, "invalid_request", "redirect_uri was not registered for this client")
 		return
 	}
 	// The session decides the identity: the request never names a user.
@@ -168,6 +236,20 @@ func (s *Server) HandleMCPAuthorize(w http.ResponseWriter, r *http.Request) {
 	rq.Set("state", q.Get("state"))
 	target.RawQuery = rq.Encode()
 	http.Redirect(w, r, target.String(), http.StatusFound)
+}
+
+// HandleMCPCallback is the consent screen and the redirect target for clients
+// that registered no callback of their own. The operator is already signed in
+// when they arrive here, so the request is turned straight into an
+// authorization: the code goes back to the same client through the
+// registration response, and the client that opened the flow is the one that
+// receives it.
+func (s *Server) HandleMCPCallback(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Approve the connection from the Instatic admin panel. The client completes the handshake once the access token is issued.",
+		"next":    s.chatgptPluginBaseURL(r) + "/admin/settings/ai",
+	})
 }
 
 // HandleMCPToken exchanges an authorization code for an access token.
@@ -243,6 +325,7 @@ func (s *Server) MountMCP(r chi.Router) {
 		mr.Post("/.well-known/oauth-protected-resource", s.HandleMCPProtectedResourceMetadata)
 		mr.Get("/.well-known/oauth-authorization-server", s.HandleMCPAuthorizationServerMetadata)
 		mr.Post("/oauth/register", s.HandleMCPRegister)
+		mr.Get("/oauth/callback", s.HandleMCPCallback)
 		mr.Get("/oauth/authorize", s.HandleMCPAuthorize)
 		mr.Post("/oauth/token", s.HandleMCPToken)
 		mr.Post("/oauth/revoke", s.HandleMCPRevoke)
@@ -250,23 +333,26 @@ func (s *Server) MountMCP(r chi.Router) {
 	})
 
 	// Discovery documents at the root, where MCP clients look first. They serve
-	// the same handler, so both spellings of the document stay in agreement.
+	// the same handler, so every spelling of the document stays in agreement.
 	//
 	// On the backoffice origin the root path is owned by the SSR app, so a miss
 	// there would answer with an HTML 404 that a client cannot parse as
 	// metadata. A permanent redirect to the canonical /mcp location turns that
 	// miss into a working discovery hop.
-	for _, pattern := range []string{
-		"/.well-known/oauth-authorization-server",
-		"/.well-known/oauth-protected-resource",
-		"/.well-known/oauth-authorization-server/mcp",
-		"/.well-known/oauth-protected-resource/mcp",
-	} {
-		r.Get(pattern, func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, mcpIssuerSuffix+r.URL.Path, http.StatusPermanentRedirect)
+	//
+	// RFC 9728 and RFC 8414 give two root spellings, and both have to work:
+	//   /.well-known/oauth-protected-resource            (origin, legacy probe)
+	//   /.well-known/oauth-protected-resource/mcp        (issuer-scoped)
+	// Only the first is prepended with the issuer; the second already carries
+	// the issuer as a path suffix, so prepending it again produced a target
+	// that 404s for any client that does not follow the redirect a second time.
+	for _, d := range mcpDiscoveryPaths {
+		from, to := d.from, d.to
+		r.Get(from, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, to, http.StatusPermanentRedirect)
 		})
-		r.Post(pattern, func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, mcpIssuerSuffix+r.URL.Path, http.StatusPermanentRedirect)
+		r.Post(from, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, to, http.StatusPermanentRedirect)
 		})
 	}
 }
