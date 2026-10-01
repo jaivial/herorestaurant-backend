@@ -184,6 +184,12 @@ func (s *Server) Routes() http.Handler {
 	// /api/plugin surface coexist with the backoffice routes.
 	s.MountChatGPTPlugin(r)
 
+	// MCP server (mcp_server_v1). Mounted after the middleware stack so the
+	// OAuth discovery documents stay reachable at the paths MCP clients probe.
+	// Its paths are absolute (/mcp, /.well-known/oauth-*), so the /api prefix
+	// rewrite does not affect them.
+	s.MountMCP(r)
+
 	r.Route("/admin", func(r chi.Router) {
 		// Shared-secret layer for the whole admin API and its WebSockets, injected
 		// server-side by the backoffice SSR proxy. No-op when VAULT_KEY is unset.
