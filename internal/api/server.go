@@ -748,6 +748,13 @@ func (s *Server) Routes() http.Handler {
 		// MiniMax AI config (api key + model) — root only.
 		r.With(s.requireBOSession, rootOnlyGate).Get("/config/minimax", s.handleBOMiniMaxConfigGet)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/minimax", s.handleBOMiniMaxConfigSet)
+
+		// ChatGPT plugin credentials — root only. Always scoped to the caller and
+		// their active restaurant, so a token can never outlive or exceed the
+		// session that created it.
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/chatgpt-plugin/tokens", s.handleBOChatGPTPluginTokensGet)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/chatgpt-plugin/tokens", s.handleBOChatGPTPluginTokenIssue)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/chatgpt-plugin/tokens/revoke", s.handleBOChatGPTPluginTokenRevoke)
 		// Coordination id: stripe_prereserva_adelanto_v1
 		// Coordination id: stripe_connect_multitenant_v1 - per-restaurant
 		// "Cobros online" (connected account); no keys per tenant.
