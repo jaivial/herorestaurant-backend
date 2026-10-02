@@ -283,6 +283,20 @@ DIRECTIVES.update({
     "agent_info": "Pregunta de información del restaurante (dirección, contacto, cómo llegar): responde con get_restaurant_info y send_location si procede; no inventes.",
     "agent_feedback": "El cliente comparte su opinión: si es positiva, agradécelo con calidez; si es negativa, discúlpate brevemente y ofrece que el equipo le contacte con send_contact.",
 })
+# Coordination id: wa_bot_foreign_phone_policy_v1 - bookings are bound to the
+# WhatsApp number that created them; when the writer's phone has none and the
+# customer refers to a booking made from another phone/name, the reply must
+# state the security policy clearly instead of just "not found".
+FOREIGN_PHONE_DIRECTIVE = ("SEGURIDAD DEL TELÉFONO: las reservas solo se pueden ver y gestionar desde el número de WhatsApp que las creó. "
+                           "Si get_bookings no devuelve reservas y el cliente menciona una reserva hecha con otro teléfono o a nombre de otra persona, "
+                           "respóndele con seguridad y sin dudas que por medidas de seguridad solo puede consultar y gestionar las reservas hechas con el número desde el que escribe, "
+                           "y recomiéndale que la persona que hizo la reserva escriba desde su propio teléfono para poder verla o gestionarla. "
+                           "No busques reservas de terceros ni respondas solo que no aparece.")
+for _node in ("agent_status", "agent_booking", "agent_booking_cancel",
+              "agent_modify_time", "agent_modify_date", "agent_modify_people",
+              "agent_modify_rice", "agent_modify_other"):
+    DIRECTIVES[_node] = DIRECTIVES[_node] + " " + FOREIGN_PHONE_DIRECTIVE
+
 MULTI_DIRECTIVE = "El mensaje trae VARIAS peticiones: respóndelas todas en un único mensaje, en orden, sin olvidar ninguna."
 ALLERGEN_IN_MULTI_DIRECTIVE = "Una de las peticiones es sobre ingredientes o alérgenos: NO la contestes tú; gestiona el resto y, para esa parte, usa send_contact con un request_summary sobre la consulta de alérgenos (seguridad alimentaria)."
 FORMAL_DIRECTIVE = "El cliente escribe de usted: trátale de usted y con un tono más formal."

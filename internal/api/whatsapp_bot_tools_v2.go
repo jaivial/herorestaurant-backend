@@ -112,7 +112,7 @@ func (s *Server) botToolBookingDetails(ctx context.Context, restaurantID int, ph
 		}
 		return botJSON(out), nil
 	}
-	return botJSON(map[string]any{"error": "reserva no encontrada para este teléfono"}), nil
+	return botBookingNotFoundForPhone(), nil
 }
 
 func (s *Server) botToolAddBookingNote(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, input json.RawMessage) (string, error) {
@@ -129,7 +129,7 @@ func (s *Server) botToolAddBookingNote(ctx context.Context, restaurantID int, ms
 	}
 	date, isEvent, isSpecial, found := s.botOwnedBookingFlags(ctx, restaurantID, in.BookingID, msg.Sender)
 	if !found {
-		return botJSON(map[string]any{"error": "reserva no encontrada para este teléfono"}), nil
+		return botBookingNotFoundForPhone(), nil
 	}
 	if botIsSameDay(date) {
 		return botJSON(map[string]any{"error": "la reserva es para hoy: el cliente debe llamar al restaurante"}), nil

@@ -606,12 +606,36 @@ func (s *Server) botFindBookings(ctx context.Context, restaurantID int, phone st
 	return out, rows.Err()
 }
 
+// Coordination id: wa_bot_foreign_phone_policy_v1 - bookings are bound to the
+// WhatsApp number that created them. Every "nothing found for this phone"
+// tool result carries this note so the model answers with the security policy
+// (clear and assertive) instead of a vague "booking not found", and tells the
+// customer that whoever made the booking must manage it from their own phone.
+const botForeignPhonePolicyNote = "Por seguridad, solo se pueden ver y gestionar las reservas creadas desde el número de WhatsApp que escribe el cliente: no puedes buscar reservas de otros teléfonos ni de otros nombres. Si el cliente se refiere a una reserva existente hecha por otra persona o con otro teléfono, dilo con claridad y sin dudas y recomiéndale que la persona que hizo la reserva escriba desde su propio teléfono para poder verla o gestionarla. No respondas solo que 'no aparece ninguna' sin explicar esto, y no ofrezcas crear una reserva nueva si el cliente ya tiene una hecha."
+
+// botGetBookingsResult serializes get_bookings output, attaching the phone
+// security policy note when the customer's phone has no bookings.
+func botGetBookingsResult(bookings []botBookingRow) string {
+	out := map[string]any{"bookings": bookings, "count": len(bookings)}
+	if len(bookings) == 0 {
+		out["policy_note"] = botForeignPhonePolicyNote
+	}
+	return botJSON(out)
+}
+
+// botBookingNotFoundForPhone is the shared error for a booking_id that does
+// not belong to the sender's phone: it states the security policy so the
+// customer gets a clear answer instead of "not found".
+func botBookingNotFoundForPhone() string {
+	return botJSON(map[string]any{"error": "reserva no encontrada para este teléfono", "policy_note": botForeignPhonePolicyNote})
+}
+
 func (s *Server) botToolGetBookings(ctx context.Context, restaurantID int, phone string) (string, error) {
 	bookings, err := s.botFindBookings(ctx, restaurantID, phone)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando reservas"}), nil
 	}
-	return botJSON(map[string]any{"bookings": bookings, "count": len(bookings)}), nil
+	return botGetBookingsResult(bookings), nil
 }
 
 func (s *Server) botToolCreateBooking(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
@@ -739,7 +763,7 @@ func (s *Server) botToolCancelBooking(ctx context.Context, restaurantID int, pho
 		return botJSON(map[string]any{"error": "error verificando la reserva"}), nil
 	}
 	if !owned {
-		return botJSON(map[string]any{"error": "reserva no encontrada para este teléfono"}), nil
+		return botBookingNotFoundForPhone(), nil
 	}
 
 	err = withTx(ctx, s.db, func(ctx context.Context, tx *sql.Tx) error {
@@ -810,7 +834,7 @@ func (s *Server) botToolModifyBooking(ctx context.Context, restaurantID int, pho
 		return botJSON(map[string]any{"error": "error verificando la reserva"}), nil
 	}
 	if !owned {
-		return botJSON(map[string]any{"error": "reserva no encontrada para este teléfono"}), nil
+		return botBookingNotFoundForPhone(), nil
 	}
 
 	sets := []string{}
