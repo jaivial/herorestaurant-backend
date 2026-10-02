@@ -504,7 +504,7 @@ func (s *Server) botToolBookingMenu(ctx context.Context, restaurantID int, phone
 		`, restaurantID, bookingID, national, digits, digits).Scan(&dateISO, &menuAssignedInt, &menuDeGrupoID, &extrasRaw)
 		bookingExtras = bookingExtraNames(extrasRaw.String)
 		if errors.Is(err, sql.ErrNoRows) {
-			return botJSON(map[string]any{"error": "reserva no encontrada"}), nil
+			return botBookingNotFoundForPhone(), nil
 		}
 		if err != nil {
 			return botJSON(map[string]any{"error": "error consultando la reserva"}), nil
