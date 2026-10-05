@@ -39,8 +39,10 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 
 	// The gateway needs to know which JIDs address the bot so a group mention
 	// can be recognised before the tenant is resolved (coordination id:
-	// wa_bot_group_mention_v1). Resolution is a single indexed lookup on the
-	// instance row, cheap enough to do for every webhook.
+	// wa_bot_group_mention_v1). The database phone plus the provider's LID
+	// mapping are cached for botOwnJIDsTTL, so this is a cache hit on all but
+	// the first message after the TTL expires - it is not a provider round trip
+	// per webhook.
 	gw := &evolutionGateway{s: s, ownJIDs: s.botOwnJIDsByInstanceName(r.Context(), evoEnvelopeInstanceName(body))}
 
 	// Connection lifecycle first (keeps the QR onboarding UI live).
