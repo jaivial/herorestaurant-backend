@@ -5,6 +5,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Coordination id: booking-extras-handoff.
@@ -42,8 +43,27 @@ var botExtrasGenericTerms = []string{
 	"champan", "champagne", "botella de vino", "tarta",
 }
 
+// normalizeBotIntentText folds a string to a comparable form: lowercased,
+// accent-free and with runs of internal whitespace collapsed to a single space.
+//
+// The whitespace collapse matters beyond tidiness. botFindGroupJID matches the
+// management group by subject using this function on both sides, and a
+// WhatsApp group subject may legitimately contain a double space (or a
+// non-breaking one, which is not even caught by strings.Fields). Without the
+// collapse, "Bot  Alquería" normalizes to "bot  alqueria" and no longer equals
+// the expected "bot alqueria", so the bot silently stops finding a group that
+// is configured correctly. TrimSpace alone only fixes the ends.
 func normalizeBotIntentText(raw string) string {
-	return botExtrasAccentReplacer.Replace(strings.ToLower(strings.TrimSpace(raw)))
+	folded := botExtrasAccentReplacer.Replace(strings.ToLower(strings.TrimSpace(raw)))
+	// Replace NBSP and other Unicode spaces with a plain space first, so
+	// strings.Fields treats them as separators.
+	folded = strings.Map(func(r rune) rune {
+		if r == '\u00a0' || unicode.IsSpace(r) {
+			return ' '
+		}
+		return r
+	}, folded)
+	return strings.Join(strings.Fields(folded), " ")
 }
 
 // botExtrasNoticeText is the mandatory reply when a customer asks to change the
