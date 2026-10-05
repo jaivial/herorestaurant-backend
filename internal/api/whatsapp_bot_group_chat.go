@@ -208,48 +208,154 @@ func botGroupMessageAudit(restaurantID int, groupJID, participant, reason string
 		restaurantID, groupJID, participant, reason)
 }
 
-// botGroupFetchOwnJIDs asks the provider which JIDs belong to the bot so a
-// mention of the linked number or LID is recognised. Failures are not fatal:
-// the raw "@<digits>" body fallback still works.
-func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []string {
-	own := s.botGroupOwnJIDs(ctx, restaurantID)
-	if len(own) > 0 {
-		return own
+// botOwnJIDsTTL bounds how long the bot's own identifiers are reused. The
+// mapping phone <-> LID is stable for the life of a linked instance, so it does
+// not need refreshing per message; without a cache this would add a provider
+// round trip (~0.5-0.7s, 10s timeout) to EVERY inbound webhook, 1:1 included,
+// just to answer a group mention.
+const botOwnJIDsTTL = 30 * time.Minute
+
+var botOwnJIDsCache = struct {
+	sync.Mutex
+	byRID map[int]botOwnJIDsEntry
+}{byRID: map[int]botOwnJIDsEntry{}}
+
+type botOwnJIDsEntry struct {
+	jids []string
+	at   time.Time
+}
+
+// botOwnJIDsCached returns the previously learned identities for the restaurant
+// when they are still fresh.
+func botOwnJIDsCached(restaurantID int) []string {
+	botOwnJIDsCache.Lock()
+	defer botOwnJIDsCache.Unlock()
+	e, ok := botOwnJIDsCache.byRID[restaurantID]
+	if !ok || time.Since(e.at) >= botOwnJIDsTTL {
+		return nil
 	}
+	return e.jids
+}
+
+// botOwnJIDsRemember stores the learned identities for the restaurant.
+func botOwnJIDsRemember(restaurantID int, jids []string) {
+	if len(jids) == 0 {
+		return
+	}
+	botOwnJIDsCache.Lock()
+	botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: jids, at: time.Now()}
+	botOwnJIDsCache.Unlock()
+}
+
+// botGroupFetchOwnJIDs returns every identifier the bot answers to, so a
+// mention of the linked number OR of the bot's Baileys LID is recognised.
+//
+// Both sources are needed and neither alone is sufficient:
+//   - the database holds the phone number (restaurant_uazapi_instances
+//     .connected_phone), but not the LID;
+//   - the provider holds the LID (the group owner / participants[].id), and the
+//     phone form of the same member (participants[].phoneNumber).
+//
+// An earlier version returned the database value and stopped, so on a
+// LID-addressed instance the mention (a LID) never matched the stored phone and
+// the bot stayed silent in its own group. Failures are not fatal: the raw
+// "@<digits>" body fallback still works.
+func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []string {
+	if cached := botOwnJIDsCached(restaurantID); len(cached) > 0 {
+		return cached
+	}
+	own := s.botGroupOwnJIDs(ctx, restaurantID)
 	gw, ok := s.botGatewayFor(ctx, restaurantID)
 	if !ok {
-		return nil
+		// Cache the database-only answer too, so a missing gateway does not
+		// re-attempt the lookup on every inbound message.
+		botOwnJIDsRemember(restaurantID, own)
+		return own
 	}
 	evo, ok := gw.(*evolutionGateway)
 	if !ok {
-		return nil
+		botOwnJIDsRemember(restaurantID, own)
+		return own
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	_, code, raw, err := s.uazapiJSONRequest(reqCtx, strings.TrimRight(evo.baseURL, "/")+"/group/fetchAllGroups/"+evo.instanceName+"?getParticipants=true", http.MethodGet, map[string]string{"apikey": evo.apiKey}, nil)
 	if err != nil || code < 200 || code >= 300 {
-		return nil
+		// Provider down: fall back to the phone and cache it, so a transient
+		// outage costs one attempt per TTL instead of one per message.
+		if len(own) > 0 {
+			botOwnJIDsRemember(restaurantID, own)
+		}
+		return own
 	}
-	return botGroupOwnerJIDsFromGroups(raw)
+	// The bot's phone is the key used to find its LID among the participants;
+	// the database value is authoritative, so prefer it and fall back to the
+	// first stored number when the row has none.
+	phone := ""
+	for _, v := range own {
+		if d := digitsOnly(v); d != "" {
+			phone = v
+			break
+		}
+	}
+	// The LID is the form a mention actually uses, so it goes first, then the
+	// phone forms as a fallback.
+	merged := append(botGroupOwnJIDsFromGroups(raw, phone), own...)
+	botOwnJIDsRemember(restaurantID, merged)
+	return merged
 }
 
-// botGroupOwnerJIDsFromGroups extracts the "owner"/"ownerJid" of every group,
-// which is the bot's own number on its own instances.
-func botGroupOwnerJIDsFromGroups(raw string) []string {
+// botGroupOwnJIDsFromGroups maps the bot's phone number to the LID the group
+// uses for it, so a mention is recognised in either form.
+//
+// Baileys addresses members by opaque LID (262096671481918@lid) and keeps the
+// real phone in participants[].phoneNumber (34960255536@s.whatsapp.net). The
+// digits of a LID are NOT the phone number, so matching a mention only against
+// the stored phone fails on every LID-addressed instance: the mention arrives as
+// the LID and never equals the phone.
+//
+// phone is the authoritative bot number (the instance ownerJid, which equals
+// restaurant_uazapi_instances.connected_phone). Only that participant is
+// expanded, so a mention of any other member cannot trigger the bot. The
+// group's owner/subjectOwner are deliberately NOT used: they identify the human
+// who created the group, not the bot.
+func botGroupOwnJIDsFromGroups(raw, phone string) []string {
 	var groups []struct {
-		Owner    string `json:"owner"`
-		OwnerJID string `json:"ownerJid"`
+		Participants []struct {
+			ID          string `json:"id"`
+			PhoneNumber string `json:"phoneNumber"`
+		} `json:"participants"`
 	}
 	if err := json.Unmarshal([]byte(raw), &groups); err != nil {
 		return nil
 	}
 	var out []string
+	seen := map[string]struct{}{}
+	add := func(v string) {
+		if d := digitsOnly(v); d != "" {
+			if _, dup := seen[d]; dup {
+				return
+			}
+			seen[d] = struct{}{}
+			out = append(out, d)
+		}
+	}
+	botPhone := digitsOnly(phone)
 	for _, g := range groups {
-		for _, v := range []string{g.Owner, g.OwnerJID} {
-			if d := digitsOnly(v); d != "" {
-				out = append(out, d)
+		if botPhone == "" {
+			continue
+		}
+		for _, p := range g.Participants {
+			if digitsOnly(p.PhoneNumber) == botPhone {
+				// Same member: register both identifiers so a mention in
+				// either form matches.
+				add(p.PhoneNumber)
+				add(p.ID)
 			}
 		}
+		// No other participant is registered: the group owner is the human
+		// who CREATED the group, not the bot, and registering every member
+		// would let a mention of any member trigger the bot.
 	}
 	return out
 }
