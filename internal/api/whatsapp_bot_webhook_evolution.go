@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -35,7 +37,11 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	gw := &evolutionGateway{s: s}
+	// The gateway needs to know which JIDs address the bot so a group mention
+	// can be recognised before the tenant is resolved (coordination id:
+	// wa_bot_group_mention_v1). Resolution is a single indexed lookup on the
+	// instance row, cheap enough to do for every webhook.
+	gw := &evolutionGateway{s: s, ownJIDs: s.botOwnJIDsByInstanceName(r.Context(), evoEnvelopeInstanceName(body))}
 
 	// Connection lifecycle first (keeps the QR onboarding UI live).
 	if ev, ok := gw.ParseConnectionEvent(body); ok {
@@ -55,6 +61,25 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "message": "unknown instance"})
 		return
 	}
+
+	// Group gate: the bot only answers inside its own management group and
+	// only when mentioned. Everything else is dropped with a checkpoint log
+	// (wa_bot_group_mention_v1) so a noisy group never reaches the LLM.
+	if botGroupIsGroupJID(in.ChatJID) {
+		tenant := s.loadBotTenantConfig(r.Context(), restaurantID)
+		if !s.botGroupIsManagementGroup(r.Context(), restaurantID, in.ChatJID, tenant) {
+			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "skipped_not_management_group")
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_management_group"})
+			return
+		}
+		if !in.Mentioned {
+			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "skipped_not_mentioned")
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_mentioned"})
+			return
+		}
+		botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted")
+	}
+
 	if in.Ignored {
 		log.Printf("[bot] checkpoint wa_bot_ignore_non_conversational_v1 restaurant_id=%d sender=%s", restaurantID, in.Sender)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "ignored": true})
@@ -78,6 +103,12 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		InstanceToken: in.SessionRef,
 		IsAudio:       in.IsAudio,
 		AudioB64:      in.AudioB64,
+		// Group routing (wa_bot_group_mention_v1): Sender is the group JID,
+		// so every tool, the transcript and the reply target the group.
+		IsGroup:        botGroupIsGroupJID(in.ChatJID),
+		ChatJID:        in.ChatJID,
+		ParticipantJID: in.ParticipantJID,
+		Mentioned:      in.Mentioned,
 	}
 	s.processInboundBotMessage(w, r, restaurantID, msg)
 }
@@ -144,4 +175,31 @@ func (s *Server) handleEvolutionConnectionEvent(ctx context.Context, ev waConnEv
 	}
 	s.broadcastWhatsAppConnection(ctx, restaurantID)
 	return true
+}
+
+// evoEnvelopeInstanceName extracts the instance name from a raw Evolution
+// payload without a full parse, so the gateway can resolve the bot's own JIDs
+// before the message is normalized.
+func evoEnvelopeInstanceName(body []byte) string {
+	var env struct {
+		Instance string `json:"instance"`
+	}
+	if json.Unmarshal(body, &env) != nil {
+		return ""
+	}
+	return strings.TrimSpace(env.Instance)
+}
+
+// botOwnJIDsByInstanceName returns the JIDs that address the bot for the
+// instance that produced this webhook. Used so a group @mention of the linked
+// number is recognised as addressed-to-bot (wa_bot_group_mention_v1).
+func (s *Server) botOwnJIDsByInstanceName(ctx context.Context, instanceName string) []string {
+	if s == nil || s.db == nil || strings.TrimSpace(instanceName) == "" {
+		return nil
+	}
+	restaurantID, ok := s.resolveBotRestaurantByProviderInstance(ctx, instanceName)
+	if !ok {
+		return nil
+	}
+	return s.botGroupFetchOwnJIDs(ctx, restaurantID)
 }

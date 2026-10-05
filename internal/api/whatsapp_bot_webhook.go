@@ -41,6 +41,14 @@ type botWebhookMessage struct {
 	DuplicateRequest bool
 	Ignored          bool   // reaction/edit/delete/poll event: never a customer turn
 	MediaKind        string // label of a non-text message, for the transcript
+	// Coordination id: wa_bot_group_mention_v1 - group routing. When IsGroup
+	// is true, Sender is the @g.us group JID (so every tool and the reply
+	// address the group) and ParticipantJID identifies the member who
+	// mentioned the bot.
+	IsGroup        bool
+	ChatJID        string
+	ParticipantJID string
+	Mentioned      bool
 }
 
 // parseBotWebhookMessage extracts the message from a UAZAPI webhook body.
@@ -583,9 +591,15 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	}
 	promptData.RouteDirective = decision.Directive
 	promptData.RouteNode = decision.Node
+	// Coordination id: wa_bot_group_mention_v1 - a group turn is a staff turn:
+	// the prompt changes and the special-menu CRUD tools become available.
+	promptData.InGroup = msg.IsGroup
+	if msg.IsGroup {
+		promptData.GroupMember = msg.PushName
+	}
 	system := renderBotSystemPrompt(promptData)
 	_, _, memberErr := s.botMemberForPhone(ctx, restaurantID, msg.Sender)
-	tools := botCustomerToolDefs(botToolDefs(tenant), memberErr == nil)
+	tools := botCustomerToolDefs(botToolDefsForChat(tenant, msg.IsGroup), memberErr == nil)
 	turn := &botTurnState{}
 	exec := s.botToolExecutorForTurn(restaurantID, msg, tenant, turn)
 	sessionID := botSessionID(restaurantID, msg.Sender)

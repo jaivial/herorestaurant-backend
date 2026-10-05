@@ -91,6 +91,25 @@ type waInbound struct {
 	// MediaKind is a human label for a non-text message ("una tarjeta de
 	// contacto", "una imagen", ...), used to record staff-sent media.
 	MediaKind string
+	// ChatJID is the conversation the message belongs to: the member's
+	// @s.whatsapp.net JID for 1:1 chats, or the @g.us group JID when a group
+	// member addressed the bot. Replies must go back to this id.
+	// Coordination id: wa_bot_group_mention_v1
+	ChatJID string
+	// ParticipantJID is the member who wrote inside a group (empty in 1:1).
+	ParticipantJID string
+	// Mentioned reports that the bot was explicitly addressed in a group.
+	// Group messages without a mention are dropped: the group is noisy and
+	// the bot must never answer an unaddressed message.
+	Mentioned bool
+	// MentionJIDs are the JIDs mentioned in the message body (group only).
+	MentionJIDs []string
+	// QuotedJIDs are the authors of the messages this one replies to
+	// (group only); quoting the bot counts as addressing it.
+	QuotedJIDs []string
+	// OwnJIDs are the JIDs that address the bot itself, resolved by the
+	// caller from the instance so the parser stays provider-agnostic.
+	OwnJIDs []string
 }
 
 // botIgnoredMessageTypes are provider message types that are not a customer

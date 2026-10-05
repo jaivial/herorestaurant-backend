@@ -38,6 +38,11 @@ type botPromptData struct {
 	// RouteDirective is the pipeline instruction for the chosen route.
 	RouteDirective string
 	RouteNode      string
+	// InGroup marks a turn inside the restaurant's management WhatsApp group
+	// (wa_bot_group_mention_v1): the speaker is staff, not a customer.
+	InGroup bool
+	// GroupMember is the name of the staff member that mentioned the bot.
+	GroupMember string
 }
 
 // botDefaultRules is the critical-rules block used when the tenant has not
@@ -119,6 +124,25 @@ func renderBotSystemPrompt(d botPromptData) string {
 		fmt.Fprintf(&b, "Estás conversando con **%s**.\n", d.PushName)
 	}
 	b.WriteString("\n")
+
+	// Coordination id: wa_bot_group_mention_v1 - inside the management group the
+	// speaker is staff acting on behalf of a customer, so the tone and the
+	// available actions change.
+	if d.InGroup {
+		b.WriteString("## MODO GRUPO INTERNO (equipo del restaurante)\n")
+		who := d.GroupMember
+		if who == "" {
+			who = "un miembro del equipo"
+		}
+		fmt.Fprintf(&b, "Has sido mencionado en el **grupo interno del restaurante** por %s. NO es un cliente: es un miembro del equipo que te escribe para gestionar reservas en nombre de un cliente.\n", who)
+		b.WriteString("- Responde al equipo de forma directa y concisa, como un colega: no uses el tono ni las frases de \"querido cliente\".\n")
+		b.WriteString("- Cada mensaje del grupo menciona un teléfono de cliente: SIÉNTESE de ese teléfono, porque las herramientas de reservas works por teléfono del cliente, no por el número del que escribe.\n")
+		b.WriteString("- Pide el teléfono del cliente si no aparece en el mensaje.\n")
+		b.WriteString("- SÍlo respondes a los mensajes que te mencionan; en el resto del grupo no debes intervenir.\n")
+		b.WriteString("- Para reservas de FECHA ESPECIAL (Navidad, Nochevieja, eventos) tienes herramientas propias: `get_special_date_menu` (qué se puede reservar y con qué ids), `create_special_booking`, `modify_special_booking` y `cancel_special_booking`. Úsalas en lugar de derivar a la web.\n")
+		b.WriteString("- Antes de crear, modificar o cancelar, repite los datos al grupo y espera confirmación; después llama a la herramienta con `confirmed=true`.\n")
+		b.WriteString("\n")
+	}
 
 	b.WriteString("## DATOS DEL RESTAURANTE\n")
 	if d.Phone != "" {
