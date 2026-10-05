@@ -95,6 +95,10 @@ func (s *Server) botToolGetSpecialDateInfo(ctx context.Context, restaurantID int
 func (s *Server) botToolGetSpecialDateBookings(ctx context.Context, restaurantID int, input json.RawMessage) (string, error) {
 	var in struct {
 		Date string `json:"date"`
+		// Phone narrows the lookup to one customer. The management group needs
+		// it to find "the booking of this phone" among a busy festive date.
+		// Coordination id: wa_bot_special_crud_v1
+		Phone string `json:"phone"`
 	}
 	if err := json.Unmarshal(input, &in); err != nil {
 		return botJSON(map[string]any{"error": "parámetros inválidos"}), nil
@@ -103,13 +107,21 @@ func (s *Server) botToolGetSpecialDateBookings(ctx context.Context, restaurantID
 	if !ok {
 		return botJSON(map[string]any{"error": "fecha inválida; usa YYYY-MM-DD o dd/MM/yyyy"}), nil
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	query := `
 		SELECT id, customer_name, TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time,
 		       party_size, COALESCE(is_special_booking, 0), COALESCE(is_prereserva, 0), COALESCE(special_json, '')
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ? AND COALESCE(is_special_booking, 0) = 1
-		ORDER BY reservation_time ASC, id ASC
-	`, restaurantID, date)
+	`
+	args := []any{restaurantID, date}
+	// Optional phone filter: match the stored national or international form.
+	if p := botGroupParticipantPhone(in.Phone); p != "" {
+		national, digits := botPhoneVariants(p)
+		query += ` AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)`
+		args = append(args, national, digits, digits)
+	}
+	query += ` ORDER BY reservation_time ASC, id ASC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo consultar las reservas especiales"}), nil
 	}
@@ -144,10 +156,14 @@ func (s *Server) botToolGetSpecialDateBookings(ctx context.Context, restaurantID
 	sort.SliceStable(out, func(i, j int) bool {
 		return anyToString(out[i]["reservation_time"]) < anyToString(out[j]["reservation_time"])
 	})
-	return botJSON(map[string]any{
+	payload := map[string]any{
 		"date":     date,
 		"bookings": out,
-	}), nil
+	}
+	if p := strings.TrimSpace(in.Phone); p != "" {
+		payload["filtered_by_phone"] = p
+	}
+	return botJSON(payload), nil
 }
 
 // botNormaliseToolDate accepts both YYYY-MM-DD and dd/MM/yyyy and returns the

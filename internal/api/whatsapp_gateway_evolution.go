@@ -26,6 +26,11 @@ type evolutionGateway struct {
 	apiKey       string
 	instanceName string
 	cloudAPI     bool // instance uses Evolution's WHATSAPP-BUSINESS (Cloud API) connector
+	// ownJIDs are the JIDs/digits that address the bot itself, so a group
+	// mention can be recognised. Empty for parsing gateways built without a
+	// server (unit tests), where the raw "@<digits>" fallback still applies.
+	// Coordination id: wa_bot_group_mention_v1
+	ownJIDs []string
 }
 
 var _ WhatsAppGateway = (*evolutionGateway)(nil)
@@ -420,55 +425,59 @@ type evoEnvelope struct {
 	Data     json.RawMessage `json:"data"`
 }
 
+// evoUpsertData is the messages.upsert payload normalized once for both 1:1
+// and group messages. Coordination id: wa_bot_group_mention_v1
+type evoUpsertData struct {
+	Key struct {
+		RemoteJid    string `json:"remoteJid"`
+		RemoteJidAlt string `json:"remoteJidAlt"`
+		FromMe       bool   `json:"fromMe"`
+		ID           string `json:"id"`
+		// In a group the sender is the participant, not the chat.
+		Participant     string `json:"participant"`
+		ParticipantAlt  string `json:"participantAlt"`
+		ParticipantJidA string `json:"participantJidAlt"`
+	} `json:"key"`
+	PushName    string `json:"pushName"`
+	MessageType string `json:"messageType"`
+	Message     struct {
+		Conversation    string `json:"conversation"`
+		ExtendedTextMsg struct {
+			Text string `json:"text"`
+		} `json:"extendedTextMessage"`
+		ListResponseMsg struct {
+			Title             string `json:"title"`
+			SingleSelectReply struct {
+				SelectedRowID string `json:"selectedRowId"`
+			} `json:"singleSelectReply"`
+		} `json:"listResponseMessage"`
+		AudioMessage json.RawMessage `json:"audioMessage"`
+		// Base64 of the media, present because the webhook is registered
+		// with webhookBase64=true (wa_bot_audio_transcription_v1).
+		Base64          string          `json:"base64"`
+		PtvMessage      json.RawMessage `json:"ptvMessage"`
+		ReactionMessage json.RawMessage `json:"reactionMessage"`
+		ProtocolMessage json.RawMessage `json:"protocolMessage"`
+		// Baileys reports the rendered mentions in mentionText and the JID
+		// that was mentioned in contextInfo.mentionedJid.
+		MentionText []string `json:"mentionText"`
+		ContextInfo struct {
+			MentionedJID string `json:"mentionedJid"`
+		} `json:"contextInfo"`
+	} `json:"message"`
+}
+
 func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	var env evoEnvelope
 	if err := json.Unmarshal(body, &env); err != nil || !strings.EqualFold(env.Event, "messages.upsert") {
 		return waInbound{}, false
 	}
-	var d struct {
-		Key struct {
-			RemoteJid    string `json:"remoteJid"`
-			RemoteJidAlt string `json:"remoteJidAlt"`
-			FromMe       bool   `json:"fromMe"`
-			ID           string `json:"id"`
-		} `json:"key"`
-		PushName    string `json:"pushName"`
-		MessageType string `json:"messageType"`
-		Message     struct {
-			Conversation    string `json:"conversation"`
-			ExtendedTextMsg struct {
-				Text string `json:"text"`
-			} `json:"extendedTextMessage"`
-			ListResponseMsg struct {
-				Title             string `json:"title"`
-				SingleSelectReply struct {
-					SelectedRowID string `json:"selectedRowId"`
-				} `json:"singleSelectReply"`
-			} `json:"listResponseMessage"`
-			AudioMessage json.RawMessage `json:"audioMessage"`
-			// Base64 of the media, present because the webhook is registered
-			// with webhookBase64=true (wa_bot_audio_transcription_v1).
-			Base64          string          `json:"base64"`
-			PtvMessage      json.RawMessage `json:"ptvMessage"`
-			ReactionMessage json.RawMessage `json:"reactionMessage"`
-			ProtocolMessage json.RawMessage `json:"protocolMessage"`
-		} `json:"message"`
-	}
+	var d evoUpsertData
 	if err := json.Unmarshal(env.Data, &d); err != nil {
 		return waInbound{}, false
 	}
 	jid := strings.TrimSpace(d.Key.RemoteJid)
-	if !strings.HasSuffix(jid, "@s.whatsapp.net") {
-		// Recent Baileys versions address inbound 1:1 messages by WhatsApp's
-		// opaque LID and preserve the phone-number JID in remoteJidAlt. The bot
-		// needs the phone number both to identify the customer and to reply.
-		if strings.HasSuffix(jid, "@lid") {
-			jid = strings.TrimSpace(d.Key.RemoteJidAlt)
-		}
-	}
-	if jid == "" || !strings.HasSuffix(jid, "@s.whatsapp.net") { // drop groups (@g.us) / status / unresolved LIDs
-		return waInbound{}, false
-	}
+
 	text := d.Message.Conversation
 	if text == "" {
 		text = d.Message.ExtendedTextMsg.Text
@@ -484,6 +493,46 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	if pushName == "" {
 		pushName = "Cliente"
 	}
+
+	isAudio := d.Message.AudioMessage != nil || d.Message.PtvMessage != nil
+	ignored := botIsIgnoredMessageType(d.MessageType) || d.Message.ReactionMessage != nil || d.Message.ProtocolMessage != nil
+
+	// Coordination id: wa_bot_group_mention_v1 - a group message is a
+	// management turn, not a customer one. It is only served when the bot is
+	// explicitly mentioned; replies go to the group JID and the transcript is
+	// keyed by the group so members share one thread.
+	if botGroupIsGroupJID(jid) {
+		return parseEvolutionGroupMessage(evoGroupInput{
+			Instance:  strings.TrimSpace(env.Instance),
+			GroupJID:  jid,
+			MessageID: d.Key.ID,
+			FromMe:    d.Key.FromMe,
+			// Keep every participant field: the phone JID may be in any of
+			// them when Baileys addresses the member by opaque LID.
+			Participants: []string{d.Key.Participant, d.Key.ParticipantJidA, d.Key.ParticipantAlt},
+			PushName:     pushName,
+			MessageType:  d.MessageType,
+			Text:         text,
+			MentionText:  d.Message.MentionText,
+			MentionedJID: strings.TrimSpace(d.Message.ContextInfo.MentionedJID),
+			AudioB64:     botAudioBase64(isAudio, d.Message.Base64),
+			IsAudio:      isAudio,
+			Ignored:      ignored,
+			OwnJIDs:      g.ownJIDs,
+		})
+	}
+
+	if !strings.HasSuffix(jid, "@s.whatsapp.net") {
+		// Recent Baileys versions address inbound 1:1 messages by WhatsApp's
+		// opaque LID and preserve the phone-number JID in remoteJidAlt. The bot
+		// needs the phone number both to identify the customer and to reply.
+		if strings.HasSuffix(jid, "@lid") {
+			jid = strings.TrimSpace(d.Key.RemoteJidAlt)
+		}
+	}
+	if jid == "" || !strings.HasSuffix(jid, "@s.whatsapp.net") { // drop status / unresolved LIDs
+		return waInbound{}, false
+	}
 	return waInbound{
 		Sender:     strings.TrimSuffix(jid, "@s.whatsapp.net"),
 		Text:       strings.TrimSpace(text),
@@ -491,10 +540,11 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		MessageID:  d.Key.ID,
 		FromMe:     d.Key.FromMe,
 		SessionRef: strings.TrimSpace(env.Instance),
-		IsAudio:    d.Message.AudioMessage != nil || d.Message.PtvMessage != nil,
-		Ignored:    botIsIgnoredMessageType(d.MessageType) || d.Message.ReactionMessage != nil || d.Message.ProtocolMessage != nil,
+		IsAudio:    isAudio,
+		Ignored:    ignored,
 		MediaKind:  botMediaKindLabel(d.MessageType),
-		AudioB64:   botAudioBase64(d.Message.AudioMessage != nil || d.Message.PtvMessage != nil, d.Message.Base64),
+		AudioB64:   botAudioBase64(isAudio, d.Message.Base64),
+		ChatJID:    jid,
 	}, true
 }
 
