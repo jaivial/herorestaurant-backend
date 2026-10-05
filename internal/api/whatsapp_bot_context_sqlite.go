@@ -126,7 +126,7 @@ func (s *botConversationStore) Append(ctx context.Context, restaurantID int, use
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO conversation_messages
         (restaurant_id,user_phone,role,content,tool_name,source,include_in_context,created_at_ms)
-        VALUES (?,?,?,?,?,?,?,?)`, restaurantID, digitsOnly(userPhone), role, content, toolName, source, includeInContext, time.Now().UnixMilli())
+        VALUES (?,?,?,?,?,?,?,?)`, restaurantID, botConversationKey(userPhone), role, content, toolName, source, includeInContext, time.Now().UnixMilli())
 	return err
 }
 
@@ -141,7 +141,7 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 	rows, err := s.db.QueryContext(ctx, `SELECT role, content, source, tool_name FROM (
             SELECT id, role, content, source, tool_name, created_at_ms FROM conversation_messages
             WHERE restaurant_id=? AND user_phone=? AND include_in_context=1
-            ORDER BY id DESC LIMIT 40) ORDER BY id ASC`, restaurantID, digitsOnly(userPhone))
+            ORDER BY id DESC LIMIT 40) ORDER BY id ASC`, restaurantID, botConversationKey(userPhone))
 	if err != nil {
 		return nil, err
 	}
@@ -471,4 +471,16 @@ func (s *botConversationStore) DecisionRestaurants(ctx context.Context) ([]int, 
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// botConversationKey is the thread key for a transcript row. Phone numbers key
+// by their digits; a group thread keys by its namespaced @g.us id so several
+// members share one conversation and never collide with a phone number
+// (coordination id: wa_bot_group_mention_v1).
+func botConversationKey(chat string) string {
+	chat = strings.TrimSpace(chat)
+	if botGroupIsGroupJID(chat) {
+		return botGroupConversationKey(chat)
+	}
+	return digitsOnly(chat)
 }

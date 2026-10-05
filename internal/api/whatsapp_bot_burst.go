@@ -64,7 +64,9 @@ func (c *botBurstCoalescer) release(key string) {
 }
 
 func botBurstKey(restaurantID int, sender string) string {
-	return fmt.Sprintf("%d:%s", restaurantID, digitsOnly(sender))
+	// Group threads coalesce per group (wa_bot_group_mention_v1), not per
+	// member, so several mentions queued at once form one burst.
+	return fmt.Sprintf("%d:%s", restaurantID, botConversationKey(sender))
 }
 
 // take waits for the quiet window and returns the burst (nil = done; the

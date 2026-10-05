@@ -35,6 +35,11 @@ type botTenantConfig struct {
 	// Coordination id: wa_bot_management_group_v1
 	ManagementGroupName string `json:"management_group_name"`
 	ManagementGroupJID  string `json:"management_group_jid"`
+	// DisableSpecialCRUD turns OFF the special-menu CRUD tools, so a restaurant
+	// that wants the website-only flow for festive dates keeps it even though
+	// the bot runs inside the management group. Coordination id:
+	// wa_bot_special_crud_v1
+	DisableSpecialCRUD bool `json:"disable_special_crud"`
 }
 
 func parseBotTenantConfig(raw string) botTenantConfig {
@@ -58,6 +63,16 @@ func botSchema(s string) json.RawMessage { return json.RawMessage(s) }
 // botToolDefs returns the tool definitions offered to the LLM. Attachment
 // tools are gated out when the tenant disables them.
 func botToolDefs(cfg botTenantConfig) []botToolDef {
+	return botToolDefsForChat(cfg, false)
+}
+
+// botToolDefsForChat builds the tool list for one turn. inGroup marks a
+// management-group turn, which is the only surface where the special-menu CRUD
+// tools are advertised: a customer in a 1:1 chat must never be able to create,
+// change or cancel a festive booking through the bot. The executor re-checks
+// the rule server-side, so this is a UX aid, not the guard.
+// Coordination id: wa_bot_group_mention_v1 / wa_bot_special_crud_v1
+func botToolDefsForChat(cfg botTenantConfig, inGroup bool) []botToolDef {
 	defs := []botToolDef{
 		{
 			Name:        "send_message",
@@ -137,8 +152,8 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 			// bookings lookup used by the bot to summarise / lookup special
 			// date reservations.
 			Name:        "get_special_date_bookings",
-			Description: "Lista las reservas especiales de una fecha concreta con su bloque special (menús, principales y totales de adelanto) y el flag is_prereserva. ÚSALO cuando el cliente pida ver reservas especiales o para verificar pre-reservas.",
-			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"}},"required":["date"]}`),
+			Description: "Lista las reservas especiales de una fecha concreta con su bloque special (menús, principales y totales de adelanto) y el flag is_prereserva. ÚSALO cuando el cliente pida ver reservas especiales o para verificar pre-reservas. En el grupo interno añade phone para ver solo las reservas de ese cliente.",
+			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"},"phone":{"type":"string","description":"Filtra por el teléfono de un cliente (opcional)"}},"required":["date"]}`),
 		},
 		{
 			Name:        "check_availability_for_party",
@@ -234,6 +249,12 @@ func botToolDefs(cfg botTenantConfig) []botToolDef {
 		)
 	}
 
+	// Coordination id: wa_bot_special_crud_v1 - the CRUD surface is only
+	// advertised in the management group, and only when the tenant keeps it
+	// enabled. botToolDefsInGroup carries the turn context.
+	if inGroup && !cfg.DisableSpecialCRUD {
+		defs = append(defs, botToolDefsSpecialCRUD()...)
+	}
 	defs = append(defs, botToolDefsV2()...)
 	return defs
 }
@@ -265,4 +286,72 @@ func botCustomerToolDefs(defs []botToolDef, isMember bool) []botToolDef {
 		}
 	}
 	return out
+}
+
+// botToolDefsSpecialCRUD exposes the special-menu CRUD surface to the LLM
+// (coordination id: wa_bot_special_crud_v1).
+//
+// They are only advertised inside the management group, where staff write on
+// behalf of a named customer: a customer in a 1:1 chat must never be able to
+// create, change or cancel a festive booking through the bot. The executor
+// re-checks that rule server-side, so advertising is a UX aid, not the guard.
+func botToolDefsSpecialCRUD() []botToolDef {
+	return []botToolDef{
+		{
+			Name:        "get_special_date_menu",
+			Description: "Devuelve QUÉ se puede reservar en una fecha especial: los menús con su special_date_menu_id, precio, adelanto y, si el menú es por secciones, sus secciones con los principales de cada una. Úsala SIEMPRE antes de crear o modificar una reserva de menú especial para obtener los ids correctos.",
+			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"}},"required":["date"]}`),
+		},
+		{
+			Name:        "create_special_booking",
+			Description: "Crea una reserva de MENÚ ESPECIAL (Navidad, Nochevieja, evento…) en una fecha que sea fecha especial activa. Úsala primero get_special_date_menu. La suma de los menús debe coincidir EXACTAMENTE con las personas. Requiere confirmed=true. Envía el número de teléfono del cliente en `phone` (si falta se usa el del mensaje).",
+			InputSchema: botSchema(`{"type":"object","properties":{
+				"date":{"type":"string","description":"Fecha YYYY-MM-DD de la fecha especial"},
+				"time":{"type":"string","description":"Hora HH:MM"},
+				"people":{"type":"integer","description":"Número de comensales"},
+				"name":{"type":"string","description":"Nombre del cliente"},
+				"phone":{"type":"string","description":"Teléfono del cliente (opcional)"},
+				"commentary":{"type":"string","description":"Comentarios (opcional)"},
+				"special":{"type":"object","description":"Bloque de menús especiales","properties":{
+					"menus":{"type":"array","description":"Menús con su cantidad","items":{"type":"object","properties":{
+						"special_date_menu_id":{"type":"integer","description":"Id del menú de la fecha especial"},
+						"count":{"type":"integer","description":"Cuántas unidades"},
+						"adelanto_payment_method":{"type":"string","description":"Método de pago del adelanto (opcional)"},
+						"items":{"type":"array","items":{"type":"integer"},"description":"Principales elegidos (opcional)"},
+						"sections":{"type":"array","description":"Reserva por secciones de un menú especial","items":{"type":"object","properties":{
+							"section_id":{"type":"integer"},
+							"count":{"type":"integer"},
+							"items":{"type":"array","items":{"type":"integer"}}
+						},"required":["section_id","count"]}}
+					},"required":["special_date_menu_id","count"]}},
+					"payment_method":{"type":"string","description":"Método de pago del adelanto (opcional)"}
+				}},
+				"confirmed":{"type":"boolean","description":"DEBE ser true para ejecutar"}
+			},"required":["date","time","people","special","confirmed"]}`),
+		},
+		{
+			Name:        "modify_special_booking",
+			Description: "Modifica una reserva de menú especial ya creada (fecha, hora, número de comensales, comentarios o menús). Identifica la reserva por su booking_id y, si la consulta es para un cliente concreto, indica su teléfono en `phone`. Requiere confirmed=true.",
+			InputSchema: botSchema(`{"type":"object","properties":{
+				"booking_id":{"type":"integer","description":"ID de la reserva"},
+				"date":{"type":"string","description":"Nueva fecha YYYY-MM-DD (opcional)"},
+				"time":{"type":"string","description":"Nueva hora HH:MM (opcional)"},
+				"people":{"type":"integer","description":"Nuevos comensales (opcional)"},
+				"commentary":{"type":"string","description":"Nuevos comentarios (opcional)"},
+				"phone":{"type":"string","description":"Teléfono del cliente (opcional)"},
+				"special":{"type":"object","description":"Nuevo bloque de menús especiales (opcional)"},
+				"confirmed":{"type":"boolean","description":"DEBE ser true para ejecutar"}
+			},"required":["booking_id","confirmed"]}`),
+		},
+		{
+			Name:        "cancel_special_booking",
+			Description: "Cancela una reserva de menú especial. Solo reservas del teléfono del cliente. Requiere confirmed=true.",
+			InputSchema: botSchema(`{"type":"object","properties":{
+				"booking_id":{"type":"integer","description":"ID de la reserva"},
+				"reason":{"type":"string","description":"Motivo (opcional)"},
+				"phone":{"type":"string","description":"Teléfono del cliente (opcional)"},
+				"confirmed":{"type":"boolean","description":"DEBE ser true para ejecutar"}
+			},"required":["booking_id","confirmed"]}`),
+		},
+	}
 }
