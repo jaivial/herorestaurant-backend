@@ -259,11 +259,14 @@ func botGroupOwnerJIDsFromGroups(raw string) []string {
 // stay free of provider JSON details (SOLID: the provider adapter only
 // translates, this file decides).
 type evoGroupInput struct {
-	Instance     string
-	GroupJID     string
-	MessageID    string
-	FromMe       bool
-	Participant  string
+	Instance  string
+	GroupJID  string
+	MessageID string
+	FromMe    bool
+	// Participant holds every field the provider gave us for the sender. The
+	// phone JID may be in any of them (see botGroupParticipantJID), so they are
+	// kept as a list rather than collapsed to the first non-empty value.
+	Participants []string
 	PushName     string
 	MessageType  string
 	Text         string
@@ -293,7 +296,8 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 	if groupJID == "" {
 		return waInbound{}, false
 	}
-	participant := botGroupParticipantPhone(in.Participant)
+	participantJID := botGroupParticipantJID(in.Participants...)
+	participant := botGroupParticipantPhone(participantJID)
 	if in.Ignored {
 		botGroupMessageAudit(0, groupJID, participant, "ignored_non_conversational")
 		return waInbound{}, false
@@ -330,7 +334,7 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 		// Replies and the transcript both address the GROUP, never the member.
 		Sender:         groupJID,
 		ChatJID:        groupJID,
-		ParticipantJID: botGroupParticipantJID(in.Participant),
+		ParticipantJID: participantJID,
 		Text:           text,
 		PushName:       sanitizeBotPushName(pushName),
 		MessageID:      in.MessageID,
@@ -346,30 +350,37 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 	}, true
 }
 
-// botGroupParticipantJID normalizes the sender JID inside a group. Recent
-// Baileys versions address members by opaque LID and keep the phone JID in
-// participantAlt; the phone is what the booking tools key on.
-func botGroupParticipantJID(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
+// botGroupParticipantJID returns the phone-number JID of the member who wrote
+// in the group, or "" when only an opaque LID is known.
+//
+// Recent Baileys versions address group members by WhatsApp's opaque LID
+// (2276688822233@lid) and keep the phone JID in a sibling field. The booking
+// tools key on the phone, so the caller must try every participant field and
+// keep the first one that is a real @s.whatsapp.net id — the same rule the 1:1
+// path applies to remoteJid/remoteJidAlt.
+func botGroupParticipantJID(participants ...string) string {
+	for _, raw := range participants {
+		raw = strings.TrimSpace(raw)
+		if strings.HasSuffix(raw, "@s.whatsapp.net") {
+			return raw
+		}
 	}
-	if !strings.HasSuffix(raw, "@s.whatsapp.net") {
-		return raw
-	}
-	return raw
+	return ""
 }
 
 // botGroupParticipantPhone returns the member's national/international phone
-// used as the customer identity for bookings, or "" when the JID is an opaque
-// LID we cannot resolve.
+// used as the customer identity for bookings, or "" when the value is not a
+// resolvable phone JID.
+//
+// It deliberately refuses anything that is not a @s.whatsapp.net id. digitsOnly
+// on an opaque LID ("2276688822233@lid") yields digits that are NOT a phone
+// number, and that value is only locally unique, so feeding it to an ownership
+// check against contact_phone would either never match or collide with a real
+// customer number. "" makes the caller refuse the turn instead.
 func botGroupParticipantPhone(raw string) string {
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if !strings.HasSuffix(raw, "@s.whatsapp.net") {
 		return ""
 	}
-	if d := digitsOnly(strings.TrimSuffix(raw, "@s.whatsapp.net")); d != "" {
-		return d
-	}
-	return ""
+	return digitsOnly(strings.TrimSuffix(raw, "@s.whatsapp.net"))
 }

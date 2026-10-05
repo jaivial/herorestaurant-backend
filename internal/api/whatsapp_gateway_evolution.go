@@ -507,9 +507,9 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 			GroupJID:  jid,
 			MessageID: d.Key.ID,
 			FromMe:    d.Key.FromMe,
-			Participant: strings.TrimSpace(firstNonEmpty(
-				d.Key.Participant, d.Key.ParticipantJidA, d.Key.ParticipantAlt,
-			)),
+			// Keep every participant field: the phone JID may be in any of
+			// them when Baileys addresses the member by opaque LID.
+			Participants: []string{d.Key.Participant, d.Key.ParticipantJidA, d.Key.ParticipantAlt},
 			PushName:     pushName,
 			MessageType:  d.MessageType,
 			Text:         text,

@@ -40,9 +40,9 @@ import (
 // group (msg.IsGroup) and when the tenant has not disabled them, because they
 // are a management surface, not a customer one.
 
-// botSpecialCRUDDisabled reports whether a tenant opted out of the special
-// menu CRUD tools. Staff who prefer the website-only flow keep it by
-// disabling the feature in whatsapp_bot_config (special_crud_enabled=false).
+// botSpecialCRUDEnabled reports whether the tenant may use the special-menu CRUD
+// tools. A restaurant that prefers the website-only flow opts out in
+// whatsapp_bot_config.config_json with "disable_special_crud": true.
 func botSpecialCRUDEnabled(tenant botTenantConfig) bool {
 	return !tenant.DisableSpecialCRUD
 }
@@ -162,8 +162,13 @@ func (s *Server) botToolCreateSpecialBooking(ctx context.Context, restaurantID i
 	if name == "" || name == "Cliente" {
 		name = "Cliente WhatsApp"
 	}
-	// onlineOnly=true: the bot books like the public form, so sections the
-	// backoffice disabled for online booking can never be selected here.
+	// The group is a STAFF surface, so boNormalizeAndValidateBookingInput runs
+	// with its normal backoffice semantics: resolveSpecialBookingInput is called
+	// with onlineOnly=false, so a section the backoffice disabled for online
+	// booking is still bookable here and the deposit may be recorded under any
+	// canonical SPEC 2 method. That is the same permission a backoffice user
+	// has, which is why this is correct for a group but would NOT be correct on
+	// the public form.
 	booking, err := s.boNormalizeAndValidateBookingInput(ctx, restaurantID, boNormalizeInput{
 		ReservationDate:         dateISO,
 		ReservationTime:         strings.TrimSpace(in.Time),
@@ -324,7 +329,7 @@ func (s *Server) botToolModifySpecialBooking(ctx context.Context, restaurantID i
 		body["special"] = in.Special
 	}
 	if len(body) == 0 {
-		return botJSON(map[string]any{"error": "indica al menos un campo a cambiar (time, people, commentary o special)"}), nil
+		return botJSON(map[string]any{"error": "indica al menos un campo a cambiar (date, time, people, commentary o special)"}), nil
 	}
 	raw, code, err := s.assistantCallHandler(ctx, s.handleBOBookingPatch, assistantHandlerInput{
 		Method:   "PATCH",
@@ -364,7 +369,11 @@ func (s *Server) botToolCancelSpecialBooking(ctx context.Context, restaurantID i
 	if !in.Confirmed {
 		return botJSON(map[string]any{"error": "requiere confirmed=true tras repetir la cancelación al grupo"}), nil
 	}
-	owned, err := s.botSpecialBookingIsOwned(ctx, restaurantID, in.BookingID, botSpecialCRUDActorPhone(msg))
+	// Same target resolution as modify: staff cancel on behalf of a CUSTOMER,
+	// so an explicit phone (quoted in the group message) wins over the member's
+	// own number. Cancelling for someone else is the most common case, so the
+	// two tools must behave identically here.
+	owned, err := s.botSpecialBookingIsOwned(ctx, restaurantID, in.BookingID, botSpecialCRUDTargetPhone(msg, in.Phone))
 	if err != nil {
 		return botJSON(map[string]any{"error": "error verificando la reserva"}), nil
 	}
@@ -493,13 +502,19 @@ func (s *Server) botToolGetSpecialDateMenu(ctx context.Context, restaurantID int
 		}
 		// Coordination id: special_date_section_menus_v1 - a special-type menu
 		// is booked per section, so the bookable unit is the section.
+		//
+		// The full list is exposed, not just onlineSpecialDateMenuSections:
+		// create_special_booking runs with backoffice (onlineOnly=false)
+		// semantics, so filtering here would hide sections the caller IS
+		// allowed to book and could report a date with only offline sections as
+		// having no menus at all. Each section still carries its own
+		// "online_enabled" flag so the model can prefer the online ones.
 		if m.MenuID.Valid && m.MenuType == "special" {
-			all := s.loadSpecialDateMenuSections(ctx, restaurantID, m.ID, m.MenuID.Int64, true)
-			online := onlineSpecialDateMenuSections(all)
-			if len(all) > 0 && len(online) == 0 {
+			sections := s.loadSpecialDateMenuSections(ctx, restaurantID, m.ID, m.MenuID.Int64, true)
+			if len(sections) == 0 {
 				continue
 			}
-			entry["sections"] = online
+			entry["sections"] = sections
 			out = append(out, entry)
 			continue
 		}
