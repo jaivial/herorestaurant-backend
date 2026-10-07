@@ -532,6 +532,12 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/reservations/eligible", s.handleBOPOSReservationsEligible)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/reservations/{bookingId}/visit", s.handleBOPOSReservationVisit)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/visits/{id}", s.handleBOPOSVisitGet)
+		// Staff PIN: set your own, verify someone else's to approve an action.
+		// Under the sell gate because they are part of working the till rather
+		// than administration.
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Get("/pos/pin", s.handleBOPOSPinStatus)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/pin", s.handleBOPOSPinSet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/pin/verify", s.handleBOPOSPinVerify)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/visits", s.handleBOPOSVisitCreate)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posVisitManageGate).Patch("/pos/visits/{id}", s.handleBOPOSVisitPatch)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posVisitManageGate).Post("/pos/visits/{id}/cancel", s.handleBOPOSVisitCancel)
