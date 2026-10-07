@@ -321,6 +321,26 @@ func persistPOSModifiers(ctx context.Context, tx *sql.Tx, restaurantID int, line
 	return nil
 }
 
+// loadPOSTicketLineTags reads every line's tags in one query. Reading them per
+// line turned a ticket open into one round trip per line, which on a menu with
+// components is the difference between two queries and twenty.
+func (s *Server) loadPOSTicketLineTags(ctx context.Context, restaurantID int, ticketID int64) (map[int64][]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT t.ticket_line_id,t.tag_id FROM pos_ticket_line_tags t JOIN pos_ticket_lines l ON l.restaurant_id=t.restaurant_id AND l.id=t.ticket_line_id WHERE t.restaurant_id=? AND l.ticket_id=? ORDER BY t.ticket_line_id,t.tag_id`, restaurantID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]int64{}
+	for rows.Next() {
+		var lineID, tagID int64
+		if err = rows.Scan(&lineID, &tagID); err != nil {
+			return nil, err
+		}
+		out[lineID] = append(out[lineID], tagID)
+	}
+	return out, rows.Err()
+}
+
 // loadPOSTicketModifiers returns the modifiers of each line keyed by line id.
 // Voids keep their modifiers (status lives on the line, not the modifier) so an
 // auditor can still read what was ordered before the void.

@@ -824,7 +824,14 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	if modErr != nil {
 		return nil, modErr
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
+	// Pack and tag data come from two extra queries for the whole ticket rather
+	// than two more per line: a menu with six components would otherwise issue
+	// eighteen round trips on every ticket open.
+	lineTags, tagErr := s.loadPOSTicketLineTags(ctx, restaurantID, ticketID)
+	if tagErr != nil {
+		return nil, tagErr
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at,pack_id,parent_line_id FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -839,28 +846,19 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 		var compedAt sql.NullTime
 		var compReason string
 		var updatedAt time.Time
-		if err = rows.Scan(&id, &productID, &name, &quantity, &unitPrice, &vat, &lineDiscount, &lineTotal, &notes, &lineStatus, &compedAt, &compReason, &updatedAt); err != nil {
+		var packID, parentLineID sql.NullInt64
+		if err = rows.Scan(&id, &productID, &name, &quantity, &unitPrice, &vat, &lineDiscount, &lineTotal, &notes, &lineStatus, &compedAt, &compReason, &updatedAt, &packID, &parentLineID); err != nil {
 			return nil, err
 		}
-		tagRows, tagErr := s.db.QueryContext(ctx, `SELECT tag_id FROM pos_ticket_line_tags WHERE restaurant_id=? AND ticket_line_id=? ORDER BY tag_id`, restaurantID, id)
-		if tagErr != nil {
-			return nil, tagErr
+		tagIDs := lineTags[id]
+		if tagIDs == nil {
+			tagIDs = []int64{}
 		}
-		tagIDs := []int64{}
-		for tagRows.Next() {
-			var tagID int64
-			if tagErr = tagRows.Scan(&tagID); tagErr != nil {
-				tagRows.Close()
-				return nil, tagErr
-			}
-			tagIDs = append(tagIDs, tagID)
-		}
-		tagRows.Close()
 		mods := lineModifiers[id]
 		if mods == nil {
 			mods = []map[string]any{}
 		}
-		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "modifiers": mods, "updatedAt": updatedAt})
+		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "modifiers": mods, "packId": stockNullableDBInt(packID), "parentLineId": stockNullableDBInt(parentLineID), "updatedAt": updatedAt})
 	}
 	return map[string]any{"id": ticketID, "ticketNumber": number, "status": status, "subtotalGrossCents": subtotal, "discountCents": discount, "surchargeCents": surcharge, "tipCents": tip, "taxCents": tax, "totalGrossCents": total, "paidCents": paid, "refundedCents": refunded, "version": version, "operatorMemberId": stockNullableDBInt(operator), "note": ticketNote, "lines": lines}, rows.Err()
 }
