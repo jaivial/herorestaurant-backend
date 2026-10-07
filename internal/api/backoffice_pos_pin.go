@@ -151,9 +151,14 @@ func (s *Server) countPINFailure(r *http.Request, restaurantID int64, userID int
 	statement := `INSERT INTO pos_pin_attempts (restaurant_id,attempted_by,failed_attempts,locked_until)
 		VALUES (?,?,1,IF(1>=?,DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE),NULL))
 		ON DUPLICATE KEY UPDATE
-		  failed_attempts = IF(locked_until IS NOT NULL AND locked_until <= NOW(), 1, failed_attempts + 1),
-		  locked_until = IF(locked_until IS NOT NULL AND locked_until <= NOW(), DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE),
-		                    IF(failed_attempts + 1 >= ?, DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE), locked_until))`
+		  failed_attempts = IF(updated_at < DATE_SUB(NOW(),INTERVAL ` + window + ` MINUTE) OR (locked_until IS NOT NULL AND locked_until <= NOW()), 1, failed_attempts + 1),
+		  locked_until = IF(failed_attempts >= ?, DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE), NULL)`
+	// MySQL applies these assignments left to right, and locked_until reads the
+	// failed_attempts this same statement just wrote. The previous version
+	// tested "failed_attempts + 1" AFTER incrementing, so it locked on the 4th
+	// failure instead of the 5th, and failures never expired: three typos last
+	// week plus one today locked the terminal for 15 minutes (measured on dev).
+	// Now the count restarts after an expired lock or a quiet window.
 	_, err := s.db.ExecContext(r.Context(), statement, restaurantID, userID, posPinMaxAttempts, posPinMaxAttempts)
 	return err
 }
