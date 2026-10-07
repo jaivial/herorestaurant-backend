@@ -627,6 +627,7 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		PaymentMethod  string               `json:"paymentMethod"`
 		IdempotencyKey string               `json:"idempotencyKey"`
 		Lines          []posRefundLineInput `json:"lines"`
+		ApprovalPin    string               `json:"approvalPin"`
 	}
 	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&in) != nil || in.AmountCents <= 0 || strings.TrimSpace(in.Reason) == "" || strings.TrimSpace(in.IdempotencyKey) == "" || !validPOSPaymentMethod(strings.ToUpper(in.PaymentMethod)) {
 		httpx.WriteError(w, 400, "Invalid refund")
@@ -640,6 +641,10 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+	approvedBy, ok := s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, in.AmountCents, false)
+	if !ok {
+		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -668,6 +673,9 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	refundID, _ := res.LastInsertId()
+	// A refund had no audit row at all; with a PIN policy it must at least name
+	// who authorised the money going back.
+	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'REFUND',JSON_OBJECT('refundId',?,'amountCents',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, ticketID, refundID, in.AmountCents, strings.TrimSpace(in.Reason), approvedBy, a.User.ID)
 	lineAmountTotal := int64(0)
 	for _, line := range in.Lines {
 		lineAmountTotal += line.AmountCents

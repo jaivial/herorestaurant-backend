@@ -305,6 +305,11 @@ type posSettings struct {
 	AutoCloseVisit    bool   `json:"autoCloseVisit"`
 	RequireOpenShift  bool   `json:"requireOpenShift"`
 	ReceiptPrefix     string `json:"receiptPrefix"`
+	// PinThresholdCents: a money-reducing action of at least this amount needs
+	// a manager PIN. nil = no amount rule.
+	PinThresholdCents *int64 `json:"pinThresholdCents"`
+	// PinRequiredForDiscount: every discount and comp needs a manager PIN.
+	PinRequiredForDiscount bool `json:"pinRequiredForDiscount"`
 }
 
 // posRestaurantProfile is the issuer identity printed on POS documents such as
@@ -349,12 +354,18 @@ func defaultPOSSettings() posSettings {
 
 func (s *Server) loadPOSSettings(ctx context.Context, restaurantID int) (posSettings, error) {
 	out := defaultPOSSettings()
-	var enabled, autoClose, requireShift int
-	err := s.db.QueryRowContext(ctx, `SELECT is_enabled,stock_mode,covers_mode,timezone,TIME_FORMAT(business_day_cutoff,'%H:%i'),auto_close_visit,require_open_shift,receipt_prefix FROM pos_settings WHERE restaurant_id=?`, restaurantID).Scan(&enabled, &out.StockMode, &out.CoversMode, &out.Timezone, &out.BusinessDayCutoff, &autoClose, &requireShift, &out.ReceiptPrefix)
+	var enabled, autoClose, requireShift, pinDiscount int
+	var pinThreshold sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT is_enabled,stock_mode,covers_mode,timezone,TIME_FORMAT(business_day_cutoff,'%H:%i'),auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount FROM pos_settings WHERE restaurant_id=?`, restaurantID).Scan(&enabled, &out.StockMode, &out.CoversMode, &out.Timezone, &out.BusinessDayCutoff, &autoClose, &requireShift, &out.ReceiptPrefix, &pinThreshold, &pinDiscount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
 	}
 	out.IsEnabled, out.AutoCloseVisit, out.RequireOpenShift = enabled != 0, autoClose != 0, requireShift != 0
+	out.PinRequiredForDiscount = pinDiscount != 0
+	if pinThreshold.Valid {
+		v := pinThreshold.Int64
+		out.PinThresholdCents = &v
+	}
 	return out, err
 }
 
@@ -424,7 +435,20 @@ func (s *Server) handleBOPOSSettingsPatch(w http.ResponseWriter, r *http.Request
 		}
 		consumed = append(consumed, id)
 	}
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO pos_settings (restaurant_id,is_enabled,stock_mode,covers_mode,timezone,business_day_cutoff,auto_close_visit,require_open_shift,receipt_prefix) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE is_enabled=VALUES(is_enabled),stock_mode=VALUES(stock_mode),covers_mode=VALUES(covers_mode),timezone=VALUES(timezone),business_day_cutoff=VALUES(business_day_cutoff),auto_close_visit=VALUES(auto_close_visit),require_open_shift=VALUES(require_open_shift),receipt_prefix=VALUES(receipt_prefix)`, a.ActiveRestaurantID, stockBoolInt(in.IsEnabled), in.StockMode, in.CoversMode, in.Timezone, in.BusinessDayCutoff, stockBoolInt(in.AutoCloseVisit), stockBoolInt(in.RequireOpenShift), strings.TrimSpace(in.ReceiptPrefix))
+	// A PIN policy can only be switched on when someone can actually type a
+	// PIN, otherwise the very next discount locks the till.
+	if (in.PinRequiredForDiscount || (in.PinThresholdCents != nil && *in.PinThresholdCents > 0)) && !(current.PinRequiredForDiscount || current.PinThresholdCents != nil) {
+		var withPIN int
+		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`, a.ActiveRestaurantID).Scan(&withPIN); err != nil || withPIN == 0 {
+			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "code": "PIN_POLICY_NO_PIN", "message": "Nadie tiene PIN configurado: crea al menos uno (Mi PIN) antes de exigirlo"})
+			return
+		}
+	}
+	var pinThreshold any
+	if in.PinThresholdCents != nil && *in.PinThresholdCents > 0 {
+		pinThreshold = *in.PinThresholdCents
+	}
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO pos_settings (restaurant_id,is_enabled,stock_mode,covers_mode,timezone,business_day_cutoff,auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE is_enabled=VALUES(is_enabled),stock_mode=VALUES(stock_mode),covers_mode=VALUES(covers_mode),timezone=VALUES(timezone),business_day_cutoff=VALUES(business_day_cutoff),auto_close_visit=VALUES(auto_close_visit),require_open_shift=VALUES(require_open_shift),receipt_prefix=VALUES(receipt_prefix),pin_threshold_cents=VALUES(pin_threshold_cents),pin_required_for_discount=VALUES(pin_required_for_discount)`, a.ActiveRestaurantID, stockBoolInt(in.IsEnabled), in.StockMode, in.CoversMode, in.Timezone, in.BusinessDayCutoff, stockBoolInt(in.AutoCloseVisit), stockBoolInt(in.RequireOpenShift), strings.TrimSpace(in.ReceiptPrefix), pinThreshold, stockBoolInt(in.PinRequiredForDiscount))
 	if err != nil {
 		httpx.WriteError(w, 500, "Error saving POS settings")
 		return
@@ -1231,14 +1255,12 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 	// When a PIN is offered it is verified here, not trusted from the client: the
 	// audit trail has to name a manager whose PIN was actually checked, otherwise
 	// the name is whatever the browser felt like sending.
-	approvedBy := ""
-	if strings.TrimSpace(in.ApprovalPin) != "" {
-		name, err := s.verifyPOSApprovalPIN(r, a.ActiveRestaurantID, strings.TrimSpace(in.ApprovalPin))
-		if err != nil {
-			httpx.WriteError(w, http.StatusForbidden, "PIN de aprobación incorrecto")
-			return
-		}
-		approvedBy = name
+	// The amount the policy compares is what the guest stops paying.
+	var voidAmount int64
+	_ = s.db.QueryRowContext(r.Context(), `SELECT line_total_gross_cents FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND id=?`, a.ActiveRestaurantID, ticketID, lineID).Scan(&voidAmount)
+	approvedBy, ok := s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, voidAmount, false)
+	if !ok {
+		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -1313,6 +1335,7 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 		AmountCents     int64  `json:"amountCents"`
 		Reason          string `json:"reason"`
 		ExpectedVersion int    `json:"expectedVersion"`
+		ApprovalPin     string `json:"approvalPin"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || in.AmountCents < 0 || in.AmountCents > 100000000 || in.AmountCents > 0 && strings.TrimSpace(in.Reason) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid discount")
@@ -1326,7 +1349,8 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	var status string
 	var version int
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,version FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &version); err != nil || status != "OPEN" {
+	var currentDiscount int64
+	if err = tx.QueryRowContext(r.Context(), `SELECT status,version,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &version, &currentDiscount); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
@@ -1334,11 +1358,20 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Ticket changed", "code": "STALE_TICKET"})
 		return
 	}
+	// Only a discount that GROWS needs approval: taking one off makes the guest
+	// pay more, which nobody has to authorise.
+	approvedBy := ""
+	if in.AmountCents > currentDiscount {
+		var ok bool
+		if approvedBy, ok = s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, in.AmountCents-currentDiscount, true); !ok {
+			return
+		}
+	}
 	if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, in.AmountCents); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'DISCOUNT',JSON_OBJECT('amountCents',?,'reason',?),?)`, a.ActiveRestaurantID, ticketID, in.AmountCents, strings.TrimSpace(in.Reason), a.User.ID)
+	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'DISCOUNT',JSON_OBJECT('amountCents',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, ticketID, in.AmountCents, strings.TrimSpace(in.Reason), approvedBy, a.User.ID)
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error applying discount")
 		return
