@@ -91,12 +91,12 @@ func botToolDefsForChat(cfg botTenantConfig, inGroup bool) []botToolDef {
 		},
 		{
 			Name:        "list_menus",
-			Description: "Lista los menús reservables activos con su categoría (menú cerrado convencional, menú cerrado de grupo, a la carta convencional, a la carta de grupo, menú especial), su precio y subtítulo. ÚSALO cuando el cliente pregunte por los menús disponibles.",
+			Description: "Lista los menús reservables activos con su categoría, su precio y subtítulo. Cada menú trae category (código numérico: 1=menú cerrado convencional, 2=menú cerrado de grupo, 3=a la carta convencional, 4=a la carta de grupo, 5=a la carta por tiempo, 6=menú especial), category_name (nombre técnico) y category_label (etiqueta en español). USA SIEMPRE category_label para hablarle al cliente, nunca el número ni category_name. ÚSALO cuando el cliente pregunte por los menús disponibles.",
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),
 		},
 		{
 			Name:        "get_menu_details",
-			Description: "Obtiene toda la información de UN menú por su menu_id: los platos de cada sección (título, descripción, precio, suplemento), el precio del menú y sus condiciones (bebida y precio por persona si la bebida es ilimitada, tamaño mínimo de grupo, máximo de platos principales por mesa, si incluye café y comentarios). Usa list_menus primero para conocer el menu_id.",
+			Description: "Con la misma convención de category que list_menus (1=menú cerrado convencional, 2=menú cerrado de grupo, 3=a la carta convencional, 4=a la carta de grupo, 5=a la carta por tiempo, 6=menú especial), obténe toda la información de UN menú por su menu_id: los platos de cada sección (título, descripción, precio, suplemento), el precio del menú y sus condiciones (bebida y precio por persona si la bebida es ilimitada, tamaño mínimo de grupo, máximo de platos principales por mesa, si incluye café y comentarios). Usa list_menus primero para conocer el menu_id.",
 			InputSchema: botSchema(`{"type":"object","properties":{"menu_id":{"type":"integer","description":"ID del menú (de list_menus)"}},"required":["menu_id"]}`),
 		},
 		{
