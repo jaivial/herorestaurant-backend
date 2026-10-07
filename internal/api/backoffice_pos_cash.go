@@ -366,14 +366,15 @@ func (s *Server) handleBOPOSCashMovementCreate(w http.ResponseWriter, r *http.Re
 	// would train staff to type PINs they do not have. What must never happen is
 	// the audit trail naming a manager the server never checked, so when a PIN
 	// IS sent it is resolved here and only its verified name is stored.
-	approvedBy := ""
-	if pin := strings.TrimSpace(in.ApprovalPin); pin != "" {
-		name, pinErr := s.verifyPOSApprovalPIN(r, a.ActiveRestaurantID, pin)
-		if pinErr != nil {
-			httpx.WriteError(w, http.StatusForbidden, "PIN de aprobaci\u00f3n incorrecto")
-			return
-		}
-		approvedBy = name
+	// The amount rule applies to cash LEAVING the drawer; a deposit (IN) is
+	// still verified when a PIN is offered, but never demands one.
+	policyAmount := in.AmountCents
+	if in.Type == "IN" {
+		policyAmount = 0
+	}
+	approvedBy, ok := s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, policyAmount, false)
+	if !ok {
+		return
 	}
 	var existing int64
 	if err = s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_cash_movements WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existing); err == nil {

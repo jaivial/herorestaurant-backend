@@ -440,6 +440,7 @@ func (s *Server) handleBOPOSTicketAdjustment(w http.ResponseWriter, r *http.Requ
 		Reason          string  `json:"reason"`
 		IdempotencyKey  string  `json:"idempotencyKey"`
 		ExpectedVersion int     `json:"expectedVersion"`
+		ApprovalPin     string  `json:"approvalPin"`
 	}
 	if ticketID <= 0 || !posDecodeBody(w, r, &in) || strings.TrimSpace(in.IdempotencyKey) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid adjustment")
@@ -507,6 +508,14 @@ func (s *Server) handleBOPOSTicketAdjustment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// A surcharge makes the guest pay more and needs nobody's approval.
+	approvedBy := ""
+	if kind == "DISCOUNT" {
+		var ok bool
+		if approvedBy, ok = s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, amount, true); !ok {
+			return
+		}
+	}
 	nextDiscount, nextSurcharge := currentDiscount, currentSurcharge
 	signed := amount
 	if kind == "DISCOUNT" {
@@ -537,7 +546,7 @@ func (s *Server) handleBOPOSTicketAdjustment(w http.ResponseWriter, r *http.Requ
 		httpx.WriteError(w, http.StatusInternalServerError, "Error recording adjustment")
 		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,?,JSON_OBJECT('amountCents',?,'mode',?,'reason',?),?)`, a.ActiveRestaurantID, ticketID, kind, signed, mode, reason, a.User.ID)
+	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,?,JSON_OBJECT('amountCents',?,'mode',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, ticketID, kind, signed, mode, reason, approvedBy, a.User.ID)
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error applying adjustment")
 		return
@@ -563,6 +572,7 @@ func (s *Server) handleBOPOSLineComp(w http.ResponseWriter, r *http.Request) {
 		Comped          bool   `json:"comped"`
 		Reason          string `json:"reason"`
 		ExpectedVersion int    `json:"expectedVersion"`
+		ApprovalPin     string `json:"approvalPin"`
 	}
 	if ticketID <= 0 || lineID <= 0 || !posDecodeBody(w, r, &in) {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid comp request")
@@ -598,8 +608,13 @@ func (s *Server) handleBOPOSLineComp(w http.ResponseWriter, r *http.Request) {
 	}
 	// Comping discounts the whole line: the dish is still served and still
 	// deducts stock, but the customer is charged nothing for it.
+	approvedBy := ""
 	if in.Comped {
 		gross := int64(math.Round(quantity * float64(unitPrice)))
+		var ok bool
+		if approvedBy, ok = s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, gross, true); !ok {
+			return
+		}
 		_, err = tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET discount_cents=?,comped_at=NOW(),comp_reason=?,comped_by=? WHERE restaurant_id=? AND id=?`, gross, reason, a.User.ID, a.ActiveRestaurantID, lineID)
 	} else {
 		_, err = tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET discount_cents=0,comped_at=NULL,comp_reason=NULL,comped_by=NULL WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, lineID)
@@ -617,7 +632,7 @@ func (s *Server) handleBOPOSLineComp(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'COMP',JSON_OBJECT('comped',?,'reason',?),?)`, a.ActiveRestaurantID, lineID, in.Comped, reason, a.User.ID)
+	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'COMP',JSON_OBJECT('comped',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, lineID, in.Comped, reason, approvedBy, a.User.ID)
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error comping line")
 		return
