@@ -123,14 +123,17 @@ func (s *Server) handleBOPOSCourseList(w http.ResponseWriter, r *http.Request) {
 		COALESCE(SUM(CASE WHEN COALESCE(sent.qty,0) >= l.quantity THEN 1 ELSE 0 END),0)
 		FROM pos_ticket_lines l
 		LEFT JOIN (
-			SELECT dl.ticket_line_id, SUM(dl.quantity_delta) AS qty
-			FROM pos_kitchen_dispatch_lines dl
-			JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id
-			WHERE dl.restaurant_id=? AND d.status<>'CANCELLED'
-			GROUP BY dl.ticket_line_id
+			SELECT line_id AS ticket_line_id, SUM(q) AS qty FROM (
+				SELECT dl.ticket_line_id AS line_id, dl.quantity_delta AS q
+				FROM pos_kitchen_dispatch_lines dl
+				JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id
+				WHERE dl.restaurant_id=? AND d.status<>'CANCELLED'
+				UNION ALL SELECT to_line_id, quantity FROM pos_kitchen_line_transfers WHERE restaurant_id=?
+				UNION ALL SELECT from_line_id, -quantity FROM pos_kitchen_line_transfers WHERE restaurant_id=?
+			) moves GROUP BY line_id
 		) sent ON sent.ticket_line_id = l.id
 		WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'
-		GROUP BY course ORDER BY LENGTH(course),course`, a.ActiveRestaurantID, a.ActiveRestaurantID, ticketID)
+		GROUP BY course ORDER BY LENGTH(course),course`, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, ticketID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading courses")
 		return
