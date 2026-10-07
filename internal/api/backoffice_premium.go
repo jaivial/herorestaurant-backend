@@ -36,12 +36,15 @@ const (
 
 var boPremiumDomainRe = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$`)
 
-var boWebsiteMenuTypes = map[string]struct{}{
-	"closed_conventional": {},
-	"closed_group":        {},
-	"a_la_carte":          {},
-	"a_la_carte_group":    {},
-	"special":             {},
+// boWebsiteMenuTypes is the set of menu types that can own a website theme
+// override, keyed by the canonical numeric code (see menutype.go).
+// Coordination id: menu_type_numeric_v1
+var boWebsiteMenuTypes = map[int]struct{}{
+	MenuTypeClosedConventional: {},
+	MenuTypeClosedGroup:        {},
+	MenuTypeALaCarte:           {},
+	MenuTypeALaCarteGroup:      {},
+	MenuTypeSpecial:            {},
 }
 
 var boWebsiteThemeCatalog = []map[string]any{
@@ -488,15 +491,31 @@ func normalizeWebsiteThemeID(themeID string) string {
 	return trimmed
 }
 
-func normalizeWebsiteMenuType(menuType string) string {
-	out := strings.TrimSpace(strings.ToLower(menuType))
-	if out == "group" {
-		return "closed_group"
+// normalizeWebsiteMenuType resolves a menu type sent by the backoffice
+// (numeric code or legacy string) to the canonical code, or MenuTypeUnknown.
+// Coordination id: menu_type_numeric_v1
+func normalizeWebsiteMenuType(menuType any) int {
+	return MenuTypeFromAny(menuType)
+}
+
+// websiteMenuTypeOverridesJSON renders the code-keyed overrides as the wire map.
+// A JSON object key is always a string, so every override is published twice:
+// under the canonical numeric code ("3") and under the legacy name
+// ("a_la_carte"), both mapping to the same theme id. The backoffice upsert
+// accepts either key, so a frontend can migrate at its own pace.
+// Coordination id: menu_type_numeric_v1
+func websiteMenuTypeOverridesJSON(overrides map[int]string) map[string]string {
+	out := make(map[string]string, len(overrides)*2)
+	for code, themeID := range overrides {
+		out[strconv.Itoa(code)] = themeID
+		if name := MenuTypeName(code); name != "" {
+			out[name] = themeID
+		}
 	}
 	return out
 }
 
-func (s *Server) loadBOPremiumWebsiteMenuTemplates(ctx context.Context, restaurantID int) (string, map[string]string, bool, error) {
+func (s *Server) loadBOPremiumWebsiteMenuTemplates(ctx context.Context, restaurantID int) (string, map[int]string, bool, error) {
 	defaultThemeID := ""
 	hasDefaultAssignment := false
 	if row, found, err := s.queryOneAsMap(ctx, `SELECT template_id FROM restaurant_websites WHERE restaurant_id = ? LIMIT 1`, restaurantID); err != nil {
@@ -522,9 +541,9 @@ func (s *Server) loadBOPremiumWebsiteMenuTemplates(ctx context.Context, restaura
 	}
 	defer rows.Close()
 
-	overrides := map[string]string{}
+	overrides := map[int]string{}
 	for rows.Next() {
-		var menuTypeRaw string
+		var menuTypeRaw sql.NullInt64
 		var themeIDRaw string
 		if scanErr := rows.Scan(&menuTypeRaw, &themeIDRaw); scanErr != nil {
 			return "", nil, false, scanErr
@@ -546,7 +565,7 @@ func (s *Server) loadBOPremiumWebsiteMenuTemplates(ctx context.Context, restaura
 	return defaultThemeID, overrides, hasAssignment, nil
 }
 
-func (s *Server) upsertBOPremiumWebsiteMenuTemplateOverrides(ctx context.Context, restaurantID int, overrides map[string]string) error {
+func (s *Server) upsertBOPremiumWebsiteMenuTemplateOverrides(ctx context.Context, restaurantID int, overrides map[int]string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -598,7 +617,7 @@ func (s *Server) handleBOPremiumWebsiteMenuTemplatesGet(w http.ResponseWriter, r
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":          true,
 		"default_theme_id": defaultThemeID,
-		"overrides":        overrides,
+		"overrides":        websiteMenuTypeOverridesJSON(overrides),
 		"themes":           boWebsiteThemeCatalog,
 		"assigned":         hasAssignment,
 	})
@@ -629,7 +648,10 @@ func (s *Server) handleBOPremiumWebsiteMenuTemplatesUpsert(w http.ResponseWriter
 		}
 	}
 
-	overrides := map[string]string{}
+	// Coordination id: menu_type_numeric_v1 - the wire map is keyed by the
+	// legacy name (the JSON key type is string); both a name and a numeric
+	// code as the key are accepted and stored as the canonical code.
+	overrides := map[int]string{}
 	for menuTypeRaw, themeIDRaw := range req.Overrides {
 		menuType := normalizeWebsiteMenuType(menuTypeRaw)
 		if _, ok := boWebsiteMenuTypes[menuType]; !ok {
@@ -689,7 +711,7 @@ func (s *Server) handleBOPremiumWebsiteMenuTemplatesUpsert(w http.ResponseWriter
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":          true,
 		"default_theme_id": defaultThemeOut,
-		"overrides":        overridesOut,
+		"overrides":        websiteMenuTypeOverridesJSON(overridesOut),
 		"themes":           boWebsiteThemeCatalog,
 		"assigned":         hasAssignmentOut,
 	})

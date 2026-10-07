@@ -131,10 +131,14 @@ type publicMenuSettings struct {
 }
 
 type publicMenuItem struct {
-	ID                   int64                 `json:"id"`
-	Slug                 string                `json:"slug"`
-	MenuTitle            string                `json:"menu_title"`
-	MenuType             string                `json:"menu_type"`
+	ID        int64  `json:"id"`
+	Slug      string `json:"slug"`
+	MenuTitle string `json:"menu_title"`
+	// Coordination id: menu_type_numeric_v1 - menu_type is the canonical numeric
+	// code; menu_type_name keeps the legacy string for the frontends that have
+	// not migrated yet (rolling deploy).
+	MenuType             int                   `json:"menu_type"`
+	MenuTypeName         string                `json:"menu_type_name,omitempty"`
 	Price                string                `json:"price"`
 	Active               bool                  `json:"active"`
 	MenuSubtitle         []string              `json:"menu_subtitle"`
@@ -178,7 +182,8 @@ type publicMenuItemHome struct {
 	Slug                 string   `json:"slug"`
 	MenuTitle            string   `json:"menu_title"`
 	MenuTitleEnglish     string   `json:"menu_title_english,omitempty"`
-	MenuType             string   `json:"menu_type"`
+	MenuType             int      `json:"menu_type"`
+	MenuTypeName         string   `json:"menu_type_name,omitempty"`
 	Active               bool     `json:"active"`
 	MenuSubtitle         []string `json:"menu_subtitle"`
 	MenuSubtitleEnglish  []string `json:"menu_subtitle_english,omitempty"`
@@ -451,15 +456,6 @@ func (s *Server) handlePageVisibilityPatch(w http.ResponseWriter, r *http.Reques
 	httpx.WriteJSON(w, http.StatusOK, vis.payload())
 }
 
-func isPublicMenuType(menuType string) bool {
-	switch menuType {
-	case "closed_conventional", "closed_group", "a_la_carte", "a_la_carte_group", "special":
-		return true
-	default:
-		return false
-	}
-}
-
 func buildPublicMenuSlug(title string, menuID int64) string {
 	base := strings.ToLower(strings.TrimSpace(title))
 	base = publicMenuSlugReplacer.Replace(base)
@@ -726,14 +722,14 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		WHERE restaurant_id = ?
 		  AND active = 1
 		  AND is_draft = 0
-		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') IN ('closed_conventional', 'closed_group', 'a_la_carte', 'a_la_carte_group', 'special')
+		  AND COALESCE(menu_type, 1) IN (1,2,3,4,6)
 		ORDER BY
-		  CASE COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
-		    WHEN 'closed_conventional' THEN 1
-		    WHEN 'a_la_carte' THEN 2
-		    WHEN 'closed_group' THEN 3
-		    WHEN 'a_la_carte_group' THEN 4
-		    WHEN 'special' THEN 5
+		  CASE COALESCE(menu_type, 1)
+		    WHEN 1 THEN 1
+		    WHEN 3 THEN 2
+		    WHEN 2 THEN 3
+		    WHEN 4 THEN 4
+		    WHEN 6 THEN 5
 		    ELSE 9
 		  END ASC,
 		  modified_at DESC,
@@ -756,7 +752,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			var (
 				menuID                  int64
 				menuTitle               string
-				menuTypeRaw             sql.NullString
+				menuTypeRaw             sql.NullInt64
 				activeInt               int
 				menuSubtitleRaw         sql.NullString
 				showDishImagesInt       int
@@ -784,8 +780,8 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			menuType := normalizeV2MenuType(menuTypeRaw.String)
-			if !isPublicMenuType(menuType) {
+			menuType := MenuTypeFromAny(menuTypeRaw)
+			if !IsPublicMenuTypeCode(menuType) {
 				continue
 			}
 
@@ -794,6 +790,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				Slug:                 buildPublicMenuSlug(menuTitle, menuID),
 				MenuTitle:            menuTitle,
 				MenuType:             menuType,
+				MenuTypeName:         MenuTypeName(menuType),
 				Active:               activeInt != 0,
 				MenuSubtitle:         anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
 				ShowDishImages:       showDishImagesInt != 0,
@@ -833,7 +830,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			menuTitle               string
 			priceRaw                sql.NullString
 			activeInt               int
-			menuTypeRaw             sql.NullString
+			menuTypeRaw             sql.NullInt64
 			menuSubtitleRaw         sql.NullString
 			showDishImagesInt       int
 			showSectionTabsInt      int
@@ -888,8 +885,8 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		menuType := normalizeV2MenuType(menuTypeRaw.String)
-		if !isPublicMenuType(menuType) {
+		menuType := MenuTypeFromAny(menuTypeRaw)
+		if !IsPublicMenuTypeCode(menuType) {
 			continue
 		}
 
@@ -925,12 +922,13 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		item := publicMenuItem{
-			ID:        menuID,
-			Slug:      buildPublicMenuSlug(menuTitle, menuID),
-			MenuTitle: menuTitle,
-			MenuType:  menuType,
-			Price:     price,
-			Active:    activeInt != 0,
+			ID:           menuID,
+			Slug:         buildPublicMenuSlug(menuTitle, menuID),
+			MenuTitle:    menuTitle,
+			MenuType:     menuType,
+			MenuTypeName: MenuTypeName(menuType),
+			Price:        price,
+			Active:       activeInt != 0,
 			MenuSubtitle: anySliceToStringList(
 				decodeJSONOrFallback(menuSubtitleRaw.String, []any{}),
 			),
@@ -1209,10 +1207,10 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 	}
 
 	// First, get the menu type to determine response format
-	var menuType string
+	var menuType sql.NullInt64
 	logCheckpoint(r, "public_menu_by_id_db_query_started", "menu_id", menuIDParam)
 	err = s.db.QueryRowContext(r.Context(), `
-		SELECT COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
+		SELECT COALESCE(menu_type, 1)
 		FROM menus
 		WHERE id = ? AND restaurant_id = ? AND active = 1 AND is_draft = 0
 	`, menuID, restaurantID).Scan(&menuType)
@@ -1230,10 +1228,10 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 		})
 		return
 	}
-	logCheckpoint(r, "public_menu_by_id_db_query_completed", "menu_type", menuType)
+	logCheckpoint(r, "public_menu_by_id_db_query_completed", "menu_type", strconv.Itoa(MenuTypeFromAny(menuType)))
 
-	// If menu type is "special", return minimal response
-	if menuType == "special" {
+	// A special-type menu answers with the minimal response.
+	if MenuTypeFromAny(menuType) == MenuTypeSpecial {
 		var (
 			menuTitle          string
 			menuSubtitleRaw    sql.NullString
@@ -1278,7 +1276,7 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 
 	// For non-special menus, return full menu data (reuse existing logic)
 	// This would be the same as the full response in handlePublicMenus
-	logCheckpoint(r, "public_menu_by_id_response_sent", "menu_id", menuIDParam, "menu_type", menuType)
+	logCheckpoint(r, "public_menu_by_id_response_sent", "menu_id", menuIDParam, "menu_type", strconv.Itoa(MenuTypeFromAny(menuType)))
 	s.handleFullPublicMenuByID(w, r, int64(restaurantID), menuID)
 }
 
@@ -1287,7 +1285,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		menuTitle               string
 		priceRaw                sql.NullString
 		activeInt               int
-		menuTypeRaw             sql.NullString
+		menuTypeRaw             sql.NullInt64
 		menuSubtitleRaw         sql.NullString
 		showDishImagesInt       int
 		showSectionTabsInt      int
@@ -1363,8 +1361,8 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	menuType := normalizeV2MenuType(menuTypeRaw.String)
-	if !isPublicMenuType(menuType) {
+	menuType := MenuTypeFromAny(menuTypeRaw)
+	if !IsPublicMenuTypeCode(menuType) {
 		httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
 			"success": false,
 			"message": "Menu not found",
@@ -1404,12 +1402,13 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	}
 
 	item := publicMenuItem{
-		ID:        menuID,
-		Slug:      buildPublicMenuSlug(menuTitle, menuID),
-		MenuTitle: menuTitle,
-		MenuType:  menuType,
-		Price:     price,
-		Active:    activeInt != 0,
+		ID:           menuID,
+		Slug:         buildPublicMenuSlug(menuTitle, menuID),
+		MenuTitle:    menuTitle,
+		MenuType:     menuType,
+		MenuTypeName: MenuTypeName(menuType),
+		Price:        price,
+		Active:       activeInt != 0,
 		MenuSubtitle: anySliceToStringList(
 			decodeJSONOrFallback(menuSubtitleRaw.String, []any{}),
 		),
@@ -1634,8 +1633,11 @@ type publicMenuSidebarItem struct {
 	ID        int64  `json:"id"`
 	Slug      string `json:"slug"`
 	MenuTitle string `json:"menu_title"`
-	MenuType  string `json:"menu_type"`
-	Active    bool   `json:"active"`
+	MenuType  int    `json:"menu_type"`
+	// Coordination id: menu_type_numeric_v1 - legacy string kept for the
+	// frontends that have not migrated yet.
+	MenuTypeName string `json:"menu_type_name,omitempty"`
+	Active       bool   `json:"active"`
 	// Coordination id: special_menu_visibility_v1
 	WebPlacement      string `json:"web_placement"`
 	LegacySourceTable string `json:"legacy_source_table,omitempty"`
@@ -1643,12 +1645,12 @@ type publicMenuSidebarItem struct {
 
 // activePublicMenuOrderBy returns the same ORDER BY clause used across menu list endpoints.
 func activePublicMenuOrderBy() string {
-	return `CASE COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
-		    WHEN 'closed_conventional' THEN 1
-		    WHEN 'a_la_carte' THEN 2
-		    WHEN 'closed_group' THEN 3
-		    WHEN 'a_la_carte_group' THEN 4
-		    WHEN 'special' THEN 5
+	return `CASE COALESCE(menu_type, 1)
+		    WHEN 1 THEN 1
+		    WHEN 3 THEN 2
+		    WHEN 2 THEN 3
+		    WHEN 4 THEN 4
+		    WHEN 6 THEN 5
 		    ELSE 9
 		  END ASC,
 		  modified_at DESC,
@@ -1660,7 +1662,7 @@ func activePublicMenuWhere() string {
 	return `restaurant_id = ?
 		  AND active = 1
 		  AND is_draft = 0
-		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') IN ('closed_conventional', 'closed_group', 'a_la_carte', 'a_la_carte_group', 'special')`
+		  AND COALESCE(menu_type, 1) IN (1,2,3,4,6)`
 }
 
 // activePublicMenuWhereAliased is activePublicMenuWhere for queries that join
@@ -1669,7 +1671,7 @@ func activePublicMenuWhereAliased(alias string) string {
 	return alias + `.restaurant_id = ?
 		  AND ` + alias + `.active = 1
 		  AND ` + alias + `.is_draft = 0
-		  AND COALESCE(NULLIF(TRIM(` + alias + `.menu_type), ''), 'closed_conventional') IN ('closed_conventional', 'closed_group', 'a_la_carte', 'a_la_carte_group', 'special')`
+		  AND COALESCE(` + alias + `.menu_type, 1) IN (1,2,3,4,6)`
 }
 
 // handlePublicMenuByRouteID handles GET /menus/{menuID}.
@@ -1695,7 +1697,7 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, menu_title, COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional'), COALESCE(legacy_source_table, ''),
+		SELECT id, menu_title, COALESCE(menu_type, 1), COALESCE(legacy_source_table, ''),
 		       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1)
 		FROM menus
 		WHERE `+activePublicMenuWhere()+`
@@ -1716,7 +1718,7 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 		var (
 			menuID            int64
 			menuTitle         string
-			menuTypeRaw       string
+			menuTypeRaw       sql.NullInt64
 			legacySourceTable string
 			webPlacementRaw   string
 			menuPublicActive  int
@@ -1729,8 +1731,8 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		menuType := normalizeV2MenuType(menuTypeRaw)
-		if !isPublicMenuType(menuType) {
+		menuType := MenuTypeFromAny(menuTypeRaw)
+		if !IsPublicMenuTypeCode(menuType) {
 			continue
 		}
 
@@ -1747,6 +1749,7 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 			Slug:              buildPublicMenuSlug(menuTitle, menuID),
 			MenuTitle:         menuTitle,
 			MenuType:          menuType,
+			MenuTypeName:      MenuTypeName(menuType),
 			Active:            true, // All results are active due to WHERE clause
 			WebPlacement:      normalizedWebPlacement(webPlacementRaw),
 			LegacySourceTable: strings.ToUpper(strings.TrimSpace(legacySourceTable)),
@@ -1852,7 +1855,7 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 		var (
 			menuID                  int64
 			menuTitle               string
-			menuTypeRaw             sql.NullString
+			menuTypeRaw             sql.NullInt64
 			activeInt               int
 			menuSubtitleRaw         sql.NullString
 			showMenuPreviewImageInt int
@@ -1874,8 +1877,8 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		menuType := normalizeV2MenuType(menuTypeRaw.String)
-		if !isPublicMenuType(menuType) {
+		menuType := MenuTypeFromAny(menuTypeRaw)
+		if !IsPublicMenuTypeCode(menuType) {
 			continue
 		}
 
@@ -1884,6 +1887,7 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 			Slug:                 buildPublicMenuSlug(menuTitle, menuID),
 			MenuTitle:            menuTitle,
 			MenuType:             menuType,
+			MenuTypeName:         MenuTypeName(menuType),
 			Active:               activeInt != 0,
 			MenuSubtitle:         anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
 			ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
