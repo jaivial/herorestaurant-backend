@@ -7,7 +7,6 @@ import (
 	"errors"
 	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -81,8 +80,9 @@ func (s *Server) loadPOSPacks(ctx context.Context, q posModifierGroupQueryer, re
 		return nil, err
 	}
 	defer rows.Close()
-	packs := []posPack{}
-	index := map[int64]int{}
+	// Capacity grows here, but the pointers below are taken only after the
+	// loop is finished, so no append can move them afterwards.
+	packs := make([]posPack, 0, 16)
 	for rows.Next() {
 		var p posPack
 		var active int
@@ -92,8 +92,14 @@ func (s *Server) loadPOSPacks(ctx context.Context, q posModifierGroupQueryer, re
 		p.IsActive = active != 0
 		p.Components = []posPackComponent{}
 		p.Slots = []string{}
-		index[p.ID] = len(packs)
 		packs = append(packs, p)
+	}
+	// Pointers are taken only after the loop: appending during the loop can
+	// reallocate the backing array and leave earlier pointers aimed at the
+	// discarded copy, so every pack but the last would come back empty.
+	ptrs := make([]*posPack, len(packs))
+	for i := range packs {
+		ptrs[i] = &packs[i]
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
@@ -101,47 +107,10 @@ func (s *Server) loadPOSPacks(ctx context.Context, q posModifierGroupQueryer, re
 	if len(packs) == 0 {
 		return packs, nil
 	}
-	cRows, err := q.QueryContext(ctx, `SELECT c.pack_id,c.pos_product_id,pr.name,c.quantity,COALESCE(c.slot_group,''),c.is_default,c.sort_order FROM pos_pack_components c JOIN pos_products pr ON pr.restaurant_id=c.restaurant_id AND pr.id=c.pos_product_id WHERE c.restaurant_id=? ORDER BY c.sort_order,pr.name`, restaurantID)
-	if err != nil {
+	// One joined query for every pack's components, so a 40-menu catalog is two
+	// queries, not forty-one.
+	if err = s.scanPOSPackComponents(ctx, q, restaurantID, ptrs); err != nil {
 		return nil, err
-	}
-	defer cRows.Close()
-	slotSeen := map[int64]map[string]bool{}
-	for cRows.Next() {
-		var packID int64
-		var c posPackComponent
-		var qty float64
-		var def int
-		if err = cRows.Scan(&packID, &c.ProductID, &c.ProductName, &qty, &c.SlotGroup, &def, &c.SortOrder); err != nil {
-			return nil, err
-		}
-		c.Quantity = qty
-		c.IsDefault = def != 0
-		i, ok := index[packID]
-		if !ok {
-			continue
-		}
-		packs[i].Components = append(packs[i].Components, c)
-		if c.SlotGroup != "" {
-			if slotSeen[packID] == nil {
-				slotSeen[packID] = map[string]bool{}
-			}
-			if !slotSeen[packID][c.SlotGroup] {
-				slotSeen[packID][c.SlotGroup] = true
-				packs[i].Slots = append(packs[i].Slots, c.SlotGroup)
-			}
-		}
-	}
-	if err = cRows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range packs {
-		sort.SliceStable(packs[i].Components, func(a, b int) bool {
-			if packs[i].Components[a].SortOrder != packs[i].Components[b].SortOrder {
-				return packs[i].Components[a].SortOrder < packs[i].Components[b].SortOrder
-			}
-			return packs[i].Components[a].ProductName < packs[i].Components[b].ProductName
-		})
 	}
 	return packs, nil
 }
@@ -153,79 +122,60 @@ type posPackRowQueryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// loadPOSPack reads one pack with its components.
+// scanPOSPackComponents fills the components and slot list for one pack and
+// resolves each component's VAT rate. It is shared by the list and single
+// loaders so both derive the same component shape.
+func (s *Server) scanPOSPackComponents(ctx context.Context, q posModifierGroupQueryer, restaurantID int, packs []*posPack) error {
+	rows, err := q.QueryContext(ctx, `SELECT c.pack_id,c.pos_product_id,pr.name,c.quantity,COALESCE(c.slot_group,''),c.is_default,c.sort_order,`+posProductVATRateSQL+` FROM pos_pack_components c JOIN pos_products pr ON pr.restaurant_id=c.restaurant_id AND pr.id=c.pos_product_id LEFT JOIN stock_vat_rates v ON v.restaurant_id=c.restaurant_id AND v.id=pr.vat_rate_id WHERE c.restaurant_id=? ORDER BY c.sort_order,pr.name`, restaurantID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	index := make(map[int64]*posPack, len(packs))
+	for _, p := range packs {
+		index[p.ID] = p
+	}
+	seen := map[int64]map[string]bool{}
+	for rows.Next() {
+		var packID int64
+		var c posPackComponent
+		var qty float64
+		var def int
+		if err = rows.Scan(&packID, &c.ProductID, &c.ProductName, &qty, &c.SlotGroup, &def, &c.SortOrder, &c.VATRate); err != nil {
+			return err
+		}
+		c.Quantity = qty
+		c.IsDefault = def != 0
+		p, ok := index[packID]
+		if !ok {
+			continue
+		}
+		p.Components = append(p.Components, c)
+		if c.SlotGroup != "" {
+			if seen[packID] == nil {
+				seen[packID] = map[string]bool{}
+			}
+			if !seen[packID][c.SlotGroup] {
+				seen[packID][c.SlotGroup] = true
+				p.Slots = append(p.Slots, c.SlotGroup)
+			}
+		}
+	}
+	return rows.Err()
+}
+
+// loadPOSPack reads one pack with its components and its components' VAT.
 func (s *Server) loadPOSPack(ctx context.Context, q posPackRowQueryer, restaurantID int, packID int64) (*posPack, error) {
-	row := q.QueryRowContext(ctx, `SELECT p.id,p.name,COALESCE(p.description,''),p.price_gross_cents,`+posProductVATRateSQL+`,p.is_active,p.sort_order FROM pos_packs p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE p.restaurant_id=? AND p.id=?`, restaurantID, packID)
 	var p posPack
 	var active int
-	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.PriceGrossCents, &p.VATRate, &active, &p.SortOrder); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT p.id,p.name,COALESCE(p.description,''),p.price_gross_cents,`+posProductVATRateSQL+`,p.is_active,p.sort_order FROM pos_packs p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE p.restaurant_id=? AND p.id=?`, restaurantID, packID).Scan(&p.ID, &p.Name, &p.Description, &p.PriceGrossCents, &p.VATRate, &active, &p.SortOrder); err != nil {
 		return nil, err
 	}
 	p.IsActive = active != 0
 	p.Components = []posPackComponent{}
 	p.Slots = []string{}
-	cRows, err := q.QueryContext(ctx, `SELECT c.pos_product_id,pr.name,c.quantity,COALESCE(c.slot_group,''),c.is_default,c.sort_order FROM pos_pack_components c JOIN pos_products pr ON pr.restaurant_id=c.restaurant_id AND pr.id=c.pos_product_id WHERE c.restaurant_id=? AND c.pack_id=? ORDER BY c.sort_order,pr.name`, restaurantID, packID)
-	if err != nil {
+	if err := s.scanPOSPackComponents(ctx, q, restaurantID, []*posPack{&p}); err != nil {
 		return nil, err
-	}
-	defer cRows.Close()
-	seen := map[string]bool{}
-	vatOf := map[int64]float64{}
-	for cRows.Next() {
-		var c posPackComponent
-		var qty float64
-		var def int
-		if err = cRows.Scan(&c.ProductID, &c.ProductName, &qty, &c.SlotGroup, &def, &c.SortOrder); err != nil {
-			return nil, err
-		}
-		c.Quantity = qty
-		c.IsDefault = def != 0
-		p.Components = append(p.Components, c)
-		if c.SlotGroup != "" && !seen[c.SlotGroup] {
-			seen[c.SlotGroup] = true
-			p.Slots = append(p.Slots, c.SlotGroup)
-		}
-	}
-	if err = cRows.Err(); err != nil {
-		return nil, err
-	}
-	// One extra query for the VAT of every distinct component, so a menu with
-	// five components does not become five queries inside the checkout.
-	ids := make([]any, 0, len(p.Components)+1)
-	placeholders := ""
-	for _, c := range p.Components {
-		if _, ok := vatOf[c.ProductID]; ok {
-			continue
-		}
-		vatOf[c.ProductID] = 0
-		ids = append(ids, c.ProductID)
-	}
-	if len(ids) > 0 {
-		placeholders = strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-		args := make([]any, 0, len(ids)+1)
-		args = append(args, restaurantID)
-		for _, v := range ids {
-			args = append(args, v)
-		}
-		vRows, vErr := q.QueryContext(ctx, `SELECT p.id,`+posProductVATRateSQL+` FROM pos_products p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE p.restaurant_id=? AND p.id IN (`+placeholders+`)`, args...)
-		if vErr != nil {
-			return nil, vErr
-		}
-		defer vRows.Close()
-		for vRows.Next() {
-			var pid int64
-			var rate float64
-			if err = vRows.Scan(&pid, &rate); err != nil {
-				return nil, err
-			}
-			vatOf[pid] = rate
-		}
-		if err = vRows.Err(); err != nil {
-			return nil, err
-		}
-	}
-	for i := range p.Components {
-		p.Components[i].VATRate = vatOf[p.Components[i].ProductID]
 	}
 	return &p, nil
 }
