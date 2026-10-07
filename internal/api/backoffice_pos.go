@@ -32,7 +32,10 @@ const (
 	posPermissionReports      = "pos.reports.view"
 	posPermissionSettings     = "pos.settings.manage"
 	posPermissionKitchen      = "pos.kitchen.manage"
-	posFeatureKey             = "pos_pack"
+	// Modifier configuration is catalog data: whoever owns the POS catalog
+	// decides the prices a guest can be charged, so it rides the same gate.
+	posPermissionModifiers = posPermissionCatalog
+	posFeatureKey          = "pos_pack"
 )
 
 func (s *Server) checkPOSRateLimit(scope string, restaurantID, userID, limit int) bool {
@@ -589,7 +592,14 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day")
 		return
 	}
-	payload := map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift, "date": businessDate, "cashDay": cashDay}
+	// Modifier groups per product id (as string keys). Empty map when the menu
+	// has no modifiers, which is the common case, so the payload stays small.
+	productModifiers, modErr := s.posModifierCatalogForProducts(r.Context(), a.ActiveRestaurantID)
+	if modErr != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS modifiers")
+		return
+	}
+	payload := map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "productModifiers": productModifiers, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift, "date": businessDate, "cashDay": cashDay}
 	// Only shipped when stock tracking is on: an absent key tells the sell
 	// screen it should not render stock badges at all.
 	if settings.StockMode != "OFF" {
@@ -802,6 +812,10 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	// fields, so no extra query is needed. The ORDER BY id is deliberate and
 	// stays: the client owns the display order, and a stable server order keeps
 	// this payload deterministic.
+	lineModifiers, modErr := s.loadPOSTicketModifiers(ctx, restaurantID, ticketID)
+	if modErr != nil {
+		return nil, modErr
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
 	if err != nil {
 		return nil, err
@@ -834,7 +848,11 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 			tagIDs = append(tagIDs, tagID)
 		}
 		tagRows.Close()
-		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "updatedAt": updatedAt})
+		mods := lineModifiers[id]
+		if mods == nil {
+			mods = []map[string]any{}
+		}
+		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "modifiers": mods, "updatedAt": updatedAt})
 	}
 	return map[string]any{"id": ticketID, "ticketNumber": number, "status": status, "subtotalGrossCents": subtotal, "discountCents": discount, "surchargeCents": surcharge, "tipCents": tip, "taxCents": tax, "totalGrossCents": total, "paidCents": paid, "refundedCents": refunded, "version": version, "operatorMemberId": stockNullableDBInt(operator), "note": ticketNote, "lines": lines}, rows.Err()
 }
@@ -878,11 +896,12 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		ProductID              int64   `json:"productId"`
-		Quantity               float64 `json:"quantity"`
-		Notes                  string  `json:"notes"`
-		IdempotencyKey         string  `json:"idempotencyKey"`
-		UnitPriceOverrideCents *int64  `json:"unitPriceOverrideCents"`
+		ProductID              int64                  `json:"productId"`
+		Quantity               float64                `json:"quantity"`
+		Notes                  string                 `json:"notes"`
+		IdempotencyKey         string                 `json:"idempotencyKey"`
+		UnitPriceOverrideCents *int64                 `json:"unitPriceOverrideCents"`
+		Modifiers              []posModifierSelection `json:"modifiers"`
 	}
 	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || in.ProductID <= 0 || in.Quantity <= 0 || strings.TrimSpace(in.IdempotencyKey) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid ticket line")
@@ -932,8 +951,24 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		price = override
 		overrideApplied = override != catalogPrice
 	}
-	lineTotal := int64(math.Round(in.Quantity * float64(price)))
-	lineRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, price, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, a.User.ID)
+	// Modifiers are validated against the groups that actually apply to this
+	// product, so a line can never be priced with an option the catalog does
+	// not offer. The delta is per unit of the line, so a 2x2 line pays for two
+	// of each modifier.
+	modifierRows, modifierDelta, modErr := resolvePOSModifiers(mustPOSModifierGroups(r.Context(), tx, a.ActiveRestaurantID, in.ProductID), in.Modifiers)
+	if modErr != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid modifier selection")
+		return
+	}
+	// The override replaces the catalog price; the modifier delta is still added
+	// on top, so an override can never silently drop the chosen extras.
+	lineUnitPrice := price + modifierDelta
+	if lineUnitPrice < 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "Modifier price makes the line negative")
+		return
+	}
+	lineTotal := int64(math.Round(in.Quantity * float64(lineUnitPrice)))
+	lineRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, lineUnitPrice, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, a.User.ID)
 	if err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
@@ -941,6 +976,10 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		lineID, _ := lineRes.LastInsertId()
+		if err = persistPOSModifiers(r.Context(), tx, a.ActiveRestaurantID, lineID, modifierRows); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
+			return
+		}
 		if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, existingDiscount); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
 			return
@@ -955,7 +994,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if overrideApplied {
-			_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PRICE_OVERRIDE',JSON_OBJECT('productId',?,'catalogPriceCents',?,'overridePriceCents',?),?)`, a.ActiveRestaurantID, lineID, in.ProductID, catalogPrice, price, a.User.ID)
+			_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PRICE_OVERRIDE',JSON_OBJECT('productId',?,'catalogPriceCents',?,'overridePriceCents',?,'modifierDeltaCents',?),?)`, a.ActiveRestaurantID, lineID, in.ProductID, catalogPrice, price, modifierDelta, a.User.ID)
 		}
 	}
 	if err = tx.Commit(); err != nil {
