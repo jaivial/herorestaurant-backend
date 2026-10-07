@@ -257,8 +257,11 @@ func resolvePOSPack(pack posPack, sel posPackSelection) ([]posPackComponent, int
 	if quantity < 0 || quantity > 1000 || quantity != math.Trunc(quantity) {
 		return nil, 0, errPOSPackSelection
 	}
+	// One component per slot, enforced by the slot loop itself. No global
+	// "seen product" guard: two different slots may legitimately both choose
+	// the same dish (an "ensalada" as a starter and as a garnish), and one
+	// slot cannot repeat a product because it only ever contributes one pick.
 	chosen := make([]posPackComponent, 0, len(pack.Components))
-	taken := map[int64]bool{}
 	for _, slot := range pack.Slots {
 		options := pack.slotComponents(slot)
 		if len(options) == 0 {
@@ -293,10 +296,6 @@ func resolvePOSPack(pack posPack, sel posPackSelection) ([]posPackComponent, int
 			}
 			picked = &options[0]
 		}
-		if taken[picked.ProductID] {
-			return nil, 0, errPOSPackSelection
-		}
-		taken[picked.ProductID] = true
 		chosen = append(chosen, *picked)
 	}
 	// Components with no slot are fixed parts of the pack.
@@ -304,10 +303,6 @@ func resolvePOSPack(pack posPack, sel posPackSelection) ([]posPackComponent, int
 		if c.SlotGroup != "" {
 			continue
 		}
-		if taken[c.ProductID] {
-			return nil, 0, errPOSPackSelection
-		}
-		taken[c.ProductID] = true
 		chosen = append(chosen, c)
 	}
 	if len(chosen) == 0 {

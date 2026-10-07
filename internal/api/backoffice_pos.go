@@ -976,15 +976,38 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		// with its own previous rows, never with an unrelated line.
 		parentRes, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,created_by) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, pack.Name, qty, pack.PriceGrossCents, pack.VATRate, packTotal, stockNullableString(in.Notes), in.IdempotencyKey, pack.ID, a.User.ID)
 		if insErr != nil {
-			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
+			if !strings.Contains(strings.ToLower(insErr.Error()), "duplicate") {
+				httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
+				return
+			}
+			// This pack was already rung up under the same key: the retry is a
+			// no-op, not a second menu.
+			if err = tx.Commit(); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error adding line")
+				return
+			}
+			ticket, loadErr := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
+			if loadErr != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error loading ticket")
+				return
+			}
+			httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "ticket": ticket})
 			return
 		}
 		parentID, _ := parentRes.LastInsertId()
+		// Settings are read once for the whole menu, not once per dish.
+		settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
+		if settingsErr != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS settings")
+			return
+		}
 		for i, c := range components {
 			componentQty := c.Quantity * float64(qty)
 			compKey := in.IdempotencyKey + ":c" + strconv.Itoa(i)
 			compRes, cErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,idempotency_key,parent_line_id,created_by) VALUES (?,?,?,?,?,0,?,0,?,?,?)`, a.ActiveRestaurantID, ticketID, c.ProductID, c.ProductName, componentQty, c.VATRate, compKey, parentID, a.User.ID)
 			if cErr != nil {
+				// A duplicate component key means this whole request already
+				// applied. Swallowing it keeps the retry idempotent.
 				if !strings.Contains(strings.ToLower(cErr.Error()), "duplicate") {
 					httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
 					return
@@ -992,10 +1015,9 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			componentID, _ := compRes.LastInsertId()
-			// Components carry the stock and the kitchen, not the parent: the
-			// parent is a menu, the components are the dishes that leave it.
-			settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
-			if settingsErr == nil && settings.StockMode == "LIVE" {
+			// Components carry the stock, not the parent: the parent is a menu,
+			// the components are the dishes that leave it.
+			if settings.StockMode == "LIVE" {
 				if _, err = s.deductStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, componentID, c.ProductID, componentQty, "pos-pack:"+compKey); err != nil {
 					httpx.WriteError(w, http.StatusInternalServerError, "Error deducting stock")
 					return
@@ -1004,6 +1026,13 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, existingDiscount); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
+			return
+		}
+		// Audit the menu: which pack, at what price, with which choices. A
+		// pack is the unit the guest bought, so the void/discount trail has to
+		// name it even though its component lines are separately traceable.
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PACK_RUNG',JSON_OBJECT('packId',?,'packName',?,'quantity',?,'unitPriceCents',?,'totalCents',?),?)`, a.ActiveRestaurantID, parentID, pack.ID, pack.Name, qty, pack.PriceGrossCents, packTotal, a.User.ID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error auditing pack line")
 			return
 		}
 		if err = tx.Commit(); err != nil {
@@ -1154,6 +1183,14 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
 		httpx.WriteError(w, http.StatusNotFound, "Ticket line not found")
+		return
+	}
+	// A pack parent owns its component lines. Voiding the menu must void the
+	// dishes with it: the money is on the parent, so leaving the children
+	// active would print them to the kitchen and keep the plate on the bill
+	// with nothing to pay for.
+	if _, err = tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=NOW() WHERE restaurant_id=? AND parent_line_id=? AND status='ACTIVE'`, strings.TrimSpace(in.Reason), a.User.ID, a.ActiveRestaurantID, lineID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error voiding line")
 		return
 	}
 	if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, ticketDiscount); err != nil {
