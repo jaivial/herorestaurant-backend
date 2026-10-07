@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -624,6 +625,35 @@ func nextPOSTicketNumber(ctx context.Context, tx *sql.Tx, restaurantID int, busi
 	var next int64
 	if err = tx.QueryRowContext(ctx, `SELECT next_value-1 FROM pos_daily_sequences WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' FOR UPDATE`, restaurantID, businessDate).Scan(&next); err != nil {
 		return "", err
+	}
+
+	// A ticket number is never reused, so a number that already exists is a hard
+	// stop -- but a sequence that has fallen behind reality must not take the
+	// whole till down with an opaque "Error creating ticket".
+	//
+	// The counter can legitimately end up behind the tickets: a database restore,
+	// a ticket inserted by an import or by another system, or a row edited by
+	// hand. None of those are normal, and all of them stop service at the worst
+	// possible moment, on the busiest table.
+	//
+	// So the counter is checked against the highest number actually issued for
+	// the day and pushed forward if it is behind. It is only ever moved FORWARD:
+	// a counter ahead of reality just skips a number, which is harmless, whereas
+	// moving it back would reuse one. This runs only when a collision is found,
+	// so the normal path stays exactly as fast and as strict as before.
+	used := fmt.Sprintf("%s-%s-%%", prefix, strings.ReplaceAll(businessDate, "-", ""))
+	var highest int64
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(ticket_number,'-',-1) AS UNSIGNED)),0) FROM pos_tickets WHERE restaurant_id=? AND ticket_number LIKE ?`, restaurantID, used).Scan(&highest); err != nil {
+		return "", err
+	}
+	if highest >= next {
+		// next_value stores "one past the last issued number", so it must end up
+		// one past the highest number that exists.
+		if _, err = tx.ExecContext(ctx, `UPDATE pos_daily_sequences SET next_value=? WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' AND next_value<=?`, highest+1, restaurantID, businessDate, highest+1); err != nil {
+			return "", err
+		}
+		log.Printf("POS ticket sequence for %s was behind the issued tickets (next=%d, highest issued=%d): moved forward so no number is reused", businessDate, next, highest)
+		next = highest + 1
 	}
 	return fmt.Sprintf("%s-%s-%04d", prefix, strings.ReplaceAll(businessDate, "-", ""), next), nil
 }
