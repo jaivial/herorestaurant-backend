@@ -258,9 +258,17 @@ func (s *Server) handleBOPOSVisitTicketCreate(w http.ResponseWriter, r *http.Req
 	}
 	var in struct {
 		IdempotencyKey string `json:"idempotencyKey"`
+		// GuestLabel names the comensal on a separated check. Optional: a table
+		// that does not want to hand over names still gets a working account.
+		GuestLabel string `json:"guestLabel"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" {
 		httpx.WriteError(w, 400, "Idempotency key is required")
+		return
+	}
+	guestLabel := strings.TrimSpace(in.GuestLabel)
+	if len(guestLabel) > 60 {
+		httpx.WriteError(w, 400, "El nombre del comensal no puede pasar de 60 caracteres")
 		return
 	}
 	settings, _ := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
@@ -281,7 +289,7 @@ func (s *Server) handleBOPOSVisitTicketCreate(w http.ResponseWriter, r *http.Req
 		httpx.WriteError(w, 500, "Error creating ticket")
 		return
 	}
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO pos_tickets (restaurant_id,visit_id,ticket_number,creation_idempotency_key,opened_by) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, visitID, number, in.IdempotencyKey, a.User.ID)
+	res, err := tx.ExecContext(r.Context(), `INSERT INTO pos_tickets (restaurant_id,visit_id,ticket_number,creation_idempotency_key,opened_by,guest_label) VALUES (?,?,?,?,?,NULLIF(?,''))`, a.ActiveRestaurantID, visitID, number, in.IdempotencyKey, a.User.ID, guestLabel)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			var existingID int64
@@ -495,4 +503,60 @@ func (s *Server) handleBOPOSShiftClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "expectedCashCents": expected, "differenceCents": difference})
+}
+
+// handleBOPOSTicketGuestLabel names (or clears) the comensal on a separated
+// check, so a table of four who want to pay apart can say which check is whose
+// instead of four anonymous tabs called "Cuenta 1..4".
+//
+// Only an OPEN ticket may be renamed: once the check is paid or voided it is an
+// accounting record and the name printed on it must not be edited after the
+// fact.
+func (s *Server) handleBOPOSTicketGuestLabel(w http.ResponseWriter, r *http.Request) {
+	a, _ := boAuthFromContext(r.Context())
+	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// A closed cash day is a signed Z closure; mutating it afterwards would
+	// invalidate an accounting document that has already been reported.
+	if posWriteCashDayGuard(w, s.requireOpenCashDayForTicket(r.Context(), a.ActiveRestaurantID, ticketID)) {
+		return
+	}
+	var in struct {
+		GuestLabel string `json:"guestLabel"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in) != nil {
+		httpx.WriteError(w, 400, "Invalid body")
+		return
+	}
+	guestLabel := strings.TrimSpace(in.GuestLabel)
+	if len(guestLabel) > 60 {
+		httpx.WriteError(w, 400, "El nombre del comensal no puede pasar de 60 caracteres")
+		return
+	}
+	// The open/closed question is asked BEFORE the write, so a check that closed
+	// a second ago is never renamed and then reported as failed.
+	//
+	// RowsAffected is deliberately not used to decide this. MySQL reports 0 rows
+	// when the new label equals the old one, which is exactly what happens when
+	// the waiter confirms a name without editing it -- a success, not a closed
+	// account. Keeping the status read separate is what makes "save the same
+	// name again" work.
+	var status string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT status FROM pos_tickets WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, ticketID).Scan(&status); err != nil {
+		httpx.WriteError(w, 404, "La cuenta no existe")
+		return
+	}
+	if status != "OPEN" {
+		httpx.WriteError(w, 409, "La cuenta ya está cobrada o anulada: el comensal ya no se puede cambiar")
+		return
+	}
+	if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_tickets SET guest_label=NULLIF(?,\'\') WHERE restaurant_id=? AND id=?`, guestLabel, a.ActiveRestaurantID, ticketID); err != nil {
+		httpx.WriteError(w, 500, "No se pudo guardar el nombre del comensal")
+		return
+	}
+	ticket, err := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
+	if err != nil {
+		httpx.WriteError(w, 500, "No se pudo leer la cuenta")
+		return
+	}
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "ticket": ticket})
 }
