@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -43,16 +44,21 @@ func (s *Server) handleBOPOSPinSet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "El PIN debe tener 4 a 6 dígitos")
 		return
 	}
+	// The PIN belongs to the signed-in backoffice user. Most restaurant_members
+	// rows have no bo_user_id, so "my member row" cannot be the key: a manager
+	// whose staff record was never linked would be unable to set a PIN at all.
+	// The member row is created on demand so the PIN has a home and the name
+	// shown next to an approved action is not blank.
+	memberID, err := s.ensurePOSPinMember(r, a.ActiveRestaurantID, a.User.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error reading staff record")
+		return
+	}
 	// A member who already has a PIN must type the old one to replace it, so a
 	// borrowed tablet cannot quietly reassign the account that the audit trail
 	// will then blame for the actions.
 	var current string
-	err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(pos_pin_hash,'') FROM restaurant_members WHERE restaurant_id=? AND bo_user_id=? AND is_active=1`, a.ActiveRestaurantID, a.User.ID).Scan(&current)
-	if err == sql.ErrNoRows {
-		httpx.WriteError(w, http.StatusNotFound, "No staff record for this user")
-		return
-	}
-	if err != nil {
+	if err = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(pos_pin_hash,'') FROM restaurant_members WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, memberID).Scan(&current); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reading PIN")
 		return
 	}
@@ -68,7 +74,7 @@ func (s *Server) handleBOPOSPinSet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error hashing PIN")
 		return
 	}
-	if _, err = s.db.ExecContext(r.Context(), `UPDATE restaurant_members SET pos_pin_hash=?,pos_pin_set_at=NOW() WHERE restaurant_id=? AND bo_user_id=?`, string(hashed), a.ActiveRestaurantID, a.User.ID); err != nil {
+	if _, err = s.db.ExecContext(r.Context(), `UPDATE restaurant_members SET pos_pin_hash=?,pos_pin_set_at=NOW() WHERE restaurant_id=? AND id=?`, string(hashed), a.ActiveRestaurantID, memberID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving PIN")
 		return
 	}
@@ -166,13 +172,54 @@ func (s *Server) countPINFailure(r *http.Request, restaurantID int64, userID int
 // UI can ask for one at a sensible moment instead of failing at the till.
 func (s *Server) handleBOPOSPinStatus(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
+	memberID, err := s.lookupPOSPinMember(r, a.ActiveRestaurantID, a.User.ID)
 	var exists int
-	err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND bo_user_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`, a.ActiveRestaurantID, a.User.ID).Scan(&exists)
-	if err != nil {
+	if err == nil {
+		err = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND id=? AND pos_pin_hash IS NOT NULL`, a.ActiveRestaurantID, memberID).Scan(&exists)
+	}
+	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reading PIN")
 		return
 	}
 	var count int
 	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`, a.ActiveRestaurantID).Scan(&count)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "hasPin": exists > 0, "staffWithPin": count})
+}
+
+// lookupPOSPinMember returns the staff row that carries this backoffice user's
+// PIN, or sql.ErrNoRows when the user has never set one. It is a lookup only:
+// asking whether you have a PIN must not create anything.
+func (s *Server) lookupPOSPinMember(r *http.Request, restaurantID int, userID int) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(r.Context(), `SELECT id FROM restaurant_members WHERE restaurant_id=? AND bo_user_id=? AND is_active=1`, restaurantID, userID).Scan(&id)
+	return id, err
+}
+
+// ensurePOSPinMember is lookupPOSPinMember plus a fallback for the manager whose
+// staff record was never linked to their backoffice login. The row is created
+// with the account's own name rather than left blank, so an approved action
+// shows a real person in the audit trail instead of an empty cell.
+func (s *Server) ensurePOSPinMember(r *http.Request, restaurantID int, userID int) (int64, error) {
+	if id, err := s.lookupPOSPinMember(r, restaurantID, userID); err == nil {
+		return id, nil
+	} else if err != sql.ErrNoRows {
+		return 0, err
+	}
+	var first, last string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT first_name,last_name FROM bo_users WHERE id=?`, userID).Scan(&first, &last); err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(first) == "" {
+		first = "POS"
+	}
+	if strings.TrimSpace(last) == "" {
+		last = fmt.Sprintf("user %d", userID)
+	}
+	res, err := s.db.ExecContext(r.Context(), `INSERT INTO restaurant_members (restaurant_id,bo_user_id,first_name,last_name,is_active) VALUES (?,?,?,?,1)`, restaurantID, userID, first, last)
+	if err != nil {
+		// Lost a race with another request: fall back to the row that won.
+		return s.lookupPOSPinMember(r, restaurantID, userID)
+	}
+	id, _ := res.LastInsertId()
+	return id, nil
 }
