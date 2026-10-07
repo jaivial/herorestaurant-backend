@@ -582,6 +582,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posKitchenGate).Delete("/pos/kitchen/routes/{id}", s.handleBOPOSKitchenRouteDelete)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/kitchen-dispatches", s.handleBOPOSKitchenDispatchCreate)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/kitchen/queue", s.handleBOPOSKitchenQueue)
+		// Coursing: which courses a ticket has, and firing one to the kitchen.
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posViewGate).Get("/pos/tickets/{id}/courses", s.handleBOPOSCourseList)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posKitchenGate).Post("/pos/tickets/{id}/courses/fire", s.handleBOPOSCourseFire)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posKitchenGate).Post("/pos/kitchen/dispatches/{id}/status", s.handleBOPOSKitchenDispatchStatus)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Get("/pos/activation-readiness", s.handleBOPOSActivationReadiness)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Post("/pos/activation-acceptances", s.handleBOPOSActivationAccept)
