@@ -963,6 +963,10 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Coordination id: special_menu_group_booking_v1 - both toggles that make a
+	// special menu bookable as a group menu.
+	groupBookingFlags := s.loadSpecialMenuGroupBookingFlags(r.Context(), a.ActiveRestaurantID, menuID)
+
 	// Coordination id: menu_editor_preview_open_v1 - the editor/preview split is
 	// a per-(user, restaurant, menu) preference written over the socket, so this
 	// hydration REST returns it for the requested menu id (any menu type).
@@ -1020,7 +1024,10 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 				"ai_generated_img":           menuPreviewAIGenerated,
 			},
 			// Coordination id: special_menu_principales_v1
-			"special_principales_enabled": s.specialMenuPrincipalesEnabled(r.Context(), a.ActiveRestaurantID, menuID),
+			"special_principales_enabled": groupBookingFlags.PrincipalesEnabled,
+			// Coordination id: special_menu_group_booking_v1
+			"special_group_menu_enabled":   groupBookingFlags.GroupMenuEnabled,
+			"special_principales_required": groupBookingFlags.PrincipalesRequired,
 		},
 	})
 }

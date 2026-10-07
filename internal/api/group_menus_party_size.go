@@ -34,6 +34,15 @@ func hasPrincipalesItems(principales any) bool {
 	return false
 }
 
+// handleGetValidMenusForPartySize lists the group menus (menu de grupo) valid for
+// a party size, both for GET /api/reservations/group-menus and the legacy alias
+// getValidMenusForPartySize.php.
+//
+// Closed_group menus come from their own menus.principales JSON; special menus
+// are offered here when flagged as a group menu and holding principals, with
+// every special_menu_section_principales section flattened into the same
+// {titulo_principales, items} shape the group wizard already reads.
+// Coordination id: special_menu_group_booking_v1
 func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
 	if !ok {
@@ -74,12 +83,16 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 		       COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') AS menu_type,
 		       menu_subtitle,
 		       entrantes, principales, postre, beverage, comments,
-		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at
+		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at,
+		       COALESCE(special_group_menu_enabled, 0), COALESCE(special_principales_required, 0)
 		FROM menus
 		WHERE restaurant_id = ?
 		  AND active = 1
 		  AND min_party_size <= ?
-		  AND LOWER(COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')) = 'closed_group'
+		  AND (
+		        LOWER(COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')) = 'closed_group'
+		        OR COALESCE(special_group_menu_enabled, 0) = 1
+		      )
 		ORDER BY min_party_size ASC, price ASC
 	`, restaurantID, partySize)
 	if err != nil {
@@ -118,6 +131,30 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 		Beverage              any      `json:"beverage"`
 		Comments              any      `json:"comments"`
 		CreatedAt             string   `json:"created_at"`
+		// Coordination id: special_menu_group_booking_v1 - the front uses this
+		// flag to tell a special menu from a closed_group one (both keep the
+		// same "principales" shape) and to know whether principales are forced.
+		SpecialGroupMenuEnabled    bool `json:"special_group_menu_enabled"`
+		SpecialPrincipalesRequired bool `json:"special_principales_required"`
+	}
+
+	// Coordination id: special_menu_group_booking_v1 - resolve the special
+	// menus' principals before walking the cursor: nested queries are only safe
+	// once rows.Close() ran, matching loadSpecialMenuSectionsPayload.
+	if err := rows.Close(); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Server error: " + err.Error(),
+		})
+		return
+	}
+	specialPrincipales, err := s.loadSpecialGroupMenuPrincipales(r.Context(), restaurantID)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"message": "Server error: " + err.Error(),
+		})
+		return
 	}
 
 	var menus []menuOut
@@ -138,6 +175,8 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			mainDishesLimitInt    int
 			mainDishesLimitNumber int
 			createdAt             time.Time
+			specialGroupEnabled   int
+			specialPrincipalesReq int
 		)
 		if err := rows.Scan(
 			&id,
@@ -155,6 +194,8 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			&mainDishesLimitInt,
 			&mainDishesLimitNumber,
 			&createdAt,
+			&specialGroupEnabled,
+			&specialPrincipalesReq,
 		); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -162,7 +203,14 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			})
 			return
 		}
-		if !isPartySizeClosedGroupMenuType(menuType) {
+		isSpecialMenu := normalizeV2MenuType(menuType) == "special"
+		if !isPartySizeClosedGroupMenuType(menuType) && !isSpecialMenu {
+			continue
+		}
+		// Coordination id: special_menu_group_booking_v1 - a special menu is
+		// offered here only when it is flagged as a group menu and has
+		// principales (toggle on + non-empty list).
+		if isSpecialMenu && specialPrincipales[int64(id)] == nil {
 			continue
 		}
 
@@ -185,6 +233,15 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			Items:  []any{},
 		})
 
+		if isSpecialMenu {
+			// Coordination id: special_menu_group_booking_v1 - reuse the v1
+			// readers: every section's principals are flattened into the same
+			// {titulo_principales, items} shape the group wizard consumes.
+			principalesFallback = specialPrincipales[int64(id)]
+			// Special sections carry no per-section limit, so the menu row's own
+			// main_dishes_limit is already the real limit (0/false when unset).
+		}
+
 		// Skip menus without principales items
 		if !hasPrincipalesItems(principalesFallback) {
 			continue
@@ -196,20 +253,22 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 		})
 
 		menu := menuOut{
-			ID:                    id,
-			MenuTitle:             menuTitle,
-			Price:                 price,
-			MinPartySize:          minPartySize,
-			MainDishesLimit:       mainDishesLimitInt != 0,
-			MainDishesLimitNumber: mainDishesLimitNumber,
-			IncludedCoffee:        includedCoffeeInt != 0,
-			MenuSubtitle:          decodeOr(menuSubtitleRaw, []any{}),
-			Entrantes:             decodeOr(entrantesRaw, []any{}),
-			Principales:           principalesFallback,
-			Postre:                decodeOr(postreRaw, []any{}),
-			Beverage:              beverageFallback,
-			Comments:              decodeOr(commentsRaw, []any{}),
-			CreatedAt:             createdAt.Format("2006-01-02 15:04:05"),
+			ID:                         id,
+			MenuTitle:                  menuTitle,
+			Price:                      price,
+			MinPartySize:               minPartySize,
+			MainDishesLimit:            mainDishesLimitInt != 0,
+			MainDishesLimitNumber:      mainDishesLimitNumber,
+			IncludedCoffee:             includedCoffeeInt != 0,
+			MenuSubtitle:               decodeOr(menuSubtitleRaw, []any{}),
+			Entrantes:                  decodeOr(entrantesRaw, []any{}),
+			Principales:                principalesFallback,
+			Postre:                     decodeOr(postreRaw, []any{}),
+			Beverage:                   beverageFallback,
+			Comments:                   decodeOr(commentsRaw, []any{}),
+			CreatedAt:                  createdAt.Format("2006-01-02 15:04:05"),
+			SpecialGroupMenuEnabled:    specialGroupEnabled != 0,
+			SpecialPrincipalesRequired: specialPrincipalesReq != 0,
 		}
 		menus = append(menus, menu)
 	}
