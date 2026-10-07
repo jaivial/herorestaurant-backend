@@ -164,13 +164,16 @@ func (s *Server) countPINFailure(r *http.Request, restaurantID int64, userID int
 	// MySQL treats the ? as part of the INTERVAL keyword and never sees a placeholder,
 	// so binding it there makes the driver complain about the argument count.
 	window := strconv.Itoa(int(posPinLockWindow.Minutes()))
+	// The lock is only set once the count actually reaches the threshold. Doing it
+	// in the VALUES clause would arm the lockout on the very first wrong PIN and
+	// lock the waiter out of their own PIN for a single typo.
 	statement := `INSERT INTO pos_pin_attempts (restaurant_id,attempted_by,failed_attempts,locked_until)
-		VALUES (?,?,1,DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE))
+		VALUES (?,?,1,IF(1>=?,DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE),NULL))
 		ON DUPLICATE KEY UPDATE
 		  failed_attempts = IF(locked_until IS NOT NULL AND locked_until <= NOW(), 1, failed_attempts + 1),
 		  locked_until = IF(locked_until IS NOT NULL AND locked_until <= NOW(), DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE),
 		                    IF(failed_attempts + 1 >= ?, DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE), locked_until))`
-	_, err := s.db.ExecContext(r.Context(), statement, restaurantID, userID, posPinMaxAttempts)
+	_, err := s.db.ExecContext(r.Context(), statement, restaurantID, userID, posPinMaxAttempts, posPinMaxAttempts)
 	return err
 }
 
