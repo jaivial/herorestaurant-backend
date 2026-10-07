@@ -27,6 +27,9 @@ type posCheckoutPayment struct {
 	// TipCents is money handed over on top of the sale. It is never part of the
 	// payment-vs-total match, so net sales and VAT stay untouched.
 	TipCents int64 `json:"tipCents"`
+	// TenderedCents is the cash the guest handed over, when the cashier typed
+	// it. CASH only, and never less than what this payment applies.
+	TenderedCents *int64 `json:"tenderedCents"`
 }
 
 type posCheckoutInput struct {
@@ -331,7 +334,7 @@ func (s *Server) checkoutTicketInTx(ctx context.Context, tx *sql.Tx, restaurantI
 			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusBadRequest, msg: "Tip cannot be negative"}
 		}
 		tipTotal += payment.TipCents
-		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_payments (restaurant_id,ticket_id,method,amount_cents,tip_cents,provider,provider_reference,card_last4,idempotency_key,received_by) VALUES (?,?,?,?,?,?,?,?,?,?)`, restaurantID, ticketID, payment.Method, payment.AmountCents, payment.TipCents, stockNullableString(payment.Provider), stockNullableString(payment.ProviderReference), stockNullableString(payment.CardLast4), payment.IdempotencyKey, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_payments (restaurant_id,ticket_id,method,amount_cents,tip_cents,tendered_cents,provider,provider_reference,card_last4,idempotency_key,received_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, restaurantID, ticketID, payment.Method, payment.AmountCents, payment.TipCents, payment.TenderedCents, stockNullableString(payment.Provider), stockNullableString(payment.ProviderReference), stockNullableString(payment.CardLast4), payment.IdempotencyKey, userID); err != nil {
 			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusBadRequest, msg: "Payment could not be recorded"}
 		}
 	}
@@ -413,6 +416,13 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 		if !validPOSPaymentMethod(in.Payments[index].Method) || in.Payments[index].AmountCents <= 0 || strings.TrimSpace(in.Payments[index].IdempotencyKey) == "" {
 			httpx.WriteError(w, http.StatusBadRequest, "Invalid payment")
 			return
+		}
+		if tendered := in.Payments[index].TenderedCents; tendered != nil {
+			applied := in.Payments[index].AmountCents + in.Payments[index].TipCents
+			if in.Payments[index].Method != "CASH" || *tendered < applied || *tendered > applied+100000000 {
+				httpx.WriteError(w, http.StatusBadRequest, "Entregado no válido: solo en efectivo y nunca menos de lo cobrado")
+				return
+			}
 		}
 		if in.Payments[index].AmountCents > math.MaxInt64-paymentTotal {
 			httpx.WriteError(w, http.StatusBadRequest, "Payment total is too large")
