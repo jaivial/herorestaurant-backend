@@ -126,7 +126,7 @@ type posPackRowQueryer interface {
 // resolves each component's VAT rate. It is shared by the list and single
 // loaders so both derive the same component shape.
 func (s *Server) scanPOSPackComponents(ctx context.Context, q posModifierGroupQueryer, restaurantID int, packs []*posPack) error {
-	rows, err := q.QueryContext(ctx, `SELECT c.pack_id,c.pos_product_id,pr.name,c.quantity,COALESCE(c.slot_group,''),c.is_default,c.sort_order,`+posProductVATRateSQL+` FROM pos_pack_components c JOIN pos_products pr ON pr.restaurant_id=c.restaurant_id AND pr.id=c.pos_product_id LEFT JOIN stock_vat_rates v ON v.restaurant_id=c.restaurant_id AND v.id=pr.vat_rate_id WHERE c.restaurant_id=? ORDER BY c.sort_order,pr.name`, restaurantID)
+	rows, err := q.QueryContext(ctx, `SELECT c.pack_id,c.pos_product_id,p.name,c.quantity,COALESCE(c.slot_group,''),c.is_default,c.sort_order,`+posProductVATRateSQL+` FROM pos_pack_components c JOIN pos_products p ON p.restaurant_id=c.restaurant_id AND p.id=c.pos_product_id LEFT JOIN stock_vat_rates v ON v.restaurant_id=c.restaurant_id AND v.id=p.vat_rate_id WHERE c.restaurant_id=? ORDER BY c.sort_order,p.name`, restaurantID)
 	if err != nil {
 		return err
 	}
