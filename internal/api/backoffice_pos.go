@@ -869,7 +869,9 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	// It is NULL for a whole-table account, which is the normal case, so it rides
 	// along in the existing select rather than costing a second query.
 	var guestLabel sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT ticket_number,status,subtotal_gross_cents,discount_cents,tax_cents,total_gross_cents,paid_cents,refunded_cents,version,surcharge_cents,tip_cents,operator_member_id,COALESCE(note,''),guest_label FROM pos_tickets WHERE restaurant_id=? AND id=?`, restaurantID, ticketID).Scan(&number, &status, &subtotal, &discount, &tax, &total, &paid, &refunded, &version, &surcharge, &tip, &operator, &ticketNote, &guestLabel)
+	var customerID sql.NullInt64
+	var customerName, customerNotes string
+	err := s.db.QueryRowContext(ctx, `SELECT t.ticket_number,t.status,t.subtotal_gross_cents,t.discount_cents,t.tax_cents,t.total_gross_cents,t.paid_cents,t.refunded_cents,t.version,t.surcharge_cents,t.tip_cents,t.operator_member_id,COALESCE(t.note,''),t.guest_label,t.customer_id,COALESCE(c.display_name,''),COALESCE(c.notes,'') FROM pos_tickets t LEFT JOIN pos_customers c ON c.restaurant_id=t.restaurant_id AND c.id=t.customer_id WHERE t.restaurant_id=? AND t.id=?`, restaurantID, ticketID).Scan(&number, &status, &subtotal, &discount, &tax, &total, &paid, &refunded, &version, &surcharge, &tip, &operator, &ticketNote, &guestLabel, &customerID, &customerName, &customerNotes)
 	if err != nil {
 		return nil, err
 	}
@@ -923,7 +925,7 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 		}
 		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "modifiers": mods, "packId": stockNullableDBInt(packID), "parentLineId": stockNullableDBInt(parentLineID), "course": courseName, "updatedAt": updatedAt, "kitchenSentQuantity": kitchenSent[id]})
 	}
-	return map[string]any{"id": ticketID, "ticketNumber": number, "status": status, "subtotalGrossCents": subtotal, "discountCents": discount, "surchargeCents": surcharge, "tipCents": tip, "taxCents": tax, "totalGrossCents": total, "paidCents": paid, "refundedCents": refunded, "version": version, "operatorMemberId": stockNullableDBInt(operator), "note": ticketNote, "guestLabel": guestLabel.String, "lines": lines}, rows.Err()
+	return map[string]any{"id": ticketID, "ticketNumber": number, "status": status, "subtotalGrossCents": subtotal, "discountCents": discount, "surchargeCents": surcharge, "tipCents": tip, "taxCents": tax, "totalGrossCents": total, "paidCents": paid, "refundedCents": refunded, "version": version, "operatorMemberId": stockNullableDBInt(operator), "note": ticketNote, "guestLabel": guestLabel.String, "customerId": stockNullableDBInt(customerID), "customerName": customerName, "customerNotes": customerNotes, "lines": lines}, rows.Err()
 }
 
 // loadPOSTicketKitchenSent is how much of each line the kitchen already knows
