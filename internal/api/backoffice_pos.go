@@ -599,7 +599,15 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS modifiers")
 		return
 	}
-	payload := map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "productModifiers": productModifiers, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift, "date": businessDate, "cashDay": cashDay}
+	// Active packs travel with the bootstrap: the sell screen needs the fixed
+	// price and the slots to render, and a separate round trip on every tap
+	// would be one request per plate.
+	packs, packErr := s.loadPOSPacks(r.Context(), s.db, a.ActiveRestaurantID, true)
+	if packErr != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS packs")
+		return
+	}
+	payload := map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "productModifiers": productModifiers, "packs": packs, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift, "date": businessDate, "cashDay": cashDay}
 	// Only shipped when stock tracking is on: an absent key tells the sell
 	// screen it should not render stock badges at all.
 	if settings.StockMode != "OFF" {
@@ -902,9 +910,27 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey         string                 `json:"idempotencyKey"`
 		UnitPriceOverrideCents *int64                 `json:"unitPriceOverrideCents"`
 		Modifiers              []posModifierSelection `json:"modifiers"`
+		// PackID rings up a menu instead of a product: the parent line carries
+		// the pack price and the components expand underneath it.
+		PackID     int64             `json:"packId"`
+		PackSelect *posPackSelection `json:"packSelection"`
 	}
-	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || in.ProductID <= 0 || in.Quantity <= 0 || strings.TrimSpace(in.IdempotencyKey) == "" {
+	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" || in.Quantity <= 0 {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid ticket line")
+		return
+	}
+	if in.PackID > 0 && in.ProductID > 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "A line is either a product or a pack")
+		return
+	}
+	if in.PackID <= 0 && in.ProductID <= 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid ticket line")
+		return
+	}
+	if in.PackID > 0 && (in.UnitPriceOverrideCents != nil || len(in.Modifiers) > 0) {
+		// The pack price is fixed; an override or a modifier on top of it would
+		// price the menu outside the catalog without anyone choosing it.
+		httpx.WriteError(w, http.StatusBadRequest, "A pack cannot take a price override or modifiers")
 		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -917,6 +943,80 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 	var existingDiscount int64
 	if err = tx.QueryRowContext(r.Context(), `SELECT status,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &existingDiscount); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
+		return
+	}
+	// A pack is rung up as one line at the pack price; its components are
+	// written underneath at zero so the ticket shows the menu the guest
+	// ordered while the money is counted once, on the parent.
+	if in.PackID > 0 {
+		pack, packErr := s.loadPOSPack(r.Context(), tx, a.ActiveRestaurantID, in.PackID)
+		if packErr != nil {
+			httpx.WriteError(w, http.StatusNotFound, "Pack not found")
+			return
+		}
+		if !pack.IsActive {
+			httpx.WriteError(w, http.StatusNotFound, "Pack not found")
+			return
+		}
+		selection := posPackSelection{Quantity: in.Quantity, Choices: map[string]int64{}}
+		if in.PackSelect != nil {
+			selection.Quantity = in.PackSelect.Quantity
+			if in.PackSelect.Choices != nil {
+				selection.Choices = in.PackSelect.Choices
+			}
+		}
+		components, qty, selErr := resolvePOSPack(*pack, selection)
+		if selErr != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "Invalid pack selection")
+			return
+		}
+		packTotal := posPackLineTotal(*pack, qty)
+		// The idempotency key is unique per restaurant, so each component line
+		// derives its own key from the caller's: a retried request must collide
+		// with its own previous rows, never with an unrelated line.
+		parentRes, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,created_by) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, pack.Name, qty, pack.PriceGrossCents, pack.VATRate, packTotal, stockNullableString(in.Notes), in.IdempotencyKey, pack.ID, a.User.ID)
+		if insErr != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
+			return
+		}
+		parentID, _ := parentRes.LastInsertId()
+		for i, c := range components {
+			componentQty := c.Quantity * float64(qty)
+			compKey := in.IdempotencyKey + ":c" + strconv.Itoa(i)
+			compRes, cErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,idempotency_key,parent_line_id,created_by) VALUES (?,?,?,?,?,0,?,0,?,?,?)`, a.ActiveRestaurantID, ticketID, c.ProductID, c.ProductName, componentQty, c.VATRate, compKey, parentID, a.User.ID)
+			if cErr != nil {
+				if !strings.Contains(strings.ToLower(cErr.Error()), "duplicate") {
+					httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
+					return
+				}
+				continue
+			}
+			componentID, _ := compRes.LastInsertId()
+			// Components carry the stock and the kitchen, not the parent: the
+			// parent is a menu, the components are the dishes that leave it.
+			settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
+			if settingsErr == nil && settings.StockMode == "LIVE" {
+				if _, err = s.deductStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, componentID, c.ProductID, componentQty, "pos-pack:"+compKey); err != nil {
+					httpx.WriteError(w, http.StatusInternalServerError, "Error deducting stock")
+					return
+				}
+			}
+		}
+		if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, existingDiscount); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
+			return
+		}
+		if err = tx.Commit(); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error adding line")
+			return
+		}
+		ticket, loadErr := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
+		if loadErr != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error loading ticket")
+			return
+		}
+		s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
+		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "ticket": ticket})
 		return
 	}
 	var name string
