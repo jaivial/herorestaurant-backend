@@ -538,6 +538,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posVisitManageGate).Post("/pos/visits/{id}/park", s.handleBOPOSVisitPark)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posVisitManageGate).Post("/pos/visits/{id}/merge", s.handleBOPOSVisitMerge)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Patch("/pos/visits/{id}/customer", s.handleBOPOSVisitCustomer)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/recall", s.handleBOPOSRecall)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/visits/{id}/tickets", s.handleBOPOSVisitTicketCreate)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCheckoutGate).Post("/pos/visits/{id}/close", s.handleBOPOSVisitClose)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/void", s.handleBOPOSTicketVoid)
