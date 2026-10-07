@@ -1147,11 +1147,24 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Reason string `json:"reason"`
+		Reason      string `json:"reason"`
+		ApprovalPin string `json:"approvalPin"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.Reason) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Void reason is required")
 		return
+	}
+	// When a PIN is offered it is verified here, not trusted from the client: the
+	// audit trail has to name a manager whose PIN was actually checked, otherwise
+	// the name is whatever the browser felt like sending.
+	approvedBy := ""
+	if strings.TrimSpace(in.ApprovalPin) != "" {
+		name, err := s.verifyPOSApprovalPIN(r, a.ActiveRestaurantID, strings.TrimSpace(in.ApprovalPin))
+		if err != nil {
+			httpx.WriteError(w, http.StatusForbidden, "PIN de aprobación incorrecto")
+			return
+		}
+		approvedBy = name
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -1193,6 +1206,16 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, ticketDiscount); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
+		return
+	}
+	// A void is the one action that quietly takes money off a bill, so it is
+	// written to the audit trail with the reason and, when a manager signed it
+	// off, who did. Without this there is no way to answer "who removed this
+	// dish and when" after the fact.
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id)
+		VALUES (?,'ticket_line',?,'LINE_VOID',JSON_OBJECT('reason',?,'approvedBy',?),?)`,
+		a.ActiveRestaurantID, lineID, strings.TrimSpace(in.Reason), approvedBy, a.User.ID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error voiding line")
 		return
 	}
 	if err = tx.Commit(); err != nil {

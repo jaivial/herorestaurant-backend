@@ -111,33 +111,14 @@ func (s *Server) handleBOPOSPinVerify(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusTooManyRequests, "Demasiados intentos fallidos. Espera unos minutos.")
 		return
 	}
-	// Only active members may be used to approve an action: an account that has
-	// left the restaurant must not be able to sign off tonight's voids.
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,pos_pin_hash FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`, a.ActiveRestaurantID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error reading PINs")
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		var hashed string
-		if err = rows.Scan(&id, &hashed); err != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error reading PINs")
-			return
-		}
-		if bcrypt.CompareHashAndPassword([]byte(hashed), []byte(pin)) == nil {
-			// Reset the terminal's counter on success: one bad guess while
-			// closing the till must not lock the waiter out of their own PIN.
-			_, _ = s.db.ExecContext(r.Context(), `DELETE FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`, a.ActiveRestaurantID, a.User.ID)
-			var name string
-			_ = s.db.QueryRowContext(r.Context(), `SELECT TRIM(CONCAT(first_name,' ',last_name)) FROM restaurant_members WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id).Scan(&name)
-			httpx.WriteJSON(w, 200, map[string]any{"success": true, "memberId": id, "displayName": name})
-			return
-		}
-	}
-	if err = rows.Err(); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error reading PINs")
+	// Resolved through the same helper the line void uses, so the two paths
+	// cannot drift apart in who they accept.
+	name, nameErr := s.verifyPOSApprovalPIN(r, a.ActiveRestaurantID, pin)
+	if nameErr == nil {
+		// Reset the terminal's counter on success: one bad guess while closing
+		// the till must not lock the waiter out of their own PIN.
+		_, _ = s.db.ExecContext(r.Context(), `DELETE FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`, a.ActiveRestaurantID, a.User.ID)
+		httpx.WriteJSON(w, 200, map[string]any{"success": true, "displayName": name})
 		return
 	}
 	// Throttle against this terminal, not against the member: a wrong PIN
@@ -242,4 +223,33 @@ func splitPOSPinName(full string) (string, string) {
 		return strings.TrimSpace(first), strings.TrimSpace(last)
 	}
 	return full, "POS"
+}
+
+// verifyPOSApprovalPIN resolves an approval PIN to the manager's name. Shared by
+// the standalone /pin/verify endpoint and by the line void, so both paths are
+// checked by exactly the same rule.
+func (s *Server) verifyPOSApprovalPIN(r *http.Request, restaurantID int, pin string) (string, error) {
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,pos_pin_hash FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`, restaurantID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var hashed string
+		if err = rows.Scan(&id, &hashed); err != nil {
+			return "", err
+		}
+		if bcrypt.CompareHashAndPassword([]byte(hashed), []byte(pin)) == nil {
+			return s.posPINMemberName(r, restaurantID, id)
+		}
+	}
+	return "", sql.ErrNoRows
+}
+
+// posPINMemberName is the name shown next to an approved action.
+func (s *Server) posPINMemberName(r *http.Request, restaurantID int, memberID int64) (string, error) {
+	var name string
+	err := s.db.QueryRowContext(r.Context(), `SELECT TRIM(CONCAT(first_name,' ',last_name)) FROM restaurant_members WHERE restaurant_id=? AND id=?`, restaurantID, memberID).Scan(&name)
+	return name, err
 }
