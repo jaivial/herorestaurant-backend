@@ -16,7 +16,7 @@ import (
 // =============================================================================
 // Special menus bookable as a group menu (menu de grupo).
 //
-// A special menu (menus.menu_type = 'special') is normally offered per image
+// A special menu (menus.menu_type = 6) is normally offered per image
 // section, but the group wizard only reads GET /api/reservations/group-menus.
 // The two columns added by migration 164_special_menu_group_booking.sql let the
 // backoffice publish a special menu there without touching the closed_group
@@ -40,7 +40,7 @@ type specialMenuGroupBookingFlags struct {
 	PrincipalesRequired bool
 	// PrincipalesEnabled mirrors menus.special_principales_enabled (v1 toggle).
 	PrincipalesEnabled bool
-	// SpecialType is true when menus.menu_type normalizes to 'special'.
+	// SpecialType is true when menus.menu_type resolves to MenuTypeSpecial.
 	SpecialType bool
 	// HasPrincipales is true when the menu offers at least one principal dish.
 	HasPrincipales bool
@@ -60,14 +60,14 @@ func (s *Server) loadSpecialMenuGroupBookingFlags(ctx context.Context, restauran
 		groupEnabled  int
 		required      int
 		principalesOn int
-		menuType      string
+		menuType      int
 	)
 	flags := specialMenuGroupBookingFlags{}
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(special_group_menu_enabled, 0),
 		       COALESCE(special_principales_required, 0),
 		       COALESCE(special_principales_enabled, 0),
-		       COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
+		       COALESCE(menu_type, 1)
 		FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1
 	`, menuID, restaurantID).Scan(&groupEnabled, &required, &principalesOn, &menuType); err != nil {
 		if err != sql.ErrNoRows {
@@ -78,7 +78,7 @@ func (s *Server) loadSpecialMenuGroupBookingFlags(ctx context.Context, restauran
 	flags.GroupMenuEnabled = groupEnabled != 0
 	flags.PrincipalesRequired = required != 0
 	flags.PrincipalesEnabled = principalesOn != 0
-	flags.SpecialType = normalizeV2MenuType(menuType) == "special"
+	flags.SpecialType = IsSpecialMenuType(menuType)
 	for _, list := range s.loadPublicSpecialMenuPrincipales(ctx, restaurantID, menuID) {
 		if len(list) > 0 {
 			flags.HasPrincipales = true
@@ -99,7 +99,7 @@ func (s *Server) loadSpecialGroupMenuPrincipales(ctx context.Context, restaurant
 		SELECT id FROM menus
 		WHERE restaurant_id = ?
 		  AND active = 1
-		  AND LOWER(COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')) = 'special'
+		  AND COALESCE(menu_type, 1) = 6
 		  AND COALESCE(special_group_menu_enabled, 0) = 1
 	`, restaurantID)
 	if err != nil {

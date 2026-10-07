@@ -2470,7 +2470,7 @@ func (s *Server) handleBOMenuSelectorGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, menu_title, COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') AS menu_type
+		SELECT id, menu_title, COALESCE(menu_type, 1) AS menu_type
 		FROM menus
 		WHERE restaurant_id = ? AND is_draft = 0 AND active = 1
 		ORDER BY menu_type ASC, menu_title ASC
@@ -2485,14 +2485,18 @@ func (s *Server) handleBOMenuSelectorGet(w http.ResponseWriter, r *http.Request)
 	var menus []map[string]any
 	for rows.Next() {
 		var id int
-		var title, menuType string
+		var title string
+		var menuType int
 		if err := rows.Scan(&id, &title, &menuType); err != nil {
 			continue
 		}
 		menus = append(menus, map[string]any{
 			"id":         id,
 			"menu_title": title,
-			"menu_type":  menuType,
+			// Coordination id: menu_type_numeric_v1 - the selector carries the
+			// canonical code plus the legacy name for the rollout.
+			"menu_type":      menuType,
+			"menu_type_name": MenuTypeName(menuType),
 		})
 	}
 

@@ -11,8 +11,11 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
-func isPartySizeClosedGroupMenuType(raw string) bool {
-	return normalizeV2MenuType(raw) == "closed_group"
+// isPartySizeClosedGroupMenuType reports whether a raw menu_type value (numeric
+// code or legacy string) is the closed group menu.
+// Coordination id: menu_type_numeric_v1
+func isPartySizeClosedGroupMenuType(raw any) bool {
+	return MenuTypeFromAny(raw) == MenuTypeClosedGroup
 }
 
 // hasPrincipalesItems checks if the principales object has a non-empty items array.
@@ -80,7 +83,7 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, price, included_coffee,
-		       COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') AS menu_type,
+		       COALESCE(menu_type, 1) AS menu_type,
 		       menu_subtitle,
 		       entrantes, principales, postre, beverage, comments,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at,
@@ -90,7 +93,7 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 		  AND active = 1
 		  AND min_party_size <= ?
 		  AND (
-		        LOWER(COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')) = 'closed_group'
+		        COALESCE(menu_type, 1) = 2
 		        OR COALESCE(special_group_menu_enabled, 0) = 1
 		      )
 		ORDER BY min_party_size ASC, price ASC
@@ -145,7 +148,7 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 		menuTitle             string
 		price                 float64
 		includedCoffeeInt     int
-		menuType              string
+		menuType              int
 		menuSubtitleRaw       sql.NullString
 		entrantesRaw          sql.NullString
 		principalesRaw        sql.NullString
@@ -234,7 +237,7 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 
 	var menus []menuOut
 	for _, row := range rowsIn {
-		isSpecialMenu := normalizeV2MenuType(row.menuType) == "special"
+		isSpecialMenu := IsSpecialMenuType(row.menuType)
 		if !isPartySizeClosedGroupMenuType(row.menuType) && !isSpecialMenu {
 			continue
 		}

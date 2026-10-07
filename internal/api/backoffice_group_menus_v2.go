@@ -61,26 +61,6 @@ type boV2Dish struct {
 	ReadOnly bool `json:"read_only,omitempty"`
 }
 
-func normalizeV2MenuType(raw string) string {
-	s := strings.ToLower(strings.TrimSpace(raw))
-	switch s {
-	case "closed_group":
-		return "closed_group"
-	case "a_la_carte", "a_la_carta":
-		return "a_la_carte"
-	case "a_la_carte_group", "a_la_carta_grupo":
-		return "a_la_carte_group"
-	case "a_la_carte_time":
-		return "a_la_carte_time"
-	case "special":
-		return "special"
-	case "closed_conventional", "closed", "":
-		return "closed_conventional"
-	default:
-		return "closed_conventional"
-	}
-}
-
 func normalizeV2SectionKind(raw string) string {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	switch s {
@@ -234,7 +214,7 @@ func (s *Server) handleBOGroupMenusV2List(w http.ResponseWriter, r *http.Request
 			price      string
 			activeInt  int
 			draftInt   int
-			menuType   sql.NullString
+			menuType   sql.NullInt64
 			createdAt  sql.NullString
 			modifiedAt sql.NullString
 		)
@@ -243,14 +223,18 @@ func (s *Server) handleBOGroupMenusV2List(w http.ResponseWriter, r *http.Request
 			return
 		}
 		out = append(out, map[string]any{
-			"id":          id,
-			"menu_title":  title,
-			"price":       price,
-			"active":      activeInt != 0,
-			"is_draft":    draftInt != 0,
-			"menu_type":   normalizeV2MenuType(menuType.String),
-			"created_at":  createdAt.String,
-			"modified_at": modifiedAt.String,
+			"id":         id,
+			"menu_title": title,
+			"price":      price,
+			"active":     activeInt != 0,
+			"is_draft":   draftInt != 0,
+			// Coordination id: menu_type_numeric_v1 - the API answers the
+			// canonical numeric code; the legacy name is kept alongside so a
+			// frontend not yet migrated keeps working.
+			"menu_type":      MenuTypeFromAny(menuType),
+			"menu_type_name": MenuTypeName(MenuTypeFromAny(menuType)),
+			"created_at":     createdAt.String,
+			"modified_at":    modifiedAt.String,
 		})
 	}
 
@@ -269,10 +253,10 @@ func (s *Server) handleBOGroupMenusV2CreateDraft(w http.ResponseWriter, r *http.
 	}
 
 	var req struct {
-		MenuType string `json:"menu_type"`
+		MenuType any `json:"menu_type"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	menuType := normalizeV2MenuType(req.MenuType)
+	menuType := menuTypeWriteCode(req.MenuType)
 
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -291,7 +275,7 @@ func (s *Server) handleBOGroupMenusV2CreateDraft(w http.ResponseWriter, r *http.
 
 	// Special menus should not be drafts by default
 	isDraft := 1
-	if menuType == "special" {
+	if menuType == MenuTypeSpecial {
 		isDraft = 0
 	}
 
@@ -873,7 +857,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		price                      string
 		activeInt                  int
 		draftInt                   int
-		menuType                   sql.NullString
+		menuType                   sql.NullInt64
 		menuSubtitleRaw            sql.NullString
 		showDishImagesInt          int
 		showSectionTabsInt         int
@@ -955,7 +939,7 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Special menu image sections (title + image + position). Only meaningful
-	// for menu_type='special' but the endpoint stays generic.
+	// for a special-type menu but the endpoint stays generic.
 	// Coordination id: special_menu_sections_v1
 	specialSections, err := s.loadSpecialMenuSections(r.Context(), a.ActiveRestaurantID, menuID)
 	if err != nil {
@@ -978,13 +962,15 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"menu": map[string]any{
-			"id":                      menuID,
-			"editor_preview_open":     editorPreviewOpen,
-			"menu_title":              title,
-			"price":                   price,
-			"active":                  activeInt != 0,
-			"is_draft":                draftInt != 0,
-			"menu_type":               normalizeV2MenuType(menuType.String),
+			"id":                  menuID,
+			"editor_preview_open": editorPreviewOpen,
+			"menu_title":          title,
+			"price":               price,
+			"active":              activeInt != 0,
+			"is_draft":            draftInt != 0,
+			// Coordination id: menu_type_numeric_v1
+			"menu_type":               MenuTypeFromAny(menuType),
+			"menu_type_name":          MenuTypeName(MenuTypeFromAny(menuType)),
 			"menu_subtitle":           anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
 			"show_dish_images":        showDishImagesInt != 0,
 			"show_section_tabs":       showSectionTabsInt != 0,
@@ -1188,9 +1174,12 @@ func (s *Server) handleBOGroupMenusV2PatchBasics(w http.ResponseWriter, r *http.
 		isDraft = parseLooseBoolOrDefault(v, isDraft)
 	}
 
-	menuType := normalizeV2MenuType(currentType.String)
+	// Coordination id: menu_type_numeric_v1 - the patch keeps the stored code
+	// unless a usable menu_type arrives, accepting the numeric code or the
+	// legacy string.
+	menuType := menuTypeWriteCodeOr(currentType, MenuTypeClosedConventional)
 	if v, ok := input["menu_type"]; ok {
-		menuType = normalizeV2MenuType(anyToString(v))
+		menuType = menuTypeWriteCode(v)
 	}
 
 	menuSubtitleJSON := currentMenuSubtitle.String
@@ -1323,15 +1312,18 @@ func (s *Server) handleBOGroupMenusV2PatchMenuType(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Coordination id: menu_type_numeric_v1 - accepts the numeric code or the
+	// legacy string so a rolling deploy keeps working from either side.
 	var req struct {
-		MenuType string `json:"menu_type"`
+		MenuType any `json:"menu_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid JSON body"})
 		return
 	}
 
-	if strings.TrimSpace(req.MenuType) == "" {
+	menuTypeCode := MenuTypeFromAny(req.MenuType)
+	if menuTypeCode == MenuTypeUnknown {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu type is required"})
 		return
 	}
@@ -1351,22 +1343,21 @@ func (s *Server) handleBOGroupMenusV2PatchMenuType(w http.ResponseWriter, r *htt
 		return
 	}
 
-	menuType := normalizeV2MenuType(req.MenuType)
-
 	if _, err := s.db.ExecContext(r.Context(), `
 		UPDATE menus
 		SET menu_type = ?,
 		    editor_version = 2
 		WHERE id = ? AND restaurant_id = ?
-	`, menuType, menuID, a.ActiveRestaurantID); err != nil {
+	`, menuTypeCode, menuID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menu")
 		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"menu_id":   menuID,
-		"menu_type": menuType,
+		"success":        true,
+		"menu_id":        menuID,
+		"menu_type":      menuTypeCode,
+		"menu_type_name": MenuTypeName(menuTypeCode),
 	})
 }
 
@@ -2447,7 +2438,7 @@ func (s *Server) handleBOGroupMenusV2Publish(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Get menu type to check if it's a special menu (which doesn't require sections/dishes)
-	var menuType string
+	var menuType sql.NullInt64
 	if err := s.db.QueryRowContext(r.Context(), `
 		SELECT menu_type FROM menus WHERE id = ? AND restaurant_id = ?
 	`, menuID, a.ActiveRestaurantID).Scan(&menuType); err != nil {
@@ -2459,7 +2450,7 @@ func (s *Server) handleBOGroupMenusV2Publish(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	isSpecial := menuType == "special"
+	isSpecial := MenuTypeFromAny(menuType) == MenuTypeSpecial
 
 	var (
 		sections int
@@ -2824,7 +2815,7 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 	}
 
 	// Check menu exists and belongs to restaurant
-	var menuType string
+	var menuType sql.NullInt64
 	err = s.db.QueryRowContext(r.Context(), `SELECT menu_type FROM menus WHERE id = ? AND restaurant_id = ?`, menuID, a.ActiveRestaurantID).Scan(&menuType)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
@@ -2832,7 +2823,7 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 	}
 
 	// Verify it's a special menu
-	if menuType != "special" {
+	if MenuTypeFromAny(menuType) != MenuTypeSpecial {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu is not a special menu"})
 		return
 	}
@@ -3576,8 +3567,8 @@ func (s *Server) handleBOGroupMenusV2ResolvePostres(w http.ResponseWriter, r *ht
 	if err == sql.ErrNoRows {
 		res, insErr := s.db.ExecContext(r.Context(), `
 			INSERT INTO menus (restaurant_id, menu_title, menu_type, active, is_draft, legacy_source_table)
-			VALUES (?, 'Postres', 'special', 1, 0, 'POSTRES')
-		`, a.ActiveRestaurantID)
+			VALUES (?, 'Postres', ?, 1, 0, 'POSTRES')
+		`, a.ActiveRestaurantID, MenuTypeSpecial)
 		if insErr != nil {
 			logCheckpoint(r, "menu_postres_resolve_create_failed", "restaurant_id", strconv.Itoa(a.ActiveRestaurantID))
 			httpx.WriteError(w, http.StatusInternalServerError, "Error creando postres")

@@ -318,7 +318,7 @@ func (s *Server) fetchMandatoryMenusDetails(ctx context.Context, restaurantID in
 	}
 
 	query := `
-		SELECT id, menu_title, COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') AS menu_type,
+		SELECT id, menu_title, COALESCE(menu_type, 1) AS menu_type,
 		       menu_subtitle, entrantes, principales, min_party_size, main_dishes_limit, main_dishes_limit_number, price
 		FROM menus
 		WHERE restaurant_id = ? AND id IN (` + strings.Join(placeholders, ",") + `) AND active = 1 AND is_draft = 0
@@ -333,7 +333,7 @@ func (s *Server) fetchMandatoryMenusDetails(ctx context.Context, restaurantID in
 	type menuOut struct {
 		ID                 int     `json:"id"`
 		MenuTitle          string  `json:"menu_title"`
-		MenuType           string  `json:"menu_type"`
+		MenuType           int     `json:"menu_type"`
 		MenuSubtitle       string  `json:"menu_subtitle"`
 		Entrantes          string  `json:"entrantes"`
 		Principales        string  `json:"principales"`
@@ -377,10 +377,16 @@ func (s *Server) fetchMandatoryMenusDetails(ctx context.Context, restaurantID in
 		}
 
 		results = append(results, map[string]any{
-			"menuId":                m.ID,
-			"menuTitle":             m.MenuTitle,
-			"menuSubtitle":          m.MenuSubtitle,
+			"menuId":       m.ID,
+			"menuTitle":    m.MenuTitle,
+			"menuSubtitle": m.MenuSubtitle,
+			// Coordination id: menu_type_numeric_v1 - mandatory menu display
+			// (MandatoryMenuDisplay.menuType, read by the reservas wizard).
+			// The key and shape are unchanged; only the value becomes the
+			// canonical numeric code. menuTypeName keeps the legacy string so
+			// a frontend not yet migrated keeps working.
 			"menuType":              m.MenuType,
+			"menuTypeName":          MenuTypeName(m.MenuType),
 			"entrantes":             entrantes,
 			"principales":           principales,
 			"minPartySize":          m.MinPartySize,

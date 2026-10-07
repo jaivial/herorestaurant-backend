@@ -9,18 +9,22 @@ import (
 	"time"
 )
 
-// botMenuCategoryLabel maps a menu_type to its Spanish label.
-func botMenuCategoryLabel(menuType string) string {
-	switch normalizeV2MenuType(menuType) {
-	case "closed_conventional":
+// botMenuCategoryLabel maps a menu_type (numeric code or legacy string) to its
+// Spanish label.
+// Coordination id: menu_type_numeric_v1
+func botMenuCategoryLabel(menuType any) string {
+	switch MenuTypeFromAny(menuType) {
+	case MenuTypeClosedConventional:
 		return "Menú cerrado convencional"
-	case "closed_group":
+	case MenuTypeClosedGroup:
 		return "Menú cerrado de grupo"
-	case "a_la_carte":
+	case MenuTypeALaCarte:
 		return "A la carta convencional"
-	case "a_la_carte_group":
+	case MenuTypeALaCarteGroup:
 		return "A la carta de grupo"
-	case "special":
+	case MenuTypeALaCarteTime:
+		return "A la carta por tiempo"
+	case MenuTypeSpecial:
 		return "Menú especial"
 	default:
 		return "Menú"
@@ -79,19 +83,18 @@ func botMenuBeverageSettings(raw string) map[string]any {
 // botToolListMenus returns the active bookable menus grouped by category type.
 func (s *Server) botToolListMenus(ctx context.Context, restaurantID int) (string, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, menu_title, COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional'),
+		SELECT id, menu_title, COALESCE(menu_type, 1),
 		       COALESCE(price, ''), COALESCE(menu_subtitle, '')
 		FROM menus
 		WHERE restaurant_id = ? AND active = 1 AND is_draft = 0
-		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
-		      IN ('closed_conventional', 'closed_group', 'a_la_carte', 'a_la_carte_group', 'special')
+		  AND COALESCE(menu_type, 1) IN (1,2,3,4,6)
 		ORDER BY
-		  CASE COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional')
-		    WHEN 'closed_conventional' THEN 1
-		    WHEN 'a_la_carte' THEN 2
-		    WHEN 'closed_group' THEN 3
-		    WHEN 'a_la_carte_group' THEN 4
-		    WHEN 'special' THEN 5 ELSE 9 END ASC,
+		  CASE COALESCE(menu_type, 1)
+		    WHEN 1 THEN 1
+		    WHEN 3 THEN 2
+		    WHEN 2 THEN 3
+		    WHEN 4 THEN 4
+		    WHEN 6 THEN 5 ELSE 9 END ASC,
 		  modified_at DESC, id DESC
 	`, restaurantID)
 	if err != nil {
@@ -104,22 +107,24 @@ func (s *Server) botToolListMenus(ctx context.Context, restaurantID int) (string
 		var (
 			id          int64
 			title       string
-			menuType    string
+			menuType    int
 			price       string
 			subtitleRaw string
 		)
 		if err := rows.Scan(&id, &title, &menuType, &price, &subtitleRaw); err != nil {
 			return botJSON(map[string]any{"error": "error leyendo los menús"}), nil
 		}
-		menuType = normalizeV2MenuType(menuType)
 		price = strings.TrimSpace(price)
 		if price == "" {
 			price = "0"
 		}
 		menus = append(menus, map[string]any{
-			"menu_id":        id,
-			"title":          strings.TrimSpace(title),
+			"menu_id": id,
+			"title":   strings.TrimSpace(title),
+			// Coordination id: menu_type_numeric_v1 - the code is canonical;
+			// the name keeps the payload readable for the bot.
 			"category":       menuType,
+			"category_name":  MenuTypeName(menuType),
 			"category_label": botMenuCategoryLabel(menuType),
 			"price":          price,
 			"subtitle":       anySliceToStringList(decodeJSONOrFallback(subtitleRaw, []any{})),
@@ -157,14 +162,15 @@ var errBotMenuNotFound = errors.New("bot menu not found")
 // weekday calendar so the LLM knows on which days the menu is served.
 func (s *Server) botMenuDetailsPayload(ctx context.Context, restaurantID int, menuID int64) (map[string]any, error) {
 	var (
-		title, menuType, price, subtitleRaw     string
+		title, price, subtitleRaw               string
+		menuType                                int
 		entrantesRaw, principalesRaw, postreRaw string
 		beverageRaw, commentsRaw                string
 		minPartySize, mainLimitNum              int
 		mainLimit, includedCoffee               int
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT menu_title, COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional'),
+		SELECT menu_title, COALESCE(menu_type, 1),
 		       COALESCE(price, ''), COALESCE(menu_subtitle, ''),
 		       COALESCE(entrantes, ''), COALESCE(principales, ''), COALESCE(postre, ''),
 		       COALESCE(beverage, ''), COALESCE(comments, ''),
@@ -186,7 +192,6 @@ func (s *Server) botMenuDetailsPayload(ctx context.Context, restaurantID int, me
 		return nil, err
 	}
 
-	menuType = normalizeV2MenuType(menuType)
 	price = strings.TrimSpace(price)
 	if price == "" {
 		price = "0"
@@ -222,9 +227,11 @@ func (s *Server) botMenuDetailsPayload(ctx context.Context, restaurantID int, me
 	}
 
 	payload := map[string]any{
-		"menu_id":            menuID,
-		"title":              strings.TrimSpace(title),
+		"menu_id": menuID,
+		"title":   strings.TrimSpace(title),
+		// Coordination id: menu_type_numeric_v1
 		"category":           menuType,
+		"category_name":      MenuTypeName(menuType),
 		"category_label":     botMenuCategoryLabel(menuType),
 		"price":              price,
 		"subtitle":           anySliceToStringList(decodeJSONOrFallback(subtitleRaw, []any{})),
@@ -242,7 +249,7 @@ func (s *Server) botMenuDetailsPayload(ctx context.Context, restaurantID int, me
 	// Coordination id: special_menu_price_date_v1 - special menus expose the
 	// priced sections plus the special day (and whether it needs prereserva),
 	// so the bot quotes prices and routes guests to the right date.
-	if menuType == "special" {
+	if menuType == MenuTypeSpecial {
 		payload["special_sections"] = s.loadPublicSpecialMenuSections(ctx, restaurantID, menuID)
 		if day := s.loadMenuSpecialDate(ctx, restaurantID, menuID); day != nil {
 			payload["special_date"] = day
@@ -547,7 +554,7 @@ func (s *Server) botToolBookingMenu(ctx context.Context, restaurantID int, phone
 		}
 	}
 
-	menus, configured, err := s.botMenusAvailableOnWeekday(ctx, restaurantID, weekday, "closed_conventional")
+	menus, configured, err := s.botMenusAvailableOnWeekday(ctx, restaurantID, weekday, MenuTypeClosedConventional)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando los menús por defecto"}), nil
 	}

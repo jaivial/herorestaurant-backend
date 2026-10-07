@@ -46,12 +46,12 @@ func onlineSpecialDateMenuSections(sections []specialDateMenuSection) []specialD
 
 // specialDateMenuIsSpecialType reports whether a catalogue menu is special.
 func (s *Server) specialDateMenuIsSpecialType(ctx context.Context, restaurantID int, menuID int64) bool {
-	var menuType string
+	var menuType sql.NullInt64
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT menu_type FROM menus WHERE id = ? AND restaurant_id = ?`, menuID, restaurantID).Scan(&menuType); err != nil {
 		return false
 	}
-	return menuType == "special"
+	return IsSpecialMenuType(menuType)
 }
 
 // loadSpecialDateMenuSections returns the sections of the special menu behind

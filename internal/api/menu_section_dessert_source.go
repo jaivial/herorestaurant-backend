@@ -81,8 +81,8 @@ func (s *Server) resolveGeneralDessertsSectionID(ctx context.Context, restaurant
 	if err == sql.ErrNoRows {
 		res, insErr := s.db.ExecContext(ctx, `
 			INSERT INTO menus (restaurant_id, menu_title, price, menu_type, active, is_draft, legacy_source_table)
-			VALUES (?, 'Postres', 0, 'special', 1, 0, 'POSTRES')
-		`, restaurantID)
+			VALUES (?, 'Postres', 0, ?, 1, 0, 'POSTRES')
+		`, restaurantID, MenuTypeSpecial)
 		if insErr != nil {
 			return 0, 0, insErr
 		}

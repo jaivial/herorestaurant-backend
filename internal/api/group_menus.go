@@ -579,7 +579,7 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 		SELECT id, menu_title
 		FROM menus
 		WHERE restaurant_id = ? AND active = 1
-		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') IN ('closed_group', 'a_la_carte_group')
+		  AND COALESCE(menu_type, 1) IN (2,4)
 		ORDER BY created_at ASC
 	`
 
@@ -676,7 +676,7 @@ func (s *Server) handleGetGroupMenuForDisplay(w http.ResponseWriter, r *http.Req
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, created_at
 		FROM menus
 		WHERE id = ? AND restaurant_id = ? AND active = 1
-		  AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') IN ('closed_group', 'a_la_carte_group')
+		  AND COALESCE(menu_type, 1) IN (2,4)
 		LIMIT 1
 	`
 

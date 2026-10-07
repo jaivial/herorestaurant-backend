@@ -140,9 +140,10 @@ type specialDateMenuRecord struct {
 	Position       int
 	MenuTitle      string
 	MenuPrice      float64
-	// Coordination id: special_menu_principales_v1 - special-type menus take
-	// their principales from special_menu_section_principales.
-	MenuType string
+	// Coordination id: special_menu_principales_v1 + menu_type_numeric_v1 -
+	// special-type menus take their principales from
+	// special_menu_section_principales. MenuType is the canonical numeric code.
+	MenuType int
 }
 
 // specialDateSettings carries the fields the snapshot helper needs from a
@@ -201,7 +202,7 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 		       sdm.adelanto_amount, sdm.price, sdm.position,
 		       COALESCE(m.menu_title, '') AS menu_title,
 		       COALESCE(m.price, 0) AS menu_price,
-		       COALESCE(m.menu_type, '') AS menu_type
+		       COALESCE(m.menu_type, 1) AS menu_type
 		FROM special_date_menus sdm
 		LEFT JOIN menus m
 		  ON m.id = sdm.menu_id AND m.restaurant_id = sdm.restaurant_id
@@ -345,7 +346,7 @@ func (s *Server) resolveSpecialBookingInput(
 		// Coordination id: special_date_section_menus_v1 - a special-type menu
 		// is booked per section: one snapshot line per section, priced and
 		// charged with that section's price and adelanto.
-		if rec.MenuID.Valid && rec.MenuType == "special" {
+		if rec.MenuID.Valid && IsSpecialMenuType(rec.MenuType) {
 			var unified *float64
 			if settings.AdelantoUnified && settings.AdelantoUnifiedAmount != nil {
 				unified = settings.AdelantoUnifiedAmount
@@ -382,7 +383,7 @@ func (s *Server) resolveSpecialBookingInput(
 					name, _ := s.loadDishNameForTenant(ctx, restaurantID, id)
 					snapItems = append(snapItems, specialBookingSnapshotItem{DishID: id, Name: name})
 				}
-			} else if rec.MenuType == "special" {
+			} else if IsSpecialMenuType(rec.MenuType) {
 				items, ok := s.validateSpecialMenuPrincipalItems(ctx, restaurantID, rec.MenuID.Int64, m.Items)
 				if !ok {
 					return nil, nil, errors.New("Algunos platos seleccionados no pertenecen al menú")

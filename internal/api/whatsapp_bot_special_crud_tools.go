@@ -509,7 +509,7 @@ func (s *Server) botToolGetSpecialDateMenu(ctx context.Context, restaurantID int
 		// allowed to book and could report a date with only offline sections as
 		// having no menus at all. Each section still carries its own
 		// "online_enabled" flag so the model can prefer the online ones.
-		if m.MenuID.Valid && m.MenuType == "special" {
+		if m.MenuID.Valid && IsSpecialMenuType(m.MenuType) {
 			sections := s.loadSpecialDateMenuSections(ctx, restaurantID, m.ID, m.MenuID.Int64, true)
 			if len(sections) == 0 {
 				continue
