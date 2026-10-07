@@ -44,6 +44,9 @@ type posRecallLine struct {
 	// become one paid line plus a pile of parentless 0,00 € plates.
 	packID       sql.NullInt64
 	parentLineID sql.NullInt64
+	// course travels with the line: a recalled menu still belongs to the same
+	// service, so firing course 2 does not leave it stranded in course 1.
+	course string
 	// name/option/delta/qty per modifier, snapshotted from the source so the
 	// copy reads exactly like the original even if the catalogue changed.
 	modifiers []posRecallModifier
@@ -59,7 +62,7 @@ type posRecallModifier struct {
 // loadPOSRecallLines reads the active lines of a finished ticket plus their
 // modifiers, in two queries regardless of how many lines there are.
 func (s *Server) loadPOSRecallLines(ctx context.Context, tx *sql.Tx, restaurantID int, sourceTicketID int64) ([]posRecallLine, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,pack_id,parent_line_id FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`, restaurantID, sourceTicketID)
+	rows, err := tx.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,pack_id,parent_line_id,COALESCE(NULLIF(course,''),'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`, restaurantID, sourceTicketID)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +72,7 @@ func (s *Server) loadPOSRecallLines(ctx context.Context, tx *sql.Tx, restaurantI
 	for rows.Next() {
 		var line posRecallLine
 		var id int64
-		if err = rows.Scan(&id, &line.productID, &line.name, &line.quantity, &line.unitPrice, &line.vatRate, &line.lineTotal, &line.notes, &line.packID, &line.parentLineID); err != nil {
+		if err = rows.Scan(&id, &line.productID, &line.name, &line.quantity, &line.unitPrice, &line.vatRate, &line.lineTotal, &line.notes, &line.packID, &line.parentLineID, &line.course); err != nil {
 			return nil, err
 		}
 		line.id = id
@@ -171,7 +174,7 @@ func (s *Server) handleBOPOSRecall(w http.ResponseWriter, r *http.Request) {
 		if line.notes.Valid {
 			notes = line.notes.String
 		}
-		res, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, targetID, productID, line.name, line.quantity, line.unitPrice, line.vatRate, line.lineTotal, notes, key, packID, a.User.ID)
+		res, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, targetID, productID, line.name, line.quantity, line.unitPrice, line.vatRate, line.lineTotal, notes, key, packID, line.course, a.User.ID)
 		if insErr != nil {
 			if strings.Contains(strings.ToLower(insErr.Error()), "duplicate") {
 				// This recall already applied: skip rather than charge twice.
@@ -217,7 +220,7 @@ func (s *Server) handleBOPOSRecall(w http.ResponseWriter, r *http.Request) {
 		if line.notes.Valid {
 			notes = line.notes.String
 		}
-		res, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,parent_line_id,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, targetID, productID, line.name, line.quantity, line.unitPrice, line.vatRate, line.lineTotal, notes, key, newParent, a.User.ID)
+		res, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,parent_line_id,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, targetID, productID, line.name, line.quantity, line.unitPrice, line.vatRate, line.lineTotal, notes, key, newParent, line.course, a.User.ID)
 		if insErr != nil {
 			if strings.Contains(strings.ToLower(insErr.Error()), "duplicate") {
 				continue

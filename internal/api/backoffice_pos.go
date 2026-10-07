@@ -831,7 +831,7 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	if tagErr != nil {
 		return nil, tagErr
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at,pack_id,parent_line_id FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at,pack_id,parent_line_id,COALESCE(NULLIF(course,''),'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -847,7 +847,8 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 		var compReason string
 		var updatedAt time.Time
 		var packID, parentLineID sql.NullInt64
-		if err = rows.Scan(&id, &productID, &name, &quantity, &unitPrice, &vat, &lineDiscount, &lineTotal, &notes, &lineStatus, &compedAt, &compReason, &updatedAt, &packID, &parentLineID); err != nil {
+		var courseName string
+		if err = rows.Scan(&id, &productID, &name, &quantity, &unitPrice, &vat, &lineDiscount, &lineTotal, &notes, &lineStatus, &compedAt, &compReason, &updatedAt, &packID, &parentLineID, &courseName); err != nil {
 			return nil, err
 		}
 		tagIDs := lineTags[id]
@@ -858,7 +859,7 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 		if mods == nil {
 			mods = []map[string]any{}
 		}
-		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "modifiers": mods, "packId": stockNullableDBInt(packID), "parentLineId": stockNullableDBInt(parentLineID), "updatedAt": updatedAt})
+		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "modifiers": mods, "packId": stockNullableDBInt(packID), "parentLineId": stockNullableDBInt(parentLineID), "course": courseName, "updatedAt": updatedAt})
 	}
 	return map[string]any{"id": ticketID, "ticketNumber": number, "status": status, "subtotalGrossCents": subtotal, "discountCents": discount, "surchargeCents": surcharge, "tipCents": tip, "taxCents": tax, "totalGrossCents": total, "paidCents": paid, "refundedCents": refunded, "version": version, "operatorMemberId": stockNullableDBInt(operator), "note": ticketNote, "lines": lines}, rows.Err()
 }
@@ -910,7 +911,10 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		Modifiers              []posModifierSelection `json:"modifiers"`
 		// PackID rings up a menu instead of a product: the parent line carries
 		// the pack price and the components expand underneath it.
-		PackID     int64             `json:"packId"`
+		PackID int64 `json:"packId"`
+		// Course is which service the dish belongs to ("1", "2", ...). It only
+		// decides *when* the kitchen hears about it; the guest is billed the same.
+		Course     string            `json:"course"`
 		PackSelect *posPackSelection `json:"packSelection"`
 	}
 	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" || in.Quantity <= 0 {
@@ -972,7 +976,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		// The idempotency key is unique per restaurant, so each component line
 		// derives its own key from the caller's: a retried request must collide
 		// with its own previous rows, never with an unrelated line.
-		parentRes, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,created_by) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, pack.Name, qty, pack.PriceGrossCents, pack.VATRate, packTotal, stockNullableString(in.Notes), in.IdempotencyKey, pack.ID, a.User.ID)
+		parentRes, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,course,created_by) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, pack.Name, qty, pack.PriceGrossCents, pack.VATRate, packTotal, stockNullableString(in.Notes), in.IdempotencyKey, pack.ID, normalisePOSCourse(in.Course), a.User.ID)
 		if insErr != nil {
 			if !strings.Contains(strings.ToLower(insErr.Error()), "duplicate") {
 				httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
@@ -1002,7 +1006,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		for i, c := range components {
 			componentQty := c.Quantity * float64(qty)
 			compKey := in.IdempotencyKey + ":c" + strconv.Itoa(i)
-			compRes, cErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,idempotency_key,parent_line_id,created_by) VALUES (?,?,?,?,?,0,?,0,?,?,?)`, a.ActiveRestaurantID, ticketID, c.ProductID, c.ProductName, componentQty, c.VATRate, compKey, parentID, a.User.ID)
+			compRes, cErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,idempotency_key,parent_line_id,course,created_by) VALUES (?,?,?,?,?,0,?,0,?,?,?,?)`, a.ActiveRestaurantID, ticketID, c.ProductID, c.ProductName, componentQty, c.VATRate, compKey, parentID, normalisePOSCourse(in.Course), a.User.ID)
 			if cErr != nil {
 				// A duplicate component key means this whole request already
 				// applied. Swallowing it keeps the retry idempotent.
@@ -1095,7 +1099,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lineTotal := int64(math.Round(in.Quantity * float64(lineUnitPrice)))
-	lineRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, lineUnitPrice, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, a.User.ID)
+	lineRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, lineUnitPrice, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, normalisePOSCourse(in.Course), a.User.ID)
 	if err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")

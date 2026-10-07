@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -195,8 +197,15 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 	}
 	var in struct {
 		IdempotencyKey string `json:"idempotencyKey"`
+		Course         string `json:"course"`
 	}
-	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" {
+	// A course fire synthesises the dispatch body and passes it through the
+	// context rather than rewriting r.Body, so the caller's request is untouched.
+	payload := r.Body
+	if injected, ok := r.Context().Value(posCourseFireBodyKey{}).([]byte); ok {
+		payload = io.NopCloser(bytes.NewReader(injected))
+	}
+	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, payload, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" {
 		httpx.WriteError(w, 400, "Invalid kitchen dispatch")
 		return
 	}
@@ -206,13 +215,26 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		return
 	}
 	defer tx.Rollback()
+	// "" means "send everything" and is left alone; anything else is a course and
+	// is normalised so "2", " 2 " and "2.º" all fire the same one.
+	if requested := strings.TrimSpace(in.Course); requested != "" {
+		in.Course = normalisePOSCourse(requested)
+	}
 	var visitID int64
 	var status string
 	if err = tx.QueryRowContext(r.Context(), `SELECT visit_id,status FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&visitID, &status); err != nil || status != "OPEN" {
 		httpx.WriteError(w, 409, "Ticket is not open")
 		return
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT l.id,l.pos_product_id,p.category_id,l.product_name_snapshot,l.quantity,COALESCE(l.notes,'') FROM pos_ticket_lines l JOIN pos_products p ON p.restaurant_id=l.restaurant_id AND p.id=l.pos_product_id WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE' ORDER BY l.id`, a.ActiveRestaurantID, ticketID)
+	// A course fire dispatches one course only; a full "send everything" dispatch
+	// passes an empty course, which matches every line.
+	courseFilter := ""
+	args := []any{a.ActiveRestaurantID, ticketID}
+	if in.Course != "" {
+		courseFilter = " AND COALESCE(NULLIF(l.course,''),'1')=?"
+		args = append(args, in.Course)
+	}
+	rows, err := tx.QueryContext(r.Context(), `SELECT l.id,l.pos_product_id,p.category_id,l.product_name_snapshot,l.quantity,COALESCE(l.notes,'') FROM pos_ticket_lines l JOIN pos_products p ON p.restaurant_id=l.restaurant_id AND p.id=l.pos_product_id WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'`+courseFilter+` ORDER BY l.id`, args...)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading kitchen lines")
 		return
