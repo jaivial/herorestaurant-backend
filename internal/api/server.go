@@ -656,6 +656,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/special-principales", s.handleBOSpecialMenuPrincipalesToggle)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/special-sections/{sectionId}/principales", s.handleBOSpecialSectionPrincipalAdd)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}/special-sections/{sectionId}/principales/{dishId}", s.handleBOSpecialSectionPrincipalDelete)
+		// Coordination id: special_menu_group_booking_v1
+		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/special-group-booking", s.handleBOSpecialMenuGroupBooking)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}", s.handleBOGroupMenusV2Delete)
 		r.With(s.requireBOSession, menusGate).Get("/menus/selector", s.handleBOMenuSelectorGet)
 		r.With(s.requireBOSession, menusGate).Get("/dishes-catalog/search", s.handleBODishesCatalogSearch)
