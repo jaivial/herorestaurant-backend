@@ -560,6 +560,12 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/lines/{lineId}/tags", s.handleBOPOSLineTagAttach)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCheckoutGate).Post("/pos/tickets/{id}/checkout", s.handleBOPOSCheckout)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posRefundGate).Post("/pos/tickets/{id}/refunds", s.handleBOPOSRefund)
+		// Fiscal groundwork: numbering series, simplified invoice, its duplicate
+		// copy and the rectifying invoice for a refund. Issuing is behind the
+		// refund permission because both actions create a fiscal record.
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/fiscal/series", s.handleBOPOSFiscalSeries)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/fiscal/series/{seriesId}/verify", s.handleBOPOSFiscalChainVerify)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posRefundGate).Post("/pos/tickets/{id}/fiscal-document", s.handleBOPOSFiscalDocument)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/covers", s.handleBOPOSCoversReport)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posCoversAdjustGate).Post("/pos/covers/adjustments", s.handleBOPOSCoverAdjustment)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posReportsGate).Get("/pos/covers/reconciliation", s.handleBOPOSCoversReconciliation)

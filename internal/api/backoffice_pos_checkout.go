@@ -425,6 +425,13 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 500, "Error loading POS settings")
 		return
 	}
+	// Cash over the LIVA threshold has to carry the buyer's NIF (art. 20.Uno.2º
+	// b). Checked before the transaction opens so the guest is told immediately
+	// rather than after a rollback, and the message names what to do.
+	if refusal := s.posCashNIFRefusal(r.Context(), a.ActiveRestaurantID, ticketID, in.Payments); refusal != "" {
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": refusal, "code": "CASH_NIF_REQUIRED"})
+		return
+	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error checking out ticket")
