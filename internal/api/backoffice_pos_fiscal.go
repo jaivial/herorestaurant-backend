@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -295,7 +296,13 @@ func (s *Server) issuePOSFiscalDocument(ctx context.Context, tx *sql.Tx, params 
 	}
 
 	fullNumber := fmt.Sprintf("%s-%s-%04d", prefix, params.IssuedAt.Format("2006-01-02"), nextNumber)
-	issuedAt := params.IssuedAt.UTC().Format(time.RFC3339)
+	// The column is DATETIME, so sub-second precision is lost on the way back
+	// out. Hashing the full RFC3339 with fractions here would make every
+	// document look tampered with to the chain check, which rebuilds the same
+	// content from what is actually stored. Truncate first so both sides hash
+	// the same string.
+	issuedAtStored := params.IssuedAt.UTC().Truncate(time.Second)
+	issuedAt := issuedAtStored.Format(time.RFC3339)
 
 	lines := params.Lines
 	if len(lines) == 0 && params.TicketID > 0 {
@@ -363,7 +370,12 @@ func (s *Server) issuePOSFiscalDocument(ctx context.Context, tx *sql.Tx, params 
 		visitID = params.VisitID
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO pos_fiscal_documents (restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,copy_number,content_hash,previous_hash,is_certified,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,0,?)`,
-		params.RestaurantID, seriesID, nextNumber, params.DocumentType, fullNumber, key.TerminalKey, params.IssuedAt, ticketID, visitID, correctsID, nullIfEmpty(params.CorrectsNumber), nullIfEmpty(params.Reason),
+		// Store the SAME instant the hash was built from, as a naive UTC
+		// DATETIME. Passing params.IssuedAt through raw would write local time
+		// with its zone, and the chain check (which reads the column back and
+		// rebuilds the content) would compute a different hash for a document
+		// nobody touched.
+		params.RestaurantID, seriesID, nextNumber, params.DocumentType, fullNumber, key.TerminalKey, issuedAtStored, ticketID, visitID, correctsID, nullIfEmpty(params.CorrectsNumber), nullIfEmpty(params.Reason),
 		params.RestaurantName, content.IssuerTaxID, nullIfEmpty(content.CustomerName), nullIfEmpty(content.CustomerTaxID),
 		params.BaseCents, params.TaxCents, params.SurchargeCents, params.DiscountCents, params.TotalCents,
 		string(breakdownJSON), string(linesJSON), hash, nullIfEmpty(previousHash.String), params.CreatedBy)
@@ -451,15 +463,21 @@ func validSpanishIssuerTaxID(value string) bool {
 func (s *Server) duplicatePOSFiscalDocument(ctx context.Context, tx *sql.Tx, restaurantID int, documentID int64, copyNumber int, createdBy int) (map[string]any, error) {
 	// INSERT ... SELECT rather than read-then-write: the duplicate must be a
 	// byte-for-byte copy of the original (same number, same content hash, same
-	// previous hash) and only copy_number may differ. Re-serialising the rows in
+	// previous hash) and only copy_number may differ.
+	//
+	// copy_number=1 in the WHERE is what keeps this honest. Without it,
+	// duplicating an already-duplicated document copies the COPY's previous
+	// hash, so the third copy of a series would claim to hang off a document
+	// that is not the one it corrects and the chain check would rightly call
+	// it broken. Re-serialising the rows in
 	// Go would let a rounding difference produce a duplicate whose hash does not
 	// match its original, which is exactly the inconsistency the chain exists to
 	// prevent.
 	if copyNumber < 2 {
 		copyNumber = 2
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO pos_fiscal_documents (restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,copy_number,content_hash,previous_hash,is_certified,created_by)
-		SELECT restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,?,content_hash,previous_hash,0,? FROM pos_fiscal_documents WHERE restaurant_id=? AND id=?`,
+	res, err := tx.ExecContext(ctx, `INSERT INTO pos_fiscal_documents (restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,copy_number,content_hash,previous_hash,is_certified,created_by)
+		SELECT restaurant_id,series_id,series_number,document_type,full_number,terminal_key,issued_at,ticket_id,visit_id,corrects_document_id,corrects_number,correction_reason,issuer_name,issuer_tax_id,customer_name,customer_tax_id,base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,vat_breakdown_json,lines_json,?,content_hash,COALESCE(previous_hash,''),0,? FROM pos_fiscal_documents WHERE restaurant_id=? AND id=? AND copy_number=1`,
 		copyNumber, createdBy, restaurantID, documentID)
 	if err != nil {
 		return nil, err
@@ -509,25 +527,39 @@ func (s *Server) duplicatePOSFiscalDocument(ctx context.Context, tx *sql.Tx, res
 // content from the stored columns and compares. A mismatch therefore means the
 // row itself changed, which is the case the check exists for.
 func (s *Server) verifyPOSFiscalChain(ctx context.Context, restaurantID, seriesID int64) (map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,series_number,full_number,document_type,terminal_key,issued_at,ticket_number,issuer_name,issuer_tax_id,COALESCE(customer_name,''),COALESCE(customer_tax_id,''),base_cents,tax_cents,surcharge_cents,discount_cents,total_cents,COALESCE(lines_json,''),COALESCE(vat_breakdown_json,''),COALESCE(correction_reason,''),content_hash,COALESCE(previous_hash,''),COALESCE(corrects_number,''),corrects_document_id FROM pos_fiscal_documents WHERE restaurant_id=? AND series_id=? ORDER BY series_number`, restaurantID, seriesID)
+	rows, err := s.db.QueryContext(ctx, `SELECT d.id,d.series_number,d.full_number,d.document_type,d.terminal_key,d.issued_at,COALESCE(t.ticket_number,''),d.issuer_name,d.issuer_tax_id,COALESCE(d.customer_name,''),COALESCE(d.customer_tax_id,''),d.base_cents,d.tax_cents,d.surcharge_cents,d.discount_cents,d.total_cents,COALESCE(d.lines_json,''),COALESCE(d.vat_breakdown_json,''),COALESCE(d.correction_reason,''),d.copy_number,d.content_hash,COALESCE(d.previous_hash,''),COALESCE(d.corrects_number,''),d.corrects_document_id FROM pos_fiscal_documents d LEFT JOIN pos_tickets t ON t.id=d.ticket_id AND t.restaurant_id=d.restaurant_id WHERE d.restaurant_id=? AND d.series_id=? ORDER BY d.series_number, d.copy_number, d.id`, restaurantID, seriesID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	expected := ""
+	headBeforeCopy := ""
 	count := 0
 	untested := 0
 	var broken []map[string]any
 	for rows.Next() {
 		var id, number, base, tax, surcharge, discount, total int64
 		var full, docType, terminal, ticketNumber, issuerName, issuerTaxID, customerName, customerTaxID, linesJSON, breakdownJSON, reason, storedHash, previousHash, correctsNumber string
+		var copy int
 		var correctsID sql.NullInt64
 		var issuedAt sql.NullTime
-		if err = rows.Scan(&id, &number, &full, &docType, &terminal, &issuedAt, &ticketNumber, &issuerName, &issuerTaxID, &customerName, &customerTaxID, &base, &tax, &surcharge, &discount, &total, &linesJSON, &breakdownJSON, &reason, &storedHash, &previousHash, &correctsNumber, &correctsID); err != nil {
+		if err = rows.Scan(&id, &number, &full, &docType, &terminal, &issuedAt, &ticketNumber, &issuerName, &issuerTaxID, &customerName, &customerTaxID, &base, &tax, &surcharge, &discount, &total, &linesJSON, &breakdownJSON, &reason, &copy, &storedHash, &previousHash, &correctsNumber, &correctsID); err != nil {
 			return nil, err
 		}
 		problems := []string{}
-		if previousHash != expected {
+		// A duplicate copy is not a new link: it repeats the original's
+		// number AND its predecessor hash, because a copy has to BE the same
+		// document. It is therefore checked against the predecessor its
+		// original had, not against whatever row happened to come out of the
+		// cursor before it. Copies are ordered right after their original
+		// (series_number, copy_number, id), so the row above a copy is
+		// always its original and the head still holds the original's own
+		// predecessor.
+		want := expected
+		if copy > 1 {
+			want = headBeforeCopy
+		}
+		if previousHash != want {
 			problems = append(problems, "no enlaza con el documento anterior")
 		}
 		// Recompute from the stored content. A copy/duplicate carries the same
@@ -549,7 +581,9 @@ func (s *Server) verifyPOSFiscalChain(ctx context.Context, restaurantID, seriesI
 		}
 		issued := time.Now().UTC()
 		if issuedAt.Valid {
-			issued = issuedAt.Time.UTC()
+			// Same truncation as the issuing side: the stored DATETIME has no
+			// sub-second part, so the rebuilt content must not invent one.
+			issued = issuedAt.Time.UTC().Truncate(time.Second)
 		}
 		content := posFiscalContent{
 			SeriesType: docType, SeriesNumber: number, FullNumber: full, TerminalKey: terminal,
@@ -571,10 +605,21 @@ func (s *Server) verifyPOSFiscalChain(ctx context.Context, restaurantID, seriesI
 			broken = append(broken, map[string]any{"id": id, "fullNumber": full, "problems": problems})
 		}
 		count++
+		// Remember the predecessor the current row was expected to hang off,
+		// so a copy that follows can be judged against its own original.
+		headBeforeCopy = expected
 		// The head advances to the STORED hash, not the recomputed one: a
 		// tampered document must not silently re-anchor everything after it,
 		// which is what makes a gap detectable at all.
-		expected = storedHash
+		//
+		// A duplicate copy is the exception: it is not a new link in the
+		// chain. It repeats the original's number AND its previous_hash, on
+		// purpose, because the copy has to be the same document. Advancing the
+		// head with it would make the third copy look broken when it is
+		// exactly as valid as the second. Only the original moves the chain on.
+		if copy == 1 {
+			expected = storedHash
+		}
 	}
 	return map[string]any{
 		"seriesId":     seriesID,
@@ -688,11 +733,24 @@ func (s *Server) handleBOPOSFiscalDocument(w http.ResponseWriter, r *http.Reques
 		}
 		document, err = s.duplicatePOSFiscalDocument(r.Context(), tx, a.ActiveRestaurantID, in.DocumentID, in.CopyNumber, a.User.ID)
 		if err != nil {
+			// Without this line a duplicate that fails for any SQL reason
+			// (column count, duplicate key, missing row) is indistinguishable
+			// from a hundred other 500s in the POS.
+			log.Printf("POS fiscal duplicate failed: document=%d copy=%d err=%v", in.DocumentID, in.CopyNumber, err)
 			httpx.WriteError(w, http.StatusInternalServerError, "Error issuing duplicate")
 			return
 		}
 	case "rectify":
 		document, err = s.issueRectifyingInvoice(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, in.RefundID, in.Reason, restaurantName, restaurantTaxID, in.TerminalKey)
+		if err != nil {
+			// These are the caller's fault, not a server fault: a rectifying
+			// invoice without a reason, without a prior invoice or without a
+			// completed refund is a 409 with a sentence the waiter can act on.
+			// Answering 500 hid the reason behind "Error issuing fiscal document".
+			log.Printf("POS fiscal rectify refused: ticket=%d reason=%q err=%v", ticketID, in.Reason, err)
+			httpx.WriteError(w, http.StatusConflict, err.Error())
+			return
+		}
 	default:
 		if existingID > 0 {
 			httpx.WriteError(w, http.StatusConflict, "Esta cuenta ya tiene una factura simplificada emitida")
@@ -714,6 +772,7 @@ func (s *Server) handleBOPOSFiscalDocument(w http.ResponseWriter, r *http.Reques
 		})
 	}
 	if err != nil {
+		log.Printf("POS fiscal document failed: ticket=%d err=%v", ticketID, err)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error issuing fiscal document")
 		return
 	}
@@ -887,6 +946,7 @@ func (s *Server) handleBOPOSFiscalChainVerify(w http.ResponseWriter, r *http.Req
 	}
 	result, err := s.verifyPOSFiscalChain(r.Context(), int64(a.ActiveRestaurantID), seriesID)
 	if err != nil {
+		log.Printf("POS fiscal chain verify failed: series=%d err=%v", seriesID, err)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error verifying fiscal chain")
 		return
 	}
