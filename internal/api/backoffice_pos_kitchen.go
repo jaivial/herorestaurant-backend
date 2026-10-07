@@ -302,7 +302,22 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 			current[line.LineID] = line.Quantity
 			lineByID[line.LineID] = line
 		}
-		sentRows, qErr := tx.QueryContext(r.Context(), `SELECT dl.ticket_line_id,COALESCE(SUM(dl.quantity_delta),0) FROM pos_kitchen_dispatch_lines dl JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id WHERE d.restaurant_id=? AND d.ticket_id=? AND d.station_id=? AND d.status<>'CANCELLED' GROUP BY dl.ticket_line_id`, a.ActiveRestaurantID, ticketID, stationID)
+		// Scoped to the same course as `current`. Without this, firing course 2
+		// compares course 2's lines against everything ever sent to the station:
+		// course 1's lines are missing from `current` but present in `sent`, so the
+		// delta comes out negative and the kitchen is told to VOID dishes the
+		// waiter never cancelled.
+		sentFilter := ""
+		sentArgs := []any{a.ActiveRestaurantID, ticketID, stationID}
+		if in.Course != "" {
+			sentFilter = " AND COALESCE(NULLIF(l.course,''),'1')=?"
+			sentArgs = append(sentArgs, in.Course)
+		}
+		sentRows, qErr := tx.QueryContext(r.Context(), `SELECT dl.ticket_line_id,COALESCE(SUM(dl.quantity_delta),0) FROM pos_kitchen_dispatch_lines dl
+			JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id
+			JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id
+			WHERE d.restaurant_id=? AND d.ticket_id=? AND d.station_id=? AND d.status<>'CANCELLED'`+sentFilter+`
+			GROUP BY dl.ticket_line_id`, sentArgs...)
 		if qErr != nil {
 			httpx.WriteError(w, 500, "Error loading dispatch history")
 			return
