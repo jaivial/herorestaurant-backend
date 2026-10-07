@@ -3,7 +3,6 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -143,7 +142,9 @@ func (s *Server) handleBOPOSPinVerify(w http.ResponseWriter, r *http.Request) {
 	// Throttle against this terminal, not against the member: a wrong PIN
 	// cannot honestly be blamed on the person it was meant for.
 	if err = s.countPINFailure(r, int64(a.ActiveRestaurantID), int64(a.User.ID)); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error recording failed attempt")
+		// Surfaced rather than swallowed: a throttle that silently stops
+		// recording is a throttle that silently stops working.
+		httpx.WriteError(w, http.StatusInternalServerError, "Error recording failed attempt: "+err.Error())
 		return
 	}
 	httpx.WriteError(w, http.StatusUnauthorized, "PIN incorrecto")
@@ -205,16 +206,13 @@ func (s *Server) ensurePOSPinMember(r *http.Request, restaurantID int, userID in
 	} else if err != sql.ErrNoRows {
 		return 0, err
 	}
-	var first, last string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT first_name,last_name FROM bo_users WHERE id=?`, userID).Scan(&first, &last); err != nil {
+	// bo_users carries a single `name`, not first/last, so the name is split once
+	// here to fit the members table rather than inventing a surname.
+	var full string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(NULLIF(name,''),email) FROM bo_users WHERE id=?`, userID).Scan(&full); err != nil {
 		return 0, err
 	}
-	if strings.TrimSpace(first) == "" {
-		first = "POS"
-	}
-	if strings.TrimSpace(last) == "" {
-		last = fmt.Sprintf("user %d", userID)
-	}
+	first, last := splitPOSPinName(full)
 	res, err := s.db.ExecContext(r.Context(), `INSERT INTO restaurant_members (restaurant_id,bo_user_id,first_name,last_name,is_active) VALUES (?,?,?,?,1)`, restaurantID, userID, first, last)
 	if err != nil {
 		// Lost a race with another request: fall back to the row that won.
@@ -222,4 +220,18 @@ func (s *Server) ensurePOSPinMember(r *http.Request, restaurantID int, userID in
 	}
 	id, _ := res.LastInsertId()
 	return id, nil
+}
+
+// splitPOSPinName turns a backoffice account name into the first/last pair the
+// members table wants, falling back to something readable rather than empty so
+// an approved action never shows a blank name in the audit trail.
+func splitPOSPinName(full string) (string, string) {
+	full = strings.TrimSpace(full)
+	if full == "" {
+		return "POS", "user"
+	}
+	if first, last, ok := strings.Cut(full, " "); ok && strings.TrimSpace(last) != "" {
+		return strings.TrimSpace(first), strings.TrimSpace(last)
+	}
+	return full, "POS"
 }
