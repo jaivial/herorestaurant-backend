@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -159,13 +160,17 @@ func (s *Server) handleBOPOSPinVerify(w http.ResponseWriter, r *http.Request) {
 // honest tradeoff — a guessed PIN never gets blamed on an innocent colleague, and
 // a determined attacker is throttled anyway.
 func (s *Server) countPINFailure(r *http.Request, restaurantID int64, userID int64) error {
-	_, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_pin_attempts (restaurant_id,attempted_by,failed_attempts,locked_until)
-		VALUES (?,?,1,DATE_ADD(NOW(),INTERVAL ? MINUTE))
+	// The lock window is interpolated, not bound: inside DATE_ADD(... INTERVAL ? MINUTE)
+	// MySQL treats the ? as part of the INTERVAL keyword and never sees a placeholder,
+	// so binding it there makes the driver complain about the argument count.
+	window := strconv.Itoa(int(posPinLockWindow.Minutes()))
+	statement := `INSERT INTO pos_pin_attempts (restaurant_id,attempted_by,failed_attempts,locked_until)
+		VALUES (?,?,1,DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE))
 		ON DUPLICATE KEY UPDATE
 		  failed_attempts = IF(locked_until IS NOT NULL AND locked_until <= NOW(), 1, failed_attempts + 1),
-		  locked_until = IF(locked_until IS NOT NULL AND locked_until <= NOW(), DATE_ADD(NOW(),INTERVAL ? MINUTE),
-		                    IF(failed_attempts + 1 >= ?, DATE_ADD(NOW(),INTERVAL ? MINUTE), locked_until))`,
-		restaurantID, userID, int(posPinLockWindow.Minutes()), int(posPinLockWindow.Minutes()), posPinMaxAttempts)
+		  locked_until = IF(locked_until IS NOT NULL AND locked_until <= NOW(), DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE),
+		                    IF(failed_attempts + 1 >= ?, DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE), locked_until))`
+	_, err := s.db.ExecContext(r.Context(), statement, restaurantID, userID, posPinMaxAttempts)
 	return err
 }
 
