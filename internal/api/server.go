@@ -551,6 +551,12 @@ func (s *Server) Routes() http.Handler {
 		// Naming a separated check is a sell-side action (it happens while the
 		// table is still ordering), not an accounting edit.
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/guest-label", s.handleBOPOSTicketGuestLabel)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/customer", s.handleBOPOSTicketCustomer)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Get("/pos/customers", s.handleBOPOSCustomersSearch)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/customers", s.handleBOPOSCustomerCreate)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Get("/pos/customers/{id}", s.handleBOPOSCustomerGet)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Patch("/pos/customers/{id}", s.handleBOPOSCustomerPatch)
+		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSettingsGate).Post("/pos/customers/{id}/anonymise", s.handleBOPOSCustomerAnonymise)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/lines", s.handleBOPOSLineCreate)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Patch("/pos/tickets/{id}/lines/{lineId}", s.handleBOPOSLinePatch)
 		r.With(s.requireBOSession, s.requireBOPOSFeature, withBOPOSTimeout, posSellGate).Post("/pos/tickets/{id}/lines/{lineId}/move", s.handleBOPOSLineMove)
