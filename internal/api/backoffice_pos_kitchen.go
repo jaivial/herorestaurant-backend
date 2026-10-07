@@ -272,7 +272,7 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		}
 		routeRows.Close()
 	}
-	priorStations, priorErr := tx.QueryContext(r.Context(), `SELECT DISTINCT station_id FROM pos_kitchen_dispatches WHERE restaurant_id=? AND ticket_id=?`, a.ActiveRestaurantID, ticketID)
+	priorStations, priorErr := tx.QueryContext(r.Context(), `SELECT DISTINCT d.station_id FROM pos_kitchen_dispatches d JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=d.restaurant_id AND dl.dispatch_id=d.id JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id WHERE d.restaurant_id=? AND (d.ticket_id=? OR l.ticket_id=?) UNION SELECT kt.station_id FROM pos_kitchen_line_transfers kt JOIN pos_ticket_lines l ON l.restaurant_id=kt.restaurant_id AND l.id=kt.to_line_id WHERE kt.restaurant_id=? AND l.ticket_id=?`, a.ActiveRestaurantID, ticketID, ticketID, a.ActiveRestaurantID, ticketID)
 	if priorErr != nil {
 		httpx.WriteError(w, 500, "Error loading dispatch history")
 		return
@@ -308,16 +308,26 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		// delta comes out negative and the kitchen is told to VOID dishes the
 		// waiter never cancelled.
 		sentFilter := ""
-		sentArgs := []any{a.ActiveRestaurantID, ticketID, stationID}
+		branchArgs := []any{a.ActiveRestaurantID, ticketID, stationID}
 		if in.Course != "" {
 			sentFilter = " AND COALESCE(NULLIF(l.course,''),'1')=?"
-			sentArgs = append(sentArgs, in.Course)
+			branchArgs = append(branchArgs, in.Course)
 		}
-		sentRows, qErr := tx.QueryContext(r.Context(), `SELECT dl.ticket_line_id,COALESCE(SUM(dl.quantity_delta),0) FROM pos_kitchen_dispatch_lines dl
+		sentArgs := append(append(append([]any{}, branchArgs...), branchArgs...), branchArgs...)
+		// "Sent" follows the LINE, not the dispatch: a dish moved to another
+		// check (one comensal's own bill) was dispatched under the old check,
+		// and is still cooked. Keying on l.ticket_id keeps it sent where it now
+		// lives and gone from where it left, so neither check re-cooks or voids
+		// it. pos_kitchen_line_transfers carries the sent quantity across a
+		// partial move, where the dish was split into two rows.
+		sentRows, qErr := tx.QueryContext(r.Context(), `SELECT x.line_id,COALESCE(SUM(x.qty),0) FROM (
+			SELECT dl.ticket_line_id line_id,dl.quantity_delta qty FROM pos_ticket_lines l
+			JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=l.restaurant_id AND dl.ticket_line_id=l.id
 			JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id
-			JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id
-			WHERE d.restaurant_id=? AND d.ticket_id=? AND d.station_id=? AND d.status<>'CANCELLED'`+sentFilter+`
-			GROUP BY dl.ticket_line_id`, sentArgs...)
+			WHERE l.restaurant_id=? AND l.ticket_id=? AND d.station_id=? AND d.status<>'CANCELLED'`+sentFilter+`
+			UNION ALL SELECT kt.to_line_id,kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.to_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=? AND kt.station_id=?`+sentFilter+`
+			UNION ALL SELECT kt.from_line_id,-kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.from_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=? AND kt.station_id=?`+sentFilter+`
+			) x GROUP BY x.line_id`, sentArgs...)
 		if qErr != nil {
 			httpx.WriteError(w, 500, "Error loading dispatch history")
 			return

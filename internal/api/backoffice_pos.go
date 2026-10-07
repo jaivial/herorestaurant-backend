@@ -865,6 +865,10 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	if tagErr != nil {
 		return nil, tagErr
 	}
+	kitchenSent, sentErr := s.loadPOSTicketKitchenSent(ctx, restaurantID, ticketID)
+	if sentErr != nil {
+		return nil, sentErr
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at,pack_id,parent_line_id,COALESCE(NULLIF(course,''),'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
 	if err != nil {
 		return nil, err
@@ -893,9 +897,41 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 		if mods == nil {
 			mods = []map[string]any{}
 		}
-		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "modifiers": mods, "packId": stockNullableDBInt(packID), "parentLineId": stockNullableDBInt(parentLineID), "course": courseName, "updatedAt": updatedAt})
+		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "modifiers": mods, "packId": stockNullableDBInt(packID), "parentLineId": stockNullableDBInt(parentLineID), "course": courseName, "updatedAt": updatedAt, "kitchenSentQuantity": kitchenSent[id]})
 	}
 	return map[string]any{"id": ticketID, "ticketNumber": number, "status": status, "subtotalGrossCents": subtotal, "discountCents": discount, "surchargeCents": surcharge, "tipCents": tip, "taxCents": tax, "totalGrossCents": total, "paidCents": paid, "refundedCents": refunded, "version": version, "operatorMemberId": stockNullableDBInt(operator), "note": ticketNote, "guestLabel": guestLabel.String, "lines": lines}, rows.Err()
+}
+
+// loadPOSTicketKitchenSent is how much of each line the kitchen already knows
+// about, read from the server's own dispatch history instead of the browser's
+// memory, so a reload, a second terminal or a line moved to another check does
+// not make an already-cooked dish look unsent. A line routed to two stations
+// counts as sent once either has it: the waiter's question is "did the kitchen
+// hear about this", and the per-station deltas are the dispatch's business.
+func (s *Server) loadPOSTicketKitchenSent(ctx context.Context, restaurantID int, ticketID int64) (map[int64]float64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT line_id,MAX(qty) FROM (
+		SELECT x.line_id,x.station_id,SUM(x.qty) qty FROM (
+			SELECT dl.ticket_line_id line_id,d.station_id,dl.quantity_delta qty FROM pos_ticket_lines l JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=l.restaurant_id AND dl.ticket_line_id=l.id JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id WHERE l.restaurant_id=? AND l.ticket_id=? AND d.status<>'CANCELLED'
+			UNION ALL SELECT kt.to_line_id,kt.station_id,kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.to_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=?
+			UNION ALL SELECT kt.from_line_id,kt.station_id,-kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.from_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=?
+		) x GROUP BY x.line_id,x.station_id
+	) per_station GROUP BY line_id`, restaurantID, ticketID, restaurantID, ticketID, restaurantID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]float64{}
+	for rows.Next() {
+		var id int64
+		var qty float64
+		if err = rows.Scan(&id, &qty); err != nil {
+			return nil, err
+		}
+		if qty > 0 {
+			out[id] = qty
+		}
+	}
+	return out, rows.Err()
 }
 
 // recalculatePOSTicket recomputes the ticket money from its ACTIVE lines. The
