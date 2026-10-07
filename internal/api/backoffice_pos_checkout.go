@@ -465,7 +465,9 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 	// not the calendar day the sale is being rung up on.
 	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, s.posVisitServiceDate(r.Context(), a.ActiveRestaurantID, result.VisitID))
 	ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket, "stockStatus": result.StockStatus, "visitClosed": result.VisitClosed})
+	// The payments are echoed back so the receipt can print how the ticket was
+	// settled without a second round trip right after the sale.
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket, "payments": s.posTicketPayments(r, a.ActiveRestaurantID, ticketID), "stockStatus": result.StockStatus, "visitClosed": result.VisitClosed})
 }
 
 // handleBOPOSCashDayBulkCheckout checks out every still-open ticket on a
