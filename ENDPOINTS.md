@@ -2790,6 +2790,35 @@ UAZAPI pool allocation is disabled. Bot option menus use Evolution
 `POST /message/sendButtons/{instance}` with reply buttons. Evolution `2.3.7`
 Baileys `sendList` is avoided because its live route returns HTTP 400.
 
+#### evo-weai (Rust replacement for the Evolution fork)
+
+[evo-weai](https://github.com/jaivial/evo-weai) (>= `0.2.4`) serves the same
+REST routes and webhook payloads as the Evolution fork, so it is used through
+the existing `evolution` provider: no code path changes, only the server row.
+Coordination id: `wa_evo_weai_v1`.
+
+- What the bot relies on, pinned by `whatsapp_gateway_evo_weai_test.go` with
+  webhook bodies produced by evo-weai itself (`testdata/evo_weai_webhooks.json`):
+  `key.remoteJidAlt` for LID-addressed 1:1 chats (older evo-weai versions do not
+  send it, and those chats are dropped), `key.participantAlt` for group members,
+  `pushName`, `qrcode.base64` (an SVG data URL, rendered as is), the pairing
+  code in `qrcode.pairingCode`, `wuid` on `connection.update`, and
+  `message.base64` for voice notes when the webhook has `webhookBase64`.
+- `TestEvoWeaiIT_GatewayLifecycle` drives provision, QR, status, the webhook
+  ownership guard and delete against a running server without linking a phone:
+  `EVO_WEAI_IT_URL=http://127.0.0.1:<port> EVO_WEAI_IT_KEY=<global key> go test ./internal/api -run EvoWeaiIT`.
+- evo-weai resolves a webhook's host when it is set and refuses internal
+  targets, so `BOT_PUBLIC_WEBHOOK_URL` must be a public hostname (as it already
+  is). Sends to an instance that is not linked fail with HTTP 400, which the
+  outbox retries.
+- Switching production (not done by the code change; the device has to be
+  linked again, since credentials do not move between servers): run
+  evo-weai on its own loopback port with its own `WEAI_API_KEY`, add a
+  `uazapi_servers` row with `provider = 'evolution'`, its `base_url` and that
+  key, deactivate the fork's row (`is_active = 0`), disconnect the restaurant
+  with `delete_instance:true` and connect again from the backoffice. The fork
+  (`127.0.0.1:8098`) can be stopped once the new instance is linked.
+
 If a restaurant already has `restaurant_integrations.uazapi_url/uazapi_token`,
 onboarding checks that instance first and adopts it into
 `restaurant_uazapi_instances`. This supports legacy connected instances without
