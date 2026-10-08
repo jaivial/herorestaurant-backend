@@ -116,6 +116,10 @@ func botMergeBurst(burst []botWebhookMessage) botWebhookMessage {
 // botRunConversationWorker drains the conversation queue, one turn per burst.
 func (s *Server) botRunConversationWorker(restaurantID int, sender string) {
 	key := botBurstKey(restaurantID, sender)
+	// "escribiendo…" from the first message until the worker drains: covers
+	// the burst window, transcription and the agent turn (wa_bot_typing_v1).
+	stopTyping := s.botStartTyping(restaurantID, sender)
+	defer stopTyping()
 	for {
 		burst := s.botBursts.take(key)
 		if burst == nil {
