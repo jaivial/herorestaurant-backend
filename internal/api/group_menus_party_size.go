@@ -242,8 +242,8 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			continue
 		}
 		// Coordination id: special_menu_group_booking_v1 - a special menu is
-		// offered here only when it is flagged as a group menu and has
-		// principales (toggle on + non-empty list), the shared rule.
+		// offered here as soon as it is flagged as a group menu, with or
+		// without principals.
 		if isSpecialMenu && specialPrincipales[int64(row.id)] == nil {
 			continue
 		}
@@ -260,8 +260,10 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 			principalesFallback = specialPrincipales[int64(row.id)]
 		}
 
-		// Skip menus without principales items
-		if !hasPrincipalesItems(principalesFallback) {
+		// Skip menus without principals items. Coordination id:
+		// special_menu_group_booking_v1 - a special group menu is offered
+		// even with no dishes, so the guest books it without picking one.
+		if !isSpecialMenu && !hasPrincipalesItems(principalesFallback) {
 			continue
 		}
 
