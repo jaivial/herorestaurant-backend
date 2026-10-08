@@ -215,12 +215,13 @@ func (s *Server) handleBOMenuWeekdayWSMessage(r *http.Request, restaurantID int,
 
 // botMenusAvailableOnWeekday returns the active, bookable menus that are marked
 // as available on the given weekday key. When menuType is non-empty only that
-// menu_type is returned (e.g. "closed_conventional" for the default menus).
+// menu_type is returned (e.g. MenuTypeClosedConventional for the default menus);
+// it accepts the canonical numeric code or the legacy string.
 //
 // When the restaurant has no weekday configuration at all yet, it falls back
 // to the active menus of the requested type so the bot keeps working while the
 // operator fills in the calendar.
-func (s *Server) botMenusAvailableOnWeekday(ctx context.Context, restaurantID int, weekday string, menuType string) ([]map[string]any, bool, error) {
+func (s *Server) botMenusAvailableOnWeekday(ctx context.Context, restaurantID int, weekday string, menuType any) ([]map[string]any, bool, error) {
 	key := normalizeBOMenuWeekday(weekday)
 	if key == "" {
 		return []map[string]any{}, false, nil
@@ -228,14 +229,16 @@ func (s *Server) botMenusAvailableOnWeekday(ctx context.Context, restaurantID in
 
 	args := []any{restaurantID, key}
 	where := `m.restaurant_id = ? AND m.active = 1 AND m.is_draft = 0 AND a.weekday = ? AND a.available = 1`
-	if strings.TrimSpace(menuType) != "" {
-		where += ` AND COALESCE(NULLIF(TRIM(m.menu_type), ''), 'closed_conventional') = ?`
-		args = append(args, strings.TrimSpace(menuType))
+	// Coordination id: menu_type_numeric_v1 - the caller may pass the canonical
+	// numeric code or the legacy string; both resolve to the same column value.
+	if menuTypeCode := MenuTypeFromAny(menuType); menuTypeCode != MenuTypeUnknown {
+		where += ` AND COALESCE(m.menu_type, 1) = ?`
+		args = append(args, menuTypeCode)
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT m.id, m.menu_title,
-		       COALESCE(NULLIF(TRIM(m.menu_type), ''), 'closed_conventional'),
+		       COALESCE(m.menu_type, 1),
 		       COALESCE(m.price, ''), COALESCE(m.menu_subtitle, '')
 		FROM menus m
 		JOIN menu_weekday_availability a
@@ -267,13 +270,13 @@ func (s *Server) botMenusAvailableOnWeekday(ctx context.Context, restaurantID in
 	// requested category, flagged as not-yet-configured.
 	fallbackArgs := []any{restaurantID}
 	fallbackWhere := `restaurant_id = ? AND active = 1 AND is_draft = 0`
-	if strings.TrimSpace(menuType) != "" {
-		fallbackWhere += ` AND COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional') = ?`
-		fallbackArgs = append(fallbackArgs, strings.TrimSpace(menuType))
+	if menuTypeCode := MenuTypeFromAny(menuType); menuTypeCode != MenuTypeUnknown {
+		fallbackWhere += ` AND COALESCE(menu_type, 1) = ?`
+		fallbackArgs = append(fallbackArgs, menuTypeCode)
 	}
 	fallbackRows, ferr := s.db.QueryContext(ctx, `
 		SELECT id, menu_title,
-		       COALESCE(NULLIF(TRIM(menu_type), ''), 'closed_conventional'),
+		       COALESCE(menu_type, 1),
 		       COALESCE(price, ''), COALESCE(menu_subtitle, '')
 		FROM menus
 		WHERE `+fallbackWhere+`
@@ -293,14 +296,14 @@ func scanBotMenuRows(rows *sql.Rows) ([]map[string]any, error) {
 		var (
 			id          int64
 			title       string
-			menuType    string
+			menuType    int
 			price       string
 			subtitleRaw string
 		)
 		if err := rows.Scan(&id, &title, &menuType, &price, &subtitleRaw); err != nil {
 			return nil, err
 		}
-		normalized := normalizeV2MenuType(menuType)
+		normalized := menuType
 		cleanPrice := strings.TrimSpace(price)
 		if cleanPrice == "" {
 			cleanPrice = "0"

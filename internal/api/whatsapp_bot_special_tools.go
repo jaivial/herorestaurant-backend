@@ -60,7 +60,7 @@ func (s *Server) botToolGetSpecialDateInfo(ctx context.Context, restaurantID int
 		}
 		// Coordination id: special_date_section_menus_v1 - special menus are
 		// priced and charged per section, not with a menu-level price.
-		if m.MenuID.Valid && m.MenuType == "special" {
+		if m.MenuID.Valid && IsSpecialMenuType(m.MenuType) {
 			delete(entry, "unit_price")
 			delete(entry, "adelanto_amount")
 			// Coordination id: special_date_section_online_v1 - the bot books

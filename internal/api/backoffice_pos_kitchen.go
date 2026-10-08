@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -195,8 +197,15 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 	}
 	var in struct {
 		IdempotencyKey string `json:"idempotencyKey"`
+		Course         string `json:"course"`
 	}
-	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" {
+	// A course fire synthesises the dispatch body and passes it through the
+	// context rather than rewriting r.Body, so the caller's request is untouched.
+	payload := r.Body
+	if injected, ok := r.Context().Value(posCourseFireBodyKey{}).([]byte); ok {
+		payload = io.NopCloser(bytes.NewReader(injected))
+	}
+	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, payload, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" {
 		httpx.WriteError(w, 400, "Invalid kitchen dispatch")
 		return
 	}
@@ -206,13 +215,26 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		return
 	}
 	defer tx.Rollback()
+	// "" means "send everything" and is left alone; anything else is a course and
+	// is normalised so "2", " 2 " and "2.º" all fire the same one.
+	if requested := strings.TrimSpace(in.Course); requested != "" {
+		in.Course = normalisePOSCourse(requested)
+	}
 	var visitID int64
 	var status string
 	if err = tx.QueryRowContext(r.Context(), `SELECT visit_id,status FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&visitID, &status); err != nil || status != "OPEN" {
 		httpx.WriteError(w, 409, "Ticket is not open")
 		return
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT l.id,l.pos_product_id,p.category_id,l.product_name_snapshot,l.quantity,COALESCE(l.notes,'') FROM pos_ticket_lines l JOIN pos_products p ON p.restaurant_id=l.restaurant_id AND p.id=l.pos_product_id WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE' ORDER BY l.id`, a.ActiveRestaurantID, ticketID)
+	// A course fire dispatches one course only; a full "send everything" dispatch
+	// passes an empty course, which matches every line.
+	courseFilter := ""
+	args := []any{a.ActiveRestaurantID, ticketID}
+	if in.Course != "" {
+		courseFilter = " AND COALESCE(NULLIF(l.course,''),'1')=?"
+		args = append(args, in.Course)
+	}
+	rows, err := tx.QueryContext(r.Context(), `SELECT l.id,l.pos_product_id,p.category_id,l.product_name_snapshot,l.quantity,COALESCE(l.notes,'') FROM pos_ticket_lines l JOIN pos_products p ON p.restaurant_id=l.restaurant_id AND p.id=l.pos_product_id WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'`+courseFilter+` ORDER BY l.id`, args...)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading kitchen lines")
 		return
@@ -250,7 +272,7 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		}
 		routeRows.Close()
 	}
-	priorStations, priorErr := tx.QueryContext(r.Context(), `SELECT DISTINCT station_id FROM pos_kitchen_dispatches WHERE restaurant_id=? AND ticket_id=?`, a.ActiveRestaurantID, ticketID)
+	priorStations, priorErr := tx.QueryContext(r.Context(), `SELECT DISTINCT d.station_id FROM pos_kitchen_dispatches d JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=d.restaurant_id AND dl.dispatch_id=d.id JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id WHERE d.restaurant_id=? AND (d.ticket_id=? OR l.ticket_id=?) UNION SELECT kt.station_id FROM pos_kitchen_line_transfers kt JOIN pos_ticket_lines l ON l.restaurant_id=kt.restaurant_id AND l.id=kt.to_line_id WHERE kt.restaurant_id=? AND l.ticket_id=?`, a.ActiveRestaurantID, ticketID, ticketID, a.ActiveRestaurantID, ticketID)
 	if priorErr != nil {
 		httpx.WriteError(w, 500, "Error loading dispatch history")
 		return
@@ -280,7 +302,32 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 			current[line.LineID] = line.Quantity
 			lineByID[line.LineID] = line
 		}
-		sentRows, qErr := tx.QueryContext(r.Context(), `SELECT dl.ticket_line_id,COALESCE(SUM(dl.quantity_delta),0) FROM pos_kitchen_dispatch_lines dl JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id WHERE d.restaurant_id=? AND d.ticket_id=? AND d.station_id=? AND d.status<>'CANCELLED' GROUP BY dl.ticket_line_id`, a.ActiveRestaurantID, ticketID, stationID)
+		// Scoped to the same course as `current`. Without this, firing course 2
+		// compares course 2's lines against everything ever sent to the station:
+		// course 1's lines are missing from `current` but present in `sent`, so the
+		// delta comes out negative and the kitchen is told to VOID dishes the
+		// waiter never cancelled.
+		sentFilter := ""
+		branchArgs := []any{a.ActiveRestaurantID, ticketID, stationID}
+		if in.Course != "" {
+			sentFilter = " AND COALESCE(NULLIF(l.course,''),'1')=?"
+			branchArgs = append(branchArgs, in.Course)
+		}
+		sentArgs := append(append(append([]any{}, branchArgs...), branchArgs...), branchArgs...)
+		// "Sent" follows the LINE, not the dispatch: a dish moved to another
+		// check (one comensal's own bill) was dispatched under the old check,
+		// and is still cooked. Keying on l.ticket_id keeps it sent where it now
+		// lives and gone from where it left, so neither check re-cooks or voids
+		// it. pos_kitchen_line_transfers carries the sent quantity across a
+		// partial move, where the dish was split into two rows.
+		sentRows, qErr := tx.QueryContext(r.Context(), `SELECT x.line_id,COALESCE(SUM(x.qty),0) FROM (
+			SELECT dl.ticket_line_id line_id,dl.quantity_delta qty FROM pos_ticket_lines l
+			JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=l.restaurant_id AND dl.ticket_line_id=l.id
+			JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id
+			WHERE l.restaurant_id=? AND l.ticket_id=? AND d.station_id=? AND d.status<>'CANCELLED'`+sentFilter+`
+			UNION ALL SELECT kt.to_line_id,kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.to_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=? AND kt.station_id=?`+sentFilter+`
+			UNION ALL SELECT kt.from_line_id,-kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.from_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=? AND kt.station_id=?`+sentFilter+`
+			) x GROUP BY x.line_id`, sentArgs...)
 		if qErr != nil {
 			httpx.WriteError(w, 500, "Error loading dispatch history")
 			return

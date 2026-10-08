@@ -304,7 +304,7 @@ func (s *Server) handleBOPOSCashMovements(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusNotFound, "Shift not found")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by,created_at FROM pos_cash_movements WHERE restaurant_id=? AND shift_id=? ORDER BY created_at DESC,id DESC LIMIT 500`, a.ActiveRestaurantID, shiftID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by,created_at,COALESCE(approved_by,'') FROM pos_cash_movements WHERE restaurant_id=? AND shift_id=? ORDER BY created_at DESC,id DESC LIMIT 500`, a.ActiveRestaurantID, shiftID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash movements")
 		return
@@ -313,13 +313,13 @@ func (s *Server) handleBOPOSCashMovements(w http.ResponseWriter, r *http.Request
 	items := []map[string]any{}
 	for rows.Next() {
 		var id, amount, actor int64
-		var terminal, kind, reason, key string
+		var terminal, kind, reason, key, approvedBy string
 		var created time.Time
-		if err = rows.Scan(&id, &terminal, &kind, &amount, &reason, &key, &actor, &created); err != nil {
+		if err = rows.Scan(&id, &terminal, &kind, &amount, &reason, &key, &actor, &created, &approvedBy); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error reading cash movements")
 			return
 		}
-		items = append(items, map[string]any{"id": id, "shiftId": shiftID, "terminalKey": terminal, "type": kind, "amountCents": amount, "reason": reason, "idempotencyKey": key, "createdBy": actor, "createdAt": created})
+		items = append(items, map[string]any{"id": id, "shiftId": shiftID, "terminalKey": terminal, "type": kind, "amountCents": amount, "reason": reason, "idempotencyKey": key, "createdBy": actor, "approvedBy": approvedBy, "createdAt": created})
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "shiftId": shiftID, "items": items})
 }
@@ -333,6 +333,9 @@ func (s *Server) handleBOPOSCashMovementCreate(w http.ResponseWriter, r *http.Re
 		AmountCents    int64  `json:"amountCents"`
 		Reason         string `json:"reason"`
 		IdempotencyKey string `json:"idempotencyKey"`
+		// Optional. When present it is verified HERE, never trusted from the
+		// client, and the member it resolves to is written to the audit trail.
+		ApprovalPin string `json:"approvalPin"`
 	}
 	if !posDecodeBody(w, r, &in) {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid cash movement")
@@ -359,6 +362,20 @@ func (s *Server) handleBOPOSCashMovementCreate(w http.ResponseWriter, r *http.Re
 	if in.TerminalKey == "" {
 		in.TerminalKey = shiftTerminal
 	}
+	// A PIN is optional, and that is deliberate: forcing one on every waiter
+	// would train staff to type PINs they do not have. What must never happen is
+	// the audit trail naming a manager the server never checked, so when a PIN
+	// IS sent it is resolved here and only its verified name is stored.
+	// The amount rule applies to cash LEAVING the drawer; a deposit (IN) is
+	// still verified when a PIN is offered, but never demands one.
+	policyAmount := in.AmountCents
+	if in.Type == "IN" {
+		policyAmount = 0
+	}
+	approvedBy, ok := s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, policyAmount, false)
+	if !ok {
+		return
+	}
 	var existing int64
 	if err = s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_cash_movements WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existing); err == nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "movementId": existing, "shiftId": shiftID})
@@ -367,7 +384,7 @@ func (s *Server) handleBOPOSCashMovementCreate(w http.ResponseWriter, r *http.Re
 		httpx.WriteError(w, http.StatusInternalServerError, "Error checking cash movement")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_cash_movements (restaurant_id,shift_id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, shiftID, in.TerminalKey, in.Type, in.AmountCents, in.Reason, in.IdempotencyKey, a.User.ID)
+	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_cash_movements (restaurant_id,shift_id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by,approved_by) VALUES (?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, shiftID, in.TerminalKey, in.Type, in.AmountCents, in.Reason, in.IdempotencyKey, a.User.ID, nullIfEmpty(approvedBy))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			_ = s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_cash_movements WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existing)
@@ -378,8 +395,8 @@ func (s *Server) handleBOPOSCashMovementCreate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	id, _ := res.LastInsertId()
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_movement',?,'CREATE',JSON_OBJECT('shiftId',?,'type',?,'amountCents',?,'reason',?),?)`, a.ActiveRestaurantID, id, shiftID, in.Type, in.AmountCents, in.Reason, a.User.ID)
-	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "movementId": id, "shiftId": shiftID, "type": in.Type, "amountCents": in.AmountCents})
+	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_movement',?,'CREATE',JSON_OBJECT('shiftId',?,'type',?,'amountCents',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, id, shiftID, in.Type, in.AmountCents, in.Reason, approvedBy, a.User.ID)
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "movementId": id, "shiftId": shiftID, "type": in.Type, "amountCents": in.AmountCents, "approvedBy": approvedBy})
 }
 
 func (s *Server) handleBOPOSCashClosures(w http.ResponseWriter, r *http.Request) {

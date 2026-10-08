@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -32,7 +33,10 @@ const (
 	posPermissionReports      = "pos.reports.view"
 	posPermissionSettings     = "pos.settings.manage"
 	posPermissionKitchen      = "pos.kitchen.manage"
-	posFeatureKey             = "pos_pack"
+	// Modifier configuration is catalog data: whoever owns the POS catalog
+	// decides the prices a guest can be charged, so it rides the same gate.
+	posPermissionModifiers = posPermissionCatalog
+	posFeatureKey          = "pos_pack"
 )
 
 func (s *Server) checkPOSRateLimit(scope string, restaurantID, userID, limit int) bool {
@@ -301,6 +305,11 @@ type posSettings struct {
 	AutoCloseVisit    bool   `json:"autoCloseVisit"`
 	RequireOpenShift  bool   `json:"requireOpenShift"`
 	ReceiptPrefix     string `json:"receiptPrefix"`
+	// PinThresholdCents: a money-reducing action of at least this amount needs
+	// a manager PIN. nil = no amount rule.
+	PinThresholdCents *int64 `json:"pinThresholdCents"`
+	// PinRequiredForDiscount: every discount and comp needs a manager PIN.
+	PinRequiredForDiscount bool `json:"pinRequiredForDiscount"`
 }
 
 // posRestaurantProfile is the issuer identity printed on POS documents such as
@@ -345,12 +354,18 @@ func defaultPOSSettings() posSettings {
 
 func (s *Server) loadPOSSettings(ctx context.Context, restaurantID int) (posSettings, error) {
 	out := defaultPOSSettings()
-	var enabled, autoClose, requireShift int
-	err := s.db.QueryRowContext(ctx, `SELECT is_enabled,stock_mode,covers_mode,timezone,TIME_FORMAT(business_day_cutoff,'%H:%i'),auto_close_visit,require_open_shift,receipt_prefix FROM pos_settings WHERE restaurant_id=?`, restaurantID).Scan(&enabled, &out.StockMode, &out.CoversMode, &out.Timezone, &out.BusinessDayCutoff, &autoClose, &requireShift, &out.ReceiptPrefix)
+	var enabled, autoClose, requireShift, pinDiscount int
+	var pinThreshold sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT is_enabled,stock_mode,covers_mode,timezone,TIME_FORMAT(business_day_cutoff,'%H:%i'),auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount FROM pos_settings WHERE restaurant_id=?`, restaurantID).Scan(&enabled, &out.StockMode, &out.CoversMode, &out.Timezone, &out.BusinessDayCutoff, &autoClose, &requireShift, &out.ReceiptPrefix, &pinThreshold, &pinDiscount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
 	}
 	out.IsEnabled, out.AutoCloseVisit, out.RequireOpenShift = enabled != 0, autoClose != 0, requireShift != 0
+	out.PinRequiredForDiscount = pinDiscount != 0
+	if pinThreshold.Valid {
+		v := pinThreshold.Int64
+		out.PinThresholdCents = &v
+	}
 	return out, err
 }
 
@@ -420,7 +435,20 @@ func (s *Server) handleBOPOSSettingsPatch(w http.ResponseWriter, r *http.Request
 		}
 		consumed = append(consumed, id)
 	}
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO pos_settings (restaurant_id,is_enabled,stock_mode,covers_mode,timezone,business_day_cutoff,auto_close_visit,require_open_shift,receipt_prefix) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE is_enabled=VALUES(is_enabled),stock_mode=VALUES(stock_mode),covers_mode=VALUES(covers_mode),timezone=VALUES(timezone),business_day_cutoff=VALUES(business_day_cutoff),auto_close_visit=VALUES(auto_close_visit),require_open_shift=VALUES(require_open_shift),receipt_prefix=VALUES(receipt_prefix)`, a.ActiveRestaurantID, stockBoolInt(in.IsEnabled), in.StockMode, in.CoversMode, in.Timezone, in.BusinessDayCutoff, stockBoolInt(in.AutoCloseVisit), stockBoolInt(in.RequireOpenShift), strings.TrimSpace(in.ReceiptPrefix))
+	// A PIN policy can only be switched on when someone can actually type a
+	// PIN, otherwise the very next discount locks the till.
+	if (in.PinRequiredForDiscount || (in.PinThresholdCents != nil && *in.PinThresholdCents > 0)) && !(current.PinRequiredForDiscount || current.PinThresholdCents != nil) {
+		var withPIN int
+		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`, a.ActiveRestaurantID).Scan(&withPIN); err != nil || withPIN == 0 {
+			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "code": "PIN_POLICY_NO_PIN", "message": "Nadie tiene PIN configurado: crea al menos uno (Mi PIN) antes de exigirlo"})
+			return
+		}
+	}
+	var pinThreshold any
+	if in.PinThresholdCents != nil && *in.PinThresholdCents > 0 {
+		pinThreshold = *in.PinThresholdCents
+	}
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO pos_settings (restaurant_id,is_enabled,stock_mode,covers_mode,timezone,business_day_cutoff,auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE is_enabled=VALUES(is_enabled),stock_mode=VALUES(stock_mode),covers_mode=VALUES(covers_mode),timezone=VALUES(timezone),business_day_cutoff=VALUES(business_day_cutoff),auto_close_visit=VALUES(auto_close_visit),require_open_shift=VALUES(require_open_shift),receipt_prefix=VALUES(receipt_prefix),pin_threshold_cents=VALUES(pin_threshold_cents),pin_required_for_discount=VALUES(pin_required_for_discount)`, a.ActiveRestaurantID, stockBoolInt(in.IsEnabled), in.StockMode, in.CoversMode, in.Timezone, in.BusinessDayCutoff, stockBoolInt(in.AutoCloseVisit), stockBoolInt(in.RequireOpenShift), strings.TrimSpace(in.ReceiptPrefix), pinThreshold, stockBoolInt(in.PinRequiredForDiscount))
 	if err != nil {
 		httpx.WriteError(w, 500, "Error saving POS settings")
 		return
@@ -589,7 +617,22 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day")
 		return
 	}
-	payload := map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift, "date": businessDate, "cashDay": cashDay}
+	// Modifier groups per product id (as string keys). Empty map when the menu
+	// has no modifiers, which is the common case, so the payload stays small.
+	productModifiers, modErr := s.posModifierCatalogForProducts(r.Context(), a.ActiveRestaurantID)
+	if modErr != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS modifiers")
+		return
+	}
+	// Active packs travel with the bootstrap: the sell screen needs the fixed
+	// price and the slots to render, and a separate round trip on every tap
+	// would be one request per plate.
+	packs, packErr := s.loadPOSPacks(r.Context(), s.db, a.ActiveRestaurantID, true)
+	if packErr != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS packs")
+		return
+	}
+	payload := map[string]any{"success": true, "settings": settings, "restaurant": restaurant, "products": products, "productModifiers": productModifiers, "packs": packs, "tables": tables, "areas": areas, "visits": visits, "operators": operators, "currentShift": currentShift, "date": businessDate, "cashDay": cashDay}
 	// Only shipped when stock tracking is on: an absent key tells the sell
 	// screen it should not render stock badges at all.
 	if settings.StockMode != "OFF" {
@@ -606,6 +649,35 @@ func nextPOSTicketNumber(ctx context.Context, tx *sql.Tx, restaurantID int, busi
 	var next int64
 	if err = tx.QueryRowContext(ctx, `SELECT next_value-1 FROM pos_daily_sequences WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' FOR UPDATE`, restaurantID, businessDate).Scan(&next); err != nil {
 		return "", err
+	}
+
+	// A ticket number is never reused, so a number that already exists is a hard
+	// stop -- but a sequence that has fallen behind reality must not take the
+	// whole till down with an opaque "Error creating ticket".
+	//
+	// The counter can legitimately end up behind the tickets: a database restore,
+	// a ticket inserted by an import or by another system, or a row edited by
+	// hand. None of those are normal, and all of them stop service at the worst
+	// possible moment, on the busiest table.
+	//
+	// So the counter is checked against the highest number actually issued for
+	// the day and pushed forward if it is behind. It is only ever moved FORWARD:
+	// a counter ahead of reality just skips a number, which is harmless, whereas
+	// moving it back would reuse one. This runs only when a collision is found,
+	// so the normal path stays exactly as fast and as strict as before.
+	used := fmt.Sprintf("%s-%s-%%", prefix, strings.ReplaceAll(businessDate, "-", ""))
+	var highest int64
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(ticket_number,'-',-1) AS UNSIGNED)),0) FROM pos_tickets WHERE restaurant_id=? AND ticket_number LIKE ?`, restaurantID, used).Scan(&highest); err != nil {
+		return "", err
+	}
+	if highest >= next {
+		// next_value stores "one past the last issued number", so it must end up
+		// one past the highest number that exists.
+		if _, err = tx.ExecContext(ctx, `UPDATE pos_daily_sequences SET next_value=? WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' AND next_value<=?`, highest+1, restaurantID, businessDate, highest+1); err != nil {
+			return "", err
+		}
+		log.Printf("POS ticket sequence for %s was behind the issued tickets (next=%d, highest issued=%d): moved forward so no number is reused", businessDate, next, highest)
+		next = highest + 1
 	}
 	return fmt.Sprintf("%s-%s-%04d", prefix, strings.ReplaceAll(businessDate, "-", ""), next), nil
 }
@@ -793,7 +865,13 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	var surcharge, tip int64
 	var operator sql.NullInt64
 	var ticketNote string
-	err := s.db.QueryRowContext(ctx, `SELECT ticket_number,status,subtotal_gross_cents,discount_cents,tax_cents,total_gross_cents,paid_cents,refunded_cents,version,surcharge_cents,tip_cents,operator_member_id,COALESCE(note,'') FROM pos_tickets WHERE restaurant_id=? AND id=?`, restaurantID, ticketID).Scan(&number, &status, &subtotal, &discount, &tax, &total, &paid, &refunded, &version, &surcharge, &tip, &operator, &ticketNote)
+	// guest_label is the comensal written on a separated check ("Cuenta 1 - Ana").
+	// It is NULL for a whole-table account, which is the normal case, so it rides
+	// along in the existing select rather than costing a second query.
+	var guestLabel sql.NullString
+	var customerID sql.NullInt64
+	var customerName, customerNotes string
+	err := s.db.QueryRowContext(ctx, `SELECT t.ticket_number,t.status,t.subtotal_gross_cents,t.discount_cents,t.tax_cents,t.total_gross_cents,t.paid_cents,t.refunded_cents,t.version,t.surcharge_cents,t.tip_cents,t.operator_member_id,COALESCE(t.note,''),t.guest_label,t.customer_id,COALESCE(c.display_name,''),COALESCE(c.notes,'') FROM pos_tickets t LEFT JOIN pos_customers c ON c.restaurant_id=t.restaurant_id AND c.id=t.customer_id WHERE t.restaurant_id=? AND t.id=?`, restaurantID, ticketID).Scan(&number, &status, &subtotal, &discount, &tax, &total, &paid, &refunded, &version, &surcharge, &tip, &operator, &ticketNote, &guestLabel, &customerID, &customerName, &customerNotes)
 	if err != nil {
 		return nil, err
 	}
@@ -802,7 +880,22 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	// fields, so no extra query is needed. The ORDER BY id is deliberate and
 	// stays: the client owns the display order, and a stable server order keeps
 	// this payload deterministic.
-	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
+	lineModifiers, modErr := s.loadPOSTicketModifiers(ctx, restaurantID, ticketID)
+	if modErr != nil {
+		return nil, modErr
+	}
+	// Pack and tag data come from two extra queries for the whole ticket rather
+	// than two more per line: a menu with six components would otherwise issue
+	// eighteen round trips on every ticket open.
+	lineTags, tagErr := s.loadPOSTicketLineTags(ctx, restaurantID, ticketID)
+	if tagErr != nil {
+		return nil, tagErr
+	}
+	kitchenSent, sentErr := s.loadPOSTicketKitchenSent(ctx, restaurantID, ticketID)
+	if sentErr != nil {
+		return nil, sentErr
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at,pack_id,parent_line_id,COALESCE(NULLIF(course,''),'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -817,26 +910,54 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 		var compedAt sql.NullTime
 		var compReason string
 		var updatedAt time.Time
-		if err = rows.Scan(&id, &productID, &name, &quantity, &unitPrice, &vat, &lineDiscount, &lineTotal, &notes, &lineStatus, &compedAt, &compReason, &updatedAt); err != nil {
+		var packID, parentLineID sql.NullInt64
+		var courseName string
+		if err = rows.Scan(&id, &productID, &name, &quantity, &unitPrice, &vat, &lineDiscount, &lineTotal, &notes, &lineStatus, &compedAt, &compReason, &updatedAt, &packID, &parentLineID, &courseName); err != nil {
 			return nil, err
 		}
-		tagRows, tagErr := s.db.QueryContext(ctx, `SELECT tag_id FROM pos_ticket_line_tags WHERE restaurant_id=? AND ticket_line_id=? ORDER BY tag_id`, restaurantID, id)
-		if tagErr != nil {
-			return nil, tagErr
+		tagIDs := lineTags[id]
+		if tagIDs == nil {
+			tagIDs = []int64{}
 		}
-		tagIDs := []int64{}
-		for tagRows.Next() {
-			var tagID int64
-			if tagErr = tagRows.Scan(&tagID); tagErr != nil {
-				tagRows.Close()
-				return nil, tagErr
-			}
-			tagIDs = append(tagIDs, tagID)
+		mods := lineModifiers[id]
+		if mods == nil {
+			mods = []map[string]any{}
 		}
-		tagRows.Close()
-		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "updatedAt": updatedAt})
+		lines = append(lines, map[string]any{"id": id, "productId": stockNullableDBInt(productID), "productName": name, "quantity": quantity, "unitPriceGrossCents": unitPrice, "vatRate": vat, "discountCents": lineDiscount, "lineTotalGrossCents": lineTotal, "notes": notes, "status": lineStatus, "comped": compedAt.Valid, "compReason": compReason, "tagIds": tagIDs, "modifiers": mods, "packId": stockNullableDBInt(packID), "parentLineId": stockNullableDBInt(parentLineID), "course": courseName, "updatedAt": updatedAt, "kitchenSentQuantity": kitchenSent[id]})
 	}
-	return map[string]any{"id": ticketID, "ticketNumber": number, "status": status, "subtotalGrossCents": subtotal, "discountCents": discount, "surchargeCents": surcharge, "tipCents": tip, "taxCents": tax, "totalGrossCents": total, "paidCents": paid, "refundedCents": refunded, "version": version, "operatorMemberId": stockNullableDBInt(operator), "note": ticketNote, "lines": lines}, rows.Err()
+	return map[string]any{"id": ticketID, "ticketNumber": number, "status": status, "subtotalGrossCents": subtotal, "discountCents": discount, "surchargeCents": surcharge, "tipCents": tip, "taxCents": tax, "totalGrossCents": total, "paidCents": paid, "refundedCents": refunded, "version": version, "operatorMemberId": stockNullableDBInt(operator), "note": ticketNote, "guestLabel": guestLabel.String, "customerId": stockNullableDBInt(customerID), "customerName": customerName, "customerNotes": customerNotes, "lines": lines}, rows.Err()
+}
+
+// loadPOSTicketKitchenSent is how much of each line the kitchen already knows
+// about, read from the server's own dispatch history instead of the browser's
+// memory, so a reload, a second terminal or a line moved to another check does
+// not make an already-cooked dish look unsent. A line routed to two stations
+// counts as sent once either has it: the waiter's question is "did the kitchen
+// hear about this", and the per-station deltas are the dispatch's business.
+func (s *Server) loadPOSTicketKitchenSent(ctx context.Context, restaurantID int, ticketID int64) (map[int64]float64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT line_id,MAX(qty) FROM (
+		SELECT x.line_id,x.station_id,SUM(x.qty) qty FROM (
+			SELECT dl.ticket_line_id line_id,d.station_id,dl.quantity_delta qty FROM pos_ticket_lines l JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=l.restaurant_id AND dl.ticket_line_id=l.id JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id WHERE l.restaurant_id=? AND l.ticket_id=? AND d.status<>'CANCELLED'
+			UNION ALL SELECT kt.to_line_id,kt.station_id,kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.to_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=?
+			UNION ALL SELECT kt.from_line_id,kt.station_id,-kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.from_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=?
+		) x GROUP BY x.line_id,x.station_id
+	) per_station GROUP BY line_id`, restaurantID, ticketID, restaurantID, ticketID, restaurantID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]float64{}
+	for rows.Next() {
+		var id int64
+		var qty float64
+		if err = rows.Scan(&id, &qty); err != nil {
+			return nil, err
+		}
+		if qty > 0 {
+			out[id] = qty
+		}
+	}
+	return out, rows.Err()
 }
 
 // recalculatePOSTicket recomputes the ticket money from its ACTIVE lines. The
@@ -878,14 +999,36 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		ProductID              int64   `json:"productId"`
-		Quantity               float64 `json:"quantity"`
-		Notes                  string  `json:"notes"`
-		IdempotencyKey         string  `json:"idempotencyKey"`
-		UnitPriceOverrideCents *int64  `json:"unitPriceOverrideCents"`
+		ProductID              int64                  `json:"productId"`
+		Quantity               float64                `json:"quantity"`
+		Notes                  string                 `json:"notes"`
+		IdempotencyKey         string                 `json:"idempotencyKey"`
+		UnitPriceOverrideCents *int64                 `json:"unitPriceOverrideCents"`
+		Modifiers              []posModifierSelection `json:"modifiers"`
+		// PackID rings up a menu instead of a product: the parent line carries
+		// the pack price and the components expand underneath it.
+		PackID int64 `json:"packId"`
+		// Course is which service the dish belongs to ("1", "2", ...). It only
+		// decides *when* the kitchen hears about it; the guest is billed the same.
+		Course     string            `json:"course"`
+		PackSelect *posPackSelection `json:"packSelection"`
 	}
-	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || in.ProductID <= 0 || in.Quantity <= 0 || strings.TrimSpace(in.IdempotencyKey) == "" {
+	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.IdempotencyKey) == "" || in.Quantity <= 0 {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid ticket line")
+		return
+	}
+	if in.PackID > 0 && in.ProductID > 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "A line is either a product or a pack")
+		return
+	}
+	if in.PackID <= 0 && in.ProductID <= 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid ticket line")
+		return
+	}
+	if in.PackID > 0 && (in.UnitPriceOverrideCents != nil || len(in.Modifiers) > 0) {
+		// The pack price is fixed; an override or a modifier on top of it would
+		// price the menu outside the catalog without anyone choosing it.
+		httpx.WriteError(w, http.StatusBadRequest, "A pack cannot take a price override or modifiers")
 		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -898,6 +1041,109 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 	var existingDiscount int64
 	if err = tx.QueryRowContext(r.Context(), `SELECT status,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &existingDiscount); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
+		return
+	}
+	// A pack is rung up as one line at the pack price; its components are
+	// written underneath at zero so the ticket shows the menu the guest
+	// ordered while the money is counted once, on the parent.
+	if in.PackID > 0 {
+		pack, packErr := s.loadPOSPack(r.Context(), tx, a.ActiveRestaurantID, in.PackID)
+		if packErr != nil {
+			httpx.WriteError(w, http.StatusNotFound, "Pack not found")
+			return
+		}
+		if !pack.IsActive {
+			httpx.WriteError(w, http.StatusNotFound, "Pack not found")
+			return
+		}
+		selection := posPackSelection{Quantity: in.Quantity, Choices: map[string]int64{}}
+		if in.PackSelect != nil {
+			selection.Quantity = in.PackSelect.Quantity
+			if in.PackSelect.Choices != nil {
+				selection.Choices = in.PackSelect.Choices
+			}
+		}
+		components, qty, selErr := resolvePOSPack(*pack, selection)
+		if selErr != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "Invalid pack selection")
+			return
+		}
+		packTotal := posPackLineTotal(*pack, qty)
+		// The idempotency key is unique per restaurant, so each component line
+		// derives its own key from the caller's: a retried request must collide
+		// with its own previous rows, never with an unrelated line.
+		parentRes, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,course,created_by) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, pack.Name, qty, pack.PriceGrossCents, pack.VATRate, packTotal, stockNullableString(in.Notes), in.IdempotencyKey, pack.ID, normalisePOSCourse(in.Course), a.User.ID)
+		if insErr != nil {
+			if !strings.Contains(strings.ToLower(insErr.Error()), "duplicate") {
+				httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
+				return
+			}
+			// This pack was already rung up under the same key: the retry is a
+			// no-op, not a second menu.
+			if err = tx.Commit(); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error adding line")
+				return
+			}
+			ticket, loadErr := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
+			if loadErr != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error loading ticket")
+				return
+			}
+			httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "ticket": ticket})
+			return
+		}
+		parentID, _ := parentRes.LastInsertId()
+		// Settings are read once for the whole menu, not once per dish.
+		settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
+		if settingsErr != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS settings")
+			return
+		}
+		for i, c := range components {
+			componentQty := c.Quantity * float64(qty)
+			compKey := in.IdempotencyKey + ":c" + strconv.Itoa(i)
+			compRes, cErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,idempotency_key,parent_line_id,course,created_by) VALUES (?,?,?,?,?,0,?,0,?,?,?,?)`, a.ActiveRestaurantID, ticketID, c.ProductID, c.ProductName, componentQty, c.VATRate, compKey, parentID, normalisePOSCourse(in.Course), a.User.ID)
+			if cErr != nil {
+				// A duplicate component key means this whole request already
+				// applied. Swallowing it keeps the retry idempotent.
+				if !strings.Contains(strings.ToLower(cErr.Error()), "duplicate") {
+					httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
+					return
+				}
+				continue
+			}
+			componentID, _ := compRes.LastInsertId()
+			// Components carry the stock, not the parent: the parent is a menu,
+			// the components are the dishes that leave it.
+			if settings.StockMode == "LIVE" {
+				if _, err = s.deductStockForLine(r.Context(), tx, a.ActiveRestaurantID, a.User.ID, ticketID, componentID, c.ProductID, componentQty, "pos-pack:"+compKey); err != nil {
+					httpx.WriteError(w, http.StatusInternalServerError, "Error deducting stock")
+					return
+				}
+			}
+		}
+		if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, existingDiscount); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
+			return
+		}
+		// Audit the menu: which pack, at what price, with which choices. A
+		// pack is the unit the guest bought, so the void/discount trail has to
+		// name it even though its component lines are separately traceable.
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PACK_RUNG',JSON_OBJECT('packId',?,'packName',?,'quantity',?,'unitPriceCents',?,'totalCents',?),?)`, a.ActiveRestaurantID, parentID, pack.ID, pack.Name, qty, pack.PriceGrossCents, packTotal, a.User.ID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error auditing pack line")
+			return
+		}
+		if err = tx.Commit(); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error adding line")
+			return
+		}
+		ticket, loadErr := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
+		if loadErr != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error loading ticket")
+			return
+		}
+		s.broadcastBOFichajeRevenue(a.ActiveRestaurantID, boTodayDate())
+		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "ticket": ticket})
 		return
 	}
 	var name string
@@ -932,8 +1178,24 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		price = override
 		overrideApplied = override != catalogPrice
 	}
-	lineTotal := int64(math.Round(in.Quantity * float64(price)))
-	lineRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, price, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, a.User.ID)
+	// Modifiers are validated against the groups that actually apply to this
+	// product, so a line can never be priced with an option the catalog does
+	// not offer. The delta is per unit of the line, so a 2x2 line pays for two
+	// of each modifier.
+	modifierRows, modifierDelta, modErr := resolvePOSModifiers(mustPOSModifierGroups(r.Context(), tx, a.ActiveRestaurantID, in.ProductID), in.Modifiers)
+	if modErr != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "Invalid modifier selection")
+		return
+	}
+	// The override replaces the catalog price; the modifier delta is still added
+	// on top, so an override can never silently drop the chosen extras.
+	lineUnitPrice := price + modifierDelta
+	if lineUnitPrice < 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "Modifier price makes the line negative")
+		return
+	}
+	lineTotal := int64(math.Round(in.Quantity * float64(lineUnitPrice)))
+	lineRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, lineUnitPrice, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, normalisePOSCourse(in.Course), a.User.ID)
 	if err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
@@ -941,6 +1203,10 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		lineID, _ := lineRes.LastInsertId()
+		if err = persistPOSModifiers(r.Context(), tx, a.ActiveRestaurantID, lineID, modifierRows); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
+			return
+		}
 		if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, existingDiscount); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
 			return
@@ -955,7 +1221,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if overrideApplied {
-			_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PRICE_OVERRIDE',JSON_OBJECT('productId',?,'catalogPriceCents',?,'overridePriceCents',?),?)`, a.ActiveRestaurantID, lineID, in.ProductID, catalogPrice, price, a.User.ID)
+			_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PRICE_OVERRIDE',JSON_OBJECT('productId',?,'catalogPriceCents',?,'overridePriceCents',?,'modifierDeltaCents',?),?)`, a.ActiveRestaurantID, lineID, in.ProductID, catalogPrice, price, modifierDelta, a.User.ID)
 		}
 	}
 	if err = tx.Commit(); err != nil {
@@ -981,10 +1247,21 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Reason string `json:"reason"`
+		Reason      string `json:"reason"`
+		ApprovalPin string `json:"approvalPin"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.Reason) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Void reason is required")
+		return
+	}
+	// When a PIN is offered it is verified here, not trusted from the client: the
+	// audit trail has to name a manager whose PIN was actually checked, otherwise
+	// the name is whatever the browser felt like sending.
+	// The amount the policy compares is what the guest stops paying.
+	var voidAmount int64
+	_ = s.db.QueryRowContext(r.Context(), `SELECT line_total_gross_cents FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND id=?`, a.ActiveRestaurantID, ticketID, lineID).Scan(&voidAmount)
+	approvedBy, ok := s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, voidAmount, false)
+	if !ok {
 		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -1017,8 +1294,26 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "Ticket line not found")
 		return
 	}
+	// A pack parent owns its component lines. Voiding the menu must void the
+	// dishes with it: the money is on the parent, so leaving the children
+	// active would print them to the kitchen and keep the plate on the bill
+	// with nothing to pay for.
+	if _, err = tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=NOW() WHERE restaurant_id=? AND parent_line_id=? AND status='ACTIVE'`, strings.TrimSpace(in.Reason), a.User.ID, a.ActiveRestaurantID, lineID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error voiding line")
+		return
+	}
 	if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, ticketDiscount); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error calculating ticket")
+		return
+	}
+	// A void is the one action that quietly takes money off a bill, so it is
+	// written to the audit trail with the reason and, when a manager signed it
+	// off, who did. Without this there is no way to answer "who removed this
+	// dish and when" after the fact.
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id)
+		VALUES (?,'ticket_line',?,'LINE_VOID',JSON_OBJECT('reason',?,'approvedBy',?),?)`,
+		a.ActiveRestaurantID, lineID, strings.TrimSpace(in.Reason), approvedBy, a.User.ID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error voiding line")
 		return
 	}
 	if err = tx.Commit(); err != nil {
@@ -1042,6 +1337,7 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 		AmountCents     int64  `json:"amountCents"`
 		Reason          string `json:"reason"`
 		ExpectedVersion int    `json:"expectedVersion"`
+		ApprovalPin     string `json:"approvalPin"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || in.AmountCents < 0 || in.AmountCents > 100000000 || in.AmountCents > 0 && strings.TrimSpace(in.Reason) == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid discount")
@@ -1055,7 +1351,8 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	var status string
 	var version int
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,version FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &version); err != nil || status != "OPEN" {
+	var currentDiscount int64
+	if err = tx.QueryRowContext(r.Context(), `SELECT status,version,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &version, &currentDiscount); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
@@ -1063,11 +1360,20 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Ticket changed", "code": "STALE_TICKET"})
 		return
 	}
+	// Only a discount that GROWS needs approval: taking one off makes the guest
+	// pay more, which nobody has to authorise.
+	approvedBy := ""
+	if in.AmountCents > currentDiscount {
+		var ok bool
+		if approvedBy, ok = s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, in.AmountCents-currentDiscount, true); !ok {
+			return
+		}
+	}
 	if _, err = s.recalculatePOSTicket(r.Context(), tx, a.ActiveRestaurantID, ticketID, in.AmountCents); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'DISCOUNT',JSON_OBJECT('amountCents',?,'reason',?),?)`, a.ActiveRestaurantID, ticketID, in.AmountCents, strings.TrimSpace(in.Reason), a.User.ID)
+	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'DISCOUNT',JSON_OBJECT('amountCents',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, ticketID, in.AmountCents, strings.TrimSpace(in.Reason), approvedBy, a.User.ID)
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error applying discount")
 		return

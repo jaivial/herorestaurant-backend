@@ -73,7 +73,7 @@ func (s *Server) websiteBuilderRestaurantID(ctx context.Context, r *http.Request
 
 func (s *Server) renderWebsiteBuilderMenus(ctx context.Context, restaurantID int) (string, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT COALESCE(menu_title, ''), COALESCE(price, ''), COALESCE(menu_type, '')
+		SELECT COALESCE(menu_title, ''), COALESCE(price, ''), COALESCE(menu_type, 1)
 		FROM menus
 		WHERE restaurant_id = ? AND active = 1 AND is_draft = 0
 		ORDER BY modified_at DESC, id DESC
@@ -90,15 +90,17 @@ func (s *Server) renderWebsiteBuilderMenus(ctx context.Context, restaurantID int
 	for rows.Next() {
 		var title string
 		var price string
-		var menuType string
+		var menuType sql.NullInt64
 		if err := rows.Scan(&title, &price, &menuType); err != nil {
 			return "", err
 		}
 		count++
 		out.WriteString(`<article data-ui="website-menu-card">`)
 		out.WriteString(`<h3 data-ui="website-menu-title">` + html.EscapeString(strings.TrimSpace(title)) + `</h3>`)
-		if strings.TrimSpace(menuType) != "" {
-			out.WriteString(`<p data-ui="website-menu-type">` + html.EscapeString(strings.TrimSpace(menuType)) + `</p>`)
+		// Coordination id: menu_type_numeric_v1 - the preview prints the
+		// human label of the canonical code.
+		if label := botMenuCategoryLabel(menuType); MenuTypeFromAny(menuType) != MenuTypeUnknown {
+			out.WriteString(`<p data-ui="website-menu-type">` + html.EscapeString(label) + `</p>`)
 		}
 		if strings.TrimSpace(price) != "" {
 			out.WriteString(`<p data-ui="website-menu-price">` + html.EscapeString(strings.TrimSpace(price)) + `</p>`)

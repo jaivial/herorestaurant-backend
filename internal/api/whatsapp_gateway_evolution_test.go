@@ -319,7 +319,11 @@ func TestEvo_RegisterWebhookRequestsBase64QR(t *testing.T) {
 	if err := newEvoGW(srv.URL).RegisterWebhook(context.Background(), "https://example.com/hook", nil); err != nil {
 		t.Fatal(err)
 	}
-	webhook, _ := reqs[0].body["webhook"].(map[string]any)
+	// The ownership guard reads the current webhook first, then sets it.
+	if len(reqs) != 2 || reqs[0].path != "/webhook/find/nv_1" || reqs[1].path != "/webhook/set/nv_1" {
+		t.Fatalf("reqs=%+v", reqs)
+	}
+	webhook, _ := reqs[1].body["webhook"].(map[string]any)
 	if webhook["webhookBase64"] != true {
 		t.Fatalf("webhook=%v", webhook)
 	}

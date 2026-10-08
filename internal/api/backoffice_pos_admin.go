@@ -69,7 +69,37 @@ func (s *Server) handleBOPOSTicketGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 500, "Error loading ticket")
 		return
 	}
-	httpx.WriteJSON(w, 200, map[string]any{"success": true, "ticket": ticket})
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "ticket": ticket, "payments": s.posTicketPayments(r, a.ActiveRestaurantID, id)})
+}
+
+// posTicketPayments lists how a ticket was actually paid. A receipt that prints
+// only the total leaves the guest unable to check that they paid by card or in
+// cash, and leaves the till unable to reconcile against the payments rows that
+// already exist. Only captured money is returned: a voided or refunded row is
+// not money that came in.
+func (s *Server) posTicketPayments(r *http.Request, restaurantID int, ticketID int64) []map[string]any {
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,method,amount_cents,tip_cents,tendered_cents,COALESCE(provider,''),COALESCE(card_last4,'') FROM pos_payments WHERE restaurant_id=? AND ticket_id=? AND status='CAPTURED' ORDER BY id`, restaurantID, ticketID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, amount, tip int64
+		var tendered sql.NullInt64
+		var method, provider, last4 string
+		if err := rows.Scan(&id, &method, &amount, &tip, &tendered, &provider, &last4); err != nil {
+			return items
+		}
+		item := map[string]any{"id": id, "method": method, "amountCents": amount, "tipCents": tip, "provider": provider, "cardLast4": last4, "tenderedCents": nil, "changeCents": nil}
+		// Change is only ever reported from a recorded tender, never guessed.
+		if tendered.Valid {
+			item["tenderedCents"] = tendered.Int64
+			item["changeCents"] = tendered.Int64 - amount - tip
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 func (s *Server) handleBOPOSProductGet(w http.ResponseWriter, r *http.Request) {

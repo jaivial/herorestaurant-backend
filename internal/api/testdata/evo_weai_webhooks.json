@@ -1,0 +1,131 @@
+{
+  "open": {
+    "data": {
+      "instance": "nv-1-x",
+      "state": "open"
+    },
+    "date_time": "2026-10-08T13:18:38.904Z",
+    "destination": "https://example.com/bot/webhook/evolution/s",
+    "event": "connection.update",
+    "instance": "nv-1-x",
+    "sender": null,
+    "server_url": "http://127.0.0.1:8113"
+  },
+  "paired": {
+    "data": {
+      "instance": "nv-1-x",
+      "state": "open",
+      "wuid": "34960255536@s.whatsapp.net"
+    },
+    "date_time": "2026-10-08T13:18:38.904Z",
+    "destination": "https://example.com/bot/webhook/evolution/s",
+    "event": "connection.update",
+    "instance": "nv-1-x",
+    "sender": null,
+    "server_url": "http://127.0.0.1:8113"
+  },
+  "pairing": {
+    "data": {
+      "qrcode": {
+        "instance": "nv-1-x",
+        "pairingCode": "ABCD1234"
+      }
+    },
+    "date_time": "2026-10-08T13:18:38.904Z",
+    "destination": "https://example.com/bot/webhook/evolution/s",
+    "event": "qrcode.updated",
+    "instance": "nv-1-x",
+    "sender": null,
+    "server_url": "http://127.0.0.1:8113"
+  },
+  "qr": {
+    "data": {
+      "qrcode": {
+        "base64": "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBzdGFuZGFsb25lPSJ5ZXMiPz48c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmVyc2lvbj0iMS4xIiB3aWR0aD0iMjkwIiBoZWlnaHQ9IjI5MCIgdmlld0JveD0iMCAwIDI5MCAyOTAiIHNoYXBlLXJlbmRlcmluZz0iY3Jpc3BFZGdlcyI+PHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjI5MCIgaGVpZ2h0PSIyOTAiIGZpbGw9IiNmZmYiLz48cGF0aCBmaWxsPSIjMDAwIiBkPSJNNDAgNDBoMTB2MTBINDBWNDBNNTAgNDBoMTB2MTBINTBWNDBNNjAgNDBoMTB2MTBINjBWNDBNNzAgNDBoMTB2MTBINzBWNDBNODAgNDBoMTB2MTBIODBWNDBNOTAgNDBoMTB2MTBIOTBWNDBNMTAwIDQwaDEwdjEwSDEwMFY0ME0xMjAgNDBoMTB2MTBIMTIwVjQwTTEzMCA0MGgxMHYxMEgxMzBWNDBNMTYwIDQwaDEwdjEwSDE2MFY0ME0xODAgNDBoMTB2MTBIMTgwVjQwTTE5MCA0MGgxMHYxMEgxOTBWNDBNMjAwIDQwaDEwdjEwSDIwMFY0ME0yMTAgNDBoMTB2MTBIMjEwVjQwTTIyMCA0MGgxMHYxMEgyMjBWNDBNMjMwIDQwaDEwdjEwSDIzMFY0ME0yNDAgNDBoMTB2MTBIMjQwVjQwTTQwIDUwaDEwdjEwSDQwVjUwTTEwMCA1MGgxMHYxMEgxMDBWNTBNMTMwIDUwaDEwdjEwSDEzMFY1ME0xNTAgNTBoMTB2MTBIMTUwVjUwTTE2MCA1MGgxMHYxMEgxNjBWNTBNMTgwIDUwaDEwdjEwSDE4MFY1ME0yNDAgNTBoMTB2MTBIMjQwVjUwTTQwIDYwaDEwdjEwSDQwVjYwTTYwIDYwaDEwdjEwSDYwVjYwTTcwIDYwaDEwdjEwSDcwVjYwTTgwIDYwaDEwdjEwSDgwVjYwTTEwMCA2MGgxMHYxMEgxMDBWNjBNMTMwIDYwaDEwdjEwSDEzMFY2ME0xODAgNjBoMTB2MTBIMTgwVjYwTTIwMCA2MGgxMHYxMEgyMDBWNjBNMjEwIDYwaDEwdjEwSDIxMFY2ME0yMjAgNjBoMTB2MTBIMjIwVjYwTTI0MCA2MGgxMHYxMEgyNDBWNjBNNDAgNzBoMTB2MTBINDBWNzBNNjAgNzBoMTB2MTBINjBWNzBNNzAgNzBoMTB2MTBINzBWNzBNODAgNzBoMTB2MTBIODBWNzBNMTAwIDcwaDEwdjEwSDEwMFY3ME0xMjAgNzBoMTB2MTBIMTIwVjcwTTEzMCA3MGgxMHYxMEgxMzBWNzBNMTQwIDcwaDEwdjEwSDE0MFY3ME0xNTAgNzBoMTB2MTBIMTUwVjcwTTE4MCA3MGgxMHYxMEgxODBWNzBNMjAwIDcwaDEwdjEwSDIwMFY3ME0yMTAgNzBoMTB2MTBIMjEwVjcwTTIyMCA3MGgxMHYxMEgyMjBWNzBNMjQwIDcwaDEwdjEwSDI0MFY3ME00MCA4MGgxMHYxMEg0MFY4ME02MCA4MGgxMHYxMEg2MFY4ME03MCA4MGgxMHYxMEg3MFY4ME04MCA4MGgxMHYxMEg4MFY4ME0xMDAgODBoMTB2MTBIMTAwVjgwTTEyMCA4MGgxMHYxMEgxMjBWODBNMTMwIDgwaDEwdjEwSDEzMFY4ME0xNDAgODBoMTB2MTBIMTQwVjgwTTE2MCA4MGgxMHYxMEgxNjBWODBNMTgwIDgwaDEwdjEwSDE4MFY4ME0yMDAgODBoMTB2MTBIMjAwVjgwTTIxMCA4MGgxMHYxMEgyMTBWODBNMjIwIDgwaDEwdjEwSDIyMFY4ME0yNDAgODBoMTB2MTBIMjQwVjgwTTQwIDkwaDEwdjEwSDQwVjkwTTEwMCA5MGgxMHYxMEgxMDBWOTBNMTIwIDkwaDEwdjEwSDEyMFY5ME0xNDAgOTBoMTB2MTBIMTQwVjkwTTE1MCA5MGgxMHYxMEgxNTBWOTBNMTgwIDkwaDEwdjEwSDE4MFY5ME0yNDAgOTBoMTB2MTBIMjQwVjkwTTQwIDEwMGgxMHYxMEg0MFYxMDBNNTAgMTAwaDEwdjEwSDUwVjEwME02MCAxMDBoMTB2MTBINjBWMTAwTTcwIDEwMGgxMHYxMEg3MFYxMDBNODAgMTAwaDEwdjEwSDgwVjEwME05MCAxMDBoMTB2MTBIOTBWMTAwTTEwMCAxMDBoMTB2MTBIMTAwVjEwME0xMjAgMTAwaDEwdjEwSDEyMFYxMDBNMTQwIDEwMGgxMHYxMEgxNDBWMTAwTTE2MCAxMDBoMTB2MTBIMTYwVjEwME0xODAgMTAwaDEwdjEwSDE4MFYxMDBNMTkwIDEwMGgxMHYxMEgxOTBWMTAwTTIwMCAxMDBoMTB2MTBIMjAwVjEwME0yMTAgMTAwaDEwdjEwSDIxMFYxMDBNMjIwIDEwMGgxMHYxMEgyMjBWMTAwTTIzMCAxMDBoMTB2MTBIMjMwVjEwME0yNDAgMTAwaDEwdjEwSDI0MFYxMDBNMTIwIDExMGgxMHYxMEgxMjBWMTEwTTEzMCAxMTBoMTB2MTBIMTMwVjExME0xNDAgMTEwaDEwdjEwSDE0MFYxMTBNMTUwIDExMGgxMHYxMEgxNTBWMTEwTTE2MCAxMTBoMTB2MTBIMTYwVjExME00MCAxMjBoMTB2MTBINDBWMTIwTTgwIDEyMGgxMHYxMEg4MFYxMjBNMTAwIDEyMGgxMHYxMEgxMDBWMTIwTTExMCAxMjBoMTB2MTBIMTEwVjEyME0xMjAgMTIwaDEwdjEwSDEyMFYxMjBNMTMwIDEyMGgxMHYxMEgxMzBWMTIwTTE1MCAxMjBoMTB2MTBIMTUwVjEyME0xNzAgMTIwaDEwdjEwSDE3MFYxMjBNMTgwIDEyMGgxMHYxMEgxODBWMTIwTTE5MCAxMjBoMTB2MTBIMTkwVjEyME0yMDAgMTIwaDEwdjEwSDIwMFYxMjBNMjEwIDEyMGgxMHYxMEgyMTBWMTIwTTI0MCAxMjBoMTB2MTBIMjQwVjEyME00MCAxMzBoMTB2MTBINDBWMTMwTTYwIDEzMGgxMHYxMEg2MFYxMzBNODAgMTMwaDEwdjEwSDgwVjEzME0xMjAgMTMwaDEwdjEwSDEyMFYxMzBNMTQwIDEzMGgxMHYxMEgxNDBWMTMwTTE1MCAxMzBoMTB2MTBIMTUwVjEzME0xNjAgMTMwaDEwdjEwSDE2MFYxMzBNMTgwIDEzMGgxMHYxMEgxODBWMTMwTTIwMCAxMzBoMTB2MTBIMjAwVjEzME0yMjAgMTMwaDEwdjEwSDIyMFYxMzBNMjMwIDEzMGgxMHYxMEgyMzBWMTMwTTI0MCAxMzBoMTB2MTBIMjQwVjEzME05MCAxNDBoMTB2MTBIOTBWMTQwTTEwMCAxNDBoMTB2MTBIMTAwVjE0ME0xMjAgMTQwaDEwdjEwSDEyMFYxNDBNMTUwIDE0MGgxMHYxMEgxNTBWMTQwTTE3MCAxNDBoMTB2MTBIMTcwVjE0ME0yMDAgMTQwaDEwdjEwSDIwMFYxNDBNMjEwIDE0MGgxMHYxMEgyMTBWMTQwTTIzMCAxNDBoMTB2MTBIMjMwVjE0ME01MCAxNTBoMTB2MTBINTBWMTUwTTcwIDE1MGgxMHYxMEg3MFYxNTBNODAgMTUwaDEwdjEwSDgwVjE1ME0xMTAgMTUwaDEwdjEwSDExMFYxNTBNMTIwIDE1MGgxMHYxMEgxMjBWMTUwTTE0MCAxNTBoMTB2MTBIMTQwVjE1ME0xNzAgMTUwaDEwdjEwSDE3MFYxNTBNMTkwIDE1MGgxMHYxMEgxOTBWMTUwTTIwMCAxNTBoMTB2MTBIMjAwVjE1ME0yNDAgMTUwaDEwdjEwSDI0MFYxNTBNNDAgMTYwaDEwdjEwSDQwVjE2ME02MCAxNjBoMTB2MTBINjBWMTYwTTcwIDE2MGgxMHYxMEg3MFYxNjBNODAgMTYwaDEwdjEwSDgwVjE2ME05MCAxNjBoMTB2MTBIOTBWMTYwTTEwMCAxNjBoMTB2MTBIMTAwVjE2ME0xMjAgMTYwaDEwdjEwSDEyMFYxNjBNMTYwIDE2MGgxMHYxMEgxNjBWMTYwTTE3MCAxNjBoMTB2MTBIMTcwVjE2ME0xOTAgMTYwaDEwdjEwSDE5MFYxNjBNMjMwIDE2MGgxMHYxMEgyMzBWMTYwTTI0MCAxNjBoMTB2MTBIMjQwVjE2ME0xMjAgMTcwaDEwdjEwSDEyMFYxNzBNMTYwIDE3MGgxMHYxMEgxNjBWMTcwTTE4MCAxNzBoMTB2MTBIMTgwVjE3ME0yMDAgMTcwaDEwdjEwSDIwMFYxNzBNMjIwIDE3MGgxMHYxMEgyMjBWMTcwTTQwIDE4MGgxMHYxMEg0MFYxODBNNTAgMTgwaDEwdjEwSDUwVjE4ME02MCAxODBoMTB2MTBINjBWMTgwTTcwIDE4MGgxMHYxMEg3MFYxODBNODAgMTgwaDEwdjEwSDgwVjE4ME05MCAxODBoMTB2MTBIOTBWMTgwTTEwMCAxODBoMTB2MTBIMTAwVjE4ME0xMjAgMTgwaDEwdjEwSDEyMFYxODBNMTQwIDE4MGgxMHYxMEgxNDBWMTgwTTE2MCAxODBoMTB2MTBIMTYwVjE4ME0xODAgMTgwaDEwdjEwSDE4MFYxODBNMjAwIDE4MGgxMHYxMEgyMDBWMTgwTTQwIDE5MGgxMHYxMEg0MFYxOTBNMTAwIDE5MGgxMHYxMEgxMDBWMTkwTTE0MCAxOTBoMTB2MTBIMTQwVjE5ME0xNTAgMTkwaDEwdjEwSDE1MFYxOTBNMTYwIDE5MGgxMHYxMEgxNjBWMTkwTTE5MCAxOTBoMTB2MTBIMTkwVjE5ME0yMDAgMTkwaDEwdjEwSDIwMFYxOTBNMjMwIDE5MGgxMHYxMEgyMzBWMTkwTTQwIDIwMGgxMHYxMEg0MFYyMDBNNjAgMjAwaDEwdjEwSDYwVjIwME03MCAyMDBoMTB2MTBINzBWMjAwTTgwIDIwMGgxMHYxMEg4MFYyMDBNMTAwIDIwMGgxMHYxMEgxMDBWMjAwTTEyMCAyMDBoMTB2MTBIMTIwVjIwME0xNTAgMjAwaDEwdjEwSDE1MFYyMDBNMTcwIDIwMGgxMHYxMEgxNzBWMjAwTTE4MCAyMDBoMTB2MTBIMTgwVjIwME0xOTAgMjAwaDEwdjEwSDE5MFYyMDBNMjAwIDIwMGgxMHYxMEgyMDBWMjAwTTIzMCAyMDBoMTB2MTBIMjMwVjIwME00MCAyMTBoMTB2MTBINDBWMjEwTTYwIDIxMGgxMHYxMEg2MFYyMTBNNzAgMjEwaDEwdjEwSDcwVjIxME04MCAyMTBoMTB2MTBIODBWMjEwTTEwMCAyMTBoMTB2MTBIMTAwVjIxME0xNDAgMjEwaDEwdjEwSDE0MFYyMTBNMTUwIDIxMGgxMHYxMEgxNTBWMjEwTTE2MCAyMTBoMTB2MTBIMTYwVjIxME0yMDAgMjEwaDEwdjEwSDIwMFYyMTBNMjIwIDIxMGgxMHYxMEgyMjBWMjEwTTIzMCAyMTBoMTB2MTBIMjMwVjIxME0yNDAgMjEwaDEwdjEwSDI0MFYyMTBNNDAgMjIwaDEwdjEwSDQwVjIyME02MCAyMjBoMTB2MTBINjBWMjIwTTcwIDIyMGgxMHYxMEg3MFYyMjBNODAgMjIwaDEwdjEwSDgwVjIyME0xMDAgMjIwaDEwdjEwSDEwMFYyMjBNMTMwIDIyMGgxMHYxMEgxMzBWMjIwTTE0MCAyMjBoMTB2MTBIMTQwVjIyME0xNTAgMjIwaDEwdjEwSDE1MFYyMjBNMTgwIDIyMGgxMHYxMEgxODBWMjIwTTE5MCAyMjBoMTB2MTBIMTkwVjIyME0yMDAgMjIwaDEwdjEwSDIwMFYyMjBNMjEwIDIyMGgxMHYxMEgyMTBWMjIwTTIyMCAyMjBoMTB2MTBIMjIwVjIyME00MCAyMzBoMTB2MTBINDBWMjMwTTEwMCAyMzBoMTB2MTBIMTAwVjIzME0xNDAgMjMwaDEwdjEwSDE0MFYyMzBNMTcwIDIzMGgxMHYxMEgxNzBWMjMwTTE4MCAyMzBoMTB2MTBIMTgwVjIzME00MCAyNDBoMTB2MTBINDBWMjQwTTUwIDI0MGgxMHYxMEg1MFYyNDBNNjAgMjQwaDEwdjEwSDYwVjI0ME03MCAyNDBoMTB2MTBINzBWMjQwTTgwIDI0MGgxMHYxMEg4MFYyNDBNOTAgMjQwaDEwdjEwSDkwVjI0ME0xMDAgMjQwaDEwdjEwSDEwMFYyNDBNMTIwIDI0MGgxMHYxMEgxMjBWMjQwTTE2MCAyNDBoMTB2MTBIMTYwVjI0ME0xNzAgMjQwaDEwdjEwSDE3MFYyNDBNMTgwIDI0MGgxMHYxMEgxODBWMjQwTTI0MCAyNDBoMTB2MTBIMjQwVjI0MCIvPjwvc3ZnPg==",
+        "code": "2@abc,def",
+        "instance": "nv-1-x"
+      }
+    },
+    "date_time": "2026-10-08T13:18:38.904Z",
+    "destination": "https://example.com/bot/webhook/evolution/s",
+    "event": "qrcode.updated",
+    "instance": "nv-1-x",
+    "sender": null,
+    "server_url": "http://127.0.0.1:8113"
+  },
+  "upsert_group_lid": {
+    "data": {
+      "key": {
+        "addressingMode": "lid",
+        "fromMe": false,
+        "id": "3EB0ABC",
+        "participant": "242554100576489@lid",
+        "participantAlt": "34692747052@s.whatsapp.net",
+        "remoteJid": "120363000000000001@g.us"
+      },
+      "message": {
+        "extendedTextMessage": {
+          "text": "@34960255536 hola"
+        }
+      },
+      "messageType": "extendedTextMessage",
+      "pushName": "Ana",
+      "source": "web",
+      "text": "@34960255536 hola"
+    },
+    "date_time": "2026-10-08T13:18:38.904Z",
+    "destination": "https://example.com/bot/webhook/evolution/s",
+    "event": "messages.upsert",
+    "instance": "nv-1-x",
+    "sender": null,
+    "server_url": "http://127.0.0.1:8113"
+  },
+  "upsert_lid_1to1": {
+    "data": {
+      "key": {
+        "addressingMode": "lid",
+        "fromMe": false,
+        "id": "3EB0ABC",
+        "remoteJid": "242554100576489@lid",
+        "remoteJidAlt": "34692747052@s.whatsapp.net"
+      },
+      "message": {
+        "conversation": "hola"
+      },
+      "messageType": "conversation",
+      "pushName": "Ana",
+      "source": "web",
+      "text": "hola"
+    },
+    "date_time": "2026-10-08T13:18:38.904Z",
+    "destination": "https://example.com/bot/webhook/evolution/s",
+    "event": "messages.upsert",
+    "instance": "nv-1-x",
+    "sender": null,
+    "server_url": "http://127.0.0.1:8113"
+  },
+  "upsert_pn_1to1": {
+    "data": {
+      "key": {
+        "addressingMode": "pn",
+        "fromMe": false,
+        "id": "3EB0ABC",
+        "remoteJid": "34600111222@s.whatsapp.net",
+        "remoteJidAlt": "111@lid"
+      },
+      "message": {
+        "conversation": "hola"
+      },
+      "messageType": "conversation",
+      "pushName": "Ana",
+      "source": "web",
+      "text": "hola"
+    },
+    "date_time": "2026-10-08T13:18:38.904Z",
+    "destination": "https://example.com/bot/webhook/evolution/s",
+    "event": "messages.upsert",
+    "instance": "nv-1-x",
+    "sender": null,
+    "server_url": "http://127.0.0.1:8113"
+  }
+}

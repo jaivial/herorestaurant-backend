@@ -45,3 +45,7 @@ backup/
 *dump*.sql
 *.sqlite
 *.sqlite-*
+
+# Nested worktrees are separate checkouts, not part of this repo.
+# Without this, `git add -A` sweeps 30+ of them into a commit as gitlinks.
+.worktrees/

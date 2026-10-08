@@ -298,6 +298,14 @@ func (s *Server) prepareFrontBooking(r *http.Request, restaurantID int) (*prepar
 			rowsRaw = "[]"
 		}
 
+		// Coordination id: special_menu_group_booking_v1
+		if err := s.requireGroupMenuPrincipales(r, menuDeGrupoID, rowsRaw); err != nil {
+			return nil, &frontBookingError{Status: http.StatusBadRequest, Body: map[string]any{
+				"success": false,
+				"message": err.Error(),
+			}}
+		}
+
 		if principalesEnabled {
 			summary, storedJSON, err := buildPrincipalesSummaryAndJSON(menuPrincipalesRaw, rowsRaw, partySize)
 			if err != nil {
@@ -686,6 +694,16 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 		if rowsRaw == "" {
 			rowsRaw = "[]"
 		}
+
+		// Coordination id: special_menu_group_booking_v1
+		if err := s.requireGroupMenuPrincipales(r, menuDeGrupoID, rowsRaw); err != nil {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+
 		if principalesEnabled {
 			summary, storedJSON, err := buildPrincipalesSummaryAndJSON(menuPrincipalesRaw, rowsRaw, partySize)
 			if err != nil {
@@ -1048,6 +1066,45 @@ func parseChildrenFromForm(r *http.Request, partySize int) (int, error) {
 		return 0, errors.New("Número de niños inválido")
 	}
 	return n, nil
+}
+
+// requireGroupMenuPrincipales enforces menus.special_principales_required on the
+// group-menu path: a menu whose principales are mandatory cannot be booked
+// without them. Shared by the direct insert and the checkout path, which both
+// validate today against menus.principales.
+// Coordination id: special_menu_group_booking_v1
+func (s *Server) requireGroupMenuPrincipales(r *http.Request, menuID int, rowsRaw string) error {
+	restaurantID, ok := restaurantIDFromContext(r.Context())
+	if !ok {
+		return nil
+	}
+	flags := s.loadSpecialMenuGroupBookingFlags(r.Context(), restaurantID, int64(menuID))
+	if !flags.PrincipalesRequired {
+		return nil
+	}
+	// The menu must offer principales at all (toggle on + non-empty list) and the
+	// front must send a usable selection.
+	if !flags.BookableAsGroupMenu() || !hasGroupMenuPrincipalesRows(rowsRaw) {
+		return errors.New("Debe elegir los platos principales del menú")
+	}
+	return nil
+}
+
+// hasGroupMenuPrincipalesRows reports whether principals_json carries at least
+// one usable {name, servings} row.
+func hasGroupMenuPrincipalesRows(rowsRaw string) bool {
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(rowsRaw), &rows); err != nil {
+		return false
+	}
+	for _, row := range rows {
+		name := strings.TrimSpace(anyToString(row["name"]))
+		servings, _ := anyToInt(row["servings"])
+		if name != "" && servings > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) fetchActiveGroupMenuTitleAndPrincipales(r *http.Request, menuID int) (title string, principalesRaw string, err error) {

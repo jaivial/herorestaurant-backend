@@ -14,15 +14,16 @@ import (
 )
 
 type posProduct struct {
-	ID              int64   `json:"id"`
-	Name            string  `json:"name"`
-	SKU             string  `json:"sku,omitempty"`
-	CategoryID      *int64  `json:"categoryId,omitempty"`
-	CategoryName    string  `json:"categoryName,omitempty"`
-	PriceGrossCents int64   `json:"priceGrossCents"`
-	VATRateID       *int64  `json:"vatRateId,omitempty"`
-	VATRate         float64 `json:"vatRate"`
-	IsActive        bool    `json:"isActive"`
+	ID              int64    `json:"id"`
+	Name            string   `json:"name"`
+	SKU             string   `json:"sku,omitempty"`
+	CategoryID      *int64   `json:"categoryId,omitempty"`
+	CategoryName    string   `json:"categoryName,omitempty"`
+	PriceGrossCents int64    `json:"priceGrossCents"`
+	VATRateID       *int64   `json:"vatRateId,omitempty"`
+	VATRate         float64  `json:"vatRate"`
+	IsActive        bool     `json:"isActive"`
+	Allergens       []string `json:"allergens"`
 }
 
 func (s *Server) loadPOSProducts(ctx context.Context, restaurantID int, activeOnly bool) ([]posProduct, error) {
@@ -30,7 +31,7 @@ func (s *Server) loadPOSProducts(ctx context.Context, restaurantID int, activeOn
 	if activeOnly {
 		where += " AND p.is_active=1"
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,COALESCE(p.sku,''),p.category_id,COALESCE(c.name,''),p.price_gross_cents,p.vat_rate_id,`+posProductVATRateSQL+`,p.is_active FROM pos_products p LEFT JOIN pos_product_categories c ON c.restaurant_id=p.restaurant_id AND c.id=p.category_id LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE `+where+` ORDER BY c.sort_order,c.name,p.name`, restaurantID)
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,COALESCE(p.sku,''),p.category_id,COALESCE(c.name,''),p.price_gross_cents,p.vat_rate_id,`+posProductVATRateSQL+`,p.is_active,COALESCE(p.allergens_json,'') FROM pos_products p LEFT JOIN pos_product_categories c ON c.restaurant_id=p.restaurant_id AND c.id=p.category_id LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE `+where+` ORDER BY c.sort_order,c.name,p.name`, restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -40,9 +41,11 @@ func (s *Server) loadPOSProducts(ctx context.Context, restaurantID int, activeOn
 		var product posProduct
 		var category, vatRateID sql.NullInt64
 		var active int
-		if err = rows.Scan(&product.ID, &product.Name, &product.SKU, &category, &product.CategoryName, &product.PriceGrossCents, &vatRateID, &product.VATRate, &active); err != nil {
+		var allergensJSON string
+		if err = rows.Scan(&product.ID, &product.Name, &product.SKU, &category, &product.CategoryName, &product.PriceGrossCents, &vatRateID, &product.VATRate, &active, &allergensJSON); err != nil {
 			return nil, err
 		}
+		product.Allergens = decodePOSAllergens(allergensJSON)
 		if category.Valid {
 			value := category.Int64
 			product.CategoryID = &value
@@ -70,19 +73,25 @@ func (s *Server) handleBOPOSProductsList(w http.ResponseWriter, r *http.Request)
 func (s *Server) savePOSProduct(w http.ResponseWriter, r *http.Request, id int64) {
 	a, _ := boAuthFromContext(r.Context())
 	var in struct {
-		Name            string `json:"name"`
-		SKU             string `json:"sku"`
-		CategoryID      *int64 `json:"categoryId"`
-		PriceGrossCents int64  `json:"priceGrossCents"`
-		VATRateID       *int64 `json:"vatRateId"`
-		IsActive        bool   `json:"isActive"`
+		Name            string   `json:"name"`
+		SKU             string   `json:"sku"`
+		CategoryID      *int64   `json:"categoryId"`
+		PriceGrossCents int64    `json:"priceGrossCents"`
+		VATRateID       *int64   `json:"vatRateId"`
+		IsActive        bool     `json:"isActive"`
+		Allergens       []string `json:"allergens"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || strings.TrimSpace(in.Name) == "" || in.PriceGrossCents < 0 {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid POS product")
 		return
 	}
+	allergens, ok := normalisePOSAllergens(in.Allergens)
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "Alergeno no reconocido: use los 14 alergenos de la UE, sulfitos o altramuz.")
+		return
+	}
 	if id == 0 {
-		res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_products (restaurant_id,category_id,name,source_type,sku,price_gross_cents,vat_rate_id,is_active) VALUES (?,?,?,'MANUAL',?,?,?,?)`, a.ActiveRestaurantID, in.CategoryID, strings.TrimSpace(in.Name), stockNullableString(in.SKU), in.PriceGrossCents, in.VATRateID, stockBoolInt(in.IsActive))
+		res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_products (restaurant_id,category_id,name,source_type,sku,price_gross_cents,vat_rate_id,is_active,allergens_json) VALUES (?,?,?,'MANUAL',?,?,?,?,?)`, a.ActiveRestaurantID, in.CategoryID, strings.TrimSpace(in.Name), stockNullableString(in.SKU), in.PriceGrossCents, in.VATRateID, stockBoolInt(in.IsActive), encodePOSAllergens(allergens))
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "POS product could not be created")
 			return
@@ -91,7 +100,7 @@ func (s *Server) savePOSProduct(w http.ResponseWriter, r *http.Request, id int64
 		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "id": id})
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `UPDATE pos_products SET category_id=?,name=?,sku=?,price_gross_cents=?,vat_rate_id=?,is_active=?,version=version+1 WHERE restaurant_id=? AND id=? AND deleted_at IS NULL`, in.CategoryID, strings.TrimSpace(in.Name), stockNullableString(in.SKU), in.PriceGrossCents, in.VATRateID, stockBoolInt(in.IsActive), a.ActiveRestaurantID, id)
+	res, err := s.db.ExecContext(r.Context(), `UPDATE pos_products SET category_id=?,name=?,sku=?,price_gross_cents=?,vat_rate_id=?,is_active=?,allergens_json=?,version=version+1 WHERE restaurant_id=? AND id=? AND deleted_at IS NULL`, in.CategoryID, strings.TrimSpace(in.Name), stockNullableString(in.SKU), in.PriceGrossCents, in.VATRateID, stockBoolInt(in.IsActive), encodePOSAllergens(allergens), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "POS product could not be updated")
 		return

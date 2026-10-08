@@ -27,6 +27,9 @@ type posCheckoutPayment struct {
 	// TipCents is money handed over on top of the sale. It is never part of the
 	// payment-vs-total match, so net sales and VAT stay untouched.
 	TipCents int64 `json:"tipCents"`
+	// TenderedCents is the cash the guest handed over, when the cashier typed
+	// it. CASH only, and never less than what this payment applies.
+	TenderedCents *int64 `json:"tenderedCents"`
 }
 
 type posCheckoutInput struct {
@@ -331,7 +334,7 @@ func (s *Server) checkoutTicketInTx(ctx context.Context, tx *sql.Tx, restaurantI
 			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusBadRequest, msg: "Tip cannot be negative"}
 		}
 		tipTotal += payment.TipCents
-		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_payments (restaurant_id,ticket_id,method,amount_cents,tip_cents,provider,provider_reference,card_last4,idempotency_key,received_by) VALUES (?,?,?,?,?,?,?,?,?,?)`, restaurantID, ticketID, payment.Method, payment.AmountCents, payment.TipCents, stockNullableString(payment.Provider), stockNullableString(payment.ProviderReference), stockNullableString(payment.CardLast4), payment.IdempotencyKey, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_payments (restaurant_id,ticket_id,method,amount_cents,tip_cents,tendered_cents,provider,provider_reference,card_last4,idempotency_key,received_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, restaurantID, ticketID, payment.Method, payment.AmountCents, payment.TipCents, payment.TenderedCents, stockNullableString(payment.Provider), stockNullableString(payment.ProviderReference), stockNullableString(payment.CardLast4), payment.IdempotencyKey, userID); err != nil {
 			return posCheckoutTxResult{}, &posCheckoutTxError{status: http.StatusBadRequest, msg: "Payment could not be recorded"}
 		}
 	}
@@ -414,6 +417,13 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, "Invalid payment")
 			return
 		}
+		if tendered := in.Payments[index].TenderedCents; tendered != nil {
+			applied := in.Payments[index].AmountCents + in.Payments[index].TipCents
+			if in.Payments[index].Method != "CASH" || *tendered < applied || *tendered > applied+100000000 {
+				httpx.WriteError(w, http.StatusBadRequest, "Entregado no válido: solo en efectivo y nunca menos de lo cobrado")
+				return
+			}
+		}
 		if in.Payments[index].AmountCents > math.MaxInt64-paymentTotal {
 			httpx.WriteError(w, http.StatusBadRequest, "Payment total is too large")
 			return
@@ -423,6 +433,13 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 	settings, err := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading POS settings")
+		return
+	}
+	// Cash over the LIVA threshold has to carry the buyer's NIF (art. 20.Uno.2º
+	// b). Checked before the transaction opens so the guest is told immediately
+	// rather than after a rollback, and the message names what to do.
+	if refusal := s.posCashNIFRefusal(r.Context(), a.ActiveRestaurantID, ticketID, in.Payments); refusal != "" {
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": refusal, "code": "CASH_NIF_REQUIRED"})
 		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -458,7 +475,9 @@ func (s *Server) handleBOPOSCheckout(w http.ResponseWriter, r *http.Request) {
 	// not the calendar day the sale is being rung up on.
 	s.broadcastPOSCashDayTotals(a.ActiveRestaurantID, s.posVisitServiceDate(r.Context(), a.ActiveRestaurantID, result.VisitID))
 	ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, ticketID)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket, "stockStatus": result.StockStatus, "visitClosed": result.VisitClosed})
+	// The payments are echoed back so the receipt can print how the ticket was
+	// settled without a second round trip right after the sale.
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "ticket": ticket, "payments": s.posTicketPayments(r, a.ActiveRestaurantID, ticketID), "stockStatus": result.StockStatus, "visitClosed": result.VisitClosed})
 }
 
 // handleBOPOSCashDayBulkCheckout checks out every still-open ticket on a
@@ -618,6 +637,7 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		PaymentMethod  string               `json:"paymentMethod"`
 		IdempotencyKey string               `json:"idempotencyKey"`
 		Lines          []posRefundLineInput `json:"lines"`
+		ApprovalPin    string               `json:"approvalPin"`
 	}
 	if ticketID <= 0 || json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&in) != nil || in.AmountCents <= 0 || strings.TrimSpace(in.Reason) == "" || strings.TrimSpace(in.IdempotencyKey) == "" || !validPOSPaymentMethod(strings.ToUpper(in.PaymentMethod)) {
 		httpx.WriteError(w, 400, "Invalid refund")
@@ -631,6 +651,10 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+	approvedBy, ok := s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, in.AmountCents, false)
+	if !ok {
+		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -659,6 +683,9 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	refundID, _ := res.LastInsertId()
+	// A refund had no audit row at all; with a PIN policy it must at least name
+	// who authorised the money going back.
+	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'REFUND',JSON_OBJECT('refundId',?,'amountCents',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, ticketID, refundID, in.AmountCents, strings.TrimSpace(in.Reason), approvedBy, a.User.ID)
 	lineAmountTotal := int64(0)
 	for _, line := range in.Lines {
 		lineAmountTotal += line.AmountCents
