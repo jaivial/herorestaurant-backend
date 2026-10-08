@@ -620,6 +620,10 @@ func (s *Server) handleDeleteBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Coordination id: booking_documents_v1 - release the documents of a booking
+	// that no longer exists (booking_documents has no FK to bookings).
+	s.purgeBookingDocuments(r.Context(), restaurantID, int64(b.ID))
+
 	s.emitN8nWebhookAsync(restaurantID, "booking.cancelled", map[string]any{
 		"source":          "legacy_admin_delete_booking",
 		"cancelledBy":     "staff",

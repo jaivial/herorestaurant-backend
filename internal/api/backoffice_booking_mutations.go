@@ -103,6 +103,13 @@ type boBookingUpsertReq struct {
 	// Coordination id: booking_is_event_v1 - event/negotiation booking flag.
 	IsEvent *bool `json:"is_event,omitempty"`
 
+	// Coordination id: booking_documents_v1 - "Enviar copia al cliente": attach
+	// the booking's documents to the confirmation email and WhatsApp message.
+	SendDocumentsToClient *bool `json:"send_documents_to_client,omitempty"`
+	// Draft document ids uploaded before the booking existed (anadir). They are
+	// claimed by the new booking; unknown or foreign ids are ignored.
+	DocumentIDs []int64 `json:"document_ids,omitempty"`
+
 	// Multi-arroz (non group menu).
 	ArrozTypes    []string `json:"arroz_types,omitempty"`
 	ArrozServings []int    `json:"arroz_servings,omitempty"`
@@ -181,6 +188,16 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.boSetBookingIsEvent(r.Context(), a.ActiveRestaurantID, int64(id), req.IsEvent)
+	// Coordination id: booking_documents_v1 - bind the draft uploads to the new
+	// booking and store the send-to-client toggle BEFORE the notifications, so
+	// the confirmation can already carry the documents.
+	s.boSetBookingSendDocumentsToClient(r.Context(), a.ActiveRestaurantID, int64(id), req.SendDocumentsToClient)
+	if claimed := s.bindDraftDocumentsToBooking(r.Context(), a.ActiveRestaurantID, a.User.ID, int64(id), req.DocumentIDs); len(req.DocumentIDs) > 0 && claimed < len(req.DocumentIDs) {
+		// Best-effort binding must never fail the reservation, but a silently
+		// dropped attachment is impossible to diagnose later, so say how many
+		// of the ids the staff sent actually landed on this booking.
+		log.Printf("[booking_documents_v1] restaurant=%d booking=%d partial_bind=%d/%d", a.ActiveRestaurantID, id, claimed, len(req.DocumentIDs))
+	}
 
 	out, err := s.boFetchBookingByID(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
@@ -207,6 +224,14 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 	s.broadcastBookingChanged(a.ActiveRestaurantID, int64(id), "booking_created")
 	var whatsappSent, emailSent bool
 	var notificationWarning string
+
+	// Coordination id: booking_documents_v1 - with "Enviar copia al cliente" on,
+	// the documents travel with the confirmation email and WhatsApp message.
+	if toBool(out["send_documents_to_client"]) {
+		if files := s.bookingDocumentPayloadsForSend(r.Context(), a.ActiveRestaurantID, int64(id)); len(files) > 0 {
+			notifData[bookingDocumentsKey] = files
+		}
+	}
 
 	if waErr := sendBookingWhatsAppToCustomer(r.Context(), s, a.ActiveRestaurantID, notifData, int64(id)); waErr != nil {
 		log.Printf("WhatsApp notification failed for backoffice booking #%d: %v", id, waErr)
@@ -275,8 +300,11 @@ type boBookingPatchReq struct {
 	// Coordination id: booking_is_event_v1 - event/negotiation booking flag.
 	IsEvent *bool `json:"is_event,omitempty"`
 
-	ArrozTypes    *[]string `json:"arroz_types,omitempty"`
-	ArrozServings *[]int    `json:"arroz_servings,omitempty"`
+	// Coordination id: booking_documents_v1
+	SendDocumentsToClient *bool     `json:"send_documents_to_client,omitempty"`
+	DocumentIDs           []int64   `json:"document_ids,omitempty"`
+	ArrozTypes            *[]string `json:"arroz_types,omitempty"`
+	ArrozServings         *[]int    `json:"arroz_servings,omitempty"`
 
 	SpecialMenu    *bool            `json:"special_menu,omitempty"`
 	MenuDeGrupoID  *int             `json:"menu_de_grupo_id,omitempty"`
@@ -546,6 +574,12 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 
 	s.broadcastBookingChanged(a.ActiveRestaurantID, int64(id), "booking_updated")
 	s.boSetBookingIsEvent(r.Context(), a.ActiveRestaurantID, int64(id), req.IsEvent)
+	// Coordination id: booking_documents_v1 - the toggle and any draft uploaded
+	// after the booking already existed.
+	s.boSetBookingSendDocumentsToClient(r.Context(), a.ActiveRestaurantID, int64(id), req.SendDocumentsToClient)
+	if claimed := s.bindDraftDocumentsToBooking(r.Context(), a.ActiveRestaurantID, a.User.ID, int64(id), req.DocumentIDs); len(req.DocumentIDs) > 0 && claimed < len(req.DocumentIDs) {
+		log.Printf("[booking_documents_v1] restaurant=%d booking=%d partial_bind=%d/%d", a.ActiveRestaurantID, id, claimed, len(req.DocumentIDs))
+	}
 	out, err := s.boFetchBookingByID(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
@@ -1455,6 +1489,9 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		"receipt_url": nullStringOrNil(receiptURL),
 		// Coordination id: booking_is_event_v1
 		"is_event": s.boBookingIsEvent(ctx, restaurantID, int64(bookingID)),
+		// Coordination id: booking_documents_v1
+		"send_documents_to_client": s.boBookingSendDocumentsToClient(ctx, restaurantID, int64(bookingID)),
+		"documents":                s.boBookingDocumentsSummary(ctx, restaurantID, int64(bookingID)),
 	}, nil
 }
 
@@ -1614,6 +1651,45 @@ func (s *Server) boSetBookingIsEvent(ctx context.Context, restaurantID int, book
 	if _, err := s.db.ExecContext(ctx, `UPDATE bookings SET is_event = ? WHERE restaurant_id = ? AND id = ?`, boolToTinyint(*isEvent), restaurantID, bookingID); err != nil {
 		log.Printf("[booking_is_event_v1] restaurant=%d booking=%d update_error=%v", restaurantID, bookingID, err)
 	}
+}
+
+// boSetBookingSendDocumentsToClient stores the "Enviar copia al cliente" flag
+// when the request carries it (nil keeps the stored value). Same semantics as
+// boSetBookingIsEvent.
+// Coordination id: booking_documents_v1
+func (s *Server) boSetBookingSendDocumentsToClient(ctx context.Context, restaurantID int, bookingID int64, send *bool) {
+	if send == nil || bookingID <= 0 {
+		return
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE bookings SET send_documents_to_client = ? WHERE restaurant_id = ? AND id = ?`, boolToTinyint(*send), restaurantID, bookingID); err != nil {
+		log.Printf("[booking_documents_v1] restaurant=%d booking=%d toggle_update_error=%v", restaurantID, bookingID, err)
+	}
+}
+
+// boBookingSendDocumentsToClient reads the flag (false on any error / missing
+// column), so a deployment without the migration still answers with the
+// documented default instead of failing the whole booking payload.
+func (s *Server) boBookingSendDocumentsToClient(ctx context.Context, restaurantID int, bookingID int64) bool {
+	var v int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(send_documents_to_client,0) FROM bookings WHERE restaurant_id = ? AND id = ?`, restaurantID, bookingID).Scan(&v); err != nil {
+		return false
+	}
+	return v != 0
+}
+
+// boBookingDocumentsSummary is the lightweight document list embedded in the
+// booking payload (metadata only, no bytes). A storage/DB failure degrades to
+// an empty list rather than breaking the booking page.
+// Coordination id: booking_documents_v1
+func (s *Server) boBookingDocumentsSummary(ctx context.Context, restaurantID int, bookingID int64) []bookingDocument {
+	if bookingID <= 0 {
+		return []bookingDocument{}
+	}
+	docs, err := s.listBookingDocuments(ctx, restaurantID, bookingID)
+	if err != nil {
+		return []bookingDocument{}
+	}
+	return docs
 }
 
 // boBookingIsEvent reads the event flag (false on any error / missing column).

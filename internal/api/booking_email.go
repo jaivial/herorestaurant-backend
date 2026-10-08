@@ -525,6 +525,15 @@ func sendBookingConfirmationEmails(ctx context.Context, s *Server, restaurantID 
 		subject = "Prereserva confirmada y pago recibido - " + brandName
 	}
 
+	// Coordination id: booking_documents_v1 - "Enviar copia al cliente": the
+	// booking's documents travel as email attachments, after the receipt so a
+	// receipt, when present, stays first in the guest's mail client.
+	if docs, ok := booking[bookingDocumentsKey].([]bookingDocumentFile); ok {
+		for _, doc := range docs {
+			attachments = append(attachments, doc.emailAttachment())
+		}
+	}
+
 	// Coordination id: festive_prereserva_notifications_v1 - the restaurant
 	// copy goes to the restaurant email (Ajustes) and the sending mailbox; the
 	// customer always gets its own copy. Duplicates are sent once.

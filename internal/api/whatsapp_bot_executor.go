@@ -817,6 +817,10 @@ func (s *Server) botToolCancelBooking(ctx context.Context, restaurantID int, pho
 		}
 		return botJSON(map[string]any{"error": "error cancelando la reserva"}), nil
 	}
+	// Coordination id: booking_documents_v1 - the booking row is gone, release
+	// its documents (booking_documents has no FK to bookings).
+	s.purgeBookingDocuments(ctx, restaurantID, in.BookingID)
+
 	return botJSON(map[string]any{"cancelled": true, "booking_id": in.BookingID}), nil
 }
 

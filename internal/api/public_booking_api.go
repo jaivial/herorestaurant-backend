@@ -358,6 +358,10 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Coordination id: booking_documents_v1 - the booking row is gone, release
+	// its documents (booking_documents has no FK to bookings).
+	s.purgeBookingDocuments(r.Context(), restaurantID, int64(b.ID))
+
 	resp := publicBookingToResponse(&b)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

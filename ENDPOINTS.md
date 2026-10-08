@@ -685,6 +685,81 @@ Cancels a booking (moves row to `cancelled_bookings` and deletes from `bookings`
 Response:
 - `{ success: true }`
 
+### `GET /api/admin/bookings/{id}/documents`
+Documents attached to one booking (metadata only, oldest first).
+Coordination id: `booking_documents_v1`.
+
+Response:
+- `{ success: true, documents: Document[] }`
+- `{ success: false, message: string }`
+
+`Document`:
+```json
+{
+  "id": 42,
+  "restaurant_id": 3,
+  "booking_id": 128,
+  "uploaded_by": 7,
+  "title": "Menu del dia",
+  "original_filename": "menu-navidad.pdf",
+  "content_type": "application/pdf",
+  "size_bytes": 183420,
+  "created_at": "2026-10-08 18:05:58",
+  "url": "/api/admin/bookings/documents/42/file",
+  "cdn_url": "https://<pull-zone>/3/booking-documents/bookings/128/<uuid>.pdf",
+  "is_image": false
+}
+```
+
+### `GET /api/admin/bookings/documents/{docId}/file`
+Streams one stored document same-origin (backoffice session required, tenant
+scoped). Use it to preview or download; `url` in the document payload points
+here. Images are stored as WebP, so the stored size can be smaller than the
+uploaded one.
+
+### `GET /api/admin/bookings/documents/ws` (WebSocket)
+Upload / list / delete of booking documents. Session cookie required, tenant
+taken from the session (never from the message). Coordination id:
+`booking_documents_v1`.
+
+Limits: 25 MB per file (any type); images are stored as WebP of at most 2 MB
+and accept up to 10 MB of input; 50 documents per booking.
+
+Client -> server:
+```json
+{"type":"bookingDocumentUpload","requestId":"r1","filename":"menu.pdf","mimeType":"application/pdf","title":"Menu","bookingId":null,"dataBase64":"..."}
+{"type":"bookingDocumentList","requestId":"r2","bookingId":128}
+{"type":"bookingDocumentDelete","requestId":"r3","id":42,"confirmed":true}
+```
+`bookingId` omitted or `null` uploads a DRAFT owned by the session user; drafts
+are claimed by the new booking through `document_ids` on
+`POST /api/admin/bookings`. `bookingDocumentDelete` without `"confirmed":true`
+is never destructive: the server answers `bookingDocumentDeleteConfirm` and
+waits.
+
+Server -> client:
+```json
+{"type":"bookingDocumentUploadOk","requestId":"r1","document":{...Document...}}
+{"type":"bookingDocumentListOk","requestId":"r2","documents":[...],"drafts":[...]}
+{"type":"bookingDocumentDeleteOk","requestId":"r3","id":42}
+{"type":"bookingDocumentDeleteConfirm","requestId":"r3","id":42,"message":"Eliminar definitivamente este documento?"}
+{"type":"bookingDocumentUploadError","requestId":"r1","code":"too_large","message":"..."}
+```
+Errors mirror the action (`bookingDocumentUploadError`,
+`bookingDocumentListError`, `bookingDocumentDeleteError`) and carry `code`:
+`too_large`, `too_many`, `empty_file`, `not_found`, `storage_not_configured`,
+`upload_failed`, `server_error`. `drafts` are always the caller's own unbound
+uploads, so an editor keeps its pending attachments after a reload.
+
+### Send-to-client toggle
+`POST /api/admin/bookings` and `PATCH /api/admin/bookings/{id}` accept
+`send_documents_to_client` (boolean, default `false`) plus `document_ids`
+(array of draft ids to bind). The booking payload answers with both
+`send_documents_to_client` and `documents`. When the flag is true, the
+confirmation email carries the documents as attachments and the confirmation
+WhatsApp message forwards them as media (images as images, everything else as
+documents).
+
 ### `GET /api/admin/arroz-types`
 Returns available rice types from `FINDE` (active `TIPO='ARROZ'`), as a bare JSON array.
 
