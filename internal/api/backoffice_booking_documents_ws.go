@@ -105,9 +105,11 @@ func (s *Server) handleBOBookingDocumentsWS(w http.ResponseWriter, r *http.Reque
 	}
 	client := &bookingDocumentWSClient{conn: conn, restaurantID: a.ActiveRestaurantID, userID: a.User.ID}
 
-	// The cap is the file cap plus base64 overhead, so a peer cannot make the
-	// server buffer an arbitrarily large frame.
-	conn.SetReadLimit(int64(bookingDocumentMaxUploadBytes) * 2)
+	// The cap must cover the base64 encoding of the largest ACCEPTED file,
+	// otherwise a legal 25 MB upload (33.4 MB of base64) is cut off by the
+	// read limit before decodeBookingDocumentBase64 can answer `too_large`,
+	// and the client just sees the socket die with no requestId.
+	conn.SetReadLimit(bookingDocumentWSReadLimitBytes)
 
 	go func() {
 		defer func() { _ = client.close() }()

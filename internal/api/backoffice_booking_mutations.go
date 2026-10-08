@@ -192,7 +192,12 @@ func (s *Server) handleBOBookingCreate(w http.ResponseWriter, r *http.Request) {
 	// booking and store the send-to-client toggle BEFORE the notifications, so
 	// the confirmation can already carry the documents.
 	s.boSetBookingSendDocumentsToClient(r.Context(), a.ActiveRestaurantID, int64(id), req.SendDocumentsToClient)
-	s.bindDraftDocumentsToBooking(r.Context(), a.ActiveRestaurantID, a.User.ID, int64(id), req.DocumentIDs)
+	if claimed := s.bindDraftDocumentsToBooking(r.Context(), a.ActiveRestaurantID, a.User.ID, int64(id), req.DocumentIDs); len(req.DocumentIDs) > 0 && claimed < len(req.DocumentIDs) {
+		// Best-effort binding must never fail the reservation, but a silently
+		// dropped attachment is impossible to diagnose later, so say how many
+		// of the ids the staff sent actually landed on this booking.
+		log.Printf("[booking_documents_v1] restaurant=%d booking=%d partial_bind=%d/%d", a.ActiveRestaurantID, id, claimed, len(req.DocumentIDs))
+	}
 
 	out, err := s.boFetchBookingByID(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
@@ -572,7 +577,9 @@ func (s *Server) handleBOBookingPatch(w http.ResponseWriter, r *http.Request) {
 	// Coordination id: booking_documents_v1 - the toggle and any draft uploaded
 	// after the booking already existed.
 	s.boSetBookingSendDocumentsToClient(r.Context(), a.ActiveRestaurantID, int64(id), req.SendDocumentsToClient)
-	s.bindDraftDocumentsToBooking(r.Context(), a.ActiveRestaurantID, a.User.ID, int64(id), req.DocumentIDs)
+	if claimed := s.bindDraftDocumentsToBooking(r.Context(), a.ActiveRestaurantID, a.User.ID, int64(id), req.DocumentIDs); len(req.DocumentIDs) > 0 && claimed < len(req.DocumentIDs) {
+		log.Printf("[booking_documents_v1] restaurant=%d booking=%d partial_bind=%d/%d", a.ActiveRestaurantID, id, claimed, len(req.DocumentIDs))
+	}
 	out, err := s.boFetchBookingByID(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
