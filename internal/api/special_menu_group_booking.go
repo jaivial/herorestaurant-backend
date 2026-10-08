@@ -25,10 +25,12 @@ import (
 //   special_group_menu_enabled -> the special menu is offered as a group menu
 //   special_principales_required -> guests must pick the principales
 //
-// Shared rule (same "toggle on + non-empty list" rule as
-// special_menu_principales_v1): a special menu is bookable as a group menu only
-// when it is flagged as a group menu AND its principales toggle is on with at
-// least one dish. On with no dishes == off.
+// Shared rule: a special menu is bookable as a group menu as soon as it is
+// flagged as one. Principales are optional -- a menu can be reserved without
+// the guests picking a main course. Only special_principales_required depends
+// on the principals, and it is only satisfiable when the menu offers some
+// (toggle on + at least one dish, the same "on with no dishes == off" rule as
+// special_menu_principales_v1).
 // Coordination id: special_menu_group_booking_v1
 // =============================================================================
 
@@ -47,9 +49,18 @@ type specialMenuGroupBookingFlags struct {
 }
 
 // BookableAsGroupMenu is the single rule used by the public group-menus listing,
-// the backoffice payload and the booking validation.
+// the backoffice payload and the booking validation. Being a group menu does
+// not require the menu to offer principals: the guest books it as it is and
+// only picks a main course when the menu lists some.
 func (f specialMenuGroupBookingFlags) BookableAsGroupMenu() bool {
-	return f.SpecialType && f.GroupMenuEnabled && f.PrincipalesEnabled && f.HasPrincipales
+	return f.SpecialType && f.GroupMenuEnabled
+}
+
+// OffersPrincipales reports whether the menu actually offers a main course to
+// choose from (v1 toggle on + at least one dish). Only "Plato principal
+// obligatorio" needs it: it cannot be satisfied without dishes to pick.
+func (f specialMenuGroupBookingFlags) OffersPrincipales() bool {
+	return f.PrincipalesEnabled && f.HasPrincipales
 }
 
 // loadSpecialMenuGroupBookingFlags reads both flags of one menu row in a single
@@ -121,12 +132,10 @@ func (s *Server) loadSpecialGroupMenuPrincipales(ctx context.Context, restaurant
 		if !flags.BookableAsGroupMenu() {
 			continue
 		}
-		payload := specialPrincipalesForGroupMenu(
+		// A group menu without principals is still offered: the wizard shows
+		// the block with no options and the guest simply does not pick one.
+		out[menuID] = specialPrincipalesForGroupMenu(
 			s.loadPublicSpecialMenuPrincipales(ctx, restaurantID, menuID))
-		if !hasPrincipalesItems(payload) {
-			continue
-		}
-		out[menuID] = payload
 	}
 	return out, nil
 }
