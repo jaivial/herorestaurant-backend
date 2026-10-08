@@ -1084,7 +1084,10 @@ func (s *Server) requireGroupMenuPrincipales(r *http.Request, menuID int, rowsRa
 	}
 	// The menu must offer principales at all (toggle on + non-empty list) and the
 	// front must send a usable selection.
-	if !flags.BookableAsGroupMenu() || !hasGroupMenuPrincipalesRows(rowsRaw) {
+	// Offering them is what makes the requirement satisfiable: a menu
+	// flagged as a group menu with no dishes can still be booked, but it
+	// can never demand a main course.
+	if !flags.OffersPrincipales() || !hasGroupMenuPrincipalesRows(rowsRaw) {
 		return errors.New("Debe elegir los platos principales del menú")
 	}
 	return nil
