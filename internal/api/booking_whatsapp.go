@@ -223,6 +223,27 @@ func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID 
 				log.Printf("[special_booking_qr_v1] WhatsApp QR failed for booking #%d: %v", bookingID, err)
 			}
 		}
+		// Coordination id: booking_documents_v1 - "Enviar copia al cliente": each
+		// document follows as WhatsApp media. Images go as images, everything
+		// else as a document, both through the gateway's own media path (the
+		// gateway downloads the CDN url, so no base64 crosses the wire twice).
+		// A document with no CDN url (Bunny down when it was stored) is logged
+		// and skipped: the confirmation text itself already went out.
+		if docs, ok := booking[bookingDocumentsKey].([]bookingDocumentFile); ok {
+			for _, doc := range docs {
+				if strings.TrimSpace(doc.CDNURL) == "" {
+					log.Printf("[booking_documents_v1] booking=%d document=%d skipped: no cdn url", bookingID, doc.ID)
+					continue
+				}
+				kind := "document"
+				if doc.IsImage {
+					kind = "image"
+				}
+				if err := gw.SendMedia(ctx, msg.To, waMedia{Kind: kind, URL: doc.CDNURL, Filename: doc.downloadFilename(), Caption: strings.TrimSpace(doc.Title)}); err != nil {
+					log.Printf("[booking_documents_v1] WhatsApp document failed for booking #%d doc=%d: %v", bookingID, doc.ID, err)
+				}
+			}
+		}
 	}
 
 	if err := s.sendWhatsAppMenuTracked(ctx, restaurantID, gw, msg.To, msg.Text, msg.Choices, "booking_confirmation"); err == nil {
