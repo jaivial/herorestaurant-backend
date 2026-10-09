@@ -484,8 +484,8 @@ func affluenceSeasonalYears(rows []affluenceDailyRow, months []int, firstDate st
 	historyStart, _ := time.Parse("2006-01-02", firstDate)
 	years := make([]int, 0, len(yearSet))
 	for year := range yearSet {
-		// Skip years whose selected months all ended before the history starts:
-		// they would read as a misleading zero, not as "no data".
+		// Only like-for-like years: a selected month that starts before the
+		// history does is empty or truncated and would fake a low season.
 		if affluenceYearHasHistory(year, months, historyStart) {
 			years = append(years, year)
 		}
@@ -537,11 +537,11 @@ func affluenceMonthFinished(year, month int, today time.Time) bool {
 
 func affluenceYearHasHistory(year int, months []int, historyStart time.Time) bool {
 	for _, month := range months {
-		if !time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC).Before(historyStart) {
-			return true
+		if time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC).Before(historyStart) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // affluenceCoversUntil sums the covers of one year's selected months up to limit (inclusive).
