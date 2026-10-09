@@ -218,7 +218,9 @@ func bookingDocumentFilename(value string) string {
 }
 
 // bookingDocumentObjectPath is the storage path format, tenant-scoped:
-//   {restaurant_id}/booking-documents/{draft|bookings/{booking_id}}/{uuid}{ext}
+//
+//	{restaurant_id}/booking-documents/{draft|bookings/{booking_id}}/{uuid}{ext}
+//
 // The uuid keeps the object unguessable and collision free; the original file
 // name never becomes part of the path.
 func bookingDocumentObjectPath(restaurantID int, bookingID *int64, ext string) string {

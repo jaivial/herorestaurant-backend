@@ -3,7 +3,7 @@ package api
 import "testing"
 
 func TestParseSupportedBOAppVersionRejectsUnknownValues(t *testing.T) {
-	for _, raw := range []string{"", "0.3", "garbage", "1.0"} {
+	for _, raw := range []string{"", "0.9", "garbage", "1.0"} {
 		if got, ok := parseSupportedBOAppVersion(raw); ok || got != "" {
 			t.Fatalf("parseSupportedBOAppVersion(%q) = %q, %v; want empty, false", raw, got, ok)
 		}
@@ -11,7 +11,7 @@ func TestParseSupportedBOAppVersionRejectsUnknownValues(t *testing.T) {
 }
 
 func TestParseSupportedBOAppVersionAcceptsKnownValues(t *testing.T) {
-	for _, want := range []string{boAppVersion001, boAppVersion01, boAppVersion02} {
+	for _, want := range []string{boAppVersion001, boAppVersion01, boAppVersion02, boAppVersion03, boAppVersion04} {
 		got, ok := parseSupportedBOAppVersion("  " + want + "  ")
 		if !ok || got != want {
 			t.Fatalf("parseSupportedBOAppVersion(%q) = %q, %v; want %q, true", want, got, ok, want)
