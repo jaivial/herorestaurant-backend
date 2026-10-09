@@ -21,9 +21,12 @@ func TestPublicAdVisibleOnDate(t *testing.T) {
 	}
 }
 
-func TestPublicAdVisibleOnDateRequiresActiveAndAllowsOpenSchedule(t *testing.T) {
-	if !publicAdVisibleOnDate(boAd{Active: true}, "2026-08-29") {
-		t.Fatal("active ad without dates should be visible")
+func TestPublicAdVisibleOnDateRequiresActiveAndCompleteDateRange(t *testing.T) {
+	// An ad only runs inside an explicit date range: an active ad whose range
+	// was cleared (or is incomplete) must not be shown. Mirrored client-side
+	// by activeAdsForDate in frontend/src/lib/publicAds.ts.
+	if publicAdVisibleOnDate(boAd{Active: true}, "2026-08-29") {
+		t.Fatal("active ad without dates must not be visible")
 	}
 	if publicAdVisibleOnDate(boAd{Active: false}, "2026-08-29") {
 		t.Fatal("inactive ad must never be visible")

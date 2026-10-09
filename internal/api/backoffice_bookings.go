@@ -180,6 +180,11 @@ func (s *Server) handleBOBookingsList(w http.ResponseWriter, r *http.Request) {
 
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 
+	// Coordination id: booking_documents_v1 - safety net for documents whose
+	// booking was removed by a path that does not call purgeBookingDocuments.
+	// Off the request path: this list must not pay for a storage sweep.
+	s.purgeOrphanedBookingDocumentsAsync(a.ActiveRestaurantID)
+
 	sortKey := strings.TrimSpace(r.URL.Query().Get("sort"))
 	if sortKey != "added_date" && sortKey != "reservation_time" && sortKey != "" {
 		sortKey = ""
@@ -557,6 +562,9 @@ func (s *Server) handleBOBookingCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Coordination id: booking_documents_v1 - the booking row is gone, so its
+	// documents must be released too (booking_documents has no FK to bookings).
+	s.purgeBookingDocuments(r.Context(), restaurantID, int64(bookingID))
 	s.broadcastBookingChanged(restaurantID, int64(bookingID), "booking_cancelled")
 	s.emitN8nWebhookAsync(restaurantID, "booking.cancelled", map[string]any{
 		"source":            "backoffice_cancel",

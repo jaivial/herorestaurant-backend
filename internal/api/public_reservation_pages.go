@@ -825,6 +825,10 @@ func (s *Server) handleCancelReservationPage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Coordination id: booking_documents_v1 - the booking row is gone, release
+	// its documents (booking_documents has no FK to bookings).
+	s.purgeBookingDocuments(r.Context(), restaurantID, int64(b.ID))
+
 	data["Success"] = true
 	data["Message"] = "Su reserva ha sido cancelada correctamente."
 	data["ShowConfirmation"] = false

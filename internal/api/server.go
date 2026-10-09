@@ -267,6 +267,11 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Get("/bookings", s.handleBOBookingsList)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/search", s.handleBOBookingsSearch)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/export", s.handleBOBookingsExport)
+		// Coordination id: booking_documents_v1 - documents attached to a booking.
+		// The upload travels over the socket; REST only lists and serves.
+		r.With(s.requireBOSession, reservasGate).Get("/bookings/documents/ws", s.handleBOBookingDocumentsWS)
+		r.With(s.requireBOSession, reservasGate).Get("/bookings/documents/{docId}/file", s.handleBOBookingDocumentFile)
+		r.With(s.requireBOSession, reservasGate).Get("/bookings/{id}/documents", s.handleBOBookingDocumentsList)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/{id}", s.handleBOBookingGet)
 		// Coordination id: special_booking_qr_v1
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/{id}/qr", s.handleBOBookingQR)
@@ -997,6 +1002,12 @@ func (s *Server) Routes() http.Handler {
 		// Analytics V1 uses an idempotent selected-range rebuild; it has no outbox.
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/overview", s.handleBOAnalyticsOverview)
 		r.With(s.requireBOSession, statisticsGate).Post("/analytics/refresh", s.handleBOAnalyticsRefresh)
+
+		// Customer affluence over the full bookings history (affluence_stats_v1).
+		// Read-only aggregations: bucketed evolution with previous-period delta
+		// and the seasonal month/year comparison.
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/affluence", s.handleBOAffluence)
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/affluence/seasonal", s.handleBOAffluenceSeasonal)
 
 		// Platform (superadmin) endpoints — cross-tenant management.
 		// All gated by requireBOSuperadmin (is_superadmin=1 only).
