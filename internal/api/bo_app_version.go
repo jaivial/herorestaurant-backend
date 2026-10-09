@@ -40,23 +40,25 @@ const (
 // boAppVersion04Modules is the explicit module list of boAppVersion04. Sections
 // outside it are hidden and their routes denied, whatever the role allows.
 var boAppVersion04Modules = map[string]bool{
-	boSectionReservas: true,
-	boSectionMenus:    true,
-	boSectionComida:   true,
-	boSectionMiembros: true,
-	boSectionHorarios: true,
-	boSectionFichaje:  true,
-	boSectionFacturas: true,
-	boSectionCampanas: true,
-	boSectionAnuncios: true,
-	boSectionQR:       true,
+	boSectionReservas:     true,
+	boSectionMenus:        true,
+	boSectionComida:       true,
+	boSectionMiembros:     true,
+	boSectionHorarios:     true,
+	boSectionFichaje:      true,
+	boSectionFacturas:     true,
+	boSectionCampanas:     true,
+	boSectionAnuncios:     true,
+	boSectionQR:           true,
+	boSectionEstadisticas: true,
 }
 
 // boAppVersion04Capabilities is the capability whitelist of boAppVersion04:
-// campanas only, so stock / POS / statistics / platform / ads stay closed even
-// though 0.4 sorts above their 0.2 minimum.
+// campanas and statistics only, so stock / POS / platform / ads stay closed
+// even though 0.4 sorts above their 0.2 minimum.
 var boAppVersion04Capabilities = map[boAppCapability]bool{
-	boCapabilityCampanas: true,
+	boCapabilityCampanas:     true,
+	boCapabilityEstadisticas: true,
 }
 
 var boCapabilityMinVersion = map[boAppCapability]string{
