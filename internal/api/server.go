@@ -1003,6 +1003,12 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/overview", s.handleBOAnalyticsOverview)
 		r.With(s.requireBOSession, statisticsGate).Post("/analytics/refresh", s.handleBOAnalyticsRefresh)
 
+		// Customer affluence over the full bookings history (affluence_stats_v1).
+		// Read-only aggregations: bucketed evolution with previous-period delta
+		// and the seasonal month/year comparison.
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/affluence", s.handleBOAffluence)
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/affluence/seasonal", s.handleBOAffluenceSeasonal)
+
 		// Platform (superadmin) endpoints — cross-tenant management.
 		// All gated by requireBOSuperadmin (is_superadmin=1 only).
 		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/dashboard", s.handlePlatformDashboard)
