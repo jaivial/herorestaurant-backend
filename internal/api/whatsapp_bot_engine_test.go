@@ -32,8 +32,11 @@ func fakeLLM(t *testing.T, responses []map[string]any) (*httptest.Server, *[][]b
 	return srv, &calls
 }
 
-func TestBotRunAgentLoop_SendMessageAndEndTurn(t *testing.T) {
-	// Script: 1st call → tool_use send_message; 2nd call → end_turn.
+func TestBotRunAgentLoop_EarlyStopAfterDelivery(t *testing.T) {
+	// wa_bot_early_stop_v1: when every tool of the response was a successful
+	// customer delivery (send_message), the reply is out and the loop stops
+	// without the extra end_turn model call.
+	// Script: 1st call → tool_use send_message; no 2nd call expected.
 	llm, calls := fakeLLM(t, []map[string]any{
 		{
 			"stop_reason": "tool_use",
@@ -41,10 +44,6 @@ func TestBotRunAgentLoop_SendMessageAndEndTurn(t *testing.T) {
 				{"type": "tool_use", "id": "tu_1", "name": "send_message",
 					"input": map[string]any{"message": "¡Hola! ¿En qué te ayudo?"}},
 			},
-		},
-		{
-			"stop_reason": "end_turn",
-			"content":     []map[string]any{{"type": "text", "text": "listo"}},
 		},
 	})
 	defer llm.Close()
@@ -71,29 +70,23 @@ func TestBotRunAgentLoop_SendMessageAndEndTurn(t *testing.T) {
 	if len(sentTexts) != 1 || sentTexts[0] != "¡Hola! ¿En qué te ayudo?" {
 		t.Errorf("sentTexts = %v", sentTexts)
 	}
-	if result.Iterations != 2 {
-		t.Errorf("iterations = %d", result.Iterations)
+	if result.Iterations != 1 {
+		t.Errorf("iterations = %d, want 1 (early stop after delivery)", result.Iterations)
 	}
-	if len(*calls) != 2 {
-		t.Fatalf("llm calls = %d", len(*calls))
+	if len(*calls) != 1 {
+		t.Fatalf("llm calls = %d, want 1 (early stop after delivery)", len(*calls))
 	}
 
-	// Second request must include assistant tool_use + user tool_result.
-	var second struct {
+	// The single request is the original user turn.
+	var first struct {
 		Messages []struct {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
 		} `json:"messages"`
 	}
-	_ = json.Unmarshal((*calls)[1], &second)
-	if len(second.Messages) != 3 {
-		t.Fatalf("second call messages = %d", len(second.Messages))
-	}
-	if second.Messages[1].Role != "assistant" || second.Messages[2].Role != "user" {
-		t.Errorf("roles = %s, %s", second.Messages[1].Role, second.Messages[2].Role)
-	}
-	if !json.Valid(second.Messages[2].Content) {
-		t.Error("tool_result content not valid json")
+	_ = json.Unmarshal((*calls)[0], &first)
+	if len(first.Messages) != 1 || first.Messages[0].Role != "user" {
+		t.Errorf("first call messages = %+v", first.Messages)
 	}
 }
 
