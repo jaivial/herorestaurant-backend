@@ -1096,10 +1096,15 @@ type platformUAZAPIServer struct {
 }
 
 func (s *Server) handlePlatformUAZAPIServersList(w http.ResponseWriter, r *http.Request) {
+	// used_count is a stored counter that can drift from the real number of
+	// instances (QA: "1 en uso" with 0 WhatsApp instances). Report the live
+	// count of active instances per server instead.
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, name, provider, base_url, capacity, used_count, is_active
-		FROM uazapi_servers
-		ORDER BY is_active DESC, priority DESC, id ASC
+		SELECT s.id, s.name, s.provider, s.base_url, s.capacity,
+		  (SELECT COUNT(*) FROM restaurant_uazapi_instances i WHERE i.server_id = s.id AND i.is_active = 1) AS used_count,
+		  s.is_active
+		FROM uazapi_servers s
+		ORDER BY s.is_active DESC, s.priority DESC, s.id ASC
 	`)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo servidores UAZAPI")
