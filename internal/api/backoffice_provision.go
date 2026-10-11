@@ -40,7 +40,7 @@ func (s *Server) provisionRestaurantOwner(ctx context.Context, restaurantID, use
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT IGNORE INTO bo_user_restaurants (user_id, restaurant_id, role) VALUES (?, ?, owner)`,
+		`INSERT IGNORE INTO bo_user_restaurants (user_id, restaurant_id, role) VALUES (?, ?, 'owner')`,
 		userID, restaurantID)
 	return err
 }
