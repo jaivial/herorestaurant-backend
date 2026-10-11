@@ -156,7 +156,7 @@ func assistantInjectInvoicePDFURL(body []byte, id int) []byte {
 	if err := json.Unmarshal(body, &v); err != nil {
 		return body
 	}
-	v["pdf_url"] = "/api/invoices/" + strconv.Itoa(id) + "/pdf"
+	v["pdf_url"] = "/api/admin/invoices/" + strconv.Itoa(id) + "/pdf"
 	out, err := json.Marshal(v)
 	if err != nil {
 		return body
@@ -186,7 +186,7 @@ func assistantInjectInvoiceListPDFURLs(body []byte) []byte {
 			if !ok || idF <= 0 {
 				continue
 			}
-			m["pdf_url"] = "/api/invoices/" + strconv.Itoa(int(idF)) + "/pdf"
+			m["pdf_url"] = "/api/admin/invoices/" + strconv.Itoa(int(idF)) + "/pdf"
 			changed = true
 		}
 	}
