@@ -559,7 +559,7 @@ func assistantCleanseReply(s string) string {
 }
 
 
-var assistantForkyFenceRunRe = regexp.MustCompile("(\x60\x60\x60forky-(?:doc|chart|widget))[ \t]*(?=[{\\[])")
+var assistantForkyFenceRunRe = regexp.MustCompile("(\x60\x60\x60forky-(?:doc|chart|widget))[ \t]*([{\\[])")
 var assistantInvoicePDFRe = regexp.MustCompile("/api/invoices/(\\d+)/pdf")
 
 // assistantNormalizeRichBlocks repairs small, deterministic rich-block
@@ -574,7 +574,7 @@ func assistantNormalizeRichBlocks(reply string, toolMsgs []assistantChatMessage)
 	if !strings.Contains(reply, "```forky-") {
 		return reply
 	}
-	reply = assistantForkyFenceRunRe.ReplaceAllString(reply, "$1\n")
+	reply = assistantForkyFenceRunRe.ReplaceAllString(reply, "$1\n$2")
 	valid := map[string]bool{}
 	for _, m := range toolMsgs {
 		b, err := json.Marshal(m.Content)
