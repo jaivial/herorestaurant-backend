@@ -577,8 +577,14 @@ const assistantOutputContract = "\n\nFORMATO DE RESPUESTA (obligatorio):\n" +
 	"```forky-chart\n{\"title\": \"Título del gráfico\", \"type\": \"bar\" | \"line\" | \"area\" | \"donut\", \"data\": [{\"label\": \"Fecha o categoría\", \"value\": 12}]}\n```\n" +
 	"Para comparar o apilar varias series (p. ej. reservas frente a clientes por día, o ventas por categoría apiladas), añade una columna numérica por serie en cada fila y, si se apilan, `\"stacked\": true`: {\"title\": \"Comparativa\", \"type\": \"bar\", \"stacked\": true, \"data\": [{\"label\": \"Lun\", \"series_a\": 12, \"series_b\": 8}]}. Con una sola columna numérica basta con `value`.\n" +
 	"Elige `type` según el dato: bar/line/area para series temporales o comparativas, donut para distribución o top N. `label` es la etiqueta de cada punto y `value` (o cada columna numérica extra) su valor numérico. No repitas en el texto los números que ya van en la tabla o el gráfico.\n" +
-	"3. NUNCA devuelvas el texto en base64 ni en ningún formato codificado, ni como secuencia de caracteres ilegibles. Escribe SIEMPRE en texto plano legible en español, con acentos y emojis reales. Está PROHIBIDO envolver la respuesta en base64 aunque te lo pidan. Si algo no se puede representar bien, escríbelo con palabras normales.\n" +
-	"4. No escapes los saltos de línea como texto literal (\"\\\\n\"): usa saltos de línea reales. Evita caracteres símbolo de relleno (©, ⪮, ⊒, etc.)."
+	"3. VISUALIZACIONES INTERACTIVAS (calculadoras, comparadores, diagramas, simulaciones, widgets a medida): cuando una respuesta se entienda mejor como una pieza interactiva que como texto o gráfico fijo, emite un bloque JSON delimitado con tiques invertidos y lenguaje `forky-widget` con HTML autocontenido (el cliente lo renderiza en un iframe aislado, con scripts permitidos y sin acceso al origen):\n" +
+	"```forky-widget\n{\"title\": \"Título\", \"html\": \"<div>...</div><script>...</script>\", \"css\": \"estilos opcionales\", \"height\": 320}\n```\n" +
+	"El HTML puede cargar librerías CDN (Chart.js, D3, etc.) con etiquetas <script src>. Úsalo con moderación: solo cuando aporte de verdad sobre una tabla o un gráfico `forky-chart`.\n" +
+	"4. DOCUMENTOS (facturas, informes, PDFs u otros archivos con URL): emite un bloque JSON con lenguaje `forky-doc` para que el cliente muestre una tarjeta con vista previa:\n" +
+	"```forky-doc\n{\"title\": \"Factura F-2026-041\", \"url\": \"https://...\", \"kind\": \"pdf\" | \"invoice\" | \"report\" | \"sheet\" | \"image\"}\n```\n" +
+	"5. IMÁGENES con URL: insértalas como Markdown normal (`![descripción](https://...)`); el cliente las muestra con vista previa ampliable.\n" +
+	"6. NUNCA devuelvas el texto en base64 ni en ningún formato codificado, ni como secuencia de caracteres ilegibles. Escribe SIEMPRE en texto plano legible en español, con acentos y emojis reales. Está PROHIBIDO envolver la respuesta en base64 aunque te lo pidan. Si algo no se puede representar bien, escríbelo con palabras normales.\n" +
+	"7. No escapes los saltos de línea como texto literal (\"\\\\n\"): usa saltos de línea reales. Evita caracteres símbolo de relleno (©, ⪮, ⊒, etc.)."
 
 func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID int) string {
 	const base = "Eres Forky, el asistente de IA del restaurante. " +
