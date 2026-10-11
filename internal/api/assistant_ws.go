@@ -249,11 +249,15 @@ func (c *assistantClient) loadHistory(ctx context.Context, sessionID int64) ([]a
 	defer rows.Close()
 	var out []assistantChatMessage
 	for rows.Next() {
-		var m assistantChatMessage
-		if err := rows.Scan(&m.Role, &m.Content); err != nil {
+		// Scan into explicit strings: scanning TEXT into the interface Content
+		// yields []byte, and the hello frame's JSON marshal would emit it as
+		// base64 (assistant replies were rescued by the client-side decoder,
+		// but user messages rendered as raw base64 blobs).
+		var role, content string
+		if err := rows.Scan(&role, &content); err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+		out = append(out, assistantChatMessage{Role: role, Content: content})
 	}
 	// Contaminated rows already in the database keep poisoning their session on
 	// every replay, so filter them out of the context we send to the model.
