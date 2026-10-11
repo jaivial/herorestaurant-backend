@@ -186,6 +186,19 @@ func (s *Server) handlePlatformRestaurantCreate(w http.ResponseWriter, r *http.R
 	}
 	id, _ := res.LastInsertId()
 
+	// Multitenant provisioning: a new restaurant must be usable right away -
+	// seed its satellite rows with defaults and grant the creator ownership.
+	if err := s.provisionRestaurantDefaults(r.Context(), int(id), name); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error aprovisionando el restaurante: " + err.Error()})
+		return
+	}
+	if a, ok := boAuthFromContext(r.Context()); ok {
+		if err := s.provisionRestaurantOwner(r.Context(), int(id), a.User.ID); err != nil {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error asignando el propietario: " + err.Error()})
+			return
+		}
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
 		"restaurantId": id,
