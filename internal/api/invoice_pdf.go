@@ -156,6 +156,9 @@ func invoiceFallbackPDF(d invoiceRenderData) ([]byte, error) {
 	// right-side meta
 	pdf.SetXY(122, startY)
 	meta := []string{"Nº " + d.Number}
+	if d.Number != "" {
+		meta = append(meta, "Referencia: "+d.Number)
+	}
 	if d.InvoiceDate != "" {
 		meta = append(meta, "Fecha: "+d.InvoiceDate)
 	}
