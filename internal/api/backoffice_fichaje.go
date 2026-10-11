@@ -1436,6 +1436,13 @@ func (s *Server) handleBOHorariosUpdate(w http.ResponseWriter, r *http.Request) 
 	// the schedule being edited.
 	current, err := s.getBOHorarioByID(r.Context(), a.ActiveRestaurantID, int64(scheduleID))
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+				"success": false,
+				"message": "Horario no encontrado",
+			})
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo horario")
 		return
 	}
@@ -1501,6 +1508,13 @@ func (s *Server) handleBOHorariosDelete(w http.ResponseWriter, r *http.Request) 
 	// Get schedule before deleting for broadcast
 	schedule, err := s.getBOHorarioByID(r.Context(), a.ActiveRestaurantID, int64(scheduleID))
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
+				"success": false,
+				"message": "Horario no encontrado",
+			})
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo horario")
 		return
 	}
