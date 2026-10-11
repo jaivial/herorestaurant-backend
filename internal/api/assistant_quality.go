@@ -22,7 +22,7 @@ import (
 
 // assistantChartBlock matches a fenced forky-chart block, which is machine
 // generated JSON and must not be judged as prose.
-var assistantChartBlock = regexp.MustCompile("(?s)```forky-chart.*?```")
+var assistantChartBlock = regexp.MustCompile("(?s)```forky-(?:chart|widget|doc).*?```")
 
 // assistantLongBase64Run matches a base64 blob left in a reply. Runs made only
 // of '-'/'=' are excluded by the mixed-alphabet check in the caller: markdown
