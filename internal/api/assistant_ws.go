@@ -393,6 +393,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		// the client and before persisting, so the chat never shows a raw blob.
 		turnText := assistantRecoverEncodedReply(result.Text)
 		if turnText != "" {
+			if final.Len() > 0 {
+				final.WriteString("\n\n")
+			}
 			final.WriteString(turnText)
 			_ = c.writeJSON(map[string]any{"type": "delta", "text": turnText})
 		}
