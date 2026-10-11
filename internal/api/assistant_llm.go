@@ -560,7 +560,7 @@ func assistantCleanseReply(s string) string {
 
 
 var assistantForkyFenceRunRe = regexp.MustCompile("(\x60\x60\x60forky-(?:doc|chart|widget))[ \t]*([{\\[])")
-var assistantInvoicePDFRe = regexp.MustCompile("/api/invoices/(\\d+)/pdf")
+var assistantInvoicePDFRe = regexp.MustCompile("/api/(?:admin/)?invoices/(\\d+)/pdf")
 
 // assistantNormalizeRichBlocks repairs small, deterministic rich-block
 // deviations before persisting a reply: (1) a model sometimes opens a
@@ -595,7 +595,7 @@ func assistantNormalizeRichBlocks(reply string, toolMsgs []assistantChatMessage)
 		}
 		if len(valid) == 1 {
 			for vid := range valid {
-				return "/api/invoices/" + vid + "/pdf"
+				return "/api/admin/invoices/" + vid + "/pdf"
 			}
 		}
 		return u
