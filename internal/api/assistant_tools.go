@@ -386,7 +386,9 @@ func assistantToolAllowed(a boAuth, tool string) bool {
 	for _, x := range a.User.SectionAccess {
 		allowed[strings.ToLower(strings.TrimSpace(x))] = true
 	}
-	if len(allowed) == 0 {
+	if len(allowed) == 0 || role == "root" || role == "admin" || role == "owner" {
+		// Operational roles always get the section, even when a stored
+		// session carries a stale explicit SectionAccess list.
 		if role == "root" || role == "admin" || role == "owner" {
 			allowed[section] = true
 		}
