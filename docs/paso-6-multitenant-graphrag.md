@@ -22,9 +22,9 @@ Recon 2026-10-11 (dev). Objetivo original: "Hacer que sea lo mas reproducible po
 ## Plan de trabajo (dev only)
 
 - [x] Auditoria de cobertura tenant con el code graph: endpoints cuya cadena no llega a restaurantIDFromContext.
-- [ ] Flujo/endpoint de onboarding de tenant (clonado desde plantilla).
-- [ ] Retrieval de memoria en el loop del asistente + eval con Jev.
-- [ ] Limpieza de defaults hardcoded que rompan un segundo tenant.
+- [x] Flujo/endpoint de onboarding de tenant (clonado desde plantilla).
+- [x] Retrieval de memoria en el loop del asistente + eval con Jev.
+- [x] Limpieza de defaults hardcoded que rompan un segundo tenant.
 
 ## Auditoria gap 1 - cobertura tenant (2026-10-11)
 
@@ -66,3 +66,18 @@ Runbook para tenant nuevo:
 Mejora opcional detectada: sembrar un dominio por defecto en create (p.ej. {slug}.menustudioai.com) para que el tenant resuelva sin paso manual. Decision de producto, no bug.
 
 Conclusion: gap 2 cerrado. La reproducibilidad ya es real: crear tenant = una llamada + dominio + conectar WA.
+
+## Gap 3 - defaults hardcoded (2026-10-11)
+
+Sweep de 233 refs villacarmen/alqueria en backend Go: la inmensa mayoria son el nombre del modulo (preactvillacarmen) en imports o defaults ya sobreescribibles por env. Unico default no cosmetico: el fallback de host en publicBaseURL/publicBaseURLForRestaurant (public_reservation_pages.go). Corregido en PR #458: nuevo env PUBLIC_FALLBACK_HOST, comportamiento identico si no se configura. Gap 3 cerrado.
+
+## Gap 4 - graph RAG de producto (2026-10-11)
+
+El loop de memoria YA esta completo y cableado:
+- Extraccion: kickAssistantMemoryExtraction tras cada intercambio (prompt LLM dedicado, nodos + edges).
+- Almacen: assistant_memory_nodes (scope restaurant_id + user_id; user_id=0 = compartida del tenant) + assistant_memory_edges.
+- Retrieval: loadAssistantMemories rankea por peso del nodo + boost de edges (SUM(e.weight)*0.5) e inyecta via assistantMemoryPromptBlock en el system prompt del assistant WS (assistant_ws.go:382).
+
+Pendiente opcional: metrica de utilidad de memoria en Jev (precision de los recuerdos inyectados) y ejercitarlo mas en dev (solo 5 nodos/2 edges). No es bloqueante: la arquitectura pedida ("aprender de cada usuario de cada tenant y cada restaurant") ya existe con ese scope exacto.
+
+Gap 4 cerrado. Queda gap 5 (plantilla clonable de tenant demo) como mejora futura, no bloqueante.
