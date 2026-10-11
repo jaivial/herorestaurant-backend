@@ -961,7 +961,7 @@ func (s *Server) handlePlatformStripePaymentsList(w http.ResponseWriter, r *http
 			COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.currency')), '') AS currency,
 			COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.metadata.domain')), '') AS domain,
 			COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.metadata.restaurant_id')), '0') AS restaurant_id,
-			r.name AS restaurant_name,
+			COALESCE(r.name, '') AS restaurant_name,
 			COALESCE(DATE_FORMAT(e.created_at, '%Y-%m-%dT%H:%i:%sZ'), '') AS paid_at
 		FROM stripe_events e
 		LEFT JOIN restaurants r ON r.id = CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.metadata.restaurant_id')), '0') AS UNSIGNED)
