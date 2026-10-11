@@ -88,13 +88,22 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		for rows.Next() {
 			var id int
 			var n, d string
-			var p, f any
+			// TEXT/DECIMAL scanned into any arrive as []byte and JSON-marshal as
+			// base64; scan into NullString so the model sees real values.
+			var p, f sql.NullString
 			if e = rows.Scan(&id, &n, &d, &p, &f); e != nil {
 				return "", e
 			}
-			item := map[string]any{"id": id, "name": n, "description": d, "price": p}
+			item := map[string]any{"id": id, "name": n, "description": d, "price": nil}
+			if p.Valid {
+				item["price"] = p.String
+			}
 			if spec.foto != "" {
-				item["foto"] = f
+				var fv any
+				if f.Valid {
+					fv = f.String
+				}
+				item["foto"] = fv
 			}
 			out = append(out, item)
 		}
@@ -102,12 +111,16 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 	case "catalog_get":
 		var id int
 		var n, d string
-		var p any
+		var p sql.NullString
 		e := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT %s,%s,%s,%s FROM %s WHERE restaurant_id=? AND %s=?", spec.idCol, spec.name, spec.desc, catalogPriceExpr(spec), spec.table, spec.idCol), rid, in.ID).Scan(&id, &n, &d, &p)
 		if e != nil {
 			return "", e
 		}
-		return botJSON(map[string]any{"id": id, "name": n, "description": d, "price": p}), nil
+		var pv any
+		if p.Valid {
+			pv = p.String
+		}
+		return botJSON(map[string]any{"id": id, "name": n, "description": d, "price": pv}), nil
 	case "catalog_create":
 		if !in.Confirmed {
 			return s.assistantRequireConfirmation(rid, name, raw)
