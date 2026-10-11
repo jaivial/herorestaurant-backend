@@ -378,6 +378,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		_ = c.s.db.QueryRowContext(ctx, `SELECT COALESCE(restaurant_id,0) FROM assistant_sessions WHERE id=?`, sid).Scan(&restaurantID)
 	}
 	prompt := c.s.buildAssistantSystemPrompt(ctx, restaurantID)
+	if c.auth != nil {
+		prompt += assistantMemoryPromptBlock(c.s.loadAssistantMemories(ctx, restaurantID, c.auth.User.ID, 15))
+	}
 	_ = c.writeJSON(map[string]any{"type": "status", "state": "thinking"})
 	toolDefs := assistantToolDefs()
 	toolMsgs := append([]assistantChatMessage{}, hist...)
@@ -438,5 +441,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 			return
 		}
 	}
+	if c.auth != nil {
+		c.s.kickAssistantMemoryExtraction(ctx, restaurantID, c.auth.User.ID, content, final.String())
+	}
+
 	_ = c.writeJSON(map[string]any{"type": "done"})
 }
