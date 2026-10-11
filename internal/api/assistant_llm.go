@@ -391,8 +391,15 @@ func assistantRecoverEncodedReply(text string) string {
 	// Note this works on the ORIGINAL text: assistantStripBase64Wrapper trims
 	// trailing backticks globally, which would eat the closing fence of a
 	// ```forky-chart block and stop the UI from rendering the chart.
-	if decoded, ok := assistantRecoverEncodedBlocks(text); ok {
-		return decoded
+	// Rich Forky blocks (```forky-chart, ```forky-widget, ```forky-doc) carry
+	// long unbroken HTML/JSON runs that the base64 run finder mistakes for
+	// encoded payloads; decoding in place eats the fence and the start of the
+	// block. When a rich-block fence is present the reply is authoritative
+	// plain text: skip in-place recovery and only cleanse.
+	if !strings.Contains(text, "```forky-") {
+		if decoded, ok := assistantRecoverEncodedBlocks(text); ok {
+			return decoded
+		}
 	}
 	// MiniMax intermittently hallucinates CJK (Chinese) phrases and filler
 	// symbols mid-Spanish-reply (e.g. "具体的"), no matter the model. None of
