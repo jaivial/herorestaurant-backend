@@ -123,6 +123,7 @@ func (s *Server) assistantInvoicesList(ctx context.Context, _ int, input json.Ra
 	if code >= 400 {
 		return "", assistantHandlerError("invoices_list", body, code)
 	}
+	body = assistantInjectInvoiceListPDFURLs(body)
 	return botHandlerResponse("invoices_list", body)
 }
 
@@ -140,7 +141,63 @@ func (s *Server) assistantInvoiceGet(ctx context.Context, _ int, input json.RawM
 	if code >= 400 {
 		return "", assistantHandlerError("invoice_get", body, code)
 	}
+	// Expose the PDF so the model can render a forky-doc preview card.
+	body = assistantInjectInvoicePDFURL(body, in.ID)
 	return botHandlerResponse("invoice_get", body)
+}
+
+// assistantInjectInvoicePDFURL adds pdf_url to an invoice payload so the
+// assistant can link or preview the real document instead of inventing URLs.
+func assistantInjectInvoicePDFURL(body []byte, id int) []byte {
+	if id <= 0 {
+		return body
+	}
+	var v map[string]any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return body
+	}
+	v["pdf_url"] = "/api/invoices/" + strconv.Itoa(id) + "/pdf"
+	out, err := json.Marshal(v)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// assistantInjectInvoiceListPDFURLs adds pdf_url to every invoice object in a
+// list payload, whichever envelope key the handler used.
+func assistantInjectInvoiceListPDFURLs(body []byte) []byte {
+	var v map[string]any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return body
+	}
+	changed := false
+	for _, key := range []string{"invoices", "items", "data", "results"} {
+		arr, ok := v[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, item := range arr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			idF, ok := m["id"].(float64)
+			if !ok || idF <= 0 {
+				continue
+			}
+			m["pdf_url"] = "/api/invoices/" + strconv.Itoa(int(idF)) + "/pdf"
+			changed = true
+		}
+	}
+	if !changed {
+		return body
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 // --- Platform typed reads (reuse backoffice_settings.go handlers) ---
