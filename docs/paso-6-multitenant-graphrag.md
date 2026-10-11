@@ -44,3 +44,25 @@ Detalles verificados:
 - DEFAULT_RESTAURANT_ID: fallback intencionado y documentado, no un agujero.
 
 Conclusion: el sustrato multitenant esta mas sano de lo esperado (ver coordination ids stripe_connect_multitenant_v1). Gap 1 cerrado. Siguiente: gap 2 (onboarding de tenant empaquetado).
+
+## Gap 2 - onboarding de tenant (2026-10-11)
+
+Resultado: YA EXISTE como API de plataforma. No hace falta empaquetar nada nuevo, solo documentar el runbook.
+
+Flujo real (verificado en codigo):
+1. POST /admin/platform/restaurants (requireBOSession + requireBOSuperadmin): crea la fila restaurants (slug, name, CIF, contacto).
+2. provisionRestaurantDefaults: siembra idempotente (INSERT IGNORE) de branding, reservation_defaults, info, bot_ai_config, page_visibility.
+3. provisionRestaurantOwner: membership owner del creador en bo_user_restaurants.
+4. Dominios: gestion via plataforma (restaurant_domains); la resolucion por host (tenant.go) los usa en cuanto existen.
+5. WhatsApp: pool UAZAPI con aprovisionamiento por capacidad (backoffice_uazapi_provisioning.go) + connect/QR desde /app/config.
+6. Desactivar/reactivar: POST /platform/restaurants/{id}/deactivate|activate.
+
+Runbook para tenant nuevo:
+- Crear via platform API (superadmin) -> restaurante operativo con defaults en segundos.
+- Asignar dominio(s) en plataforma -> el sitio publico resuelve por host.
+- Conectar WhatsApp desde el backoffice del tenant -> sale del pool UAZAPI.
+- Invitar usuarios (bo_member_invitation_tokens) con rol por restaurante.
+
+Mejora opcional detectada: sembrar un dominio por defecto en create (p.ej. {slug}.menustudioai.com) para que el tenant resuelva sin paso manual. Decision de producto, no bug.
+
+Conclusion: gap 2 cerrado. La reproducibilidad ya es real: crear tenant = una llamada + dominio + conectar WA.
