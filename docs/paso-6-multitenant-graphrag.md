@@ -21,7 +21,26 @@ Recon 2026-10-11 (dev). Objetivo original: "Hacer que sea lo mas reproducible po
 
 ## Plan de trabajo (dev only)
 
-- [ ] Auditoria de cobertura tenant con el code graph: endpoints cuya cadena no llega a restaurantIDFromContext.
+- [x] Auditoria de cobertura tenant con el code graph: endpoints cuya cadena no llega a restaurantIDFromContext.
 - [ ] Flujo/endpoint de onboarding de tenant (clonado desde plantilla).
 - [ ] Retrieval de memoria en el loop del asistente + eval con Jev.
 - [ ] Limpieza de defaults hardcoded que rompan un segundo tenant.
+
+## Auditoria gap 1 - cobertura tenant (2026-10-11)
+
+Metodo: code graph Neo4j (8036 nodos, 35707 edges) + revision de montaje de rutas en server.go. 1046 endpoints clasificados.
+
+Resultado: SIN agujeros de cobertura inexplicados. Tres vias de resolucion de tenant, todas correctas:
+
+1. Middleware por host (tenant.go): X-Forwarded-Host/Host -> restaurant_domains, cache TTL, restaurantID en ctx. Sitios publicos.
+2. Middleware de sesion BO (requireBOSession -> backoffice_middleware.go): inyecta ActiveRestaurantID. Cubre los 584 endpoints /admin/* + site-builder + fichaje + bot config. NOTA: el code graph no ve middleware (no son CALLS edges), asi que una query pura de grafo marca falsos positivos; hay que cruzar con el montaje chi (r.With(...)).
+3. Resolucion propia en superficies publicas (public_booking_api.go, webhooks UAZAPI): ctx primero, fallback documentado a DEFAULT_RESTAURANT_ID para despliegues single-domain.
+
+Detalles verificados:
+- 0 tenant IDs hardcodeados en codigo (el unico "1" era un comentario de doc en public_ads.go).
+- assistant_*_tools: la firma (ctx, rid, input) ignora rid pero delega en los handlers BO reales con el ctx (assistantCallHandler), asi que el scoping fluye por contexto. Falsa alarma.
+- mcp: OAuth 2.1 PKCE propio, inyecta ActiveRestaurantID del token.
+- website-builder publico: render de fragmentos, global por diseno.
+- DEFAULT_RESTAURANT_ID: fallback intencionado y documentado, no un agujero.
+
+Conclusion: el sustrato multitenant esta mas sano de lo esperado (ver coordination ids stripe_connect_multitenant_v1). Gap 1 cerrado. Siguiente: gap 2 (onboarding de tenant empaquetado).
