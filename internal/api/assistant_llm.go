@@ -558,6 +558,50 @@ func assistantCleanseReply(s string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+
+var assistantForkyFenceRunRe = regexp.MustCompile("(\x60\x60\x60forky-(?:doc|chart|widget))[ \t]*(?=[{\\[])")
+var assistantInvoicePDFRe = regexp.MustCompile("/api/invoices/(\\d+)/pdf")
+
+// assistantNormalizeRichBlocks repairs small, deterministic rich-block
+// deviations before persisting a reply: (1) a model sometimes opens a
+// ```forky-doc/chart/widget fence and writes the payload on the same line,
+// which the client parser does not recognise, and (2) it occasionally typos
+// the invoice id inside a pdf URL even though the tool response carried the
+// exact pdf_url. When the turn's tool results contain invoice PDF URLs, any
+// URL whose id is not among them is corrected to the only valid one (safe
+// only when exactly one candidate exists).
+func assistantNormalizeRichBlocks(reply string, toolMsgs []assistantChatMessage) string {
+	if !strings.Contains(reply, "```forky-") {
+		return reply
+	}
+	reply = assistantForkyFenceRunRe.ReplaceAllString(reply, "$1\n")
+	valid := map[string]bool{}
+	for _, m := range toolMsgs {
+		b, err := json.Marshal(m.Content)
+		if err != nil {
+			continue
+		}
+		for _, mm := range assistantInvoicePDFRe.FindAllStringSubmatch(string(b), -1) {
+			valid[mm[1]] = true
+		}
+	}
+	if len(valid) == 0 || !assistantInvoicePDFRe.MatchString(reply) {
+		return reply
+	}
+	return assistantInvoicePDFRe.ReplaceAllStringFunc(reply, func(u string) string {
+		id := assistantInvoicePDFRe.FindStringSubmatch(u)[1]
+		if valid[id] {
+			return u
+		}
+		if len(valid) == 1 {
+			for vid := range valid {
+				return "/api/invoices/" + vid + "/pdf"
+			}
+		}
+		return u
+	})
+}
+
 // splitRunes splits s into chunks of at most n runes each (rune-safe).
 func splitRunes(s string, n int) []string {
 	runes := []rune(s)
