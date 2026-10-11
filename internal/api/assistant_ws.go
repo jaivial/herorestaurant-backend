@@ -424,7 +424,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 	// turn and prime the model to produce more of the same. Dropping it keeps
 	// the session clean, and the user simply sees the (already streamed) text
 	// without it contaminating future context.
-	reply := assistantSanitizeForHistory(final.String())
+	reply := assistantNormalizeRichBlocks(assistantSanitizeForHistory(final.String()), toolMsgs)
 	if strings.TrimSpace(reply) != "" {
 		if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, reply); err != nil {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist reply"})
