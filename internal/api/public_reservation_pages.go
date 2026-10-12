@@ -188,9 +188,18 @@ func publicBaseURL(r *http.Request) string {
 	}
 	host := strings.TrimSpace(r.Host)
 	if host == "" {
-		host = "alqueriavillacarmen.com"
+		host = publicFallbackHost()
 	}
 	return scheme + "://" + host
+}
+
+// publicFallbackHost is the last-resort host when the request carries none.
+// Tenant-neutral: configurable per deployment via PUBLIC_FALLBACK_HOST.
+func publicFallbackHost() string {
+	if h := strings.TrimSpace(os.Getenv("PUBLIC_FALLBACK_HOST")); h != "" {
+		return h
+	}
+	return "alqueriavillacarmen.com"
 }
 
 // publicBaseURLForRestaurant resolves the base URL using the restaurant's primary domain from DB.
@@ -209,7 +218,7 @@ func publicBaseURLForRestaurant(r *http.Request, s *Server, restaurantID int) st
 	}
 	host := strings.TrimSpace(r.Host)
 	if host == "" {
-		host = "alqueriavillacarmen.com"
+		host = publicFallbackHost()
 	}
 	return scheme + "://" + host
 }
