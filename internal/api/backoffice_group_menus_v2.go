@@ -1759,6 +1759,24 @@ func (s *Server) handleBOGroupMenusV2PatchSectionAnnotations(w http.ResponseWrit
 	})
 }
 
+// propagateSectionDishToCatalog applies the menu-edited dish fields to the shared
+// catalog entry, so the general dish list (and other menus adding it later) pick
+// up the change. Only runs when the operator chose "apply to the general ficha";
+// the menu-scoped snapshot stays the default write target.
+// Coordination id: menu_dish_apply_to_catalog_v1
+func propagateSectionDishToCatalog(ctx context.Context, tx *sql.Tx, restaurantID int, catalogDishID *int64, title, description string, allergens []string, supplementEnabled bool, supplementPrice *float64) error {
+	if catalogDishID == nil || *catalogDishID <= 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `
+		UPDATE menu_dishes_catalog
+		SET title = ?, description = ?, allergens_json = ?,
+		    default_supplement_enabled = ?, default_supplement_price = ?
+		WHERE id = ? AND restaurant_id = ?
+	`, title, description, mustJSON(allergens, []any{}), boolToTinyint(supplementEnabled), supplementPrice, *catalogDishID, restaurantID)
+	return err
+}
+
 func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -1795,6 +1813,7 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			SupplementPrice    *float64 `json:"supplement_price"`
 			Price              *float64 `json:"price"`
 			Active             *bool    `json:"active"`
+			ApplyToCatalog     bool     `json:"apply_to_catalog"`
 		} `json:"dishes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1943,6 +1962,12 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 			keep = append(keep, dish.ID)
 			keepSet[dish.ID] = struct{}{}
 			translDishes = append(translDishes, dishTransl{ID: dish.ID, Title: title, Description: description})
+			if dish.ApplyToCatalog {
+				if err := propagateSectionDishToCatalog(r.Context(), tx, a.ActiveRestaurantID, dish.CatalogDishID, title, description, allergens, dish.SupplementEnabled, dish.SupplementPrice); err != nil {
+					httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando la ficha general del plato")
+					return
+				}
+			}
 			continue
 		}
 
@@ -1977,6 +2002,12 @@ func (s *Server) handleBOGroupMenusV2PutSectionDishes(w http.ResponseWriter, r *
 		keep = append(keep, newID)
 		keepSet[newID] = struct{}{}
 		translDishes = append(translDishes, dishTransl{ID: newID, Title: title, Description: description})
+		if dish.ApplyToCatalog {
+			if err := propagateSectionDishToCatalog(r.Context(), tx, a.ActiveRestaurantID, dish.CatalogDishID, title, description, allergens, dish.SupplementEnabled, dish.SupplementPrice); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando la ficha general del plato")
+				return
+			}
+		}
 	}
 
 	if len(keep) == 0 {
@@ -2205,6 +2236,10 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 	if raw, ok := input["description_enabled"]; ok {
 		descriptionEnabled = parseLooseBoolOrDefault(raw, descriptionEnabled)
 	}
+	applyToCatalog := false
+	if raw, ok := input["apply_to_catalog"]; ok {
+		applyToCatalog = parseLooseBoolOrDefault(raw, false)
+	}
 
 	_, err = tx.ExecContext(r.Context(), `
 		UPDATE group_menu_section_dishes_v2
@@ -2238,6 +2273,13 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando plato")
 		return
+	}
+
+	if applyToCatalog {
+		if err := propagateSectionDishToCatalog(r.Context(), tx, a.ActiveRestaurantID, catalogDishID, title, description, allergens, supplementEnabled, supplementPrice); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando la ficha general del plato")
+			return
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
