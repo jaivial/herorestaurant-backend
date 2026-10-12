@@ -155,6 +155,7 @@ type boAd struct {
 	Content                  []boAdContentElement      `json:"content"`
 	CTAs                     []boAdCTA                 `json:"ctas"`
 	Layout                   *boAdLayout               `json:"layout,omitempty"`
+	Canvas                   *boAdCanvas               `json:"canvas,omitempty"`
 	ImageGenerationStatus    boAdImageGenerationStatus `json:"image_generation_status,omitempty"`
 	ImageGenerationStartedAt string                    `json:"image_generation_started_at,omitempty"`
 	StartsAt                 *string                   `json:"starts_at,omitempty"`
@@ -170,6 +171,7 @@ type boAdInput struct {
 	Content  []boAdContentElement `json:"content"`
 	CTAs     []boAdCTA            `json:"ctas"`
 	Layout   *boAdLayout          `json:"layout,omitempty"`
+	Canvas   *boAdCanvas          `json:"canvas,omitempty"`
 	StartsAt *string              `json:"starts_at,omitempty"`
 	EndsAt   *string              `json:"ends_at,omitempty"`
 }
@@ -482,11 +484,11 @@ func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (bo
 	var ad boAd
 	var active int
 	var startsAt, endsAt sql.NullTime
-	var contentRaw, ctasRaw, layoutRaw []byte
+	var contentRaw, ctasRaw, layoutRaw, canvasRaw []byte
 	var statusRaw sql.NullString
 	var startedAt, createdAt, updatedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
-		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &layoutRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
+		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &layoutRaw, &canvasRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
 	if err != nil {
 		return ad, err
 	}
@@ -515,6 +517,13 @@ func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (bo
 		if err := json.Unmarshal(layoutRaw, &ad.Layout); err != nil {
 			return ad, err
 		}
+	}
+	if len(canvasRaw) > 0 {
+		var canvas boAdCanvas
+		if err := json.Unmarshal(canvasRaw, &canvas); err != nil {
+			return ad, err
+		}
+		ad.Canvas = &canvas
 	}
 	if createdAt.Valid {
 		ad.CreatedAt = createdAt.Time.UTC().Format(time.RFC3339)
@@ -547,6 +556,9 @@ func validateBOAdInput(input boAdInput) (boAdInput, error) {
 		return input, err
 	}
 	input.Layout = layout
+	if err := validateBOAdCanvas(input.Canvas); err != nil {
+		return input, err
+	}
 	if (input.StartsAt == nil) != (input.EndsAt == nil) {
 		return input, errors.New("start and end dates must be provided together")
 	}
@@ -634,15 +646,19 @@ func (s *Server) updateBOAd(ctx context.Context, restaurantID int, adID int64, i
 	if normalized.Layout != nil {
 		layoutRaw, _ = json.Marshal(normalized.Layout)
 	}
+	var canvasRaw []byte
+	if normalized.Canvas != nil {
+		canvasRaw, _ = json.Marshal(normalized.Canvas)
+	}
 	if adID <= 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw)
+		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw)
 		if err != nil {
 			return boAd{}, err
 		}
 		id, _ := res.LastInsertId()
 		return s.readBOAd(ctx, restaurantID, id)
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ? WHERE id = ? AND restaurant_id = ?`, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, adID, restaurantID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ?, canvas_json = ? WHERE id = ? AND restaurant_id = ?`, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw, adID, restaurantID); err != nil {
 		return boAd{}, err
 	}
 	return s.readBOAd(ctx, restaurantID, adID)
