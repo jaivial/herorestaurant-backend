@@ -2,15 +2,39 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 )
 
-func assistantCatalogResources() map[string]struct{ table, name, desc, price, softDelete string } {
-	return map[string]struct{ table, name, desc, price, softDelete string }{
-		"comida": {"comida", "nombre", "descripcion", "precio", "activo"}, "bebidas": {"bebidas", "nombre", "descripcion", "precio", "activo"}, "cafes": {"cafes", "nombre", "descripcion", "precio", "activo"}, "vinos": {"vinos", "nombre", "descripcion", "precio", "activo"}, "menus": {"group_menus", "name", "description", "price", "active"}, "pos_products": {"pos_products", "name", "description", "price_cents", "status"}, "stock_items": {"stock_items", "name", "description", "unit_cost", "status"}, "members": {"members", "name", "email", "phone", "active"},
+func assistantCatalogResources() map[string]struct{ table, idCol, name, desc, price, softDelete, foto string } {
+	type spec struct{ table, idCol, name, desc, price, softDelete, foto string }
+	m := map[string]spec{
+		// Real schema (dev MySQL): BEBIDAS/CAFES/VINOS use num as PK, comida
+		// lives in comida_items, menus has menu_title, POS prices are cents.
+		"comida":       {"comida_items", "id", "nombre", "descripcion", "precio", "active", "foto_url"},
+		"bebidas":      {"BEBIDAS", "num", "nombre", "descripcion", "precio", "active", "foto_path"},
+		"cafes":        {"CAFES", "num", "nombre", "descripcion", "precio", "active", "foto_path"},
+		"vinos":        {"VINOS", "num", "nombre", "descripcion", "precio", "active", "foto"},
+		"menus":        {"menus", "id", "menu_title", "menu_subtitle", "price", "active", "menu_preview_image_path"},
+		"pos_products": {"pos_products", "id", "name", "description", "price_gross_cents", "is_active", ""},
+		"stock_items":  {"stock_items", "id", "name", "description", "", "is_active", "image_url"},
+		"members":      {"restaurant_members", "id", "first_name", "email", "", "is_active", "photo_url"},
 	}
+	out := map[string]struct{ table, idCol, name, desc, price, softDelete, foto string }{}
+	for k, v := range m {
+		out[k] = struct{ table, idCol, name, desc, price, softDelete, foto string }{v.table, v.idCol, v.name, v.desc, v.price, v.softDelete, v.foto}
+	}
+	return out
+}
+
+// catalogPriceExpr returns the price column or NULL when the resource has none.
+func catalogPriceExpr(sp struct{ table, idCol, name, desc, price, softDelete, foto string }) string {
+	if sp.price == "" {
+		return "NULL"
+	}
+	return sp.price
 }
 
 func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string, raw json.RawMessage) (string, error) {
@@ -44,13 +68,17 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		if limit < 1 || limit > 100 {
 			limit = 50
 		}
-		q := fmt.Sprintf("SELECT id,%s,%s,%s FROM %s WHERE restaurant_id=?", spec.name, spec.desc, spec.price, spec.table)
+		fotoExpr := "NULL"
+		if spec.foto != "" {
+			fotoExpr = spec.foto
+		}
+		q := fmt.Sprintf("SELECT %s,%s,%s,%s,%s FROM %s WHERE restaurant_id=?", spec.idCol, spec.name, spec.desc, catalogPriceExpr(spec), fotoExpr, spec.table)
 		args := []any{rid}
 		if in.Search != "" {
 			q += fmt.Sprintf(" AND %s LIKE ?", spec.name)
 			args = append(args, "%"+in.Search+"%")
 		}
-		q += fmt.Sprintf(" ORDER BY id DESC LIMIT %d", limit)
+		q += fmt.Sprintf(" ORDER BY %s DESC LIMIT %d", spec.idCol, limit)
 		rows, e := s.db.QueryContext(ctx, q, args...)
 		if e != nil {
 			return "", e
@@ -60,22 +88,39 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		for rows.Next() {
 			var id int
 			var n, d string
-			var p any
-			if e = rows.Scan(&id, &n, &d, &p); e != nil {
+			// TEXT/DECIMAL scanned into any arrive as []byte and JSON-marshal as
+			// base64; scan into NullString so the model sees real values.
+			var p, f sql.NullString
+			if e = rows.Scan(&id, &n, &d, &p, &f); e != nil {
 				return "", e
 			}
-			out = append(out, map[string]any{"id": id, "name": n, "description": d, "price": p})
+			item := map[string]any{"id": id, "name": n, "description": d, "price": nil}
+			if p.Valid {
+				item["price"] = p.String
+			}
+			if spec.foto != "" {
+				var fv any
+				if f.Valid {
+					fv = f.String
+				}
+				item["foto"] = fv
+			}
+			out = append(out, item)
 		}
 		return botJSON(map[string]any{"resource": in.Resource, "items": out}), rows.Err()
 	case "catalog_get":
 		var id int
 		var n, d string
-		var p any
-		e := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT id,%s,%s,%s FROM %s WHERE restaurant_id=? AND id=?", spec.name, spec.desc, spec.price, spec.table), rid, in.ID).Scan(&id, &n, &d, &p)
+		var p sql.NullString
+		e := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT %s,%s,%s,%s FROM %s WHERE restaurant_id=? AND %s=?", spec.idCol, spec.name, spec.desc, catalogPriceExpr(spec), spec.table, spec.idCol), rid, in.ID).Scan(&id, &n, &d, &p)
 		if e != nil {
 			return "", e
 		}
-		return botJSON(map[string]any{"id": id, "name": n, "description": d, "price": p}), nil
+		var pv any
+		if p.Valid {
+			pv = p.String
+		}
+		return botJSON(map[string]any{"id": id, "name": n, "description": d, "price": pv}), nil
 	case "catalog_create":
 		if !in.Confirmed {
 			return s.assistantRequireConfirmation(rid, name, raw)
@@ -83,7 +128,12 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, raw); err != nil {
 			return "", err
 		}
-		res, e := s.db.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (restaurant_id,%s,%s,%s) VALUES (?,?,?,?)", spec.table, spec.name, spec.desc, spec.price), rid, in.Name, in.Description, in.Price)
+		res, e := func() (sql.Result, error) {
+			if spec.price == "" {
+				return s.db.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (restaurant_id,%s,%s) VALUES (?,?,?)", spec.table, spec.name, spec.desc), rid, in.Name, in.Description)
+			}
+			return s.db.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (restaurant_id,%s,%s,%s) VALUES (?,?,?,?)", spec.table, spec.name, spec.desc, spec.price), rid, in.Name, in.Description, in.Price)
+		}()
 		if e != nil {
 			return "", e
 		}
@@ -96,7 +146,12 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, raw); err != nil {
 			return "", err
 		}
-		res, e := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=COALESCE(NULLIF(?,''),%s),%s=COALESCE(NULLIF(?,''),%s),%s=? WHERE restaurant_id=? AND id=?", spec.table, spec.name, spec.name, spec.desc, spec.desc, spec.price), in.Name, in.Description, in.Price, rid, in.ID)
+		res, e := func() (sql.Result, error) {
+			if spec.price == "" {
+				return s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=COALESCE(NULLIF(?,''),%s),%s=COALESCE(NULLIF(?,''),%s) WHERE restaurant_id=? AND %s=?", spec.table, spec.name, spec.name, spec.desc, spec.desc, spec.idCol), in.Name, in.Description, rid, in.ID)
+			}
+			return s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=COALESCE(NULLIF(?,''),%s),%s=COALESCE(NULLIF(?,''),%s),%s=? WHERE restaurant_id=? AND %s=?", spec.table, spec.name, spec.name, spec.desc, spec.desc, spec.price, spec.idCol), in.Name, in.Description, in.Price, rid, in.ID)
+		}()
 		if e != nil {
 			return "", e
 		}
@@ -109,7 +164,7 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, raw); err != nil {
 			return "", err
 		}
-		res, e := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=? WHERE restaurant_id=? AND id=?", spec.table, spec.softDelete), 0, rid, in.ID)
+		res, e := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=? WHERE restaurant_id=? AND %s=?", spec.table, spec.softDelete, spec.idCol), 0, rid, in.ID)
 		if e != nil {
 			return "", e
 		}

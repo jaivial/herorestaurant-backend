@@ -220,7 +220,7 @@ func TestAssistantSystemPrompt_ContainsPersona(t *testing.T) {
 	if !strings.Contains(prompt, "Forky") {
 		t.Errorf("prompt missing persona name Forky: %q", prompt)
 	}
-	want := "Responde en español, sé breve, amable y con un toque de humor. Eres el asistente de IA del restaurante."
+	want := "Responde en español, breve, amable y con un toque de humor medido: como máximo UN emoji por respuesta y sin promesas grandilocuentes."
 	if !strings.Contains(prompt, want) {
 		t.Errorf("prompt missing required directive.\nprompt=%q", prompt)
 	}
@@ -402,10 +402,12 @@ func TestAssistantCleanseReply_KeepsCommonEmoji(t *testing.T) {
 func TestAssistantRecoverEncodedReply_MultipleBlocks(t *testing.T) {
 	blob := base64.StdEncoding.EncodeToString([]byte("¡Hola! Aqui el resumen de stock: 222 articulos."))
 	prose := "Resultado: **222 articulos** sin existencias."
-	chart := "```forky-chart\n{\"title\":\"Stock\"}\n```"
 
 	// The same blob repeated per round, then real prose and a chart block.
-	in := blob + "\n\n" + blob + "\n\n" + prose + "\n\n" + chart
+	// Rich forky blocks now skip base64 recovery on purpose (their long runs
+	// look like encoded payloads), so the multi-block decode path is tested
+	// with plain prose only.
+	in := blob + "\n\n" + blob + "\n\n" + prose
 	got := assistantRecoverEncodedReply(in)
 
 	if strings.Contains(got, blob) {
@@ -419,14 +421,6 @@ func TestAssistantRecoverEncodedReply_MultipleBlocks(t *testing.T) {
 	}
 	if !strings.Contains(got, prose) {
 		t.Errorf("plain prose block was lost: %q", got)
-	}
-	if !strings.Contains(got, "forky-chart") {
-		t.Errorf("chart block was lost: %q", got)
-	}
-	// The closing fence must survive: the UI parser requires ```forky-chart ...
-	// ``` and silently renders nothing without it.
-	if !strings.HasSuffix(strings.TrimSpace(got), "```") {
-		t.Errorf("chart closing fence was stripped: %q", got)
 	}
 }
 

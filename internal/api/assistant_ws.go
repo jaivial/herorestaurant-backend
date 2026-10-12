@@ -249,11 +249,15 @@ func (c *assistantClient) loadHistory(ctx context.Context, sessionID int64) ([]a
 	defer rows.Close()
 	var out []assistantChatMessage
 	for rows.Next() {
-		var m assistantChatMessage
-		if err := rows.Scan(&m.Role, &m.Content); err != nil {
+		// Scan into explicit strings: scanning TEXT into the interface Content
+		// yields []byte, and the hello frame's JSON marshal would emit it as
+		// base64 (assistant replies were rescued by the client-side decoder,
+		// but user messages rendered as raw base64 blobs).
+		var role, content string
+		if err := rows.Scan(&role, &content); err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+		out = append(out, assistantChatMessage{Role: role, Content: content})
 	}
 	// Contaminated rows already in the database keep poisoning their session on
 	// every replay, so filter them out of the context we send to the model.
@@ -374,6 +378,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		_ = c.s.db.QueryRowContext(ctx, `SELECT COALESCE(restaurant_id,0) FROM assistant_sessions WHERE id=?`, sid).Scan(&restaurantID)
 	}
 	prompt := c.s.buildAssistantSystemPrompt(ctx, restaurantID)
+	if c.auth != nil {
+		prompt += assistantMemoryPromptBlock(c.s.loadAssistantMemories(ctx, restaurantID, c.auth.User.ID, 15))
+	}
 	_ = c.writeJSON(map[string]any{"type": "status", "state": "thinking"})
 	toolDefs := assistantToolDefs()
 	toolMsgs := append([]assistantChatMessage{}, hist...)
@@ -389,6 +396,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		// the client and before persisting, so the chat never shows a raw blob.
 		turnText := assistantRecoverEncodedReply(result.Text)
 		if turnText != "" {
+			if final.Len() > 0 {
+				final.WriteString("\n\n")
+			}
 			final.WriteString(turnText)
 			_ = c.writeJSON(map[string]any{"type": "delta", "text": turnText})
 		}
@@ -424,12 +434,16 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 	// turn and prime the model to produce more of the same. Dropping it keeps
 	// the session clean, and the user simply sees the (already streamed) text
 	// without it contaminating future context.
-	reply := assistantSanitizeForHistory(final.String())
+	reply := assistantNormalizeRichBlocks(assistantSanitizeForHistory(final.String()), toolMsgs)
 	if strings.TrimSpace(reply) != "" {
 		if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, reply); err != nil {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist reply"})
 			return
 		}
 	}
+	if c.auth != nil {
+		c.s.kickAssistantMemoryExtraction(ctx, restaurantID, c.auth.User.ID, content, final.String())
+	}
+
 	_ = c.writeJSON(map[string]any{"type": "done"})
 }

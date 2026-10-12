@@ -1,548 +1,605 @@
-# User stories - Backoffice Alqueria (paso 7)
+# User stories - Backoffice APP
 
-Generado desde ENDPOINTS.md (fuente de verdad de la API). Cada historia tiene criterio de aceptacion testeable con cu contra backoffice-dev.menustudioai.com.
+Generado a partir de `forky_admin_ops.json` (556 operaciones `/admin`, mapa del paso 2).
+Cada historia referencia su operacion; el ACL exacto viene de los gates de la ruta.
+Estado de prueba con cu: [ ] pendiente, [x] verificado en dev.
 
-Estados: pendiente / ok / bug (con PR que lo arregla).
+## pos (126 operaciones)
 
-| ID | Area | Historia | Criterio de aceptacion | Estado |
-|----|------|----------|------------------------|--------|
-| US-0001 | Publico | Como visitante puedo consultar booking?id=<booking_id> (`GET /api/public/booking?id=<booking_id>`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0002 | Backoffice | Como miembro del backoffice puedo consultar overview (`GET /api/admin/analytics/overview`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0003 | Backoffice | Sin sesion valida, `GET /api/admin/analytics/overview` | Respuesta 401/403, nunca datos | ok |
-| US-0004 | Backoffice | Como miembro del backoffice puedo ejecutar refresh (`POST /api/admin/analytics/refresh`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0005 | Backoffice | Sin sesion valida, `POST /api/admin/analytics/refresh` | Respuesta 401/403, nunca datos | ok |
-| US-0006 | Backoffice | `POST /api/admin/analytics/refresh` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0007 | Backoffice | Como miembro del backoffice puedo ejecutar login (`POST /api/admin/login`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0008 | Backoffice | `POST /api/admin/login` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0009 | Backoffice | Como miembro del backoffice puedo ejecutar logout (`POST /api/admin/logout`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0010 | Backoffice | Sin sesion valida, `POST /api/admin/logout` | Respuesta 401/403, nunca datos | ok (pre-auth por diseno) |
-| US-0011 | Backoffice | `POST /api/admin/logout` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0012 | Backoffice | Como miembro del backoffice puedo consultar me (`GET /api/admin/me`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0013 | Backoffice | Sin sesion valida, `GET /api/admin/me` | Respuesta 401/403, nunca datos | ok |
-| US-0014 | Backoffice | Como miembro del backoffice puedo actualizar preferences (`PUT /api/admin/me/preferences`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0015 | Backoffice | Sin sesion valida, `PUT /api/admin/me/preferences` | Respuesta 401/403, nunca datos | ok |
-| US-0016 | Backoffice | `PUT /api/admin/me/preferences` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0017 | API | Como cliente de la API puedo consultar healthz (`GET /healthz`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0018 | Backoffice | Como miembro del backoffice puedo consultar metrics (`GET /api/admin/dashboard/metrics`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0019 | Backoffice | Sin sesion valida, `GET /api/admin/dashboard/metrics` | Respuesta 401/403, nunca datos | ok |
-| US-0020 | Backoffice | Como miembro del backoffice puedo ejecutar password (`POST /api/admin/me/password`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0021 | Backoffice | Sin sesion valida, `POST /api/admin/me/password` | Respuesta 401/403, nunca datos | ok |
-| US-0022 | Backoffice | `POST /api/admin/me/password` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0023 | Backoffice | Como miembro del backoffice puedo ejecutar active restaurant (`POST /api/admin/active-restaurant`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0024 | Backoffice | Sin sesion valida, `POST /api/admin/active-restaurant` | Respuesta 401/403, nunca datos | ok |
-| US-0025 | Backoffice | `POST /api/admin/active-restaurant` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0026 | Backoffice | Como miembro del backoffice puedo consultar members (`GET /api/admin/members`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0027 | Backoffice | Sin sesion valida, `GET /api/admin/members` | Respuesta 401/403, nunca datos | ok |
-| US-0028 | Backoffice | Como miembro del backoffice puedo ejecutar members (`POST /api/admin/members`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0029 | Backoffice | Sin sesion valida, `POST /api/admin/members` | Respuesta 401/403, nunca datos | ok |
-| US-0030 | Backoffice | `POST /api/admin/members` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0031 | Backoffice | Como miembro del backoffice puedo ejecutar resend (`POST /api/admin/members/{id}/invitation/resend`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0032 | Backoffice | Sin sesion valida, `POST /api/admin/members/{id}/invitation/resend` | Respuesta 401/403, nunca datos | ok |
-| US-0033 | Backoffice | `POST /api/admin/members/{id}/invitation/resend` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0034 | Backoffice | Como miembro del backoffice puedo ejecutar send (`POST /api/admin/members/{id}/password-reset/send`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0035 | Backoffice | Sin sesion valida, `POST /api/admin/members/{id}/password-reset/send` | Respuesta 401/403, nunca datos | ok |
-| US-0036 | Backoffice | `POST /api/admin/members/{id}/password-reset/send` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0037 | Backoffice | Como miembro del backoffice puedo consultar elemento (`GET /api/admin/members/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0038 | Backoffice | Sin sesion valida, `GET /api/admin/members/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0039 | Backoffice | Como miembro del backoffice puedo actualizar elemento (`PATCH /api/admin/members/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0040 | Backoffice | Sin sesion valida, `PATCH /api/admin/members/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0041 | Backoffice | `PATCH /api/admin/members/{id}` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0042 | Backoffice | Como miembro del backoffice puedo eliminar elemento (`DELETE /api/admin/members/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0043 | Backoffice | Sin sesion valida, `DELETE /api/admin/members/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0044 | Backoffice | Como miembro del backoffice puedo consultar compensations (`GET /api/admin/members/{id}/compensations`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0045 | Backoffice | Sin sesion valida, `GET /api/admin/members/{id}/compensations` | Respuesta 401/403, nunca datos | ok |
-| US-0046 | Backoffice | Como miembro del backoffice puedo ejecutar compensations (`POST /api/admin/members/{id}/compensations`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0047 | Backoffice | Sin sesion valida, `POST /api/admin/members/{id}/compensations` | Respuesta 401/403, nunca datos | ok |
-| US-0048 | Backoffice | `POST /api/admin/members/{id}/compensations` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0049 | Backoffice | Como miembro del backoffice puedo actualizar elemento (`PATCH /api/admin/members/{id}/compensations/{compensationId}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0050 | Backoffice | Sin sesion valida, `PATCH /api/admin/members/{id}/compensations/{compensationId}` | Respuesta 401/403, nunca datos | ok |
-| US-0051 | Backoffice | `PATCH /api/admin/members/{id}/compensations/{compensationId}` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0052 | Backoffice | Como miembro del backoffice puedo eliminar elemento (`DELETE /api/admin/members/{id}/compensations/{compensationId}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0053 | Backoffice | Sin sesion valida, `DELETE /api/admin/members/{id}/compensations/{compensationId}` | Respuesta 401/403, nunca datos | ok |
-| US-0054 | Backoffice | Como miembro del backoffice puedo consultar stats (`GET /api/admin/members/{id}/stats`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0055 | Backoffice | Sin sesion valida, `GET /api/admin/members/{id}/stats` | Respuesta 401/403, nunca datos | ok |
-| US-0056 | Backoffice | Como miembro del backoffice puedo consultar time balance (`GET /api/admin/members/{id}/time-balance`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0057 | Backoffice | Sin sesion valida, `GET /api/admin/members/{id}/time-balance` | Respuesta 401/403, nunca datos | ok |
-| US-0058 | Backoffice | Como miembro del backoffice puedo ejecutar ensure user (`POST /api/admin/members/{id}/ensure-user`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0059 | Backoffice | Sin sesion valida, `POST /api/admin/members/{id}/ensure-user` | Respuesta 401/403, nunca datos | ok |
-| US-0060 | Backoffice | `POST /api/admin/members/{id}/ensure-user` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0061 | Backoffice | Como miembro del backoffice puedo consultar roles (`GET /api/admin/roles`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0062 | Backoffice | Sin sesion valida, `GET /api/admin/roles` | Respuesta 401/403, nunca datos | ok |
-| US-0063 | Backoffice | Como miembro del backoffice puedo ejecutar roles (`POST /api/admin/roles`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0064 | Backoffice | Sin sesion valida, `POST /api/admin/roles` | Respuesta 401/403, nunca datos | ok |
-| US-0065 | Backoffice | `POST /api/admin/roles` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0066 | Backoffice | Como miembro del backoffice puedo actualizar role (`PATCH /api/admin/users/{id}/role`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0067 | Backoffice | Sin sesion valida, `PATCH /api/admin/users/{id}/role` | Respuesta 401/403, nunca datos | ok |
-| US-0068 | Backoffice | `PATCH /api/admin/users/{id}/role` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0069 | Backoffice | Como miembro del backoffice puedo ejecutar validate (`POST /api/admin/invitations/validate`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0070 | Backoffice | Sin sesion valida, `POST /api/admin/invitations/validate` | Respuesta 401/403, nunca datos | ok (pre-auth por diseno) |
-| US-0071 | Backoffice | `POST /api/admin/invitations/validate` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0072 | Backoffice | Como miembro del backoffice puedo ejecutar start (`POST /api/admin/invitations/onboarding/start`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0073 | Backoffice | Sin sesion valida, `POST /api/admin/invitations/onboarding/start` | Respuesta 401/403, nunca datos | ok (pre-auth por diseno) |
-| US-0074 | Backoffice | `POST /api/admin/invitations/onboarding/start` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0075 | Backoffice | Como miembro del backoffice puedo consultar elemento (`GET /api/admin/invitations/onboarding/{guid}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0076 | Backoffice | Sin sesion valida, `GET /api/admin/invitations/onboarding/{guid}` | Respuesta 401/403, nunca datos | ok (pre-auth por diseno) |
-| US-0077 | Backoffice | Como miembro del backoffice puedo ejecutar profile (`POST /api/admin/invitations/onboarding/{guid}/profile`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0078 | Backoffice | Sin sesion valida, `POST /api/admin/invitations/onboarding/{guid}/profile` | Respuesta 401/403, nunca datos | ok (pre-auth por diseno) |
-| US-0079 | Backoffice | `POST /api/admin/invitations/onboarding/{guid}/profile` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0080 | Backoffice | Como miembro del backoffice puedo ejecutar avatar (`POST /api/admin/invitations/onboarding/{guid}/avatar`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0081 | Backoffice | Sin sesion valida, `POST /api/admin/invitations/onboarding/{guid}/avatar` | Respuesta 401/403, nunca datos | ok (pre-auth por diseno) |
-| US-0082 | Backoffice | `POST /api/admin/invitations/onboarding/{guid}/avatar` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0083 | Backoffice | Como miembro del backoffice puedo ejecutar password (`POST /api/admin/invitations/onboarding/{guid}/password`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0084 | Backoffice | Sin sesion valida, `POST /api/admin/invitations/onboarding/{guid}/password` | Respuesta 401/403, nunca datos | ok (pre-auth por diseno) |
-| US-0085 | Backoffice | `POST /api/admin/invitations/onboarding/{guid}/password` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0086 | Backoffice | Como miembro del backoffice puedo ejecutar validate (`POST /api/admin/password-resets/validate`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0087 | Backoffice | Sin sesion valida, `POST /api/admin/password-resets/validate` | Respuesta 401/403, nunca datos | ok (pre-auth por diseno) |
-| US-0088 | Backoffice | `POST /api/admin/password-resets/validate` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0089 | Backoffice | Como miembro del backoffice puedo ejecutar confirm (`POST /api/admin/password-resets/confirm`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0090 | Backoffice | Sin sesion valida, `POST /api/admin/password-resets/confirm` | Respuesta 401/403, nunca datos | ok (pre-auth por diseno) |
-| US-0091 | Backoffice | `POST /api/admin/password-resets/confirm` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0092 | Backoffice | Como miembro del backoffice puedo consultar ping (`GET /api/admin/fichaje/ping`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0093 | Backoffice | Sin sesion valida, `GET /api/admin/fichaje/ping` | Respuesta 401/403, nunca datos | ok |
-| US-0094 | Backoffice | Como miembro del backoffice puedo consultar state (`GET /api/admin/fichaje/state`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0095 | Backoffice | Sin sesion valida, `GET /api/admin/fichaje/state` | Respuesta 401/403, nunca datos | ok |
-| US-0096 | Backoffice | Como miembro del backoffice puedo ejecutar start (`POST /api/admin/fichaje/start`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0097 | Backoffice | Sin sesion valida, `POST /api/admin/fichaje/start` | Respuesta 401/403, nunca datos | ok |
-| US-0098 | Backoffice | `POST /api/admin/fichaje/start` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0099 | Backoffice | Como miembro del backoffice puedo ejecutar stop (`POST /api/admin/fichaje/stop`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0100 | Backoffice | Sin sesion valida, `POST /api/admin/fichaje/stop` | Respuesta 401/403, nunca datos | ok |
-| US-0101 | Backoffice | `POST /api/admin/fichaje/stop` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0102 | Backoffice | Como miembro del backoffice puedo ejecutar start (`POST /api/admin/fichaje/admin/start`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0103 | Backoffice | Sin sesion valida, `POST /api/admin/fichaje/admin/start` | Respuesta 401/403, nunca datos | ok |
-| US-0104 | Backoffice | `POST /api/admin/fichaje/admin/start` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0105 | Backoffice | Como miembro del backoffice puedo ejecutar stop (`POST /api/admin/fichaje/admin/stop`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0106 | Backoffice | Sin sesion valida, `POST /api/admin/fichaje/admin/stop` | Respuesta 401/403, nunca datos | ok |
-| US-0107 | Backoffice | `POST /api/admin/fichaje/admin/stop` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0108 | Backoffice | Como miembro del backoffice puedo consultar entries (`GET /api/admin/fichaje/entries`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0109 | Backoffice | Sin sesion valida, `GET /api/admin/fichaje/entries` | Respuesta 401/403, nunca datos | ok |
-| US-0110 | Backoffice | Como miembro del backoffice puedo actualizar elemento (`PATCH /api/admin/fichaje/entries/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0111 | Backoffice | Sin sesion valida, `PATCH /api/admin/fichaje/entries/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0112 | Backoffice | `PATCH /api/admin/fichaje/entries/{id}` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0113 | Backoffice | Como miembro del backoffice puedo consultar labour cost (`GET /api/admin/fichaje/labour-cost`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0114 | Backoffice | Sin sesion valida, `GET /api/admin/fichaje/labour-cost` | Respuesta 401/403, nunca datos | ok |
-| US-0115 | Backoffice | Como miembro del backoffice puedo consultar ws (`GET /api/admin/fichaje/ws`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0116 | Backoffice | Sin sesion valida, `GET /api/admin/fichaje/ws` | Respuesta 401/403, nunca datos | ok |
-| US-0117 | Backoffice | Como miembro del backoffice puedo consultar horarios (`GET /api/admin/horarios`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0118 | Backoffice | Sin sesion valida, `GET /api/admin/horarios` | Respuesta 401/403, nunca datos | ok |
-| US-0119 | Backoffice | Como miembro del backoffice puedo ejecutar horarios (`POST /api/admin/horarios`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0120 | Backoffice | Sin sesion valida, `POST /api/admin/horarios` | Respuesta 401/403, nunca datos | ok |
-| US-0121 | Backoffice | `POST /api/admin/horarios` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0122 | Backoffice | Como miembro del backoffice puedo consultar month (`GET /api/admin/horarios/month`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0123 | Backoffice | Sin sesion valida, `GET /api/admin/horarios/month` | Respuesta 401/403, nunca datos | ok |
-| US-0124 | Backoffice | Como miembro del backoffice puedo consultar calendar (`GET /api/admin/calendar`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0125 | Backoffice | Sin sesion valida, `GET /api/admin/calendar` | Respuesta 401/403, nunca datos | ok |
-| US-0126 | Backoffice | Como miembro del backoffice puedo consultar bookings (`GET /api/admin/bookings`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0127 | Backoffice | Sin sesion valida, `GET /api/admin/bookings` | Respuesta 401/403, nunca datos | ok |
-| US-0128 | Backoffice | Como miembro del backoffice puedo consultar export (`GET /api/admin/bookings/export`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0129 | Backoffice | Sin sesion valida, `GET /api/admin/bookings/export` | Respuesta 401/403, nunca datos | ok |
-| US-0130 | Backoffice | Como miembro del backoffice puedo consultar search (`GET /api/admin/bookings/search`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0131 | Backoffice | Sin sesion valida, `GET /api/admin/bookings/search` | Respuesta 401/403, nunca datos | ok |
-| US-0132 | Backoffice | Como miembro del backoffice puedo consultar elemento (`GET /api/admin/bookings/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0133 | Backoffice | Sin sesion valida, `GET /api/admin/bookings/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0134 | Backoffice | Como miembro del backoffice puedo ejecutar bookings (`POST /api/admin/bookings`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0135 | Backoffice | Sin sesion valida, `POST /api/admin/bookings` | Respuesta 401/403, nunca datos | ok |
-| US-0136 | Backoffice | `POST /api/admin/bookings` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0137 | Backoffice | Como miembro del backoffice puedo actualizar elemento (`PATCH /api/admin/bookings/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0138 | Backoffice | Sin sesion valida, `PATCH /api/admin/bookings/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0139 | Backoffice | `PATCH /api/admin/bookings/{id}` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0140 | Backoffice | Como miembro del backoffice puedo ejecutar cancel (`POST /api/admin/bookings/{id}/cancel`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0141 | Backoffice | Sin sesion valida, `POST /api/admin/bookings/{id}/cancel` | Respuesta 401/403, nunca datos | ok |
-| US-0142 | Backoffice | `POST /api/admin/bookings/{id}/cancel` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0143 | Backoffice | Como miembro del backoffice puedo consultar documents (`GET /api/admin/bookings/{id}/documents`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0144 | Backoffice | Sin sesion valida, `GET /api/admin/bookings/{id}/documents` | Respuesta 401/403, nunca datos | ok |
-| US-0145 | Backoffice | Como miembro del backoffice puedo consultar file (`GET /api/admin/bookings/documents/{docId}/file`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0146 | Backoffice | Sin sesion valida, `GET /api/admin/bookings/documents/{docId}/file` | Respuesta 401/403, nunca datos | ok |
-| US-0147 | Backoffice | Como miembro del backoffice puedo consultar ws (`GET /api/admin/bookings/documents/ws`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0148 | Backoffice | Sin sesion valida, `GET /api/admin/bookings/documents/ws` | Respuesta 401/403, nunca datos | ok |
-| US-0149 | Backoffice | Como miembro del backoffice puedo consultar arroz types (`GET /api/admin/arroz-types`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0150 | Backoffice | Sin sesion valida, `GET /api/admin/arroz-types` | Respuesta 401/403, nunca datos | ok |
-| US-0151 | Backoffice | Como miembro del backoffice puedo consultar group menus v2?includeDrafts=0|1 (`GET /api/admin/group-menus-v2?includeDrafts=0|1`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0152 | Backoffice | Sin sesion valida, `GET /api/admin/group-menus-v2?includeDrafts=0|1` | Respuesta 401/403, nunca datos | ok |
-| US-0153 | Backoffice | Como miembro del backoffice puedo ejecutar drafts (`POST /api/admin/group-menus-v2/drafts`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0154 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/drafts` | Respuesta 401/403, nunca datos | ok |
-| US-0155 | Backoffice | `POST /api/admin/group-menus-v2/drafts` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0156 | Backoffice | Como miembro del backoffice puedo consultar elemento (`GET /api/admin/group-menus-v2/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0157 | Backoffice | Sin sesion valida, `GET /api/admin/group-menus-v2/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0158 | Backoffice | Como miembro del backoffice puedo actualizar basics (`PATCH /api/admin/group-menus-v2/{id}/basics`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0159 | Backoffice | Sin sesion valida, `PATCH /api/admin/group-menus-v2/{id}/basics` | Respuesta 401/403, nunca datos | ok |
-| US-0160 | Backoffice | `PATCH /api/admin/group-menus-v2/{id}/basics` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0161 | Backoffice | Como miembro del backoffice puedo actualizar menu type (`PATCH /api/admin/group-menus-v2/{id}/menu-type`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0162 | Backoffice | Sin sesion valida, `PATCH /api/admin/group-menus-v2/{id}/menu-type` | Respuesta 401/403, nunca datos | ok |
-| US-0163 | Backoffice | `PATCH /api/admin/group-menus-v2/{id}/menu-type` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0164 | Backoffice | Como miembro del backoffice puedo actualizar sections (`PUT /api/admin/group-menus-v2/{id}/sections`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0165 | Backoffice | Sin sesion valida, `PUT /api/admin/group-menus-v2/{id}/sections` | Respuesta 401/403, nunca datos | ok |
-| US-0166 | Backoffice | `PUT /api/admin/group-menus-v2/{id}/sections` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0167 | Backoffice | Como miembro del backoffice puedo actualizar annotations (`PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/annotations`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0168 | Backoffice | Sin sesion valida, `PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/annotations` | Respuesta 401/403, nunca datos | ok |
-| US-0169 | Backoffice | `PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/annotations` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0170 | Backoffice | Como miembro del backoffice puedo consultar dishes (`GET /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0171 | Backoffice | Sin sesion valida, `GET /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes` | Respuesta 401/403, nunca datos | ok |
-| US-0172 | Backoffice | Como miembro del backoffice puedo actualizar dishes (`PUT /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0173 | Backoffice | Sin sesion valida, `PUT /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes` | Respuesta 401/403, nunca datos | ok |
-| US-0174 | Backoffice | `PUT /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0175 | Backoffice | Como miembro del backoffice puedo actualizar elemento (`PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0176 | Backoffice | Sin sesion valida, `PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}` | Respuesta 401/403, nunca datos | ok |
-| US-0177 | Backoffice | `PATCH /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0178 | Backoffice | Como miembro del backoffice puedo ejecutar image (`POST /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0179 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image` | Respuesta 401/403, nunca datos | ok |
-| US-0180 | Backoffice | `POST /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0181 | Backoffice | Como miembro del backoffice puedo ejecutar ai (`POST /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image/ai`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0182 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image/ai` | Respuesta 401/403, nunca datos | ok |
-| US-0183 | Backoffice | `POST /api/admin/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}/image/ai` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0184 | Backoffice | Como miembro del backoffice puedo ejecutar preview image (`POST /api/admin/group-menus-v2/{id}/preview-image`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0185 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/{id}/preview-image` | Respuesta 401/403, nunca datos | ok |
-| US-0186 | Backoffice | `POST /api/admin/group-menus-v2/{id}/preview-image` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0187 | Backoffice | Como miembro del backoffice puedo ejecutar ai (`POST /api/admin/group-menus-v2/{id}/preview-image/ai`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0188 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/{id}/preview-image/ai` | Respuesta 401/403, nunca datos | ok |
-| US-0189 | Backoffice | `POST /api/admin/group-menus-v2/{id}/preview-image/ai` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0190 | Backoffice | Como miembro del backoffice puedo consultar slider (`GET /api/admin/group-menus-v2/{id}/slider`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0191 | Backoffice | Sin sesion valida, `GET /api/admin/group-menus-v2/{id}/slider` | Respuesta 401/403, nunca datos | ok |
-| US-0192 | Backoffice | Como miembro del backoffice puedo actualizar slider (`PATCH /api/admin/group-menus-v2/{id}/slider`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0193 | Backoffice | Sin sesion valida, `PATCH /api/admin/group-menus-v2/{id}/slider` | Respuesta 401/403, nunca datos | ok |
-| US-0194 | Backoffice | `PATCH /api/admin/group-menus-v2/{id}/slider` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0195 | Backoffice | Como miembro del backoffice puedo ejecutar images (`POST /api/admin/group-menus-v2/{id}/slider/images`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0196 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/{id}/slider/images` | Respuesta 401/403, nunca datos | ok |
-| US-0197 | Backoffice | `POST /api/admin/group-menus-v2/{id}/slider/images` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0198 | Backoffice | Como miembro del backoffice puedo eliminar elemento (`DELETE /api/admin/group-menus-v2/{id}/slider/images/{imageId}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0199 | Backoffice | Sin sesion valida, `DELETE /api/admin/group-menus-v2/{id}/slider/images/{imageId}` | Respuesta 401/403, nunca datos | ok |
-| US-0200 | Backoffice | Como miembro del backoffice puedo actualizar images (`PUT /api/admin/group-menus-v2/{id}/slider/images`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0201 | Backoffice | Sin sesion valida, `PUT /api/admin/group-menus-v2/{id}/slider/images` | Respuesta 401/403, nunca datos | ok |
-| US-0202 | Backoffice | `PUT /api/admin/group-menus-v2/{id}/slider/images` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0203 | Backoffice | Como miembro del backoffice puedo ejecutar ai (`POST /api/admin/group-menus-v2/{id}/slider/images/ai`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0204 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/{id}/slider/images/ai` | Respuesta 401/403, nunca datos | ok |
-| US-0205 | Backoffice | `POST /api/admin/group-menus-v2/{id}/slider/images/ai` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0206 | Backoffice | Como miembro del backoffice puedo consultar ws?menuId=elemento (`GET /api/admin/group-menus-v2/ws?menuId={id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0207 | Backoffice | Sin sesion valida, `GET /api/admin/group-menus-v2/ws?menuId={id}` | Respuesta 401/403, nunca datos | ok |
-| US-0208 | Backoffice | Como miembro del backoffice puedo ejecutar special image (`POST /api/admin/group-menus-v2/{id}/special-image`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0209 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/{id}/special-image` | Respuesta 401/403, nunca datos | ok |
-| US-0210 | Backoffice | `POST /api/admin/group-menus-v2/{id}/special-image` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0211 | Backoffice | Como miembro del backoffice puedo ejecutar publish (`POST /api/admin/group-menus-v2/{id}/publish`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0212 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/{id}/publish` | Respuesta 401/403, nunca datos | ok |
-| US-0213 | Backoffice | `POST /api/admin/group-menus-v2/{id}/publish` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0214 | Backoffice | Como miembro del backoffice puedo ejecutar toggle active (`POST /api/admin/group-menus-v2/{id}/toggle-active`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0215 | Backoffice | Sin sesion valida, `POST /api/admin/group-menus-v2/{id}/toggle-active` | Respuesta 401/403, nunca datos | ok |
-| US-0216 | Backoffice | `POST /api/admin/group-menus-v2/{id}/toggle-active` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0217 | Backoffice | Como miembro del backoffice puedo eliminar elemento (`DELETE /api/admin/group-menus-v2/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0218 | Backoffice | Sin sesion valida, `DELETE /api/admin/group-menus-v2/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0219 | Backoffice | Como miembro del backoffice puedo consultar search?q=<text>&limit=<n> (`GET /api/admin/dishes-catalog/search?q=<text>&limit=<n>`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0220 | Backoffice | Sin sesion valida, `GET /api/admin/dishes-catalog/search?q=<text>&limit=<n>` | Respuesta 401/403, nunca datos | ok |
-| US-0221 | Backoffice | Como miembro del backoffice puedo ejecutar upsert (`POST /api/admin/dishes-catalog/upsert`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0222 | Backoffice | Sin sesion valida, `POST /api/admin/dishes-catalog/upsert` | Respuesta 401/403, nunca datos | ok |
-| US-0223 | Backoffice | `POST /api/admin/dishes-catalog/upsert` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0224 | Backoffice | Como miembro del backoffice puedo consultar restaurant info (`GET /api/admin/config/restaurant-info`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0225 | Backoffice | Sin sesion valida, `GET /api/admin/config/restaurant-info` | Respuesta 401/403, nunca datos | ok |
-| US-0226 | Backoffice | Como miembro del backoffice puedo ejecutar check website (`POST /api/admin/config/check-website`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0227 | Backoffice | Sin sesion valida, `POST /api/admin/config/check-website` | Respuesta 401/403, nunca datos | ok |
-| US-0228 | Backoffice | `POST /api/admin/config/check-website` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0229 | Backoffice | Como miembro del backoffice puedo ejecutar restaurant info (`POST /api/admin/config/restaurant-info`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0230 | Backoffice | Sin sesion valida, `POST /api/admin/config/restaurant-info` | Respuesta 401/403, nunca datos | ok |
-| US-0231 | Backoffice | `POST /api/admin/config/restaurant-info` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0232 | Backoffice | Como miembro del backoffice puedo consultar defaults (`GET /api/admin/config/defaults`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0233 | Backoffice | Sin sesion valida, `GET /api/admin/config/defaults` | Respuesta 401/403, nunca datos | ok |
-| US-0234 | Backoffice | Como miembro del backoffice puedo ejecutar defaults (`POST /api/admin/config/defaults`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0235 | Backoffice | Sin sesion valida, `POST /api/admin/config/defaults` | Respuesta 401/403, nunca datos | ok |
-| US-0236 | Backoffice | `POST /api/admin/config/defaults` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0237 | Backoffice | Como miembro del backoffice puedo consultar location booking?date=YYYY MM DD (`GET /api/admin/config/location-booking?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0238 | Backoffice | Sin sesion valida, `GET /api/admin/config/location-booking?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | ok |
-| US-0239 | Backoffice | Como miembro del backoffice puedo ejecutar location booking (`POST /api/admin/config/location-booking`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0240 | Backoffice | Sin sesion valida, `POST /api/admin/config/location-booking` | Respuesta 401/403, nunca datos | ok |
-| US-0241 | Backoffice | `POST /api/admin/config/location-booking` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0242 | Backoffice | Como miembro del backoffice puedo ejecutar date (`POST /api/admin/config/floors/date`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0243 | Backoffice | Sin sesion valida, `POST /api/admin/config/floors/date` | Respuesta 401/403, nunca datos | ok |
-| US-0244 | Backoffice | `POST /api/admin/config/floors/date` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0245 | Backoffice | Como miembro del backoffice puedo consultar day?date=YYYY MM DD (`GET /api/admin/config/day?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0246 | Backoffice | Sin sesion valida, `GET /api/admin/config/day?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | ok |
-| US-0247 | Backoffice | Como miembro del backoffice puedo ejecutar day (`POST /api/admin/config/day`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0248 | Backoffice | Sin sesion valida, `POST /api/admin/config/day` | Respuesta 401/403, nunca datos | ok |
-| US-0249 | Backoffice | `POST /api/admin/config/day` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0250 | Backoffice | Como miembro del backoffice puedo consultar opening hours?date=YYYY MM DD (`GET /api/admin/config/opening-hours?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0251 | Backoffice | Sin sesion valida, `GET /api/admin/config/opening-hours?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | ok |
-| US-0252 | Backoffice | Como miembro del backoffice puedo ejecutar opening hours (`POST /api/admin/config/opening-hours`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0253 | Backoffice | Sin sesion valida, `POST /api/admin/config/opening-hours` | Respuesta 401/403, nunca datos | ok |
-| US-0254 | Backoffice | `POST /api/admin/config/opening-hours` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0255 | Backoffice | Como miembro del backoffice puedo consultar daily limit?date=YYYY MM DD (`GET /api/admin/config/daily-limit?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0256 | Backoffice | Sin sesion valida, `GET /api/admin/config/daily-limit?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | ok |
-| US-0257 | Backoffice | Como miembro del backoffice puedo ejecutar daily limit (`POST /api/admin/config/daily-limit`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0258 | Backoffice | Sin sesion valida, `POST /api/admin/config/daily-limit` | Respuesta 401/403, nunca datos | ok |
-| US-0259 | Backoffice | `POST /api/admin/config/daily-limit` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0260 | Backoffice | Como miembro del backoffice puedo consultar mesas de dos?date=YYYY MM DD (`GET /api/admin/config/mesas-de-dos?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0261 | Backoffice | Sin sesion valida, `GET /api/admin/config/mesas-de-dos?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | ok |
-| US-0262 | Backoffice | Como miembro del backoffice puedo ejecutar mesas de dos (`POST /api/admin/config/mesas-de-dos`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0263 | Backoffice | Sin sesion valida, `POST /api/admin/config/mesas-de-dos` | Respuesta 401/403, nunca datos | ok |
-| US-0264 | Backoffice | `POST /api/admin/config/mesas-de-dos` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0265 | Backoffice | Como miembro del backoffice puedo consultar mesas de tres?date=YYYY MM DD (`GET /api/admin/config/mesas-de-tres?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0266 | Backoffice | Sin sesion valida, `GET /api/admin/config/mesas-de-tres?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | ok |
-| US-0267 | Backoffice | Como miembro del backoffice puedo ejecutar mesas de tres (`POST /api/admin/config/mesas-de-tres`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0268 | Backoffice | Sin sesion valida, `POST /api/admin/config/mesas-de-tres` | Respuesta 401/403, nunca datos | ok |
-| US-0269 | Backoffice | `POST /api/admin/config/mesas-de-tres` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0270 | Backoffice | Como miembro del backoffice puedo consultar defaults (`GET /api/admin/config/floors/defaults`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0271 | Backoffice | Sin sesion valida, `GET /api/admin/config/floors/defaults` | Respuesta 401/403, nunca datos | ok |
-| US-0272 | Backoffice | Como miembro del backoffice puedo ejecutar defaults (`POST /api/admin/config/floors/defaults`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0273 | Backoffice | Sin sesion valida, `POST /api/admin/config/floors/defaults` | Respuesta 401/403, nunca datos | ok |
-| US-0274 | Backoffice | `POST /api/admin/config/floors/defaults` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0275 | Backoffice | Como miembro del backoffice puedo consultar floors?date=YYYY MM DD (`GET /api/admin/config/floors?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0276 | Backoffice | Sin sesion valida, `GET /api/admin/config/floors?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | ok |
-| US-0277 | Backoffice | Como miembro del backoffice puedo ejecutar floors (`POST /api/admin/config/floors`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0278 | Backoffice | Sin sesion valida, `POST /api/admin/config/floors` | Respuesta 401/403, nunca datos | ok |
-| US-0279 | Backoffice | `POST /api/admin/config/floors` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0280 | API | Como cliente de la API puedo consultar menu visibility (`GET /api/menu-visibility`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0281 | API | Sin sesion valida, `GET /api/menu-visibility` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0282 | API | Como cliente de la API puedo consultar home (`GET /api/menus/home`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0283 | API | Sin sesion valida, `GET /api/menus/home` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0284 | API | Como cliente de la API puedo consultar public (`GET /api/menus/public`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0285 | API | Sin sesion valida, `GET /api/menus/public` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0286 | API | Como cliente de la API puedo consultar dia (`GET /api/menus/dia`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0287 | API | Sin sesion valida, `GET /api/menus/dia` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0288 | API | Como cliente de la API puedo consultar finde (`GET /api/menus/finde`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0289 | API | Sin sesion valida, `GET /api/menus/finde` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0290 | API | Como cliente de la API puedo consultar postres (`GET /api/postres`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0291 | API | Sin sesion valida, `GET /api/postres` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0292 | API | Como cliente de la API puedo consultar vinos (`GET /api/vinos`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0293 | API | Sin sesion valida, `GET /api/vinos` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0294 | API | Como cliente de la API puedo consultar api_vinos.php (`GET /api/api_vinos.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0295 | API | Sin sesion valida, `GET /api/api_vinos.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0296 | API | Como cliente de la API puedo ejecutar vinos (`POST /api/vinos`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0297 | API | Sin sesion valida, `POST /api/vinos` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0298 | API | `POST /api/vinos` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0299 | API | Como cliente de la API puedo ejecutar api_vinos.php (`POST /api/api_vinos.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0300 | API | Sin sesion valida, `POST /api/api_vinos.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0301 | API | `POST /api/api_vinos.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0302 | API | Como cliente de la API puedo ejecutar toggleMenuVisibility.php (`POST /api/menuVisibilityBackend/toggleMenuVisibility.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0303 | API | Sin sesion valida, `POST /api/menuVisibilityBackend/toggleMenuVisibility.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0304 | API | `POST /api/menuVisibilityBackend/toggleMenuVisibility.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0305 | API | Como cliente de la API puedo ejecutar updateDishDia.php (`POST /api/updateDishDia.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0306 | API | Sin sesion valida, `POST /api/updateDishDia.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0307 | API | `POST /api/updateDishDia.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0308 | API | Como cliente de la API puedo ejecutar toggleDishStatusDia.php (`POST /api/toggleDishStatusDia.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0309 | API | Sin sesion valida, `POST /api/toggleDishStatusDia.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0310 | API | `POST /api/toggleDishStatusDia.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0311 | API | Como cliente de la API puedo consultar searchDishesDia.php (`GET /api/searchDishesDia.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0312 | API | Sin sesion valida, `GET /api/searchDishesDia.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0313 | API | Como cliente de la API puedo ejecutar updateDish.php (`POST /api/updateDish.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0314 | API | Sin sesion valida, `POST /api/updateDish.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0315 | API | `POST /api/updateDish.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0316 | API | Como cliente de la API puedo ejecutar toggleDishStatus.php (`POST /api/toggleDishStatus.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0317 | API | Sin sesion valida, `POST /api/toggleDishStatus.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0318 | API | `POST /api/toggleDishStatus.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0319 | API | Como cliente de la API puedo consultar searchDishesFinde.php (`GET /api/searchDishesFinde.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0320 | API | Sin sesion valida, `GET /api/searchDishesFinde.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0321 | API | Como cliente de la API puedo consultar updatePostre.php (`GET /api/updatePostre.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0322 | API | Sin sesion valida, `GET /api/updatePostre.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0323 | API | Como cliente de la API puedo ejecutar updatePostre.php (`POST /api/updatePostre.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0324 | API | Sin sesion valida, `POST /api/updatePostre.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0325 | API | `POST /api/updatePostre.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0326 | API | Como cliente de la API puedo consultar searchPostres.php (`GET /api/searchPostres.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0327 | API | Sin sesion valida, `GET /api/searchPostres.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0328 | API | Como cliente de la API puedo consultar getAllMenus.php (`GET /api/menuDeGruposBackend/getAllMenus.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0329 | API | Sin sesion valida, `GET /api/menuDeGruposBackend/getAllMenus.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0330 | API | Como cliente de la API puedo consultar getMenu.php?id=<id> (`GET /api/menuDeGruposBackend/getMenu.php?id=<id>`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0331 | API | Sin sesion valida, `GET /api/menuDeGruposBackend/getMenu.php?id=<id>` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0332 | API | Como cliente de la API puedo consultar getActiveMenusForDisplay.php (`GET /api/menuDeGruposBackend/getActiveMenusForDisplay.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0333 | API | Sin sesion valida, `GET /api/menuDeGruposBackend/getActiveMenusForDisplay.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0334 | API | Como cliente de la API puedo consultar getMenuForDisplay?id=<id> (`GET /api/menuDeGruposBackend/getMenuForDisplay?id=<id>`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0335 | API | Sin sesion valida, `GET /api/menuDeGruposBackend/getMenuForDisplay?id=<id>` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0336 | API | Como cliente de la API puedo ejecutar addMenu.php (`POST /api/menuDeGruposBackend/addMenu.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0337 | API | Sin sesion valida, `POST /api/menuDeGruposBackend/addMenu.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0338 | API | `POST /api/menuDeGruposBackend/addMenu.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0339 | API | Como cliente de la API puedo ejecutar updateMenu.php (`POST /api/menuDeGruposBackend/updateMenu.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0340 | API | Sin sesion valida, `POST /api/menuDeGruposBackend/updateMenu.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0341 | API | `POST /api/menuDeGruposBackend/updateMenu.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0342 | API | Como cliente de la API puedo actualizar updateMenu.php (`PUT /api/menuDeGruposBackend/updateMenu.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0343 | API | Sin sesion valida, `PUT /api/menuDeGruposBackend/updateMenu.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0344 | API | `PUT /api/menuDeGruposBackend/updateMenu.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0345 | API | Como cliente de la API puedo ejecutar toggleActive.php (`POST /api/menuDeGruposBackend/toggleActive.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0346 | API | Sin sesion valida, `POST /api/menuDeGruposBackend/toggleActive.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0347 | API | `POST /api/menuDeGruposBackend/toggleActive.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0348 | API | Como cliente de la API puedo ejecutar deleteMenu.php (`POST /api/menuDeGruposBackend/deleteMenu.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0349 | API | Sin sesion valida, `POST /api/menuDeGruposBackend/deleteMenu.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0350 | API | `POST /api/menuDeGruposBackend/deleteMenu.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0351 | API | Como cliente de la API puedo eliminar deleteMenu.php (`DELETE /api/menuDeGruposBackend/deleteMenu.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0352 | API | Sin sesion valida, `DELETE /api/menuDeGruposBackend/deleteMenu.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0353 | API | Como cliente de la API puedo consultar rice types (`GET /api/reservations/rice-types`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0354 | API | Sin sesion valida, `GET /api/reservations/rice-types` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0355 | API | Como cliente de la API puedo consultar group menus?party_size=<number> (`GET /api/reservations/group-menus?party_size=<number>`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0356 | API | Sin sesion valida, `GET /api/reservations/group-menus?party_size=<number>` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0357 | API | Como cliente de la API puedo consultar mandatory menus?date=YYYY MM DD (`GET /api/reservations/mandatory-menus?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0358 | API | Sin sesion valida, `GET /api/reservations/mandatory-menus?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0359 | API | Como cliente de la API puedo ejecutar fetch_daily_limit.php (`POST /api/fetch_daily_limit.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0360 | API | Sin sesion valida, `POST /api/fetch_daily_limit.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0361 | API | `POST /api/fetch_daily_limit.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0362 | API | Como cliente de la API puedo consultar month availability (`GET /api/reservations/month-availability`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0363 | API | Sin sesion valida, `GET /api/reservations/month-availability` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0364 | API | Como cliente de la API puedo consultar closed days (`GET /api/reservations/closed-days`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0365 | API | Sin sesion valida, `GET /api/reservations/closed-days` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0366 | API | Como cliente de la API puedo consultar getopeninghours.php (`GET /api/getopeninghours.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0367 | API | Sin sesion valida, `GET /api/getopeninghours.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0368 | API | Como cliente de la API puedo ejecutar editopeninghours.php (`POST /api/editopeninghours.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0369 | API | Sin sesion valida, `POST /api/editopeninghours.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0370 | API | `POST /api/editopeninghours.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0371 | API | Como cliente de la API puedo consultar gethourpercentages.php (`GET /api/gethourpercentages.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0372 | API | Sin sesion valida, `GET /api/gethourpercentages.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0373 | API | Como cliente de la API puedo ejecutar updatehourpercentages.php (`POST /api/updatehourpercentages.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0374 | API | Sin sesion valida, `POST /api/updatehourpercentages.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0375 | API | `POST /api/updatehourpercentages.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0376 | API | Como cliente de la API puedo consultar get_calendar_data.php (`GET /api/get_calendar_data.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0377 | API | Sin sesion valida, `GET /api/get_calendar_data.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0378 | API | Como cliente de la API puedo consultar getValidMenusForPartySize.php (`GET /api/getValidMenusForPartySize.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0379 | API | Sin sesion valida, `GET /api/getValidMenusForPartySize.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0380 | API | Como cliente de la API puedo consultar get_booking_availability_context.php (`GET /api/get_booking_availability_context.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0381 | API | Sin sesion valida, `GET /api/get_booking_availability_context.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0382 | API | Como cliente de la API puedo ejecutar get_booking_availability_context.php (`POST /api/get_booking_availability_context.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0383 | API | Sin sesion valida, `POST /api/get_booking_availability_context.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0384 | API | `POST /api/get_booking_availability_context.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0385 | API | Como cliente de la API puedo consultar get_available_rice_types.php (`GET /api/get_available_rice_types.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0386 | API | Sin sesion valida, `GET /api/get_available_rice_types.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0387 | API | Como cliente de la API puedo ejecutar check_date_availability.php (`POST /api/check_date_availability.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0388 | API | Sin sesion valida, `POST /api/check_date_availability.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0389 | API | `POST /api/check_date_availability.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0390 | API | Como cliente de la API puedo ejecutar check_party_size_availability.php (`POST /api/check_party_size_availability.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0391 | API | Sin sesion valida, `POST /api/check_party_size_availability.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0392 | API | `POST /api/check_party_size_availability.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0393 | API | Como cliente de la API puedo ejecutar validate_booking_modifiable.php (`POST /api/validate_booking_modifiable.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0394 | API | Sin sesion valida, `POST /api/validate_booking_modifiable.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0395 | API | `POST /api/validate_booking_modifiable.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0396 | API | Como cliente de la API puedo ejecutar update_reservation.php (`POST /api/update_reservation.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0397 | API | Sin sesion valida, `POST /api/update_reservation.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0398 | API | `POST /api/update_reservation.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0399 | API | Como cliente de la API puedo ejecutar save_modification_history.php (`POST /api/save_modification_history.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0400 | API | Sin sesion valida, `POST /api/save_modification_history.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0401 | API | `POST /api/save_modification_history.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0402 | API | Como cliente de la API puedo ejecutar notify_restaurant_modification.php (`POST /api/notify_restaurant_modification.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0403 | API | Sin sesion valida, `POST /api/notify_restaurant_modification.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0404 | API | `POST /api/notify_restaurant_modification.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0405 | API | Como cliente de la API puedo consultar n8nReminder.php (`GET /api/n8nReminder.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0406 | API | Sin sesion valida, `GET /api/n8nReminder.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0407 | API | Como cliente de la API puedo consultar confirm_reservation.php (`GET /confirm_reservation.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0408 | API | Sin sesion valida, `GET /confirm_reservation.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0409 | API | Como cliente de la API puedo ejecutar confirm_reservation.php (`POST /confirm_reservation.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0410 | API | Sin sesion valida, `POST /confirm_reservation.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0411 | API | `POST /confirm_reservation.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0412 | API | Como cliente de la API puedo consultar cancel_reservation.php (`GET /cancel_reservation.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0413 | API | Sin sesion valida, `GET /cancel_reservation.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0414 | API | Como cliente de la API puedo ejecutar cancel_reservation.php (`POST /cancel_reservation.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0415 | API | Sin sesion valida, `POST /cancel_reservation.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0416 | API | `POST /cancel_reservation.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0417 | API | Como cliente de la API puedo consultar book_rice.php (`GET /book_rice.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0418 | API | Sin sesion valida, `GET /book_rice.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0419 | API | Como cliente de la API puedo ejecutar book_rice.php (`POST /book_rice.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0420 | API | Sin sesion valida, `POST /book_rice.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0421 | API | `POST /book_rice.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0422 | API | Como cliente de la API puedo ejecutar navidad_booking.php (`POST /api/navidad_booking.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0423 | API | Sin sesion valida, `POST /api/navidad_booking.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0424 | API | `POST /api/navidad_booking.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0425 | API | Como cliente de la API puedo ejecutar sendEmailAndWhastappAd.php (`POST /api/emailAdvertising/sendEmailAndWhastappAd.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0426 | API | Sin sesion valida, `POST /api/emailAdvertising/sendEmailAndWhastappAd.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0427 | API | `POST /api/emailAdvertising/sendEmailAndWhastappAd.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0428 | API | Como cliente de la API puedo consultar two top availability?date=<YYYY MM DD> (`GET /api/reservations/two-top-availability?date=<YYYY-MM-DD>`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0429 | API | Sin sesion valida, `GET /api/reservations/two-top-availability?date=<YYYY-MM-DD>` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0430 | API | Como cliente de la API puedo consultar hour data?date=<YYYY MM DD> (`GET /api/reservations/hour-data?date=<YYYY-MM-DD>`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0431 | API | Sin sesion valida, `GET /api/reservations/hour-data?date=<YYYY-MM-DD>` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0432 | API | Como cliente de la API puedo consultar day context?date=<YYYY MM DD> (`GET /api/reservations/day-context?date=<YYYY-MM-DD>`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0433 | API | Sin sesion valida, `GET /api/reservations/day-context?date=<YYYY-MM-DD>` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0434 | API | Como cliente de la API puedo ejecutar fetch_mesas_de_dos.php (`POST /api/fetch_mesas_de_dos.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0435 | API | Sin sesion valida, `POST /api/fetch_mesas_de_dos.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0436 | API | `POST /api/fetch_mesas_de_dos.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0437 | API | Como cliente de la API puedo ejecutar update_daily_limit.php (`POST /api/update_daily_limit.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0438 | API | Sin sesion valida, `POST /api/update_daily_limit.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0439 | API | `POST /api/update_daily_limit.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0440 | API | Como cliente de la API puedo ejecutar limitemesasdedos.php (`POST /api/limitemesasdedos.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0441 | API | Sin sesion valida, `POST /api/limitemesasdedos.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0442 | API | `POST /api/limitemesasdedos.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0443 | API | Como cliente de la API puedo ejecutar get_mesasdedos_limit.php (`POST /api/get_mesasdedos_limit.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0444 | API | Sin sesion valida, `POST /api/get_mesasdedos_limit.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0445 | API | `POST /api/get_mesasdedos_limit.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0446 | API | Como cliente de la API puedo ejecutar check_day_status.php (`POST /api/check_day_status.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0447 | API | Sin sesion valida, `POST /api/check_day_status.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0448 | API | `POST /api/check_day_status.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0449 | API | Como cliente de la API puedo ejecutar open_day.php (`POST /api/open_day.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0450 | API | Sin sesion valida, `POST /api/open_day.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0451 | API | `POST /api/open_day.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0452 | API | Como cliente de la API puedo ejecutar close_day.php (`POST /api/close_day.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0453 | API | Sin sesion valida, `POST /api/close_day.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0454 | API | `POST /api/close_day.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0455 | API | Como cliente de la API puedo ejecutar fetch_occupancy.php (`POST /api/fetch_occupancy.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0456 | API | Sin sesion valida, `POST /api/fetch_occupancy.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0457 | API | `POST /api/fetch_occupancy.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0458 | API | Como cliente de la API puedo consultar gethourdata.php?date=YYYY MM DD (`GET /api/gethourdata.php?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0459 | API | Sin sesion valida, `GET /api/gethourdata.php?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0460 | API | Como cliente de la API puedo ejecutar savehourdata.php (`POST /api/savehourdata.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0461 | API | Sin sesion valida, `POST /api/savehourdata.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0462 | API | `POST /api/savehourdata.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0463 | API | Como cliente de la API puedo ejecutar front (`POST /api/bookings/front`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0464 | API | Sin sesion valida, `POST /api/bookings/front` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0465 | API | `POST /api/bookings/front` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0466 | API | Como cliente de la API puedo consultar get_reservation_day_context.php?date=YYYY MM DD (`GET /api/get_reservation_day_context.php?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0467 | API | Sin sesion valida, `GET /api/get_reservation_day_context.php?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0468 | API | Como cliente de la API puedo ejecutar insert_booking.php (`POST /api/insert_booking.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0469 | API | Sin sesion valida, `POST /api/insert_booking.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0470 | API | `POST /api/insert_booking.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0471 | Backoffice | Como miembro del backoffice puedo ejecutar logo (`POST /api/admin/branding/logo`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0472 | Backoffice | Sin sesion valida, `POST /api/admin/branding/logo` | Respuesta 401/403, nunca datos | ok |
-| US-0473 | Backoffice | `POST /api/admin/branding/logo` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0474 | API | Como cliente de la API puedo ejecutar fetch_bookings.php (`POST /api/fetch_bookings.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0475 | API | Sin sesion valida, `POST /api/fetch_bookings.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0476 | API | `POST /api/fetch_bookings.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0477 | API | Como cliente de la API puedo ejecutar get_booking.php (`POST /api/get_booking.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0478 | API | Sin sesion valida, `POST /api/get_booking.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0479 | API | `POST /api/get_booking.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0480 | API | Como cliente de la API puedo ejecutar edit_booking.php (`POST /api/edit_booking.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0481 | API | Sin sesion valida, `POST /api/edit_booking.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0482 | API | `POST /api/edit_booking.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0483 | API | Como cliente de la API puedo ejecutar delete_booking.php (`POST /api/delete_booking.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0484 | API | Sin sesion valida, `POST /api/delete_booking.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0485 | API | `POST /api/delete_booking.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0486 | API | Como cliente de la API puedo ejecutar update_table_number.php (`POST /api/update_table_number.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0487 | API | Sin sesion valida, `POST /api/update_table_number.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0488 | API | `POST /api/update_table_number.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0489 | API | Como cliente de la API puedo ejecutar get_reservations.php (`POST /api/get_reservations.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0490 | API | Sin sesion valida, `POST /api/get_reservations.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0491 | API | `POST /api/get_reservations.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0492 | API | Como cliente de la API puedo ejecutar fetch_cancelled_bookings.php (`POST /api/fetch_cancelled_bookings.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0493 | API | Sin sesion valida, `POST /api/fetch_cancelled_bookings.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0494 | API | `POST /api/fetch_cancelled_bookings.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0495 | API | Como cliente de la API puedo ejecutar reactivate_booking.php (`POST /api/reactivate_booking.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0496 | API | Sin sesion valida, `POST /api/reactivate_booking.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0497 | API | `POST /api/reactivate_booking.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0498 | API | Como cliente de la API puedo consultar salon_condesa_api.php?date=YYYY MM DD (`GET /api/salon_condesa_api.php?date=YYYY-MM-DD`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0499 | API | Sin sesion valida, `GET /api/salon_condesa_api.php?date=YYYY-MM-DD` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0500 | API | Como cliente de la API puedo ejecutar salon_condesa_api.php (`POST /api/salon_condesa_api.php`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0501 | API | Sin sesion valida, `POST /api/salon_condesa_api.php` | Respuesta 401/403, nunca datos | n/a (ruta inexistente, 404 sin datos) |
-| US-0502 | API | `POST /api/salon_condesa_api.php` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0503 | Backoffice | Como miembro del backoffice puedo consultar tables (`GET /api/admin/tables`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0504 | Backoffice | Sin sesion valida, `GET /api/admin/tables` | Respuesta 401/403, nunca datos | ok |
-| US-0505 | Backoffice | Como miembro del backoffice puedo ejecutar tables (`POST /api/admin/tables`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0506 | Backoffice | Sin sesion valida, `POST /api/admin/tables` | Respuesta 401/403, nunca datos | ok |
-| US-0507 | Backoffice | `POST /api/admin/tables` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0508 | Backoffice | Como miembro del backoffice puedo actualizar tables (`PUT /api/admin/tables`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0509 | Backoffice | Sin sesion valida, `PUT /api/admin/tables` | Respuesta 401/403, nunca datos | ok |
-| US-0510 | Backoffice | `PUT /api/admin/tables` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0511 | Backoffice | Como miembro del backoffice puedo ejecutar texture image (`POST /api/admin/tables/{id}/texture-image`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0512 | Backoffice | Sin sesion valida, `POST /api/admin/tables/{id}/texture-image` | Respuesta 401/403, nunca datos | ok |
-| US-0513 | Backoffice | `POST /api/admin/tables/{id}/texture-image` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0514 | Backoffice | Como miembro del backoffice puedo eliminar elemento (`DELETE /api/admin/tables/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0515 | Backoffice | Sin sesion valida, `DELETE /api/admin/tables/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0516 | Backoffice | Como miembro del backoffice puedo consultar ws (`GET /api/admin/tables/ws`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0517 | Backoffice | Sin sesion valida, `GET /api/admin/tables/ws` | Respuesta 401/403, nunca datos | ok |
-| US-0518 | Backoffice | Como miembro del backoffice puedo actualizar phone (`PUT /api/admin/members/{id}/phone`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0519 | Backoffice | Sin sesion valida, `PUT /api/admin/members/{id}/phone` | Respuesta 401/403, nunca datos | ok |
-| US-0520 | Backoffice | `PUT /api/admin/members/{id}/phone` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0521 | Backoffice | Como miembro del backoffice puedo ejecutar subscribe (`POST /api/admin/members/whatsapp/subscribe`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0522 | Backoffice | Sin sesion valida, `POST /api/admin/members/whatsapp/subscribe` | Respuesta 401/403, nunca datos | ok |
-| US-0523 | Backoffice | `POST /api/admin/members/whatsapp/subscribe` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0524 | Backoffice | Como miembro del backoffice puedo ejecutar connect (`POST /api/admin/members/whatsapp/connect`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0525 | Backoffice | Sin sesion valida, `POST /api/admin/members/whatsapp/connect` | Respuesta 401/403, nunca datos | ok |
-| US-0526 | Backoffice | `POST /api/admin/members/whatsapp/connect` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0527 | Backoffice | Como miembro del backoffice puedo consultar connection (`GET /api/admin/members/whatsapp/connection`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0528 | Backoffice | Sin sesion valida, `GET /api/admin/members/whatsapp/connection` | Respuesta 401/403, nunca datos | ok |
-| US-0529 | Backoffice | Como miembro del backoffice puedo ejecutar disconnect (`POST /api/admin/members/whatsapp/disconnect`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0530 | Backoffice | Sin sesion valida, `POST /api/admin/members/whatsapp/disconnect` | Respuesta 401/403, nunca datos | ok |
-| US-0531 | Backoffice | `POST /api/admin/members/whatsapp/disconnect` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0532 | Backoffice | Como miembro del backoffice puedo consultar servers (`GET /api/admin/integrations/uazapi/servers`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0533 | Backoffice | Sin sesion valida, `GET /api/admin/integrations/uazapi/servers` | Respuesta 401/403, nunca datos | ok |
-| US-0534 | Backoffice | Como miembro del backoffice puedo ejecutar servers (`POST /api/admin/integrations/uazapi/servers`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0535 | Backoffice | Sin sesion valida, `POST /api/admin/integrations/uazapi/servers` | Respuesta 401/403, nunca datos | ok |
-| US-0536 | Backoffice | `POST /api/admin/integrations/uazapi/servers` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
-| US-0537 | Backoffice | Como miembro del backoffice puedo actualizar elemento (`PATCH /api/admin/integrations/uazapi/servers/{id}`) | Respuesta 2xx con el contrato documentado en ENDPOINTS.md | pendiente |
-| US-0538 | Backoffice | Sin sesion valida, `PATCH /api/admin/integrations/uazapi/servers/{id}` | Respuesta 401/403, nunca datos | ok |
-| US-0539 | Backoffice | `PATCH /api/admin/integrations/uazapi/servers/{id}` con payload invalido | Respuesta 400/422 con mensaje claro, sin escrituras parciales | pendiente |
+- [ ] US-0001 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos accounting export csv` (GET /pos/accounting/export.csv) en la seccion pos.
+- [ ] US-0002 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero ejecutar `post pos activation acceptances` (POST /pos/activation-acceptances) en la seccion pos.
+- [ ] US-0003 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero consultar `get pos activation readiness` (GET /pos/activation-readiness) en la seccion pos.
+- [ ] US-0004 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos bootstrap` (GET /pos/bootstrap) en la seccion pos.
+- [ ] US-0005 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos cash days current` (GET /pos/cash-days/current) en la seccion pos.
+- [ ] US-0006 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos cash days date billing` (GET /pos/cash-days/{date}/billing) en la seccion pos.
+- [ ] US-0007 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Checkout): Como usuario del backoffice, quiero ejecutar `post pos cash days date bulk checkout` (POST /pos/cash-days/{date}/bulk-checkout) en la seccion pos.
+- [ ] US-0008 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos cash days date tables` (GET /pos/cash-days/{date}/tables) en la seccion pos.
+- [ ] US-0009 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Shift): Como usuario del backoffice, quiero ejecutar `post pos cash days id close` (POST /pos/cash-days/{id}/close) en la seccion pos.
+- [ ] US-0010 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos cash days` (GET /pos/cash-days) en la seccion pos.
+- [ ] US-0011 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Shift): Como usuario del backoffice, quiero ejecutar `post pos cash days` (POST /pos/cash-days) en la seccion pos.
+- [ ] US-0012 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos cash closures id` (GET /pos/cash/closures/{id}) en la seccion pos.
+- [ ] US-0013 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos cash closures` (GET /pos/cash/closures) en la seccion pos.
+- [ ] US-0014 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Shift): Como usuario del backoffice, quiero ejecutar `post pos cash closures` (POST /pos/cash/closures) en la seccion pos.
+- [ ] US-0015 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos cash movements` (GET /pos/cash/movements) en la seccion pos.
+- [ ] US-0016 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Checkout): Como usuario del backoffice, quiero ejecutar `post pos cash movements` (POST /pos/cash/movements) en la seccion pos.
+- [ ] US-0017 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos cash summary` (GET /pos/cash/summary) en la seccion pos.
+- [ ] US-0018 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero eliminar `delete pos categories id` (DELETE /pos/categories/{id}) en la seccion pos.
+- [ ] US-0019 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero actualizar `patch pos categories id` (PATCH /pos/categories/{id}) en la seccion pos.
+- [ ] US-0020 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos categories` (GET /pos/categories) en la seccion pos.
+- [ ] US-0021 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero ejecutar `post pos categories` (POST /pos/categories) en la seccion pos.
+- [ ] US-0022 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS CoversAdjust): Como usuario del backoffice, quiero ejecutar `post pos covers adjustments` (POST /pos/covers/adjustments) en la seccion pos.
+- [ ] US-0023 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero ejecutar `post pos covers reconciliation rebuild` (POST /pos/covers/reconciliation/rebuild) en la seccion pos.
+- [ ] US-0024 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos covers reconciliation` (GET /pos/covers/reconciliation) en la seccion pos.
+- [ ] US-0025 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos covers` (GET /pos/covers) en la seccion pos.
+- [ ] US-0026 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero ejecutar `post pos customers id anonymise` (POST /pos/customers/{id}/anonymise) en la seccion pos.
+- [ ] US-0027 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero consultar `get pos customers id` (GET /pos/customers/{id}) en la seccion pos.
+- [ ] US-0028 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero actualizar `patch pos customers id` (PATCH /pos/customers/{id}) en la seccion pos.
+- [ ] US-0029 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero consultar `get pos customers` (GET /pos/customers) en la seccion pos.
+- [ ] US-0030 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos customers` (POST /pos/customers) en la seccion pos.
+- [ ] US-0031 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Checkout): Como usuario del backoffice, quiero ejecutar `post pos drawer open` (POST /pos/drawer/open) en la seccion pos.
+- [ ] US-0032 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos fiscal series seriesid verify` (GET /pos/fiscal/series/{seriesId}/verify) en la seccion pos.
+- [ ] US-0033 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos fiscal series` (GET /pos/fiscal/series) en la seccion pos.
+- [ ] US-0034 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero consultar `get pos health` (GET /pos/health) en la seccion pos.
+- [ ] US-0035 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Kitchen): Como usuario del backoffice, quiero ejecutar `post pos kitchen dispatches id status` (POST /pos/kitchen/dispatches/{id}/status) en la seccion pos.
+- [ ] US-0036 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos kitchen queue` (GET /pos/kitchen/queue) en la seccion pos.
+- [ ] US-0037 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Kitchen): Como usuario del backoffice, quiero eliminar `delete pos kitchen routes id` (DELETE /pos/kitchen/routes/{id}) en la seccion pos.
+- [ ] US-0038 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos kitchen routes` (GET /pos/kitchen/routes) en la seccion pos.
+- [ ] US-0039 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Kitchen): Como usuario del backoffice, quiero ejecutar `post pos kitchen routes` (POST /pos/kitchen/routes) en la seccion pos.
+- [ ] US-0040 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Kitchen): Como usuario del backoffice, quiero actualizar `patch pos kitchen stations id` (PATCH /pos/kitchen/stations/{id}) en la seccion pos.
+- [ ] US-0041 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos kitchen stations` (GET /pos/kitchen/stations) en la seccion pos.
+- [ ] US-0042 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Kitchen): Como usuario del backoffice, quiero ejecutar `post pos kitchen stations` (POST /pos/kitchen/stations) en la seccion pos.
+- [ ] US-0043 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero ejecutar `post pos modifier groups groupid options` (POST /pos/modifier-groups/{groupId}/options) en la seccion pos.
+- [ ] US-0044 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero eliminar `delete pos modifier groups id` (DELETE /pos/modifier-groups/{id}) en la seccion pos.
+- [ ] US-0045 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero actualizar `patch pos modifier groups id` (PATCH /pos/modifier-groups/{id}) en la seccion pos.
+- [ ] US-0046 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos modifier groups` (GET /pos/modifier-groups) en la seccion pos.
+- [ ] US-0047 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero ejecutar `post pos modifier groups` (POST /pos/modifier-groups) en la seccion pos.
+- [ ] US-0048 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero eliminar `delete pos modifier options id` (DELETE /pos/modifier-options/{id}) en la seccion pos.
+- [ ] US-0049 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero actualizar `patch pos modifier options id` (PATCH /pos/modifier-options/{id}) en la seccion pos.
+- [ ] US-0050 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero eliminar `delete pos pack components id` (DELETE /pos/pack-components/{id}) en la seccion pos.
+- [ ] US-0051 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero actualizar `patch pos pack components id` (PATCH /pos/pack-components/{id}) en la seccion pos.
+- [ ] US-0052 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero eliminar `delete pos packs id` (DELETE /pos/packs/{id}) en la seccion pos.
+- [ ] US-0053 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero actualizar `patch pos packs id` (PATCH /pos/packs/{id}) en la seccion pos.
+- [ ] US-0054 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero ejecutar `post pos packs packid components` (POST /pos/packs/{packId}/components) en la seccion pos.
+- [ ] US-0055 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos packs` (GET /pos/packs) en la seccion pos.
+- [ ] US-0056 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero ejecutar `post pos packs` (POST /pos/packs) en la seccion pos.
+- [ ] US-0057 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos pin verify` (POST /pos/pin/verify) en la seccion pos.
+- [ ] US-0058 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero consultar `get pos pin` (GET /pos/pin) en la seccion pos.
+- [ ] US-0059 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos pin` (POST /pos/pin) en la seccion pos.
+- [ ] US-0060 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos products id stock rules` (GET /pos/products/{id}/stock-rules) en la seccion pos.
+- [ ] US-0061 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS StockMapping): Como usuario del backoffice, quiero actualizar `put pos products id stock rules` (PUT /pos/products/{id}/stock-rules) en la seccion pos.
+- [ ] US-0062 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero eliminar `delete pos products id` (DELETE /pos/products/{id}) en la seccion pos.
+- [ ] US-0063 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos products id` (GET /pos/products/{id}) en la seccion pos.
+- [ ] US-0064 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero actualizar `patch pos products id` (PATCH /pos/products/{id}) en la seccion pos.
+- [ ] US-0065 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos products productid modifier groups` (GET /pos/products/{productId}/modifier-groups) en la seccion pos.
+- [ ] US-0066 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero actualizar `put pos products productid modifier groups` (PUT /pos/products/{productId}/modifier-groups) en la seccion pos.
+- [ ] US-0067 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos products` (GET /pos/products) en la seccion pos.
+- [ ] US-0068 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero ejecutar `post pos products` (POST /pos/products) en la seccion pos.
+- [ ] US-0069 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos reports card reconciliation` (GET /pos/reports/card-reconciliation) en la seccion pos.
+- [ ] US-0070 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos reports sales csv` (GET /pos/reports/sales.csv) en la seccion pos.
+- [ ] US-0071 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos reports sales` (GET /pos/reports/sales) en la seccion pos.
+- [ ] US-0072 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Reports): Como usuario del backoffice, quiero consultar `get pos reports stock` (GET /pos/reports/stock) en la seccion pos.
+- [ ] US-0073 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos reservations eligible` (GET /pos/reservations/eligible) en la seccion pos.
+- [ ] US-0074 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos reservations bookingid visit` (GET /pos/reservations/{bookingId}/visit) en la seccion pos.
+- [ ] US-0075 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero consultar `get pos roles slug permissions` (GET /pos/roles/{slug}/permissions) en la seccion pos.
+- [ ] US-0076 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero actualizar `put pos roles slug permissions` (PUT /pos/roles/{slug}/permissions) en la seccion pos.
+- [ ] US-0077 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero eliminar `delete pos service periods id` (DELETE /pos/service-periods/{id}) en la seccion pos.
+- [ ] US-0078 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero actualizar `patch pos service periods id` (PATCH /pos/service-periods/{id}) en la seccion pos.
+- [ ] US-0079 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos service periods` (GET /pos/service-periods) en la seccion pos.
+- [ ] US-0080 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero ejecutar `post pos service periods` (POST /pos/service-periods) en la seccion pos.
+- [ ] US-0081 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos settings` (GET /pos/settings) en la seccion pos.
+- [ ] US-0082 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Settings): Como usuario del backoffice, quiero actualizar `patch pos settings` (PATCH /pos/settings) en la seccion pos.
+- [ ] US-0083 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos shifts current` (GET /pos/shifts/current) en la seccion pos.
+- [ ] US-0084 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Shift): Como usuario del backoffice, quiero ejecutar `post pos shifts open` (POST /pos/shifts/open) en la seccion pos.
+- [ ] US-0085 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Shift): Como usuario del backoffice, quiero ejecutar `post pos shifts id close` (POST /pos/shifts/{id}/close) en la seccion pos.
+- [ ] US-0086 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS StockMapping): Como usuario del backoffice, quiero ejecutar `post pos stock anomalies id resolve` (POST /pos/stock-anomalies/{id}/resolve) en la seccion pos.
+- [ ] US-0087 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS StockMapping): Como usuario del backoffice, quiero consultar `get pos stock anomalies` (GET /pos/stock-anomalies) en la seccion pos.
+- [ ] US-0088 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS StockMapping): Como usuario del backoffice, quiero ejecutar `post pos stock exceptions replay` (POST /pos/stock-exceptions/replay) en la seccion pos.
+- [ ] US-0089 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS StockMapping): Como usuario del backoffice, quiero consultar `get pos stock exceptions` (GET /pos/stock-exceptions) en la seccion pos.
+- [ ] US-0090 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS StockMapping): Como usuario del backoffice, quiero consultar `get pos stock readiness` (GET /pos/stock-readiness) en la seccion pos.
+- [ ] US-0091 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos tags` (GET /pos/tags) en la seccion pos.
+- [ ] US-0092 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Catalog): Como usuario del backoffice, quiero ejecutar `post pos tags` (POST /pos/tags) en la seccion pos.
+- [ ] US-0093 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, requireBOPOSViewOrFichajeAdmin): Como usuario del backoffice, quiero consultar `get pos tickets hourly` (GET /pos/tickets/hourly) en la seccion pos.
+- [ ] US-0094 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, requireBOPOSViewOrFichajeAdmin): Como usuario del backoffice, quiero consultar `get pos tickets series` (GET /pos/tickets/series) en la seccion pos.
+- [ ] US-0095 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Discount): Como usuario del backoffice, quiero ejecutar `post pos tickets id adjustments` (POST /pos/tickets/{id}/adjustments) en la seccion pos.
+- [ ] US-0096 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Checkout): Como usuario del backoffice, quiero ejecutar `post pos tickets id checkout` (POST /pos/tickets/{id}/checkout) en la seccion pos.
+- [ ] US-0097 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Kitchen): Como usuario del backoffice, quiero ejecutar `post pos tickets id courses fire` (POST /pos/tickets/{id}/courses/fire) en la seccion pos.
+- [ ] US-0098 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos tickets id courses` (GET /pos/tickets/{id}/courses) en la seccion pos.
+- [ ] US-0099 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos tickets id customer` (POST /pos/tickets/{id}/customer) en la seccion pos.
+- [ ] US-0100 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Discount): Como usuario del backoffice, quiero ejecutar `post pos tickets id discount` (POST /pos/tickets/{id}/discount) en la seccion pos.
+- [ ] US-0101 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Refund): Como usuario del backoffice, quiero ejecutar `post pos tickets id fiscal document` (POST /pos/tickets/{id}/fiscal-document) en la seccion pos.
+- [ ] US-0102 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos tickets id guest label` (POST /pos/tickets/{id}/guest-label) en la seccion pos.
+- [ ] US-0103 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos tickets id kitchen dispatches` (POST /pos/tickets/{id}/kitchen-dispatches) en la seccion pos.
+- [ ] US-0104 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Discount): Como usuario del backoffice, quiero ejecutar `post pos tickets id lines lineid comp` (POST /pos/tickets/{id}/lines/{lineId}/comp) en la seccion pos.
+- [ ] US-0105 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos tickets id lines lineid move` (POST /pos/tickets/{id}/lines/{lineId}/move) en la seccion pos.
+- [ ] US-0106 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos tickets id lines lineid tags` (POST /pos/tickets/{id}/lines/{lineId}/tags) en la seccion pos.
+- [ ] US-0107 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS LineVoid): Como usuario del backoffice, quiero ejecutar `post pos tickets id lines lineid void` (POST /pos/tickets/{id}/lines/{lineId}/void) en la seccion pos.
+- [ ] US-0108 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero actualizar `patch pos tickets id lines lineid` (PATCH /pos/tickets/{id}/lines/{lineId}) en la seccion pos.
+- [ ] US-0109 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos tickets id lines` (POST /pos/tickets/{id}/lines) en la seccion pos.
+- [ ] US-0110 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero actualizar `patch pos tickets id operator` (PATCH /pos/tickets/{id}/operator) en la seccion pos.
+- [ ] US-0111 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos tickets id recall` (POST /pos/tickets/{id}/recall) en la seccion pos.
+- [ ] US-0112 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Refund): Como usuario del backoffice, quiero ejecutar `post pos tickets id refunds` (POST /pos/tickets/{id}/refunds) en la seccion pos.
+- [ ] US-0113 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos tickets id tags` (POST /pos/tickets/{id}/tags) en la seccion pos.
+- [ ] US-0114 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos tickets id void` (POST /pos/tickets/{id}/void) en la seccion pos.
+- [ ] US-0115 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos tickets id` (GET /pos/tickets/{id}) en la seccion pos.
+- [ ] US-0116 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos tickets` (GET /pos/tickets) en la seccion pos.
+- [ ] US-0117 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS VisitManage): Como usuario del backoffice, quiero ejecutar `post pos visits id cancel` (POST /pos/visits/{id}/cancel) en la seccion pos.
+- [ ] US-0118 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Checkout): Como usuario del backoffice, quiero ejecutar `post pos visits id close` (POST /pos/visits/{id}/close) en la seccion pos.
+- [ ] US-0119 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero actualizar `patch pos visits id customer` (PATCH /pos/visits/{id}/customer) en la seccion pos.
+- [ ] US-0120 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS VisitManage): Como usuario del backoffice, quiero ejecutar `post pos visits id merge` (POST /pos/visits/{id}/merge) en la seccion pos.
+- [ ] US-0121 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS VisitManage): Como usuario del backoffice, quiero ejecutar `post pos visits id park` (POST /pos/visits/{id}/park) en la seccion pos.
+- [ ] US-0122 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos visits id tickets` (POST /pos/visits/{id}/tickets) en la seccion pos.
+- [ ] US-0123 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos visits id` (GET /pos/visits/{id}) en la seccion pos.
+- [ ] US-0124 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS VisitManage): Como usuario del backoffice, quiero actualizar `patch pos visits id` (PATCH /pos/visits/{id}) en la seccion pos.
+- [ ] US-0125 (lectura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS View): Como usuario del backoffice, quiero consultar `get pos visits` (GET /pos/visits) en la seccion pos.
+- [ ] US-0126 (escritura; ACL: requireBOPOSFeature, withBOPOSTimeout, perm POS Sell): Como usuario del backoffice, quiero ejecutar `post pos visits` (POST /pos/visits) en la seccion pos.
 
+## stock (103 operaciones)
+
+- [ ] US-0127 (escritura; ACL: withBOStockTimeout, productionTypeGate): Como usuario del backoffice, quiero ejecutar `post comida bulk stock link apply` (POST /comida/bulk-stock-link/apply) en la seccion stock.
+- [ ] US-0128 (escritura; ACL: withBOStockTimeout, productionTypeGate): Como usuario del backoffice, quiero ejecutar `post comida bulk stock link preview` (POST /comida/bulk-stock-link/preview) en la seccion stock.
+- [ ] US-0129 (escritura; ACL: withBOStockTimeout, productionTypeGate): Como usuario del backoffice, quiero actualizar `patch comida items id production type` (PATCH /comida/items/{id}/production-type) en la seccion stock.
+- [ ] US-0130 (escritura; ACL: withBOStockTimeout, sheetsManageGate): Como usuario del backoffice, quiero ejecutar `post comida technical sheets ensure` (POST /comida/technical-sheets/ensure) en la seccion stock.
+- [ ] US-0131 (lectura; ACL: withBOStockTimeout, sheetsViewGate): Como usuario del backoffice, quiero consultar `get comida technical sheets id allergens` (GET /comida/technical-sheets/{id}/allergens) en la seccion stock.
+- [ ] US-0132 (escritura; ACL: withBOStockTimeout, sheetsManageGate): Como usuario del backoffice, quiero actualizar `patch comida technical sheets id allergens` (PATCH /comida/technical-sheets/{id}/allergens) en la seccion stock.
+- [ ] US-0133 (escritura; ACL: withBOStockTimeout, sheetsManageGate): Como usuario del backoffice, quiero eliminar `delete comida technical sheets id components component` (DELETE /comida/technical-sheets/{id}/components/{componentId}) en la seccion stock.
+- [ ] US-0134 (escritura; ACL: withBOStockTimeout, sheetsManageGate): Como usuario del backoffice, quiero actualizar `patch comida technical sheets id components componenti` (PATCH /comida/technical-sheets/{id}/components/{componentId}) en la seccion stock.
+- [ ] US-0135 (lectura; ACL: withBOStockTimeout, sheetsViewGate): Como usuario del backoffice, quiero consultar `get comida technical sheets id components` (GET /comida/technical-sheets/{id}/components) en la seccion stock.
+- [ ] US-0136 (escritura; ACL: withBOStockTimeout, sheetsManageGate): Como usuario del backoffice, quiero ejecutar `post comida technical sheets id components` (POST /comida/technical-sheets/{id}/components) en la seccion stock.
+- [ ] US-0137 (lectura; ACL: withBOStockTimeout, sheetsViewGate): Como usuario del backoffice, quiero consultar `get comida technical sheets id cost` (GET /comida/technical-sheets/{id}/cost) en la seccion stock.
+- [ ] US-0138 (escritura; ACL: withBOStockTimeout, sheetsManageGate): Como usuario del backoffice, quiero ejecutar `post comida technical sheets id duplicate` (POST /comida/technical-sheets/{id}/duplicate) en la seccion stock.
+- [ ] US-0139 (escritura; ACL: withBOStockTimeout, sheetsPublishGate): Como usuario del backoffice, quiero ejecutar `post comida technical sheets id publish` (POST /comida/technical-sheets/{id}/publish) en la seccion stock.
+- [ ] US-0140 (escritura; ACL: withBOStockTimeout, sheetsStepsGate): Como usuario del backoffice, quiero actualizar `put comida technical sheets id steps order` (PUT /comida/technical-sheets/{id}/steps/order) en la seccion stock.
+- [ ] US-0141 (escritura; ACL: withBOStockTimeout, sheetsStepsGate): Como usuario del backoffice, quiero eliminar `delete comida technical sheets id steps stepid` (DELETE /comida/technical-sheets/{id}/steps/{stepId}) en la seccion stock.
+- [ ] US-0142 (escritura; ACL: withBOStockTimeout, sheetsStepsGate): Como usuario del backoffice, quiero actualizar `patch comida technical sheets id steps stepid` (PATCH /comida/technical-sheets/{id}/steps/{stepId}) en la seccion stock.
+- [ ] US-0143 (lectura; ACL: withBOStockTimeout, sheetsViewGate): Como usuario del backoffice, quiero consultar `get comida technical sheets id steps` (GET /comida/technical-sheets/{id}/steps) en la seccion stock.
+- [ ] US-0144 (escritura; ACL: withBOStockTimeout, sheetsStepsGate): Como usuario del backoffice, quiero ejecutar `post comida technical sheets id steps` (POST /comida/technical-sheets/{id}/steps) en la seccion stock.
+- [ ] US-0145 (lectura; ACL: withBOStockTimeout, sheetsViewGate): Como usuario del backoffice, quiero consultar `get comida technical sheets id usage` (GET /comida/technical-sheets/{id}/usage) en la seccion stock.
+- [ ] US-0146 (escritura; ACL: withBOStockTimeout, sheetsDeleteGate): Como usuario del backoffice, quiero eliminar `delete comida technical sheets id` (DELETE /comida/technical-sheets/{id}) en la seccion stock.
+- [ ] US-0147 (lectura; ACL: withBOStockTimeout, sheetsViewGate): Como usuario del backoffice, quiero consultar `get comida technical sheets id` (GET /comida/technical-sheets/{id}) en la seccion stock.
+- [ ] US-0148 (escritura; ACL: withBOStockTimeout, sheetsManageGate): Como usuario del backoffice, quiero actualizar `patch comida technical sheets id` (PATCH /comida/technical-sheets/{id}) en la seccion stock.
+- [ ] US-0149 (lectura; ACL: withBOStockTimeout, sheetsViewGate): Como usuario del backoffice, quiero consultar `get comida technical sheets` (GET /comida/technical-sheets) en la seccion stock.
+- [ ] US-0150 (escritura; ACL: withBOStockTimeout, sheetsManageGate): Como usuario del backoffice, quiero ejecutar `post comida technical sheets` (POST /comida/technical-sheets) en la seccion stock.
+- [ ] US-0151 (escritura; ACL: withBOStockTimeout, perm stock forecast): Como usuario del backoffice, quiero actualizar `put stock affluence` (PUT /stock/affluence) en la seccion stock.
+- [ ] US-0152 (escritura; ACL: perm stock forecast, perm stock costs view, requireBOStockAI): Como usuario del backoffice, quiero ejecutar `post stock ai recommendations` (POST /stock/ai/recommendations) en la seccion stock.
+- [ ] US-0153 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero eliminar `delete stock categories id` (DELETE /stock/categories/{id}) en la seccion stock.
+- [ ] US-0154 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero actualizar `patch stock categories id` (PATCH /stock/categories/{id}) en la seccion stock.
+- [ ] US-0155 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock categories` (GET /stock/categories) en la seccion stock.
+- [ ] US-0156 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero ejecutar `post stock categories` (POST /stock/categories) en la seccion stock.
+- [ ] US-0157 (lectura; ACL: withBOStockTimeout, perm stock costs view): Como usuario del backoffice, quiero consultar `get stock costing` (GET /stock/costing) en la seccion stock.
+- [ ] US-0158 (escritura; ACL: withBOStockTimeout, perm stock count close): Como usuario del backoffice, quiero ejecutar `post stock counts id close` (POST /stock/counts/{id}/close) en la seccion stock.
+- [ ] US-0159 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock counts id` (GET /stock/counts/{id}) en la seccion stock.
+- [ ] US-0160 (escritura; ACL: withBOStockTimeout, perm stock count): Como usuario del backoffice, quiero ejecutar `post stock counts` (POST /stock/counts) en la seccion stock.
+- [ ] US-0161 (escritura; ACL: perm stock ocr upload, requireBOStockAI): Como usuario del backoffice, quiero ejecutar `post stock documents extract text` (POST /stock/documents/extract-text) en la seccion stock.
+- [ ] US-0162 (escritura; ACL: perm stock ocr confirm): Como usuario del backoffice, quiero ejecutar `post stock documents id confirm invoice` (POST /stock/documents/{id}/confirm-invoice) en la seccion stock.
+- [ ] US-0163 (escritura; ACL: perm stock ocr confirm): Como usuario del backoffice, quiero ejecutar `post stock documents id confirm recipe` (POST /stock/documents/{id}/confirm-recipe) en la seccion stock.
+- [ ] US-0164 (escritura; ACL: perm stock ocr confirm): Como usuario del backoffice, quiero eliminar `delete stock documents id original` (DELETE /stock/documents/{id}/original) en la seccion stock.
+- [ ] US-0165 (lectura; ACL: perm stock ocr upload): Como usuario del backoffice, quiero consultar `get stock documents id original` (GET /stock/documents/{id}/original) en la seccion stock.
+- [ ] US-0166 (escritura; ACL: perm stock ocr upload): Como usuario del backoffice, quiero ejecutar `post stock documents id reject` (POST /stock/documents/{id}/reject) en la seccion stock.
+- [ ] US-0167 (escritura; ACL: perm stock ocr upload): Como usuario del backoffice, quiero actualizar `patch stock documents id review` (PATCH /stock/documents/{id}/review) en la seccion stock.
+- [ ] US-0168 (lectura; ACL: perm stock ocr upload): Como usuario del backoffice, quiero consultar `get stock documents id` (GET /stock/documents/{id}) en la seccion stock.
+- [ ] US-0169 (lectura; ACL: perm stock ocr upload): Como usuario del backoffice, quiero consultar `get stock documents` (GET /stock/documents) en la seccion stock.
+- [ ] US-0170 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock expiring` (GET /stock/expiring) en la seccion stock.
+- [ ] US-0171 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock export` (GET /stock/export) en la seccion stock.
+- [ ] US-0172 (lectura; ACL: withBOStockTimeout, perm stock forecast): Como usuario del backoffice, quiero consultar `get stock forecast` (GET /stock/forecast) en la seccion stock.
+- [ ] US-0173 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock item options` (GET /stock/item-options) en la seccion stock.
+- [ ] US-0174 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock items id movements` (GET /stock/items/{id}/movements) en la seccion stock.
+- [ ] US-0175 (escritura; ACL: withBOStockTimeout, cap stock): Como usuario del backoffice, quiero ejecutar `post stock items id movements` (POST /stock/items/{id}/movements) en la seccion stock.
+- [ ] US-0176 (escritura; ACL: withBOStockTimeout, perm stock costs manage): Como usuario del backoffice, quiero ejecutar `post stock items id prices` (POST /stock/items/{id}/prices) en la seccion stock.
+- [ ] US-0177 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero actualizar `patch stock items id targets` (PATCH /stock/items/{id}/targets) en la seccion stock.
+- [ ] US-0178 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero eliminar `delete stock items id units unitid` (DELETE /stock/items/{id}/units/{unitId}) en la seccion stock.
+- [ ] US-0179 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock items id units` (GET /stock/items/{id}/units) en la seccion stock.
+- [ ] US-0180 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero ejecutar `post stock items id units` (POST /stock/items/{id}/units) en la seccion stock.
+- [ ] US-0181 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero eliminar `delete stock items id` (DELETE /stock/items/{id}) en la seccion stock.
+- [ ] US-0182 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero actualizar `patch stock items id` (PATCH /stock/items/{id}) en la seccion stock.
+- [ ] US-0183 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock items` (GET /stock/items) en la seccion stock.
+- [ ] US-0184 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero ejecutar `post stock items` (POST /stock/items) en la seccion stock.
+- [ ] US-0185 (lectura; ACL: withBOStockTimeout, perm stock costs manage): Como usuario del backoffice, quiero consultar `get stock labour members` (GET /stock/labour-members) en la seccion stock.
+- [ ] US-0186 (lectura; ACL: withBOStockTimeout, perm stock costs view): Como usuario del backoffice, quiero consultar `get stock margin scopes defaults` (GET /stock/margin-scopes/defaults) en la seccion stock.
+- [ ] US-0187 (lectura; ACL: withBOStockTimeout, perm stock costs view): Como usuario del backoffice, quiero consultar `get stock margin scopes resolve` (GET /stock/margin-scopes/resolve) en la seccion stock.
+- [ ] US-0188 (lectura; ACL: withBOStockTimeout, perm stock costs view): Como usuario del backoffice, quiero consultar `get stock margin scopes targets` (GET /stock/margin-scopes/targets) en la seccion stock.
+- [ ] US-0189 (escritura; ACL: withBOStockTimeout, perm stock costs manage): Como usuario del backoffice, quiero eliminar `delete stock margin scopes id` (DELETE /stock/margin-scopes/{id}) en la seccion stock.
+- [ ] US-0190 (lectura; ACL: withBOStockTimeout, perm stock costs view): Como usuario del backoffice, quiero consultar `get stock margin scopes` (GET /stock/margin-scopes) en la seccion stock.
+- [ ] US-0191 (escritura; ACL: withBOStockTimeout, perm stock costs manage): Como usuario del backoffice, quiero actualizar `put stock margin scopes` (PUT /stock/margin-scopes) en la seccion stock.
+- [ ] US-0192 (lectura; ACL: withBOStockTimeout, perm stock costs view, rol>=90): Como usuario del backoffice, quiero consultar `get stock production labour entries` (GET /stock/production-labour/entries) en la seccion stock.
+- [ ] US-0193 (escritura; ACL: withBOStockTimeout, perm stock costs manage, rol>=90): Como usuario del backoffice, quiero eliminar `delete stock production orders id labour allocationid` (DELETE /stock/production-orders/{id}/labour/{allocationId}) en la seccion stock.
+- [ ] US-0194 (lectura; ACL: withBOStockTimeout, perm stock costs view, rol>=90): Como usuario del backoffice, quiero consultar `get stock production orders id labour` (GET /stock/production-orders/{id}/labour) en la seccion stock.
+- [ ] US-0195 (escritura; ACL: withBOStockTimeout, perm stock costs manage, rol>=90): Como usuario del backoffice, quiero ejecutar `post stock production orders id labour` (POST /stock/production-orders/{id}/labour) en la seccion stock.
+- [ ] US-0196 (lectura; ACL: withBOStockTimeout, perm stock costs view, rol>=90): Como usuario del backoffice, quiero consultar `get stock production orders` (GET /stock/production-orders) en la seccion stock.
+- [ ] US-0197 (escritura; ACL: withBOStockTimeout, perm stock costs manage): Como usuario del backoffice, quiero actualizar `patch stock recipes id pricing` (PATCH /stock/recipes/{id}/pricing) en la seccion stock.
+- [ ] US-0198 (escritura; ACL: withBOStockTimeout, perm stock recipes view): Como usuario del backoffice, quiero ejecutar `post stock recipes id production preview` (POST /stock/recipes/{id}/production/preview) en la seccion stock.
+- [ ] US-0199 (escritura; ACL: withBOStockTimeout, perm stock production): Como usuario del backoffice, quiero ejecutar `post stock recipes id production` (POST /stock/recipes/{id}/production) en la seccion stock.
+- [ ] US-0200 (escritura; ACL: withBOStockTimeout, perm stock recipes manage): Como usuario del backoffice, quiero eliminar `delete stock recipes id` (DELETE /stock/recipes/{id}) en la seccion stock.
+- [ ] US-0201 (lectura; ACL: withBOStockTimeout, perm stock recipes view): Como usuario del backoffice, quiero consultar `get stock recipes id` (GET /stock/recipes/{id}) en la seccion stock.
+- [ ] US-0202 (escritura; ACL: withBOStockTimeout, perm stock recipes manage): Como usuario del backoffice, quiero actualizar `patch stock recipes id` (PATCH /stock/recipes/{id}) en la seccion stock.
+- [ ] US-0203 (lectura; ACL: withBOStockTimeout, perm stock recipes view): Como usuario del backoffice, quiero consultar `get stock recipes` (GET /stock/recipes) en la seccion stock.
+- [ ] US-0204 (escritura; ACL: withBOStockTimeout, perm stock recipes manage): Como usuario del backoffice, quiero ejecutar `post stock recipes` (POST /stock/recipes) en la seccion stock.
+- [ ] US-0205 (escritura; ACL: withBOStockTimeout, perm stock settings): Como usuario del backoffice, quiero ejecutar `post stock reconciliation rebuild` (POST /stock/reconciliation/rebuild) en la seccion stock.
+- [ ] US-0206 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock reconciliation` (GET /stock/reconciliation) en la seccion stock.
+- [ ] US-0207 (lectura; ACL: withBOStockTimeout, perm stock settings): Como usuario del backoffice, quiero consultar `get stock roles slug permissions` (GET /stock/roles/{slug}/permissions) en la seccion stock.
+- [ ] US-0208 (escritura; ACL: withBOStockTimeout, perm stock settings): Como usuario del backoffice, quiero actualizar `put stock roles slug permissions` (PUT /stock/roles/{slug}/permissions) en la seccion stock.
+- [ ] US-0209 (escritura; ACL: perm stock settings, requireBOStockAI): Como usuario del backoffice, quiero ejecutar `post stock settings classify seasonality` (POST /stock/settings/classify-seasonality) en la seccion stock.
+- [ ] US-0210 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock settings` (GET /stock/settings) en la seccion stock.
+- [ ] US-0211 (escritura; ACL: withBOStockTimeout, perm stock settings): Como usuario del backoffice, quiero actualizar `patch stock settings` (PATCH /stock/settings) en la seccion stock.
+- [ ] US-0212 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock summary` (GET /stock/summary) en la seccion stock.
+- [ ] US-0213 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock suppliers id aliases` (GET /stock/suppliers/{id}/aliases) en la seccion stock.
+- [ ] US-0214 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero actualizar `put stock suppliers id aliases` (PUT /stock/suppliers/{id}/aliases) en la seccion stock.
+- [ ] US-0215 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock suppliers id prices` (GET /stock/suppliers/{id}/prices) en la seccion stock.
+- [ ] US-0216 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero eliminar `delete stock suppliers id` (DELETE /stock/suppliers/{id}) en la seccion stock.
+- [ ] US-0217 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero actualizar `patch stock suppliers id` (PATCH /stock/suppliers/{id}) en la seccion stock.
+- [ ] US-0218 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock suppliers` (GET /stock/suppliers) en la seccion stock.
+- [ ] US-0219 (escritura; ACL: withBOStockTimeout, perm stock items): Como usuario del backoffice, quiero ejecutar `post stock suppliers` (POST /stock/suppliers) en la seccion stock.
+- [ ] US-0220 (escritura; ACL: withBOStockTimeout, perm stock transfer): Como usuario del backoffice, quiero ejecutar `post stock transfers` (POST /stock/transfers) en la seccion stock.
+- [ ] US-0221 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock valuation` (GET /stock/valuation) en la seccion stock.
+- [ ] US-0222 (escritura; ACL: withBOStockTimeout, perm stock costs manage): Como usuario del backoffice, quiero eliminar `delete stock vat rates id` (DELETE /stock/vat-rates/{id}) en la seccion stock.
+- [ ] US-0223 (escritura; ACL: withBOStockTimeout, perm stock costs manage): Como usuario del backoffice, quiero actualizar `patch stock vat rates id` (PATCH /stock/vat-rates/{id}) en la seccion stock.
+- [ ] US-0224 (lectura; ACL: withBOStockTimeout, perm stock costs view): Como usuario del backoffice, quiero consultar `get stock vat rates` (GET /stock/vat-rates) en la seccion stock.
+- [ ] US-0225 (escritura; ACL: withBOStockTimeout, perm stock costs manage): Como usuario del backoffice, quiero ejecutar `post stock vat rates` (POST /stock/vat-rates) en la seccion stock.
+- [ ] US-0226 (escritura; ACL: withBOStockTimeout, perm stock warehouses): Como usuario del backoffice, quiero eliminar `delete stock warehouses id` (DELETE /stock/warehouses/{id}) en la seccion stock.
+- [ ] US-0227 (escritura; ACL: withBOStockTimeout, perm stock warehouses): Como usuario del backoffice, quiero actualizar `patch stock warehouses id` (PATCH /stock/warehouses/{id}) en la seccion stock.
+- [ ] US-0228 (lectura; ACL: withBOStockTimeout, perm stock view): Como usuario del backoffice, quiero consultar `get stock warehouses` (GET /stock/warehouses) en la seccion stock.
+- [ ] US-0229 (escritura; ACL: withBOStockTimeout, perm stock warehouses): Como usuario del backoffice, quiero ejecutar `post stock warehouses` (POST /stock/warehouses) en la seccion stock.
+
+## menus (96 operaciones)
+
+- [ ] US-0230 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post bebidas id toggle` (POST /bebidas/{id}/toggle) en la seccion menus.
+- [ ] US-0231 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete bebidas id` (DELETE /bebidas/{id}) en la seccion menus.
+- [ ] US-0232 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch bebidas id` (PATCH /bebidas/{id}) en la seccion menus.
+- [ ] US-0233 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get bebidas` (GET /bebidas) en la seccion menus.
+- [ ] US-0234 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post bebidas` (POST /bebidas) en la seccion menus.
+- [ ] US-0235 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post cafes id toggle` (POST /cafes/{id}/toggle) en la seccion menus.
+- [ ] US-0236 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete cafes id` (DELETE /cafes/{id}) en la seccion menus.
+- [ ] US-0237 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch cafes id` (PATCH /cafes/{id}) en la seccion menus.
+- [ ] US-0238 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get cafes` (GET /cafes) en la seccion menus.
+- [ ] US-0239 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post cafes` (POST /cafes) en la seccion menus.
+- [ ] US-0240 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get comida bebidas categorias check` (GET /comida/bebidas/categorias/check) en la seccion menus.
+- [ ] US-0241 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get comida bebidas categorias` (GET /comida/bebidas/categorias) en la seccion menus.
+- [ ] US-0242 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post comida bebidas categorias` (POST /comida/bebidas/categorias) en la seccion menus.
+- [ ] US-0243 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete comida categorias id` (DELETE /comida/categorias/{id}) en la seccion menus.
+- [ ] US-0244 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch comida categorias id` (PATCH /comida/categorias/{id}) en la seccion menus.
+- [ ] US-0245 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get comida categorias` (GET /comida/categorias) en la seccion menus.
+- [ ] US-0246 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post comida categorias` (POST /comida/categorias) en la seccion menus.
+- [ ] US-0247 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get comida counts` (GET /comida/counts) en la seccion menus.
+- [ ] US-0248 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get comida platos categorias` (GET /comida/platos/categorias) en la seccion menus.
+- [ ] US-0249 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post comida platos categorias` (POST /comida/platos/categorias) en la seccion menus.
+- [ ] US-0250 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete comida tipo id` (DELETE /comida/{tipo}/{id}) en la seccion menus.
+- [ ] US-0251 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get comida tipo id` (GET /comida/{tipo}/{id}) en la seccion menus.
+- [ ] US-0252 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch comida tipo id` (PATCH /comida/{tipo}/{id}) en la seccion menus.
+- [ ] US-0253 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get comida tipo` (GET /comida/{tipo}) en la seccion menus.
+- [ ] US-0254 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post comida tipo` (POST /comida/{tipo}) en la seccion menus.
+- [ ] US-0255 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get dishes catalog search` (GET /dishes-catalog/search) en la seccion menus.
+- [ ] US-0256 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post dishes catalog upsert` (POST /dishes-catalog/upsert) en la seccion menus.
+- [ ] US-0257 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post group menus v2 drafts` (POST /group-menus-v2/drafts) en la seccion menus.
+- [ ] US-0258 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post group menus v2 postres resolve` (POST /group-menus-v2/postres/resolve) en la seccion menus.
+- [ ] US-0259 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch group menus v2 id basics` (PATCH /group-menus-v2/{id}/basics) en la seccion menus.
+- [ ] US-0260 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get group menus v2 id beverage options` (GET /group-menus-v2/{id}/beverage-options) en la seccion menus.
+- [ ] US-0261 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch group menus v2 id menu type` (PATCH /group-menus-v2/{id}/menu-type) en la seccion menus.
+- [ ] US-0262 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post group menus v2 id publish` (POST /group-menus-v2/{id}/publish) en la seccion menus.
+- [ ] US-0263 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete group menus v2 id same day booking dishid` (DELETE /group-menus-v2/{id}/same-day-booking/{dishId}) en la seccion menus.
+- [ ] US-0264 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post group menus v2 id same day booking dishid` (POST /group-menus-v2/{id}/same-day-booking/{dishId}) en la seccion menus.
+- [ ] US-0265 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get group menus v2 id same day booking` (GET /group-menus-v2/{id}/same-day-booking) en la seccion menus.
+- [ ] US-0266 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch group menus v2 id sections sectionid annotations` (PATCH /group-menus-v2/{id}/sections/{sectionId}/annotations) en la seccion menus.
+- [ ] US-0267 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch group menus v2 id sections sectionid dessert sou` (PATCH /group-menus-v2/{id}/sections/{sectionId}/dessert-source) en la seccion menus.
+- [ ] US-0268 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch group menus v2 id sections sectionid dishes dish` (PATCH /group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}) en la seccion menus.
+- [ ] US-0269 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get group menus v2 id sections sectionid dishes` (GET /group-menus-v2/{id}/sections/{sectionId}/dishes) en la seccion menus.
+- [ ] US-0270 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `put group menus v2 id sections sectionid dishes` (PUT /group-menus-v2/{id}/sections/{sectionId}/dishes) en la seccion menus.
+- [ ] US-0271 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch group menus v2 id sections sectionid visibility` (PATCH /group-menus-v2/{id}/sections/{sectionId}/visibility) en la seccion menus.
+- [ ] US-0272 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete group menus v2 id sections sectionid` (DELETE /group-menus-v2/{id}/sections/{sectionId}) en la seccion menus.
+- [ ] US-0273 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `put group menus v2 id sections` (PUT /group-menus-v2/{id}/sections) en la seccion menus.
+- [ ] US-0274 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get group menus v2 id slider` (GET /group-menus-v2/{id}/slider) en la seccion menus.
+- [ ] US-0275 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch group menus v2 id slider` (PATCH /group-menus-v2/{id}/slider) en la seccion menus.
+- [ ] US-0276 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `put group menus v2 id special cta` (PUT /group-menus-v2/{id}/special-cta) en la seccion menus.
+- [ ] US-0277 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `put group menus v2 id special group booking` (PUT /group-menus-v2/{id}/special-group-booking) en la seccion menus.
+- [ ] US-0278 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `put group menus v2 id special principales` (PUT /group-menus-v2/{id}/special-principales) en la seccion menus.
+- [ ] US-0279 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `put group menus v2 id special sections order` (PUT /group-menus-v2/{id}/special-sections/order) en la seccion menus.
+- [ ] US-0280 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete group menus v2 id special sections sectionid pr` (DELETE /group-menus-v2/{id}/special-sections/{sectionId}/principales/{dishId}) en la seccion menus.
+- [ ] US-0281 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post group menus v2 id special sections sectionid prin` (POST /group-menus-v2/{id}/special-sections/{sectionId}/principales) en la seccion menus.
+- [ ] US-0282 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete group menus v2 id special sections sectionid` (DELETE /group-menus-v2/{id}/special-sections/{sectionId}) en la seccion menus.
+- [ ] US-0283 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch group menus v2 id special sections sectionid` (PATCH /group-menus-v2/{id}/special-sections/{sectionId}) en la seccion menus.
+- [ ] US-0284 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get group menus v2 id special sections` (GET /group-menus-v2/{id}/special-sections) en la seccion menus.
+- [ ] US-0285 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post group menus v2 id special sections` (POST /group-menus-v2/{id}/special-sections) en la seccion menus.
+- [ ] US-0286 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post group menus v2 id toggle active` (POST /group-menus-v2/{id}/toggle-active) en la seccion menus.
+- [ ] US-0287 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch group menus v2 id visibility` (PATCH /group-menus-v2/{id}/visibility) en la seccion menus.
+- [ ] US-0288 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete group menus v2 id` (DELETE /group-menus-v2/{id}) en la seccion menus.
+- [ ] US-0289 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get group menus v2 id` (GET /group-menus-v2/{id}) en la seccion menus.
+- [ ] US-0290 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get group menus v2` (GET /group-menus-v2) en la seccion menus.
+- [ ] US-0291 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post group menus id toggle` (POST /group-menus/{id}/toggle) en la seccion menus.
+- [ ] US-0292 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete group menus id` (DELETE /group-menus/{id}) en la seccion menus.
+- [ ] US-0293 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get group menus id` (GET /group-menus/{id}) en la seccion menus.
+- [ ] US-0294 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `put group menus id` (PUT /group-menus/{id}) en la seccion menus.
+- [ ] US-0295 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get group menus` (GET /group-menus) en la seccion menus.
+- [ ] US-0296 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post group menus` (POST /group-menus) en la seccion menus.
+- [ ] US-0297 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get menu visibility` (GET /menu-visibility) en la seccion menus.
+- [ ] US-0298 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post menu visibility` (POST /menu-visibility) en la seccion menus.
+- [ ] US-0299 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete menus dia dishes id` (DELETE /menus/dia/dishes/{id}) en la seccion menus.
+- [ ] US-0300 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch menus dia dishes id` (PATCH /menus/dia/dishes/{id}) en la seccion menus.
+- [ ] US-0301 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post menus dia dishes` (POST /menus/dia/dishes) en la seccion menus.
+- [ ] US-0302 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post menus dia price` (POST /menus/dia/price) en la seccion menus.
+- [ ] US-0303 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get menus dia` (GET /menus/dia) en la seccion menus.
+- [ ] US-0304 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete menus finde dishes id` (DELETE /menus/finde/dishes/{id}) en la seccion menus.
+- [ ] US-0305 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch menus finde dishes id` (PATCH /menus/finde/dishes/{id}) en la seccion menus.
+- [ ] US-0306 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post menus finde dishes` (POST /menus/finde/dishes) en la seccion menus.
+- [ ] US-0307 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post menus finde price` (POST /menus/finde/price) en la seccion menus.
+- [ ] US-0308 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get menus finde` (GET /menus/finde) en la seccion menus.
+- [ ] US-0309 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get menus selector` (GET /menus/selector) en la seccion menus.
+- [ ] US-0310 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post platos id toggle` (POST /platos/{id}/toggle) en la seccion menus.
+- [ ] US-0311 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete platos id` (DELETE /platos/{id}) en la seccion menus.
+- [ ] US-0312 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch platos id` (PATCH /platos/{id}) en la seccion menus.
+- [ ] US-0313 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get platos` (GET /platos) en la seccion menus.
+- [ ] US-0314 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post platos` (POST /platos) en la seccion menus.
+- [ ] US-0315 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete postres id` (DELETE /postres/{id}) en la seccion menus.
+- [ ] US-0316 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch postres id` (PATCH /postres/{id}) en la seccion menus.
+- [ ] US-0317 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get postres` (GET /postres) en la seccion menus.
+- [ ] US-0318 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post postres` (POST /postres) en la seccion menus.
+- [ ] US-0319 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get restaurant pages visibility` (GET /restaurant/pages/visibility) en la seccion menus.
+- [ ] US-0320 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch restaurant pages visibility` (PATCH /restaurant/pages/visibility) en la seccion menus.
+- [ ] US-0321 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero eliminar `delete vinos id` (DELETE /vinos/{id}) en la seccion menus.
+- [ ] US-0322 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get vinos id` (GET /vinos/{id}) en la seccion menus.
+- [ ] US-0323 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero actualizar `patch vinos id` (PATCH /vinos/{id}) en la seccion menus.
+- [ ] US-0324 (lectura; ACL: seccion menus): Como usuario del backoffice, quiero consultar `get vinos` (GET /vinos) en la seccion menus.
+- [ ] US-0325 (escritura; ACL: seccion menus): Como usuario del backoffice, quiero ejecutar `post vinos` (POST /vinos) en la seccion menus.
+
+## reservas (88 operaciones)
+
+- [ ] US-0326 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get arroz types` (GET /arroz-types) en la seccion reservas.
+- [ ] US-0327 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero eliminar `delete booking extras id` (DELETE /booking-extras/{id}) en la seccion reservas.
+- [ ] US-0328 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get booking extras` (GET /booking-extras) en la seccion reservas.
+- [ ] US-0329 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post booking extras` (POST /booking-extras) en la seccion reservas.
+- [ ] US-0330 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post bookings cancelled id reactivate` (POST /bookings/cancelled/{id}/reactivate) en la seccion reservas.
+- [ ] US-0331 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings cancelled` (GET /bookings/cancelled) en la seccion reservas.
+- [ ] US-0332 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings documents docid file` (GET /bookings/documents/{docId}/file) en la seccion reservas.
+- [ ] US-0333 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings export` (GET /bookings/export) en la seccion reservas.
+- [ ] US-0334 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings modified` (GET /bookings/modified) en la seccion reservas.
+- [ ] US-0335 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings search` (GET /bookings/search) en la seccion reservas.
+- [ ] US-0336 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post bookings id cancel` (POST /bookings/{id}/cancel) en la seccion reservas.
+- [ ] US-0337 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings id documents` (GET /bookings/{id}/documents) en la seccion reservas.
+- [ ] US-0338 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings id qr` (GET /bookings/{id}/qr) en la seccion reservas.
+- [ ] US-0339 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings id receipt pdf` (GET /bookings/{id}/receipt.pdf) en la seccion reservas.
+- [ ] US-0340 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings id` (GET /bookings/{id}) en la seccion reservas.
+- [ ] US-0341 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero actualizar `patch bookings id` (PATCH /bookings/{id}) en la seccion reservas.
+- [ ] US-0342 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get bookings` (GET /bookings) en la seccion reservas.
+- [ ] US-0343 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post bookings` (POST /bookings) en la seccion reservas.
+- [ ] US-0344 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get branding` (GET /branding) en la seccion reservas.
+- [ ] US-0345 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post branding` (POST /branding) en la seccion reservas.
+- [ ] US-0346 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get calendar` (GET /calendar) en la seccion reservas.
+- [ ] US-0347 (escritura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero ejecutar `post campanas preview` (POST /campanas/preview) en la seccion reservas.
+- [ ] US-0348 (lectura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero consultar `get campanas template` (GET /campanas/template) en la seccion reservas.
+- [ ] US-0349 (lectura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero consultar `get campanas unsubscribed` (GET /campanas/unsubscribed) en la seccion reservas.
+- [ ] US-0350 (lectura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero consultar `get campanas campaignid audience` (GET /campanas/{campaignId}/audience) en la seccion reservas.
+- [ ] US-0351 (lectura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero consultar `get campanas campaignid recipients` (GET /campanas/{campaignId}/recipients) en la seccion reservas.
+- [ ] US-0352 (escritura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero ejecutar `post campanas campaignid send` (POST /campanas/{campaignId}/send) en la seccion reservas.
+- [ ] US-0353 (lectura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero consultar `get campanas campaignid status` (GET /campanas/{campaignId}/status) en la seccion reservas.
+- [ ] US-0354 (escritura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero ejecutar `post campanas campaignid test` (POST /campanas/{campaignId}/test) en la seccion reservas.
+- [ ] US-0355 (escritura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero eliminar `delete campanas campaignid` (DELETE /campanas/{campaignId}) en la seccion reservas.
+- [ ] US-0356 (lectura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero consultar `get campanas campaignid` (GET /campanas/{campaignId}) en la seccion reservas.
+- [ ] US-0357 (escritura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero actualizar `put campanas campaignid` (PUT /campanas/{campaignId}) en la seccion reservas.
+- [ ] US-0358 (lectura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero consultar `get campanas` (GET /campanas) en la seccion reservas.
+- [ ] US-0359 (escritura; ACL: seccion reservas, campaignsGate): Como usuario del backoffice, quiero ejecutar `post campanas` (POST /campanas) en la seccion reservas.
+- [ ] US-0360 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config check website` (POST /config/check-website) en la seccion reservas.
+- [ ] US-0361 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config daily limit` (GET /config/daily-limit) en la seccion reservas.
+- [ ] US-0362 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config daily limit` (POST /config/daily-limit) en la seccion reservas.
+- [ ] US-0363 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config day` (GET /config/day) en la seccion reservas.
+- [ ] US-0364 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config day` (POST /config/day) en la seccion reservas.
+- [ ] US-0365 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config defaults` (GET /config/defaults) en la seccion reservas.
+- [ ] US-0366 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config defaults` (POST /config/defaults) en la seccion reservas.
+- [ ] US-0367 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config email provider` (GET /config/email-provider) en la seccion reservas.
+- [ ] US-0368 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config email provider` (POST /config/email-provider) en la seccion reservas.
+- [ ] US-0369 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config floors date` (POST /config/floors/date) en la seccion reservas.
+- [ ] US-0370 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config floors defaults` (GET /config/floors/defaults) en la seccion reservas.
+- [ ] US-0371 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config floors defaults` (POST /config/floors/defaults) en la seccion reservas.
+- [ ] US-0372 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config floors` (GET /config/floors) en la seccion reservas.
+- [ ] US-0373 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config floors` (POST /config/floors) en la seccion reservas.
+- [ ] US-0374 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config hour split percentages` (POST /config/hour-split-percentages) en la seccion reservas.
+- [ ] US-0375 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config hour split` (GET /config/hour-split) en la seccion reservas.
+- [ ] US-0376 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config hour split` (POST /config/hour-split) en la seccion reservas.
+- [ ] US-0377 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config location booking` (GET /config/location-booking) en la seccion reservas.
+- [ ] US-0378 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config location booking` (POST /config/location-booking) en la seccion reservas.
+- [ ] US-0379 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config mandatory menus` (GET /config/mandatory-menus) en la seccion reservas.
+- [ ] US-0380 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config mandatory menus` (POST /config/mandatory-menus) en la seccion reservas.
+- [ ] US-0381 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config mesas de dos` (GET /config/mesas-de-dos) en la seccion reservas.
+- [ ] US-0382 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config mesas de dos` (POST /config/mesas-de-dos) en la seccion reservas.
+- [ ] US-0383 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config mesas de tres` (GET /config/mesas-de-tres) en la seccion reservas.
+- [ ] US-0384 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config mesas de tres` (POST /config/mesas-de-tres) en la seccion reservas.
+- [ ] US-0385 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config mobility day` (GET /config/mobility-day) en la seccion reservas.
+- [ ] US-0386 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config mobility day` (POST /config/mobility-day) en la seccion reservas.
+- [ ] US-0387 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config opening hours` (GET /config/opening-hours) en la seccion reservas.
+- [ ] US-0388 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config opening hours` (POST /config/opening-hours) en la seccion reservas.
+- [ ] US-0389 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config restaurant info` (GET /config/restaurant-info) en la seccion reservas.
+- [ ] US-0390 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config restaurant info` (POST /config/restaurant-info) en la seccion reservas.
+- [ ] US-0391 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config salon condesa` (GET /config/salon-condesa) en la seccion reservas.
+- [ ] US-0392 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config salon condesa` (POST /config/salon-condesa) en la seccion reservas.
+- [ ] US-0393 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config salons day status` (POST /config/salons/day-status) en la seccion reservas.
+- [ ] US-0394 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero eliminar `delete config salons salonid` (DELETE /config/salons/{salonId}) en la seccion reservas.
+- [ ] US-0395 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero actualizar `put config salons salonid` (PUT /config/salons/{salonId}) en la seccion reservas.
+- [ ] US-0396 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config salons` (GET /config/salons) en la seccion reservas.
+- [ ] US-0397 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config salons` (POST /config/salons) en la seccion reservas.
+- [ ] US-0398 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config special dates stats` (GET /config/special-dates/stats) en la seccion reservas.
+- [ ] US-0399 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get config special dates` (GET /config/special-dates) en la seccion reservas.
+- [ ] US-0400 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post config special dates` (POST /config/special-dates) en la seccion reservas.
+- [ ] US-0401 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get dashboard metrics` (GET /dashboard/metrics) en la seccion reservas.
+- [ ] US-0402 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get legal pages slug` (GET /legal-pages/{slug}) en la seccion reservas.
+- [ ] US-0403 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post legal pages slug` (POST /legal-pages/{slug}) en la seccion reservas.
+- [ ] US-0404 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get legal pages` (GET /legal-pages) en la seccion reservas.
+- [ ] US-0405 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero eliminar `delete tables template floornumber` (DELETE /tables/template/{floorNumber}) en la seccion reservas.
+- [ ] US-0406 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get tables template floornumber` (GET /tables/template/{floorNumber}) en la seccion reservas.
+- [ ] US-0407 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post tables template floornumber` (POST /tables/template/{floorNumber}) en la seccion reservas.
+- [ ] US-0408 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero eliminar `delete tables id` (DELETE /tables/{id}) en la seccion reservas.
+- [ ] US-0409 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get tables` (GET /tables) en la seccion reservas.
+- [ ] US-0410 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero ejecutar `post tables` (POST /tables) en la seccion reservas.
+- [ ] US-0411 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero actualizar `put tables` (PUT /tables) en la seccion reservas.
+- [ ] US-0412 (lectura; ACL: seccion reservas): Como usuario del backoffice, quiero consultar `get widget settings` (GET /widget/settings) en la seccion reservas.
+- [ ] US-0413 (escritura; ACL: seccion reservas): Como usuario del backoffice, quiero actualizar `put widget settings` (PUT /widget/settings) en la seccion reservas.
+
+## miembros (33 operaciones)
+
+- [ ] US-0414 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get booking notifications` (GET /booking-notifications) en la seccion miembros.
+- [ ] US-0415 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero actualizar `put booking notifications` (PUT /booking-notifications) en la seccion miembros.
+- [ ] US-0416 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members whatsapp connect` (POST /members/whatsapp/connect) en la seccion miembros.
+- [ ] US-0417 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get members whatsapp connection` (GET /members/whatsapp/connection) en la seccion miembros.
+- [ ] US-0418 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members whatsapp disconnect` (POST /members/whatsapp/disconnect) en la seccion miembros.
+- [ ] US-0419 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members whatsapp flush queue` (POST /members/whatsapp/flush-queue) en la seccion miembros.
+- [ ] US-0420 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members whatsapp send` (POST /members/whatsapp/send) en la seccion miembros.
+- [ ] US-0421 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero eliminar `delete members id compensations compensationid` (DELETE /members/{id}/compensations/{compensationId}) en la seccion miembros.
+- [ ] US-0422 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero actualizar `patch members id compensations compensationid` (PATCH /members/{id}/compensations/{compensationId}) en la seccion miembros.
+- [ ] US-0423 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get members id compensations` (GET /members/{id}/compensations) en la seccion miembros.
+- [ ] US-0424 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members id compensations` (POST /members/{id}/compensations) en la seccion miembros.
+- [ ] US-0425 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members id ensure user` (POST /members/{id}/ensure-user) en la seccion miembros.
+- [ ] US-0426 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members id invitation resend` (POST /members/{id}/invitation/resend) en la seccion miembros.
+- [ ] US-0427 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members id password reset send` (POST /members/{id}/password-reset/send) en la seccion miembros.
+- [ ] US-0428 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members id phone verification confirm` (POST /members/{id}/phone/verification/confirm) en la seccion miembros.
+- [ ] US-0429 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members id phone verification send` (POST /members/{id}/phone/verification/send) en la seccion miembros.
+- [ ] US-0430 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero actualizar `put members id phone` (PUT /members/{id}/phone) en la seccion miembros.
+- [ ] US-0431 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get members id stats range` (GET /members/{id}/stats-range) en la seccion miembros.
+- [ ] US-0432 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get members id stats year` (GET /members/{id}/stats-year) en la seccion miembros.
+- [ ] US-0433 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get members id stats` (GET /members/{id}/stats) en la seccion miembros.
+- [ ] US-0434 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get members id table data` (GET /members/{id}/table-data) en la seccion miembros.
+- [ ] US-0435 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get members id time balance` (GET /members/{id}/time-balance) en la seccion miembros.
+- [ ] US-0436 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members id whatsapp verification confirm` (POST /members/{id}/whatsapp/verification/confirm) en la seccion miembros.
+- [ ] US-0437 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members id whatsapp verification send` (POST /members/{id}/whatsapp/verification/send) en la seccion miembros.
+- [ ] US-0438 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero eliminar `delete members id` (DELETE /members/{id}) en la seccion miembros.
+- [ ] US-0439 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get members id` (GET /members/{id}) en la seccion miembros.
+- [ ] US-0440 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero actualizar `patch members id` (PATCH /members/{id}) en la seccion miembros.
+- [ ] US-0441 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get members` (GET /members) en la seccion miembros.
+- [ ] US-0442 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post members` (POST /members) en la seccion miembros.
+- [ ] US-0443 (lectura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero consultar `get roles` (GET /roles) en la seccion miembros.
+- [ ] US-0444 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero ejecutar `post roles` (POST /roles) en la seccion miembros.
+- [ ] US-0445 (escritura; ACL: seccion miembros, rol>=90): Como usuario del backoffice, quiero actualizar `patch users id role` (PATCH /users/{id}/role) en la seccion miembros.
+- [ ] US-0446 (escritura; ACL: seccion miembros, rol>=100): Como usuario del backoffice, quiero actualizar `patch users id version` (PATCH /users/{id}/version) en la seccion miembros.
+
+## superadmin (25 operaciones)
+
+- [ ] US-0447 (lectura; ACL: superadmin): Como usuario del backoffice, quiero consultar `get platform dashboard` (GET /platform/dashboard) en la seccion superadmin.
+- [ ] US-0448 (lectura; ACL: superadmin): Como usuario del backoffice, quiero consultar `get platform domains` (GET /platform/domains) en la seccion superadmin.
+- [ ] US-0449 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform restaurants id activate` (POST /platform/restaurants/{id}/activate) en la seccion superadmin.
+- [ ] US-0450 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform restaurants id deactivate` (POST /platform/restaurants/{id}/deactivate) en la seccion superadmin.
+- [ ] US-0451 (escritura; ACL: superadmin): Como usuario del backoffice, quiero actualizar `patch platform restaurants id` (PATCH /platform/restaurants/{id}) en la seccion superadmin.
+- [ ] US-0452 (lectura; ACL: superadmin): Como usuario del backoffice, quiero consultar `get platform restaurants` (GET /platform/restaurants) en la seccion superadmin.
+- [ ] US-0453 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform restaurants` (POST /platform/restaurants) en la seccion superadmin.
+- [ ] US-0454 (escritura; ACL: superadmin): Como usuario del backoffice, quiero actualizar `put platform stripe connect restaurants id fee` (PUT /platform/stripe-connect/restaurants/{id}/fee) en la seccion superadmin.
+- [ ] US-0455 (escritura; ACL: superadmin): Como usuario del backoffice, quiero actualizar `put platform stripe connect settings` (PUT /platform/stripe-connect/settings) en la seccion superadmin.
+- [ ] US-0456 (lectura; ACL: superadmin): Como usuario del backoffice, quiero consultar `get platform stripe connect` (GET /platform/stripe-connect) en la seccion superadmin.
+- [ ] US-0457 (lectura; ACL: superadmin): Como usuario del backoffice, quiero consultar `get platform stripe payments` (GET /platform/stripe/payments) en la seccion superadmin.
+- [ ] US-0458 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform stripe refund` (POST /platform/stripe/refund) en la seccion superadmin.
+- [ ] US-0459 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform subscriptions id toggle` (POST /platform/subscriptions/{id}/toggle) en la seccion superadmin.
+- [ ] US-0460 (lectura; ACL: superadmin): Como usuario del backoffice, quiero consultar `get platform subscriptions` (GET /platform/subscriptions) en la seccion superadmin.
+- [ ] US-0461 (lectura; ACL: superadmin): Como usuario del backoffice, quiero consultar `get platform uazapi servers` (GET /platform/uazapi-servers) en la seccion superadmin.
+- [ ] US-0462 (escritura; ACL: superadmin): Como usuario del backoffice, quiero eliminar `delete platform users id assign restaurantid` (DELETE /platform/users/{id}/assign/{restaurantId}) en la seccion superadmin.
+- [ ] US-0463 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform users id assign` (POST /platform/users/{id}/assign) en la seccion superadmin.
+- [ ] US-0464 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform users id password` (POST /platform/users/{id}/password) en la seccion superadmin.
+- [ ] US-0465 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform users id revoke sessions` (POST /platform/users/{id}/revoke-sessions) en la seccion superadmin.
+- [ ] US-0466 (escritura; ACL: superadmin): Como usuario del backoffice, quiero actualizar `patch platform users id` (PATCH /platform/users/{id}) en la seccion superadmin.
+- [ ] US-0467 (lectura; ACL: superadmin): Como usuario del backoffice, quiero consultar `get platform users` (GET /platform/users) en la seccion superadmin.
+- [ ] US-0468 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform users` (POST /platform/users) en la seccion superadmin.
+- [ ] US-0469 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform whatsapp id disconnect` (POST /platform/whatsapp/{id}/disconnect) en la seccion superadmin.
+- [ ] US-0470 (escritura; ACL: superadmin): Como usuario del backoffice, quiero ejecutar `post platform whatsapp id renew qr` (POST /platform/whatsapp/{id}/renew-qr) en la seccion superadmin.
+- [ ] US-0471 (lectura; ACL: superadmin): Como usuario del backoffice, quiero consultar `get platform whatsapp` (GET /platform/whatsapp) en la seccion superadmin.
+
+## ajustes (22 operaciones)
+
+- [ ] US-0472 (lectura; ACL: seccion ajustes, rol>=90): Como usuario del backoffice, quiero consultar `get bot config` (GET /bot/config) en la seccion ajustes.
+- [ ] US-0473 (escritura; ACL: seccion ajustes, rol>=90): Como usuario del backoffice, quiero actualizar `put bot config` (PUT /bot/config) en la seccion ajustes.
+- [ ] US-0474 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero ejecutar `post domains quote` (POST /domains/quote) en la seccion ajustes.
+- [ ] US-0475 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero ejecutar `post domains register` (POST /domains/register) en la seccion ajustes.
+- [ ] US-0476 (lectura; ACL: seccion ajustes): Como usuario del backoffice, quiero consultar `get domains search` (GET /domains/search) en la seccion ajustes.
+- [ ] US-0477 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero ejecutar `post domains verify` (POST /domains/verify) en la seccion ajustes.
+- [ ] US-0478 (escritura; ACL: seccion ajustes, rol>=90): Como usuario del backoffice, quiero actualizar `patch integrations uazapi servers id` (PATCH /integrations/uazapi/servers/{id}) en la seccion ajustes.
+- [ ] US-0479 (lectura; ACL: seccion ajustes, rol>=90): Como usuario del backoffice, quiero consultar `get integrations uazapi servers` (GET /integrations/uazapi/servers) en la seccion ajustes.
+- [ ] US-0480 (escritura; ACL: seccion ajustes, rol>=90): Como usuario del backoffice, quiero ejecutar `post integrations uazapi servers` (POST /integrations/uazapi/servers) en la seccion ajustes.
+- [ ] US-0481 (lectura; ACL: seccion ajustes): Como usuario del backoffice, quiero consultar `get integrations` (GET /integrations) en la seccion ajustes.
+- [ ] US-0482 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero ejecutar `post integrations` (POST /integrations) en la seccion ajustes.
+- [ ] US-0483 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero ejecutar `post site builder billing checkout` (POST /site-builder/billing/checkout) en la seccion ajustes.
+- [ ] US-0484 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero ejecutar `post site builder domains provision` (POST /site-builder/domains/provision) en la seccion ajustes.
+- [ ] US-0485 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero ejecutar `post site builder domains register` (POST /site-builder/domains/register) en la seccion ajustes.
+- [ ] US-0486 (lectura; ACL: seccion ajustes): Como usuario del backoffice, quiero consultar `get site builder domains search` (GET /site-builder/domains/search) en la seccion ajustes.
+- [ ] US-0487 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero ejecutar `post website ai generate` (POST /website/ai-generate) en la seccion ajustes.
+- [ ] US-0488 (lectura; ACL: seccion ajustes): Como usuario del backoffice, quiero consultar `get website menu templates` (GET /website/menu-templates) en la seccion ajustes.
+- [ ] US-0489 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero actualizar `put website menu templates` (PUT /website/menu-templates) en la seccion ajustes.
+- [ ] US-0490 (lectura; ACL: seccion ajustes): Como usuario del backoffice, quiero consultar `get website templates` (GET /website/templates) en la seccion ajustes.
+- [ ] US-0491 (lectura; ACL: seccion ajustes): Como usuario del backoffice, quiero consultar `get website` (GET /website) en la seccion ajustes.
+- [ ] US-0492 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero ejecutar `post website` (POST /website) en la seccion ajustes.
+- [ ] US-0493 (escritura; ACL: seccion ajustes): Como usuario del backoffice, quiero actualizar `put website` (PUT /website) en la seccion ajustes.
+
+## root (20 operaciones)
+
+- [ ] US-0494 (lectura; ACL: rol>=100): Como usuario del backoffice, quiero consultar `get bot ai restaurantid` (GET /bot/ai/{restaurantId}) en la seccion root.
+- [ ] US-0495 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero actualizar `put bot ai restaurantid` (PUT /bot/ai/{restaurantId}) en la seccion root.
+- [ ] US-0496 (lectura; ACL: rol>=100): Como usuario del backoffice, quiero consultar `get bot pipeline restaurantid` (GET /bot/pipeline/{restaurantId}) en la seccion root.
+- [ ] US-0497 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post bot settings restaurantid preview` (POST /bot/settings/{restaurantId}/preview) en la seccion root.
+- [ ] US-0498 (lectura; ACL: rol>=100): Como usuario del backoffice, quiero consultar `get bot settings restaurantid` (GET /bot/settings/{restaurantId}) en la seccion root.
+- [ ] US-0499 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero actualizar `put bot settings restaurantid` (PUT /bot/settings/{restaurantId}) en la seccion root.
+- [ ] US-0500 (lectura; ACL: rol>=100): Como usuario del backoffice, quiero consultar `get config bunny storage` (GET /config/bunny-storage) en la seccion root.
+- [ ] US-0501 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post config bunny storage` (POST /config/bunny-storage) en la seccion root.
+- [ ] US-0502 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post config chatgpt plugin tokens revoke` (POST /config/chatgpt-plugin/tokens/revoke) en la seccion root.
+- [ ] US-0503 (lectura; ACL: rol>=100): Como usuario del backoffice, quiero consultar `get config chatgpt plugin tokens` (GET /config/chatgpt-plugin/tokens) en la seccion root.
+- [ ] US-0504 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post config chatgpt plugin tokens` (POST /config/chatgpt-plugin/tokens) en la seccion root.
+- [ ] US-0505 (lectura; ACL: rol>=100): Como usuario del backoffice, quiero consultar `get config minimax` (GET /config/minimax) en la seccion root.
+- [ ] US-0506 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post config minimax` (POST /config/minimax) en la seccion root.
+- [ ] US-0507 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post config stripe connect dashboard` (POST /config/stripe-connect/dashboard) en la seccion root.
+- [ ] US-0508 (lectura; ACL: rol>=100): Como usuario del backoffice, quiero consultar `get config stripe connect delete precheck` (GET /config/stripe-connect/delete-precheck) en la seccion root.
+- [ ] US-0509 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post config stripe connect disconnect` (POST /config/stripe-connect/disconnect) en la seccion root.
+- [ ] US-0510 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post config stripe connect onboard` (POST /config/stripe-connect/onboard) en la seccion root.
+- [ ] US-0511 (lectura; ACL: rol>=100): Como usuario del backoffice, quiero consultar `get config stripe connect` (GET /config/stripe-connect) en la seccion root.
+- [ ] US-0512 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post members whatsapp cancel` (POST /members/whatsapp/cancel) en la seccion root.
+- [ ] US-0513 (escritura; ACL: rol>=100): Como usuario del backoffice, quiero ejecutar `post members whatsapp subscribe` (POST /members/whatsapp/subscribe) en la seccion root.
+
+## facturas (12 operaciones)
+
+- [ ] US-0514 (lectura; ACL: seccion facturas): Como usuario del backoffice, quiero consultar `get invoices search reservation` (GET /invoices/search-reservation) en la seccion facturas.
+- [ ] US-0515 (escritura; ACL: seccion facturas): Como usuario del backoffice, quiero eliminar `delete invoices id comments commentid` (DELETE /invoices/{id}/comments/{commentId}) en la seccion facturas.
+- [ ] US-0516 (escritura; ACL: seccion facturas): Como usuario del backoffice, quiero actualizar `put invoices id comments commentid` (PUT /invoices/{id}/comments/{commentId}) en la seccion facturas.
+- [ ] US-0517 (lectura; ACL: seccion facturas): Como usuario del backoffice, quiero consultar `get invoices id comments` (GET /invoices/{id}/comments) en la seccion facturas.
+- [ ] US-0518 (escritura; ACL: seccion facturas): Como usuario del backoffice, quiero ejecutar `post invoices id comments` (POST /invoices/{id}/comments) en la seccion facturas.
+- [ ] US-0519 (lectura; ACL: seccion facturas): Como usuario del backoffice, quiero consultar `get invoices id pdf` (GET /invoices/{id}/pdf) en la seccion facturas.
+- [ ] US-0520 (escritura; ACL: seccion facturas): Como usuario del backoffice, quiero ejecutar `post invoices id send` (POST /invoices/{id}/send) en la seccion facturas.
+- [ ] US-0521 (escritura; ACL: seccion facturas): Como usuario del backoffice, quiero eliminar `delete invoices id` (DELETE /invoices/{id}) en la seccion facturas.
+- [ ] US-0522 (lectura; ACL: seccion facturas): Como usuario del backoffice, quiero consultar `get invoices id` (GET /invoices/{id}) en la seccion facturas.
+- [ ] US-0523 (escritura; ACL: seccion facturas): Como usuario del backoffice, quiero actualizar `put invoices id` (PUT /invoices/{id}) en la seccion facturas.
+- [ ] US-0524 (lectura; ACL: seccion facturas): Como usuario del backoffice, quiero consultar `get invoices` (GET /invoices) en la seccion facturas.
+- [ ] US-0525 (escritura; ACL: seccion facturas): Como usuario del backoffice, quiero ejecutar `post invoices` (POST /invoices) en la seccion facturas.
+
+## fichaje (11 operaciones)
+
+- [ ] US-0526 (escritura; ACL: seccion fichaje, rol>=90): Como usuario del backoffice, quiero ejecutar `post fichaje start` (POST /fichaje/admin/start) en la seccion fichaje.
+- [ ] US-0527 (escritura; ACL: seccion fichaje, rol>=90): Como usuario del backoffice, quiero ejecutar `post fichaje stop` (POST /fichaje/admin/stop) en la seccion fichaje.
+- [ ] US-0528 (escritura; ACL: seccion fichaje, rol>=90): Como usuario del backoffice, quiero actualizar `patch fichaje entries id` (PATCH /fichaje/entries/{id}) en la seccion fichaje.
+- [ ] US-0529 (lectura; ACL: seccion fichaje, rol>=90): Como usuario del backoffice, quiero consultar `get fichaje entries` (GET /fichaje/entries) en la seccion fichaje.
+- [ ] US-0530 (lectura; ACL: seccion fichaje, rol>=90): Como usuario del backoffice, quiero consultar `get fichaje hourly costs` (GET /fichaje/hourly-costs) en la seccion fichaje.
+- [ ] US-0531 (lectura; ACL: seccion fichaje, rol>=90): Como usuario del backoffice, quiero consultar `get fichaje labour cost` (GET /fichaje/labour-cost) en la seccion fichaje.
+- [ ] US-0532 (lectura; ACL: seccion fichaje): Como usuario del backoffice, quiero consultar `get fichaje ping` (GET /fichaje/ping) en la seccion fichaje.
+- [ ] US-0533 (escritura; ACL: seccion fichaje): Como usuario del backoffice, quiero ejecutar `post fichaje start` (POST /fichaje/start) en la seccion fichaje.
+- [ ] US-0534 (lectura; ACL: seccion fichaje): Como usuario del backoffice, quiero consultar `get fichaje state` (GET /fichaje/state) en la seccion fichaje.
+- [ ] US-0535 (escritura; ACL: seccion fichaje): Como usuario del backoffice, quiero ejecutar `post fichaje stop` (POST /fichaje/stop) en la seccion fichaje.
+- [ ] US-0536 (lectura; ACL: seccion fichaje): Como usuario del backoffice, quiero consultar `get horarios my schedule` (GET /horarios/my-schedule) en la seccion fichaje.
+
+## horarios (7 operaciones)
+
+- [ ] US-0537 (lectura; ACL: seccion horarios): Como usuario del backoffice, quiero consultar `get horarios calendar` (GET /horarios/calendar) en la seccion horarios.
+- [ ] US-0538 (lectura; ACL: seccion horarios): Como usuario del backoffice, quiero consultar `get horarios member range` (GET /horarios/member-range) en la seccion horarios.
+- [ ] US-0539 (lectura; ACL: seccion horarios): Como usuario del backoffice, quiero consultar `get horarios month` (GET /horarios/month) en la seccion horarios.
+- [ ] US-0540 (escritura; ACL: seccion horarios): Como usuario del backoffice, quiero eliminar `delete horarios id` (DELETE /horarios/{id}) en la seccion horarios.
+- [ ] US-0541 (escritura; ACL: seccion horarios): Como usuario del backoffice, quiero actualizar `put horarios id` (PUT /horarios/{id}) en la seccion horarios.
+- [ ] US-0542 (lectura; ACL: seccion horarios): Como usuario del backoffice, quiero consultar `get horarios` (GET /horarios) en la seccion horarios.
+- [ ] US-0543 (escritura; ACL: seccion horarios): Como usuario del backoffice, quiero ejecutar `post horarios` (POST /horarios) en la seccion horarios.
+
+## session (5 operaciones)
+
+- [ ] US-0544 (escritura; ACL: usuario autenticado): Como usuario del backoffice, quiero ejecutar `post active restaurant` (POST /active-restaurant) en la seccion session.
+- [ ] US-0545 (escritura; ACL: usuario autenticado): Como usuario del backoffice, quiero ejecutar `post me password` (POST /me/password) en la seccion session.
+- [ ] US-0546 (escritura; ACL: usuario autenticado): Como usuario del backoffice, quiero actualizar `put me preferences` (PUT /me/preferences) en la seccion session.
+- [ ] US-0547 (lectura; ACL: usuario autenticado): Como usuario del backoffice, quiero consultar `get me` (GET /me) en la seccion session.
+- [ ] US-0548 (lectura; ACL: withBOStockTimeout): Como usuario del backoffice, quiero consultar `get stock permissions mine` (GET /stock/permissions/mine) en la seccion session.
+
+## estadisticas (4 operaciones)
+
+- [ ] US-0549 (lectura; ACL: seccion estadisticas): Como usuario del backoffice, quiero consultar `get analytics affluence seasonal` (GET /analytics/affluence/seasonal) en la seccion estadisticas.
+- [ ] US-0550 (lectura; ACL: seccion estadisticas): Como usuario del backoffice, quiero consultar `get analytics affluence` (GET /analytics/affluence) en la seccion estadisticas.
+- [ ] US-0551 (lectura; ACL: seccion estadisticas): Como usuario del backoffice, quiero consultar `get analytics overview` (GET /analytics/overview) en la seccion estadisticas.
+- [ ] US-0552 (escritura; ACL: seccion estadisticas): Como usuario del backoffice, quiero ejecutar `post analytics refresh` (POST /analytics/refresh) en la seccion estadisticas.
+
+## anuncios (4 operaciones)
+
+- [ ] US-0553 (escritura; ACL: adsGate): Como usuario del backoffice, quiero eliminar `delete config ads adid` (DELETE /config/ads/{adId}) en la seccion anuncios.
+- [ ] US-0554 (escritura; ACL: adsGate): Como usuario del backoffice, quiero actualizar `put config ads adid` (PUT /config/ads/{adId}) en la seccion anuncios.
+- [ ] US-0555 (lectura; ACL: adsGate): Como usuario del backoffice, quiero consultar `get config ads` (GET /config/ads) en la seccion anuncios.
+- [ ] US-0556 (escritura; ACL: adsGate): Como usuario del backoffice, quiero ejecutar `post config ads` (POST /config/ads) en la seccion anuncios.
+
+Total: 556 historias.

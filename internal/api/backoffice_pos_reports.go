@@ -123,7 +123,7 @@ func (s *Server) handleBOPOSCoversRebuild(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(r.Context(), `SELECT DISTINCT service_date,service_type FROM pos_visits WHERE restaurant_id=? AND service_date BETWEEN ? AND ? UNION SELECT DISTINCT service_date,service_type FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date BETWEEN ? AND ?`, a.ActiveRestaurantID, from, to, a.ActiveRestaurantID, from, to)
+	rows, err := tx.QueryContext(r.Context(), `SELECT DISTINCT DATE_FORMAT(service_date,'%Y-%m-%d'),service_type FROM pos_visits WHERE restaurant_id=? AND service_date BETWEEN ? AND ? UNION SELECT DISTINCT DATE_FORMAT(service_date,'%Y-%m-%d'),service_type FROM pos_cover_adjustments WHERE restaurant_id=? AND service_date BETWEEN ? AND ?`, a.ActiveRestaurantID, from, to, a.ActiveRestaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading cover keys")
 		return

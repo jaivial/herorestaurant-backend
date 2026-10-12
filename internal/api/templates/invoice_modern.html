@@ -45,6 +45,7 @@
     <div class="doc">
       <div class="title">FACTURA</div>
       {{if .Number}}<div class="muted">Nº {{.Number}}</div>{{end}}
+      {{if .Number}}<div class="muted">Referencia: {{.Number}}</div>{{end}}
       {{if .InvoiceDate}}<div class="muted">{{.InvoiceDate}}</div>{{end}}
     </div>
   </div>

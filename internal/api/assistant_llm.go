@@ -391,8 +391,15 @@ func assistantRecoverEncodedReply(text string) string {
 	// Note this works on the ORIGINAL text: assistantStripBase64Wrapper trims
 	// trailing backticks globally, which would eat the closing fence of a
 	// ```forky-chart block and stop the UI from rendering the chart.
-	if decoded, ok := assistantRecoverEncodedBlocks(text); ok {
-		return decoded
+	// Rich Forky blocks (```forky-chart, ```forky-widget, ```forky-doc) carry
+	// long unbroken HTML/JSON runs that the base64 run finder mistakes for
+	// encoded payloads; decoding in place eats the fence and the start of the
+	// block. When a rich-block fence is present the reply is authoritative
+	// plain text: skip in-place recovery and only cleanse.
+	if !strings.Contains(text, "```forky-") {
+		if decoded, ok := assistantRecoverEncodedBlocks(text); ok {
+			return decoded
+		}
 	}
 	// MiniMax intermittently hallucinates CJK (Chinese) phrases and filler
 	// symbols mid-Spanish-reply (e.g. "具体的"), no matter the model. None of
@@ -551,6 +558,49 @@ func assistantCleanseReply(s string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
+var assistantForkyFenceRunRe = regexp.MustCompile("(\x60\x60\x60forky-(?:doc|chart|widget))[ \t]*([{\\[])")
+var assistantInvoicePDFRe = regexp.MustCompile("/api/(?:admin/)?invoices/(\\d+)/pdf")
+
+// assistantNormalizeRichBlocks repairs small, deterministic rich-block
+// deviations before persisting a reply: (1) a model sometimes opens a
+// ```forky-doc/chart/widget fence and writes the payload on the same line,
+// which the client parser does not recognise, and (2) it occasionally typos
+// the invoice id inside a pdf URL even though the tool response carried the
+// exact pdf_url. When the turn's tool results contain invoice PDF URLs, any
+// URL whose id is not among them is corrected to the only valid one (safe
+// only when exactly one candidate exists).
+func assistantNormalizeRichBlocks(reply string, toolMsgs []assistantChatMessage) string {
+	if !strings.Contains(reply, "```forky-") {
+		return reply
+	}
+	reply = assistantForkyFenceRunRe.ReplaceAllString(reply, "$1\n$2")
+	valid := map[string]bool{}
+	for _, m := range toolMsgs {
+		b, err := json.Marshal(m.Content)
+		if err != nil {
+			continue
+		}
+		for _, mm := range assistantInvoicePDFRe.FindAllStringSubmatch(string(b), -1) {
+			valid[mm[1]] = true
+		}
+	}
+	if len(valid) == 0 || !assistantInvoicePDFRe.MatchString(reply) {
+		return reply
+	}
+	return assistantInvoicePDFRe.ReplaceAllStringFunc(reply, func(u string) string {
+		id := assistantInvoicePDFRe.FindStringSubmatch(u)[1]
+		if valid[id] {
+			return u
+		}
+		if len(valid) == 1 {
+			for vid := range valid {
+				return "/api/admin/invoices/" + vid + "/pdf"
+			}
+		}
+		return u
+	})
+}
+
 // splitRunes splits s into chunks of at most n runes each (rune-safe).
 func splitRunes(s string, n int) []string {
 	runes := []rune(s)
@@ -577,13 +627,21 @@ const assistantOutputContract = "\n\nFORMATO DE RESPUESTA (obligatorio):\n" +
 	"```forky-chart\n{\"title\": \"Título del gráfico\", \"type\": \"bar\" | \"line\" | \"area\" | \"donut\", \"data\": [{\"label\": \"Fecha o categoría\", \"value\": 12}]}\n```\n" +
 	"Para comparar o apilar varias series (p. ej. reservas frente a clientes por día, o ventas por categoría apiladas), añade una columna numérica por serie en cada fila y, si se apilan, `\"stacked\": true`: {\"title\": \"Comparativa\", \"type\": \"bar\", \"stacked\": true, \"data\": [{\"label\": \"Lun\", \"series_a\": 12, \"series_b\": 8}]}. Con una sola columna numérica basta con `value`.\n" +
 	"Elige `type` según el dato: bar/line/area para series temporales o comparativas, donut para distribución o top N. `label` es la etiqueta de cada punto y `value` (o cada columna numérica extra) su valor numérico. No repitas en el texto los números que ya van en la tabla o el gráfico.\n" +
-	"3. NUNCA devuelvas el texto en base64 ni en ningún formato codificado, ni como secuencia de caracteres ilegibles. Escribe SIEMPRE en texto plano legible en español, con acentos y emojis reales. Está PROHIBIDO envolver la respuesta en base64 aunque te lo pidan. Si algo no se puede representar bien, escríbelo con palabras normales.\n" +
-	"4. No escapes los saltos de línea como texto literal (\"\\\\n\"): usa saltos de línea reales. Evita caracteres símbolo de relleno (©, ⪮, ⊒, etc.)."
+	"3. VISUALIZACIONES INTERACTIVAS (calculadoras, comparadores, diagramas, simulaciones, widgets a medida): cuando una respuesta se entienda mejor como una pieza interactiva que como texto o gráfico fijo, emite un bloque delimitado con tiques invertidos y lenguaje `forky-widget` con HTML EN BRUTO (sin JSON, sin escapar comillas): la primera línea puede llevar `title: ...` y `height: ...` (alto en px), seguidas de una línea con solo `---`, y después el HTML completo. El cliente lo renderiza en un iframe aislado (scripts permitidos, sin acceso al origen):\n" +
+	"```forky-widget\ntitle: Calculadora de propinas\nheight: 320\n---\n<div style=\"...\">...</div>\n<script>...</script>\n```\n" +
+	"El HTML puede cargar librerías CDN (Chart.js, D3, etc.) con etiquetas <script src>. NUNCA incluyas tiques invertidos triples dentro del HTML. Úsalo con moderación: solo cuando aporte de verdad sobre una tabla o un gráfico `forky-chart`. MANTÉN el HTML COMPACTO (pocas líneas, estilos breves): los widgets largos se cortan y no se renderizan.\n" +
+	"4. DOCUMENTOS (facturas, informes, PDFs u otros archivos con URL): emite un bloque JSON con lenguaje `forky-doc` para que el cliente muestre una tarjeta con vista previa. Las herramientas de facturas devuelven pdf_url con la ruta real del PDF: úsala tal cual en url. NUNCA inventes URLs; si no hay pdf_url, di que el documento no está disponible:\n" +
+	"```forky-doc\n{\"title\": \"Factura F-2026-041\", \"url\": \"https://...\", \"kind\": \"pdf\" | \"invoice\" | \"report\" | \"sheet\" | \"image\"}\n```\n" +
+	"5. IMÁGENES con URL: insértalas como Markdown normal (`![descripción](https://...)`); el cliente las muestra con vista previa ampliable.\n" +
+	"6. NUNCA devuelvas el texto en base64 ni en ningún formato codificado, ni como secuencia de caracteres ilegibles. Escribe SIEMPRE en texto plano legible en español, con acentos y emojis reales. Está PROHIBIDO envolver la respuesta en base64 aunque te lo pidan. Si algo no se puede representar bien, escríbelo con palabras normales.\n" +
+	"7. No escapes los saltos de línea como texto literal (\"\\\\n\"): usa saltos de línea reales. Evita caracteres símbolo de relleno (©, ⪮, ⊒, etc.)."
 
 func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID int) string {
 	const base = "Eres Forky, el asistente de IA del restaurante. " +
-		"Responde en español, sé breve, amable y con un toque de humor. Eres el asistente de IA del restaurante. " +
+		"Responde en español, breve, amable y con un toque de humor medido: como máximo UN emoji por respuesta y sin promesas grandilocuentes. " +
 		"Para cualquier dato factual del restaurante (nombre, reservas, menú, stock, POS, clientes o analítica), DEBES usar la herramienta correspondiente antes de responder; nunca inventes datos ni digas que careces de acceso si existe una herramienta. " +
+		"HONESTIDAD (obligatorio): solo puedes afirmar un dato del restaurante si lo devolvió una herramienta ejecutada en ESTA respuesta. Si no ejecutaste ninguna herramienta, no digas que consultaste, listaste o comprobaste nada, y jamás inventes platos, precios, nombres ni URLs. Si la herramienta falla o no devuelve datos, dilo tal cual. " +
+		"Cuando una herramienta devuelva un campo de foto (foto, foto_url o foto_path) y el usuario pida ver imágenes, muestra cada foto como imagen Markdown `![nombre](url)` usando ese campo. " +
 		"Para pedir el detalle de las reservas (listado/tabla por cliente, fecha, hora y personas), usa SIEMPRE la herramienta bookings_list; bookings_summary y analytics_report solo dan totales agregados y NO sirven para una tabla de reservas individuales." +
 		assistantOutputContract
 	if s.db == nil || restaurantID <= 0 {

@@ -186,6 +186,19 @@ func (s *Server) handlePlatformRestaurantCreate(w http.ResponseWriter, r *http.R
 	}
 	id, _ := res.LastInsertId()
 
+	// Multitenant provisioning: a new restaurant must be usable right away -
+	// seed its satellite rows with defaults and grant the creator ownership.
+	if err := s.provisionRestaurantDefaults(r.Context(), int(id), name); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error aprovisionando el restaurante: " + err.Error()})
+		return
+	}
+	if a, ok := boAuthFromContext(r.Context()); ok {
+		if err := s.provisionRestaurantOwner(r.Context(), int(id), a.User.ID); err != nil {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error asignando el propietario: " + err.Error()})
+			return
+		}
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
 		"restaurantId": id,
@@ -948,7 +961,7 @@ func (s *Server) handlePlatformStripePaymentsList(w http.ResponseWriter, r *http
 			COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.currency')), '') AS currency,
 			COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.metadata.domain')), '') AS domain,
 			COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.metadata.restaurant_id')), '0') AS restaurant_id,
-			r.name AS restaurant_name,
+			COALESCE(r.name, '') AS restaurant_name,
 			COALESCE(DATE_FORMAT(e.created_at, '%Y-%m-%dT%H:%i:%sZ'), '') AS paid_at
 		FROM stripe_events e
 		LEFT JOIN restaurants r ON r.id = CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.metadata.restaurant_id')), '0') AS UNSIGNED)
@@ -1096,10 +1109,15 @@ type platformUAZAPIServer struct {
 }
 
 func (s *Server) handlePlatformUAZAPIServersList(w http.ResponseWriter, r *http.Request) {
+	// used_count is a stored counter that can drift from the real number of
+	// instances (QA: "1 en uso" with 0 WhatsApp instances). Report the live
+	// count of active instances per server instead.
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, name, provider, base_url, capacity, used_count, is_active
-		FROM uazapi_servers
-		ORDER BY is_active DESC, priority DESC, id ASC
+		SELECT s.id, s.name, s.provider, s.base_url, s.capacity,
+		  (SELECT COUNT(*) FROM restaurant_uazapi_instances i WHERE i.server_id = s.id AND i.is_active = 1) AS used_count,
+		  s.is_active
+		FROM uazapi_servers s
+		ORDER BY s.is_active DESC, s.priority DESC, s.id ASC
 	`)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo servidores UAZAPI")

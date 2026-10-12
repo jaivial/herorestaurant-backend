@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"preactvillacarmen/internal/cache"
 	"preactvillacarmen/internal/config"
 	"preactvillacarmen/internal/httpx"
 )
@@ -36,6 +38,7 @@ type Server struct {
 	vinoAIHub             *boVinoAIHub
 	comidaAIHub           *boComidaAIHub
 	whatsappConnectionHub *boWhatsAppConnectionHub
+	boCache               *cache.Cache // bo_redis_cache_v1
 	rateMu                sync.Mutex
 	// fichajeMu serializes check-then-write clock operations. The active-entry
 	// invariant must hold even when two kiosk requests arrive concurrently.
@@ -103,6 +106,15 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		sessionCache:          newBOSessionCache(30 * time.Second),
 		bunnyCredsCache:       newBunnyCredentialsCache(),
 		minimaxStoreCache:     newMiniMaxStoreCache(),
+	}
+
+	// bo_redis_cache_v1: optional Redis cache-aside for hot /admin GETs.
+	// Disabled silently when REDIS_ADDR is empty or Redis is unreachable.
+	if c, err := cache.New(os.Getenv("REDIS_ADDR")); err != nil {
+		log.Printf("[cache] redis unavailable, caching disabled: %v", err)
+	} else if c != nil {
+		s.boCache = c
+		log.Printf("[cache] redis cache-aside enabled (ttl 15s)")
 	}
 	s.instatic = newInstaticManager(db, cfg)
 	s.instatic.StartSupervisor()
@@ -196,6 +208,9 @@ func (s *Server) Routes() http.Handler {
 		r.Use(s.requireVaultKey)
 		// Coordination id: stripe_connect_multitenant_v1 - second secret.
 		r.Use(s.requireBearerToken)
+		if s.boCache != nil {
+			r.Use(s.boCache.Middleware(boSessionCookieName))
+		}
 		reservasGate := s.requireBOSection(boSectionReservas)
 		menusGate := s.requireBOSection(boSectionMenus)
 		ajustesGate := s.requireBOSection(boSectionAjustes)
@@ -1054,6 +1069,11 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/public/booking-policies", s.handlePublicBookingPolicies)
 	r.Get("/public/legal-page", s.handlePublicLegalPageGet)
 	r.Get("/public/ads", s.handlePublicAdsList)
+	// Coordination id: ads_canvas_v1 - 1-1 canvas render (iframe target for
+	// backoffice preview, Preact home and the external-site plugin).
+	r.Get("/public/ads/{adId}/render", s.handlePublicAdRender)
+	r.Get("/public/ads/embed", s.handlePublicAdsEmbed)
+	r.Get("/public/ads-plugin.js", s.handleAdsPluginJS)
 
 	// Embeddable booking widget API under /widget/* — accepts ?restaurant_id=.
 	// Same-origin on published restaurant sites (instatic proxy passes /widget/*

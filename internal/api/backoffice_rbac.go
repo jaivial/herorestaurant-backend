@@ -50,6 +50,7 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionCampanas:     true,
 		boSectionAnuncios:     true,
 		boSectionQR:           true,
+		boSectionComida:       true,
 	},
 	"admin": {
 		boSectionReservas:     true,
@@ -68,6 +69,7 @@ var defaultRolePermissions = map[string]map[string]bool{
 		boSectionCampanas:     true,
 		boSectionAnuncios:     true,
 		boSectionQR:           true,
+		boSectionComida:       true,
 	},
 	"metre": {
 		boSectionReservas:     true,

@@ -47,6 +47,7 @@
     <div class="box">
       <div class="label">Datos de la factura</div>
       {{if .InvoiceDate}}<div><span class="muted">Fecha:</span> {{.InvoiceDate}}</div>{{end}}
+      {{if .Number}}<div><span class="muted">Referencia:</span> {{.Number}}</div>{{end}}
       {{if .DueDate}}<div><span class="muted">Vencimiento:</span> {{.DueDate}}</div>{{end}}
       <div><span class="muted">Estado:</span> {{.StatusLabel}}</div>
       {{if .PaymentMethod}}<div><span class="muted">Forma de pago:</span> {{.PaymentMethod}}</div>{{end}}
