@@ -1069,6 +1069,11 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/public/booking-policies", s.handlePublicBookingPolicies)
 	r.Get("/public/legal-page", s.handlePublicLegalPageGet)
 	r.Get("/public/ads", s.handlePublicAdsList)
+	// Coordination id: ads_canvas_v1 - 1-1 canvas render (iframe target for
+	// backoffice preview, Preact home and the external-site plugin).
+	r.Get("/public/ads/{adId}/render", s.handlePublicAdRender)
+	r.Get("/public/ads/embed", s.handlePublicAdsEmbed)
+	r.Get("/public/ads-plugin.js", s.handleAdsPluginJS)
 
 	// Embeddable booking widget API under /widget/* — accepts ?restaurant_id=.
 	// Same-origin on published restaurant sites (instatic proxy passes /widget/*
