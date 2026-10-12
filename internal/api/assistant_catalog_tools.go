@@ -1,8 +1,8 @@
 package api
 
 import (
-	"database/sql"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"

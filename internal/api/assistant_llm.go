@@ -558,7 +558,6 @@ func assistantCleanseReply(s string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-
 var assistantForkyFenceRunRe = regexp.MustCompile("(\x60\x60\x60forky-(?:doc|chart|widget))[ \t]*([{\\[])")
 var assistantInvoicePDFRe = regexp.MustCompile("/api/(?:admin/)?invoices/(\\d+)/pdf")
 
