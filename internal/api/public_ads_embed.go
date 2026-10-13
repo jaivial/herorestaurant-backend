@@ -164,7 +164,7 @@ const adsPluginJS = `(function () {
       if (seen && Date.now() - seen < 24 * 3600 * 1000) return;
     } catch (e) {}
     var dims = pickDims(ad);
-    var maxWidth = (ad.container && ad.container.maxWidth) || 560;
+    var maxWidth = (ad.container && ad.container.maxWidth) || dims.width;
     var overlay = document.createElement("div");
     overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:" + ((ad.container && ad.container.overlay) || "rgba(0,0,0,.72)") + ";display:flex;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;";
     var box = document.createElement("div");
