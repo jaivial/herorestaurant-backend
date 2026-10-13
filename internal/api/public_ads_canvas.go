@@ -30,7 +30,11 @@ func adCanvasNumber(v float64) string {
 
 // handlePublicAdRender serves GET /public/ads/{adId}/render.
 // Query params: restaurant_id (optional when host resolves tenant),
-// src (optional free-form value for outbound-link attribution).
+// src (optional free-form value for outbound-link attribution),
+// variant ("desktop" | "tablet" | "mobile", optional) and vw (viewport width
+// hint, optional) — coord id ads_canvas_breakpoints_v1: with vw the breakpoint
+// is derived like the public popover does, so the iframe renders the same
+// responsive document a real visitor at that width would see.
 func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 	adID, err := strconv.ParseInt(strings.TrimSpace(r.PathValue("adId")), 10, 64)
 	if err != nil || adID <= 0 {
@@ -57,7 +61,19 @@ func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "Ad not found")
 		return
 	}
-	if ad.Canvas == nil {
+	canvas := ad.Canvas
+	if stepID := strings.TrimSpace(r.URL.Query().Get("step")); stepID != "" {
+		canvas = nil
+		if ad.Layout != nil {
+			for _, step := range ad.Layout.Steps {
+				if step.ID == stepID {
+					canvas = step.Canvas
+					break
+				}
+			}
+		}
+	}
+	if canvas == nil {
 		httpx.WriteError(w, http.StatusNotFound, "Ad has no canvas")
 		return
 	}
@@ -66,15 +82,27 @@ func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 	if len(src) > 64 {
 		src = src[:64]
 	}
+	variant := strings.TrimSpace(r.URL.Query().Get("variant"))
+	if variant == "" {
+		if rawVW := strings.TrimSpace(r.URL.Query().Get("vw")); rawVW != "" {
+			if vw, err := strconv.Atoi(rawVW); err == nil {
+				variant = adCanvasVariantForWidth(vw)
+			}
+		}
+	}
+	if variant != "mobile" && variant != "tablet" && variant != "desktop" {
+		variant = "desktop"
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	fmt.Fprint(w, renderAdCanvasHTML(ad.Canvas, src))
+	fmt.Fprint(w, renderAdCanvasHTML(adCanvasViewFor(canvas, variant), src))
 }
 
-// renderAdCanvasHTML builds the self-contained HTML page for a canvas. Every
-// dynamic value is escaped or validated before reaching the output.
-func renderAdCanvasHTML(canvas *boAdCanvas, src string) string {
+// renderAdCanvasHTML builds the self-contained HTML page for a resolved
+// breakpoint view. Every dynamic value is escaped or validated before
+// reaching the output.
+func renderAdCanvasHTML(view adCanvasView, src string) string {
 	var b strings.Builder
 	b.WriteString("<!doctype html><html><head><meta charset=\"utf-8\">")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
@@ -88,13 +116,13 @@ func renderAdCanvasHTML(canvas *boAdCanvas, src string) string {
 	b.WriteString(".vc-ad-btn{display:flex;align-items:center;justify-content:center;width:100%;height:100%;text-decoration:none;cursor:pointer;}")
 	b.WriteString("</style></head><body>")
 	b.WriteString("<div id=\"vc-ad-viewport\"><div id=\"vc-ad-stage\" style=\"width:")
-	b.WriteString(strconv.Itoa(canvas.Width))
+	b.WriteString(strconv.Itoa(view.Width))
 	b.WriteString("px;height:")
-	b.WriteString(strconv.Itoa(canvas.Height))
+	b.WriteString(strconv.Itoa(view.Height))
 	b.WriteString("px;")
 
-	bgType := canvas.Background.Type
-	bgValue := canvas.Background.Value
+	bgType := view.Background.Type
+	bgValue := view.Background.Value
 	if bgType == "image" && adCanvasSafeURL(bgValue) {
 		b.WriteString("background-image:url(")
 		b.WriteString(html.EscapeString(bgValue))
@@ -106,7 +134,7 @@ func renderAdCanvasHTML(canvas *boAdCanvas, src string) string {
 	}
 	b.WriteString("\">")
 
-	elements := append([]boAdCanvasElement(nil), canvas.Elements...)
+	elements := append([]boAdCanvasElement(nil), view.Elements...)
 	for i := 0; i < len(elements); i++ {
 		for j := i + 1; j < len(elements); j++ {
 			if elements[j].Z < elements[i].Z {
@@ -231,9 +259,9 @@ func renderAdCanvasHTML(canvas *boAdCanvas, src string) string {
 	b.WriteString("</div></div>")
 	b.WriteString("<script>(function(){var stage=document.getElementById(\"vc-ad-stage\");")
 	b.WriteString("var w=")
-	b.WriteString(strconv.Itoa(canvas.Width))
+	b.WriteString(strconv.Itoa(view.Width))
 	b.WriteString(",h=")
-	b.WriteString(strconv.Itoa(canvas.Height))
+	b.WriteString(strconv.Itoa(view.Height))
 	b.WriteString(";function fit(){var vw=window.innerWidth,vh=window.innerHeight;var sc=Math.min(vw/w,vh/h);stage.style.transform=\"scale(\"+sc+\")\";}window.addEventListener(\"resize\",fit);fit();})();</script>")
 	b.WriteString("</body></html>")
 	return b.String()

@@ -85,6 +85,84 @@ type boAdCanvas struct {
 	Height     int                  `json:"height"`
 	Background boAdCanvasBackground `json:"background"`
 	Elements   []boAdCanvasElement  `json:"elements"`
+	// Coordination id: ads_canvas_breakpoints_v1 - responsive variants keyed by
+	// "tablet" | "mobile". A variant with its own width/height/background/
+	// elements renders instead of the base doc at that breakpoint; a missing
+	// field inherits the base value, so a variant can start as a pure copy and
+	// diverge per field.
+	Variants map[string]*boAdCanvasVariant `json:"variants,omitempty"`
+	// Container styles the public popover applies around the canvas iframe
+	// (maxWidth px, overlay css color, modal radius px). Zero value = default.
+	Container *boAdCanvasContainer `json:"container,omitempty"`
+}
+
+// boAdCanvasVariant is a per-breakpoint override of the base canvas document.
+type boAdCanvasVariant struct {
+	Container  *boAdCanvasContainer  `json:"container,omitempty"`
+	Width      int                   `json:"width"`
+	Height     int                   `json:"height"`
+	Background *boAdCanvasBackground `json:"background,omitempty"` // nil = inherit base
+	Elements   []boAdCanvasElement   `json:"elements,omitempty"`   // nil = inherit base
+}
+
+// boAdCanvasContainer styles the ad popover chrome shared by every breakpoint.
+type boAdCanvasContainer struct {
+	MaxWidth int      `json:"maxWidth,omitempty"` // popover max width px (0 = default 560)
+	Overlay  string   `json:"overlay,omitempty"`  // overlay css color ("" = default)
+	Radius   *float64 `json:"radius,omitempty"`   // nil = default 24; explicit 0 = square corners
+}
+
+// adCanvasView is the resolved document for one breakpoint: base fields with
+// the variant overrides applied. It is what every renderer paints.
+type adCanvasView struct {
+	Width      int
+	Height     int
+	Background boAdCanvasBackground
+	Elements   []boAdCanvasElement
+}
+
+// Responsive breakpoints (coord id ads_canvas_breakpoints_v1), mirrored by the
+// preact popover (publicAds.ts) and the backoffice studio (AdVisualStudio.tsx).
+const (
+	adCanvasMobileBreakpoint = 768
+	adCanvasTabletBreakpoint = 1024
+)
+
+// adCanvasVariantForWidth maps a viewport/container width to a variant name.
+func adCanvasVariantForWidth(vw int) string {
+	if vw > 0 && vw < adCanvasMobileBreakpoint {
+		return "mobile"
+	}
+	if vw > 0 && vw < adCanvasTabletBreakpoint {
+		return "tablet"
+	}
+	return "desktop"
+}
+
+// adCanvasViewFor resolves the document for a variant name ("desktop" or a
+// missing variant falls back to the base doc, so old canvases keep rendering).
+func adCanvasViewFor(c *boAdCanvas, variant string) adCanvasView {
+	view := adCanvasView{Width: c.Width, Height: c.Height, Background: c.Background, Elements: c.Elements}
+	if variant == "" || variant == "desktop" {
+		return view
+	}
+	v := c.Variants[variant]
+	if v == nil {
+		return view
+	}
+	if v.Width > 0 {
+		view.Width = v.Width
+	}
+	if v.Height > 0 {
+		view.Height = v.Height
+	}
+	if v.Background != nil {
+		view.Background = *v.Background
+	}
+	if v.Elements != nil {
+		view.Elements = v.Elements
+	}
+	return view
 }
 
 // adCanvasSafeURL allows http(s), mailto, tel and root-relative links only.
@@ -145,26 +223,70 @@ func validateBOAdCanvas(canvas *boAdCanvas) error {
 	if canvas.Width < adCanvasMinDimension || canvas.Width > adCanvasMaxDimension || canvas.Height < adCanvasMinDimension || canvas.Height > adCanvasMaxDimension {
 		return fmt.Errorf("canvas dimensions must be between %d and %d", adCanvasMinDimension, adCanvasMaxDimension)
 	}
-	if canvas.Background.Type == "" {
-		canvas.Background.Type = "color"
-	}
-	if canvas.Background.Type != "color" && canvas.Background.Type != "image" {
-		return errors.New("canvas.background.type must be color or image")
-	}
-	if canvas.Background.Type == "color" && canvas.Background.Value != "" && !adCanvasSafeColor(canvas.Background.Value) {
-		return errors.New("canvas.background.value is not a safe color")
-	}
-	if canvas.Background.Type == "image" {
-		if !adCanvasSafeURL(canvas.Background.Value) || strings.HasPrefix(strings.TrimSpace(canvas.Background.Value), "/") {
-			return errors.New("canvas.background.value is not a safe image url")
-		}
+	if err := validateAdCanvasBackground(&canvas.Background, "canvas.background"); err != nil {
+		return err
 	}
 	if len(canvas.Elements) > adCanvasMaxElements {
 		return fmt.Errorf("canvas supports at most %d elements", adCanvasMaxElements)
 	}
+	if err := validateAdCanvasElements(canvas.Elements); err != nil {
+		return err
+	}
+	for name, variant := range canvas.Variants {
+		if name != "tablet" && name != "mobile" {
+			return fmt.Errorf("canvas.variants: unknown breakpoint %q (tablet|mobile)", name)
+		}
+		if variant == nil {
+			return fmt.Errorf("canvas.variants.%s: empty variant", name)
+		}
+		if variant.Width != 0 || variant.Height != 0 {
+			if variant.Width < adCanvasMinDimension || variant.Width > adCanvasMaxDimension || variant.Height < adCanvasMinDimension || variant.Height > adCanvasMaxDimension {
+				return fmt.Errorf("canvas.variants.%s dimensions must be between %d and %d", name, adCanvasMinDimension, adCanvasMaxDimension)
+			}
+		}
+		if err := validateAdCanvasContainer(variant.Container); err != nil {
+			return fmt.Errorf("canvas.variants.%s: %w", name, err)
+		}
+		if variant.Background != nil {
+			if err := validateAdCanvasBackground(variant.Background, "canvas.variants."+name+".background"); err != nil {
+				return err
+			}
+		}
+		if len(variant.Elements) > adCanvasMaxElements {
+			return fmt.Errorf("canvas.variants.%s supports at most %d elements", name, adCanvasMaxElements)
+		}
+		if err := validateAdCanvasElements(variant.Elements); err != nil {
+			return fmt.Errorf("canvas.variants.%s: %w", name, err)
+		}
+	}
+	if err := validateAdCanvasContainer(canvas.Container); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateAdCanvasBackground(bg *boAdCanvasBackground, where string) error {
+	if bg.Type == "" {
+		bg.Type = "color"
+	}
+	if bg.Type != "color" && bg.Type != "image" {
+		return fmt.Errorf("%s.type must be color or image", where)
+	}
+	if bg.Type == "color" && bg.Value != "" && !adCanvasSafeColor(bg.Value) {
+		return fmt.Errorf("%s.value is not a safe color", where)
+	}
+	if bg.Type == "image" {
+		if !adCanvasSafeURL(bg.Value) || strings.HasPrefix(strings.TrimSpace(bg.Value), "/") {
+			return fmt.Errorf("%s.value is not a safe image url", where)
+		}
+	}
+	return nil
+}
+
+func validateAdCanvasElements(elements []boAdCanvasElement) error {
 	seen := map[string]bool{}
-	for i := range canvas.Elements {
-		el := &canvas.Elements[i]
+	for i := range elements {
+		el := &elements[i]
 		el.ID = strings.TrimSpace(el.ID)
 		if el.ID == "" || len(el.ID) > 64 {
 			return fmt.Errorf("element %d: id is required (max 64 chars)", i)
@@ -251,6 +373,21 @@ func validateBOAdCanvas(canvas *boAdCanvas) error {
 			}
 		default:
 			return fmt.Errorf("element %s: unknown type %q", el.ID, el.Type)
+		}
+	}
+	return nil
+}
+
+func validateAdCanvasContainer(c *boAdCanvasContainer) error {
+	if c != nil {
+		if c.MaxWidth != 0 && (c.MaxWidth < 240 || c.MaxWidth > 2000) {
+			return errors.New("canvas.container.maxWidth must be between 240 and 2000")
+		}
+		if c.Overlay != "" && !adCanvasSafeColor(c.Overlay) {
+			return errors.New("canvas.container.overlay is not a safe color")
+		}
+		if c.Radius != nil && (*c.Radius < 0 || *c.Radius > 96) {
+			return errors.New("canvas.container.radius must be between 0 and 96")
 		}
 	}
 	return nil
