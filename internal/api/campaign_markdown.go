@@ -219,7 +219,9 @@ func renderCampaignInline(line string, theme campaignTheme) string {
 		// may become an <img src>: an author-supplied javascript:/data: URL must
 		// never reach the delivered email (campaign_url_allowlist_v1).
 		if !adCanvasSafeURL(html.UnescapeString(parts[2])) {
-			return html.EscapeString(parts[1])
+			// parts[1] is already htmlEscape'd (the whole line was); escaping
+			// again would double-escape & and quotes in the alt text.
+			return parts[1]
 		}
 		style := `max-width:100%;height:auto;border-radius:10px;display:block;margin:12px 0`
 		if w := campaignImageWidth(parts[3]); w > 0 {
@@ -230,7 +232,7 @@ func renderCampaignInline(line string, theme campaignTheme) string {
 	out = mdLinkRe.ReplaceAllStringFunc(out, func(m string) string {
 		parts := mdLinkRe.FindStringSubmatch(m)
 		if !adCanvasSafeURL(html.UnescapeString(parts[2])) {
-			return html.EscapeString(parts[1])
+			return parts[1]
 		}
 		return fmt.Sprintf(`<a href="%s" style="color:%s;text-decoration:underline">%s</a>`, parts[2], theme.Accent, parts[1])
 	})
