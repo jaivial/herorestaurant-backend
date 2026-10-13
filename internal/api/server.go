@@ -998,6 +998,11 @@ func (s *Server) Routes() http.Handler {
 
 		// Forky AI assistant (WebSocket chat, any logged-in user).
 		r.With(s.requireBOSession).Get("/assistant/ws", s.handleBOAssistantWS)
+		// Prompt-bar media: upload to the restaurant's Bunny storage and STT
+		// via the bot pipeline (coord forky_media_transcribe_v1). Same gate
+		// as the chat socket: any logged-in backoffice session.
+		r.With(s.requireBOSession).Post("/assistant/media/upload", s.handleBOAssistantMediaUpload)
+		r.With(s.requireBOSession).Post("/assistant/transcribe", s.handleBOAssistantTranscribe)
 
 		// Invoices management
 		r.With(s.requireBOSession, facturasGate).Get("/invoices", s.handleBOInvoicesList)
