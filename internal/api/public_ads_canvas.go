@@ -61,7 +61,19 @@ func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "Ad not found")
 		return
 	}
-	if ad.Canvas == nil {
+	canvas := ad.Canvas
+	if stepID := strings.TrimSpace(r.URL.Query().Get("step")); stepID != "" {
+		canvas = nil
+		if ad.Layout != nil {
+			for _, step := range ad.Layout.Steps {
+				if step.ID == stepID {
+					canvas = step.Canvas
+					break
+				}
+			}
+		}
+	}
+	if canvas == nil {
 		httpx.WriteError(w, http.StatusNotFound, "Ad has no canvas")
 		return
 	}
@@ -84,7 +96,7 @@ func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	fmt.Fprint(w, renderAdCanvasHTML(adCanvasViewFor(ad.Canvas, variant), src))
+	fmt.Fprint(w, renderAdCanvasHTML(adCanvasViewFor(canvas, variant), src))
 }
 
 // renderAdCanvasHTML builds the self-contained HTML page for a resolved

@@ -45,7 +45,7 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 		date = time.Now().Format("2006-01-02")
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND canvas_json IS NOT NULL ORDER BY updated_at DESC, id DESC`, restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND (canvas_json IS NOT NULL OR layout_json IS NOT NULL) ORDER BY updated_at DESC, id DESC`, restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ads")
 		return
@@ -60,15 +60,18 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 
 	type embedVariant struct {
-		Width  int `json:"width"`
-		Height int `json:"height"`
+		Container *boAdCanvasContainer `json:"container,omitempty"`
+		Width     int                  `json:"width"`
+		Height    int                  `json:"height"`
 	}
 	type embedAd struct {
-		ID        int64  `json:"id"`
-		Name      string `json:"name"`
-		Width     int    `json:"width"`
-		Height    int    `json:"height"`
-		RenderURL string `json:"render_url"`
+		Steps     []boAdStep `json:"steps,omitempty"`
+		CTAs      []boAdCTA  `json:"ctas,omitempty"`
+		ID        int64      `json:"id"`
+		Name      string     `json:"name"`
+		Width     int        `json:"width"`
+		Height    int        `json:"height"`
+		RenderURL string     `json:"render_url"`
 		// Coord id ads_canvas_breakpoints_v1: responsive dims + popover chrome
 		// so the plugin can pick a variant by viewport like the home popover does.
 		Variants  map[string]embedVariant `json:"variants,omitempty"`
@@ -77,19 +80,23 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 	ads := []embedAd{}
 	for _, id := range ids {
 		ad, err := s.readBOAd(r.Context(), restaurantID, id)
-		if err != nil || ad.Canvas == nil {
+		if err != nil || (ad.Canvas == nil && (ad.Layout == nil || ad.Layout.Mode != "multiple")) {
 			continue
 		}
 		if !publicAdVisibleOnDate(ad, date) {
 			continue
 		}
-		item := embedAd{
-			ID:        ad.ID,
-			Name:      ad.Name,
-			Width:     ad.Canvas.Width,
-			Height:    ad.Canvas.Height,
-			RenderURL: fmt.Sprintf("/api/public/ads/%d/render?restaurant_id=%d&src=plugin", ad.ID, restaurantID),
+		item := embedAd{ID: ad.ID, Name: ad.Name, RenderURL: fmt.Sprintf("/api/public/ads/%d/render?restaurant_id=%d&src=plugin", ad.ID, restaurantID)}
+		if ad.Layout != nil && ad.Layout.Mode == "multiple" {
+			for _, step := range ad.Layout.Steps {
+				item.Steps = append(item.Steps, step)
+			}
+			item.CTAs = ad.CTAs
+			item.Width, item.Height = 560, 600
+			ads = append(ads, item)
+			continue
 		}
+		item.Width, item.Height = ad.Canvas.Width, ad.Canvas.Height
 		for name, variant := range ad.Canvas.Variants {
 			if variant == nil || variant.Width <= 0 || variant.Height <= 0 {
 				continue
@@ -97,7 +104,7 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 			if item.Variants == nil {
 				item.Variants = map[string]embedVariant{}
 			}
-			item.Variants[name] = embedVariant{Width: variant.Width, Height: variant.Height}
+			item.Variants[name] = embedVariant{Width: variant.Width, Height: variant.Height, Container: variant.Container}
 		}
 		if ad.Canvas.Container != nil {
 			c := *ad.Canvas.Container
@@ -145,7 +152,14 @@ const adsPluginJS = `(function () {
     return { width: ad.width, height: ad.height };
   }
 
+  function safeLink(raw) {
+    if (typeof raw !== "string" || !raw || raw.length > 2048) return null;
+    if (raw.charAt(0) === "/" && raw.charAt(1) !== "/") return raw;
+    try { var u = new URL(raw); if (["https:","http:","mailto:","tel:"].indexOf(u.protocol) >= 0) return raw; } catch(e) {}
+    return null;
+  }
   function inject(ad, container) {
+    if (ad.steps && ad.steps.length) { injectWizard(ad, container); return; }
     var iframe = document.createElement("iframe");
     iframe.src = base + ad.render_url + "&variant=" + variantForWidth(window.innerWidth);
     iframe.setAttribute("title", ad.name || "Anuncio");
@@ -157,6 +171,45 @@ const adsPluginJS = `(function () {
     container.appendChild(iframe);
   }
 
+  function injectWizard(ad, container) {
+    var body = document.createElement("div");
+    body.style.cssText = "height:100%;overflow:auto;background:#fffdf8;color:#24342b;";
+    container.appendChild(body);
+    function buttons(list, target) {
+      (list || []).forEach(function(cta){var href=safeLink(cta.navigation_mode==="custom"?cta.custom_url:cta.route);if(!href)return;var a=document.createElement("a");a.href=href;a.textContent=cta.text;a.style.cssText="display:block;margin:8px 0;padding:12px;border-radius:12px;background:#24342b;color:white;text-align:center;";target.appendChild(a);});
+    }
+    function cards() {
+      body.replaceChildren(); body.style.padding = "22px";
+      container.style.maxWidth=ad.width+"px"; container.style.aspectRatio=ad.width+"/"+ad.height;
+      ad.steps.forEach(function(step) {
+        var card = document.createElement("div"); card.style.cssText = "padding:16px;margin-bottom:12px;background:#eee4d0;border-radius:12px;";
+        var title=document.createElement("h2");title.textContent=step.title;card.appendChild(title);
+        var desc=document.createElement("p");desc.textContent=step.description;card.appendChild(desc);
+        buttons(step.buttons,card);
+        var open=document.createElement("button");open.type="button";open.textContent="Ver más";open.onclick=function(){detail(step);};card.appendChild(open);body.appendChild(card);
+      });
+    }
+    function detail(step) {
+      body.replaceChildren(); body.style.padding = step.canvas ? "0" : "22px";
+      var back=document.createElement("button");back.type="button";back.textContent="Volver";back.onclick=cards;back.style.cssText="position:absolute;top:8px;left:8px;z-index:2;";body.appendChild(back);
+      if(step.canvas) {
+        var doc=step.canvas;var name=variantForWidth(window.innerWidth);var v=doc.variants && doc.variants[name];var dims=v || doc;
+        var chrome=Object.assign({},doc.container || {},dims.container || {});
+        container.style.maxWidth=(chrome.maxWidth || dims.width || doc.width)+"px";container.style.aspectRatio=(dims.width || doc.width)+"/"+(dims.height || doc.height);container.style.borderRadius=(chrome.radius===undefined?24:chrome.radius)+"px";
+        var holder=document.createElement("div");holder.style.cssText="width:100%;aspect-ratio:"+(dims.width || doc.width)+"/"+(dims.height || doc.height)+";";body.appendChild(holder);
+        inject({name:step.title,render_url:ad.render_url+"&step="+encodeURIComponent(step.id)},holder);
+      } else {
+        (step.content || []).forEach(function(item){
+          var el=document.createElement(item.type==="image"?"img":item.type==="title"?"h2":item.type==="subtitle"?"h3":"p");
+          if(item.type==="image"){var src=safeLink(item.value);if(!src || !/^https?:/.test(src))return;el.src=src;el.alt="";el.style.maxWidth="100%";}else el.textContent=item.value;
+          body.appendChild(el);
+        });
+        buttons(ad.ctas,body);
+      }
+    }
+    cards();
+  }
+
   function showOverlay(ad) {
     var seenKey = "vc-ad-seen-" + ad.id;
     try {
@@ -164,11 +217,12 @@ const adsPluginJS = `(function () {
       if (seen && Date.now() - seen < 24 * 3600 * 1000) return;
     } catch (e) {}
     var dims = pickDims(ad);
-    var maxWidth = (ad.container && ad.container.maxWidth) || dims.width;
+    var container = Object.assign({}, ad.container || {}, dims.container || {});
+    var maxWidth = container.maxWidth || dims.width;
     var overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:" + ((ad.container && ad.container.overlay) || "rgba(0,0,0,.72)") + ";display:flex;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:" + (container.overlay || "rgba(0,0,0,.72)") + ";display:flex;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;";
     var box = document.createElement("div");
-    box.style.cssText = "position:relative;width:100%;max-width:" + Math.min(maxWidth, dims.width) + "px;aspect-ratio:" + dims.width + "/" + dims.height + ";max-height:86vh;border-radius:" + ((ad.container && ad.container.radius) || 12) + "px;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.45);background:#fff;";
+    box.style.cssText = "position:relative;width:100%;max-width:" + Math.min(maxWidth, dims.width) + "px;aspect-ratio:" + dims.width + "/" + dims.height + ";max-height:86vh;border-radius:" + (container.radius === undefined ? 24 : container.radius) + "px;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.45);background:#fff;";
     var close = document.createElement("button");
     close.setAttribute("aria-label", "Cerrar anuncio");
     close.textContent = "\u00d7";

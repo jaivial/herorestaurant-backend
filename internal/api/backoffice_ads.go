@@ -111,12 +111,13 @@ type boAdCTA struct {
 // Coordination id: ads_layout_v1 - a "multiple" anuncio renders a wizard: a
 // column of cards (one per step) where each card advances to its announcement.
 type boAdStep struct {
-	ID              string `json:"id"`
-	Title           string `json:"title"`
-	Description     string `json:"description"`
-	BackgroundMode  string `json:"background_mode"`
-	BackgroundColor string `json:"background_color,omitempty"`
-	BackgroundImage string `json:"background_image,omitempty"`
+	Canvas          *boAdCanvas `json:"canvas,omitempty"`
+	ID              string      `json:"id"`
+	Title           string      `json:"title"`
+	Description     string      `json:"description"`
+	BackgroundMode  string      `json:"background_mode"`
+	BackgroundColor string      `json:"background_color,omitempty"`
+	BackgroundImage string      `json:"background_image,omitempty"`
 	// Coordination id: ads_step_detail_background_v1 - the opened announcement
 	// of a step has its own background, independent from the card above.
 	DetailBackgroundMode  string               `json:"detail_background_mode,omitempty"`
@@ -455,6 +456,11 @@ func normalizeBOAdLayout(input *boAdLayout) (*boAdLayout, error) {
 		content, err := normalizeBOAdContent(step.Content)
 		if err != nil {
 			return nil, err
+		}
+		if step.Canvas != nil {
+			if err := validateBOAdCanvas(step.Canvas); err != nil {
+				return nil, fmt.Errorf("step %s: %w", step.ID, err)
+			}
 		}
 		step.Buttons, step.Content = buttons, content
 		steps = append(steps, step)
