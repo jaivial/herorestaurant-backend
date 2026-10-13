@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"fmt"
+	"html"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -39,7 +40,7 @@ func normalizeCampaignTheme(t campaignTheme) campaignTheme {
 	out.Surface = firstNonEmpty(hexColorOrEmpty(t.Surface), campaignBaseTheme.Surface)
 	out.Text = firstNonEmpty(hexColorOrEmpty(t.Text), campaignBaseTheme.Text)
 	out.Accent = firstNonEmpty(hexColorOrEmpty(t.Accent), campaignBaseTheme.Accent)
-	out.FontFamily = firstNonEmpty(strings.TrimSpace(t.FontFamily), campaignBaseTheme.FontFamily)
+	out.FontFamily = firstNonEmpty(safeFontFamily(t.FontFamily), campaignBaseTheme.FontFamily)
 	if out.MaxWidth < 320 || out.MaxWidth > 900 {
 		out.MaxWidth = 600
 	}
@@ -50,6 +51,25 @@ func normalizeCampaignTheme(t campaignTheme) campaignTheme {
 }
 
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+
+// safeFontFamily keeps author-supplied font stacks to plain family names: no
+// ;, }, <, >, : or backslash, so the value can never break out of the
+// style="font-family:%s" attribute it is interpolated into
+// (campaign_url_allowlist_v1).
+func safeFontFamily(raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" || len(v) > 120 {
+		return ""
+	}
+	for _, r := range v {
+		ok := r == ' ' || r == ',' || r == '.' || r == '\'' || r == '"' || r == '-' ||
+			(r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+		if !ok {
+			return ""
+		}
+	}
+	return v
+}
 
 func hexColorOrEmpty(v string) string {
 	v = strings.TrimSpace(v)
@@ -195,13 +215,25 @@ func renderCampaignInline(line string, theme campaignTheme) string {
 	out := htmlEscape(line)
 	out = mdImageRe.ReplaceAllStringFunc(out, func(m string) string {
 		parts := mdImageRe.FindStringSubmatch(m)
+		// Only http(s) (and site-relative, already dropped by the regex above)
+		// may become an <img src>: an author-supplied javascript:/data: URL must
+		// never reach the delivered email (campaign_url_allowlist_v1).
+		if !adCanvasSafeURL(html.UnescapeString(parts[2])) {
+			return html.EscapeString(parts[1])
+		}
 		style := `max-width:100%;height:auto;border-radius:10px;display:block;margin:12px 0`
 		if w := campaignImageWidth(parts[3]); w > 0 {
 			style = fmt.Sprintf("width:%dpx;", w) + style
 		}
 		return fmt.Sprintf(`<img src="%s" alt="%s" style="%s" />`, parts[2], parts[1], style)
 	})
-	out = mdLinkRe.ReplaceAllString(out, fmt.Sprintf(`<a href="$2" style="color:%s;text-decoration:underline">$1</a>`, theme.Accent))
+	out = mdLinkRe.ReplaceAllStringFunc(out, func(m string) string {
+		parts := mdLinkRe.FindStringSubmatch(m)
+		if !adCanvasSafeURL(html.UnescapeString(parts[2])) {
+			return html.EscapeString(parts[1])
+		}
+		return fmt.Sprintf(`<a href="%s" style="color:%s;text-decoration:underline">%s</a>`, parts[2], theme.Accent, parts[1])
+	})
 	out = mdBoldRe.ReplaceAllString(out, "<strong>$1</strong>")
 	out = mdItalicRe.ReplaceAllString(out, "$1<em>$2</em>")
 	out = mdCodeRe.ReplaceAllString(out, `<code>$1</code>`)
