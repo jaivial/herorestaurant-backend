@@ -59,12 +59,20 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 
+	type embedVariant struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	}
 	type embedAd struct {
 		ID        int64  `json:"id"`
 		Name      string `json:"name"`
 		Width     int    `json:"width"`
 		Height    int    `json:"height"`
 		RenderURL string `json:"render_url"`
+		// Coord id ads_canvas_breakpoints_v1: responsive dims + popover chrome
+		// so the plugin can pick a variant by viewport like the home popover does.
+		Variants  map[string]embedVariant `json:"variants,omitempty"`
+		Container *boAdCanvasContainer    `json:"container,omitempty"`
 	}
 	ads := []embedAd{}
 	for _, id := range ids {
@@ -75,13 +83,27 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 		if !publicAdVisibleOnDate(ad, date) {
 			continue
 		}
-		ads = append(ads, embedAd{
+		item := embedAd{
 			ID:        ad.ID,
 			Name:      ad.Name,
 			Width:     ad.Canvas.Width,
 			Height:    ad.Canvas.Height,
 			RenderURL: fmt.Sprintf("/api/public/ads/%d/render?restaurant_id=%d&src=plugin", ad.ID, restaurantID),
-		})
+		}
+		for name, variant := range ad.Canvas.Variants {
+			if variant == nil || variant.Width <= 0 || variant.Height <= 0 {
+				continue
+			}
+			if item.Variants == nil {
+				item.Variants = map[string]embedVariant{}
+			}
+			item.Variants[name] = embedVariant{Width: variant.Width, Height: variant.Height}
+		}
+		if ad.Canvas.Container != nil {
+			c := *ad.Canvas.Container
+			item.Container = &c
+		}
+		ads = append(ads, item)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "restaurant_id": restaurantID, "ads": ads})
 }
@@ -111,9 +133,21 @@ const adsPluginJS = `(function () {
   if (!restaurant) return;
   var mode = script.getAttribute("data-mode") || "overlay";
 
+  // Coord id ads_canvas_breakpoints_v1 - same thresholds as the home popover.
+  function variantForWidth(vw) {
+    if (vw > 0 && vw < 768) return "mobile";
+    if (vw > 0 && vw < 1024) return "tablet";
+    return "desktop";
+  }
+  function pickDims(ad) {
+    var name = variantForWidth(window.innerWidth);
+    if (ad.variants && ad.variants[name]) return ad.variants[name];
+    return { width: ad.width, height: ad.height };
+  }
+
   function inject(ad, container) {
     var iframe = document.createElement("iframe");
-    iframe.src = base + ad.render_url;
+    iframe.src = base + ad.render_url + "&variant=" + variantForWidth(window.innerWidth);
     iframe.setAttribute("title", ad.name || "Anuncio");
     iframe.style.border = "0";
     iframe.style.width = "100%";
@@ -129,10 +163,12 @@ const adsPluginJS = `(function () {
       var seen = parseInt(localStorage.getItem(seenKey) || "0", 10);
       if (seen && Date.now() - seen < 24 * 3600 * 1000) return;
     } catch (e) {}
+    var dims = pickDims(ad);
+    var maxWidth = (ad.container && ad.container.maxWidth) || 560;
     var overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:" + ((ad.container && ad.container.overlay) || "rgba(0,0,0,.72)") + ";display:flex;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;";
     var box = document.createElement("div");
-    box.style.cssText = "position:relative;width:100%;max-width:" + ad.width + "px;aspect-ratio:" + ad.width + "/" + ad.height + ";max-height:86vh;border-radius:12px;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.45);background:#fff;";
+    box.style.cssText = "position:relative;width:100%;max-width:" + Math.min(maxWidth, dims.width) + "px;aspect-ratio:" + dims.width + "/" + dims.height + ";max-height:86vh;border-radius:" + ((ad.container && ad.container.radius) || 12) + "px;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.45);background:#fff;";
     var close = document.createElement("button");
     close.setAttribute("aria-label", "Cerrar anuncio");
     close.textContent = "\u00d7";
@@ -155,7 +191,8 @@ const adsPluginJS = `(function () {
       var ad = data.ads[0];
       if (mode === "inline") {
         var holder = document.createElement("div");
-        holder.style.cssText = "width:100%;max-width:" + ad.width + "px;aspect-ratio:" + ad.width + "/" + ad.height + ";";
+        var dimsInline = pickDims(ad);
+        holder.style.cssText = "width:100%;max-width:" + dimsInline.width + "px;aspect-ratio:" + dimsInline.width + "/" + dimsInline.height + ";";
         script.parentNode.insertBefore(holder, script.nextSibling);
         inject(ad, holder);
       } else {
