@@ -104,6 +104,12 @@ type waInbound struct {
 	Mentioned bool
 	// MentionJIDs are the JIDs mentioned in the message body (group only).
 	MentionJIDs []string
+	// DocumentB64/DocumentName carry an inline documentMessage payload
+	// (webhookBase64=true, bounded ~11 MB). Extraction only happens for
+	// privileged group turns (wa_bot_privileged_group_v1); everywhere else the
+	// fields are inert.
+	DocumentB64  string
+	DocumentName string
 	// QuotedJIDs are the authors of the messages this one replies to
 	// (group only); quoting the bot counts as addressing it.
 	QuotedJIDs []string

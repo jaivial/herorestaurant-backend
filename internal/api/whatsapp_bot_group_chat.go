@@ -380,6 +380,9 @@ type evoGroupInput struct {
 	MentionedJID string
 	AudioB64     string
 	IsAudio      bool
+	// DocumentB64/DocumentName: inline document payload, wa_bot_privileged_group_v1.
+	DocumentB64  string
+	DocumentName string
 	Ignored      bool
 	OwnJIDs      []string
 }
@@ -450,6 +453,8 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 		Ignored:        in.Ignored,
 		MediaKind:      botMediaKindLabel(in.MessageType),
 		AudioB64:       in.AudioB64,
+		DocumentB64:    in.DocumentB64,
+		DocumentName:   in.DocumentName,
 		Mentioned:      true,
 		MentionJIDs:    mentions,
 		OwnJIDs:        in.OwnJIDs,

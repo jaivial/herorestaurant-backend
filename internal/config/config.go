@@ -95,7 +95,11 @@ type Config struct {
 	BotContextSQLitePath   string
 	BotDailyTurnsCap       int
 	// BotPipelineURL is the DSPy decision pipeline sidecar (wa_bot_dspy_pipeline_v1).
-	BotPipelineURL           string
+	BotPipelineURL string
+	// BotPrivilegedGroupJIDs lists the WhatsApp group JIDs (@g.us) that run
+	// bot turns with the full forky assistant tool registry (coordination id:
+	// wa_bot_privileged_group_v1). Empty disables the feature entirely.
+	BotPrivilegedGroupJIDs   []string
 	AssistantModel           string
 	AssistantTimeout         time.Duration
 	AssistantMaxTokens       int
@@ -178,17 +182,19 @@ func Load() Config {
 		BotContextSQLitePath:        strings.TrimSpace(getenv("BOT_CONTEXT_SQLITE_PATH", "./data/whatsapp-bot-context.sqlite")),
 		BotPipelineURL:              strings.TrimSpace(getenv("BOT_PIPELINE_URL", "http://127.0.0.1:18195")),
 		BotDailyTurnsCap:            getenvInt("BOT_DAILY_TURNS_CAP", 2000, 1, 1000000),
-		AssistantModel:              getenv("ASSISTANT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3")),
-		AssistantTimeout:            time.Duration(getenvInt("ASSISTANT_TIMEOUT_SECONDS", 60, 5, 600)) * time.Second,
-		AssistantMaxTokens:          getenvInt("ASSISTANT_MAX_TOKENS", 1024, 128, 8192),
-		AssistantHistoryLimit:       getenvInt("ASSISTANT_HISTORY_LIMIT", 20, 2, 100),
-		AssistantPublicRateLimit:    getenvInt("ASSISTANT_PUBLIC_RATE_LIMIT", 20, 1, 1000),
-		BotPublicWebhookURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("BOT_PUBLIC_WEBHOOK_URL")), "/"),
-		EvolutionWebhookSecret:      strings.TrimSpace(os.Getenv("EVOLUTION_WEBHOOK_SECRET")),
-		SMTPHost:                    strings.TrimSpace(os.Getenv("SMTP_HOST")),
-		SMTPPort:                    getenvInt("SMTP_PORT", 587, 1, 65535),
-		SMTPUsername:                strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
-		SMTPPassword:                os.Getenv("SMTP_PASSWORD"),
+		// wa_bot_privileged_group_v1: comma and/or space separated @g.us JIDs.
+		BotPrivilegedGroupJIDs:   botPrivilegedGroupJIDsFromEnv(getenv("BOT_PRIVILEGED_GROUP_JIDS", "")),
+		AssistantModel:           getenv("ASSISTANT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3")),
+		AssistantTimeout:         time.Duration(getenvInt("ASSISTANT_TIMEOUT_SECONDS", 60, 5, 600)) * time.Second,
+		AssistantMaxTokens:       getenvInt("ASSISTANT_MAX_TOKENS", 1024, 128, 8192),
+		AssistantHistoryLimit:    getenvInt("ASSISTANT_HISTORY_LIMIT", 20, 2, 100),
+		AssistantPublicRateLimit: getenvInt("ASSISTANT_PUBLIC_RATE_LIMIT", 20, 1, 1000),
+		BotPublicWebhookURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("BOT_PUBLIC_WEBHOOK_URL")), "/"),
+		EvolutionWebhookSecret:   strings.TrimSpace(os.Getenv("EVOLUTION_WEBHOOK_SECRET")),
+		SMTPHost:                 strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPPort:                 getenvInt("SMTP_PORT", 587, 1, 65535),
+		SMTPUsername:             strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:             os.Getenv("SMTP_PASSWORD"),
 		MySQL: MySQLConfig{
 			Host:     getenv("DB_HOST", "127.0.0.1"),
 			Port:     getenv("DB_PORT", "3306"),
@@ -244,6 +250,28 @@ func getenv(key, fallback string) string {
 		return fallback
 	}
 	return val
+}
+
+// botPrivilegedGroupJIDsFromEnv parses BOT_PRIVILEGED_GROUP_JIDS: comma and/or
+// space separated WhatsApp group JIDs, trimmed, with only values ending in
+// @g.us kept (wa_bot_privileged_group_v1). Empty input yields nil, which keeps
+// the privileged-group feature completely off.
+func botPrivilegedGroupJIDsFromEnv(raw string) []string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '	' || r == '\n' || r == '\r' || r == ';'
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" || !strings.HasSuffix(f, "@g.us") {
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func getenvFirst(keys []string, fallback string) string {
