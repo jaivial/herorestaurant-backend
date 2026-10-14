@@ -332,24 +332,12 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 	}
 
 	// Attachments are validated before anything else so a bad frame fails fast
-	// with an honest, actionable error (forky_attachments_v1).
+	// with an honest, actionable error (forky_attachments_v1). The (slower)
+	// Bunny downloads happen after the rate-limit and session gates below.
 	if err := validateAssistantAttachmentRefs(c.restaurantID, attachments); err != nil {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "adjunto rechazado: " + err.Error()})
 		return
 	}
-	// Re-read the attachment bytes server-side and build the model content
-	// blocks. A failure here fails the turn: the model is never told about a
-	// file it did not actually receive.
-	attachmentBlocks := make([]assistantAttachmentBlock, 0, len(attachments))
-	for _, ref := range attachments {
-		block, err := c.s.buildAssistantAttachmentBlock(ctx, c.restaurantID, ref)
-		if err != nil {
-			_ = c.writeJSON(map[string]any{"type": "error", "message": err.Error()})
-			return
-		}
-		attachmentBlocks = append(attachmentBlocks, block)
-	}
-	userContentBlocks, userContentPersisted := assistantAttachmentsToUserBlocks(content, attachmentBlocks)
 
 	if !c.s.assistantRateLimit(c.ip) {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "rate_limited: demasiados mensajes, espera un momento"})
@@ -375,6 +363,21 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 		}
 	}
 
+	// Re-read the attachment bytes server-side and build the model content
+	// blocks. A failure here fails the turn: the model is never told about a
+	// file it did not actually receive. Runs after the rate-limit and session
+	// gates so a rejected client never causes Bunny traffic.
+	attachmentBlocks := make([]assistantAttachmentBlock, 0, len(attachments))
+	for _, ref := range attachments {
+		block, err := c.s.buildAssistantAttachmentBlock(ctx, c.restaurantID, ref)
+		if err != nil {
+			_ = c.writeJSON(map[string]any{"type": "error", "message": err.Error()})
+			return
+		}
+		attachmentBlocks = append(attachmentBlocks, block)
+	}
+	userContentBlocks, userContentPersisted := assistantAttachmentsToUserBlocks(content, attachmentBlocks)
+
 	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'user', ?)`, sid, userContentPersisted); err != nil {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist message"})
 		return
@@ -385,6 +388,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to load history"})
 		return
 	}
+
 	// The current turn carries the real attachment content blocks; older turns
 	// come back from the DB as the persisted manifest text.
 	hist = append(hist, assistantChatMessage{Role: "user", Content: userContentBlocks})
