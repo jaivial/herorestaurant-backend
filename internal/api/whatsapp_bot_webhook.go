@@ -49,6 +49,14 @@ type botWebhookMessage struct {
 	ChatJID        string
 	ParticipantJID string
 	Mentioned      bool
+	// Coordination id: wa_bot_privileged_group_v1 - the group JID is listed in
+	// config.BotPrivilegedGroupJIDs: the turn runs with the full forky
+	// assistant tool registry and the preventive guards are skipped.
+	PrivilegedGroup bool
+	// DocumentB64/DocumentName: inline documentMessage payload, extracted
+	// into the prompt only for privileged turns.
+	DocumentB64  string
+	DocumentName string
 }
 
 // parseBotWebhookMessage extracts the message from a UAZAPI webhook body.
@@ -411,7 +419,11 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 	// inline payload are transcribed in the background turn below and then
 	// handled like text; only audios without payload get the fallback here.
 	transcribe := msg.Text == "" && msg.IsAudio && (msg.AudioB64 != "" || msg.MessageID != "")
-	if msg.Text == "" && !transcribe {
+	// Coordination id: wa_bot_privileged_group_v1 - a document in a privileged
+	// group is extracted in the turn below, so it must not hit the
+	// unsupported-media fallback.
+	privilegedDoc := msg.PrivilegedGroup && msg.DocumentB64 != ""
+	if msg.Text == "" && !transcribe && !privilegedDoc {
 		// Unsupported media: polite fallback. Voice notes get a specific reply:
 		// the bot is a reservation assistant and cannot listen to audio.
 		fallback := "Ahora mismo solo puedo gestionar mensajes de texto. ¿Me lo puedes escribir por aquí?"
@@ -538,8 +550,20 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 
 	// Coordination id: wa_bot_dspy_pipeline_v1 - the decision tree picks the
 	// handoff guard or the agent route. Unreachable pipeline -> legacy guards.
-	facts := s.botPipelineFacts(ctx, restaurantID, msg)
-	decision, pipelineOK := s.botRunPipeline(ctx, restaurantID, msg, routing, messages, facts)
+	// Coordination id: wa_bot_privileged_group_v1 - a privileged group turn is
+	// an internal management turn: the DSPy pipeline decision, the legacy
+	// guards (same-day, extras, allergen) and the human-handoff/duplicate
+	// handling are the "preventive restrictions" designed for customers and
+	// are skipped entirely there. Infrastructure (burst, dedup, cap) still
+	// applies upstream in processInboundBotMessage.
+	var decision botPipelineDecision
+	pipelineOK := false
+	if !msg.PrivilegedGroup {
+		facts := s.botPipelineFacts(ctx, restaurantID, msg)
+		decision, pipelineOK = s.botRunPipeline(ctx, restaurantID, msg, routing, messages, facts)
+	} else {
+		log.Printf("[bot] checkpoint wa_bot_privileged_group_v1 restaurant_id=%d sender=%s decision=privileged_turn_pipeline_skipped", restaurantID, msg.Sender)
+	}
 	var decisionID int64
 	if pipelineOK {
 		if s.botConversation != nil {
@@ -557,7 +581,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		if s.botApplyPipelineHandoff(ctx, restaurantID, msg, tenant, decision) {
 			return nil
 		}
-	} else {
+	} else if !msg.PrivilegedGroup {
 		// Same-day policy is resolved from the raw message before the model runs, so
 		// a same-day create/modify/cancel gets the AI notice + contact card instead
 		// of a clarifying question the model would ask first.
@@ -597,11 +621,35 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	if msg.IsGroup {
 		promptData.GroupMember = msg.PushName
 	}
+	// Coordination id: wa_bot_privileged_group_v1 - privileged group prompt block.
+	promptData.PrivilegedGroup = msg.PrivilegedGroup
+	// Document understanding is privileged-only: the inline document is
+	// extracted BEFORE the loop and appended to the last user message so the
+	// model reads the file content as part of the request. On any failure the
+	// note says so verbatim — content is never invented.
+	if msg.PrivilegedGroup && msg.DocumentB64 != "" {
+		note, extracted := botDocumentTurnNote(msg.DocumentB64, msg.DocumentName)
+		messages = botAppendTextToLastUserMessage(messages, note)
+		log.Printf("[bot] checkpoint wa_bot_privileged_group_v1 restaurant_id=%d sender=%s document=%s extracted=%t", restaurantID, msg.Sender, msg.DocumentName, extracted)
+	}
 	system := renderBotSystemPrompt(promptData)
 	_, _, memberErr := s.botMemberForPhone(ctx, restaurantID, msg.Sender)
 	tools := botCustomerToolDefs(botToolDefsForChat(tenant, msg.IsGroup), memberErr == nil)
 	turn := &botTurnState{}
 	exec := s.botToolExecutorForTurn(restaurantID, msg, tenant, turn)
+	if msg.PrivilegedGroup {
+		// Full forky registry plus every bot tool; the executor routes forky
+		// tools through the real assistant path (authorization + audit) with
+		// the synthetic root auth.
+		tools = append(botToolDefsForChat(tenant, true), botForkyToolDefs()...)
+		normalExec := exec
+		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+			if _, ok := assistantToolLookup(name); ok {
+				return s.assistantExecuteTool(botPrivilegedForkyContext(ctx), restaurantID, name, input)
+			}
+			return normalExec(ctx, name, input)
+		}
+	}
 	sessionID := botSessionID(restaurantID, msg.Sender)
 	caller := func(ctx context.Context, system string, msgs []botMessage, tools []botToolDef) (botLLMResponse, string, error) {
 		return s.botLLMCallRouted(ctx, restaurantID, routing, sessionID, system, msgs, tools)
