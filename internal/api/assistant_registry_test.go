@@ -131,6 +131,105 @@ func TestAssistantToolAllowedCoversEveryTool(t *testing.T) {
 	}
 }
 
+// TestAssistantToolAllowedRoleMatrix pins the ACL cells per role, including the
+// explicit SectionAccess path (a stored session list is authoritative) and the
+// write-deny roles. F4 QA t_bda3aee3: server-side enforcement is the contract.
+func TestAssistantToolAllowedRoleMatrix(t *testing.T) {
+	toolsBySection := func(section string) []assistantTool {
+		out := []assistantTool{}
+		for _, tool := range assistantToolRegistry {
+			if tool.Section == section {
+				out = append(out, tool)
+			}
+		}
+		return out
+	}
+	firstTool := func(section string) string {
+		tools := toolsBySection(section)
+		if len(tools) == 0 {
+			t.Fatalf("no tools for section %s", section)
+		}
+		return tools[0].Name
+	}
+	firstWrite := func(section string) string {
+		for _, tool := range toolsBySection(section) {
+			if tool.Write {
+				return tool.Name
+			}
+		}
+		t.Fatalf("no write tool for section %s", section)
+		return ""
+	}
+
+	// Operational roles: everything allowed, reads and writes.
+	for _, role := range []string{"root", "admin", "owner"} {
+		a := boAuth{Role: role, User: boUser{ID: 1}}
+		for _, tool := range assistantToolRegistry {
+			if !assistantToolAllowed(a, tool.Name) {
+				t.Errorf("%s denied %s (section %s)", role, tool.Name, tool.Section)
+			}
+		}
+	}
+
+	// Camarero with explicit SectionAccess (fichaje + horarios, as computed for
+	// the role): reads of those sections allowed, ALL writes denied, and every
+	// other section denied for reads too.
+	camarero := boAuth{Role: "camarero", User: boUser{ID: 80, SectionAccess: []string{"fichaje", "horarios"}}}
+	for _, section := range []string{"fichaje", "horarios"} {
+		if !assistantToolAllowed(camarero, firstTool(section)) {
+			t.Errorf("camarero denied %s read (section %s)", firstTool(section), section)
+		}
+		if assistantToolAllowed(camarero, firstWrite(section)) {
+			t.Errorf("camarero allowed write %s (section %s) — camarero is write-denied", firstWrite(section), section)
+		}
+	}
+	for _, section := range []string{"reservas", "comida", "menus", "stock", "pos", "estadisticas"} {
+		if assistantToolAllowed(camarero, firstTool(section)) {
+			t.Errorf("camarero allowed %s (section %s) — no section access", firstTool(section), section)
+		}
+	}
+
+	// Viewer with explicit SectionAccess: reads of the granted section pass,
+	// writes are denied by the write-deny role list.
+	viewer := boAuth{Role: "viewer", User: boUser{ID: 90, SectionAccess: []string{"reservas"}}}
+	if !assistantToolAllowed(viewer, firstTool("reservas")) {
+		t.Error("viewer denied reservas read despite explicit SectionAccess")
+	}
+	if assistantToolAllowed(viewer, firstWrite("reservas")) {
+		t.Error("viewer allowed reservas write — viewer is write-denied")
+	}
+
+	// Metre without a stored SectionAccess list: role defaults give reservas +
+	// comida (reads and writes), nothing else.
+	metre := boAuth{Role: "metre", User: boUser{ID: 13}}
+	for _, section := range []string{"reservas", "comida"} {
+		if !assistantToolAllowed(metre, firstTool(section)) {
+			t.Errorf("metre denied %s read (default sections)", firstTool(section))
+		}
+		if !assistantToolAllowed(metre, firstWrite(section)) {
+			t.Errorf("metre denied %s write (default sections)", firstWrite(section))
+		}
+	}
+	if assistantToolAllowed(metre, firstTool("stock")) {
+		t.Error("metre allowed stock read — not a metre default section")
+	}
+
+	// Stale explicit SectionAccess must NOT constrain operational roles
+	// (regression guard for #444).
+	staleAdmin := boAuth{Role: "admin", User: boUser{ID: 1, SectionAccess: []string{"fichaje"}}}
+	if !assistantToolAllowed(staleAdmin, firstTool("stock")) {
+		t.Error("admin with stale SectionAccess denied stock — operational roles bypass stale lists")
+	}
+
+	// The admin trio (session section) is open to any backoffice session; the
+	// per-operation ACL is enforced inside the tools.
+	for _, tool := range toolsBySection(assistantSessionSection) {
+		if !assistantToolAllowed(camarero, tool.Name) {
+			t.Errorf("camarero denied session tool %s", tool.Name)
+		}
+	}
+}
+
 func TestAssistantAnonymousCannotCallBackofficeTools(t *testing.T) {
 	s := &Server{}
 	for _, tool := range assistantToolRegistry {
