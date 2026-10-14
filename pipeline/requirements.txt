@@ -7,3 +7,4 @@ faster-whisper==1.2.1
 # caller (WA voice notes + forky). 14.4.0 is sdist-only (needs pkg-config in
 # the image), so pin 14.2.0 — the last 14.x with x86_64 wheels.
 
+av==14.2.0
