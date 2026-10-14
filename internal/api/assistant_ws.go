@@ -156,10 +156,11 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 		c.extendReadDeadline()
 
 		var frame struct {
-			Type         string `json:"type"`
-			Content      string `json:"content"`
-			SessionID    *int64 `json:"session_id"`
-			SessionToken string `json:"session_token"`
+			Type         string                   `json:"type"`
+			Content      string                   `json:"content"`
+			SessionID    *int64                   `json:"session_id"`
+			SessionToken string                   `json:"session_token"`
+			Attachments  []assistantAttachmentRef `json:"attachments"`
 		}
 		if err := json.Unmarshal(raw, &frame); err != nil {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "invalid frame"})
@@ -170,7 +171,7 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 			c.handleHello(wsCtx, frame.SessionID, frame.SessionToken)
 		case "message":
 			if c.tryStart() {
-				go c.handleMessage(wsCtx, frame.Content)
+				go c.handleMessage(wsCtx, frame.Content, frame.Attachments)
 			} else {
 				_ = c.writeJSON(map[string]any{"type": "error", "message": "busy: espera a que termine la respuesta anterior"})
 			}
@@ -323,12 +324,32 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 	_ = c.writeJSON(map[string]any{"type": "hello", "session_id": sid, "history": histOut})
 }
 
-func (c *assistantClient) handleMessage(ctx context.Context, content string) {
+func (c *assistantClient) handleMessage(ctx context.Context, content string, attachments []assistantAttachmentRef) {
 	defer c.finishGeneration()
-	if strings.TrimSpace(content) == "" {
+	if strings.TrimSpace(content) == "" && len(attachments) == 0 {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "empty message"})
 		return
 	}
+
+	// Attachments are validated before anything else so a bad frame fails fast
+	// with an honest, actionable error (forky_attachments_v1).
+	if err := validateAssistantAttachmentRefs(c.restaurantID, attachments); err != nil {
+		_ = c.writeJSON(map[string]any{"type": "error", "message": "adjunto rechazado: " + err.Error()})
+		return
+	}
+	// Re-read the attachment bytes server-side and build the model content
+	// blocks. A failure here fails the turn: the model is never told about a
+	// file it did not actually receive.
+	attachmentBlocks := make([]assistantAttachmentBlock, 0, len(attachments))
+	for _, ref := range attachments {
+		block, err := c.s.buildAssistantAttachmentBlock(ctx, c.restaurantID, ref)
+		if err != nil {
+			_ = c.writeJSON(map[string]any{"type": "error", "message": err.Error()})
+			return
+		}
+		attachmentBlocks = append(attachmentBlocks, block)
+	}
+	userContentBlocks, userContentPersisted := assistantAttachmentsToUserBlocks(content, attachmentBlocks)
 
 	if !c.s.assistantRateLimit(c.ip) {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "rate_limited: demasiados mensajes, espera un momento"})
@@ -354,7 +375,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		}
 	}
 
-	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'user', ?)`, sid, content); err != nil {
+	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'user', ?)`, sid, userContentPersisted); err != nil {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist message"})
 		return
 	}
@@ -364,7 +385,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string) {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to load history"})
 		return
 	}
-	hist = append(hist, assistantChatMessage{Role: "user", Content: content})
+	// The current turn carries the real attachment content blocks; older turns
+	// come back from the DB as the persisted manifest text.
+	hist = append(hist, assistantChatMessage{Role: "user", Content: userContentBlocks})
 
 	restaurantID := 0
 	if c.auth != nil {

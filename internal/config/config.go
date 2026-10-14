@@ -57,6 +57,7 @@ type Config struct {
 	StockDigestHour            int
 	MiniMaxAPIKey              string
 	MiniMaxBaseURL             string
+	BunnyStorageBaseURL        string
 	MiniMaxModel               string
 	VaultToken                 string
 	// VaultKey is the shared bearer secret required by the admin API and its
