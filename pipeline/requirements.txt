@@ -2,3 +2,8 @@ dspy==3.4.0
 fastapi==0.118.0
 uvicorn==0.37.0
 faster-whisper==1.2.1
+# faster-whisper 1.2.1 passes `metadata_errors` to av.open, which PyAV removed
+# in v15; a floating av resolved to 19.0.1 and broke /transcribe for every
+# caller (WA voice notes + forky). Pin the last compatible line.
+av==14.4.0
+
