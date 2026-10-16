@@ -807,12 +807,22 @@ func (s *Server) syncBOMenuV2LegacySnapshot(r *http.Request, restaurantID int, m
 			if title == "" {
 				continue
 			}
+			// Coordination id: menu_legacy_snapshot_skip_nonconventional_v1
+			// The legacy men\u00fas row only models three conventional blocks
+			// (entrantes / principales / postres). Any other section kind -- most
+			// visibly "arroces", plus bebidas and custom sections -- used to fall
+			// into `default` and got appended to `entrantes` as bare text, so every
+			// save re-persisted the rice inside the starters array: duplicated text
+			// that never gained allergens, supplement or dish id. Only the kind the
+			// legacy column actually models may write into it; the rest stay owned by
+			// their own group_menu_section_dishes_v2 rows and reach the public site
+			// through the section list instead.
 			switch sec.Kind {
 			case "postres", "postre":
 				postres = append(postres, title)
 			case "principales":
 				principalesItems = append(principalesItems, title)
-			default:
+			case "entrantes", "entrant", "starter", "starters":
 				entrantes = append(entrantes, title)
 			}
 		}
