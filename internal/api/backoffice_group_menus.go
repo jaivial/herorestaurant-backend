@@ -78,7 +78,7 @@ func (s *Server) handleBOGroupMenusList(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-//PrincipalesArrozDerivadosKey names the read-only list of principales that the
+// PrincipalesArrozDerivadosKey names the read-only list of principales that the
 // server derived (arroz section + arroz catalog) instead of the user storing it.
 // It is served on every read and dropped on every write.
 const PrincipalesArrozDerivadosKey = "items_arroz_derivados"
