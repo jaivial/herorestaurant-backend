@@ -21,7 +21,7 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT d.id AS NUM,
 			  CONCAT(TRIM(d.title_snapshot),
-			    IF(d.supplement_price > 0, CONCAT(' (+', FORMAT(d.supplement_price, 0), '€)')'), '')) AS rice_name
+			    IF(d.supplement_price > 0, CONCAT(' (+', FORMAT(d.supplement_price, 0), '€)'), ''))'), '')) AS rice_name
 		FROM group_menu_section_dishes_v2 d
 		JOIN group_menu_sections_v2 s ON s.id = d.section_id
 		WHERE d.restaurant_id = ?
