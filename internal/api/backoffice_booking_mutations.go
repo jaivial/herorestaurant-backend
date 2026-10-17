@@ -599,10 +599,13 @@ func (s *Server) handleBOArrozTypes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT DESCRIPCION
-		FROM FINDE
-		WHERE restaurant_id = ? AND TIPO = 'ARROZ' AND (active = 1 OR active IS NULL)
-		ORDER BY DESCRIPCION ASC
+		SELECT d.title_snapshot
+		FROM group_menu_section_dishes_v2 d
+		JOIN group_menu_sections_v2 s ON s.id = d.section_id
+		WHERE d.restaurant_id = ? AND d.active = 1
+		  AND s.section_kind = 'arroces'
+		  AND d.menu_id = 42
+		ORDER BY d.title_snapshot ASC
 	`, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando FINDE")

@@ -19,12 +19,14 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT NUM, DESCRIPCION as rice_name
-		FROM FINDE
-		WHERE restaurant_id = ?
-		  AND TIPO = 'ARROZ'
-		  AND active = 1
-		ORDER BY DESCRIPCION
+		SELECT d.id AS NUM, d.title_snapshot AS rice_name
+		FROM group_menu_section_dishes_v2 d
+		JOIN group_menu_sections_v2 s ON s.id = d.section_id
+		WHERE d.restaurant_id = ?
+		  AND d.active = 1
+		  AND s.section_kind = 'arroces'
+		  AND d.menu_id = 42
+		ORDER BY d.title_snapshot
 	`, restaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -66,9 +68,9 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 	}
 
 	riceTypesEnglish := make([]string, len(riceTypes))
-	if all, err := s.loadTranslations(r.Context(), restaurantID, "FINDE", ids, translationLang); err == nil {
+	if all, err := s.loadTranslations(r.Context(), restaurantID, entitySectionDishes, ids, translationLang); err == nil {
 		for i, id := range ids {
-			riceTypesEnglish[i] = translationOr(all[id], "descripcion")
+			riceTypesEnglish[i] = translationOr(all[id], "title")
 		}
 	}
 
