@@ -1094,7 +1094,12 @@ func (s *Server) handleBookRicePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load rice options from FINDE table.
-	rows, err := s.db.QueryContext(r.Context(), "SELECT DESCRIPCION FROM FINDE WHERE restaurant_id = ? AND TIPO = 'ARROZ' ORDER BY DESCRIPCION", restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT d.title_snapshot
+			FROM group_menu_section_dishes_v2 d
+			JOIN group_menu_sections_v2 s ON s.id = d.section_id
+			WHERE d.restaurant_id = ? AND d.active = 1
+			  AND s.title IN ('Arroces', 'Arroz a elegir')
+			ORDER BY d.title_snapshot`, restaurantID)
 	if err == nil {
 		defer rows.Close()
 		var opts []string

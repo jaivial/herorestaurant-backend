@@ -650,16 +650,14 @@ func (s *Server) loadDishNameForTenant(ctx context.Context, restaurantID int, di
 }
 
 func (s *Server) scanDishName(ctx context.Context, restaurantID int, dishID int64, dst *sql.NullString) error {
+	// Las tablas legacy DIA/FINDE ya no existen: se resolv���n via legacy_dish_map,
+	// que guarda tanto el plato v2 equivalente como el nombre original.
 	row := s.db.QueryRowContext(ctx, `
-		SELECT DESCRIPCION FROM DIA WHERE restaurant_id = ? AND NUM = ? LIMIT 1
-	`, restaurantID, dishID)
-	if err := row.Scan(dst); err == nil {
-		return nil
-	} else if err != sql.ErrNoRows {
-		return err
-	}
-	row = s.db.QueryRowContext(ctx, `
-		SELECT DESCRIPCION FROM FINDE WHERE restaurant_id = ? AND NUM = ? LIMIT 1
+		SELECT COALESCE(d.title_snapshot, m.legacy_desc)
+		FROM legacy_dish_map m
+		LEFT JOIN group_menu_section_dishes_v2 d ON d.id = m.v2_dish_id
+		WHERE m.restaurant_id = ? AND m.legacy_table IN ('DIA', 'FINDE') AND m.legacy_num = ?
+		LIMIT 1
 	`, restaurantID, dishID)
 	if err := row.Scan(dst); err == nil {
 		return nil
