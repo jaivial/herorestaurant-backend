@@ -169,7 +169,9 @@ func (s *Server) handlePublicBookingGet(w http.ResponseWriter, r *http.Request) 
 
 	// Load rice options for rice page.
 	rows, err := s.db.QueryContext(r.Context(),
-		`SELECT d.title_snapshot
+		`SELECT CONCAT(TRIM(d.title_snapshot),
+			  IF(d.supplement_price > 0,
+			     CONCAT(' (+', FORMAT(d.supplement_price, 2), ' EUR)'), ''))
 			FROM group_menu_section_dishes_v2 d
 			JOIN group_menu_sections_v2 s ON s.id = d.section_id
 			WHERE d.restaurant_id = ? AND d.active = 1
