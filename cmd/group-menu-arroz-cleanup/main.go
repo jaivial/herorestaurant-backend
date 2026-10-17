@@ -28,6 +28,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -35,6 +36,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 
 	"preactvillacarmen/internal/config"
 	"preactvillacarmen/internal/db"
@@ -271,8 +274,39 @@ func splitItems(items []string, derivedKeys map[string]bool) (kept, removed, sus
 	return kept, removed, suspicious
 }
 
+// isMissingTableErr reports whether err is MySQL's "table doesn't exist" (1146).
+func isMissingTableErr(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1146
+}
+
+// noteCatalogUnavailable explains, once, why the catalogue contributes no arroz.
+// Without it the operator sees the rice reported as "not derived" and cannot
+// tell that from a genuine stale copy.
+var catalogNoteShown bool
+
+func noteCatalogUnavailable() {
+	if catalogNoteShown {
+		return
+	}
+	catalogNoteShown = true
+	fmt.Printf("  nota: la tabla comida_items no existe en esta base; el catalogo no aporta arroz (igual que el servidor)\n")
+}
+
 // derivedArrozNames mirrors what the read path merges in, so the cleanup never
 // removes a name the booking would just merge back anyway.
+//
+// The two sources must resolve exactly like boGroupMenuDerivedArrozNames does,
+// and that function tolerates a missing table by contributing nothing
+// ("if rows, err := ...; err == nil"). Not every deployment has comida_items —
+// an older schema without it made this command abort on its very first menu,
+// making the cleanup impossible to run there. Mirroring the server is also what
+// keeps the invariant the whole command rests on: it deletes exactly what the
+// write path refuses to persist.
+//
+// A missing table is therefore an empty source, not an error. Any other failure
+// still stops the run, because silently deriving an empty set on a transient
+// error would under-delete and quietly report live dishes as suspicious.
 func derivedArrozNames(ctx context.Context, database *sql.DB, restaurantID, menuID int) ([]string, error) {
 	out := make([]string, 0, 16)
 	seen := map[string]bool{}
@@ -316,6 +350,11 @@ func derivedArrozNames(ctx context.Context, database *sql.DB, restaurantID, menu
 		ORDER BY nombre ASC
 	`, restaurantID)
 	if err != nil {
+		if isMissingTableErr(err) {
+			// Same source the read path skips. Reported once, not per menu.
+			noteCatalogUnavailable()
+			return out, nil
+		}
 		return nil, err
 	}
 	if err := add(catalogRows); err != nil {
