@@ -11,10 +11,14 @@
 //
 // Deliberate choices, because this writes to live menu data:
 //   - --dry-run is the DEFAULT; --apply is required to write anything.
-//   - Only names that look like an arroz are considered, and only when nothing
-//     derives them: a name the read path re-merges on every read is redundant
-//     wherever it sits, and a name nothing derives is a stale text-only copy.
-//     A principal a human typed that is not arroz-shaped is never touched.
+//   - A stored name is only deleted when the read path re-merges it on every read
+//     (boGroupMenuDerivedArrozNames), because then removing it changes nothing
+//     anybody can observe. That is the same set the server refuses to persist
+//     (boGroupMenuPrincipalesForPersist), so the cleanup and the write path now
+//     agree on what a stored arroz is.
+//   - A name nothing derives is NEVER deleted, however much it looks like a rice:
+//     it is the only copy of that dish, and the row is what the public menu and
+//     the booking read. Such names are reported instead, for a human to judge.
 //   - The original principals column is written to a JSON backup before the
 //     first UPDATE, so a wrong run can be undone by hand.
 //   - --restaurant and --menu narrow the blast radius.
@@ -36,11 +40,12 @@ import (
 	"preactvillacarmen/internal/db"
 )
 
-// arrozShaped matches the vocabulary the restaurant actually uses for rice. It is
-// deliberately narrow: a false positive here deletes a main course, so a plain
-// "Arroz de la casa" the human typed with nothing deriving it is exactly the case
-// worth showing in the dry-run before anyone applies.
-var arrozShaped = regexp.MustCompile(`(?i)\b(arroz|paella|fideu|arrozes)`)
+// arrozShaped matches the vocabulary the restaurant actually uses for rice. It
+// no longer decides what gets deleted, only what gets reported: a false positive
+// here used to delete a main course. "Gallineta al horno con verduras salteadas
+// y arroz aromático" is a chicken that merely mentions rice in its description,
+// and "Meloso de pescado y marisco" is a rice dish whose name never says so.
+var arrozShaped = regexp.MustCompile(`(?i)\b(arroz|paella|fideu|arrozes|meloso)`)
 
 type menuRow struct {
 	RestaurantID int
@@ -119,14 +124,9 @@ func main() {
 			derivedKeys[key(name)] = true
 		}
 
-		kept := make([]string, 0, len(items))
-		removed := make([]string, 0, 4)
-		for _, item := range items {
-			if arrozShaped.MatchString(item) && !derivedKeys[key(item)] {
-				removed = append(removed, item)
-				continue
-			}
-			kept = append(kept, item)
+		kept, removed, suspicious := splitItems(items, derivedKeys)
+		for _, item := range suspicious {
+			fmt.Printf("  OJO, no derivado (NO se borra): %s\n", item)
 		}
 		if len(removed) == 0 {
 			skipped++
@@ -215,13 +215,7 @@ func main() {
 		for _, name := range derived {
 			derivedKeys[key(name)] = true
 		}
-		kept := make([]string, 0, len(items))
-		for _, item := range items {
-			if arrozShaped.MatchString(item) && !derivedKeys[key(item)] {
-				continue
-			}
-			kept = append(kept, item)
-		}
+		kept, _, _ := splitItems(items, derivedKeys)
 		if len(kept) == len(items) {
 			continue
 		}
@@ -242,6 +236,39 @@ func main() {
 		}
 		fmt.Printf("menu %d: %d -> %d items\n", row.MenuID, len(items), len(kept))
 	}
+}
+
+// splitItems divides the stored principals into what may be deleted and what
+// must stay.
+//
+// The delete rule is the one the write path already uses
+// (boGroupMenuPrincipalesForPersist): drop a name exactly when the read path
+// re-merges it on every read, because then the row carries a copy of something
+// the menu already owns and deleting it is invisible to everybody.
+//
+// The old rule was the complement — "looks like a rice AND nothing derives it"
+// — which is backwards. Nothing-derives is the only proof that the row is the
+// single copy of that dish, so that rule deleted the live rice of the "Menú
+// Arrocero" and a gallineta whose description merely said "arroz aromático".
+// It also could not tell a menu with no arroz section (derived empty for every
+// name) from a genuinely stale one, so it emptied all of them.
+//
+// The third return value is reported and never deleted: an arroz-shaped name
+// that nothing derives. On its own that is a judgement call, not evidence.
+func splitItems(items []string, derivedKeys map[string]bool) (kept, removed, suspicious []string) {
+	kept = make([]string, 0, len(items))
+	removed = make([]string, 0, 4)
+	for _, item := range items {
+		if derivedKeys[key(item)] {
+			removed = append(removed, item)
+			continue
+		}
+		kept = append(kept, item)
+		if arrozShaped.MatchString(item) {
+			suspicious = append(suspicious, item)
+		}
+	}
+	return kept, removed, suspicious
 }
 
 // derivedArrozNames mirrors what the read path merges in, so the cleanup never
