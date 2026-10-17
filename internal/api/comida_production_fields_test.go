@@ -96,13 +96,7 @@ func TestComidaListReportsRawForUnlinkedProducts(t *testing.T) {
 
 func seedVino(t *testing.T, s *Server, name string) int64 {
 	t.Helper()
-	res, err := s.db.Exec(
-		`INSERT INTO VINOS (restaurant_id,tipo,nombre,precio,active) VALUES (1,'TINTO',?,12.5,1)`, name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := res.LastInsertId()
-	return id
+	return seedVinoCatalogue(t, s.db, 1, 0, "TINTO", name, 12.5)
 }
 
 // Wine is a separate table with its own editor, so every comida change has to
@@ -115,8 +109,8 @@ func TestVinoListExposesProductionTypeAndStockLinks(t *testing.T) {
 	s.db.QueryRow(`SELECT output_item_id FROM stock_recipes WHERE restaurant_id=1 AND id=?`, sheetID).Scan(&outputItemID)
 
 	if _, err := s.db.Exec(
-		`UPDATE VINOS SET production_type='MANUFACTURED', stock_recipe_id=?, stock_item_id=?
-		  WHERE restaurant_id=1 AND num=?`, sheetID, outputItemID, vinoID); err != nil {
+		`UPDATE group_menu_wines_v2 SET production_type='MANUFACTURED', stock_recipe_id=?, stock_item_id=?
+		  WHERE restaurant_id=1 AND id=(SELECT w.v2_wine_id FROM legacy_wine_map w WHERE w.restaurant_id=1 AND w.legacy_num=?)`, sheetID, outputItemID, vinoID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -154,13 +154,14 @@ func TestBotToolBeverages_DB(t *testing.T) {
 	defer func() {
 		_, _ = db.Exec(`DELETE FROM CAFES WHERE restaurant_id = ?`, rid)
 		_, _ = db.Exec(`DELETE FROM BEBIDAS WHERE restaurant_id = ?`, rid)
-		_, _ = db.Exec(`DELETE FROM VINOS WHERE restaurant_id = ?`, rid)
+		_, _ = db.Exec(`DELETE FROM legacy_wine_map WHERE restaurant_id = ?`, rid)
+		_, _ = db.Exec(`DELETE FROM group_menu_wines_v2 WHERE restaurant_id = ?`, rid)
 	}()
 
 	ctx := context.Background()
 	_, _ = db.Exec(`INSERT INTO CAFES (restaurant_id, tipo, nombre, precio, descripcion, titulo, active) VALUES (?, 'CAFE', 'Café solo', 1.50, 'Espresso', 'Cafés', 1)`, rid)
 	_, _ = db.Exec(`INSERT INTO BEBIDAS (restaurant_id, tipo, nombre, precio, descripcion, titulo, active) VALUES (?, 'BEBIDA', 'Agua mineral', 2.00, '50cl', 'Refrescos', 1)`, rid)
-	_, _ = db.Exec(`INSERT INTO VINOS (restaurant_id, nombre, precio, descripcion, tipo, bodega, denominacion_origen, anyo, active) VALUES (?, 'Rioja Reserva', 18.00, 'Tinto con cuerpo', 'TINTO', 'Bodega X', 'DO Rioja', '2018', 1)`, rid)
+	seedVinoCatalogue(t, db, rid, 0, "TINTO", "Rioja Reserva", 18.00)
 
 	coffee, _ := s.botToolCoffeeMenu(ctx, rid)
 	if !strings.Contains(coffee, "Café solo") || !strings.Contains(coffee, "Espresso") {

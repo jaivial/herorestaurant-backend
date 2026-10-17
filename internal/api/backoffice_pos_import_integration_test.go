@@ -30,7 +30,7 @@ func TestPOSImportPreviewMixedCollations(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 	statements := []string{
-		`DELETE FROM pos_products`, `DELETE FROM pos_product_categories`, `DELETE FROM comida_items`, `DELETE FROM VINOS`, `DELETE FROM restaurants`,
+		`DELETE FROM pos_products`, `DELETE FROM pos_product_categories`, `DELETE FROM comida_items`, `DELETE FROM legacy_wine_map`, `DELETE FROM group_menu_wines_v2`, `DELETE FROM VINOS`, `DELETE FROM restaurants`,
 		`INSERT INTO restaurants(id) VALUES(1)`,
 		// Force the collation mismatch found in production data.
 		`ALTER TABLE comida_items MODIFY nombre VARCHAR(255) COLLATE utf8mb4_unicode_ci NOT NULL, MODIFY categoria VARCHAR(100) COLLATE utf8mb4_unicode_ci NULL`,
@@ -39,6 +39,10 @@ func TestPOSImportPreviewMixedCollations(t *testing.T) {
 		// Production data has 255-char names; pos_products.name is varchar(180).
 		`INSERT INTO comida_items(id,restaurant_id,source_type,nombre,precio,categoria,active) VALUES(9,1,'platos',REPEAT('Lasaña ',36),14.00,'Principales',1)`,
 		`INSERT INTO VINOS(num,restaurant_id,nombre,precio,tipo,active) VALUES(22,1,'MIÑAXOIA GODELLO',21.00,'BLANCO',1)`,
+		// The POS import now reads the wine catalogue, so the same wine has to
+		// exist there under the legacy num 22 the test addresses it by.
+		`INSERT INTO group_menu_wines_v2(id,restaurant_id,tipo,nombre,precio,active,position) VALUES(101,1,'BLANCO','MIÑAXOIA GODELLO',21.00,1,22)`,
+		`INSERT INTO legacy_wine_map(restaurant_id,legacy_num,v2_wine_id) VALUES(1,22,101)`,
 	}
 	for _, statement := range statements {
 		if _, err = db.ExecContext(ctx, statement); err != nil {

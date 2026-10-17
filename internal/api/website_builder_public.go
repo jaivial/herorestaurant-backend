@@ -116,10 +116,10 @@ func (s *Server) renderWebsiteBuilderMenus(ctx context.Context, restaurantID int
 
 func (s *Server) renderWebsiteBuilderWines(ctx context.Context, restaurantID int) (string, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT COALESCE(nombre, ''), COALESCE(precio, 0), COALESCE(tipo, ''), COALESCE(bodega, '')
-		FROM VINOS
-		WHERE restaurant_id = ? AND active = 1
-		ORDER BY tipo ASC, num ASC
+		SELECT COALESCE(v.nombre, ''), COALESCE(v.precio, 0), COALESCE(v.tipo, ''), COALESCE(v.bodega, '')
+		FROM group_menu_wines_v2 v
+		WHERE v.restaurant_id = ? AND v.active = 1
+		ORDER BY v.tipo ASC, v.id ASC
 		LIMIT 40
 	`, restaurantID)
 	if err != nil {

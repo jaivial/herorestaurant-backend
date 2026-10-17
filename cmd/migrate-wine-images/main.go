@@ -16,11 +16,18 @@ import (
 	"preactvillacarmen/internal/db/migrations"
 )
 
+// La carta de vinos se escribe en group_menu_wines_v2; `num` es la clave legacy
+// que legacy_wine_map traduce al id de la v2.
+const wineFotoPathUpdateSQL = `UPDATE group_menu_wines_v2 w
+	JOIN legacy_wine_map m ON m.v2_wine_id = w.id AND m.restaurant_id = w.restaurant_id
+SET w.foto_path = ?
+WHERE w.restaurant_id = ? AND m.legacy_num = ?`
+
 func main() {
 	var (
 		dryRun   = flag.Bool("dry-run", true, "Don't write DB updates")
 		upload   = flag.Bool("upload", false, "Upload blobs to BunnyCDN storage")
-		keepBlob = flag.Bool("keep-blob", false, "Keep VINOS.foto blob after migration")
+		keepBlob = flag.Bool("keep-blob", false, "keep the source blob (only meaningful while reading the legacy VINOS table)")
 		limit    = flag.Int("limit", 0, "Max wines to process (0 = no limit)")
 	)
 	flag.Parse()
@@ -133,9 +140,9 @@ func main() {
 
 func updateWinePath(ctx context.Context, db *sql.DB, restaurantID int, num int, objectPath string, keepBlob bool) error {
 	if keepBlob {
-		_, err := db.ExecContext(ctx, "UPDATE VINOS SET foto_path = ? WHERE restaurant_id = ? AND num = ?", objectPath, restaurantID, num)
+		_, err := db.ExecContext(ctx, wineFotoPathUpdateSQL, objectPath, restaurantID, num)
 		return err
 	}
-	_, err := db.ExecContext(ctx, "UPDATE VINOS SET foto_path = ?, foto = NULL WHERE restaurant_id = ? AND num = ?", objectPath, restaurantID, num)
+	_, err := db.ExecContext(ctx, wineFotoPathUpdateSQL, objectPath, restaurantID, num)
 	return err
 }

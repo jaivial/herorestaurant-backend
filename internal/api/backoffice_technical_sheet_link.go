@@ -94,18 +94,27 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 	// The catalogue lives in three tables with different primary keys, so the
 	// statement is chosen by source rather than contorting one query to serve
 	// all of them.
+	//
+	// sourceIDCond is the tail of the tenant-scoped predicate; sourceIDArgs
+	// fills it, and for wine it also repeats the restaurant id because the
+	// legacy num is resolved through legacy_wine_map inside the subquery.
 	updateSQL := `UPDATE comida_items SET production_type=?, stock_recipe_id=?, stock_item_id=?
-		 WHERE restaurant_id=? AND id=?`
-	sourceTable, sourceIDColumn := "comida_items", "id"
+	 WHERE restaurant_id=? AND id=?`
+	sourceTable := "comida_items"
+	sourceIDCond := "id=?"
+	sourceIDArgs := func() []any { return []any{itemID} }
 	switch strings.ToLower(strings.TrimSpace(in.Source)) {
 	case "vinos":
-		updateSQL = `UPDATE VINOS SET production_type=?, stock_recipe_id=?, stock_item_id=?
-		 WHERE restaurant_id=? AND num=?`
-		sourceTable, sourceIDColumn = "VINOS", "num"
+		updateSQL = `UPDATE group_menu_wines_v2 SET production_type=?, stock_recipe_id=?, stock_item_id=?
+		 WHERE restaurant_id=? AND id=(SELECT w.v2_wine_id FROM legacy_wine_map w WHERE w.restaurant_id=? AND w.legacy_num=?)`
+		sourceTable = "group_menu_wines_v2"
+		sourceIDCond = "id=(SELECT w.v2_wine_id FROM legacy_wine_map w WHERE w.restaurant_id=? AND w.legacy_num=?)"
+		sourceIDArgs = func() []any { return []any{a.ActiveRestaurantID, itemID} }
 	case "postres":
 		updateSQL = `UPDATE POSTRES SET production_type=?, stock_recipe_id=?, stock_item_id=?
 		 WHERE restaurant_id=? AND NUM=?`
-		sourceTable, sourceIDColumn = "POSTRES", "NUM"
+		sourceTable = "POSTRES"
+		sourceIDCond = "NUM=?"
 	}
 	// Reverting to raw abandons the sheet. An untouched draft is discarded here
 	// so it does not accumulate as an unreachable orphan in the stock
@@ -114,15 +123,15 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 	var abandoned int64
 	if productionType == "RAW" {
 		if err := s.db.QueryRowContext(r.Context(),
-			fmt.Sprintf(`SELECT COALESCE(stock_recipe_id,0) FROM %s WHERE restaurant_id=? AND %s=?`,
-				sourceTable, sourceIDColumn),
-			a.ActiveRestaurantID, itemID).Scan(&abandoned); err != nil {
+			fmt.Sprintf(`SELECT COALESCE(stock_recipe_id,0) FROM %s WHERE restaurant_id=? AND %s`,
+				sourceTable, sourceIDCond),
+			append([]any{a.ActiveRestaurantID}, sourceIDArgs()...)...).Scan(&abandoned); err != nil {
 			abandoned = 0
 		}
 	}
 
 	res, err := s.db.ExecContext(r.Context(), updateSQL,
-		productionType, recipeID, outputItemID, a.ActiveRestaurantID, itemID)
+		append([]any{productionType, recipeID, outputItemID, a.ActiveRestaurantID}, sourceIDArgs()...)...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando el producto")
 		return
@@ -134,9 +143,9 @@ func (s *Server) handleBOComidaProductionTypePatch(w http.ResponseWriter, r *htt
 		// to surface as a spurious 404. Existence is checked before answering.
 		var exists int
 		err := s.db.QueryRowContext(r.Context(),
-			fmt.Sprintf(`SELECT 1 FROM %s WHERE restaurant_id=? AND %s=? LIMIT 1`,
-				sourceTable, sourceIDColumn),
-			a.ActiveRestaurantID, itemID).Scan(&exists)
+			fmt.Sprintf(`SELECT 1 FROM %s WHERE restaurant_id=? AND %s LIMIT 1`,
+				sourceTable, sourceIDCond),
+			append([]any{a.ActiveRestaurantID}, sourceIDArgs()...)...).Scan(&exists)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			httpx.WriteError(w, http.StatusNotFound, "Producto no encontrado")
@@ -165,15 +174,17 @@ func (s *Server) loadSheetUsage(r *http.Request, restaurantID int, sheetID int64
 	// Wine is a separate table, so it needs its own branch of the union; leaving
 	// it out would let a sheet a wine depends on be deleted.
 	rows, err := s.db.QueryContext(r.Context(),
-		// comida_items and VINOS use different collations, so the name columns
-		// are converted to one explicit collation; MySQL refuses the UNION
-		// otherwise ("illegal mix of collations").
+		// comida_items, the wine catalogue and POSTRES use different collations,
+		// so the name columns are converted to one explicit collation; MySQL
+		// refuses the UNION otherwise ("illegal mix of collations"). The wine
+		// branch reports the legacy num, which is what the caller uses to open
+		// the product.
 		`SELECT id, CONVERT(COALESCE(NULLIF(titulo,''),nombre) USING utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
 		        'COMIDA' AS source
 		   FROM comida_items WHERE restaurant_id=? AND stock_recipe_id=?
 		  UNION ALL
-		 SELECT num, CONVERT(nombre USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'VINO'
-		   FROM VINOS WHERE restaurant_id=? AND stock_recipe_id=?
+		 SELECT `+vinoV2NumExpr+`, CONVERT(v.nombre USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'VINO'
+		   `+vinoV2From+` WHERE v.restaurant_id=? AND v.stock_recipe_id=?
 		  UNION ALL
 		 SELECT NUM, CONVERT(DESCRIPCION USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'POSTRE'
 		   FROM POSTRES WHERE restaurant_id=? AND stock_recipe_id=?`,
@@ -501,7 +512,7 @@ func (s *Server) discardUntouchedDraftSheet(r *http.Request, restaurantID int, s
 	var stillUsed int
 	s.db.QueryRowContext(r.Context(), `
 		SELECT (SELECT COUNT(*) FROM comida_items WHERE restaurant_id=? AND stock_recipe_id=?)
-		     + (SELECT COUNT(*) FROM VINOS WHERE restaurant_id=? AND stock_recipe_id=?)
+		     + (SELECT COUNT(*) FROM group_menu_wines_v2 WHERE restaurant_id=? AND stock_recipe_id=?)
 		     + (SELECT COUNT(*) FROM POSTRES WHERE restaurant_id=? AND stock_recipe_id=?)`,
 		restaurantID, sheetID, restaurantID, sheetID, restaurantID, sheetID).Scan(&stillUsed)
 	if stillUsed > 0 {
