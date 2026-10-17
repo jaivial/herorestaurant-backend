@@ -18,32 +18,32 @@
 CREATE TABLE IF NOT EXISTS group_menu_wines_v2 (
   id                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   restaurant_id         INT            NOT NULL,
+  menu_id               INT            DEFAULT NULL,
+  section_id            INT            DEFAULT NULL,
   position              INT            NOT NULL DEFAULT 0,
-  tipo                  VARCHAR(16)    NOT NULL DEFAULT 'TINTO',
+  tipo                  VARCHAR(50)    NOT NULL,
   nombre                VARCHAR(255)   NOT NULL,
-  precio                DECIMAL(10,2)  NULL,
-  descripcion           TEXT           NULL,
-  bodega                VARCHAR(255)   NULL,
-  denominacion_origen   VARCHAR(255)   NULL,
-  graduacion            DECIMAL(4,1)   NULL,
-  anyo                  INT            NULL,
+  precio                DECIMAL(10,2)  DEFAULT NULL,
+  descripcion           VARCHAR(255)   DEFAULT NULL,
+  bodega                VARCHAR(255)   DEFAULT NULL,
+  denominacion_origen   VARCHAR(255)   DEFAULT NULL,
+  graduacion            DECIMAL(5,1)   DEFAULT NULL,
+  anyo                  VARCHAR(255)   DEFAULT NULL,
   active                TINYINT(1)     NOT NULL DEFAULT 1,
-  foto_path             VARCHAR(512)   NULL,
-  ui_data_id            VARCHAR(255)   NULL,
+  foto_path             VARCHAR(512)   DEFAULT NULL,
+  ui_data_id            VARCHAR(64)    DEFAULT NULL,
   production_type       ENUM('RAW','MANUFACTURED') NOT NULL DEFAULT 'RAW',
-  stock_item_id         BIGINT UNSIGNED NULL,
-  stock_recipe_id       BIGINT UNSIGNED NULL,
+  stock_item_id         BIGINT UNSIGNED DEFAULT NULL,
+  stock_recipe_id       BIGINT UNSIGNED DEFAULT NULL,
   ai_requested_img      TINYINT(1)     NOT NULL DEFAULT 0,
   ai_generating_img     TINYINT(1)     NOT NULL DEFAULT 0,
-  ai_generated_img      VARCHAR(512)   NULL,
+  ai_generated_img      VARCHAR(512)   DEFAULT NULL,
   created_at            DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at            DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  KEY idx_wines_restaurant_active (restaurant_id, active),
-  KEY idx_wines_restaurant_tipo    (restaurant_id, tipo, active),
-  KEY idx_wines_stock              (stock_item_id),
-  KEY idx_wines_recipe             (stock_recipe_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  KEY idx_wines_rest (restaurant_id, active),
+  KEY idx_wines_menu (menu_id, section_id, tipo, position)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Mapa de traduccion: el `num` de `VINOS` al `id` de esta tabla.
 -- Necesario porque el codigo legacy (y las reservas historicas) identifican
@@ -98,3 +98,18 @@ WHERE l.`num` IS NOT NULL
       AND CONVERT(w.nombre USING utf8mb4) = CONVERT(l.nombre USING utf8mb4)
       AND CONVERT(w.tipo USING utf8mb4) = CONVERT(l.tipo USING utf8mb4)
   );
+-- Correccion de esquema (aplicada tras encontrar divergencia con produccion).
+-- Las columnas `anyo`, `descripcion` y `bodega` guardan TEXTO, no numeros:
+-- en produccion 11 de 42 vinos tienen en `anyo` la variedad
+-- ("100% Godello", "12 meses en barricas..."), no un ano. Se amplian a VARCHAR
+-- para que una instalacion nueva no trunque descripciones, y `anyo` paso de
+-- VARCHAR(50) a VARCHAR(255) porque dos vinos ya estaban cortados a 50 chars.
+ALTER TABLE group_menu_wines_v2
+  MODIFY COLUMN anyo              VARCHAR(255) DEFAULT NULL,
+  MODIFY COLUMN descripcion       VARCHAR(255) DEFAULT NULL,
+  MODIFY COLUMN bodega            VARCHAR(255) DEFAULT NULL,
+  MODIFY COLUMN denominacion_origen VARCHAR(255) DEFAULT NULL,
+  MODIFY COLUMN tipo              VARCHAR(50) NOT NULL,
+  MODIFY COLUMN precio            DECIMAL(10,2) DEFAULT NULL,
+  MODIFY COLUMN graduacion        DECIMAL(5,1) DEFAULT NULL,
+  MODIFY COLUMN ui_data_id        VARCHAR(64) DEFAULT NULL;
