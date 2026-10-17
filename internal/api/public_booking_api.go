@@ -173,7 +173,8 @@ func (s *Server) handlePublicBookingGet(w http.ResponseWriter, r *http.Request) 
 			FROM group_menu_section_dishes_v2 d
 			JOIN group_menu_sections_v2 s ON s.id = d.section_id
 			WHERE d.restaurant_id = ? AND d.active = 1
-			  AND s.title IN ('Arroces', 'Arroz a elegir')
+			  AND s.section_kind = 'arroces'
+			  AND d.menu_id = 42
 			ORDER BY d.title_snapshot`,
 		restaurantID)
 	riceOptions := []string{}

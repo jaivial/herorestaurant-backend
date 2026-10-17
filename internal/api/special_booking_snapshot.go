@@ -657,6 +657,7 @@ func (s *Server) scanDishName(ctx context.Context, restaurantID int, dishID int6
 		FROM legacy_dish_map m
 		LEFT JOIN group_menu_section_dishes_v2 d ON d.id = m.v2_dish_id
 		WHERE m.restaurant_id = ? AND m.legacy_table IN ('DIA', 'FINDE') AND m.legacy_num = ?
+		ORDER BY CASE m.legacy_table WHEN 'DIA' THEN 0 ELSE 1 END
 		LIMIT 1
 	`, restaurantID, dishID)
 	if err := row.Scan(dst); err == nil {

@@ -24,7 +24,8 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 		JOIN group_menu_sections_v2 s ON s.id = d.section_id
 		WHERE d.restaurant_id = ?
 		  AND d.active = 1
-		  AND s.title IN ('Arroces', 'Arroz a elegir')
+		  AND s.section_kind = 'arroces'
+		  AND d.menu_id = 42
 		ORDER BY d.title_snapshot
 	`, restaurantID)
 	if err != nil {
@@ -67,9 +68,9 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 	}
 
 	riceTypesEnglish := make([]string, len(riceTypes))
-	if all, err := s.loadTranslations(r.Context(), restaurantID, "FINDE", ids, translationLang); err == nil {
+	if all, err := s.loadTranslations(r.Context(), restaurantID, entitySectionDishes, ids, translationLang); err == nil {
 		for i, id := range ids {
-			riceTypesEnglish[i] = translationOr(all[id], "descripcion")
+			riceTypesEnglish[i] = translationOr(all[id], "title")
 		}
 	}
 
