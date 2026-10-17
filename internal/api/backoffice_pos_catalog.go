@@ -137,9 +137,9 @@ func (s *Server) handleBOPOSProductDelete(w http.ResponseWriter, r *http.Request
 func (s *Server) handleBOPOSImportPreview(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	// COLLATE forced on both sides of the UNION: comida_items is
-	// utf8mb4_unicode_ci while legacy VINOS is utf8mb4_general_ci, and mixing
-	// them fails with "Illegal mix of collations".
-	rows, err := s.db.QueryContext(r.Context(), `SELECT source_type,source_id,name,price,category,EXISTS(SELECT 1 FROM pos_products p WHERE p.restaurant_id=? AND p.source_type=source_type AND p.source_id=source_id) FROM (SELECT 'COMIDA_ITEM' source_type,c.id source_id,c.nombre COLLATE utf8mb4_unicode_ci name,c.precio price,COALESCE(c.categoria,'') COLLATE utf8mb4_unicode_ci category FROM comida_items c WHERE c.restaurant_id=? AND c.active=1 UNION ALL SELECT 'VINO',v.num,v.nombre COLLATE utf8mb4_unicode_ci,v.precio,COALESCE(v.tipo,'') COLLATE utf8mb4_unicode_ci FROM VINOS v WHERE v.restaurant_id=? AND v.active=1) sources ORDER BY name`, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID)
+	// utf8mb4_unicode_ci while the wine catalogue is utf8mb4_0900_ai_ci, and
+	// mixing them fails with "Illegal mix of collations".
+	rows, err := s.db.QueryContext(r.Context(), `SELECT source_type,source_id,name,price,category,EXISTS(SELECT 1 FROM pos_products p WHERE p.restaurant_id=? AND p.source_type=source_type AND p.source_id=source_id) FROM (SELECT 'COMIDA_ITEM' source_type,c.id source_id,c.nombre COLLATE utf8mb4_unicode_ci name,c.precio price,COALESCE(c.categoria,'') COLLATE utf8mb4_unicode_ci category FROM comida_items c WHERE c.restaurant_id=? AND c.active=1 UNION ALL SELECT 'VINO',`+vinoV2NumExpr+`,v.nombre COLLATE utf8mb4_unicode_ci,v.precio,COALESCE(v.tipo,'') COLLATE utf8mb4_unicode_ci `+vinoV2From+` WHERE v.restaurant_id=? AND v.active=1) sources ORDER BY name`, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading Carta products")
 		return
@@ -191,18 +191,23 @@ func (s *Server) handleBOPOSImportConfirm(w http.ResponseWriter, r *http.Request
 		if item.SourceType == "COMIDA_ITEM" {
 			_, _ = tx.ExecContext(r.Context(), `INSERT IGNORE INTO pos_product_categories (restaurant_id,name,sort_order,is_active) SELECT restaurant_id,categoria,0,1 FROM comida_items WHERE restaurant_id=? AND id=? AND TRIM(COALESCE(categoria,''))<>''`, a.ActiveRestaurantID, item.SourceID)
 		}
+		// pos_products.source_id keeps holding the legacy num for wines, which
+		// is what the catalogue already stored before the switch, so the wine
+		// statements resolve it through legacy_wine_map.
 		if item.SourceType == "VINO" {
-			_, _ = tx.ExecContext(r.Context(), `INSERT IGNORE INTO pos_product_categories (restaurant_id,name,sort_order,is_active) SELECT restaurant_id,tipo,0,1 FROM VINOS WHERE restaurant_id=? AND num=? AND TRIM(COALESCE(tipo,''))<>''`, a.ActiveRestaurantID, item.SourceID)
+			_, _ = tx.ExecContext(r.Context(), `INSERT IGNORE INTO pos_product_categories (restaurant_id,name,sort_order,is_active) SELECT restaurant_id,tipo,0,1 FROM group_menu_wines_v2 WHERE restaurant_id=? AND id=(SELECT w.v2_wine_id FROM legacy_wine_map w WHERE w.restaurant_id=? AND w.legacy_num=?) AND TRIM(COALESCE(tipo,''))<>''`, a.ActiveRestaurantID, a.ActiveRestaurantID, item.SourceID)
 		}
 		query := `INSERT INTO pos_products (restaurant_id,name,source_type,source_id,price_gross_cents,is_active) SELECT c.restaurant_id,LEFT(TRIM(c.nombre),180),'COMIDA_ITEM',c.id,ROUND(c.precio*100),c.active FROM comida_items c WHERE restaurant_id=? AND id=? ON DUPLICATE KEY UPDATE name=VALUES(name),price_gross_cents=VALUES(price_gross_cents),is_active=VALUES(is_active),deleted_at=NULL,version=version+1`
+		queryArgs := []any{a.ActiveRestaurantID, item.SourceID}
 		if item.SourceType == "VINO" {
-			query = `INSERT INTO pos_products (restaurant_id,name,source_type,source_id,price_gross_cents,is_active) SELECT v.restaurant_id,LEFT(TRIM(v.nombre),180),'VINO',v.num,ROUND(v.precio*100),v.active FROM VINOS v WHERE restaurant_id=? AND num=? ON DUPLICATE KEY UPDATE name=VALUES(name),price_gross_cents=VALUES(price_gross_cents),is_active=VALUES(is_active),deleted_at=NULL,version=version+1`
+			query = `INSERT INTO pos_products (restaurant_id,name,source_type,source_id,price_gross_cents,is_active) SELECT v.restaurant_id,LEFT(TRIM(v.nombre),180),'VINO',` + vinoV2NumExpr + `,ROUND(v.precio*100),v.active ` + vinoV2From + ` WHERE ` + vinoV2WhereLegacyNumJoined + ` ON DUPLICATE KEY UPDATE name=VALUES(name),price_gross_cents=VALUES(price_gross_cents),is_active=VALUES(is_active),deleted_at=NULL,version=version+1`
+			queryArgs = vinoV2LegacyNumArgs(a.ActiveRestaurantID, int(item.SourceID))
 		}
 		if item.SourceType != "COMIDA_ITEM" && item.SourceType != "VINO" {
 			httpx.WriteError(w, http.StatusBadRequest, "Unsupported Carta source")
 			return
 		}
-		res, execErr := tx.ExecContext(r.Context(), query, a.ActiveRestaurantID, item.SourceID)
+		res, execErr := tx.ExecContext(r.Context(), query, queryArgs...)
 		if execErr != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Carta product could not be imported")
 			return
@@ -213,7 +218,7 @@ func (s *Server) handleBOPOSImportConfirm(w http.ResponseWriter, r *http.Request
 		if item.SourceType == "COMIDA_ITEM" {
 			_, _ = tx.ExecContext(r.Context(), `UPDATE pos_products p JOIN comida_items c ON c.restaurant_id=p.restaurant_id AND c.id=p.source_id LEFT JOIN pos_product_categories pc ON pc.restaurant_id=c.restaurant_id AND pc.name=c.categoria COLLATE utf8mb4_unicode_ci SET p.category_id=pc.id WHERE p.restaurant_id=? AND p.source_type='COMIDA_ITEM' AND p.source_id=?`, a.ActiveRestaurantID, item.SourceID)
 		} else {
-			_, _ = tx.ExecContext(r.Context(), `UPDATE pos_products p JOIN VINOS v ON v.restaurant_id=p.restaurant_id AND v.num=p.source_id LEFT JOIN pos_product_categories pc ON pc.restaurant_id=v.restaurant_id AND pc.name=v.tipo COLLATE utf8mb4_unicode_ci SET p.category_id=pc.id WHERE p.restaurant_id=? AND p.source_type='VINO' AND p.source_id=?`, a.ActiveRestaurantID, item.SourceID)
+			_, _ = tx.ExecContext(r.Context(), `UPDATE pos_products p JOIN legacy_wine_map w ON w.restaurant_id=p.restaurant_id AND w.legacy_num=p.source_id JOIN group_menu_wines_v2 v ON v.restaurant_id=p.restaurant_id AND v.id=w.v2_wine_id LEFT JOIN pos_product_categories pc ON pc.restaurant_id=v.restaurant_id AND pc.name=v.tipo COLLATE utf8mb4_unicode_ci SET p.category_id=pc.id WHERE p.restaurant_id=? AND p.source_type='VINO' AND p.source_id=?`, a.ActiveRestaurantID, item.SourceID)
 		}
 	}
 	if err = tx.Commit(); err != nil {

@@ -670,7 +670,7 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 
 	// Wines (VINOS, active) grouped for a cellar section.
 	var wines []map[string]any
-	if wrows, werr := m.db.QueryContext(ctx, `SELECT nombre, precio, tipo, bodega, descripcion FROM VINOS WHERE restaurant_id=? AND active=1 ORDER BY tipo, nombre`, restaurantID); werr == nil {
+	if wrows, werr := m.db.QueryContext(ctx, `SELECT nombre, precio, tipo, bodega, descripcion FROM group_menu_wines_v2 WHERE restaurant_id=? AND active=1 ORDER BY tipo, nombre`, restaurantID); werr == nil {
 		defer wrows.Close()
 		for wrows.Next() {
 			var nombre, tipo, bodega, desc sql.NullString

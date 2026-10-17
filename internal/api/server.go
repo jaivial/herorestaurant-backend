@@ -1571,18 +1571,21 @@ func (s *Server) handleVinos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fields := "num, nombre, precio, descripcion, bodega, denominacion_origen, tipo, graduacion, anyo, active, (foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto"
+	// The response keeps naming each wine by its legacy num, which is what the
+	// map join below materialises, and by the legacy ordering the frontend
+	// relies on.
+	fields := vinoV2NumExpr + ` AS num, nombre, precio, descripcion, bodega, denominacion_origen, tipo, graduacion, anyo, active, (foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto`
 	if includeImage {
 		fields += ", foto_path"
 	}
 
-	query := "SELECT " + fields + " FROM VINOS WHERE restaurant_id = ? AND active = ?"
+	query := "SELECT " + fields + " " + vinoV2From + " WHERE v.restaurant_id = ? AND v.active = ?"
 	args := []any{restaurantID, active}
 	if requestedNum != nil {
-		query += " AND num = ?"
-		args = append(args, *requestedNum)
+		query += " AND " + vinoV2WhereLegacyNumJoined
+		args = append(args, vinoV2LegacyNumArgs(restaurantID, *requestedNum)...)
 	} else {
-		query += " AND tipo = ?"
+		query += " AND v.tipo = ?"
 		args = append(args, tipo)
 	}
 

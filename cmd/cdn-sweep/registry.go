@@ -17,8 +17,13 @@ var referenceColumns = []struct{ Table, Column string }{
 	{"BEBIDAS", "foto_path"},
 	{"CAFES", "foto_path"},
 	{"POSTRES", "foto_url"},
+	// VINOS stays registered: its rows still hold the paths they held when the
+	// catalogue moved, and dropping the entry would let the sweep delete those
+	// live objects. group_menu_wines_v2 is where new wines are written.
 	{"VINOS", "foto_path"},
 	{"VINOS", "ai_generated_img"},
+	{"group_menu_wines_v2", "foto_path"},
+	{"group_menu_wines_v2", "ai_generated_img"},
 	{"stock_items", "image_url"},
 	{"stock_recipe_steps", "image_url"},
 	{"stock_recipe_steps", "image_object_path"},

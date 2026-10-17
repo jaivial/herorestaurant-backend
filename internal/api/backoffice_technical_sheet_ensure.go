@@ -34,12 +34,21 @@ func (s *Server) handleBOTechnicalSheetEnsureForProduct(w http.ResponseWriter, r
 	}
 
 	source := strings.ToLower(strings.TrimSpace(in.Source))
-	table, idColumn := "comida_items", "id"
+	// sourceIDCond is the tail of the tenant-scoped predicate that finds the
+	// product by the id the caller sent. Wine addresses its rows by the legacy
+	// num, so the catalogue id is resolved through legacy_wine_map and the
+	// restaurant id is repeated inside the subquery.
+	table := "comida_items"
+	sourceIDCond := "id=?"
+	sourceIDArgs := func() []any { return []any{in.ItemID} }
 	switch source {
 	case "vinos":
-		table, idColumn = "VINOS", "num"
+		table = "group_menu_wines_v2"
+		sourceIDCond = "id=(SELECT w.v2_wine_id FROM legacy_wine_map w WHERE w.restaurant_id=? AND w.legacy_num=?)"
+		sourceIDArgs = func() []any { return []any{a.ActiveRestaurantID, in.ItemID} }
 	case "postres":
-		table, idColumn = "POSTRES", "NUM"
+		table = "POSTRES"
+		sourceIDCond = "NUM=?"
 	}
 
 	tx, err := s.db.BeginTx(r.Context(), nil)
@@ -54,8 +63,8 @@ func (s *Server) handleBOTechnicalSheetEnsureForProduct(w http.ResponseWriter, r
 	// Table and column come from the fixed mapping above, never from user input.
 	var existing sql.NullInt64
 	if err := tx.QueryRowContext(r.Context(),
-		fmt.Sprintf(`SELECT stock_recipe_id FROM %s WHERE restaurant_id=? AND %s=? FOR UPDATE`, table, idColumn),
-		a.ActiveRestaurantID, in.ItemID).Scan(&existing); err != nil {
+		fmt.Sprintf(`SELECT stock_recipe_id FROM %s WHERE restaurant_id=? AND %s FOR UPDATE`, table, sourceIDCond),
+		append([]any{a.ActiveRestaurantID}, sourceIDArgs()...)...).Scan(&existing); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteError(w, http.StatusNotFound, "Producto no encontrado")
 			return
@@ -117,8 +126,8 @@ func (s *Server) handleBOTechnicalSheetEnsureForProduct(w http.ResponseWriter, r
 	// orphan if anything after this fails.
 	if _, err = tx.ExecContext(r.Context(),
 		fmt.Sprintf(`UPDATE %s SET production_type='MANUFACTURED', stock_recipe_id=?, stock_item_id=?
-			 WHERE restaurant_id=? AND %s=?`, table, idColumn),
-		sheetID, outputItemID, a.ActiveRestaurantID, in.ItemID); err != nil {
+			 WHERE restaurant_id=? AND %s`, table, sourceIDCond),
+		append([]any{sheetID, outputItemID, a.ActiveRestaurantID}, sourceIDArgs()...)...); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error vinculando la ficha tecnica")
 		return
 	}

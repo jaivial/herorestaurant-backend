@@ -970,50 +970,53 @@ func (s *Server) listPostres(r *http.Request, restaurantID int, query comidaList
 }
 
 func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQuery) ([]comidaVinoResponse, int, error) {
-	where := []string{"restaurant_id = ?"}
+	// The catalogue is joined to legacy_wine_map, so every column in the
+	// predicate is qualified: restaurant_id exists on both tables.
+	where := []string{"v.restaurant_id = ?"}
 	args := []any{restaurantID}
 	if query.Active != nil {
-		where = append(where, "active = ?")
+		where = append(where, "v.active = ?")
 		args = append(args, *query.Active)
 	}
 	if query.Tipo != "" {
-		where = append(where, "UPPER(COALESCE(tipo, '')) = ?")
+		where = append(where, "UPPER(COALESCE(v.tipo, '')) = ?")
 		args = append(args, strings.ToUpper(query.Tipo))
 	}
 	if query.Search != "" {
 		like := "%" + query.Search + "%"
-		where = append(where, "(nombre LIKE ? OR descripcion LIKE ? OR bodega LIKE ? OR denominacion_origen LIKE ? OR anyo LIKE ?)")
+		where = append(where, "(v.nombre LIKE ? OR v.descripcion LIKE ? OR v.bodega LIKE ? OR v.denominacion_origen LIKE ? OR v.anyo LIKE ?)")
 		args = append(args, like, like, like, like, like)
 	}
 	whereSQL := strings.Join(where, " AND ")
 
 	var total int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM VINOS WHERE "+whereSQL, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM group_menu_wines_v2 v WHERE "+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	offset := offsetForPage(query.Page, query.PageSize)
+	// The legacy foto blob is gone from the catalogue: images are served from
+	// foto_path on the CDN, so has_foto no longer has a blob to fall back on.
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT
-			num,
-			COALESCE(tipo, ''),
-			COALESCE(nombre, ''),
-			COALESCE(precio, 0),
-			COALESCE(descripcion, ''),
-			COALESCE(bodega, ''),
-			COALESCE(denominacion_origen, ''),
-			COALESCE(graduacion, 0),
-			COALESCE(anyo, ''),
-			active,
-			((foto_path IS NOT NULL AND LENGTH(foto_path) > 0) OR foto IS NOT NULL) AS has_foto,
-			COALESCE(foto_path, ''),
-			foto,
-			COALESCE(production_type, 'RAW'),
-			stock_recipe_id,
-			stock_item_id
-		FROM VINOS
+			`+vinoV2NumExpr+` AS num,
+			COALESCE(v.tipo, ''),
+			COALESCE(v.nombre, ''),
+			COALESCE(v.precio, 0),
+			COALESCE(v.descripcion, ''),
+			COALESCE(v.bodega, ''),
+			COALESCE(v.denominacion_origen, ''),
+			COALESCE(v.graduacion, 0),
+			COALESCE(v.anyo, ''),
+			v.active,
+			(v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0) AS has_foto,
+			COALESCE(v.foto_path, ''),
+			COALESCE(v.production_type, 'RAW'),
+			v.stock_recipe_id,
+			v.stock_item_id
+		`+vinoV2From+`
 		WHERE `+whereSQL+`
-		ORDER BY active DESC, tipo ASC, nombre ASC, num ASC
+		ORDER BY v.active DESC, v.tipo ASC, v.nombre ASC, num ASC
 		LIMIT ? OFFSET ?
 	`, append(args, query.PageSize, offset)...)
 	if err != nil {
@@ -1028,7 +1031,6 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 			activeInt    int
 			hasFotoInt   int
 			fotoPath     string
-			fotoBlob     []byte
 			recipeIDRaw  sql.NullInt64
 			stockItemRaw sql.NullInt64
 		)
@@ -1045,7 +1047,6 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 			&activeInt,
 			&hasFotoInt,
 			&fotoPath,
-			&fotoBlob,
 			&v.ProductionType,
 			&recipeIDRaw,
 			&stockItemRaw,
@@ -1062,8 +1063,6 @@ func (s *Server) listVinos(r *http.Request, restaurantID int, query comidaListQu
 		v.HasFoto = hasFotoInt != 0
 		if fotoPath != "" && s.bunnyConfigured(r.Context(), restaurantID) {
 			v.FotoURL = s.bunnyPullURL(r.Context(), restaurantID, fotoPath)
-		} else if len(fotoBlob) > 0 {
-			v.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 		}
 		out = append(out, v)
 	}
@@ -1266,32 +1265,31 @@ func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaV
 		activeInt          int
 		hasFotoInt         int
 		fotoPath           sql.NullString
-		fotoBlob           []byte
 		detailRecipeIDRaw  sql.NullInt64
 		detailStockItemRaw sql.NullInt64
 	)
+	// No legacy foto blob: the catalogue only stores the CDN path.
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT
-			num,
-			COALESCE(tipo, ''),
-			COALESCE(nombre, ''),
-			COALESCE(precio, 0),
-			COALESCE(descripcion, ''),
-			COALESCE(bodega, ''),
-			COALESCE(denominacion_origen, ''),
-			COALESCE(graduacion, 0),
-			COALESCE(anyo, ''),
-			active,
-			((foto_path IS NOT NULL AND LENGTH(foto_path) > 0) OR foto IS NOT NULL) AS has_foto,
-			foto_path,
-			foto,
-			COALESCE(production_type, 'RAW'),
-			stock_recipe_id,
-			stock_item_id
-		FROM VINOS
-		WHERE restaurant_id = ? AND num = ?
+			`+vinoV2NumExpr+` AS num,
+			COALESCE(v.tipo, ''),
+			COALESCE(v.nombre, ''),
+			COALESCE(v.precio, 0),
+			COALESCE(v.descripcion, ''),
+			COALESCE(v.bodega, ''),
+			COALESCE(v.denominacion_origen, ''),
+			COALESCE(v.graduacion, 0),
+			COALESCE(v.anyo, ''),
+			v.active,
+			(v.foto_path IS NOT NULL AND LENGTH(v.foto_path) > 0) AS has_foto,
+			v.foto_path,
+			COALESCE(v.production_type, 'RAW'),
+			v.stock_recipe_id,
+			v.stock_item_id
+		`+vinoV2From+`
+		WHERE `+vinoV2WhereLegacyNumJoined+`
 		LIMIT 1
-	`, restaurantID, id).Scan(
+	`, vinoV2LegacyNumArgs(restaurantID, id)...).Scan(
 		&v.Num,
 		&v.Tipo,
 		&v.Nombre,
@@ -1304,7 +1302,6 @@ func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaV
 		&activeInt,
 		&hasFotoInt,
 		&fotoPath,
-		&fotoBlob,
 		&v.ProductionType,
 		&detailRecipeIDRaw,
 		&detailStockItemRaw,
@@ -1325,8 +1322,6 @@ func (s *Server) getVinoByID(r *http.Request, restaurantID int, id int) (comidaV
 	v.HasFoto = hasFotoInt != 0
 	if fotoPath.Valid && strings.TrimSpace(fotoPath.String) != "" && s.bunnyConfigured(r.Context(), restaurantID) {
 		v.FotoURL = s.bunnyPullURL(r.Context(), restaurantID, fotoPath.String)
-	} else if len(fotoBlob) > 0 {
-		v.FotoURL = "data:" + http.DetectContentType(fotoBlob) + ";base64," + base64.StdEncoding.EncodeToString(fotoBlob)
 	}
 	return v, true, nil
 }
@@ -1530,26 +1525,22 @@ func (s *Server) createVino(w http.ResponseWriter, r *http.Request, restaurantID
 		activeInt = 0
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO VINOS
-			(restaurant_id, tipo, nombre, precio, descripcion, bodega, denominacion_origen, graduacion, anyo, active, foto_path, foto)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
-	`, restaurantID,
-		tipo,
-		nombre,
-		precio,
-		strings.TrimSpace(comidaPtrString(req.Descripcion)),
-		bodega,
-		strings.TrimSpace(comidaPtrString(req.DenominacionOrigen)),
-		comidaPtrFloat(req.Graduacion),
-		strings.TrimSpace(comidaPtrString(req.Anyo)),
-		activeInt,
-	)
+	_, legacyNum, err := s.insertVinoV2(r.Context(), restaurantID, vinoV2Insert{
+		Tipo:               tipo,
+		Nombre:             nombre,
+		Precio:             precio,
+		Descripcion:        strings.TrimSpace(comidaPtrString(req.Descripcion)),
+		Bodega:             bodega,
+		DenominacionOrigen: strings.TrimSpace(comidaPtrString(req.DenominacionOrigen)),
+		Graduacion:         comidaPtrFloat(req.Graduacion),
+		Anyo:               strings.TrimSpace(comidaPtrString(req.Anyo)),
+		Active:             activeInt,
+	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando vino")
 		return
 	}
-	newID, _ := res.LastInsertId()
+	newID := legacyNum
 
 	warning := ""
 	if req.ImageBase64 != nil && strings.TrimSpace(*req.ImageBase64) != "" {
@@ -1562,7 +1553,7 @@ func (s *Server) createVino(w http.ResponseWriter, r *http.Request, restaurantID
 		if err != nil {
 			warning = "Vino creado, pero la imagen no se pudo subir"
 		} else {
-			if _, err := s.db.ExecContext(r.Context(), "UPDATE VINOS SET foto_path = ?, foto = NULL WHERE restaurant_id = ? AND num = ?", objectPath, restaurantID, int(newID)); err != nil {
+			if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum, append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, int(newID))...)...); err != nil {
 				warning = "Vino creado, pero la imagen no se pudo guardar"
 			}
 		}
@@ -1858,7 +1849,7 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 	if req.ImageBase64 != nil {
 		raw := strings.TrimSpace(*req.ImageBase64)
 		if raw == "" {
-			sets = append(sets, "foto_path = NULL", "foto = NULL")
+			sets = append(sets, "foto_path = NULL")
 		} else {
 			img, err := decodeBase64Image(raw)
 			if err != nil {
@@ -1867,7 +1858,7 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 			}
 			wineTipo := strings.ToUpper(strings.TrimSpace(comidaPtrString(req.Tipo)))
 			if wineTipo == "" {
-				if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM VINOS WHERE num = ? AND restaurant_id = ? LIMIT 1", id, restaurantID).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
+				if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1", vinoV2LegacyNumArgs(restaurantID, id)...).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
 					wineTipo = "OTROS"
 				}
 			}
@@ -1875,7 +1866,7 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 			if err != nil {
 				imageWarning = "Vino actualizado, pero la imagen no se pudo subir"
 			} else {
-				sets = append(sets, "foto_path = ?", "foto = NULL")
+				sets = append(sets, "foto_path = ?")
 				args = append(args, objectPath)
 			}
 		}
@@ -1886,8 +1877,8 @@ func (s *Server) patchVino(w http.ResponseWriter, r *http.Request, restaurantID,
 		return
 	}
 
-	args = append(args, id, restaurantID)
-	q := "UPDATE VINOS SET " + strings.Join(sets, ", ") + " WHERE num = ? AND restaurant_id = ?"
+	args = append(args, vinoV2LegacyNumArgs(restaurantID, id)...)
+	q := "UPDATE group_menu_wines_v2 SET " + strings.Join(sets, ", ") + " WHERE " + vinoV2WhereLegacyNum
 	res, err := s.db.ExecContext(r.Context(), q, args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando vino")
@@ -1927,23 +1918,34 @@ func (s *Server) handleComidaDeleteByType(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var res sql.Result
-	switch t {
-	case comidaTipoVinos:
-		res, err = s.db.ExecContext(r.Context(), "DELETE FROM VINOS WHERE num = ? AND restaurant_id = ?", id, restaurantID)
-	case comidaTipoPostres:
-		res, err = s.db.ExecContext(r.Context(), "DELETE FROM POSTRES WHERE NUM = ? AND restaurant_id = ?", id, restaurantID)
-	default:
-		res, err = s.db.ExecContext(r.Context(), "DELETE FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = ?", id, restaurantID, string(t))
-	}
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando comida")
-		return
-	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
-		writeComidaValidationError(w, "Elemento no encontrado")
-		return
+	// Wine lives in the v2 catalogue and takes its map row down with it, so it
+	// is handled before the shared legacy branch below.
+	if t == comidaTipoVinos {
+		found, delErr := s.deleteVinoV2(r.Context(), restaurantID, id)
+		if delErr != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando comida")
+			return
+		}
+		if !found {
+			writeComidaValidationError(w, "Elemento no encontrado")
+			return
+		}
+	} else {
+		var res sql.Result
+		if t == comidaTipoPostres {
+			res, err = s.db.ExecContext(r.Context(), "DELETE FROM POSTRES WHERE NUM = ? AND restaurant_id = ?", id, restaurantID)
+		} else {
+			res, err = s.db.ExecContext(r.Context(), "DELETE FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = ?", id, restaurantID, string(t))
+		}
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando comida")
+			return
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			writeComidaValidationError(w, "Elemento no encontrado")
+			return
+		}
 	}
 
 	entityType := entityComidaItems

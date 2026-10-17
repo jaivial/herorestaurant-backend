@@ -973,7 +973,7 @@ func (s *Server) countComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaura
 		var n int
 		if err := tx.QueryRowContext(r.Context(), `
 			SELECT COUNT(*)
-			FROM VINOS
+			FROM group_menu_wines_v2
 			WHERE restaurant_id = ? AND COALESCE(tipo, '') = ?
 		`, restaurantID, category.Name).Scan(&n); err != nil {
 			return 0, err
@@ -1012,7 +1012,7 @@ func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaur
 
 	if comidaCategoryTouchesVinos(current.FoodType) {
 		if _, err := tx.ExecContext(r.Context(), `
-			UPDATE VINOS
+			UPDATE group_menu_wines_v2
 			SET tipo = ?
 			WHERE restaurant_id = ? AND COALESCE(tipo, '') = ?
 		`, newName, restaurantID, current.Name); err != nil {

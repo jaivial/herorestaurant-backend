@@ -20,7 +20,7 @@ func (s *Server) handleBOComidaCounts(w http.ResponseWriter, r *http.Request) {
 	var vinos, cafes, postres, platos, bebidas int
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT
-			(SELECT COUNT(*) FROM VINOS WHERE restaurant_id = ?),
+			(SELECT COUNT(*) FROM group_menu_wines_v2 WHERE restaurant_id = ?),
 			(SELECT COUNT(*) FROM comida_items WHERE restaurant_id = ? AND source_type = 'cafes'),
 			(SELECT COUNT(*) FROM POSTRES WHERE restaurant_id = ?),
 			(SELECT COUNT(*) FROM comida_items WHERE restaurant_id = ? AND source_type = 'platos'),

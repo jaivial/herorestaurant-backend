@@ -69,7 +69,7 @@ func (s *Server) handleBOVinoImageCutout(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var wineTipo string
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM VINOS WHERE num = ? AND restaurant_id = ? LIMIT 1", wineNum, a.ActiveRestaurantID).Scan(&wineTipo); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1", vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...).Scan(&wineTipo); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Wine not found"})
 		return
 	}
@@ -107,7 +107,7 @@ func (s *Server) handleBOVinoImageCutout(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading image"})
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), "UPDATE VINOS SET foto_path = ?, foto = NULL WHERE num = ? AND restaurant_id = ?", objectPath, wineNum, a.ActiveRestaurantID); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum, append([]any{objectPath}, vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...)...); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error saving image path"})
 		return
 	}
