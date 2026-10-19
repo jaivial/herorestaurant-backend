@@ -173,7 +173,7 @@ func buildBackofficeInvitationEmailHTML(restaurantName, invitationURL string) st
 // embedded as the body. The full-fidelity invoice is attached as a PDF.
 // customMessage is optional free text (plain, will be escaped); when provided it
 // is shown above the invoice summary.
-func buildBackofficeInvoiceEmailHTML(data invoiceRenderData, invoiceURL, customMessage string) string {
+func buildBackofficeInvoiceEmailHTML(data invoiceRenderData, invoiceURL, customMessage, customHTML string) string {
 	brand := strings.TrimSpace(data.Issuer.Name)
 	customer := htmlEscape(strings.TrimSpace(data.Customer.Name))
 	number := strings.TrimSpace(data.Number)
@@ -189,7 +189,9 @@ func buildBackofficeInvoiceEmailHTML(data invoiceRenderData, invoiceURL, customM
 	}
 
 	var intro strings.Builder
-	if strings.TrimSpace(customMessage) != "" {
+	if strings.TrimSpace(customHTML) != "" {
+		intro.WriteString("<div style=\"margin-bottom:18px;\">" + customHTML + "</div>")
+	} else if strings.TrimSpace(customMessage) != "" {
 		intro.WriteString("<div style=\"margin-bottom:18px;\">")
 		intro.WriteString(strings.ReplaceAll(htmlEscape(strings.TrimSpace(customMessage)), "\n", "<br>"))
 		intro.WriteString("</div>")
