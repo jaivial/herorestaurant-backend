@@ -64,22 +64,36 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Group gate: the bot only answers inside its own management group and
-	// only when mentioned. Everything else is dropped with a checkpoint log
-	// (wa_bot_group_mention_v1) so a noisy group never reaches the LLM.
+	// Group gate: the bot answers inside the management group and, when the
+	// feature is enabled (wa_bot_privileged_group_v1), inside any configured
+	// privileged group. Both require an explicit mention — the only relaxation
+	// is that a privileged group does not have to BE the management group.
+	// Everything else is dropped with a checkpoint log (wa_bot_group_mention_v1)
+	// so a noisy group never reaches the LLM.
 	if botGroupIsGroupJID(in.ChatJID) {
 		tenant := s.loadBotTenantConfig(r.Context(), restaurantID)
-		if !s.botGroupIsManagementGroup(r.Context(), restaurantID, in.ChatJID, tenant) {
+		isManagement := s.botGroupIsManagementGroup(r.Context(), restaurantID, in.ChatJID, tenant)
+		isPrivileged := s.botGroupIsPrivileged(in.ChatJID)
+		if !isManagement && !isPrivileged {
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "skipped_not_management_group")
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_management_group"})
 			return
 		}
 		if !in.Mentioned {
-			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "skipped_not_mentioned")
+			reason := "skipped_not_mentioned"
+			if isPrivileged {
+				reason = "skipped_not_mentioned_privileged"
+			}
+			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, reason)
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_mentioned"})
 			return
 		}
-		botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted")
+		if isPrivileged {
+			log.Printf("[bot] checkpoint wa_bot_privileged_group_v1 restaurant_id=%d group=%s participant=%s decision=accepted_privileged", restaurantID, in.ChatJID, in.ParticipantJID)
+			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted_privileged")
+		} else {
+			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted")
+		}
 	}
 
 	if in.Ignored {
@@ -111,6 +125,10 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		ChatJID:        in.ChatJID,
 		ParticipantJID: in.ParticipantJID,
 		Mentioned:      in.Mentioned,
+		// Privileged group (wa_bot_privileged_group_v1): full forky registry.
+		PrivilegedGroup: s.botGroupIsPrivileged(in.ChatJID),
+		DocumentB64:     in.DocumentB64,
+		DocumentName:    in.DocumentName,
 	}
 	s.processInboundBotMessage(w, r, restaurantID, msg)
 }

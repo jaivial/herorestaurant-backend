@@ -252,7 +252,8 @@ func (s *Server) handleAddGroupMenu(w http.ResponseWriter, r *http.Request) {
 
 	menuSubtitleJSON := mustJSON(input["menu_subtitle"], []any{})
 	entrantesJSON := mustJSON(input["entrantes"], []any{})
-	principalesJSON := mustJSON(input["principales"], map[string]any{})
+	// The menu has no id yet, so only the arroz catalog can be derived here.
+	principalesJSON := mustJSON(s.boGroupMenuPrincipalesForPersist(r.Context(), restaurantID, 0, input["principales"]), map[string]any{})
 	postreJSON := mustJSON(input["postre"], []any{})
 	beverageJSON := mustJSON(input["beverage"], map[string]any{})
 	commentsJSON := mustJSON(input["comments"], []any{})
@@ -375,7 +376,7 @@ func (s *Server) handleUpdateGroupMenu(w http.ResponseWriter, r *http.Request) {
 
 	menuSubtitleJSON := mustJSON(input["menu_subtitle"], []any{})
 	entrantesJSON := mustJSON(input["entrantes"], []any{})
-	principalesJSON := mustJSON(input["principales"], map[string]any{})
+	principalesJSON := mustJSON(s.boGroupMenuPrincipalesForPersist(r.Context(), restaurantID, int64(id), input["principales"]), map[string]any{})
 	postreJSON := mustJSON(input["postre"], []any{})
 	beverageJSON := mustJSON(input["beverage"], map[string]any{})
 	commentsJSON := mustJSON(input["comments"], []any{})

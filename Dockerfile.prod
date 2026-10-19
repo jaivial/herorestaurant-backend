@@ -30,7 +30,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -trimpath -o /out/backend ./cmd/s
 
 # ---------- Stage 3: runtime ----------
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata imagemagick imagemagick-jpeg imagemagick-webp
+# wa_bot_privileged_group_v1: tesseract + Spanish/English language data so
+# document/OCR extraction works inside the container. Adds ~40 MB to the image.
+RUN apk add --no-cache ca-certificates tzdata imagemagick imagemagick-jpeg imagemagick-webp \
+	tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-spa
 WORKDIR /app
 COPY --from=build /out/backend /app/backend
 COPY --from=frontend /src/dist /app/static

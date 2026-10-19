@@ -60,6 +60,37 @@ func (s *Server) bunnyPrivatePut(ctx context.Context, restaurantID int, objectPa
 	return bunnyPutWithCredentials(ctx, c.PrivateStorageZone, c.PrivateStorageKey, objectPath, payload, contentType)
 }
 
+// bunnyGet reads an object back from the restaurant's public storage zone via
+// the storage API (works whether or not the pull zone is publicly readable).
+// Used by the Forky chat to re-read attachments the client uploaded through
+// POST /api/admin/assistant/media/upload. Coordination id: forky_attachments_v1.
+func (s *Server) bunnyGet(ctx context.Context, restaurantID int, objectPath string) ([]byte, string, error) {
+	c := s.bunnyCreds(ctx, restaurantID)
+	if c.StorageKey == "" || c.StorageZone == "" {
+		return nil, "", errors.New("BunnyCDN storage not configured")
+	}
+	base := s.bunnyStorageBaseURL()
+	u := base + "/" + url.PathEscape(c.StorageZone) + "/" + bunnyEscapePath(objectPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("AccessKey", c.StorageKey)
+	res, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("bunny download failed (%d)", res.StatusCode)
+	}
+	payload, err := io.ReadAll(io.LimitReader(res.Body, stockDocumentMaxBytes+1))
+	if err != nil || len(payload) > stockDocumentMaxBytes {
+		return nil, "", errors.New("invalid document payload")
+	}
+	return payload, res.Header.Get("Content-Type"), nil
+}
+
 func (s *Server) bunnyPrivateGet(ctx context.Context, restaurantID int, objectPath string) ([]byte, string, error) {
 	c := s.bunnyCreds(ctx, restaurantID)
 	if c.PrivateStorageKey == "" || c.PrivateStorageZone == "" {
@@ -140,6 +171,14 @@ func bunnyPutWithCredentials(ctx context.Context, zone, accessKey, objectPath st
 		msg = res.Status
 	}
 	return fmt.Errorf("bunny upload failed (%d): %s", res.StatusCode, msg)
+}
+
+// bunnyStorageBaseURL returns the storage API root, overridable for tests.
+func (s *Server) bunnyStorageBaseURL() string {
+	if s.cfg.BunnyStorageBaseURL != "" {
+		return strings.TrimRight(s.cfg.BunnyStorageBaseURL, "/")
+	}
+	return "https://storage.bunnycdn.com"
 }
 
 func bunnyEscapePath(p string) string {

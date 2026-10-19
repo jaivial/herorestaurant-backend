@@ -454,7 +454,13 @@ type evoUpsertData struct {
 		AudioMessage json.RawMessage `json:"audioMessage"`
 		// Base64 of the media, present because the webhook is registered
 		// with webhookBase64=true (wa_bot_audio_transcription_v1).
-		Base64          string          `json:"base64"`
+		Base64 string `json:"base64"`
+		// wa_bot_privileged_group_v1: documents (with inline base64) and the
+		// image caption. Only the document fields reach waInbound today.
+		DocumentMessage *evoDocumentMessage `json:"documentMessage"`
+		ImageMessage    struct {
+			Caption string `json:"caption"`
+		} `json:"imageMessage"`
 		PtvMessage      json.RawMessage `json:"ptvMessage"`
 		ReactionMessage json.RawMessage `json:"reactionMessage"`
 		ProtocolMessage json.RawMessage `json:"protocolMessage"`
@@ -497,6 +503,11 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	isAudio := d.Message.AudioMessage != nil || d.Message.PtvMessage != nil
 	ignored := botIsIgnoredMessageType(d.MessageType) || d.Message.ReactionMessage != nil || d.Message.ProtocolMessage != nil
 
+	// Coordination id: wa_bot_privileged_group_v1 - an inline document (the
+	// webhook is registered with webhookBase64=true) is kept only when bounded
+	// (~11 MB), the same cap as the audio payload.
+	documentB64, documentName := botDocumentPayload(d.Message.DocumentMessage, d.Message.Base64)
+
 	// Coordination id: wa_bot_group_mention_v1 - a group message is a
 	// management turn, not a customer one. It is only served when the bot is
 	// explicitly mentioned; replies go to the group JID and the transcript is
@@ -517,6 +528,8 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 			MentionedJID: strings.TrimSpace(d.Message.ContextInfo.MentionedJID),
 			AudioB64:     botAudioBase64(isAudio, d.Message.Base64),
 			IsAudio:      isAudio,
+			DocumentB64:  documentB64,
+			DocumentName: documentName,
 			Ignored:      ignored,
 			OwnJIDs:      g.ownJIDs,
 		})
@@ -544,8 +557,30 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		Ignored:    ignored,
 		MediaKind:  botMediaKindLabel(d.MessageType),
 		AudioB64:   botAudioBase64(isAudio, d.Message.Base64),
-		ChatJID:    jid,
+		// wa_bot_privileged_group_v1: populated on the 1:1 path too, but the
+		// downstream customer behavior is unchanged (extraction only happens
+		// for privileged group turns).
+		DocumentB64:  documentB64,
+		DocumentName: documentName,
+		ChatJID:      jid,
 	}, true
+}
+
+// evoDocumentMessage is the inline documentMessage payload we care about
+// (wa_bot_privileged_group_v1): the file name and nothing else.
+type evoDocumentMessage struct {
+	FileName string `json:"fileName"`
+	Caption  string `json:"caption"`
+}
+
+// botDocumentPayload keeps the inline document base64 and its file name only
+// when a documentMessage carried a bounded (~11 MB) payload.
+func botDocumentPayload(doc *evoDocumentMessage, b64 string) (string, string) {
+	if doc == nil || b64 == "" || len(b64) > botDocumentMaxBytes {
+		return "", ""
+	}
+	name := strings.TrimSpace(doc.FileName)
+	return strings.TrimSpace(b64), name
 }
 
 // botAudioBase64 keeps the inline media only for voice notes (bounded ~8 MB).

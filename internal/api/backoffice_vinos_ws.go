@@ -264,10 +264,12 @@ type boVinoAIImagesItem struct {
 }
 
 func (s *Server) loadBOVinoAIImageTracker(ctx context.Context, restaurantID int) (boVinoAIImagesTracker, error) {
+	// wine_num on the wire is the legacy num, so the join with the map stays in
+	// the statement: the WebSocket clients key their rows by it.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT num, COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
-		FROM VINOS
-		WHERE restaurant_id = ? AND (ai_requested_img = 1 OR ai_generating_img = 1 OR ai_generated_img IS NOT NULL)
+		SELECT `+vinoV2NumExpr+` AS num, COALESCE(v.ai_requested_img, 0), COALESCE(v.ai_generating_img, 0), v.ai_generated_img
+		`+vinoV2From+`
+		WHERE v.restaurant_id = ? AND (v.ai_requested_img = 1 OR v.ai_generating_img = 1 OR v.ai_generated_img IS NOT NULL)
 		ORDER BY num ASC
 	`, restaurantID)
 	if err != nil {
@@ -375,11 +377,11 @@ func (s *Server) handleBOVinoAIImageGenerate(w http.ResponseWriter, r *http.Requ
 	}
 
 	res, err := s.db.ExecContext(r.Context(), `
-		UPDATE VINOS
+		UPDATE group_menu_wines_v2
 		SET ai_requested_img = 1,
 		    ai_generating_img = 1
-		WHERE num = ? AND restaurant_id = ?
-	`, wineNum, a.ActiveRestaurantID)
+		WHERE `+vinoV2WhereLegacyNum,
+		vinoV2LegacyNumArgs(a.ActiveRestaurantID, wineNum)...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating wine AI state")
 		return
@@ -460,13 +462,13 @@ func (s *Server) runBOVinoAIImageJob(job boVinoAIImageJob) {
 
 	fullURL := s.bunnyPullURL(ctx, job.RestaurantID, objectPath)
 	_, err = s.db.ExecContext(ctx, `
-		UPDATE VINOS
+		UPDATE group_menu_wines_v2
 		SET ai_requested_img = 1,
 		    ai_generating_img = 0,
 		    ai_generated_img = ?,
 		    foto_path = ?
-		WHERE num = ? AND restaurant_id = ?
-	`, fullURL, objectPath, job.WineNum, job.RestaurantID)
+		WHERE `+vinoV2WhereLegacyNum,
+		append([]any{fullURL, objectPath}, vinoV2LegacyNumArgs(job.RestaurantID, job.WineNum)...)...)
 	if err != nil {
 		s.logBOVinoAITrace("job db save error restaurant=%d wine=%d err=%v", job.RestaurantID, job.WineNum, err)
 		s.failBOVinoAIImageJob(job, "Failed saving generated image")
@@ -489,10 +491,10 @@ func (s *Server) failBOVinoAIImageJob(job boVinoAIImageJob, message string) {
 	s.logBOVinoAITrace("job failed restaurant=%d wine=%d message=%q", job.RestaurantID, job.WineNum, message)
 
 	_, _ = s.db.ExecContext(ctx, `
-		UPDATE VINOS
+		UPDATE group_menu_wines_v2
 		SET ai_generating_img = 0
-		WHERE num = ? AND restaurant_id = ?
-	`, job.WineNum, job.RestaurantID)
+		WHERE `+vinoV2WhereLegacyNum,
+		vinoV2LegacyNumArgs(job.RestaurantID, job.WineNum)...)
 
 	s.broadcastBOVinoAIEvent(job.RestaurantID, "wine_ai_failed", map[string]any{
 		"wine_num":      job.WineNum,

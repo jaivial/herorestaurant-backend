@@ -220,6 +220,9 @@ func renderAdCanvasHTML(view adCanvasView, src string) string {
 			b.WriteString("\"")
 			if p.NewTab {
 				b.WriteString(" target=\"_blank\" rel=\"noopener noreferrer\"")
+			} else {
+				// Canvas documents render in an iframe; ordinary links leave it.
+				b.WriteString(" target=\"_top\"")
 			}
 			b.WriteString(" style=\"background:")
 			b.WriteString(adCanvasCSSColor(p.Bg, "#111111"))

@@ -27,7 +27,7 @@ const (
 	botProviderJev        = "jev"
 
 	botDefaultPrimaryModel  = "opencode-go/deepseek-v4.1-flash"
-	botDefaultFallbackModel = "minimax/MiniMax-M3"
+	botDefaultFallbackModel = "minimax/MiniMax-M3.1-Flash"
 )
 
 // botAIProvider describes one LLM provider and its selectable models. Wire is
@@ -58,7 +58,7 @@ var botAIProviders = []botAIProvider{
 	},
 	{
 		ID: botProviderMiniMax, Label: "MiniMax (Coding Plan)", Wire: "anthropic",
-		Models: []string{"MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"},
+		Models: []string{"MiniMax-M3.1-Flash", "MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"},
 	},
 }
 

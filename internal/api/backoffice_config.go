@@ -2012,6 +2012,12 @@ func normalizeRestaurantWebsiteURL(raw string) (string, error) {
 
 	u.Scheme = "https"
 	u.Host = strings.ToLower(u.Host)
+	// Dev parity (ads_visual_studio_v1): loopback hosts keep their http scheme
+	// so the visual studio iframe can embed a locally served site.
+	host := u.Hostname()
+	if (host == "localhost" || host == "127.0.0.1" || host == "::1") && strings.HasSuffix(u.Host, ":18091") {
+		u.Scheme = "http"
+	}
 	return strings.TrimRight(u.String(), "/"), nil
 }
 

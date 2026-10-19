@@ -15,6 +15,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+
+	"preactvillacarmen/internal/aiusage"
 )
 
 // assistantMaxFrameRunes caps each delta frame relayed to the WebSocket client
@@ -45,6 +47,7 @@ type assistantLLMResult struct {
 	Text       string
 	ToolUses   []assistantToolUse
 	StopReason string
+	Usage      aiusage.Tokens
 }
 
 // assistantStream calls the Messages API through the official Anthropic SDK.
@@ -113,6 +116,8 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 			return result, callErr
 		}
 		result.StopReason = string(message.StopReason)
+		result.Usage = helperAnthropicUsage(message.Usage.InputTokens, message.Usage.OutputTokens, message.Usage.CacheReadInputTokens, message.Usage.CacheCreationInputTokens)
+		s.recordAIUsage(ctx, restaurantID, aiFeatureForky, botProviderMiniMax, model, result.Usage, false)
 		for _, block := range message.Content {
 			if block.Type == "text" {
 				result.Text += block.Text
@@ -168,6 +173,19 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 				Input                json.RawMessage `json:"input"`
 			} `json:"content"`
 			Delta *struct{ Type, Text, PartialJSON string } `json:"delta"`
+			// message_start carries input/cache usage; message_delta carries the
+			// final output token count.
+			Message *struct {
+				Usage struct {
+					InputTokens              int64 `json:"input_tokens"`
+					OutputTokens             int64 `json:"output_tokens"`
+					CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+					CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+			Usage *struct {
+				OutputTokens int64 `json:"output_tokens"`
+			} `json:"usage"`
 			Error *struct {
 				Message string `json:"message"`
 			} `json:"error"`
@@ -181,6 +199,12 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 				message += ": " + frame.Error.Message
 			}
 			return result, errors.New(message)
+		}
+		if frame.Message != nil {
+			result.Usage = helperAnthropicUsage(frame.Message.Usage.InputTokens, frame.Message.Usage.OutputTokens, frame.Message.Usage.CacheReadInputTokens, frame.Message.Usage.CacheCreationInputTokens)
+		}
+		if frame.Usage != nil && frame.Usage.OutputTokens > 0 {
+			result.Usage.Output = frame.Usage.OutputTokens
 		}
 		if frame.StopReason != "" {
 			result.StopReason = frame.StopReason
@@ -209,6 +233,7 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 	if err := scanner.Err(); err != nil {
 		return result, err
 	}
+	s.recordAIUsage(ctx, restaurantID, aiFeatureForky, botProviderMiniMax, model, result.Usage, false)
 	return result, nil
 }
 
@@ -641,6 +666,7 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		"Responde en español, breve, amable y con un toque de humor medido: como máximo UN emoji por respuesta y sin promesas grandilocuentes. " +
 		"Para cualquier dato factual del restaurante (nombre, reservas, menú, stock, POS, clientes o analítica), DEBES usar la herramienta correspondiente antes de responder; nunca inventes datos ni digas que careces de acceso si existe una herramienta. " +
 		"HONESTIDAD (obligatorio): solo puedes afirmar un dato del restaurante si lo devolvió una herramienta ejecutada en ESTA respuesta. Si no ejecutaste ninguna herramienta, no digas que consultaste, listaste o comprobaste nada, y jamás inventes platos, precios, nombres ni URLs. Si la herramienta falla o no devuelve datos, dilo tal cual. " +
+		"PERMISOS: si una herramienta devuelve «permiso insuficiente» o un error de autenticación, el usuario NO tiene acceso a esa acción: dilo tal cual y termina. Nunca simules que la ejecutaste, nunca inventes el dato que devolvería y no lo sustituyas por datos de memoria." +
 		"Cuando una herramienta devuelva un campo de foto (foto, foto_url o foto_path) y el usuario pida ver imágenes, muestra cada foto como imagen Markdown `![nombre](url)` usando ese campo. " +
 		"Para pedir el detalle de las reservas (listado/tabla por cliente, fecha, hora y personas), usa SIEMPRE la herramienta bookings_list; bookings_summary y analytics_report solo dan totales agregados y NO sirven para una tabla de reservas individuales." +
 		assistantOutputContract

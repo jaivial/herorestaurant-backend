@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"preactvillacarmen/internal/httpx"
 )
@@ -73,7 +72,10 @@ func (s *Server) handleVinosUpdateStatus(w http.ResponseWriter, r *http.Request)
 		status = 1
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), "UPDATE VINOS SET active = ? WHERE restaurant_id = ? AND NUM = ?", status, restaurantID, wineID); err != nil {
+	if _, err := s.db.ExecContext(r.Context(),
+		"UPDATE group_menu_wines_v2 SET active = ? WHERE "+vinoV2WhereLegacyNum,
+		append([]any{status}, vinoV2LegacyNumArgs(restaurantID, wineID)...)...,
+	); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error al actualizar el estado")
 		return
 	}
@@ -102,7 +104,7 @@ func (s *Server) handleVinosDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), "DELETE FROM VINOS WHERE restaurant_id = ? AND NUM = ?", restaurantID, wineID); err != nil {
+	if _, err := s.deleteVinoV2(r.Context(), restaurantID, wineID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error al eliminar el vino")
 		return
 	}
@@ -148,8 +150,8 @@ func (s *Server) handleVinosUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := s.db.ExecContext(
 		r.Context(),
-		"UPDATE VINOS SET nombre = ?, precio = ?, descripcion = ?, bodega = ?, denominacion_origen = ?, graduacion = ?, anyo = ? WHERE restaurant_id = ? AND NUM = ?",
-		nombre, precio, descripcion, bodega, denominacionOrigen, graduacion, anyo, restaurantID, wineID,
+		"UPDATE group_menu_wines_v2 SET nombre = ?, precio = ?, descripcion = ?, bodega = ?, denominacion_origen = ?, graduacion = ?, anyo = ? WHERE "+vinoV2WhereLegacyNum,
+		append([]any{nombre, precio, descripcion, bodega, denominacionOrigen, graduacion, anyo}, vinoV2LegacyNumArgs(restaurantID, wineID)...),
 	); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error al actualizar el vino")
 		return
@@ -167,7 +169,7 @@ func (s *Server) handleVinosUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if hasImg {
 		var wineTipo string
-		if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM VINOS WHERE restaurant_id = ? AND num = ? LIMIT 1", restaurantID, wineID).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
+		if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1", vinoV2LegacyNumArgs(restaurantID, wineID)...).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
 			wineTipo = "OTROS"
 		}
 
@@ -180,7 +182,7 @@ func (s *Server) handleVinosUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := s.db.ExecContext(r.Context(), "UPDATE VINOS SET foto_path = ?, foto = NULL WHERE restaurant_id = ? AND NUM = ?", objectPath, restaurantID, wineID); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum, append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, wineID)...)...); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": true,
 				"warning": "Vino actualizado pero la imagen no se pudo actualizar",
@@ -231,29 +233,24 @@ func (s *Server) handleVinosAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Legacy chooses a unique numeric identifier based on current epoch seconds.
-	uniqueNum := int(time.Now().Unix())
-	active := 1
-
-	if _, err := s.db.ExecContext(
-		r.Context(),
-		"INSERT INTO VINOS (restaurant_id, num, tipo, nombre, precio, descripcion, bodega, denominacion_origen, graduacion, anyo, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		restaurantID, uniqueNum, tipo, nombre, precio, descripcion, bodega, denominacionOrigen, graduacion, anyo, active,
-	); err != nil {
-		// If we collide (same second), fall back to letting MySQL assign the AUTO_INCREMENT value.
-		res, err2 := s.db.ExecContext(
-			r.Context(),
-			"INSERT INTO VINOS (restaurant_id, tipo, nombre, precio, descripcion, bodega, denominacion_origen, graduacion, anyo, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			restaurantID, tipo, nombre, precio, descripcion, bodega, denominacionOrigen, graduacion, anyo, active,
-		)
-		if err2 != nil {
-			httpx.WriteError(w, http.StatusInternalServerError, "Error al añadir el vino")
-			return
-		}
-		if id, err3 := res.LastInsertId(); err3 == nil && id > 0 {
-			uniqueNum = int(id)
-		}
+	// The catalogue picks its own primary key; the wine is addressed by the
+	// legacy num that insertVinoV2 allocates alongside it.
+	_, legacyNum, err := s.insertVinoV2(r.Context(), restaurantID, vinoV2Insert{
+		Tipo:               tipo,
+		Nombre:             nombre,
+		Precio:             precio,
+		Descripcion:        descripcion,
+		Bodega:             bodega,
+		DenominacionOrigen: denominacionOrigen,
+		Graduacion:         graduacion,
+		Anyo:               anyo,
+		Active:             1,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error al añadir el vino")
+		return
 	}
+	uniqueNum := int(legacyNum)
 
 	img, hasImg, imgErr := extractWineImage(r)
 	if imgErr != nil {
@@ -276,7 +273,7 @@ func (s *Server) handleVinosAdd(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := s.db.ExecContext(r.Context(), "UPDATE VINOS SET foto_path = ?, foto = NULL WHERE restaurant_id = ? AND num = ?", objectPath, restaurantID, uniqueNum); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum, append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, uniqueNum)...)...); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": true,
 				"wineId":  uniqueNum,

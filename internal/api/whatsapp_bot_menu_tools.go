@@ -419,12 +419,12 @@ func (s *Server) botLoadSimpleMenu(ctx context.Context, restaurantID int, table 
 // botToolWinesMenu returns the active wines (VINOS) grouped by type.
 func (s *Server) botToolWinesMenu(ctx context.Context, restaurantID int) (string, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT nombre, COALESCE(precio, 0), COALESCE(descripcion, ''), COALESCE(tipo, ''),
-		       COALESCE(bodega, ''), COALESCE(denominacion_origen, ''), COALESCE(anyo, ''),
-		       graduacion
-		FROM VINOS
-		WHERE restaurant_id = ? AND active = 1
-		ORDER BY COALESCE(tipo, ''), nombre
+		SELECT v.nombre, COALESCE(v.precio, 0), COALESCE(v.descripcion, ''), COALESCE(v.tipo, ''),
+		       COALESCE(v.bodega, ''), COALESCE(v.denominacion_origen, ''), COALESCE(v.anyo, ''),
+		       v.graduacion
+		FROM group_menu_wines_v2 v
+		WHERE v.restaurant_id = ? AND v.active = 1
+		ORDER BY COALESCE(v.tipo, ''), v.nombre
 	`, restaurantID)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando los vinos"}), nil

@@ -43,6 +43,10 @@ type botPromptData struct {
 	InGroup bool
 	// GroupMember is the name of the staff member that mentioned the bot.
 	GroupMember string
+	// PrivilegedGroup marks a turn inside a configured privileged group
+	// (wa_bot_privileged_group_v1): the full backoffice tool catalog is
+	// available and the model may execute operations directly.
+	PrivilegedGroup bool
 }
 
 // botDefaultRules is the critical-rules block used when the tenant has not
@@ -141,6 +145,17 @@ func renderBotSystemPrompt(d botPromptData) string {
 		b.WriteString("- SÍlo respondes a los mensajes que te mencionan; en el resto del grupo no debes intervenir.\n")
 		b.WriteString("- Para reservas de FECHA ESPECIAL (Navidad, Nochevieja, eventos) tienes herramientas propias: `get_special_date_menu` (qué se puede reservar y con qué ids), `create_special_booking`, `modify_special_booking` y `cancel_special_booking`. Úsalas en lugar de derivar a la web.\n")
 		b.WriteString("- Antes de crear, modificar o cancelar, repite los datos al grupo y espera confirmación; después llama a la herramienta con `confirmed=true`.\n")
+		b.WriteString("\n")
+	}
+
+	// Coordination id: wa_bot_privileged_group_v1 - inside the privileged
+	// group the turn has the complete backoffice catalog available.
+	if d.PrivilegedGroup {
+		b.WriteString("## GRUPO PRIVILEGIADO (dirección)\n")
+		b.WriteString("- Este es un turno interno de dirección: tienes disponible el CATÁLOGO COMPLETO de herramientas del backoffice, no solo las de reservas.\n")
+		b.WriteString("- Puedes consultar y EJECUTAR operaciones directamente en este grupo (lecturas y escrituras de reservas, POS, stock, fichajes, menús...).\n")
+		b.WriteString("- Si un documento adjunto aparece en el mensaje, su contenido extraído está incluido en el propio mensaje: úsalo como fuente de datos, no lo inventes.\n")
+		b.WriteString("- Antes de una operación destructiva o de escritura, confirma los datos con el equipo; después ejecuta la herramienta.\n")
 		b.WriteString("\n")
 	}
 

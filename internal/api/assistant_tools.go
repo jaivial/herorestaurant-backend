@@ -19,8 +19,10 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 	}
 	// Authorize before touching the database. Missing backoffice auth is denied
 	// for assistant tools (public assistant requests use a separate path).
-	if auth, ok := boAuthFromContext(ctx); ok {
+	auth, hasAuth := boAuthFromContext(ctx)
+	if hasAuth {
 		if !assistantToolAllowed(auth, name) {
+			s.assistantAuditToolDenial(ctx, restaurantID, name, auth.User.ID, "permiso insuficiente")
 			return "", fmt.Errorf("permiso insuficiente para %s", name)
 		}
 	} else {
@@ -28,6 +30,7 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 		// Anonymous/public assistant sessions may only read public-safe data
 		// (e.g. restaurant_info); everything else is denied before touching DB.
 		if t.Write || t.BackofficeOnly {
+			s.assistantAuditToolDenial(ctx, restaurantID, name, nil, "autenticación requerida")
 			return "", fmt.Errorf("autenticación requerida para %s", name)
 		}
 	}
@@ -58,6 +61,23 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 		}
 	}
 	return out, err
+}
+
+// assistantAuditToolDenial records a tool call that the ACL stopped before
+// dispatch. Denied attempts must be observable: without a row, probing a
+// restricted tool via chat is invisible to QA and incident review.
+func (s *Server) assistantAuditToolDenial(ctx context.Context, restaurantID int, name string, userID any, reason string) {
+	if s.db == nil {
+		return
+	}
+	result := map[string]any{"tool": name, "duration_ms": 0, "ok": false, "denied": true, "error": reason}
+	s.assistantAudit(ctx, restaurantID, "TOOL_CALL", "forky_tool", 0, result)
+	// Best-effort structured audit (migration 015); deployments without the
+	// migration retain the legacy audit row above.
+	if b, e := json.Marshal(result); e == nil {
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO assistant_tool_audit (user_id,restaurant_id,tool_name,tool_version,result_summary,error_message,duration_ms) VALUES (?,?,?,?,?,?,0)`,
+			userID, restaurantID, name, "1", string(b), reason)
+	}
 }
 
 func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID int, name string, input json.RawMessage) (string, error) {

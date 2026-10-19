@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -16,7 +17,6 @@ func assistantCatalogResources() map[string]struct{ table, idCol, name, desc, pr
 		"comida":       {"comida_items", "id", "nombre", "descripcion", "precio", "active", "foto_url"},
 		"bebidas":      {"BEBIDAS", "num", "nombre", "descripcion", "precio", "active", "foto_path"},
 		"cafes":        {"CAFES", "num", "nombre", "descripcion", "precio", "active", "foto_path"},
-		"vinos":        {"VINOS", "num", "nombre", "descripcion", "precio", "active", "foto"},
 		"menus":        {"menus", "id", "menu_title", "menu_subtitle", "price", "active", "menu_preview_image_path"},
 		"pos_products": {"pos_products", "id", "name", "description", "price_gross_cents", "is_active", ""},
 		"stock_items":  {"stock_items", "id", "name", "description", "", "is_active", "image_url"},
@@ -57,6 +57,12 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 	}
 	if name == "restaurant_settings_get" || name == "whatsapp_bot_config_get" || name == "site_published_content_get" {
 		return s.assistantSafeRead(ctx, rid, name)
+	}
+	// Wine is the one catalogue that is no longer a plain table with a plain
+	// numeric id: its rows live in group_menu_wines_v2 and are still addressed
+	// by the legacy num, so it cannot go through the generic statements below.
+	if strings.ToLower(in.Resource) == "vinos" {
+		return s.assistantVinoCatalogTool(ctx, rid, name, raw)
 	}
 	spec, ok := assistantCatalogResources()[strings.ToLower(in.Resource)]
 	if !ok {
@@ -165,6 +171,131 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 			return "", err
 		}
 		res, e := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s=? WHERE restaurant_id=? AND %s=?", spec.table, spec.softDelete, spec.idCol), 0, rid, in.ID)
+		if e != nil {
+			return "", e
+		}
+		n, _ := res.RowsAffected()
+		return botJSON(map[string]any{"deleted": n == 1}), nil
+	}
+	return "", fmt.Errorf("tool no soportada")
+}
+
+// assistantVinoCatalogTool serves the "vinos" resource of the catalog tools.
+//
+// The generic machinery above builds its statements from a table name and a
+// plain numeric id column. Wine no longer has either: its rows live in
+// group_menu_wines_v2 and are still addressed by the legacy num the assistant
+// was handed, so the id is resolved through legacy_wine_map here instead of
+// being contorted into the generic templates.
+func (s *Server) assistantVinoCatalogTool(ctx context.Context, rid int, name string, raw json.RawMessage) (string, error) {
+	if rid <= 0 || s.db == nil {
+		return "", fmt.Errorf("restaurante activo no disponible")
+	}
+	var in struct {
+		Search, Name, Description string
+		ID, Limit                 int
+		Price                     float64
+		Confirmed                 bool
+		ConfirmationToken         string `json:"confirmation_token"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return "", err
+	}
+
+	const numExpr = vinoV2NumExpr
+	switch name {
+	case "catalog_list":
+		limit := in.Limit
+		if limit < 1 || limit > 100 {
+			limit = 50
+		}
+		q := "SELECT " + numExpr + ",v.nombre,v.descripcion,v.precio,v.foto_path " + vinoV2From + " WHERE v.restaurant_id=?"
+		args := []any{rid}
+		if in.Search != "" {
+			q += " AND v.nombre LIKE ?"
+			args = append(args, "%"+in.Search+"%")
+		}
+		q += " ORDER BY " + numExpr + " DESC LIMIT " + strconv.Itoa(limit)
+		rows, e := s.db.QueryContext(ctx, q, args...)
+		if e != nil {
+			return "", e
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var id int
+			var n, d string
+			// DECIMAL/varchar scan into any arrive as []byte and JSON-marshal
+			// as base64; scan into NullString so the model sees real values.
+			var price, foto sql.NullString
+			if e = rows.Scan(&id, &n, &d, &price, &foto); e != nil {
+				return "", e
+			}
+			item := map[string]any{"id": id, "name": n, "description": d, "price": nil, "foto": nil}
+			if price.Valid {
+				item["price"] = price.String
+			}
+			if foto.Valid {
+				item["foto"] = foto.String
+			}
+			out = append(out, item)
+		}
+		return botJSON(map[string]any{"resource": "vinos", "items": out}), rows.Err()
+	case "catalog_get":
+		var id int
+		var n, d string
+		var p sql.NullString
+		e := s.db.QueryRowContext(ctx, "SELECT "+numExpr+",v.nombre,v.descripcion,v.precio "+vinoV2From+" WHERE "+vinoV2WhereLegacyNumJoined, vinoV2LegacyNumArgs(rid, in.ID)...).Scan(&id, &n, &d, &p)
+		if e != nil {
+			return "", e
+		}
+		var pv any
+		if p.Valid {
+			pv = p.String
+		}
+		return botJSON(map[string]any{"id": id, "name": n, "description": d, "price": pv}), nil
+	case "catalog_create":
+		if !in.Confirmed {
+			return s.assistantRequireConfirmation(rid, name, raw)
+		}
+		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, raw); err != nil {
+			return "", err
+		}
+		// tipo is NOT NULL in the catalogue while the tool has no notion of wine
+		// type, so an empty string is stored rather than inventing a category.
+		_, legacyNum, e := s.insertVinoV2(ctx, rid, vinoV2Insert{
+			Tipo:        "",
+			Nombre:      strings.TrimSpace(in.Name),
+			Descripcion: strings.TrimSpace(in.Description),
+			Precio:      in.Price,
+			Active:      1,
+		})
+		if e != nil {
+			return "", e
+		}
+		return botJSON(map[string]any{"created": true, "id": legacyNum}), nil
+	case "catalog_update":
+		if !in.Confirmed {
+			return s.assistantRequireConfirmation(rid, name, raw)
+		}
+		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, raw); err != nil {
+			return "", err
+		}
+		res, e := s.db.ExecContext(ctx, "UPDATE group_menu_wines_v2 SET nombre=COALESCE(NULLIF(?,''),nombre),descripcion=COALESCE(NULLIF(?,''),descripcion),precio=? WHERE "+vinoV2WhereLegacyNum,
+			append([]any{in.Name, in.Description, in.Price}, vinoV2LegacyNumArgs(rid, in.ID)...)...)
+		if e != nil {
+			return "", e
+		}
+		n, _ := res.RowsAffected()
+		return botJSON(map[string]any{"updated": n == 1}), nil
+	case "catalog_delete":
+		if !in.Confirmed {
+			return s.assistantRequireConfirmation(rid, name, raw)
+		}
+		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, name, raw); err != nil {
+			return "", err
+		}
+		res, e := s.db.ExecContext(ctx, "UPDATE group_menu_wines_v2 SET active=0 WHERE "+vinoV2WhereLegacyNum, vinoV2LegacyNumArgs(rid, in.ID)...)
 		if e != nil {
 			return "", e
 		}

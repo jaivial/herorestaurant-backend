@@ -47,8 +47,10 @@ type minimaxMessagesResponse struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
 	Usage struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	} `json:"usage"`
 }
 
@@ -86,8 +88,9 @@ func (s *Server) translateToEnglish(ctx context.Context, restaurantID int, text 
 		return "", nil
 	}
 
+	model := s.resolveMiniMaxModel(ctx, restaurantID, "")
 	reqBody := map[string]any{
-		"model":      s.resolveMiniMaxModel(ctx, restaurantID, ""),
+		"model":      model,
 		"max_tokens": 1024,
 		"system":     translationSystemPrompt,
 		"messages": []map[string]any{
@@ -138,6 +141,8 @@ func (s *Server) translateToEnglish(ctx context.Context, restaurantID int, text 
 	if parsed.Error != nil {
 		return "", fmt.Errorf("minimax translate error: %s", parsed.Error.Type)
 	}
+	s.recordAIUsage(ctx, restaurantID, aiFeatureTranslation, botProviderMiniMax, model,
+		helperAnthropicUsage(int64(parsed.Usage.InputTokens), int64(parsed.Usage.OutputTokens), int64(parsed.Usage.CacheReadInputTokens), int64(parsed.Usage.CacheCreationInputTokens)), false)
 
 	var sb strings.Builder
 	for _, block := range parsed.Content {

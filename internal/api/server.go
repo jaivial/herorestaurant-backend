@@ -998,6 +998,11 @@ func (s *Server) Routes() http.Handler {
 
 		// Forky AI assistant (WebSocket chat, any logged-in user).
 		r.With(s.requireBOSession).Get("/assistant/ws", s.handleBOAssistantWS)
+		// Prompt-bar media: upload to the restaurant's Bunny storage and STT
+		// via the bot pipeline (coord forky_media_transcribe_v1). Same gate
+		// as the chat socket: any logged-in backoffice session.
+		r.With(s.requireBOSession).Post("/assistant/media/upload", s.handleBOAssistantMediaUpload)
+		r.With(s.requireBOSession).Post("/assistant/transcribe", s.handleBOAssistantTranscribe)
 
 		// Invoices management
 		r.With(s.requireBOSession, facturasGate).Get("/invoices", s.handleBOInvoicesList)
@@ -1017,6 +1022,10 @@ func (s *Server) Routes() http.Handler {
 		// Analytics V1 uses an idempotent selected-range rebuild; it has no outbox.
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/overview", s.handleBOAnalyticsOverview)
 		r.With(s.requireBOSession, statisticsGate).Post("/analytics/refresh", s.handleBOAnalyticsRefresh)
+		// AI usage + WhatsApp message ledger for Estadísticas > IA y WhatsApp.
+		// Coordination ids: ai_usage_stats_api_v1 / whatsapp_message_logs_api_v1.
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/ai-usage", s.handleBOAIUsage)
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/whatsapp-messages", s.handleBOWhatsAppMessages)
 
 		// Customer affluence over the full bookings history (affluence_stats_v1).
 		// Read-only aggregations: bucketed evolution with previous-period delta
@@ -1566,18 +1575,21 @@ func (s *Server) handleVinos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fields := "num, nombre, precio, descripcion, bodega, denominacion_origen, tipo, graduacion, anyo, active, (foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto"
+	// The response keeps naming each wine by its legacy num, which is what the
+	// map join below materialises, and by the legacy ordering the frontend
+	// relies on.
+	fields := vinoV2NumExpr + ` AS num, nombre, precio, descripcion, bodega, denominacion_origen, tipo, graduacion, anyo, active, (foto_path IS NOT NULL AND LENGTH(foto_path) > 0) AS has_foto`
 	if includeImage {
 		fields += ", foto_path"
 	}
 
-	query := "SELECT " + fields + " FROM VINOS WHERE restaurant_id = ? AND active = ?"
+	query := "SELECT " + fields + " " + vinoV2From + " WHERE v.restaurant_id = ? AND v.active = ?"
 	args := []any{restaurantID, active}
 	if requestedNum != nil {
-		query += " AND num = ?"
-		args = append(args, *requestedNum)
+		query += " AND " + vinoV2WhereLegacyNumJoined
+		args = append(args, vinoV2LegacyNumArgs(restaurantID, *requestedNum)...)
 	} else {
-		query += " AND tipo = ?"
+		query += " AND v.tipo = ?"
 		args = append(args, tipo)
 	}
 

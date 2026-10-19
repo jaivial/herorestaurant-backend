@@ -195,11 +195,14 @@ func (s *Server) minimaxVisionOCR(ctx context.Context, restaurantID int, model, 
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		Usage botWireUsage `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &envelope); err != nil {
 		// Some MiniMax dialects wrap the reply differently; fall back to the raw body.
 		return strings.TrimSpace(string(respBody)), nil
 	}
+	s.recordAIUsage(ctx, restaurantID, aiFeatureStockOCR, botProviderMiniMax, model,
+		helperAnthropicUsage(envelope.Usage.InputTokens, envelope.Usage.OutputTokens, envelope.Usage.CacheReadInputTokens, envelope.Usage.CacheCreationInputTokens), false)
 	var sb strings.Builder
 	for _, block := range envelope.Content {
 		if block.Type == "text" {
