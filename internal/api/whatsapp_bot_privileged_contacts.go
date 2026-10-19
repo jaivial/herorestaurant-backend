@@ -144,3 +144,24 @@ func botPrivilegedConversationIsGroup(tenant botTenantConfig, jid string) bool {
 	}
 	return strings.HasSuffix(j, "@g.us")
 }
+
+// botConversationIsPrivileged reports whether the conversation is privileged,
+// given BOTH of its identities.
+//
+// WhatsApp addresses the same 1:1 chat by two forms: the opaque @lid and the
+// phone-number JID. The provider lists the chat by one of them and delivers
+// the inbound message addressed to the other, so the gate has to try both: a
+// selection made on the listed form has to match the delivered one, or the
+// privilege would silently never apply.
+//
+// The alternate identity is empty for groups (a group has a single id) and for
+// a conversation the provider only knows by one form.
+func botConversationIsPrivileged(s *Server, tenant botTenantConfig, jid, altJID string) bool {
+	if s.botGroupIsPrivileged(jid, tenant) {
+		return true
+	}
+	if alt := strings.TrimSpace(altJID); alt != "" {
+		return s.botGroupIsPrivileged(alt, tenant)
+	}
+	return false
+}

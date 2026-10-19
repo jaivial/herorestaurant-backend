@@ -75,7 +75,13 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 	tenant := s.loadBotTenantConfig(r.Context(), restaurantID)
 	// isPrivileged is computed ONCE and reused below: computing it twice
 	// would let the gate and the turn disagree if one of them changed.
-	isPrivileged := s.botGroupIsPrivileged(in.ChatJID, tenant)
+	//
+	// The conversation is matched by BOTH of its identities: the provider
+	// lists a 1:1 chat by WhatsApp's opaque @lid and delivers the message
+	// addressed to the phone number, so a selection made on one form has to
+	// match the other.
+	// Coordination id: wa_bot_privileged_contacts_v1
+	isPrivileged := botConversationIsPrivileged(s, tenant, in.ChatJID, in.ChatJIDAlt)
 	if botGroupIsGroupJID(in.ChatJID) {
 		isManagement := s.botGroupIsManagementGroup(r.Context(), restaurantID, in.ChatJID, tenant)
 		if !isManagement && !isPrivileged {
@@ -152,7 +158,9 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		ParticipantJID: in.ParticipantJID,
 		Mentioned:      in.Mentioned,
 		// Privileged group (wa_bot_privileged_group_v1): full forky registry.
-		PrivilegedGroup: s.botGroupIsPrivileged(in.ChatJID, tenant),
+		// It reuses the value computed at the gate: computing it twice would
+		// let the gate and the turn disagree if the config changed in between.
+		PrivilegedGroup: isPrivileged,
 		DocumentB64:     in.DocumentB64,
 		DocumentName:    in.DocumentName,
 	}

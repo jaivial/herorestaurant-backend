@@ -79,6 +79,9 @@ func (s *Server) botProviderChats(ctx context.Context, restaurantID int) ([]waCh
 			RemoteJID string `json:"remoteJid"`
 			Name      string `json:"name"`
 			PushName  string `json:"pushName"`
+			LastMsg   struct {
+				PushName string `json:"pushName"`
+			} `json:"lastMessage"`
 		}
 		if json.Unmarshal(chatsRaw, &chats) == nil {
 			for _, c := range chats {
@@ -90,6 +93,9 @@ func (s *Server) botProviderChats(ctx context.Context, restaurantID int) ([]waCh
 				name := strings.TrimSpace(c.Name)
 				if name == "" {
 					name = strings.TrimSpace(c.PushName)
+				}
+				if name == "" {
+					name = strings.TrimSpace(c.LastMsg.PushName)
 				}
 				out = append(out, waChat{JID: jid, Name: name, Kind: "contact"})
 			}

@@ -96,6 +96,19 @@ type waInbound struct {
 	// member addressed the bot. Replies must go back to this id.
 	// Coordination id: wa_bot_group_mention_v1
 	ChatJID string
+	// ChatJIDAlt is the OTHER identity of the same 1:1 conversation, when the
+	// provider knows it: WhatsApp addresses a 1:1 chat by its opaque @lid and
+	// keeps the phone JID aside (or the other way round).
+	//
+	// It is empty for groups (a group has a single id) and for a conversation
+	// the provider only knows by one form.
+	//
+	// The privileged gate needs both: the operator selects a conversation from
+	// the provider's chat list, which is keyed by the @lid, while the inbound
+	// message is keyed by the phone. A selection made on one form has to match
+	// the other, or the privilege would never apply.
+	// Coordination id: wa_bot_privileged_contacts_v1
+	ChatJIDAlt string
 	// ParticipantJID is the member who wrote inside a group (empty in 1:1).
 	ParticipantJID string
 	// Mentioned reports that the bot was explicitly addressed in a group.
