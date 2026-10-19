@@ -59,13 +59,27 @@ func botPrivilegedGroupSet(jids []string) map[string]struct{} {
 
 // botGroupIsPrivileged reports whether the chat JID belongs to a configured
 // privileged group. An empty config is always false: the feature is off.
-func (s *Server) botGroupIsPrivileged(jid string) bool {
+//
+// The privileged group is a per-restaurant setting, so the tenant config can
+// name it (PrivilegedGroupJIDs). The global env list still applies, so an
+// installation that has not been migrated keeps working; the tenant list only
+// ever ADDS groups for that restaurant.
+func (s *Server) botGroupIsPrivileged(jid string, tenant botTenantConfig) bool {
 	jid = strings.TrimSpace(jid)
-	if jid == "" || len(s.cfg.BotPrivilegedGroupJIDs) == 0 {
+	if jid == "" {
 		return false
 	}
-	_, ok := botPrivilegedGroupSet(s.cfg.BotPrivilegedGroupJIDs)[jid]
-	return ok
+	if len(s.cfg.BotPrivilegedGroupJIDs) > 0 {
+		if _, ok := botPrivilegedGroupSet(s.cfg.BotPrivilegedGroupJIDs)[jid]; ok {
+			return true
+		}
+	}
+	if len(tenant.PrivilegedGroupJIDs) > 0 {
+		if _, ok := botPrivilegedGroupSet(tenant.PrivilegedGroupJIDs)[jid]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // botForkyToolDefs converts the full assistant (forky) tool registry into the

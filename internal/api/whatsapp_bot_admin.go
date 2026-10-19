@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -28,6 +30,20 @@ func (s *Server) handleBOBotConfigGet(w http.ResponseWriter, r *http.Request) {
 
 // handleBOBotConfigPut stores the per-restaurant bot personalization config.
 // PUT /api/admin/bot/config
+// botStoredPrivilegedGroupJIDs returns the privileged groups already
+// configured for a restaurant, so a write by a non-root caller keeps them
+// instead of dropping them.
+func (s *Server) botStoredPrivilegedGroupJIDs(ctx context.Context, restaurantID int) []string {
+	var raw sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
+	`, restaurantID).Scan(&raw)
+	if err != nil || !raw.Valid || strings.TrimSpace(raw.String) == "" {
+		return nil
+	}
+	return parseBotTenantConfig(raw.String).PrivilegedGroupJIDs
+}
+
 func (s *Server) handleBOBotConfigPut(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -45,6 +61,17 @@ func (s *Server) handleBOBotConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.LanguageDefault != "es" && cfg.LanguageDefault != "en" {
 		cfg.LanguageDefault = "es"
+	}
+
+	// The privileged groups decide where the bot answers with the whole
+	// backoffice catalog and a root auth, so only a root may set them. This
+	// route is open to any admin (role importance >= 90); without this guard
+	// an admin could name a group they belong to and elevate themselves to
+	// the privileged catalog. A non-root write keeps the value that is
+	// already stored, so an admin editing the tone does not silently drop
+	// the privileged groups either.
+	if a.Role != "root" {
+		cfg.PrivilegedGroupJIDs = s.botStoredPrivilegedGroupJIDs(r.Context(), a.ActiveRestaurantID)
 	}
 
 	raw, _ := json.Marshal(cfg)

@@ -641,11 +641,33 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		// Full forky registry plus every bot tool; the executor routes forky
 		// tools through the real assistant path (authorization + audit) with
 		// the synthetic root auth.
-		tools = append(botToolDefsForChat(tenant, true), botForkyToolDefs()...)
+		//
+		// The two catalogs overlap (create_booking exists in both) and the
+		// provider rejects a tool list with duplicate names ("Tool names
+		// must be unique"), which killed the primary model on every
+		// privileged turn. The bot tool wins: it is the one whose input
+		// schema the bot's executor understands, and the executor routes it
+		// to the bot path, not to the forky path.
+		botTools := botToolDefsForChat(tenant, true)
+		tools = botMergeToolDefs(botTools, botForkyToolDefs())
 		normalExec := exec
+		// A name the bot defines belongs to the bot, even when forky also has
+		// a tool with that name: the bot keeps its own schema and its own
+		// executor. Every other forky tool goes through the assistant path,
+		// with the authorization and the audit row it deserves.
+		//
+		// The check is against the BOT list, not against the merged one: the
+		// merged list carries every name, so asking it would send every
+		// forky tool to the bot executor, which does not know them.
+		botOwned := map[string]struct{}{}
+		for _, d := range botTools {
+			botOwned[d.Name] = struct{}{}
+		}
 		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
 			if _, ok := assistantToolLookup(name); ok {
-				return s.assistantExecuteTool(botPrivilegedForkyContext(ctx), restaurantID, name, input)
+				if _, mine := botOwned[name]; !mine {
+					return s.assistantExecuteTool(botPrivilegedForkyContext(ctx), restaurantID, name, input)
+				}
 			}
 			return normalExec(ctx, name, input)
 		}
