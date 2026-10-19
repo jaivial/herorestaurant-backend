@@ -18,10 +18,37 @@ import (
 // selected (which may not be in the provider's answer any more, e.g. a chat
 // that was deleted).
 
+// botSettingsRestaurantIDForSession returns the restaurant of the request
+// path, but only when the session may act on it.
+//
+// The privileged routes address a restaurant by its id in the path, and the
+// id in the path is not the session's restaurant: a root who administers
+// several restaurants could otherwise write the privileged selection of a
+// restaurant that is not the one they are working on. The selection decides
+// who gets the root catalog, so it is bound to the session's restaurant.
+//
+// A request whose path names another restaurant is refused; the session's own
+// restaurant is always allowed, and a path without the parameter (the bot
+// config route) uses the session's restaurant as well.
+func (s *Server) botSettingsRestaurantIDForSession(r *http.Request) (int, bool) {
+	rid, ok := botSettingsRestaurantID(r)
+	if !ok {
+		return 0, false
+	}
+	a, hasAuth := boAuthFromContext(r.Context())
+	if !hasAuth {
+		return 0, false
+	}
+	if a.ActiveRestaurantID > 0 && rid != a.ActiveRestaurantID {
+		return 0, false
+	}
+	return rid, true
+}
+
 // handleBOBotPrivilegedContactsGet lists the conversations of the connected
 // WhatsApp account so the operator can pick the privileged ones.
 func (s *Server) handleBOBotPrivilegedContactsGet(w http.ResponseWriter, r *http.Request) {
-	rid, ok := botSettingsRestaurantID(r)
+	rid, ok := s.botSettingsRestaurantIDForSession(r)
 	if !ok {
 		httpx.WriteError(w, http.StatusBadRequest, "restaurantId inválido")
 		return
@@ -61,7 +88,7 @@ func (s *Server) handleBOBotPrivilegedContactsGet(w http.ResponseWriter, r *http
 
 // handleBOBotPrivilegedContactsPut stores the privileged conversations.
 func (s *Server) handleBOBotPrivilegedContactsPut(w http.ResponseWriter, r *http.Request) {
-	rid, ok := botSettingsRestaurantID(r)
+	rid, ok := s.botSettingsRestaurantIDForSession(r)
 	if !ok {
 		httpx.WriteError(w, http.StatusBadRequest, "restaurantId inválido")
 		return
