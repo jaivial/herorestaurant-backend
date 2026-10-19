@@ -161,14 +161,17 @@ func (s *Server) botPrepareInbound(ctx context.Context, restaurantID int, msg bo
 	if msg.Text != "" || !msg.IsAudio || (msg.AudioB64 == "" && msg.MessageID == "") {
 		return msg
 	}
+	s.botReactToMessage(restaurantID, msg, botReactReceived)
 	text := s.botTranscribeAudio(ctx, restaurantID, msg)
 	msg.AudioB64 = ""
 	if text == "" {
+		s.botReactToMessage(restaurantID, msg, botReactFailed)
 		if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
 			_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, "Perdona, no he podido entender bien el audio. ¿Me lo puedes escribir por aquí, por favor?", "unsupported_content")
 		}
 		return msg
 	}
+	s.botReactToMessage(restaurantID, msg, botReactDone)
 	msg.Text, msg.Transcribed = text, true
 	return msg
 }
