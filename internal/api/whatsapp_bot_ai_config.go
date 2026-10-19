@@ -26,8 +26,19 @@ const (
 	botProviderMiniMax    = "minimax"
 	botProviderJev        = "jev"
 
-	botDefaultPrimaryModel  = "opencode-go/deepseek-v4.1-flash"
-	botDefaultFallbackModel = "minimax/MiniMax-M3.1-Flash"
+	// The primary model is the one that answers the customer, so it is the
+	// model that has to be reliable. MiniMax M3.1 Flash is the one in use:
+	// the previous primary (opencode-go/deepseek-v4.1-flash) failed every
+	// privileged turn with HTTP 400 "Tool names must be unique" because the
+	// bot and forky catalogs share a tool name, and the fix for that was in
+	// the backend, not in the model. MiniMax is also the only provider whose
+	// key is configured globally (MINIMAX_API_KEY), so it works even for a
+	// tenant that never set a per-provider key.
+	//
+	// The fallback must be a DIFFERENT model: botLLMCallRouted skips a
+	// fallback equal to the primary.
+	botDefaultPrimaryModel  = "minimax/MiniMax-M3.1-Flash"
+	botDefaultFallbackModel = "minimax/MiniMax-M3"
 )
 
 // botAIProvider describes one LLM provider and its selectable models. Wire is
