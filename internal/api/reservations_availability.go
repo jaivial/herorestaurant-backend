@@ -16,33 +16,41 @@ import (
 	"preactvillacarmen/internal/httpx"
 )
 
-// loadRiceTypes returns the active rices of the weekend menu (legacy FINDE
-// table). Kept for callers that have no reservation date.
+// loadRiceTypes returns the active rices of the weekend menu.
+//
+// The legacy FINDE table is gone: the rices live in the v2 section whose
+// section_kind is 'arroces' (section 169 for the weekend menu, 168 for the day
+// menu). The read keeps the shape the legacy reader had - one row per rice,
+// ordered by description - so the response does not change.
 func (s *Server) loadRiceTypes(ctx context.Context, restaurantID int) ([]string, []string, error) {
-	return s.loadRiceTypesFromTable(ctx, restaurantID, "FINDE")
+	return s.loadRiceTypesForMenu(ctx, restaurantID, "finde")
 }
 
 // loadRiceTypesForMenu returns the active rices for the menu that applies to a
-// reservation date: "dia" (Monday-Friday, legacy DIA table) or "finde"
-// (Saturday-Sunday, legacy FINDE table).
+// reservation date: "dia" (Monday-Friday, menu 41) or "finde" (Saturday-Sunday,
+// menu 42).
 // Coordination id: bot_rice_menu_by_date_v1
 func (s *Server) loadRiceTypesForMenu(ctx context.Context, restaurantID int, menu string) ([]string, []string, error) {
-	table := "FINDE"
+	menuID := 42
 	if strings.EqualFold(strings.TrimSpace(menu), "dia") {
-		table = "DIA"
+		menuID = 41
 	}
-	return s.loadRiceTypesFromTable(ctx, restaurantID, table)
+	return s.loadRiceTypesFromSection(ctx, restaurantID, menuID)
 }
 
-// loadRiceTypesFromTable is the shared reader for both legacy menu tables. The
-// table name is a fixed internal literal (DIA/FINDE), never user input.
-func (s *Server) loadRiceTypesFromTable(ctx context.Context, restaurantID int, table string) ([]string, []string, error) {
+// loadRiceTypesFromSection reads the rices of a menu from the v2 section whose
+// section_kind is 'arroces'. The section is found by its kind, not by a
+// hardcoded id, so a new menu gets its rices without touching this code.
+func (s *Server) loadRiceTypesFromSection(ctx context.Context, restaurantID, menuID int) ([]string, []string, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT NUM, DESCRIPCION
-		FROM `+table+`
-		WHERE restaurant_id = ? AND TIPO = 'ARROZ' AND (active = 1 OR active IS NULL)
-		ORDER BY DESCRIPCION ASC
-	`, restaurantID)
+		SELECT d.id, d.title_snapshot
+		FROM group_menu_section_dishes_v2 d
+		JOIN group_menu_sections_v2 s ON s.id = d.section_id
+		WHERE d.restaurant_id = ? AND s.restaurant_id = ?
+		  AND s.menu_id = ? AND s.section_kind = 'arroces'
+		  AND (d.active = 1 OR d.active IS NULL)
+		ORDER BY d.title_snapshot ASC
+	`, restaurantID, restaurantID, menuID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -76,7 +84,9 @@ func (s *Server) loadRiceTypesFromTable(ctx context.Context, restaurantID int, t
 	}
 
 	english := make([]string, len(out))
-	if all, err := s.loadTranslations(ctx, restaurantID, table, ids, translationLang); err == nil {
+	// The rice translations live under the v2 entity type, keyed by the v2 id,
+	// so the row id is used directly - no legacy num needed.
+	if all, err := s.loadTranslations(ctx, restaurantID, "group_menu_section_dishes_v2", ids, translationLang); err == nil {
 		for i, id := range ids {
 			english[i] = translationOr(all[id], "descripcion")
 		}
