@@ -666,7 +666,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
 			if _, ok := assistantToolLookup(name); ok {
 				if _, mine := botOwned[name]; !mine {
-					return s.assistantExecuteTool(botPrivilegedForkyContext(ctx), restaurantID, name, input)
+					return s.assistantExecuteTool(s.botPrivilegedForkyContext(ctx, restaurantID), restaurantID, name, input)
 				}
 			}
 			return normalExec(ctx, name, input)

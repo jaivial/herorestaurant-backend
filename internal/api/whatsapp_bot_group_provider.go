@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -59,4 +62,44 @@ func botProviderFetchAllGroups(ctx context.Context, baseURL, apiKey, instanceNam
 		}
 	}
 	return buf
+}
+
+// errBotProviderUnavailable is returned when the provider cannot be reached
+// or the gateway does not speak its API.
+var errBotProviderUnavailable = errors.New("el proveedor de WhatsApp no esta disponible")
+
+// botProviderFindChats asks the provider for the conversations of the
+// instance, with their display names.
+//
+// The apikey header is mandatory: the provider answers 401 without it.
+func botProviderFindChats(ctx context.Context, baseURL, apiKey, instanceName string) ([]byte, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	instanceName = strings.TrimSpace(instanceName)
+	if baseURL == "" || instanceName == "" {
+		return nil, errBotProviderUnavailable
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	endpoint := baseURL + "/chat/findChats/" + instanceName
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, strings.NewReader("{}"))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if k := strings.TrimSpace(apiKey); k != "" {
+		req.Header.Set("apikey", k)
+	}
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("el proveedor respondio %d", resp.StatusCode)
+	}
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
