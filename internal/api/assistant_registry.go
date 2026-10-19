@@ -170,6 +170,20 @@ var assistantToolRegistry = []assistantTool{
 			return s.assistantAnalyticsTool(ctx, rid, input)
 		},
 	},
+	{
+		Name: "ai_usage_report", Description: "Devuelve el consumo de IA del restaurante activo (llamadas, tokens, coste USD por modelo y funcionalidad) agregado por semana, mes o año.",
+		Schema: json.RawMessage(`{"type":"object","properties":{"granularity":{"type":"string","enum":["week","month","year"]},"date_from":{"type":"string"},"date_to":{"type":"string"}}}`), BackofficeOnly: true, Section: "estadisticas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantAIUsageReport(ctx, rid, input)
+		},
+	},
+	{
+		Name: "whatsapp_messages_list", Description: "Lista los mensajes de WhatsApp registrados del restaurante activo (entrantes y salientes) con resumen y series por semana, mes o año.",
+		Schema: json.RawMessage(`{"type":"object","properties":{"granularity":{"type":"string","enum":["week","month","year"]},"date_from":{"type":"string"},"date_to":{"type":"string"},"direction":{"type":"string","enum":["inbound","outbound"]},"search":{"type":"string"},"limit":{"type":"integer"}}}`), BackofficeOnly: true, Section: "estadisticas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantWhatsAppMessagesList(ctx, rid, input)
+		},
+	},
 
 	// --- Schedules (horarios) ---
 	{

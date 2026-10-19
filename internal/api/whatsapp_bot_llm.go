@@ -40,12 +40,22 @@ type botToolDef struct {
 
 // botLLMResponse is the parsed Messages API response.
 type botLLMResponse struct {
-	StopReason string     `json:"stop_reason"`
-	Content    []botBlock `json:"content"`
+	StopReason string       `json:"stop_reason"`
+	Content    []botBlock   `json:"content"`
+	Usage      botWireUsage `json:"usage"`
 	Error      *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+}
+
+// botWireUsage is the Anthropic-compatible usage block (MiniMax and most
+// gateways). OpenAI-compatible usage is mapped separately.
+type botWireUsage struct {
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 }
 
 func botUserText(text string) botMessage {
@@ -85,7 +95,12 @@ func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride
 		}
 		model = m
 	}
-	return s.botAnthropicCall(ctx, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/"), apiKey, model, system, messages, tools)
+	resp, err := s.botAnthropicCall(ctx, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/"), apiKey, model, system, messages, tools)
+	if err == nil {
+		s.recordAIUsage(ctx, restaurantID, aiFeatureWhatsAppBot, botProviderMiniMax, model,
+			helperAnthropicUsage(resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens), false)
+	}
+	return resp, err
 }
 
 // botAnthropicCall performs one Anthropic-compatible Messages API request.
@@ -174,6 +189,9 @@ func (s *Server) botLLMCallRouted(ctx context.Context, restaurantID int, routing
 	for i, ref := range refs {
 		resp, err := s.botCallModelRef(ctx, restaurantID, ref, sessionID, system, messages, tools)
 		if err == nil {
+			provider, model := botSplitModelRef(ref)
+			s.recordAIUsage(ctx, restaurantID, aiFeatureWhatsAppBot, provider, model,
+				helperAnthropicUsage(resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens), i > 0)
 			if i > 0 {
 				log.Printf("[bot] checkpoint wa_bot_llm_fallback_used restaurant_id=%d model=%s", restaurantID, ref)
 			}

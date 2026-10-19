@@ -15,6 +15,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+
+	"preactvillacarmen/internal/aiusage"
 )
 
 // assistantMaxFrameRunes caps each delta frame relayed to the WebSocket client
@@ -45,6 +47,7 @@ type assistantLLMResult struct {
 	Text       string
 	ToolUses   []assistantToolUse
 	StopReason string
+	Usage      aiusage.Tokens
 }
 
 // assistantStream calls the Messages API through the official Anthropic SDK.
@@ -113,6 +116,8 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 			return result, callErr
 		}
 		result.StopReason = string(message.StopReason)
+		result.Usage = helperAnthropicUsage(message.Usage.InputTokens, message.Usage.OutputTokens, message.Usage.CacheReadInputTokens, message.Usage.CacheCreationInputTokens)
+		s.recordAIUsage(ctx, restaurantID, aiFeatureForky, botProviderMiniMax, model, result.Usage, false)
 		for _, block := range message.Content {
 			if block.Type == "text" {
 				result.Text += block.Text
@@ -168,6 +173,19 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 				Input                json.RawMessage `json:"input"`
 			} `json:"content"`
 			Delta *struct{ Type, Text, PartialJSON string } `json:"delta"`
+			// message_start carries input/cache usage; message_delta carries the
+			// final output token count.
+			Message *struct {
+				Usage struct {
+					InputTokens              int64 `json:"input_tokens"`
+					OutputTokens             int64 `json:"output_tokens"`
+					CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+					CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+			Usage *struct {
+				OutputTokens int64 `json:"output_tokens"`
+			} `json:"usage"`
 			Error *struct {
 				Message string `json:"message"`
 			} `json:"error"`
@@ -181,6 +199,12 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 				message += ": " + frame.Error.Message
 			}
 			return result, errors.New(message)
+		}
+		if frame.Message != nil {
+			result.Usage = helperAnthropicUsage(frame.Message.Usage.InputTokens, frame.Message.Usage.OutputTokens, frame.Message.Usage.CacheReadInputTokens, frame.Message.Usage.CacheCreationInputTokens)
+		}
+		if frame.Usage != nil && frame.Usage.OutputTokens > 0 {
+			result.Usage.Output = frame.Usage.OutputTokens
 		}
 		if frame.StopReason != "" {
 			result.StopReason = frame.StopReason
@@ -209,6 +233,7 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 	if err := scanner.Err(); err != nil {
 		return result, err
 	}
+	s.recordAIUsage(ctx, restaurantID, aiFeatureForky, botProviderMiniMax, model, result.Usage, false)
 	return result, nil
 }
 

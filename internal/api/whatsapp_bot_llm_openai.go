@@ -111,6 +111,13 @@ func (s *Server) botOpenAICall(ctx context.Context, p botAIProvider, apiKey, mod
 			FinishReason string    `json:"finish_reason"`
 			Message      oaMessage `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens        int64 `json:"prompt_tokens"`
+			CompletionTokens    int64 `json:"completion_tokens"`
+			PromptTokensDetails struct {
+				CachedTokens int64 `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+		} `json:"usage"`
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
@@ -126,6 +133,11 @@ func (s *Server) botOpenAICall(ctx context.Context, p botAIProvider, apiKey, mod
 	}
 	ch := parsed.Choices[0]
 	out := botLLMResponse{StopReason: ch.FinishReason}
+	out.Usage = botWireUsage{
+		InputTokens:          parsed.Usage.PromptTokens,
+		OutputTokens:         parsed.Usage.CompletionTokens,
+		CacheReadInputTokens: parsed.Usage.PromptTokensDetails.CachedTokens,
+	}
 	if t := strings.TrimSpace(ch.Message.Content); t != "" {
 		out.Content = append(out.Content, botBlock{Type: "text", Text: t})
 	}
