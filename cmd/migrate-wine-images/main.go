@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -18,10 +19,24 @@ import (
 
 // La carta de vinos se escribe en group_menu_wines_v2; `num` es la clave legacy
 // que legacy_wine_map traduce al id de la v2.
+// wineFotoPathUpdateSQL writes the BunnyCDN path of a migrated image back into
+// the v2 table.
 const wineFotoPathUpdateSQL = `UPDATE group_menu_wines_v2 w
 	JOIN legacy_wine_map m ON m.v2_wine_id = w.id AND m.restaurant_id = w.restaurant_id
-SET w.foto_path = ?
-WHERE w.restaurant_id = ? AND m.legacy_num = ?`
+	SET w.foto_path = ?
+	WHERE w.restaurant_id = ? AND m.legacy_num = ?`
+
+// isLegacyVinosMissing reports whether the error is just "the legacy VINOS
+// table is not there", which is the expected state after the migration to v2
+// finished and the table was dropped.
+func isLegacyVinosMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "doesn't exist") &&
+		(strings.Contains(msg, "vinos") || strings.Contains(msg, "1146"))
+}
 
 func main() {
 	var (
@@ -68,6 +83,13 @@ func main() {
 		ORDER BY restaurant_id ASC, num ASC
 	`)
 	if err != nil {
+		// The legacy VINOS table was dropped once every blob was uploaded to
+		// BunnyCDN. Say so plainly instead of failing with a raw SQL error:
+		// there is nothing left to migrate.
+		if isLegacyVinosMissing(err) {
+			log.Printf("VINOS legacy table no longer exists: every blob was already migrated to BunnyCDN. Nothing to do.")
+			return
+		}
 		log.Fatalf("query vinos: %v", err)
 	}
 	defer rows.Close()
