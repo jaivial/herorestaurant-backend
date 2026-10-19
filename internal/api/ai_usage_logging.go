@@ -82,11 +82,11 @@ func (s *Server) logWhatsAppMessage(ctx context.Context, restaurantID int, userP
 	}
 	messageType := "text"
 	switch toolName {
-	case "send_location":
+	case "send_location", "location":
 		messageType = "location"
-	case "send_contact":
+	case "send_contact", "contact":
 		messageType = "contact"
-	case "send_document", "send_image", "send_media":
+	case "send_document", "send_image", "send_media", "image", "document", "audio", "video":
 		messageType = "media"
 	}
 	now := time.Now()

@@ -297,7 +297,7 @@ func (s *Server) whatsappLogReport(ctx context.Context, restaurantID int, from, 
 
 	listArgs := append(append([]any{}, args...), limit+1, (page-1)*limit)
 	rows, err = s.db.QueryContext(ctx, `SELECT id,direction,message_type,user_phone,content,source,status,tool_name,
-            DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s.%fZ')
+            DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ')
         FROM whatsapp_message_logs WHERE `+clause+`
         ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, listArgs...)
 	if err != nil {
