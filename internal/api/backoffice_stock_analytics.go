@@ -814,7 +814,8 @@ func (s *Server) minimaxJSONContent(ctx context.Context, restaurantID int, syste
 	if apiKey == "" {
 		return fmt.Errorf("minimax not configured")
 	}
-	raw, _ := json.Marshal(map[string]any{"model": s.resolveMiniMaxModel(ctx, restaurantID, ""), "max_tokens": 4096, "system": system, "messages": []map[string]any{{"role": "user", "content": content}}})
+	model := s.resolveMiniMaxModel(ctx, restaurantID, "")
+	raw, _ := json.Marshal(map[string]any{"model": model, "max_tokens": 4096, "system": system, "messages": []map[string]any{{"role": "user", "content": content}}})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/v1/messages", bytes.NewReader(raw))
 	if err != nil {
 		return err
@@ -844,8 +845,10 @@ func (s *Server) minimaxJSONContent(ctx context.Context, restaurantID int, syste
 		if feature == "" {
 			feature = "stock"
 		}
-		_, _ = s.db.ExecContext(ctx, `INSERT INTO stock_ai_usage (restaurant_id,feature,model,input_tokens,output_tokens) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, feature, s.resolveMiniMaxModel(ctx, a.ActiveRestaurantID, ""), envelope.Usage.InputTokens, envelope.Usage.OutputTokens)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO stock_ai_usage (restaurant_id,feature,model,input_tokens,output_tokens) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, feature, model, envelope.Usage.InputTokens, envelope.Usage.OutputTokens)
 	}
+	s.recordAIUsage(ctx, restaurantID, aiFeatureStock, botProviderMiniMax, model,
+		helperAnthropicUsage(int64(envelope.Usage.InputTokens), int64(envelope.Usage.OutputTokens), int64(envelope.Usage.CacheReadInputTokens), int64(envelope.Usage.CacheCreationInputTokens)), false)
 	text := ""
 	for _, block := range envelope.Content {
 		if block.Type == "text" {

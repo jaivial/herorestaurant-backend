@@ -46,6 +46,21 @@
    "screens": []
   },
   {
+   "name": "admin_get_analytics_ai_usage",
+   "method": "GET",
+   "path": "/analytics/ai-usage",
+   "handler": "handleBOAIUsage",
+   "gates": [
+    "s.requireBOSession",
+    "statisticsGate"
+   ],
+   "section": "estadisticas",
+   "write": false,
+   "risk": "read",
+   "description": "AI usage + WhatsApp message ledger for Estadísticas \u003e IA y WhatsApp.",
+   "screens": []
+  },
+  {
    "name": "admin_get_analytics_overview",
    "method": "GET",
    "path": "/analytics/overview",
@@ -78,6 +93,21 @@
    "screens": [
     "/app/estadisticas"
    ]
+  },
+  {
+   "name": "admin_get_analytics_whatsapp_messages",
+   "method": "GET",
+   "path": "/analytics/whatsapp-messages",
+   "handler": "handleBOWhatsAppMessages",
+   "gates": [
+    "s.requireBOSession",
+    "statisticsGate"
+   ],
+   "section": "estadisticas",
+   "write": false,
+   "risk": "read",
+   "description": "GET /analytics/whatsapp-messages (handleBOWhatsAppMessages)",
+   "screens": []
   },
   {
    "name": "admin_get_arroz_types",
@@ -9473,6 +9503,7 @@
   "/m/app/fichaje",
   "/m/app/horarios",
   "/m/app/menus",
+  "/m/app/menus/:type",
   "/m/app/mi-horario",
   "/m/app/reservas",
   "/m/app/settings"

@@ -34,6 +34,8 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `menu_sections_get` | menus | read | no | `{"type":"object","properties":{"id":{"type":"integer"},"section_id":{"type":"integer"}},"required":["id","section_id"]}` |
 | `menu_toggle_active` | menus | write | sí | `{"type":"object","properties":{"id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["id","confirmed"]}` |
 | `analytics_report` | estadisticas | read | no | `{"type":"object","properties":{"metric":{"type":"string","enum":["bookings","bookings_by_hour","revenue","revenue_by_day","products","stock"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["metric"]}` |
+| `ai_usage_report` | estadisticas | read | no | `{"type":"object","properties":{"granularity":{"type":"string","enum":["week","month","year"]},"date_from":{"type":"string"},"date_to":{"type":"string"}}}` |
+| `whatsapp_messages_list` | estadisticas | read | no | `{"type":"object","properties":{"granularity":{"type":"string","enum":["week","month","year"]},"date_from":{"type":"string"},"date_to":{"type":"string"},"direction":{"type":"string","enum":["inbound","outbound"]},"search":{"type":"string"},"limit":{"type":"integer"}}}` |
 | `schedules_list` | horarios | read | no | `{"type":"object","properties":{"date":{"type":"string"},"limit":{"type":"integer"}}}` |
 | `schedules_by_date` | horarios | read | no | `{"type":"object","properties":{"date":{"type":"string"}}}` |
 | `schedules_month` | horarios | read | no | `{"type":"object","properties":{"year":{"type":"integer"},"month":{"type":"integer"}}}` |

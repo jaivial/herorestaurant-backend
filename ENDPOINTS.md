@@ -107,6 +107,46 @@ Returns EUR-only summary with invoiced and POS revenue separated, previous-perio
 
 Requires same statistics access. JSON body: `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`. Rebuilds selected tenant/date range idempotently from invoices, POS, stock, and production source tables. Response includes `runId`, row count, and `outbox: false`. Refresh is explicit because V1 has no source-table outbox.
 
+### `GET /api/admin/analytics/ai-usage`
+
+Requires `estadisticas` access. Append-only ledger of every LLM request the backend makes (Forky assistant, WhatsApp bot, translations, stock AI, OCR).
+
+Query parameters:
+- `from`, `to` (`YYYY-MM-DD`, optional; default last 30 days, max range 5 years).
+- `granularity`: `week` | `month` | `year` (default `month`). Drives the `series` buckets.
+
+Response (`success: true`):
+- `summary`: `{ calls, inputTokens, outputTokens, cacheReadTokens, costUsd, unpricedCalls }`.
+- `series`: `[{ period, calls, inputTokens, outputTokens, cacheReadTokens, costUsd }]`.
+- `byModel`: `[{ provider, model, calls, inputTokens, outputTokens, cacheReadTokens, costUsd, priced }]`.
+- `byFeature`: `[{ feature, calls, inputTokens, outputTokens, cacheReadTokens, costUsd }]` (`forky_assistant`, `whatsapp_bot`, `translation`, `stock_ai`, `stock_ocr`).
+- `pricing`: applied catalogue in USD per 1M tokens, with peak/off-peak rates.
+
+Cost is stored at insert time with the rate in force: DeepSeek V4.1 Flash uses peak (Mon-Fri 01:00-04:00 and 06:00-10:00 UTC) and off-peak rates; MiniMax-M3.1-Flash uses a flat rate. Unknown models are stored with `costUsd: 0` and counted in `unpricedCalls`.
+
+Realtime: each new row publishes the global socket topic `ai_usage` (`{ type: "ai_usage_recorded", id, feature, provider, model, costUsd, createdAt }`) to the restaurant room. Coordination id: `ai_usage_stats_api_v1`.
+
+### `GET /api/admin/analytics/whatsapp-messages`
+
+Requires `estadisticas` access. Append-only ledger of WhatsApp messages (inbound customer messages and outbound sent messages, including bot replies, manual replies and notifications).
+
+Query parameters:
+- `from`, `to` (`YYYY-MM-DD`, optional; default last 30 days).
+- `granularity`: `week` | `month` | `year` (default `month`).
+- `direction`: `inbound` | `outbound` (optional).
+- `search`: free text matched against phone and content (optional).
+- `page` (default 1), `limit` (default 100, max 500).
+
+Response (`success: true`):
+- `summary`: `{ total, inbound, outbound, failed }`.
+- `series`: `[{ period, inbound, outbound, total }]`.
+- `logs`: `[{ id, direction, messageType, userPhone, content, source, status, toolName, createdAt }]`.
+- `page`, `limit`, `hasMore`.
+
+Realtime: each new row publishes the global socket topic `whatsapp_log` (`{ type: "whatsapp_message_recorded", id, direction, status, createdAt }`) to the restaurant room. Coordination ids: `whatsapp_message_logs_api_v1`, `whatsapp_message_logs_v1`.
+
+Both ledgers are immutable: there is no update or delete endpoint; retention is handled by the database owner.
+
 ### `POST /api/admin/login`
 Body (JSON):
 - `identifier` (string, recomendado; acepta email o username)

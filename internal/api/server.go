@@ -1022,6 +1022,10 @@ func (s *Server) Routes() http.Handler {
 		// Analytics V1 uses an idempotent selected-range rebuild; it has no outbox.
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/overview", s.handleBOAnalyticsOverview)
 		r.With(s.requireBOSession, statisticsGate).Post("/analytics/refresh", s.handleBOAnalyticsRefresh)
+		// AI usage + WhatsApp message ledger for Estadísticas > IA y WhatsApp.
+		// Coordination ids: ai_usage_stats_api_v1 / whatsapp_message_logs_api_v1.
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/ai-usage", s.handleBOAIUsage)
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/whatsapp-messages", s.handleBOWhatsAppMessages)
 
 		// Customer affluence over the full bookings history (affluence_stats_v1).
 		// Read-only aggregations: bucketed evolution with previous-period delta

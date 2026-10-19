@@ -24,12 +24,19 @@ func (s *Server) botLoadHistory(ctx context.Context, restaurantID int, userPhone
 // sent on WhatsApp. It is best-effort so an observability write cannot prevent
 // delivery, while errors remain visible in production logs.
 func (s *Server) botRecordConversationMessage(ctx context.Context, restaurantID int, userPhone, role, content, toolName, source string) {
-	if s.botConversation == nil || content == "" {
+	if content == "" {
+		return
+	}
+	if s.botConversation == nil {
+		s.logWhatsAppMessage(ctx, restaurantID, userPhone, role, content, toolName, source)
 		return
 	}
 	if err := s.botConversation.Append(ctx, restaurantID, userPhone, role, content, toolName, source); err != nil {
 		log.Printf("[bot] save SQLite conversation: %v", err)
 	}
+	// The MySQL ledger is append-only and independent from the transcript: a
+	// transcript write failure must not hide the message from Estadísticas.
+	s.logWhatsAppMessage(ctx, restaurantID, userPhone, role, content, toolName, source)
 }
 
 // botTouchSession keeps the existing MySQL session metadata used by the
