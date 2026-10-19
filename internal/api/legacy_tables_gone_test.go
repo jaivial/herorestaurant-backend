@@ -122,7 +122,7 @@ func TestToggleDishStatusWritesToV2(t *testing.T) {
 			t.Errorf("%s does not resolve the legacy id through legacy_dish_map", fn)
 		}
 		for _, legacy := range legacyTablesGone {
-			if regexp.MustCompile(`(?i)"UPDATE\s+`+legacy+`\b`).MatchString(body) {
+			if regexp.MustCompile(`(?i)"UPDATE\s+` + legacy + `\b`).MatchString(body) {
 				t.Errorf("%s still builds a query against the retired table %q", fn, legacy)
 			}
 		}
