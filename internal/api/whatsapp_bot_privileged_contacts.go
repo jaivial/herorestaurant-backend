@@ -156,14 +156,35 @@ func botPrivilegedConversationIsGroup(tenant botTenantConfig, jid string) bool {
 //
 // The alternate identity is empty for groups (a group has a single id) and for
 // a conversation the provider only knows by one form.
+//
+// The alternate identity is only consulted for a ONE-TO-ONE conversation, and
+// only against the one-to-one selections. A group and a contact are different
+// things: a 1:1 message must never be served as a privileged GROUP, because
+// the privileged group path is the one that checks membership and skips the
+// mention requirement. Letting the alternate identity cross that line would
+// hand the root catalog to a 1:1 chat that was never selected, with no
+// membership check at all.
 func botConversationIsPrivileged(s *Server, tenant botTenantConfig, jid, altJID string) bool {
 	if s.botGroupIsPrivileged(jid, tenant) {
 		return true
 	}
-	if alt := strings.TrimSpace(altJID); alt != "" {
-		return s.botGroupIsPrivileged(alt, tenant)
+	alt := strings.TrimSpace(altJID)
+	if alt == "" {
+		return false
 	}
-	return false
+	// The alternate identity of a 1:1 chat is another 1:1 identity. If the
+	// main one is a group, the alternate cannot be a contact and vice versa:
+	// a mismatch means the two ids do not address the same conversation.
+	if botGroupIsGroupJID(jid) != botGroupIsGroupJID(alt) {
+		return false
+	}
+	// And it only matches a one-to-one selection: a group is privileged
+	// through the group lists, which are checked by the group path with its
+	// membership gate.
+	if botGroupIsGroupJID(alt) {
+		return false
+	}
+	return s.botGroupIsPrivileged(alt, tenant)
 }
 
 // botStoredPrivilegedContacts returns the privileged conversations a tenant
