@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -241,6 +242,17 @@ func (s *Server) assistantAdminDescribe(ctx context.Context, _ int, input json.R
 	return botJSON(map[string]any{"tool": "admin_describe", "operations": out, "unknown": unknown}), nil
 }
 
+// forkyPathHasParam reports whether the path pattern carries the given
+// parameter, so a caller can enforce what the parameter may be.
+func forkyPathHasParam(path string, name string) bool {
+	for _, m := range forkyPathParamRe.FindAllStringSubmatch(path, -1) {
+		if m[1] == name {
+			return true
+		}
+	}
+	return false
+}
+
 func forkyPathParams(path string) []string {
 	out := []string{}
 	for _, m := range forkyPathParamRe.FindAllStringSubmatch(path, -1) {
@@ -286,6 +298,23 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	token, ok := boSessionTokenFromContext(ctx)
 	if !ok {
 		return "", fmt.Errorf("sesión del panel no disponible")
+	}
+	// Tenant scope: a path that addresses a restaurant must address THIS
+	// restaurant. Without this the model could put another tenant's id in the
+	// path and the replay would read or write that tenant's data with the
+	// service session's authority.
+	//
+	// The bot's service session is bound to one restaurant, so a mismatch is
+	// never a legitimate call: it is either a mistake or an attempt to reach
+	// another tenant.
+	if rid > 0 && forkyPathHasParam(op.Path, "restaurantId") {
+		got := strings.TrimSpace(fmt.Sprint(in.PathParams["restaurantId"]))
+		if got == "" {
+			got = strings.TrimSpace(fmt.Sprint(in.PathParams["restaurant_id"]))
+		}
+		if got != "" && got != strconv.Itoa(rid) {
+			return "", fmt.Errorf("operación fuera del restaurante del bot: la ruta apunta a %s y este bot opera en %d", got, rid)
+		}
 	}
 	path, err := forkyRenderPath(op.Path, in.PathParams)
 	if err != nil {

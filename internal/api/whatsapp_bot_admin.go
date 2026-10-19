@@ -70,8 +70,15 @@ func (s *Server) handleBOBotConfigPut(w http.ResponseWriter, r *http.Request) {
 	// the privileged catalog. A non-root write keeps the value that is
 	// already stored, so an admin editing the tone does not silently drop
 	// the privileged groups either.
+	//
+	// The privileged CONTACTS decide the same thing for a one-to-one chat
+	// (wa_bot_privileged_contacts_v1), so they are guarded exactly the same
+	// way: otherwise an admin could name their own number here and get the
+	// root catalog on their private chat, which is the same elevation the
+	// group list would give.
 	if a.Role != "root" {
 		cfg.PrivilegedGroupJIDs = s.botStoredPrivilegedGroupJIDs(r.Context(), a.ActiveRestaurantID)
+		cfg.PrivilegedContacts = s.botStoredPrivilegedContacts(r.Context(), a.ActiveRestaurantID)
 	}
 
 	raw, _ := json.Marshal(cfg)

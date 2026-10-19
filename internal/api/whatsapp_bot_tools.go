@@ -44,6 +44,14 @@ type botTenantConfig struct {
 	// against the provider's participant list (wa_bot_group_membership_v1).
 	// Coordination id: wa_bot_privileged_group_v1
 	PrivilegedGroupJIDs []string `json:"privileged_group_jids"`
+	// PrivilegedContacts are the conversations (groups AND one-to-one
+	// contacts) the operator selected in the backoffice as privileged. A
+	// privileged group is privileged for its members; a privileged contact
+	// is privileged for that conversation alone.
+	//
+	// Every other conversation keeps the regular limits.
+	// Coordination id: wa_bot_privileged_contacts_v1
+	PrivilegedContacts []botPrivilegedContact `json:"privileged_contacts"`
 	// DisableSpecialCRUD turns OFF the special-menu CRUD tools, so a restaurant
 	// that wants the website-only flow for festive dates keeps it even though
 	// the bot runs inside the management group. Coordination id:
