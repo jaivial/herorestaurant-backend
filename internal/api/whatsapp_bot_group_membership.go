@@ -36,6 +36,12 @@ import (
 // enough that a removed member loses the catalog quickly.
 const botGroupMembersCacheTTL = 60 * time.Second
 
+// botGroupMembersCacheFailTTL bounds how long a FAILED lookup is reused.
+// A group that was renamed or deleted makes every message wait for the
+// provider timeout before being refused, so the failure is remembered
+// for a short while. The refusal itself is unchanged: fail closed.
+const botGroupMembersCacheFailTTL = 15 * time.Second
+
 // botGroupMembers is the participant list of a group, split by the kind of
 // identity each member is addressed with.
 //
@@ -68,10 +74,29 @@ type botGroupMembersEntry struct {
 	at      time.Time
 }
 
+// botGroupMembersCache is keyed by (instance, group), not by group alone.
+//
+// The participant list is fetched from ONE tenant's provider instance,
+// so a key of just the group id would let the first tenant to fill it
+// poison the entry for the second: two restaurants can share a WhatsApp
+// group (the same group holding the bots of two tenants), and then the
+// second would compare its senders against the FIRST tenant's member
+// list. The instance name is what tells the two apart.
 var botGroupMembersCache = struct {
 	sync.Mutex
-	byGroup map[string]botGroupMembersEntry
-}{byGroup: map[string]botGroupMembersEntry{}}
+	byInstanceGroup map[string]botGroupMembersEntry
+}{byInstanceGroup: map[string]botGroupMembersEntry{}}
+
+// botGroupMembersCacheKey is the cache key for one group of one instance.
+//
+// The length of the instance name prefixes the key, so no combination of
+// values can be read as another combination: ("a","b") and ("ab","")
+// would otherwise be the same string with a plain separator.
+func botGroupMembersCacheKey(instanceName, groupJID string) string {
+	instanceName = strings.TrimSpace(instanceName)
+	groupJID = strings.TrimSpace(groupJID)
+	return strconv.Itoa(len(instanceName)) + ":" + instanceName + groupJID
+}
 
 // botGroupMemberPhonesFromPayload extracts the members of the wanted group
 // from a /group/fetchAllGroups answer.
@@ -158,7 +183,7 @@ func botGroupLidDigits(v string) string {
 
 // botGroupMembersFromProvider returns the participant list of a group as
 // reported by the provider, or an empty list when it cannot be obtained.
-func (s *Server) botGroupMembersFromProvider(ctx context.Context, restaurantID int, groupJID string) botGroupMembers {
+func (s *Server) botGroupMembersFromProvider(ctx context.Context, restaurantID int, instanceName, groupJID string) botGroupMembers {
 	evo, ok := s.botGatewayFor(ctx, restaurantID)
 	if !ok {
 		return newBotGroupMembers()
@@ -167,6 +192,9 @@ func (s *Server) botGroupMembersFromProvider(ctx context.Context, restaurantID i
 	if !ok {
 		// A gateway without a participant lookup cannot prove membership.
 		return newBotGroupMembers()
+	}
+	if instanceName == "" {
+		instanceName = egw.instanceName
 	}
 	// The provider needs the apikey header: without it the answer is a 401
 	// and the membership cannot be proven (which, correctly, means the turn
@@ -178,6 +206,20 @@ func (s *Server) botGroupMembersFromProvider(ctx context.Context, restaurantID i
 	return botGroupMemberPhonesFromPayload(raw, groupJID)
 }
 
+// botProviderInstanceName returns the provider instance a restaurant uses,
+// which is the other half of the membership cache key: two restaurants can
+// share a WhatsApp group, and their member lists are not the same.
+func (s *Server) botProviderInstanceName(ctx context.Context, restaurantID int) string {
+	evo, ok := s.botGatewayFor(ctx, restaurantID)
+	if !ok {
+		return ""
+	}
+	if egw, ok := evo.(*evolutionGateway); ok {
+		return strings.TrimSpace(egw.instanceName)
+	}
+	return ""
+}
+
 // botGroupMembers returns the participant list of the group, using the
 // provider and the short-lived cache. An empty list means the membership
 // could not be proven, so the caller can fail closed.
@@ -187,22 +229,37 @@ func (s *Server) botGroupMembers(ctx context.Context, restaurantID int, groupJID
 	if groupJID == "" {
 		return empty
 	}
+	// The cache is keyed by (instance, group): the participant list comes
+	// from ONE tenant's provider, so the instance is part of the key.
+	instanceName := s.botProviderInstanceName(ctx, restaurantID)
+	if instanceName == "" {
+		// Without an instance there is nothing to key on and nothing to
+		// fetch from: fail closed.
+		return empty
+	}
 
 	// Short-lived cache: the privileged gate runs on every group message and
 	// the provider round trip is the expensive part.
+	key := botGroupMembersCacheKey(instanceName, groupJID)
 	botGroupMembersCache.Lock()
-	if e, ok := botGroupMembersCache.byGroup[groupJID]; ok && time.Since(e.at) < botGroupMembersCacheTTL {
-		botGroupMembersCache.Unlock()
-		return e.members
+	if e, ok := botGroupMembersCache.byInstanceGroup[key]; ok {
+		if time.Since(e.at) < botGroupMembersCacheTTL {
+			botGroupMembersCache.Unlock()
+			return e.members
+		}
+		// A negative entry (nothing could be proven) is held for a shorter
+		// time: a renamed or deleted group would otherwise make EVERY
+		// message wait for the provider timeout before being refused.
+		if e.members.empty() && time.Since(e.at) < botGroupMembersCacheFailTTL {
+			botGroupMembersCache.Unlock()
+			return e.members
+		}
 	}
 	botGroupMembersCache.Unlock()
 
-	members := s.botGroupMembersFromProvider(ctx, restaurantID, groupJID)
-	if members.empty() {
-		return empty
-	}
+	members := s.botGroupMembersFromProvider(ctx, restaurantID, instanceName, groupJID)
 	botGroupMembersCache.Lock()
-	botGroupMembersCache.byGroup[groupJID] = botGroupMembersEntry{members: members, at: time.Now()}
+	botGroupMembersCache.byInstanceGroup[key] = botGroupMembersEntry{members: members, at: time.Now()}
 	botGroupMembersCache.Unlock()
 	return members
 }
