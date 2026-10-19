@@ -206,3 +206,23 @@ func (s *Server) botStoredPrivilegedContacts(ctx context.Context, restaurantID i
 	}
 	return botPrivilegedContactsFromConfig(parseBotTenantConfig(current.String))
 }
+
+// botStoredPrivilegedContacts returns the privileged conversations a tenant
+// already has stored.
+//
+// It is the counterpart of botStoredPrivilegedGroupJIDs: a write that may
+// not change the privileged list (a non-root write) keeps the stored value
+// instead of dropping it, so editing the tone never silently revokes the
+// selection.
+func (s *Server) botStoredPrivilegedContacts(ctx context.Context, restaurantID int) []botPrivilegedContact {
+	if s.db == nil {
+		return nil
+	}
+	var current sql.NullString
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
+	`, restaurantID).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return botPrivilegedContactsFromConfig(parseBotTenantConfig(current.String))
+}
