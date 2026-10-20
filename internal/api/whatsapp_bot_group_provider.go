@@ -24,28 +24,41 @@ import (
 // The apikey header is mandatory: the provider answers 401 without it, and
 // uazapiJSONRequest does not add it on its own.
 func botProviderFetchAllGroups(ctx context.Context, baseURL, apiKey, instanceName string) []byte {
+	raw, _ := botProviderFetchAllGroupsWithError(ctx, baseURL, apiKey, instanceName)
+	return raw
+}
+
+// botProviderFetchAllGroupsWithError is the same call, but it also reports why
+// it failed.
+//
+// The membership check uses the version that swallows the error on purpose: a
+// failure there has to deny the privilege, silently and fast. The backoffice
+// listing needs the opposite: to tell the operator that the provider could
+// not be read, instead of showing an empty list as if the WhatsApp account
+// had no conversations at all.
+func botProviderFetchAllGroupsWithError(ctx context.Context, baseURL, apiKey, instanceName string) ([]byte, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	instanceName = strings.TrimSpace(instanceName)
 	if baseURL == "" || instanceName == "" {
-		return nil
+		return nil, errBotProviderUnavailable
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	endpoint := baseURL + "/group/fetchAllGroups/" + instanceName + "?getParticipants=true"
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	if k := strings.TrimSpace(apiKey); k != "" {
 		req.Header.Set("apikey", k)
 	}
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
+		return nil, fmt.Errorf("el proveedor respondio %d", resp.StatusCode)
 	}
 	buf := make([]byte, 0, 64*1024)
 	tmp := make([]byte, 32*1024)
@@ -61,7 +74,7 @@ func botProviderFetchAllGroups(ctx context.Context, baseURL, apiKey, instanceNam
 			break
 		}
 	}
-	return buf
+	return buf, nil
 }
 
 // errBotProviderUnavailable is returned when the provider cannot be reached

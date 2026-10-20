@@ -126,3 +126,111 @@ func TestHandleBOBotConfigPutKeepsPrivilegedListsWhenOmitted(t *testing.T) {
 		t.Errorf("the tone should have been updated, got %q", stored.Tone)
 	}
 }
+
+// La herramienta whatsapp_bot_config_update (ofrecida al bot privileged) envia
+// 8 de los 16 campos de la config. Antes, esa ruta reemplazaba el
+// config_json entero, asi que el bot borraba el grupo de gestion, el nombre
+// de contacto y el telefono del mismo dia cada vez que le pedian cambiar el
+// tono.
+//
+// Un campo ausente en el body significa "no se cambia", no "se vacia".
+//
+// Coordination id: wa_bot_privileged_contacts_v1
+func TestHandleBOBotConfigPutKeepsTheFieldsTheBodyDoesNotMention(t *testing.T) {
+	db := testDB(t) // skips when TEST_DB_DSN is not set
+	rid := 987657
+	seed := `{"tone":"viejo","language_default":"es","management_group_jid":"120363111111111@g.us","management_group_name":"Bot Alqueria","contact_name":"Alqueria Villa Carmen","same_day_contact_phone":"+34600000000","privileged_group_jids":["120363222222222@g.us"],"privileged_contacts":[{"jid":"34622222222@s.whatsapp.net","name":"Guardado","isGroup":false}]}`
+	if _, err := db.Exec(`INSERT INTO whatsapp_bot_config (restaurant_id, config_json) VALUES (?, ?)`, rid, seed); err != nil {
+		t.Skipf("cannot seed the config: %v", err)
+	}
+	defer db.Exec(`DELETE FROM whatsapp_bot_config WHERE restaurant_id = ?`, rid)
+
+	s := &Server{cfg: config.Config{}, db: db}
+	auth := boAuth{Role: "root", User: boUser{Role: "root"}, ActiveRestaurantID: rid}
+	ctx := withBOAuth(context.Background(), auth)
+
+	// This is exactly the body the bot tool sends: 8 fields, and it says
+	// nothing about the management group, the contact name or the lists.
+	body := `{"model":"minimax-m3.1-flash","language_default":"es","tone":"nuevo","greeting_style":"formal","disable_attachments":false,"custom_instructions":"","contact_phone":"+34911111111","rules":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/bot/config", strings.NewReader(body))
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleBOBotConfigPut(rec, req)
+
+	var raw string
+	if err := db.QueryRow(`SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ?`, rid).Scan(&raw); err != nil {
+		t.Fatalf("cannot read the stored config: %v", err)
+	}
+	var stored botTenantConfig
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		t.Fatalf("the stored config is not valid json: %v", err)
+	}
+
+	// The field the body carried changed.
+	if stored.Tone != "nuevo" {
+		t.Errorf("the tone should have been updated, got %q", stored.Tone)
+	}
+	if stored.ContactPhone != "+34911111111" {
+		t.Errorf("the contact phone should have been updated, got %q", stored.ContactPhone)
+	}
+	// The fields it did not mention survived.
+	if stored.ManagementGroupJID != "120363111111111@g.us" {
+		t.Errorf("the management group id was wiped by a partial body: %q", stored.ManagementGroupJID)
+	}
+	if stored.ManagementGroupName != "Bot Alqueria" {
+		t.Errorf("the management group name was wiped by a partial body: %q", stored.ManagementGroupName)
+	}
+	if stored.ContactName != "Alqueria Villa Carmen" {
+		t.Errorf("the contact name was wiped by a partial body: %q", stored.ContactName)
+	}
+	if stored.SameDayContactPhone != "+34600000000" {
+		t.Errorf("the same-day phone was wiped by a partial body: %q", stored.SameDayContactPhone)
+	}
+	if len(stored.PrivilegedGroupJIDs) != 1 || stored.PrivilegedGroupJIDs[0] != "120363222222222@g.us" {
+		t.Errorf("the privileged groups were dropped by a partial body: %v", stored.PrivilegedGroupJIDs)
+	}
+	if len(stored.PrivilegedContacts) != 1 || stored.PrivilegedContacts[0].JID != "34622222222@s.whatsapp.net" {
+		t.Errorf("the privileged contacts were dropped by a partial body: %+v", stored.PrivilegedContacts)
+	}
+}
+
+// Un root puede REVOCAR la seleccion enviando la lista vacia a proposito:
+// una lista vacia es un cambio, no una ausencia.
+//
+// Coordination id: wa_bot_privileged_contacts_v1
+func TestHandleBOBotConfigPutRootCanRevokeThePrivilegedLists(t *testing.T) {
+	db := testDB(t) // skips when TEST_DB_DSN is not set
+	rid := 987658
+	seed := `{"tone":"x","management_group_jid":"120363111111111@g.us","privileged_group_jids":["120363222222222@g.us"],"privileged_contacts":[{"jid":"34622222222@s.whatsapp.net","name":"Guardado","isGroup":false}]}`
+	if _, err := db.Exec(`INSERT INTO whatsapp_bot_config (restaurant_id, config_json) VALUES (?, ?)`, rid, seed); err != nil {
+		t.Skipf("cannot seed the config: %v", err)
+	}
+	defer db.Exec(`DELETE FROM whatsapp_bot_config WHERE restaurant_id = ?`, rid)
+
+	s := &Server{cfg: config.Config{}, db: db}
+	auth := boAuth{Role: "root", User: boUser{Role: "root"}, ActiveRestaurantID: rid}
+	ctx := withBOAuth(context.Background(), auth)
+	body := `{"tone":"x","privileged_group_jids":[],"privileged_contacts":[]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/bot/config", strings.NewReader(body))
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleBOBotConfigPut(rec, req)
+
+	var raw string
+	if err := db.QueryRow(`SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ?`, rid).Scan(&raw); err != nil {
+		t.Fatalf("cannot read the stored config: %v", err)
+	}
+	var stored botTenantConfig
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		t.Fatalf("the stored config is not valid json: %v", err)
+	}
+	if len(stored.PrivilegedGroupJIDs) != 0 {
+		t.Errorf("an explicit empty list should revoke the selection, got %v", stored.PrivilegedGroupJIDs)
+	}
+	if len(stored.PrivilegedContacts) != 0 {
+		t.Errorf("an explicit empty list should revoke the selection, got %+v", stored.PrivilegedContacts)
+	}
+	if stored.ManagementGroupJID != "120363111111111@g.us" {
+		t.Errorf("the management group id should have survived: %q", stored.ManagementGroupJID)
+	}
+}

@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,6 +35,19 @@ func (s *Server) handleBOBotConfigGet(w http.ResponseWriter, r *http.Request) {
 // botStoredPrivilegedGroupJIDs returns the privileged groups already
 // configured for a restaurant, so a write by a non-root caller keeps them
 // instead of dropping them.
+// botStoredTenantConfig returns the whole stored config of a restaurant, so a
+// partial write can be merged onto it instead of replacing it.
+func (s *Server) botStoredTenantConfig(ctx context.Context, restaurantID int) botTenantConfig {
+	var raw sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
+	`, restaurantID).Scan(&raw)
+	if err != nil || !raw.Valid || strings.TrimSpace(raw.String) == "" {
+		return botTenantConfig{}
+	}
+	return parseBotTenantConfig(raw.String)
+}
+
 func (s *Server) botStoredPrivilegedGroupJIDs(ctx context.Context, restaurantID int) []string {
 	var raw sql.NullString
 	err := s.db.QueryRowContext(ctx, `
@@ -51,13 +66,49 @@ func (s *Server) handleBOBotConfigPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cfg botTenantConfig
-	if err := readJSONBody(r, &cfg); err != nil {
+	// The body is read twice on purpose. The raw map tells us WHICH fields
+	// the caller actually sent; the struct gives us the values. A field that
+	// is NOT in the body is not being changed, it is simply not mentioned.
+	//
+	// This route is used by three callers with very different bodies: the
+	// settings form (which sends everything), the bot tool
+	// whatsapp_bot_config_update (which sends 8 of the 16 fields) and the
+	// privileged-contacts route (which sends only the list). Treating an
+	// absent field as "empty" made the second caller wipe the fields it
+	// does not know about: the management group id, the contact name, the
+	// same-day phone. The operator would open the panel, ask the bot to
+	// change the tone, and lose the management group.
+	bodyRaw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
-			"message": "JSON inválido",
+			"message": "JSON invalido",
 		})
 		return
+	}
+	sent := map[string]json.RawMessage{}
+	if len(strings.TrimSpace(string(bodyRaw))) > 0 {
+		if err := json.Unmarshal(bodyRaw, &sent); err != nil {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"message": "JSON invalido",
+			})
+			return
+		}
+	}
+
+	// Start from what is stored, and apply only what the body carries.
+	cfg := s.botStoredTenantConfig(r.Context(), a.ActiveRestaurantID)
+	if len(strings.TrimSpace(string(bodyRaw))) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(bodyRaw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&cfg); err != nil {
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"message": "JSON invalido",
+			})
+			return
+		}
 	}
 	if cfg.LanguageDefault != "es" && cfg.LanguageDefault != "en" {
 		cfg.LanguageDefault = "es"
@@ -89,21 +140,20 @@ func (s *Server) handleBOBotConfigPut(w http.ResponseWriter, r *http.Request) {
 		// The dedicated route (bot/ai/{restaurantId}/privileged-contacts) is
 		// the one that writes the selection, and it writes the whole list.
 		// Here, an omitted list means "leave it as it was".
-		if len(cfg.PrivilegedGroupJIDs) == 0 {
+		if _, ok := sent["privileged_group_jids"]; !ok {
 			cfg.PrivilegedGroupJIDs = s.botStoredPrivilegedGroupJIDs(r.Context(), a.ActiveRestaurantID)
 		}
-		if len(cfg.PrivilegedContacts) == 0 {
+		if _, ok := sent["privileged_contacts"]; !ok {
 			cfg.PrivilegedContacts = s.botStoredPrivilegedContacts(r.Context(), a.ActiveRestaurantID)
 		}
 	}
 
 	raw, _ := json.Marshal(cfg)
-	_, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), `
 		INSERT INTO whatsapp_bot_config (restaurant_id, config_json)
 		VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE config_json = VALUES(config_json)
-	`, a.ActiveRestaurantID, string(raw))
-	if err != nil {
+	`, a.ActiveRestaurantID, string(raw)); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Error guardando la configuración",
@@ -244,12 +294,11 @@ func (s *Server) handleBOBotSettingsPut(w http.ResponseWriter, r *http.Request) 
 	}
 
 	raw, _ := json.Marshal(cfg)
-	_, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), `
 		INSERT INTO whatsapp_bot_config (restaurant_id, config_json)
 		VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE config_json = VALUES(config_json)
-	`, rid, string(raw))
-	if err != nil {
+	`, rid, string(raw)); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Error guardando la configuración",
