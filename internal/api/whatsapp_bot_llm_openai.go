@@ -133,8 +133,15 @@ func (s *Server) botOpenAICall(ctx context.Context, p botAIProvider, apiKey, mod
 	}
 	ch := parsed.Choices[0]
 	out := botLLMResponse{StopReason: ch.FinishReason}
+	// OpenAI-compatible usage reports prompt_tokens inclusive of the cached
+	// tokens; normalize to the Anthropic convention (uncached input) so the
+	// pricing maths never bills the same token twice.
+	uncachedInput := parsed.Usage.PromptTokens - parsed.Usage.PromptTokensDetails.CachedTokens
+	if uncachedInput < 0 {
+		uncachedInput = 0
+	}
 	out.Usage = botWireUsage{
-		InputTokens:          parsed.Usage.PromptTokens,
+		InputTokens:          uncachedInput,
 		OutputTokens:         parsed.Usage.CompletionTokens,
 		CacheReadInputTokens: parsed.Usage.PromptTokensDetails.CachedTokens,
 	}

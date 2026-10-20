@@ -692,8 +692,9 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 
 	// Parse optional body with subject/message
 	var req struct {
-		Subject *string `json:"subject,omitempty"`
-		Message *string `json:"message,omitempty"`
+		Subject     *string `json:"subject,omitempty"`
+		Message     *string `json:"message,omitempty"`
+		MessageHTML *string `json:"message_html,omitempty"`
 	}
 	// Ignore body parse errors — body is optional
 	json.NewDecoder(r.Body).Decode(&req)
@@ -751,7 +752,11 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 		customMessage = *req.Message
 	}
 	// Email body: app shell + per-template invoice summary (HTML inside email).
-	htmlBody := buildBackofficeInvoiceEmailHTML(data, invoiceURL, customMessage)
+	customHTML := ""
+	if req.MessageHTML != nil {
+		customHTML = sanitizeEmailHTML(*req.MessageHTML)
+	}
+	htmlBody := buildBackofficeInvoiceEmailHTML(data, invoiceURL, customMessage, customHTML)
 
 	// Attachment: full-fidelity PDF of the selected template.
 	var attachments []emailAttachment

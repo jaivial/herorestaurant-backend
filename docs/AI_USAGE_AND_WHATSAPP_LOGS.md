@@ -8,7 +8,7 @@ recibidos. Coordination ids: `ai_usage_logs_v1`, `whatsapp_message_logs_v1`,
 
 ## Modelo de datos
 
-Dos tablas append-only (migración `182_ai_usage_and_whatsapp_logs.sql`).
+Dos tablas append-only (migraciones `182_ai_usage_and_whatsapp_logs.sql` y `183_minimax_m31_only.sql`).
 
 ### `ai_usage_logs`
 
@@ -53,14 +53,19 @@ histórico no cambie si el proveedor mueve precios.
 
 | Modelo | Input | Output | Cache read | Notas |
 |---|---|---|---|---|
-| DeepSeek V4.1 Flash | $0.30 peak / $0.15 off-peak | $1.20 peak / $0.60 off-peak | $0.006 peak / $0.003 off-peak | Peak L-V 01:00-04:00 y 06:00-10:00 UTC. |
-| MiniMax-M3.1-Flash | $0.15 | $0.60 | $0.015 | Tarifa plana. |
+| MiniMax-M3.1-Flash | $0.15 | $0.60 | $0.015 | Tarifa plana. Único modelo en uso. |
+| MiniMax-M3 (legacy) | $0.30 | $1.20 | $0.06 | Solo para filas históricas; ya no se selecciona. |
 
-`MiniMax-M3.1-Flash` sustituye a `MiniMax-M3` como **modelo de fallback por
-defecto** del bot (`minimax/MiniMax-M3.1-Flash`). La migración reescribe solo
-las filas que apuntaban al fallback anterior; otras elecciones de tenant se
-respetan. Los modelos sin tarifa conocida se guardan con coste 0 y se cuentan en
-`unpricedCalls` para que el panel avise.
+`MiniMax-M3.1-Flash` es el **único modelo** de la aplicación: bot de WhatsApp
+(principal, sin fallback a otro modelo), ForKy, traducciones y stock. La
+migración `183_minimax_m31_only.sql` apunta a ese modelo la configuración de
+cada restaurante y vacía el fallback del router. Los modelos sin tarifa conocida
+se guardan con coste 0 y se cuentan en `unpricedCalls` para que el panel avise.
+
+Semántica de tokens por wire: el endpoint Anthropic devuelve `input_tokens` sin
+los cacheados y `cache_read_input_tokens` aparte; el formato OpenAI incluye los
+cacheados en `prompt_tokens`. El backend normaliza ambos a la convención
+Anthropic antes de calcular el coste, para no cobrar dos veces el mismo token.
 
 ## API
 
