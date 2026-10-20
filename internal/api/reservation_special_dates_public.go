@@ -85,7 +85,8 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, title,
-		       max_per_table_enabled, max_per_table
+		       max_per_table_enabled, max_per_table,
+		       ask_adults, ask_high_chairs, ask_baby_strollers
 		FROM special_dates
 		WHERE restaurant_id = ? AND is_active = 1 AND date BETWEEN ? AND ?
 		ORDER BY date ASC
@@ -103,7 +104,9 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 		var title string
 		var maxPerTableEnabled int
 		var maxPerTable sql.NullInt64
-		if err := rows.Scan(&date, &isActive, &prereserva, &title, &maxPerTableEnabled, &maxPerTable); err != nil {
+		// Coordination id: guest_count_flags_v1
+		var askAdults, askHighChairs, askBabyStrollers int
+		if err := rows.Scan(&date, &isActive, &prereserva, &title, &maxPerTableEnabled, &maxPerTable, &askAdults, &askHighChairs, &askBabyStrollers); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, "Error leyendo special_dates")
 			return
 		}
@@ -121,6 +124,10 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 			"max_per_table_enabled": maxPerTableEnabled != 0,
 			// Coordination id: mobility_issues_v1
 			"mobility_enabled": mobilityEnabled,
+			// Coordination id: guest_count_flags_v1
+			"ask_adults":         askAdults != 0,
+			"ask_high_chairs":    askHighChairs != 0,
+			"ask_baby_strollers": askBabyStrollers != 0,
 		}
 		if maxPerTable.Valid {
 			row["max_per_table"] = maxPerTable.Int64
@@ -161,6 +168,8 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 
 	var id int64
 	var isActive, prereservaEnabled, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
+	// Coordination id: guest_count_flags_v1
+	var askAdults, askHighChairs, askBabyStrollers int
 	var title string
 	var description, customNotice sql.NullString
 	var maxPerTable sql.NullInt64
@@ -170,6 +179,7 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT id, is_active, title, description, custom_notice, prereserva_enabled,
 		       max_per_table_enabled, max_per_table, requires_adelanto,
+		       ask_adults, ask_high_chairs, ask_baby_strollers,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ?
@@ -177,6 +187,7 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	`, restaurantID, date).Scan(
 		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled,
 		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
+		&askAdults, &askHighChairs, &askBabyStrollers,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
 	)
 
@@ -224,7 +235,11 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 		"prereserva_enabled":    prereservaEnabled != 0,
 		"max_per_table_enabled": maxPerTableEnabled != 0,
 		// Coordination id: mobility_issues_v1
-		"mobility_enabled":         mobilityEnabled,
+		"mobility_enabled": mobilityEnabled,
+		// Coordination id: guest_count_flags_v1
+		"ask_adults":               askAdults != 0,
+		"ask_high_chairs":          askHighChairs != 0,
+		"ask_baby_strollers":       askBabyStrollers != 0,
 		"requires_adelanto":        requiresAdelanto != 0,
 		"adelanto_payment_methods": adelantoMethods,
 		"adelanto_unified":         adelantoUnified != 0,

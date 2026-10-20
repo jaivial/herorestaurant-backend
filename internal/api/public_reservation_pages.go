@@ -21,7 +21,7 @@ type publicBooking struct {
 	ReservationDate string
 	ReservationTime string
 	PartySize       int
-	Children        int
+	Children        sql.NullInt64
 	CustomerName    string
 	ContactPhone    sql.NullString
 	ContactEmail    sql.NullString

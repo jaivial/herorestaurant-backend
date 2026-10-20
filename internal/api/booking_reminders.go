@@ -241,8 +241,8 @@ func (s *Server) deliverBookingReminders(ctx context.Context, restaurantID int, 
 
 		extras := bookingReminderExtras{
 			ArrozLine:     bookingReminderArrozLine(b.ArrozType, b.ArrozServings),
-			HighChairs:    int(b.HighChairs.Int64),
-			BabyStrollers: int(b.BabyStrollers.Int64),
+			HighChairs:    nullInt64Ptr(b.HighChairs),
+			BabyStrollers: nullInt64Ptr(b.BabyStrollers),
 			Extras:        bookingExtraNames(b.ExtrasRaw.String),
 		}
 		// Coordination id: special_booking_v1 - render the precomputed block on

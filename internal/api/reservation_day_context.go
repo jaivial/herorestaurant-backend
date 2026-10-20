@@ -44,6 +44,14 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Coordination id: guest_count_flags_v1 - resolved "ask adults / tronas /
+	// carros" toggles for this date (active special date wins, else all on).
+	guestFlags, err := s.resolveGuestCountFlags(r.Context(), restaurantID, date)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando configuración de contadores")
+		return
+	}
+
 	openingMode := defaults.OpeningMode
 	morningHours := cloneStrings(defaults.MorningHours)
 	nightHours := cloneStrings(defaults.NightHours)
@@ -197,6 +205,10 @@ func (s *Server) handleGetReservationDayContext(w http.ResponseWriter, r *http.R
 		"activeFloors": activeFloors,
 		// Coordination id: mobility_day_override_v1 (resolved value).
 		"mobility_enabled": mobilityEnabled,
+		// Coordination id: guest_count_flags_v1 (resolved values).
+		"ask_adults":         guestFlags.AskAdults,
+		"ask_high_chairs":    guestFlags.AskHighChairs,
+		"ask_baby_strollers": guestFlags.AskBabyStrollers,
 		"locationBooking": map[string]any{
 			"allowFloorReservation": flags.Floor.Value,
 			"allowSalonReservation": flags.Salon.Value,
