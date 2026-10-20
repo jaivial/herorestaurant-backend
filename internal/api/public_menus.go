@@ -170,6 +170,8 @@ type publicMenuItem struct {
 	MenuSubtitleEnglish []string `json:"menu_subtitle_english,omitempty"`
 	SliderMode          string   `json:"slider_mode"`
 	SliderImages        []string `json:"slider_images"`
+	// Coordination id: special_menu_completo_v1 - red "COMPLETO" ribbon.
+	Completo bool `json:"completo"`
 	// Coordination id: menu_weekday_availability_v1
 	// (menu_weekday_availability -> public API -> client SDK).
 	Weekdays          map[string]bool `json:"weekdays,omitempty"`
@@ -192,6 +194,9 @@ type publicMenuItemHome struct {
 	ShowMenuPreviewImage bool     `json:"show_menu_preview_image"`
 	MenuPreviewImageURL  string   `json:"menu_preview_image_url"`
 	SpecialMenuImageURL  string   `json:"special_menu_image_url"`
+	// Coordination id: special_menu_completo_v1 - red "COMPLETO" ribbon on the
+	// homepage card.
+	Completo bool `json:"completo"`
 	// Coordination id: menu_weekday_availability_v1
 	Weekdays          map[string]bool `json:"weekdays,omitempty"`
 	WeekdaysAvailable []string        `json:"weekdays_available,omitempty"`
@@ -213,6 +218,9 @@ type publicMenuItemSpecial struct {
 	// Coordination id: special_menu_visibility_v1
 	WebPlacement     string `json:"web_placement"`
 	MenuPublicActive bool   `json:"menu_public_active"`
+	// Coordination id: special_menu_completo_v1 - red "COMPLETO" ribbon over
+	// every section of the special menu page.
+	Completo bool `json:"completo"`
 }
 
 // pageVisibility holds every per-restaurant public page toggle.
@@ -708,12 +716,12 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 
 	isHomePage := r.URL.Query().Get("home_page") == "true"
 
-	selectFields := "id, menu_title, menu_type, active, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, special_menu_image_url"
+	selectFields := "id, menu_title, menu_type, active, menu_subtitle, show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, special_menu_image_url, COALESCE(completo, 0)"
 	if !isHomePage {
 		selectFields = `id, menu_title, price, active, menu_type, menu_subtitle,
 		       show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments, important_info,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
-		       special_menu_image_url, legacy_source_table, created_at, modified_at`
+		       special_menu_image_url, legacy_source_table, created_at, modified_at, COALESCE(completo, 0)`
 	}
 
 	rows, err := s.db.QueryContext(r.Context(), `
@@ -760,6 +768,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				showMenuPreviewImageInt int
 				menuPreviewPathRaw      sql.NullString
 				specialImageURLRaw      sql.NullString
+				completoInt             int
 			)
 			if err := rows.Scan(
 				&menuID,
@@ -772,6 +781,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				&showMenuPreviewImageInt,
 				&menuPreviewPathRaw,
 				&specialImageURLRaw,
+				&completoInt,
 			); err != nil {
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 					"success": false,
@@ -798,6 +808,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
 				MenuPreviewImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, menuPreviewPathRaw.String),
 				SpecialMenuImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, specialImageURLRaw.String),
+				Completo:             completoInt != 0,
 			})
 			homeMenuIDs = append(homeMenuIDs, menuID)
 		}
@@ -850,6 +861,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			legacySourceTable       sql.NullString
 			createdAtRaw            sql.NullString
 			modifiedAtRaw           sql.NullString
+			completoInt             int
 		)
 
 		if err := rows.Scan(
@@ -877,6 +889,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			&legacySourceTable,
 			&createdAtRaw,
 			&modifiedAtRaw,
+			&completoInt,
 		); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -957,6 +970,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			LegacySourceTable:    strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),
 			CreatedAt:            createdAtRaw.String,
 			ModifiedAt:           modifiedAtRaw.String,
+			Completo:             completoInt != 0,
 		}
 
 		menuIndexByID[menuID] = len(menus)
@@ -1239,13 +1253,15 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 			specialImageURL    sql.NullString
 			webPlacementRaw    sql.NullString
 			menuPublicActiveIn int
+			completoInt        int
 		)
 		err = s.db.QueryRowContext(r.Context(), `
 			SELECT menu_title, menu_subtitle, comments, special_menu_image_url,
-			       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1)
+			       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1),
+			       COALESCE(completo, 0)
 			FROM menus
 			WHERE id = ? AND restaurant_id = ?
-		`, menuID, restaurantID).Scan(&menuTitle, &menuSubtitleRaw, &commentsRaw, &specialImageURL, &webPlacementRaw, &menuPublicActiveIn)
+		`, menuID, restaurantID).Scan(&menuTitle, &menuSubtitleRaw, &commentsRaw, &specialImageURL, &webPlacementRaw, &menuPublicActiveIn, &completoInt)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -1269,6 +1285,7 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 				// Coordination id: special_menu_visibility_v1
 				WebPlacement:     normalizedWebPlacement(webPlacementRaw.String),
 				MenuPublicActive: menuPublicActiveIn != 0,
+				Completo:         completoInt != 0,
 			},
 		})
 		return
@@ -1308,6 +1325,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		// Coordination id: special_menu_visibility_v1
 		webPlacementRaw     sql.NullString
 		menuPublicActiveInt int
+		completoInt         int
 	)
 
 	err := s.db.QueryRowContext(r.Context(), `
@@ -1315,7 +1333,8 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		       show_dish_images, show_section_tabs, show_menu_preview_image, menu_preview_image_path, entrantes, principales, postre, beverage, comments, important_info,
 		       min_party_size, main_dishes_limit, main_dishes_limit_number, included_coffee,
 		       special_menu_image_url, legacy_source_table, created_at, modified_at,
-		       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1)
+		       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1),
+		       COALESCE(completo, 0)
 		FROM menus
 		WHERE id = ? AND restaurant_id = ?
 	`, menuID, restaurantID).Scan(
@@ -1345,6 +1364,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		&modifiedAtRaw,
 		&webPlacementRaw,
 		&menuPublicActiveInt,
+		&completoInt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1440,6 +1460,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 		SpecialCta:          s.loadPublicSpecialMenuCta(r.Context(), int(restaurantID), menuID),
 		WebPlacement:        normalizedWebPlacement(webPlacementRaw.String),
 		MenuPublicActive:    menuPublicActiveInt != 0,
+		Completo:            completoInt != 0,
 		LegacySourceTable:   strings.ToUpper(strings.TrimSpace(legacySourceTable.String)),
 		CreatedAt:           createdAtRaw.String,
 		ModifiedAt:          modifiedAtRaw.String,
@@ -1641,6 +1662,9 @@ type publicMenuSidebarItem struct {
 	// Coordination id: special_menu_visibility_v1
 	WebPlacement      string `json:"web_placement"`
 	LegacySourceTable string `json:"legacy_source_table,omitempty"`
+	// Coordination id: special_menu_completo_v1 - red "COMPLETO" ribbon in the
+	// burger nav.
+	Completo bool `json:"completo"`
 }
 
 // activePublicMenuOrderBy returns the same ORDER BY clause used across menu list endpoints.
@@ -1698,7 +1722,8 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, COALESCE(menu_type, 1), COALESCE(legacy_source_table, ''),
-		       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1)
+		       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1),
+		       COALESCE(completo, 0)
 		FROM menus
 		WHERE `+activePublicMenuWhere()+`
 		ORDER BY `+activePublicMenuOrderBy(),
@@ -1722,8 +1747,9 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 			legacySourceTable string
 			webPlacementRaw   string
 			menuPublicActive  int
+			completoInt       int
 		)
-		if err := rows.Scan(&menuID, &menuTitle, &menuTypeRaw, &legacySourceTable, &webPlacementRaw, &menuPublicActive); err != nil {
+		if err := rows.Scan(&menuID, &menuTitle, &menuTypeRaw, &legacySourceTable, &webPlacementRaw, &menuPublicActive, &completoInt); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
 				"message": "Error reading menus",
@@ -1753,6 +1779,7 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 			Active:            true, // All results are active due to WHERE clause
 			WebPlacement:      normalizedWebPlacement(webPlacementRaw),
 			LegacySourceTable: strings.ToUpper(strings.TrimSpace(legacySourceTable)),
+			Completo:          completoInt != 0,
 		})
 	}
 
