@@ -29,10 +29,10 @@ import (
 func botJIDStripDeviceSuffix(v string) string {
 	v = strings.TrimSpace(v)
 	at := strings.Index(v, "@")
-	if at <= 0 {
-		return v
+	head, tail := v, ""
+	if at > 0 {
+		head, tail = v[:at], v[at:]
 	}
-	head := v[:at]
 	colon := strings.LastIndex(head, ":")
 	if colon <= 0 {
 		return v
@@ -40,7 +40,7 @@ func botJIDStripDeviceSuffix(v string) string {
 	if _, err := strconv.Atoi(head[colon+1:]); err != nil {
 		return v
 	}
-	return head[:colon] + v[at:]
+	return head[:colon] + tail
 }
 
 // botWhatsappIDDigits returns the identity digits of a WhatsApp id in any

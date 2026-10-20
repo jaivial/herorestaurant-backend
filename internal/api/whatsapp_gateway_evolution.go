@@ -638,12 +638,9 @@ func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool)
 	}
 	qr := d.QRCode.Base64
 	out := waConnEvent{
-		SessionRef: strings.TrimSpace(env.Instance),
-		Status:     normalizeUAZAPIConnectionStatus(status),
-		// The provider writes its own number with Baileys' device suffix
-		// ("34960255536:28@s.whatsapp.net"). Stored as it comes, the device
-		// is glued to the phone and the number matches nothing anymore.
-		ConnectedPhone: botWhatsappIDDigits(uazapiPickString(raw, "number", "phone", "owner", "wuid")),
+		SessionRef:     strings.TrimSpace(env.Instance),
+		Status:         normalizeUAZAPIConnectionStatus(status),
+		ConnectedPhone: uazapiPickString(raw, "number", "phone", "owner", "wuid"),
 		QR:             qr,
 		PairCode:       formatEvolutionPairingCode(uazapiPickString(raw, "pairingCode", "pairCode")),
 	}
