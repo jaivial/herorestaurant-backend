@@ -390,9 +390,14 @@ type evoGroupInput struct {
 	MessageType  string
 	Text         string
 	MentionText  []string
-	MentionedJID string
-	AudioB64     string
-	IsAudio      bool
+	// MentionedJID holds the mentioned members, in any of the forms the
+	// provider writes them.
+	MentionedJID []string
+	// QuotedParticipant is the author of the quoted message, when the
+	// message replies to another one. Empty otherwise.
+	QuotedParticipant string
+	AudioB64          string
+	IsAudio           bool
 	// DocumentB64/DocumentName: inline document payload, wa_bot_privileged_group_v1.
 	DocumentB64  string
 	DocumentName string
@@ -435,12 +440,19 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 	}
 
 	mentions := make([]string, 0, 2)
-	for _, m := range append(append([]string{}, in.MentionText...), in.MentionedJID) {
+	for _, m := range append(append([]string{}, in.MentionText...), in.MentionedJID...) {
 		if v := strings.TrimSpace(m); v != "" {
 			mentions = append(mentions, v)
 		}
 	}
-	if !botGroupMentionsBot(mentions, nil, in.Text, in.OwnJIDs) {
+	// A reply that quotes the bot is the other way of addressing it: the
+	// quoted message was written by the bot, so the sender is talking to the
+	// bot.
+	var quotedFrom []string
+	if v := strings.TrimSpace(in.QuotedParticipant); v != "" {
+		quotedFrom = []string{v}
+	}
+	if !botGroupMentionsBot(mentions, quotedFrom, in.Text, in.OwnJIDs) {
 		botGroupMessageAudit(0, groupJID, participant, "skipped_not_mentioned")
 		return waInbound{}, false
 	}
