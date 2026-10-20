@@ -64,7 +64,10 @@ func campaignDomainHasMail(domain string) bool {
 	defer cancel()
 	ok := true
 	mx, err := net.DefaultResolver.LookupMX(ctx, domain)
-	if err != nil || len(mx) == 0 {
+	// RFC 7505 Null MX ("." target): the domain states it accepts no mail.
+	if err == nil && len(mx) == 1 && strings.TrimSuffix(mx[0].Host, ".") == "" {
+		ok = false
+	} else if err != nil || len(mx) == 0 {
 		// Only a definitive "no such domain / no records" counts as dead; a
 		// timeout or SERVFAIL must not drop a good customer.
 		if dnsErr, isDNS := err.(*net.DNSError); isDNS && (dnsErr.IsNotFound) {
