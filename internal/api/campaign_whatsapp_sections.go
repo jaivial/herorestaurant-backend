@@ -173,24 +173,106 @@ func campaignUnifiedWhatsApp(markdown, brandName string) (text, image string, bu
 	return strings.TrimSpace(text), image, buttons
 }
 
-// deliverCampaignWhatsAppUnified sends one interactive message holding the
-// whole campaign: header image, text and all buttons (campaign buttons first,
-// then the extra choices such as the opt-out).
+// campaignWAMaxCTA is the real provider limit: Evolution rejects an interactive
+// message with more than 2 URL buttons ("at most 2 CTA buttons are allowed").
+const campaignWAMaxCTA = 2
+
+// campaignPickCTAs returns the buttons that get a real interactive button (the
+// pre-booking link first, then menu links, then the rest in order) and the
+// remaining ones, which travel as "label: url" lines in the same message.
+func campaignPickCTAs(buttons []string) (cta, rest []string) {
+	rank := func(b string) int {
+		_, u, _ := strings.Cut(b, "|")
+		switch {
+		case strings.Contains(u, "date="):
+			return 0
+		case strings.Contains(u, "/menu/"):
+			return 1
+		}
+		return 2
+	}
+	picked := map[int]bool{}
+	for r := 0; r <= 2 && len(cta) < campaignWAMaxCTA; r++ {
+		for i, b := range buttons {
+			if len(cta) < campaignWAMaxCTA && !picked[i] && rank(b) == r {
+				cta = append(cta, b)
+				picked[i] = true
+			}
+		}
+	}
+	for i, b := range buttons {
+		if !picked[i] {
+			rest = append(rest, b)
+		}
+	}
+	return cta, rest
+}
+
+// campaignWAMaxCTA is the real provider limit: Evolution rejects an interactive
+// message with more than 2 URL buttons ("at most 2 CTA buttons are allowed").
+const campaignWAMaxCTA = 2
+
+// campaignPickCTAs returns the buttons that get a real interactive button (the
+// pre-booking link first, then menu links, then the rest in order) and the
+// remaining ones, which travel as "label: url" lines in the same message.
+func campaignPickCTAs(buttons []string) (cta, rest []string) {
+	rank := func(b string) int {
+		_, u, _ := strings.Cut(b, "|")
+		switch {
+		case strings.Contains(u, "date="):
+			return 0
+		case strings.Contains(u, "/menu/"):
+			return 1
+		}
+		return 2
+	}
+	picked := map[int]bool{}
+	for r := 0; r <= 2 && len(cta) < campaignWAMaxCTA; r++ {
+		for i, b := range buttons {
+			if len(cta) < campaignWAMaxCTA && !picked[i] && rank(b) == r {
+				cta = append(cta, b)
+				picked[i] = true
+			}
+		}
+	}
+	for i, b := range buttons {
+		if !picked[i] {
+			rest = append(rest, b)
+		}
+	}
+	return cta, rest
+}
+
+// deliverCampaignWhatsAppUnified sends ONE interactive message holding the whole
+// campaign: header image, text, up to 2 CTA buttons and the remaining links as
+// lines (the opt-out link included).
 func (s *Server) deliverCampaignWhatsAppUnified(ctx context.Context, restaurantID int, gw WhatsAppGateway, coordID, num, brandName, markdown string, extraChoices []string) error {
 	text, image, buttons := campaignUnifiedWhatsApp(markdown, brandName)
-	choices := append(append([]string{}, buttons...), extraChoices...)
-	if sender, ok := gw.(whatsappMenuImageSender); ok && image != "" {
-		if err := sender.SendMenuImage(ctx, num, text, image, choices); err == nil {
+	cta, rest := campaignPickCTAs(buttons)
+	rest = append(rest, extraChoices...)
+	for _, b := range rest {
+		label, url, _ := strings.Cut(b, "|")
+		text += "\n\n" + strings.TrimSpace(label) + ": " + strings.TrimSpace(url)
+	}
+	if len(cta) > 0 {
+		if sender, ok := gw.(whatsappMenuImageSender); ok && image != "" {
+			if err := sender.SendMenuImage(ctx, num, text, image, cta); err == nil {
+				return nil
+			}
+		}
+		if err := gw.SendMenu(ctx, num, text, cta); err == nil {
 			return nil
 		}
 	}
-	if err := gw.SendMenu(ctx, num, text, choices); err == nil {
-		return nil
+	plain := text
+	for _, b := range cta {
+		label, url, _ := strings.Cut(b, "|")
+		plain += "\n\n" + strings.TrimSpace(label) + ": " + strings.TrimSpace(url)
 	}
-	fallback := text
-	for _, c := range choices {
-		label, url, _ := strings.Cut(c, "|")
-		fallback += "\n\n" + label + ": " + url
+	if image != "" {
+		if err := gw.SendMedia(ctx, normalizeWhatsAppNumber(num), waMedia{Kind: "image", URL: image, Caption: plain, Filename: "campana.webp"}); err == nil {
+			return nil
+		}
 	}
-	return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, coordID, num, fallback)
+	return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, coordID, num, plain)
 }
