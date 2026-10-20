@@ -26,8 +26,8 @@ type Rate struct {
 	CacheWriteUSD float64 `json:"cacheWriteUsdPerMillion"`
 }
 
-// Pricing is one catalogue entry. DeepSeek publishes peak and off-peak rates;
-// MiniMax publishes a single flat rate.
+// Pricing is one catalogue entry. MiniMax publishes a single flat rate; the
+// peak/off-peak fields are kept for providers that bill by time of day.
 type Pricing struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
@@ -36,26 +36,7 @@ type Pricing struct {
 	Flat     bool   `json:"flat"`
 }
 
-// DeepSeek V4.1 Flash (model version DeepSeek-V4.1-Flash-1017).
-// Peak: Mon-Fri 01:00-04:00 and 06:00-10:00 UTC. Off-peak is half price.
-var deepSeekV41Flash = Pricing{
-	Provider: "deepseek",
-	Model:    "deepseek-v4.1-flash",
-	Peak: Rate{
-		InputUSD:      0.30,
-		OutputUSD:     1.20,
-		CacheReadUSD:  0.006,
-		CacheWriteUSD: 0,
-	},
-	OffPeak: Rate{
-		InputUSD:      0.15,
-		OutputUSD:     0.60,
-		CacheReadUSD:  0.003,
-		CacheWriteUSD: 0,
-	},
-}
-
-// MiniMax M3.1 Flash fallback pricing.
+// MiniMax M3.1 Flash is the only model the product calls.
 var miniMaxM31Flash = Pricing{
 	Provider: "minimax",
 	Model:    "MiniMax-M3.1-Flash",
@@ -74,7 +55,27 @@ var miniMaxM31Flash = Pricing{
 	Flat: true,
 }
 
-var catalogue = []Pricing{deepSeekV41Flash, miniMaxM31Flash}
+// MiniMax M3 legacy pricing. It is not selectable any more; the entry exists
+// so historical ai_usage_logs rows keep a real cost instead of "sin tarifa".
+var miniMaxM3Legacy = Pricing{
+	Provider: "minimax",
+	Model:    "MiniMax-M3",
+	Peak: Rate{
+		InputUSD:      0.30,
+		OutputUSD:     1.20,
+		CacheReadUSD:  0.06,
+		CacheWriteUSD: 0,
+	},
+	OffPeak: Rate{
+		InputUSD:      0.30,
+		OutputUSD:     1.20,
+		CacheReadUSD:  0.06,
+		CacheWriteUSD: 0,
+	},
+	Flat: true,
+}
+
+var catalogue = []Pricing{miniMaxM31Flash, miniMaxM3Legacy}
 
 // Catalog returns the known price list.
 func Catalog() []Pricing {
@@ -91,11 +92,11 @@ func Normalize(provider, model string) (string, string) {
 	m := strings.TrimSpace(model)
 	lower := strings.ToLower(m)
 
-	if strings.Contains(lower, "deepseek") {
-		return "deepseek", "deepseek-v4.1-flash"
-	}
 	if strings.Contains(lower, "minimax-m3.1-flash") || strings.Contains(lower, "minimax-m3-1-flash") {
 		return "minimax", "MiniMax-M3.1-Flash"
+	}
+	if lower == "minimax-m3" {
+		return "minimax", "MiniMax-M3"
 	}
 	return p, m
 }
