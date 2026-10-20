@@ -41,7 +41,7 @@ func (s *Server) assistantAIUsageReport(ctx context.Context, rid int, raw json.R
 		"by_model":    report.ByModel,
 		"by_feature":  report.ByFeature,
 		"pricing":     report.Pricing,
-		"note":        "Costes en USD. DeepSeek V4.1 Flash aplica tarifa peak/off-peak (01:00-04:00 y 06:00-10:00 UTC, L-V); MiniMax-M3.1-Flash es tarifa plana.",
+		"note":        "Costes en USD. MiniMax-M3.1-Flash es tarifa plana: $0.15/1M entrada, $0.60/1M salida y $0.015/1M de caché leída.",
 	}), nil
 }
 

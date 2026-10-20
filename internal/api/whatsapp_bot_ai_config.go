@@ -16,18 +16,20 @@ import (
 
 // Coordination id: wa_bot_ai_providers_v1
 //
-// The WhatsApp bot picks a primary and a fallback model per restaurant, each
-// "provider/model". Provider API keys (opencode-go, minimax, jev) are stored in
-// restaurant_ai_provider_keys encrypted with VAULT_KEY and bound to
-// restaurant+provider, so a ciphertext cannot be replayed on another tenant.
+// The WhatsApp bot runs MiniMax-M3.1-Flash only. Provider API keys (minimax,
+// jev) are stored in restaurant_ai_provider_keys encrypted with VAULT_KEY and
+// bound to restaurant+provider, so a ciphertext cannot be replayed on another
+// tenant.
 
 const (
-	botProviderOpenCodeGo = "opencode-go"
-	botProviderMiniMax    = "minimax"
-	botProviderJev        = "jev"
+	botProviderMiniMax = "minimax"
+	botProviderJev     = "jev"
 
-	botDefaultPrimaryModel  = "opencode-go/deepseek-v4.1-flash"
-	botDefaultFallbackModel = "minimax/MiniMax-M3.1-Flash"
+	// MiniMax M3.1 Flash is the single model: primary and fallback are the same
+	// model, so the router gets no second reference and never retries against a
+	// different model. The global MINIMAX_API_KEY covers every tenant.
+	botDefaultPrimaryModel  = "minimax/MiniMax-M3.1-Flash"
+	botDefaultFallbackModel = ""
 )
 
 // botAIProvider describes one LLM provider and its selectable models. Wire is
@@ -40,30 +42,17 @@ type botAIProvider struct {
 	Models  []string `json:"models"`
 }
 
-// botAIProviders is the model catalog shown in /app/config (IA tab). MiniMax
-// lists the coding-plan models; opencode-go mirrors ~/mini-tui providers.json.
+// botAIProviders is the model catalog shown in /app/config (IA tab). Only the
+// MiniMax model the product runs is listed; there is no router fallback.
 var botAIProviders = []botAIProvider{
 	{
-		ID: botProviderOpenCodeGo, Label: "OpenCode Go", BaseURL: "https://opencode.ai/zen/go/v1", Wire: "openai",
-		Models: []string{
-			"deepseek-v4.1-flash", "deepseek-v4-flash", "deepseek-flash", "deepseek-v4-pro",
-			"glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5.1",
-			"kimi-k3", "kimi-k2.7-code", "kimi-k2.6",
-			"qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
-			"minimax-m3", "minimax-m2.7", "minimax-m2.5",
-			"mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.5-pro", "mimo-v2.5",
-			"grok-4.7", "grok-4.6", "gpt-6-luna", "gpt-5.6-luna",
-			"hy4-preview", "hy3", "longcat-2.0", "omen-alpha", "space-bunny-free",
-		},
-	},
-	{
 		ID: botProviderMiniMax, Label: "MiniMax (Coding Plan)", Wire: "anthropic",
-		Models: []string{"MiniMax-M3.1-Flash", "MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"},
+		Models: []string{"MiniMax-M3.1-Flash"},
 	},
 }
 
 // botKeyProviders are the providers whose API key can be configured.
-var botKeyProviders = []string{botProviderOpenCodeGo, botProviderMiniMax, botProviderJev}
+var botKeyProviders = []string{botProviderMiniMax, botProviderJev}
 
 func botFindProvider(id string) (botAIProvider, bool) {
 	for _, p := range botAIProviders {
@@ -209,7 +198,7 @@ func (s *Server) handleBOBotAIPut(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "JSON inválido"})
 		return
 	}
-	if !botValidModelRef(req.PrimaryModel) || !botValidModelRef(req.FallbackModel) {
+	if !botValidModelRef(req.PrimaryModel) || (strings.TrimSpace(req.FallbackModel) != "" && !botValidModelRef(req.FallbackModel)) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Modelo no válido"})
 		return
 	}
