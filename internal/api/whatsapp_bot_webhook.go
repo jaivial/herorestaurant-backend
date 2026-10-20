@@ -664,8 +664,25 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			botOwned[d.Name] = struct{}{}
 		}
 		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+			// Temporary containment (wa_bot_admin_write_denied_v1): these bot-owned
+			// mutations are gated only by a confirmed=true the model writes itself,
+			// which is not a human approval. Refused in the server for privileged
+			// groups until an approval bound to the exact preview exists. Reads,
+			// messaging and add_booking_note are unchanged.
+			if botPrivilegedDeniedWrites[name] {
+				log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
+				return botJSON(map[string]any{"error": "esta operación está desactivada temporalmente para el bot (no se ejecuta). No la reintentes ni busques otra vía: di al grupo que debe hacerse en el panel de administración."}), nil
+			}
 			if _, ok := assistantToolLookup(name); ok {
 				if _, mine := botOwned[name]; !mine {
+					// A forky write tool the bot does not own is a generic panel
+					// mutation whose confirmation token the model redeems itself:
+					// refused in the server (wa_bot_admin_write_denied_v1). Reads and
+					// the bot's own tools are unchanged.
+					if def, _ := assistantToolLookup(name); def.Write {
+						log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
+						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, di al grupo que esa operación no está soportada y que debe hacerse en el panel. No busques otra vía."}), nil
+					}
 					return s.assistantExecuteTool(s.botPrivilegedForkyContext(ctx, restaurantID), restaurantID, name, input)
 				}
 			}
@@ -769,4 +786,16 @@ func (s *Server) botSendFallback(ctx context.Context, restaurantID int, sender s
 	}
 	if s.sendWhatsAppTextTracked(ctx, restaurantID, gw, sender, fallback, "agent_fallback") == nil {
 	}
+}
+
+// botPrivilegedDeniedWrites lists the bot-owned destructive or special-booking
+// mutations refused for privileged groups while their confirmation is only a
+// model-written flag.
+var botPrivilegedDeniedWrites = map[string]bool{
+	"create_booking":         true,
+	"modify_booking":         true,
+	"cancel_booking":         true,
+	"modify_special_booking": true,
+	"cancel_special_booking": true,
+	"create_special_booking": true,
 }
