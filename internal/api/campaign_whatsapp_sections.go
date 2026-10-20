@@ -31,7 +31,7 @@ func splitCampaignWASections(markdown string) (sections []campaignWASection, ok 
 		sec := campaignWASection{}
 		var text []string
 		for _, raw := range cur {
-			line := strings.TrimSpace(raw)
+			line := strings.TrimSpace(mdIconRe.ReplaceAllString(raw, ""))
 			if m := campaignButtonLineRe.FindStringSubmatch(line); m != nil {
 				sec.Buttons = append(sec.Buttons, strings.TrimSpace(m[1])+"|"+m[2])
 				ok = true
