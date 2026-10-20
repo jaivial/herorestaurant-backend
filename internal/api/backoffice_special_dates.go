@@ -48,6 +48,9 @@ type boSpecialDateMenu struct {
 	AdelantoAmount *float64 `json:"adelanto_amount,omitempty"`
 	Price          *float64 `json:"price,omitempty"`
 	Position       int      `json:"position"`
+	// Coordination id: special_menu_completo_v1 - "COMPLETO" flag persisted on
+	// the catalogue menu itself (menus.completo), toggled from this screen.
+	Completo *bool `json:"completo,omitempty"`
 	// Coordination id: special_date_section_menus_v1 - per-section adelanto
 	// when menu_id is a special-type menu.
 	Sections []specialDateSectionAdelanto `json:"sections,omitempty"`
@@ -377,10 +380,12 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 // loadBOSpecialDateMenus reads the child rows for one special date.
 func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, specialDateID int64) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, menu_id, custom_title, custom_image_url, adelanto_amount, price, position
-		FROM special_date_menus
-		WHERE restaurant_id = ? AND special_date_id = ?
-		ORDER BY position ASC, id ASC
+		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url, sdm.adelanto_amount, sdm.price, sdm.position,
+		       COALESCE(m.completo, 0)
+		FROM special_date_menus sdm
+		LEFT JOIN menus m ON m.id = sdm.menu_id AND m.restaurant_id = sdm.restaurant_id
+		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?
+		ORDER BY sdm.position ASC, sdm.id ASC
 	`, restaurantID, specialDateID)
 	if err != nil {
 		return nil, err
@@ -393,8 +398,8 @@ func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, s
 		var menuID sql.NullInt64
 		var customTitle, customImageURL sql.NullString
 		var adelantoAmount, price sql.NullFloat64
-		var position int
-		if err := rows.Scan(&id, &menuID, &customTitle, &customImageURL, &adelantoAmount, &price, &position); err != nil {
+		var position, completo int
+		if err := rows.Scan(&id, &menuID, &customTitle, &customImageURL, &adelantoAmount, &price, &position, &completo); err != nil {
 			return nil, err
 		}
 		row := map[string]any{
@@ -403,6 +408,8 @@ func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, s
 		}
 		if menuID.Valid {
 			row["menu_id"] = menuID.Int64
+			// Coordination id: special_menu_completo_v1
+			row["completo"] = completo != 0
 		}
 		if customTitle.Valid {
 			row["custom_title"] = customTitle.String
@@ -802,6 +809,17 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error insertando special_date_menus")
 			return
+		}
+		// Coordination id: special_menu_completo_v1 - the "COMPLETO" toggle
+		// lives on the catalogue menu so the public site can flag it everywhere
+		// (menu page, home card, burger nav).
+		if m.MenuID != nil && m.Completo != nil {
+			if _, err := tx.ExecContext(r.Context(), `
+				UPDATE menus SET completo = ? WHERE id = ? AND restaurant_id = ?
+			`, boolToInt(*m.Completo), *m.MenuID, a.ActiveRestaurantID); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error guardando completo del menú")
+				return
+			}
 		}
 		// Coordination id: special_date_section_menus_v1
 		if m.MenuID != nil && len(m.Sections) > 0 {
