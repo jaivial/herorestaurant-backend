@@ -696,8 +696,9 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	sendCtx := ctx
 	if result.Interrupted {
 		// The turn context may already be expired: send the fixed reply on a short fresh one.
+		// WithoutCancel keeps the turn's values (tenant, tracing) but not its expiry.
 		var cancelSend context.CancelFunc
-		sendCtx, cancelSend = context.WithTimeout(context.Background(), 20*time.Second)
+		sendCtx, cancelSend = context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 		defer cancelSend()
 	}
 	if (result.Interrupted || !botDeliveredReply(result.ToolCalls)) && !turn.noticeDelivered {
@@ -705,13 +706,13 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// The model typed a contact card or pasted a staff notification as
 			// text: deliver the real intro + vCard instead (wa_bot_context_hygiene_v1).
 			log.Printf("[bot] checkpoint wa_bot_plain_text_rewritten restaurant_id=%d sender=%s", restaurantID, msg.Sender)
-			_, _ = s.botToolSendContact(ctx, restaurantID, msg, tenant, nil)
+			_, _ = s.botToolSendContact(sendCtx, restaurantID, msg, tenant, nil)
 		} else if text != "" {
 			log.Printf("[bot] checkpoint wa_bot_plain_text_fallback restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 			if gw, ok := s.botGatewayFor(sendCtx, restaurantID); ok && s.sendWhatsAppTextTracked(sendCtx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
 			}
 		} else {
-			s.botSendFallback(ctx, restaurantID, msg.Sender)
+			s.botSendFallback(sendCtx, restaurantID, msg.Sender)
 		}
 	}
 	log.Printf("[bot] restaurant=%d sender=%s iterations=%d model=%s node=%s tools=%s",

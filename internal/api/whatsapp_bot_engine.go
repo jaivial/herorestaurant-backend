@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"strings"
 )
@@ -76,14 +77,16 @@ type botLoopGuard struct {
 }
 
 // botResultFailed reports whether a tool result is a failure. A JSON result
-// with "error": null (or empty) is not a failure; non-JSON output keeps the
+// whose top-level "error" is null, empty or false is not a failure (the tool
+// executor reports failures as a top-level {"error": "..."}); non-JSON output keeps the
 // old substring rule.
 func botResultFailed(out string) bool {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(out), &m); err == nil {
 		raw, ok := m["error"]
 		if !ok {
-			return false
+			// No top-level error key: keep the old rule so a nested real error still counts.
+			return strings.Contains(out, `"error"`)
 		}
 		v := strings.TrimSpace(string(raw))
 		return v != "null" && v != `""` && v != "false"
@@ -235,12 +238,34 @@ const botInterruptedText = "No he podido terminar tu petición: el proceso se in
 // any tool ran there is nothing to report, so the error goes to the caller
 // (which sends its usual fallback). After tools ran, the customer gets the
 // fixed honest reply instead of a generic apology.
+// botErrClass maps an error to a fixed, safe label.
+func botErrClass(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	}
+	low := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(low, "context length") || strings.Contains(low, "context window") || strings.Contains(low, "too long") || strings.Contains(low, "maximum context"):
+		return "context_length"
+	case strings.Contains(low, "timeout") || strings.Contains(low, "deadline"):
+		return "timeout"
+	}
+	return "provider_error"
+}
+
 func botInterrupted(result *botLoopResult, msgs []botMessage, reason string, err error) (botLoopResult, error) {
 	result.Messages = msgs
 	if result.Ran == 0 {
 		return *result, err
 	}
-	log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 interrupted reason=%s iterations=%d ran=%d failed=%d tools=%s err=%v", reason, result.Iterations, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","), err)
+	// err.Error() is never logged: provider errors can carry URLs, query
+	// strings, tokens or customer content. Only a fixed class is recorded.
+	log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 interrupted reason=%s class=%s iterations=%d ran=%d failed=%d tools=%s", reason, botErrClass(err), result.Iterations, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
 	result.Interrupted = true
 	result.Messages = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botInterruptedText}}})
 	return *result, nil
