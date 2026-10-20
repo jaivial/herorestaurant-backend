@@ -13,7 +13,7 @@ import (
 // La selección de conversaciones privilegiadas decide quién recibe el
 // catálogo root, así que va atada al restaurante de la sesión. Un root que
 // administra varios restaurantes no puede escribir la selección de otro
-//tenant poniendo su id en la ruta.
+// tenant poniendo su id en la ruta.
 //
 // Coordination id: wa_bot_privileged_contacts_v1
 func TestPrivilegedContactsRoutesStayOnTheSessionRestaurant(t *testing.T) {

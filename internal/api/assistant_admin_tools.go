@@ -242,6 +242,13 @@ func (s *Server) assistantAdminDescribe(ctx context.Context, _ int, input json.R
 	return botJSON(map[string]any{"tool": "admin_describe", "operations": out, "unknown": unknown}), nil
 }
 
+// forkyPathIsActiveRestaurant reports whether the path is the one that
+// rebinds the session to another restaurant.
+func forkyPathIsActiveRestaurant(path string) bool {
+	p := strings.TrimSpace(path)
+	return p == "/active-restaurant" || strings.HasSuffix(p, "/active-restaurant")
+}
+
 // forkyPathHasParam reports whether the path pattern carries the given
 // parameter, so a caller can enforce what the parameter may be.
 func forkyPathHasParam(path string, name string) bool {
@@ -315,6 +322,17 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 		if got != "" && got != strconv.Itoa(rid) {
 			return "", fmt.Errorf("operación fuera del restaurante del bot: la ruta apunta a %s y este bot opera en %d", got, rid)
 		}
+	}
+	// The same scope applies to the operation that REBINDS the session to
+	// another restaurant (/active-restaurant): it persists
+	// active_restaurant_id on the session row, and the replay authenticates
+	// on that very session. Letting the bot rebind itself would move the
+	// whole privileged turn to another tenant.
+	//
+	// The bot has exactly one restaurant, so the operation has no meaning
+	// for it: the restaurant is already the right one.
+	if rid > 0 && forkyPathIsActiveRestaurant(op.Path) {
+		return "", fmt.Errorf("el bot no puede cambiar de restaurante: ya opera en el %d", rid)
 	}
 	path, err := forkyRenderPath(op.Path, in.PathParams)
 	if err != nil {
