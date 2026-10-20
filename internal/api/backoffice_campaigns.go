@@ -601,6 +601,8 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 			target = normalizeWhatsAppNumber(target)
 		} else if !strings.Contains(target, "@") {
 			return
+		} else if ok, _ := campaignEmailLooksDeliverable(target); !ok {
+			return
 		}
 		if target == "" {
 			return
@@ -996,6 +998,10 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			break
 		}
 		for _, p := range batch {
+			if p.t.Channel == "email" && s.campaignEmailBreakerTripped(ctx, restaurantID, campaignID, c.CoordID) {
+				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'paused', error = 'corte por rebotes' WHERE id = ? AND status = 'pending'`, p.id)
+				continue
+			}
 			// Re-read the do-not-contact list right before each delivery: a
 			// recipient that unsubscribes after the audience snapshot (the run
 			// can last hours at WhatsApp pacing) must never get the message.
