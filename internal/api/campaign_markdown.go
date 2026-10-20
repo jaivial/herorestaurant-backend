@@ -539,18 +539,18 @@ func renderCampaignWhatsAppBody(markdown, brandName, unsubscribeURL string, with
 		line = mdImageRe.ReplaceAllString(line, "$2")
 		line = mdLinkRe.ReplaceAllString(line, "$1: $2")
 		line = strings.TrimPrefix(line, "> ")
-		for _, prefix := range []string{"### ", "## ", "# "} {
-			if strings.HasPrefix(line, prefix) {
-				line = "*" + strings.TrimPrefix(line, prefix) + "*"
-				break
-			}
-		}
 		if strings.HasPrefix(line, "* ") {
 			line = "- " + strings.TrimPrefix(line, "* ")
 		}
 		line = mdBoldRe.ReplaceAllString(line, "*$1*")
 		line = mdItalicRe.ReplaceAllString(line, "${1}_${2}_")
 		line = mdCodeRe.ReplaceAllString(line, "```${1}```")
+		for _, prefix := range []string{"### ", "## ", "# "} {
+			if strings.HasPrefix(line, prefix) {
+				line = "*" + strings.TrimSpace(strings.ReplaceAll(strings.TrimPrefix(line, prefix), "*", "")) + "*"
+				break
+			}
+		}
 		out = append(out, line)
 	}
 	text := strings.Join(out, "\n")
