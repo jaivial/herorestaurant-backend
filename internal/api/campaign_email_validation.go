@@ -91,10 +91,16 @@ func (s *Server) handleBOCampaignEmailValidation(w http.ResponseWriter, r *http.
 			samples = append(samples, v.it.email+" ("+v.reason+")")
 		}
 		if apply && len(v.it.email) <= 190 {
+			// A suspected typo is never proven invalid: it stays blocked as
+			// pending verification, original reason kept.
+			source, why := "invalid", "email no valido: "+v.reason
+			if v.reason == "dominio con errata" {
+				source, why = "pending_verify", "pendiente de verificar (bloqueado hasta decision): posible errata de dominio"
+			}
 			if _, err := s.db.ExecContext(r.Context(), `
 				INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
-				VALUES (?, 'email', ?, NULLIF(?, 0), ?, 'invalid')`,
-				a.ActiveRestaurantID, v.it.email, v.it.booking, "email no valido: "+v.reason); err == nil {
+				VALUES (?, 'email', ?, NULLIF(?, 0), ?, ?)`,
+				a.ActiveRestaurantID, v.it.email, v.it.booking, why, source); err == nil {
 				stored++
 			}
 		}

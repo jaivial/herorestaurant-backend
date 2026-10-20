@@ -1144,17 +1144,20 @@ func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Req
 	kindWhere := `s.source IN ('unsubscribe', 'legacy')`
 	switch kind {
 	case "email_invalido":
-		kindWhere = `s.source NOT IN ('unsubscribe', 'legacy') AND s.channel = 'email'`
+		kindWhere = `s.source NOT IN ('unsubscribe', 'legacy', 'pending_verify') AND s.channel = 'email'`
+	case "pendiente_verificar":
+		kindWhere = `s.source = 'pending_verify'`
 	case "whatsapp_invalido":
-		kindWhere = `s.source NOT IN ('unsubscribe', 'legacy') AND s.channel = 'whatsapp'`
+		kindWhere = `s.source NOT IN ('unsubscribe', 'legacy', 'pending_verify') AND s.channel = 'whatsapp'`
 	default:
 		kind = "baja"
 	}
 	counts := map[string]int{}
 	for k, w := range map[string]string{
-		"baja":              `source IN ('unsubscribe', 'legacy')`,
-		"email_invalido":    `source NOT IN ('unsubscribe', 'legacy') AND channel = 'email'`,
-		"whatsapp_invalido": `source NOT IN ('unsubscribe', 'legacy') AND channel = 'whatsapp'`,
+		"baja":                `source IN ('unsubscribe', 'legacy')`,
+		"email_invalido":      `source NOT IN ('unsubscribe', 'legacy', 'pending_verify') AND channel = 'email'`,
+		"pendiente_verificar": `source = 'pending_verify'`,
+		"whatsapp_invalido":   `source NOT IN ('unsubscribe', 'legacy', 'pending_verify') AND channel = 'whatsapp'`,
 	} {
 		var n int
 		_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM campaign_suppressions WHERE restaurant_id = ? AND `+w, a.ActiveRestaurantID).Scan(&n)
