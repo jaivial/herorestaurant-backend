@@ -424,13 +424,30 @@ func (s *Server) handleBOCampaignImageUpload(w http.ResponseWriter, r *http.Requ
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Imagen invalida"})
 		return
 	}
-	normalized, err := specialmenuimage.NormalizeToWebPWithLimit(r.Context(), raw, filename, ct, campaignMaxImageBytes)
-	if err != nil {
-		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "No se pudo procesar la imagen"})
-		return
+	// keep=1: PNG/JPEG stored as sent. Email clients such as Outlook desktop do
+	// not render WebP, so icons and photos for the email body use this path.
+	storeExt, storeCT := ".webp", "image/webp"
+	var normalized []byte
+	if r.FormValue("keep") == "1" {
+		detected := http.DetectContentType(raw)
+		if (detected != "image/png" && detected != "image/jpeg") || len(raw) > campaignMaxImageBytes {
+			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Solo PNG o JPG dentro del limite"})
+			return
+		}
+		normalized, storeCT = raw, detected
+		storeExt = ".png"
+		if detected == "image/jpeg" {
+			storeExt = ".jpg"
+		}
+	} else {
+		normalized, err = specialmenuimage.NormalizeToWebPWithLimit(r.Context(), raw, filename, ct, campaignMaxImageBytes)
+		if err != nil {
+			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "No se pudo procesar la imagen"})
+			return
+		}
 	}
-	objectPath := path.Join(strconv.Itoa(a.ActiveRestaurantID), "pictures", "campaigns", strconv.FormatInt(id, 10), fmt.Sprintf("md-%d.webp", time.Now().UTC().UnixMilli()))
-	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalized, "image/webp"); err != nil {
+	objectPath := path.Join(strconv.Itoa(a.ActiveRestaurantID), "pictures", "campaigns", strconv.FormatInt(id, 10), fmt.Sprintf("md-%d%s", time.Now().UTC().UnixMilli(), storeExt))
+	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalized, storeCT); err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo subir la imagen"})
 		return
 	}
