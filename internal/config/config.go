@@ -9,6 +9,17 @@ import (
 	"time"
 )
 
+// Bot output budget (wa_bot_thinking_budget_v1).
+//
+// The bot runs a reasoning model (MiniMax-M3.1-Flash): it answers with a
+// thinking block that can eat the whole output budget on a big prompt, leaving
+// the turn with no text and no tool call. The default leaves room for that
+// reasoning, and BotMaxTokensCeiling is the hard maximum a turn may ask for.
+const (
+	BotDefaultMaxTokens = 4096
+	BotMaxTokensCeiling = 8192
+)
+
 type MySQLConfig struct {
 	Host     string
 	Port     string
@@ -178,7 +189,7 @@ func Load() Config {
 		BotModel:                    getenv("BOT_MINIMAX_MODEL", getenv("MINIMAX_MODEL", "MiniMax-M3.1-Flash")),
 		BotSameDayContactPhone:      strings.TrimSpace(os.Getenv("BOT_SAME_DAY_CONTACT_PHONE")),
 		BotTimeout:                  time.Duration(getenvInt("BOT_MINIMAX_TIMEOUT_SECONDS", 45, 5, 300)) * time.Second,
-		BotMaxTokens:                getenvInt("BOT_MINIMAX_MAX_TOKENS", 1024, 128, 8192),
+		BotMaxTokens:                getenvInt("BOT_MINIMAX_MAX_TOKENS", BotDefaultMaxTokens, 128, BotMaxTokensCeiling),
 		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 8, 1, 20),
 		BotContextSQLitePath:        strings.TrimSpace(getenv("BOT_CONTEXT_SQLITE_PATH", "./data/whatsapp-bot-context.sqlite")),
 		BotPipelineURL:              strings.TrimSpace(getenv("BOT_PIPELINE_URL", "http://127.0.0.1:18195")),

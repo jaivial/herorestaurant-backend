@@ -2837,8 +2837,12 @@ Same auth. Body is the `config` object above (`language_default` must be
 `whatsapp_bot_config.config_json`.
 
 Env knobs (defaults): `BOT_MINIMAX_MODEL` (MiniMax-M3),
-`BOT_MINIMAX_TIMEOUT_SECONDS` (45), `BOT_MINIMAX_MAX_TOKENS` (1024),
+`BOT_MINIMAX_TIMEOUT_SECONDS` (45), `BOT_MINIMAX_MAX_TOKENS` (4096),
 `BOT_MAX_ITERATIONS` (8), `BOT_HISTORY_LIMIT` (20), `BOT_DAILY_TURNS_CAP` (2000).
+
+The output budget leaves room for the reasoning block of the reasoning model:
+a turn that only reasons until the budget runs out is retried once with a
+bigger budget (`wa_bot_thinking_budget_v1`), never dropped.
 
 ### GET /api/admin/bot/settings/{restaurantId}
 
