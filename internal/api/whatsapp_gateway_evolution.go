@@ -469,6 +469,10 @@ type evoUpsertData struct {
 		MentionText []string `json:"mentionText"`
 		ContextInfo struct {
 			MentionedJID string `json:"mentionedJid"`
+			// QuotedParticipant is the author of the quoted message: on a
+			// reply ("quoting" in the WhatsApp UI) it is who wrote the
+			// quoted text, which is how a quote of the bot is recognised.
+			QuotedParticipant string `json:"participant"`
 		} `json:"contextInfo"`
 	} `json:"message"`
 }
@@ -526,12 +530,16 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 			Text:         text,
 			MentionText:  d.Message.MentionText,
 			MentionedJID: strings.TrimSpace(d.Message.ContextInfo.MentionedJID),
-			AudioB64:     botAudioBase64(isAudio, d.Message.Base64),
-			IsAudio:      isAudio,
-			DocumentB64:  documentB64,
-			DocumentName: documentName,
-			Ignored:      ignored,
-			OwnJIDs:      g.ownJIDs,
+			// The author of the quoted message: a reply to the bot is the
+			// other way of addressing it when the mention chip is not
+			// rendered (wa_bot_group_mention_v1).
+			QuotedParticipant: strings.TrimSpace(d.Message.ContextInfo.QuotedParticipant),
+			AudioB64:          botAudioBase64(isAudio, d.Message.Base64),
+			IsAudio:           isAudio,
+			DocumentB64:       documentB64,
+			DocumentName:      documentName,
+			Ignored:           ignored,
+			OwnJIDs:           g.ownJIDs,
 		})
 	}
 
