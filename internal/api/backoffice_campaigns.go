@@ -986,6 +986,17 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			break
 		}
 		for _, p := range batch {
+			// Re-read the do-not-contact list right before each delivery: a
+			// recipient that unsubscribes after the audience snapshot (the run
+			// can last hours at WhatsApp pacing) must never get the message.
+			if sup, supErr := s.loadCampaignSuppressionFilter(ctx, restaurantID); supErr != nil {
+				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, "no se pudo comprobar la lista de bajas", p.id)
+				continue
+			} else if sup.blocked(p.t.Channel, p.t.Target) {
+				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'skipped', error = 'baja' WHERE id = ?`, p.id)
+				slog.Default().Info("campaign.delivery.skipped_unsubscribed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID)
+				continue
+			}
 			sendErr := s.deliverCampaignTo(ctx, restaurantID, c, p.t)
 			if sendErr != nil {
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, truncate(sendErr.Error(), 500), p.id)
