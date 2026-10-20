@@ -11,19 +11,38 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"preactvillacarmen/internal/config"
 )
 
 // botBlock is a single content block in the Anthropic-compatible Messages API
 // that MiniMax exposes. It covers text, tool_use and tool_result blocks.
+//
+// Thinking is the reasoning block of a reasoning model (MiniMax-M3.1-Flash
+// answers with one): it is never shown to the customer and never executed,
+// but it is parsed so a turn that only reasoned can be told apart from a turn
+// that returned nothing at all.
 type botBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   string          `json:"content,omitempty"`
 }
+
+// errBotThinkingBudget marks the failure of a reasoning model that spent the
+// whole output budget thinking and returned no text and no tool call.
+// Coordination id: wa_bot_thinking_budget_v1
+//
+// MiniMax-M3.1-Flash is a reasoning model: on a big prompt (the privileged
+// group merges the bot catalog with the whole forky one, ~18k tokens) the
+// reasoning block can eat the entire max_tokens budget, so the turn ends with
+// stop_reason=max_tokens and nothing to show. The turn is not lost: the same
+// request is retried with a bigger budget.
+var errBotThinkingBudget = errors.New("bot thinking budget exhausted")
 
 // botMessage is one conversation turn sent to the LLM.
 type botMessage struct {
@@ -95,7 +114,7 @@ func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride
 		}
 		model = m
 	}
-	resp, err := s.botAnthropicCall(ctx, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/"), apiKey, model, system, messages, tools)
+	resp, err := s.botAnthropicCall(ctx, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/"), apiKey, model, system, messages, tools, 0)
 	if err == nil {
 		s.recordAIUsage(ctx, restaurantID, aiFeatureWhatsAppBot, botProviderMiniMax, model,
 			helperAnthropicUsage(resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens), false)
@@ -104,10 +123,15 @@ func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride
 }
 
 // botAnthropicCall performs one Anthropic-compatible Messages API request.
-func (s *Server) botAnthropicCall(ctx context.Context, baseURL, apiKey, model, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, error) {
+// maxTokensOverride replaces the configured output budget when it is > 0: the
+// reasoning-budget retry needs more room than the tenant default.
+func (s *Server) botAnthropicCall(ctx context.Context, baseURL, apiKey, model, system string, messages []botMessage, tools []botToolDef, maxTokensOverride int) (botLLMResponse, error) {
 	maxTokens := s.cfg.BotMaxTokens
+	if maxTokensOverride > 0 {
+		maxTokens = maxTokensOverride
+	}
 	if maxTokens <= 0 {
-		maxTokens = 1024
+		maxTokens = config.BotDefaultMaxTokens
 	}
 
 	reqBody := map[string]any{
@@ -164,14 +188,18 @@ func (s *Server) botAnthropicCall(ctx context.Context, baseURL, apiKey, model, s
 		return botLLMResponse{}, fmt.Errorf("minimax bot error: %s", parsed.Error.Type)
 	}
 	kept := parsed.Content[:0]
+	reasoning := 0
 	for _, b := range parsed.Content {
 		if b.Type == "text" || b.Type == "tool_use" {
 			kept = append(kept, b)
 		}
+		reasoning += len(b.Thinking)
 	}
 	parsed.Content = kept
 	if parsed.StopReason == "max_tokens" && len(kept) == 0 {
-		return botLLMResponse{}, errors.New("minimax bot: token limit reached")
+		// The model reasoned until the budget ran out and produced nothing to
+		// deliver: the turn is recoverable with a bigger budget.
+		return botLLMResponse{}, fmt.Errorf("minimax bot: token limit reached after %d reasoning chars: %w", reasoning, errBotThinkingBudget)
 	}
 	return parsed, nil
 }
@@ -180,6 +208,11 @@ func (s *Server) botAnthropicCall(ctx context.Context, baseURL, apiKey, model, s
 // (HTTP error, quota/token limit, timeout, missing key), retries the same turn
 // on the fallback model so the customer always gets an answer.
 // Coordination id: wa_bot_ai_providers_v1
+//
+// A turn that only failed because the reasoning model spent the whole output
+// budget thinking is retried on the same model with a bigger budget before
+// giving up (wa_bot_thinking_budget_v1): the request is never dropped for a
+// reason the tenant can pay to fix.
 func (s *Server) botLLMCallRouted(ctx context.Context, restaurantID int, routing botAIRouting, sessionID, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, string, error) {
 	refs := []string{routing.PrimaryModel}
 	if routing.FallbackModel != "" && routing.FallbackModel != routing.PrimaryModel {
@@ -187,7 +220,12 @@ func (s *Server) botLLMCallRouted(ctx context.Context, restaurantID int, routing
 	}
 	var lastErr error
 	for i, ref := range refs {
-		resp, err := s.botCallModelRef(ctx, restaurantID, ref, sessionID, system, messages, tools)
+		resp, err := s.botCallModelRef(ctx, restaurantID, ref, sessionID, system, messages, tools, 0)
+		if errors.Is(err, errBotThinkingBudget) {
+			budget := s.botThinkingRetryBudget()
+			log.Printf("[bot] checkpoint wa_bot_thinking_budget_v1 restaurant_id=%d model=%s retry_max_tokens=%d", restaurantID, ref, budget)
+			resp, err = s.botCallModelRef(ctx, restaurantID, ref, sessionID, system, messages, tools, budget)
+		}
 		if err == nil {
 			provider, model := botSplitModelRef(ref)
 			s.recordAIUsage(ctx, restaurantID, aiFeatureWhatsAppBot, provider, model,
@@ -203,7 +241,22 @@ func (s *Server) botLLMCallRouted(ctx context.Context, restaurantID int, routing
 	return botLLMResponse{}, "", lastErr
 }
 
-func (s *Server) botCallModelRef(ctx context.Context, restaurantID int, ref, sessionID, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, error) {
+// botThinkingRetryBudget is the output budget of the reasoning-budget retry:
+// double the tenant budget, never above the model ceiling.
+func (s *Server) botThinkingRetryBudget() int {
+	budget := s.cfg.BotMaxTokens
+	if budget <= 0 {
+		budget = config.BotDefaultMaxTokens
+	}
+	if budget*2 > config.BotMaxTokensCeiling {
+		return config.BotMaxTokensCeiling
+	}
+	return budget * 2
+}
+
+// botCallModelRef calls one model reference. maxTokensOverride replaces the
+// configured output budget when it is > 0.
+func (s *Server) botCallModelRef(ctx context.Context, restaurantID int, ref, sessionID, system string, messages []botMessage, tools []botToolDef, maxTokensOverride int) (botLLMResponse, error) {
 	providerID, model := botSplitModelRef(ref)
 	p, ok := botFindProvider(providerID)
 	if !ok {
@@ -214,7 +267,7 @@ func (s *Server) botCallModelRef(ctx context.Context, restaurantID int, ref, ses
 		return botLLMResponse{}, fmt.Errorf("%s api key not configured", p.ID)
 	}
 	if p.Wire == "openai" {
-		return s.botOpenAICall(ctx, p, key, model, sessionID, system, messages, tools)
+		return s.botOpenAICall(ctx, p, key, model, sessionID, system, messages, tools, maxTokensOverride)
 	}
-	return s.botAnthropicCall(ctx, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/"), key, model, system, messages, tools)
+	return s.botAnthropicCall(ctx, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/"), key, model, system, messages, tools, maxTokensOverride)
 }

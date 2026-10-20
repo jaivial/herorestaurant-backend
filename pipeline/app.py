@@ -42,7 +42,10 @@ logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
 OPENCODE_GO_BASE = "https://opencode.ai/zen/go/v1"
-MINIMAX_ANTHROPIC_BASE = "https://api.minimax.io/anthropic"
+# The Anthropic-compatible Messages endpoint of MiniMax. The base must carry
+# the /v1 segment: with the bare /anthropic the request lands on a path that
+# does not exist and the disambiguation dies with a 404 (wa_bot_dspy_pipeline_v1).
+MINIMAX_ANTHROPIC_BASE = "https://api.minimax.io/anthropic/v1"
 
 # Thresholds (one place, easy to tune from real traffic in the graph tab).
 CONFIDENCE_MIN = 0.55
@@ -538,7 +541,9 @@ class TurnRequest(BaseModel):
 
 
 def build_lm(spec: LMSpec, session_id: str) -> dspy.LM | None:
-    if not spec.api_key:
+    # A spec without a model has no model id: building the LM raises and the
+    # whole /decide answers 500, so the turn loses its decision.
+    if not spec.api_key or not spec.model:
         return None
     if spec.provider == "opencode-go":
         # ChainOfThought already reasons in the visible "reasoning" field, so the
@@ -548,7 +553,9 @@ def build_lm(spec: LMSpec, session_id: str) -> dspy.LM | None:
                        extra_headers={"x-opencode-session": session_id}, cache=False, num_retries=0, timeout=8,
                        reasoning_effort="none")
     if spec.provider == "minimax":
-        return dspy.LM("anthropic/" + spec.model, api_base=MINIMAX_ANTHROPIC_BASE, api_key=spec.api_key, max_tokens=1000,
+        # The model reasons before answering, so the budget must leave room for
+        # the thinking block: with a tight one the answer never arrives.
+        return dspy.LM("anthropic/" + spec.model, api_base=MINIMAX_ANTHROPIC_BASE, api_key=spec.api_key, max_tokens=2048,
                        cache=False, num_retries=0, timeout=8)
     return None
 

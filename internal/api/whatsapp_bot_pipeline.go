@@ -165,6 +165,13 @@ func (s *Server) botRunPipeline(ctx context.Context, restaurantID int, msg botWe
 	lms := make([]botPipelineLM, 0, 2)
 	for _, ref := range []string{routing.PrimaryModel, routing.FallbackModel} {
 		provider, model := botSplitModelRef(ref)
+		// A reference without a model ("minimax/") is not a model: sending it
+		// to the pipeline makes it build an LM with no model id and answer
+		// 500, killing the decision for the whole turn.
+		// Coordination id: wa_bot_dspy_pipeline_v1
+		if model == "" {
+			continue
+		}
 		if key := s.botProviderKey(ctx, restaurantID, provider); key != "" {
 			lms = append(lms, botPipelineLM{Provider: provider, Model: model, APIKey: key})
 		}
