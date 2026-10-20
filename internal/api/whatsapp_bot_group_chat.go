@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"regexp"
 	"strings"
 	"sync"
@@ -70,7 +69,7 @@ func (s *Server) botGroupOwnJIDs(ctx context.Context, restaurantID int) []string
 	if err != nil || !found {
 		return nil
 	}
-	if v := digitsOnly(rec.ConnectedPhone); v != "" {
+	if v := botWhatsappIDDigits(rec.ConnectedPhone); v != "" {
 		return []string{v}
 	}
 	return nil
@@ -82,12 +81,12 @@ func (s *Server) botGroupOwnJIDs(ctx context.Context, restaurantID int) []string
 func botGroupMentionsBot(mentions []string, quotedFrom []string, text string, ownedJIDs []string) bool {
 	owned := make(map[string]struct{}, len(ownedJIDs))
 	for _, j := range ownedJIDs {
-		if d := digitsOnly(j); d != "" {
+		if d := botWhatsappIDDigits(j); d != "" {
 			owned[d] = struct{}{}
 		}
 	}
 	match := func(candidate string) bool {
-		d := digitsOnly(candidate)
+		d := botWhatsappIDDigits(candidate)
 		if d == "" {
 			return false
 		}
@@ -256,6 +255,12 @@ func botOwnJIDsRemember(restaurantID int, jids []string) {
 //   - the provider holds the LID (the group owner / participants[].id), and the
 //     phone form of the same member (participants[].phoneNumber).
 //
+// The phone that ties both together is taken from the PROVIDER (the ownerJid
+// of the instance), because the stored copy is written from a provider payload
+// that can carry Baileys' device suffix ("34960255536:28@s.whatsapp.net"):
+// glued to the number, it no longer matches the participant and the bot goes
+// silent in its own group.
+//
 // An earlier version returned the database value and stopped, so on a
 // LID-addressed instance the mention (a LID) never matched the stored phone and
 // the bot stayed silent in its own group. Failures are not fatal: the raw
@@ -277,26 +282,26 @@ func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []s
 		botOwnJIDsRemember(restaurantID, own)
 		return own
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	_, code, raw, err := s.uazapiJSONRequest(reqCtx, strings.TrimRight(evo.baseURL, "/")+"/group/fetchAllGroups/"+evo.instanceName+"?getParticipants=true", http.MethodGet, map[string]string{"apikey": evo.apiKey}, nil)
-	if err != nil || code < 200 || code >= 300 {
+	// The number the instance really uses, asked from the instance itself.
+	phone := botProviderInstanceOwnerPhone(ctx, evo.baseURL, evo.apiKey, evo.instanceName)
+	if phone == "" {
+		// Provider down (or an instance it does not know): the database copy
+		// is the fallback.
+		for _, v := range own {
+			if d := botWhatsappIDDigits(v); d != "" {
+				phone = d
+				break
+			}
+		}
+	}
+	raw := botProviderFetchAllGroups(ctx, evo.baseURL, evo.apiKey, evo.instanceName)
+	if len(raw) == 0 {
 		// Provider down: fall back to the phone and cache it, so a transient
 		// outage costs one attempt per TTL instead of one per message.
 		if len(own) > 0 {
 			botOwnJIDsRemember(restaurantID, own)
 		}
 		return own
-	}
-	// The bot's phone is the key used to find its LID among the participants;
-	// the database value is authoritative, so prefer it and fall back to the
-	// first stored number when the row has none.
-	phone := ""
-	for _, v := range own {
-		if d := digitsOnly(v); d != "" {
-			phone = v
-			break
-		}
 	}
 	// The LID is the form a mention actually uses, so it goes first, then the
 	// phone forms as a fallback.
@@ -319,20 +324,21 @@ func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []s
 // expanded, so a mention of any other member cannot trigger the bot. The
 // group's owner/subjectOwner are deliberately NOT used: they identify the human
 // who created the group, not the bot.
-func botGroupOwnJIDsFromGroups(raw, phone string) []string {
+func botGroupOwnJIDsFromGroups(raw []byte, phone string) []string {
 	var groups []struct {
 		Participants []struct {
 			ID          string `json:"id"`
 			PhoneNumber string `json:"phoneNumber"`
+			Jid         string `json:"jid"`
 		} `json:"participants"`
 	}
-	if err := json.Unmarshal([]byte(raw), &groups); err != nil {
+	if err := json.Unmarshal(raw, &groups); err != nil {
 		return nil
 	}
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(v string) {
-		if d := digitsOnly(v); d != "" {
+		if d := botWhatsappIDDigits(v); d != "" {
 			if _, dup := seen[d]; dup {
 				return
 			}
@@ -340,18 +346,25 @@ func botGroupOwnJIDsFromGroups(raw, phone string) []string {
 			out = append(out, d)
 		}
 	}
-	botPhone := digitsOnly(phone)
+	botPhone := botWhatsappIDDigits(phone)
+	if botPhone == "" {
+		return nil
+	}
 	for _, g := range groups {
-		if botPhone == "" {
-			continue
-		}
 		for _, p := range g.Participants {
-			if digitsOnly(p.PhoneNumber) == botPhone {
-				// Same member: register both identifiers so a mention in
-				// either form matches.
-				add(p.PhoneNumber)
-				add(p.ID)
+			// The phone form: however the provider spells the member's number.
+			memberPhone := botGroupPhoneDigits(p.PhoneNumber)
+			if memberPhone == "" {
+				memberPhone = botGroupPhoneDigits(p.Jid)
 			}
+			if memberPhone != botPhone {
+				continue
+			}
+			// Same member: register both identifiers so a mention in
+			// either form matches.
+			add(p.PhoneNumber)
+			add(p.Jid)
+			add(p.ID)
 		}
 		// No other participant is registered: the group owner is the human
 		// who CREATED the group, not the bot, and registering every member
