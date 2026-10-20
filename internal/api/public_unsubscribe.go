@@ -109,7 +109,11 @@ func (s *Server) handlePublicUnsubscribe(w http.ResponseWriter, r *http.Request)
 	}
 	stored := 0
 	if ok {
-		stored = s.campaignUnsubscribeStore(r, restaurantID, in.BookingID, in.Channel, target,
+		// A manual baja silences the whole contact: always both channels,
+		// whatever channel the link carried. The counterpart contact comes from
+		// the booking (or the newest booking with that email/phone).
+		target = s.campaignUnsubscribeExpand(r.Context(), restaurantID, target)
+		stored = s.campaignUnsubscribeStore(r, restaurantID, in.BookingID, "all", target,
 			campaignUnsubscribeReason(in.Reason))
 	} else {
 		slog.Default().Info("campaign.unsubscribe.unknown_booking", "coord_id", campaignUnsubscribeCoordID,
@@ -287,4 +291,35 @@ func campaignUnsubscribeBookingID(raw string) int64 {
 		return 0
 	}
 	return id
+}
+
+// campaignUnsubscribeExpand fills the missing channel of a contact: a target
+// known only by e-mail (or only by phone) gets the other one from the newest
+// booking that carries it, so a baja always covers e-mail and WhatsApp.
+func (s *Server) campaignUnsubscribeExpand(ctx context.Context, restaurantID int, t campaignUnsubscribeTarget) campaignUnsubscribeTarget {
+	if restaurantID <= 0 || (t.Email != "" && t.Phone != "") {
+		return t
+	}
+	var email, phone string
+	var err error
+	if t.Email != "" {
+		err = s.db.QueryRowContext(ctx, `
+			SELECT COALESCE(TRIM(contact_phone), '') FROM bookings
+			WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ? AND TRIM(COALESCE(contact_phone, '')) <> ''
+			ORDER BY id DESC LIMIT 1`, restaurantID, strings.ToLower(t.Email)).Scan(&phone)
+		if err == nil {
+			t.Phone = normalizeWhatsAppNumber(phone)
+		}
+	} else if t.Phone != "" {
+		national, digits := botPhoneVariants(t.Phone)
+		err = s.db.QueryRowContext(ctx, `
+			SELECT LOWER(COALESCE(TRIM(contact_email), '')) FROM bookings
+			WHERE restaurant_id = ? AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
+			  AND TRIM(COALESCE(contact_email, '')) LIKE '%@%'
+			ORDER BY id DESC LIMIT 1`, restaurantID, national, digits, digits).Scan(&email)
+		if err == nil {
+			t.Email = email
+		}
+	}
+	return t
 }

@@ -55,6 +55,12 @@ const campaignBookingsAudienceQuery = `
 // campaignSuppressionQuery is every do-not-contact target of a restaurant plus
 // the legacy invalid_emails / invalid_phones / no_marketing rows. The legacy
 // tables do not share one collation, so every branch is cast to the same one.
+//
+// Product rule (Jaime, 2026-10-20): an INVALID e-mail blocks only e-mail, an
+// INVALID WhatsApp number blocks only WhatsApp (source invalid/bounce, one row
+// per channel). A manual BAJA (source unsubscribe/legacy) blocks BOTH channels:
+// the last two UNION branches expand every baja row to the e-mail and phone of
+// its booking, so even a single-channel baja row silences the whole contact.
 const campaignSuppressionQuery = `
 	SELECT channel, target FROM (
 		SELECT channel, CONVERT(target USING utf8mb4) COLLATE utf8mb4_unicode_ci AS target
@@ -71,6 +77,14 @@ const campaignSuppressionQuery = `
 		UNION ALL
 		SELECT 'email', CONVERT(LOWER(TRIM(contact_email)) USING utf8mb4) COLLATE utf8mb4_unicode_ci
 		FROM no_marketing WHERE TRIM(COALESCE(contact_email, '')) <> ''
+		UNION ALL
+		SELECT 'email', CONVERT(LOWER(TRIM(b.contact_email)) USING utf8mb4) COLLATE utf8mb4_unicode_ci
+		FROM campaign_suppressions s JOIN bookings b ON b.id = s.booking_id AND b.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.source IN ('unsubscribe', 'legacy') AND TRIM(COALESCE(b.contact_email, '')) <> ''
+		UNION ALL
+		SELECT 'whatsapp', CONVERT(TRIM(b.contact_phone) USING utf8mb4) COLLATE utf8mb4_unicode_ci
+		FROM campaign_suppressions s JOIN bookings b ON b.id = s.booking_id AND b.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.source IN ('unsubscribe', 'legacy') AND TRIM(COALESCE(b.contact_phone, '')) <> ''
 	) suppressed`
 
 // campaignChannelPause turns a per-minute rate into the delay between sends,
@@ -557,7 +571,7 @@ func (f campaignSuppressionFilter) blocked(channel, target string) bool {
 // the legacy send scripts used them globally).
 func (s *Server) loadCampaignSuppressionFilter(ctx context.Context, restaurantID int) (campaignSuppressionFilter, error) {
 	f := campaignSuppressionFilter{emails: map[string]bool{}, phones: map[string]bool{}}
-	rows, err := s.db.QueryContext(ctx, campaignSuppressionQuery, restaurantID)
+	rows, err := s.db.QueryContext(ctx, campaignSuppressionQuery, restaurantID, restaurantID, restaurantID)
 	if err != nil {
 		return f, err
 	}
@@ -600,6 +614,8 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 		if channel == "whatsapp" {
 			target = normalizeWhatsAppNumber(target)
 		} else if !strings.Contains(target, "@") {
+			return
+		} else if ok, _ := campaignEmailLooksDeliverable(target); !ok {
 			return
 		}
 		if target == "" {
@@ -996,6 +1012,10 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			break
 		}
 		for _, p := range batch {
+			if p.t.Channel == "email" && s.campaignEmailBreakerTripped(ctx, restaurantID, campaignID, c.CoordID) {
+				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'paused', error = 'corte por rebotes' WHERE id = ? AND status = 'pending'`, p.id)
+				continue
+			}
 			// Re-read the do-not-contact list right before each delivery: a
 			// recipient that unsubscribes after the audience snapshot (the run
 			// can last hours at WhatsApp pacing) must never get the message.
@@ -1009,7 +1029,18 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			}
 			sendErr := s.deliverCampaignTo(ctx, restaurantID, c, p.t)
 			if sendErr != nil {
+				if p.t.Channel == "email" {
+					// SMTP rejection at send time (different evidence than an IMAP
+					// NDR): only a permanent bad-address reply invalidates the
+					// address; any other failure just stays a failed row.
+					if cls := campaignSMTPErrorClass(sendErr.Error()); cls == "hard" {
+						s.campaignSuppressBounce(ctx, restaurantID, campaignBounceEvent{Address: strings.ToLower(strings.TrimSpace(p.t.Target)), Status: "5.1.1", Class: "hard"})
+					}
+				}
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, truncate(sendErr.Error(), 500), p.id)
+				if p.t.Channel == "email" {
+					s.scheduleCampaignEmailRetry(ctx, p.id, sendErr.Error())
+				}
 				slog.Default().Warn("campaign.delivery.failed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID, "err", sendErr.Error())
 			} else {
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = NOW() WHERE id = ?`, p.id)
@@ -1118,10 +1149,35 @@ func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Req
 	}
 	offset := (page - 1) * campaignUnsubscribedPageSize
 
+	// kind: baja (manual opt-out, blocks both channels) | email_invalido |
+	// whatsapp_invalido (technical, block only their channel). Default: baja.
+	kind := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("kind")))
+	kindWhere := `s.source IN ('unsubscribe', 'legacy')`
+	switch kind {
+	case "email_invalido":
+		kindWhere = `s.source NOT IN ('unsubscribe', 'legacy', 'pending_verify') AND s.channel = 'email'`
+	case "pendiente_verificar":
+		kindWhere = `s.source = 'pending_verify'`
+	case "whatsapp_invalido":
+		kindWhere = `s.source NOT IN ('unsubscribe', 'legacy', 'pending_verify') AND s.channel = 'whatsapp'`
+	default:
+		kind = "baja"
+	}
+	counts := map[string]int{}
+	for k, w := range map[string]string{
+		"baja":                `source IN ('unsubscribe', 'legacy')`,
+		"email_invalido":      `source NOT IN ('unsubscribe', 'legacy', 'pending_verify') AND channel = 'email'`,
+		"pendiente_verificar": `source = 'pending_verify'`,
+		"whatsapp_invalido":   `source NOT IN ('unsubscribe', 'legacy', 'pending_verify') AND channel = 'whatsapp'`,
+	} {
+		var n int
+		_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM campaign_suppressions WHERE restaurant_id = ? AND `+w, a.ActiveRestaurantID).Scan(&n)
+		counts[k] = n
+	}
 	var total int
 	if err := s.db.QueryRowContext(r.Context(), `
-		SELECT COUNT(*) FROM campaign_suppressions
-		WHERE restaurant_id = ? AND booking_id > 0
+		SELECT COUNT(*) FROM campaign_suppressions s
+		WHERE s.restaurant_id = ? AND `+kindWhere+`
 	`, a.ActiveRestaurantID).Scan(&total); err != nil {
 		slog.Default().Warn("campaign.unsubscribed.count_failed", "coord_id", campaignUnsubscribedCoordID,
 			"restaurant_id", a.ActiveRestaurantID, "err", err.Error())
@@ -1140,7 +1196,7 @@ func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Req
 		       COALESCE(b.party_size, 0)                              AS party_size
 		FROM campaign_suppressions s
 		LEFT JOIN bookings b ON b.id = s.booking_id AND b.restaurant_id = s.restaurant_id
-		WHERE s.restaurant_id = ? AND s.booking_id > 0
+		WHERE s.restaurant_id = ? AND `+kindWhere+`
 		ORDER BY s.created_at DESC, s.id DESC
 		LIMIT ? OFFSET ?
 	`, a.ActiveRestaurantID, campaignUnsubscribedPageSize, offset)
@@ -1195,6 +1251,8 @@ func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Req
 		"page_size":   campaignUnsubscribedPageSize,
 		"total":       total,
 		"total_pages": totalPages,
+		"kind":        kind,
+		"counts":      counts,
 	})
 }
 

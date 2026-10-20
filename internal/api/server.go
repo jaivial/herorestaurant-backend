@@ -120,6 +120,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	s.instatic.StartSupervisor()
 	s.siteBuilderHub = newSiteBuilderWSHub()
 	go s.runBOFichajeAutoCutLoop()
+	go s.runCampaignBounceLoop(context.Background()) // camp_bounce_sync_v1
 	go s.runPreShiftReminderLoop(context.Background())
 	go s.runStockDigestLoop(context.Background())
 	go s.runBookingReminderLoop(context.Background())
@@ -759,6 +760,8 @@ func (s *Server) Routes() http.Handler {
 		campaignsGate := s.requireBOCapability(boCapabilityCampanas)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas", s.handleBOCampaignsList)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/unsubscribed", s.handleBOCampaignUnsubscribed)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/email-validation", s.handleBOCampaignEmailValidation)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/bounces/sync", s.handleBOCampaignBounceSync)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas", s.handleBOCampaignCreate)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/preview", s.handleBOCampaignPreview)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/template", s.handleBOCampaignTemplate)
