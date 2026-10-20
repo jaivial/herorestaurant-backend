@@ -186,13 +186,15 @@ func campaignPickCTAs(buttons []string) (cta, rest []string) {
 		switch {
 		case strings.Contains(u, "date="):
 			return 0
-		case strings.Contains(u, "/menu/"):
+		case strings.Contains(u, "grupos"):
 			return 1
+		case strings.Contains(u, "/menu/"):
+			return 2
 		}
-		return 2
+		return 3
 	}
 	picked := map[int]bool{}
-	for r := 0; r <= 2 && len(cta) < campaignWAMaxCTA; r++ {
+	for r := 0; r <= 3 && len(cta) < campaignWAMaxCTA; r++ {
 		for i, b := range buttons {
 			if len(cta) < campaignWAMaxCTA && !picked[i] && rank(b) == r {
 				cta = append(cta, b)
