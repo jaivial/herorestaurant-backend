@@ -68,6 +68,9 @@ func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 			for _, step := range ad.Layout.Steps {
 				if step.ID == stepID {
 					canvas = step.Canvas
+					if r.URL.Query().Get("card") == "1" {
+						canvas = step.CardCanvas
+					}
 					break
 				}
 			}
