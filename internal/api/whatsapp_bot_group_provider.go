@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -80,6 +81,60 @@ func botProviderFetchAllGroupsWithError(ctx context.Context, baseURL, apiKey, in
 // errBotProviderUnavailable is returned when the provider cannot be reached
 // or the gateway does not speak its API.
 var errBotProviderUnavailable = errors.New("el proveedor de WhatsApp no esta disponible")
+
+// botProviderInstanceOwnerPhone returns the phone number of the number linked
+// to an instance, as the provider reports it.
+//
+// The instance is the authority on which number it is, so this is preferred
+// over the copy stored in the database: the stored copy is written from a
+// provider payload that can carry Baileys' device suffix
+// ("34960255536:28@s.whatsapp.net"), and a number with the device glued to
+// it matches nothing.
+//
+// It returns "" when the provider cannot be reached or does not know the
+// instance.
+func botProviderInstanceOwnerPhone(ctx context.Context, baseURL, apiKey, instanceName string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	instanceName = strings.TrimSpace(instanceName)
+	if baseURL == "" || instanceName == "" {
+		return ""
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL+"/instance/fetchInstances", nil)
+	if err != nil {
+		return ""
+	}
+	if k := strings.TrimSpace(apiKey); k != "" {
+		req.Header.Set("apikey", k)
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return ""
+	}
+	var instances []struct {
+		InstanceName string `json:"instanceName"`
+		OwnerJID     string `json:"ownerJid"`
+	}
+	if json.Unmarshal(buf, &instances) != nil {
+		return ""
+	}
+	for _, in := range instances {
+		if strings.TrimSpace(in.InstanceName) != instanceName {
+			continue
+		}
+		return botWhatsappIDDigits(in.OwnerJID)
+	}
+	return ""
+}
 
 // botProviderFindChats asks the provider for the conversations of the
 // instance, with their display names.

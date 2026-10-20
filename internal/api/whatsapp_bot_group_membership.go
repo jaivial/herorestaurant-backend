@@ -146,12 +146,16 @@ func botGroupMemberPhonesFromPayload(raw []byte, groupJID string) botGroupMember
 // botGroupPhoneDigits returns the digits of a phone-number identity
 // ("34692747052@s.whatsapp.net" -> "34692747052"). It refuses anything that is
 // not a phone jid: the digits of an opaque LID are not a phone number.
+//
+// The device suffix Baileys appends is ignored, like in the LID form: the
+// provider writes its own number as "34960255536:28@s.whatsapp.net" and the
+// same member as "34960255536@s.whatsapp.net" must be ONE key.
 func botGroupPhoneDigits(v string) string {
 	v = strings.TrimSpace(v)
 	if v == "" || !strings.HasSuffix(v, "@s.whatsapp.net") {
 		return ""
 	}
-	return digitsOnly(strings.TrimSuffix(v, "@s.whatsapp.net"))
+	return botWhatsappIDDigits(v)
 }
 
 // botGroupLidDigits returns the digits of an opaque LID identity
@@ -162,19 +166,7 @@ func botGroupPhoneDigits(v string) string {
 // same member would be registered under two keys and a match would depend on
 // which form the provider used that day.
 func botGroupLidDigits(v string) string {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return ""
-	}
-	if at := strings.Index(v, "@"); at > 0 {
-		head := v[:at]
-		if colon := strings.LastIndex(head, ":"); colon > 0 {
-			// Only strip a trailing ":<digits>" device suffix.
-			if _, err := strconv.Atoi(head[colon+1:]); err == nil {
-				v = head[:colon] + v[at:]
-			}
-		}
-	}
+	v = botJIDStripDeviceSuffix(v)
 	if !strings.HasSuffix(v, "@lid") {
 		return ""
 	}
