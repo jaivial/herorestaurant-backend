@@ -117,8 +117,18 @@ func botForkyToolDefs() []botToolDef {
 // is a real bo_sessions row owned by the deployment's superadmin, bound to
 // the restaurant, so the replay is authorized by the same code that
 // authorizes a human. See whatsapp_bot_service_session.go.
+// botPrivilegedTurnKey marks a context that belongs to a WhatsApp bot turn (a
+// model acting on a chat message, not a human in the panel).
+type botPrivilegedTurnKey struct{}
+
+func isBotPrivilegedTurn(ctx context.Context) bool {
+	v, _ := ctx.Value(botPrivilegedTurnKey{}).(bool)
+	return v
+}
+
 func (s *Server) botPrivilegedForkyContext(ctx context.Context, restaurantID int) context.Context {
 	ctx = withBOAuth(ctx, boAuth{Role: "root", User: boUser{Role: "root"}})
+	ctx = context.WithValue(ctx, botPrivilegedTurnKey{}, true)
 	if token, err := s.botServiceSession(ctx, restaurantID); err == nil && token != "" {
 		ctx = botServiceSessionTokenForContext(ctx, token)
 	}

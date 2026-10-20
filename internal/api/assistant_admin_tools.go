@@ -341,6 +341,14 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	if op.Name == "" {
 		return "", fmt.Errorf("operación desconocida para este usuario: %s (usa admin_catalog)", in.Name)
 	}
+	// A bot turn is a model acting on a chat message: it may read through the
+	// catalogue, but a generic panel write is refused here, in the server. The
+	// confirmation token is issued to and redeemed by the same model, so it is
+	// not a human decision; the dedicated bot tools carry their own checks.
+	if op.Write && isBotPrivilegedTurn(ctx) {
+		log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d", rid)
+		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call). Si lo pedido tiene una herramienta dedicada, úsala; si no, di al grupo que esa operación no está soportada y que debe hacerse en el panel. No busques otra vía."}), nil
+	}
 	if op.Write {
 		if !in.Confirmed {
 			return s.assistantRequireConfirmation(rid, "admin_call", input)
