@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -50,8 +51,8 @@ func (s *Server) botProviderChats(ctx context.Context, restaurantID int) ([]waCh
 	out := make([]waChat, 0, 32)
 
 	// Groups: /group/fetchAllGroups gives the subject of each one.
-	groupsRaw := botProviderFetchAllGroups(ctx, egw.baseURL, egw.apiKey, egw.instanceName)
-	if len(groupsRaw) > 0 {
+	groupsRaw, groupsErr := botProviderFetchAllGroupsWithError(ctx, egw.baseURL, egw.apiKey, egw.instanceName)
+	if groupsErr == nil && len(groupsRaw) > 0 {
 		var groups []struct {
 			ID      string `json:"id"`
 			Subject string `json:"subject"`
@@ -73,8 +74,8 @@ func (s *Server) botProviderChats(ctx context.Context, restaurantID int) ([]waCh
 	}
 
 	// One-to-one chats: /chat/findChats returns every conversation.
-	chatsRaw, err := botProviderFindChats(ctx, egw.baseURL, egw.apiKey, egw.instanceName)
-	if err == nil && len(chatsRaw) > 0 {
+	chatsRaw, chatsErr := botProviderFindChats(ctx, egw.baseURL, egw.apiKey, egw.instanceName)
+	if chatsErr == nil && len(chatsRaw) > 0 {
 		var chats []struct {
 			RemoteJID string `json:"remoteJid"`
 			Name      string `json:"name"`
@@ -100,6 +101,18 @@ func (s *Server) botProviderChats(ctx context.Context, restaurantID int) ([]waCh
 				out = append(out, waChat{JID: jid, Name: name, Kind: "contact"})
 			}
 		}
+	}
+
+	// A provider that is down, unauthorized or answering nonsense must not
+	// look like "this account has no conversations": the backoffice would
+	// show an empty list and the operator would think the selection is
+	// broken. When BOTH calls failed there is nothing to show, so the error
+	// is reported and the UI says it could not read the WhatsApp.
+	//
+	// When only one of them failed the other one still gave a usable list,
+	// so it is returned as it is.
+	if groupsErr != nil && chatsErr != nil {
+		return nil, fmt.Errorf("no se pudo leer el WhatsApp conectado: %w", chatsErr)
 	}
 
 	return out, nil
