@@ -58,14 +58,37 @@ func botPrivilegedGroupSet(jids []string) map[string]struct{} {
 }
 
 // botGroupIsPrivileged reports whether the chat JID belongs to a configured
-// privileged group. An empty config is always false: the feature is off.
-func (s *Server) botGroupIsPrivileged(jid string) bool {
+// privileged conversation. An empty config is always false: the feature is
+// off.
+//
+// There are two ways to be privileged:
+//
+//   - the conversation was SELECTED in the backoffice
+//     (tenant.PrivilegedContacts): a group or a one-to-one contact;
+//   - the group is listed in BOT_PRIVILEGED_GROUP_JIDS (the global env) or
+//     in tenant.PrivilegedGroupJIDs (the per-restaurant list).
+//
+// The env list still applies, so an installation that has not been migrated
+// keeps working; the tenant lists only ever ADD conversations.
+func (s *Server) botGroupIsPrivileged(jid string, tenant botTenantConfig) bool {
 	jid = strings.TrimSpace(jid)
-	if jid == "" || len(s.cfg.BotPrivilegedGroupJIDs) == 0 {
+	if jid == "" {
 		return false
 	}
-	_, ok := botPrivilegedGroupSet(s.cfg.BotPrivilegedGroupJIDs)[jid]
-	return ok
+	if _, ok := botPrivilegedContactJIDs(tenant)[jid]; ok {
+		return true
+	}
+	if len(s.cfg.BotPrivilegedGroupJIDs) > 0 {
+		if _, ok := botPrivilegedGroupSet(s.cfg.BotPrivilegedGroupJIDs)[jid]; ok {
+			return true
+		}
+	}
+	if len(tenant.PrivilegedGroupJIDs) > 0 {
+		if _, ok := botPrivilegedGroupSet(tenant.PrivilegedGroupJIDs)[jid]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // botForkyToolDefs converts the full assistant (forky) tool registry into the
@@ -86,8 +109,20 @@ func botForkyToolDefs() []botToolDef {
 // even with an empty SectionAccess list). The auth is synthetic but the
 // execution path is the real one: assistantExecuteTool authorizes and writes
 // the audit row exactly as it does for backoffice sessions.
-func botPrivilegedForkyContext(ctx context.Context) context.Context {
-	return withBOAuth(ctx, boAuth{Role: "root", User: boUser{Role: "root"}})
+//
+// The context ALSO carries the panel service session, so admin_call can
+// replay a panel route through the real router: those routes authenticate
+// on a session cookie, and without a session the whole admin catalogue was
+// unreachable from the bot ("sesion del panel no disponible"). The session
+// is a real bo_sessions row owned by the deployment's superadmin, bound to
+// the restaurant, so the replay is authorized by the same code that
+// authorizes a human. See whatsapp_bot_service_session.go.
+func (s *Server) botPrivilegedForkyContext(ctx context.Context, restaurantID int) context.Context {
+	ctx = withBOAuth(ctx, boAuth{Role: "root", User: boUser{Role: "root"}})
+	if token, err := s.botServiceSession(ctx, restaurantID); err == nil && token != "" {
+		ctx = botServiceSessionTokenForContext(ctx, token)
+	}
+	return ctx
 }
 
 // botDocumentTurnNote extracts the inline document of a privileged turn and

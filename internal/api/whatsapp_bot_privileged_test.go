@@ -37,7 +37,7 @@ func TestBotGroupIsPrivileged(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Server{cfg: config.Config{BotPrivilegedGroupJIDs: tt.jids}}
-			if got := s.botGroupIsPrivileged(tt.in); got != tt.want {
+			if got := s.botGroupIsPrivileged(tt.in, botTenantConfig{}); got != tt.want {
 				t.Errorf("botGroupIsPrivileged(%q) with %v = %v, want %v", tt.in, tt.jids, got, tt.want)
 			}
 			// The set builder must agree with the server lookup.

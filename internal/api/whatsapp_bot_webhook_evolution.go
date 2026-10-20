@@ -70,10 +70,20 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 	// is that a privileged group does not have to BE the management group.
 	// Everything else is dropped with a checkpoint log (wa_bot_group_mention_v1)
 	// so a noisy group never reaches the LLM.
+	// The tenant config is needed both by the group gate and by the message
+	// that follows it, so it is loaded once, before the branch.
+	tenant := s.loadBotTenantConfig(r.Context(), restaurantID)
+	// isPrivileged is computed ONCE and reused below: computing it twice
+	// would let the gate and the turn disagree if one of them changed.
+	//
+	// The conversation is matched by BOTH of its identities: the provider
+	// lists a 1:1 chat by WhatsApp's opaque @lid and delivers the message
+	// addressed to the phone number, so a selection made on one form has to
+	// match the other.
+	// Coordination id: wa_bot_privileged_contacts_v1
+	isPrivileged := botConversationIsPrivileged(s, tenant, in.ChatJID, in.ChatJIDAlt)
 	if botGroupIsGroupJID(in.ChatJID) {
-		tenant := s.loadBotTenantConfig(r.Context(), restaurantID)
 		isManagement := s.botGroupIsManagementGroup(r.Context(), restaurantID, in.ChatJID, tenant)
-		isPrivileged := s.botGroupIsPrivileged(in.ChatJID)
 		if !isManagement && !isPrivileged {
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "skipped_not_management_group")
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_management_group"})
@@ -88,12 +98,34 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_mentioned"})
 			return
 		}
+		// Membership gate (wa_bot_group_membership_v1): the privileged catalog is
+		// the whole backoffice with a root auth, so the sender must be a member
+		// of the group. The provider's participant list is the source of truth
+		// and the check is fail-closed: when membership cannot be proven, the
+		// turn is served as an ordinary group turn, never as a privileged one.
+		//
+		// Only the privileged path is gated this way. The management group keeps
+		// its current behaviour (the forwarded request is the point there).
+		if isPrivileged && botPrivilegedConversationIsGroup(tenant, in.ChatJID) &&
+			!s.botGroupSenderIsMember(r.Context(), restaurantID, in.ChatJID, in.ParticipantJID) {
+			log.Printf("[bot] checkpoint wa_bot_group_membership_v1 restaurant_id=%d group=%s participant=%s decision=skipped_not_group_member", restaurantID, in.ChatJID, in.ParticipantJID)
+			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "skipped_not_group_member")
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_group_member"})
+			return
+		}
 		if isPrivileged {
 			log.Printf("[bot] checkpoint wa_bot_privileged_group_v1 restaurant_id=%d group=%s participant=%s decision=accepted_privileged", restaurantID, in.ChatJID, in.ParticipantJID)
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted_privileged")
 		} else {
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted")
 		}
+	} else if isPrivileged {
+		// A privileged one-to-one contact (wa_bot_privileged_contacts_v1): the
+		// conversation itself was selected in the backoffice, so there is no
+		// membership to check and no mention to demand: it is that person
+		// writing to the bot.
+		log.Printf("[bot] checkpoint wa_bot_privileged_contacts_v1 restaurant_id=%d chat=%s decision=accepted_privileged_contact", restaurantID, in.ChatJID)
+		botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted_privileged_contact")
 	}
 
 	if in.Ignored {
@@ -126,7 +158,9 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		ParticipantJID: in.ParticipantJID,
 		Mentioned:      in.Mentioned,
 		// Privileged group (wa_bot_privileged_group_v1): full forky registry.
-		PrivilegedGroup: s.botGroupIsPrivileged(in.ChatJID),
+		// It reuses the value computed at the gate: computing it twice would
+		// let the gate and the turn disagree if the config changed in between.
+		PrivilegedGroup: isPrivileged,
 		DocumentB64:     in.DocumentB64,
 		DocumentName:    in.DocumentName,
 	}

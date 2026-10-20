@@ -155,6 +155,8 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolMemberAttendance(ctx, restaurantID, msg.Sender, input)
 	case "get_member_access":
 		return s.botToolMemberAccess(ctx, restaurantID, msg.Sender)
+	case "unsubscribe_marketing":
+		return s.botToolUnsubscribeMarketing(ctx, restaurantID, msg, input)
 	case "send_menu_buttons":
 		return s.botToolSendButtons(ctx, restaurantID, msg, input)
 	case "send_image", "send_document":
@@ -708,8 +710,20 @@ func (s *Server) botToolCreateBooking(ctx context.Context, restaurantID int, msg
 		name = "Cliente WhatsApp"
 	}
 
-	// Phone: sender is E.164 digits (e.g. 34612345678); store national part.
-	digits := digitsOnly(msg.Sender)
+	// Phone: the actor is E.164 digits (e.g. 34612345678); store the
+	// national part.
+	//
+	// In a group, msg.Sender is the GROUP id, not the member: using it
+	// would store the booking against the group's jid. The member who
+	// asked for it is the actor, so the booking belongs to that phone.
+	actor := msg.Sender
+	if msg.IsGroup {
+		actor = botSpecialCRUDActorPhone(msg)
+		if actor == "" {
+			return botJSON(map[string]any{"error": "no se puede identificar al miembro que pide la reserva"}), nil
+		}
+	}
+	digits := digitsOnly(actor)
 	cc := "34"
 	national := digits
 	if strings.HasPrefix(digits, "34") && len(digits) == 11 {

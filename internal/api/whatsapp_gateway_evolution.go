@@ -535,13 +535,25 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		})
 	}
 
+	// The identity of the conversation comes in two forms: WhatsApp's opaque
+	// @lid and the phone-number JID. The provider lists a chat by one of them
+	// and delivers the message addressed to the other, so BOTH are kept: the
+	// phone is what identifies the customer and what the reply goes to, and
+	// the other form is what the privileged gate has to match.
+	// Coordination id: wa_bot_privileged_contacts_v1
+	chatJIDAlt := ""
 	if !strings.HasSuffix(jid, "@s.whatsapp.net") {
 		// Recent Baileys versions address inbound 1:1 messages by WhatsApp's
 		// opaque LID and preserve the phone-number JID in remoteJidAlt. The bot
 		// needs the phone number both to identify the customer and to reply.
 		if strings.HasSuffix(jid, "@lid") {
+			chatJIDAlt = strings.TrimSpace(jid)
 			jid = strings.TrimSpace(d.Key.RemoteJidAlt)
 		}
+	} else if alt := strings.TrimSpace(d.Key.RemoteJidAlt); alt != "" && alt != jid {
+		// The other way round: the chat is addressed by the phone number and
+		// the opaque LID is the alternative identity.
+		chatJIDAlt = alt
 	}
 	if jid == "" || !strings.HasSuffix(jid, "@s.whatsapp.net") { // drop status / unresolved LIDs
 		return waInbound{}, false
@@ -563,6 +575,7 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		DocumentB64:  documentB64,
 		DocumentName: documentName,
 		ChatJID:      jid,
+		ChatJIDAlt:   chatJIDAlt,
 	}, true
 }
 
@@ -645,4 +658,24 @@ func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool)
 		return waConnEvent{}, false
 	}
 	return out, true
+}
+
+// SendMenuImage is SendMenu with a header image (Evolution thumbnailUrl), so the
+// image, text and buttons arrive as a single message.
+func (g *evolutionGateway) SendMenuImage(ctx context.Context, to, text, imageURL string, choices []string) error {
+	buttons := make([]map[string]any, 0, len(choices))
+	for i, c := range choices {
+		label, target, hasTarget := strings.Cut(c, "|")
+		label = strings.TrimSpace(label)
+		target = strings.TrimSpace(target)
+		if hasTarget && isHTTPURL(target) {
+			buttons = append(buttons, map[string]any{"type": "url", "displayText": label, "url": target})
+			continue
+		}
+		buttons = append(buttons, map[string]any{"type": "reply", "displayText": firstNonEmpty(label, strings.TrimSpace(c)), "id": fmt.Sprintf("opt_%d", i)})
+	}
+	title, description := splitMenuTitleAndDescription(text)
+	return g.post(ctx, g.msgPath("sendButtons"), map[string]any{
+		"number": to, "title": title, "description": description, "buttons": buttons, "thumbnailUrl": imageURL,
+	})
 }

@@ -770,6 +770,11 @@ func normalizeWhatsAppNumber(raw string) string {
 	if raw == "" {
 		return ""
 	}
+	// The provider writes its own number with Baileys' device suffix
+	// ("34960255536:28@s.whatsapp.net"). Taking the digits of the whole
+	// string would glue the device to the number ("3496025553628"), and a
+	// number like that matches nothing anymore.
+	raw = botJIDStripDeviceSuffix(raw)
 	var b strings.Builder
 	for _, ch := range raw {
 		if ch >= '0' && ch <= '9' {

@@ -145,3 +145,103 @@ func (s *Server) deliverCampaignWhatsAppSections(ctx context.Context, restaurant
 	}
 	return nil
 }
+
+// whatsappMenuImageSender is implemented by gateways whose interactive message
+// can carry a header image, so image, text and buttons travel as ONE message.
+type whatsappMenuImageSender interface {
+	SendMenuImage(ctx context.Context, to, text, imageURL string, choices []string) error
+}
+
+// campaignUnifiedWhatsApp builds the single-message form of a campaign: the
+// text without button lines, the first image and every button in order.
+func campaignUnifiedWhatsApp(markdown, brandName string) (text, image string, buttons []string) {
+	sections, _ := splitCampaignWASections(markdown)
+	var parts []string
+	for _, sec := range sections {
+		if image == "" && len(sec.Images) > 0 {
+			image = sec.Images[0]
+		}
+		buttons = append(buttons, sec.Buttons...)
+		if t := strings.TrimSpace(renderCampaignWhatsAppBody(sec.Text, "", "", false)); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	text = strings.Join(parts, "\n\n")
+	if b := strings.TrimSpace(brandName); b != "" {
+		text = "*" + b + "*\n" + text
+	}
+	return strings.TrimSpace(text), image, buttons
+}
+
+// campaignWAMaxCTA is the real provider limit: Evolution rejects an interactive
+// message with more than 2 URL buttons ("at most 2 CTA buttons are allowed").
+const campaignWAMaxCTA = 2
+
+// campaignPickCTAs returns the buttons that get a real interactive button (the
+// pre-booking link first, then menu links, then the rest in order) and the
+// remaining ones, which travel as "label: url" lines in the same message.
+func campaignPickCTAs(buttons []string) (cta, rest []string) {
+	rank := func(b string) int {
+		_, u, _ := strings.Cut(b, "|")
+		switch {
+		case strings.Contains(u, "date="):
+			return 0
+		case strings.Contains(u, "grupos"):
+			return 1
+		case strings.Contains(u, "/menu/"):
+			return 2
+		}
+		return 3
+	}
+	picked := map[int]bool{}
+	for r := 0; r <= 3 && len(cta) < campaignWAMaxCTA; r++ {
+		for i, b := range buttons {
+			if len(cta) < campaignWAMaxCTA && !picked[i] && rank(b) == r {
+				cta = append(cta, b)
+				picked[i] = true
+			}
+		}
+	}
+	for i, b := range buttons {
+		if !picked[i] {
+			rest = append(rest, b)
+		}
+	}
+	return cta, rest
+}
+
+// deliverCampaignWhatsAppUnified sends ONE interactive message holding the whole
+// campaign: header image, text, up to 2 CTA buttons and the remaining links as
+// lines (the opt-out link included).
+func (s *Server) deliverCampaignWhatsAppUnified(ctx context.Context, restaurantID int, gw WhatsAppGateway, coordID, num, brandName, markdown string, extraChoices []string) error {
+	text, image, buttons := campaignUnifiedWhatsApp(markdown, brandName)
+	cta, rest := campaignPickCTAs(buttons)
+	// Only the opt-out link stays as a line in the text; the other links that
+	// do not fit the 2 buttons are left out of the WhatsApp message on purpose.
+	_ = rest
+	for _, b := range extraChoices {
+		label, url, _ := strings.Cut(b, "|")
+		text += "\n\n" + strings.TrimSpace(label) + ": " + strings.TrimSpace(url)
+	}
+	if len(cta) > 0 {
+		if sender, ok := gw.(whatsappMenuImageSender); ok && image != "" {
+			if err := sender.SendMenuImage(ctx, num, text, image, cta); err == nil {
+				return nil
+			}
+		}
+		if err := gw.SendMenu(ctx, num, text, cta); err == nil {
+			return nil
+		}
+	}
+	plain := text
+	for _, b := range cta {
+		label, url, _ := strings.Cut(b, "|")
+		plain += "\n\n" + strings.TrimSpace(label) + ": " + strings.TrimSpace(url)
+	}
+	if image != "" {
+		if err := gw.SendMedia(ctx, normalizeWhatsAppNumber(num), waMedia{Kind: "image", URL: image, Caption: plain, Filename: "campana.webp"}); err == nil {
+			return nil
+		}
+	}
+	return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, coordID, num, plain)
+}

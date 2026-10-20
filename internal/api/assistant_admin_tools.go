@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -241,6 +242,72 @@ func (s *Server) assistantAdminDescribe(ctx context.Context, _ int, input json.R
 	return botJSON(map[string]any{"tool": "admin_describe", "operations": out, "unknown": unknown}), nil
 }
 
+// forkyPathIsAccountManagement reports whether the path manages the ACCOUNTS
+// of the panel (who can log in and with what role) rather than the business
+// data of a restaurant.
+//
+// The bot is a restaurant operator: the business data is its business
+// (reservations, menus, members, tables, stock, POS). The people behind the
+// panel are not: the service session it borrows is a superadmin, so these
+// operations would let a message change who can log into the backoffice.
+func forkyPathIsAccountManagement(path string) bool {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return false
+	}
+	// The panel's own accounts and their roles.
+	if p == "/users" || strings.HasPrefix(p, "/users/") {
+		return true
+	}
+	if p == "/roles" || strings.HasPrefix(p, "/roles/") {
+		return true
+	}
+	// The platform-level user administration (superadmin section): create,
+	// patch, assign a restaurant, set a password, revoke sessions.
+	if p == "/platform/users" || strings.HasPrefix(p, "/platform/users/") {
+		return true
+	}
+	return false
+}
+
+// forkyPathIsSessionScoped reports whether the path acts on the session's
+// own account (its password, its preferences) rather than on the business
+// data.
+//
+// The service session the bot uses belongs to a real superadmin, so these
+// operations would act on that person's account: the bot must not be able to
+// change the credentials of the account it borrows.
+func forkyPathIsSessionScoped(path string) bool {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return false
+	}
+	// "/me" and "/me/..." are the account's own routes. "/members/..." are
+	// the other people's accounts and are legitimate backoffice operations.
+	if p == "/me" {
+		return true
+	}
+	return strings.HasPrefix(p, "/me/")
+}
+
+// forkyPathIsActiveRestaurant reports whether the path is the one that
+// rebinds the session to another restaurant.
+func forkyPathIsActiveRestaurant(path string) bool {
+	p := strings.TrimSpace(path)
+	return p == "/active-restaurant" || strings.HasSuffix(p, "/active-restaurant")
+}
+
+// forkyPathHasParam reports whether the path pattern carries the given
+// parameter, so a caller can enforce what the parameter may be.
+func forkyPathHasParam(path string, name string) bool {
+	for _, m := range forkyPathParamRe.FindAllStringSubmatch(path, -1) {
+		if m[1] == name {
+			return true
+		}
+	}
+	return false
+}
+
 func forkyPathParams(path string) []string {
 	out := []string{}
 	for _, m := range forkyPathParamRe.FindAllStringSubmatch(path, -1) {
@@ -286,6 +353,56 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	token, ok := boSessionTokenFromContext(ctx)
 	if !ok {
 		return "", fmt.Errorf("sesión del panel no disponible")
+	}
+	// Tenant scope: a path that addresses a restaurant must address THIS
+	// restaurant. Without this the model could put another tenant's id in the
+	// path and the replay would read or write that tenant's data with the
+	// service session's authority.
+	//
+	// The bot's service session is bound to one restaurant, so a mismatch is
+	// never a legitimate call: it is either a mistake or an attempt to reach
+	// another tenant.
+	if rid > 0 && forkyPathHasParam(op.Path, "restaurantId") {
+		got := strings.TrimSpace(fmt.Sprint(in.PathParams["restaurantId"]))
+		if got == "" {
+			got = strings.TrimSpace(fmt.Sprint(in.PathParams["restaurant_id"]))
+		}
+		if got != "" && got != strconv.Itoa(rid) {
+			return "", fmt.Errorf("operación fuera del restaurante del bot: la ruta apunta a %s y este bot opera en %d", got, rid)
+		}
+	}
+	// The same scope applies to the operation that REBINDS the session to
+	// another restaurant (/active-restaurant): it persists
+	// active_restaurant_id on the session row, and the replay authenticates
+	// on that very session. Letting the bot rebind itself would move the
+	// whole privileged turn to another tenant.
+	//
+	// The bot has exactly one restaurant, so the operation has no meaning
+	// for it: the restaurant is already the right one.
+	if rid > 0 && forkyPathIsActiveRestaurant(op.Path) {
+		return "", fmt.Errorf("el bot no puede cambiar de restaurante: ya opera en el %d", rid)
+	}
+	// The operations that act on the SESSION ITSELF are refused for the same
+	// reason, and with a sharper edge: the service session belongs to a real
+	// superadmin, so /me/password would change THAT PERSON's password and
+	// /me/preferences would change their preferences. The bot has no
+	// identity of its own to change, and it must never be able to touch the
+	// credentials of the account it borrows.
+	if forkyPathIsSessionScoped(op.Path) {
+		return "", fmt.Errorf("el bot no puede ejecutar %s: son operaciones sobre la cuenta de la sesion, no sobre el restaurante", op.Path)
+	}
+	// The ACCOUNT MANAGEMENT operations are refused too. The service session
+	// is a superadmin, so the catalog exposes operations that create panel
+	// users, assign them to restaurants, change their roles and revoke their
+	// sessions. The bot manages a restaurant, not the people who work in the
+	// panel: giving it those operations would let a message in a group
+	// change who can log into the backoffice, or lock a colleague out.
+	//
+	// The bot is a restaurant operator: the business data is its business
+	// (reservations, menus, members, tables, stock, POS). The people behind
+	// the panel are not.
+	if forkyPathIsAccountManagement(op.Path) {
+		return "", fmt.Errorf("el bot no puede ejecutar %s: es una operacion de gestion de cuentas del panel, no de datos del restaurante", op.Path)
 	}
 	path, err := forkyRenderPath(op.Path, in.PathParams)
 	if err != nil {

@@ -424,13 +424,30 @@ func (s *Server) handleBOCampaignImageUpload(w http.ResponseWriter, r *http.Requ
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Imagen invalida"})
 		return
 	}
-	normalized, err := specialmenuimage.NormalizeToWebPWithLimit(r.Context(), raw, filename, ct, campaignMaxImageBytes)
-	if err != nil {
-		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "No se pudo procesar la imagen"})
-		return
+	// keep=1: PNG/JPEG stored as sent. Email clients such as Outlook desktop do
+	// not render WebP, so icons and photos for the email body use this path.
+	storeExt, storeCT := ".webp", "image/webp"
+	var normalized []byte
+	if r.FormValue("keep") == "1" {
+		detected := http.DetectContentType(raw)
+		if (detected != "image/png" && detected != "image/jpeg") || len(raw) > campaignMaxImageBytes {
+			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Solo PNG o JPG dentro del limite"})
+			return
+		}
+		normalized, storeCT = raw, detected
+		storeExt = ".png"
+		if detected == "image/jpeg" {
+			storeExt = ".jpg"
+		}
+	} else {
+		normalized, err = specialmenuimage.NormalizeToWebPWithLimit(r.Context(), raw, filename, ct, campaignMaxImageBytes)
+		if err != nil {
+			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "No se pudo procesar la imagen"})
+			return
+		}
 	}
-	objectPath := path.Join(strconv.Itoa(a.ActiveRestaurantID), "pictures", "campaigns", strconv.FormatInt(id, 10), fmt.Sprintf("md-%d.webp", time.Now().UTC().UnixMilli()))
-	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalized, "image/webp"); err != nil {
+	objectPath := path.Join(strconv.Itoa(a.ActiveRestaurantID), "pictures", "campaigns", strconv.FormatInt(id, 10), fmt.Sprintf("md-%d%s", time.Now().UTC().UnixMilli(), storeExt))
+	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalized, storeCT); err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo subir la imagen"})
 		return
 	}
@@ -852,7 +869,8 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		// group per section: real image(s), the text, and one interactive
 		// button per link, then the website / opt-out buttons.
 		if sections, hasButtons := splitCampaignWASections(c.BodyMarkdown); hasButtons && gwOK {
-			return s.deliverCampaignWhatsAppSections(ctx, restaurantID, gw, c.CoordID, num, branding.BrandName, sections, choices)
+			_ = sections
+			return s.deliverCampaignWhatsAppUnified(ctx, restaurantID, gw, c.CoordID, num, branding.BrandName, c.BodyMarkdown, campaignUnsubscribeChoice(unsubscribeURL))
 		}
 		// A markdown image becomes a real WhatsApp media message with the rest
 		// of the body as caption; extra images stay as URLs inside the text.
@@ -919,7 +937,10 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
 		return
 	}
-	if c.Status == "sending" {
+	// A 'sending' campaign whose runner died (backend restart/deploy) can be
+	// resumed: only the still-pending recipients are sent, sent rows are never
+	// repeated (uq_campaign_target + status).
+	if c.Status == "sending" && campaignRunners.running(c.ID) {
 		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
 		return
 	}
@@ -936,7 +957,14 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE campaigns SET status = 'sending' WHERE id = ?`, c.ID)
 	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets))
-	go s.runCampaignSend(context.WithoutCancel(r.Context()), a.ActiveRestaurantID, c.ID)
+	if !campaignRunners.start(c.ID) {
+		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
+		return
+	}
+	go func() {
+		defer campaignRunners.stop(c.ID)
+		s.runCampaignSend(context.WithoutCancel(r.Context()), a.ActiveRestaurantID, c.ID)
+	}()
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID, "queued": len(targets)})
 }
 
@@ -968,6 +996,17 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			break
 		}
 		for _, p := range batch {
+			// Re-read the do-not-contact list right before each delivery: a
+			// recipient that unsubscribes after the audience snapshot (the run
+			// can last hours at WhatsApp pacing) must never get the message.
+			if sup, supErr := s.loadCampaignSuppressionFilter(ctx, restaurantID); supErr != nil {
+				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, "no se pudo comprobar la lista de bajas", p.id)
+				continue
+			} else if sup.blocked(p.t.Channel, p.t.Target) {
+				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'skipped', error = 'baja' WHERE id = ?`, p.id)
+				slog.Default().Info("campaign.delivery.skipped_unsubscribed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID)
+				continue
+			}
 			sendErr := s.deliverCampaignTo(ctx, restaurantID, c, p.t)
 			if sendErr != nil {
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, truncate(sendErr.Error(), 500), p.id)
@@ -1157,4 +1196,35 @@ func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Req
 		"total":       total,
 		"total_pages": totalPages,
 	})
+}
+
+// campaignRunners tracks the in-process send goroutines so a campaign left in
+// 'sending' by a restart can be resumed without ever running twice.
+type campaignRunnerSet struct {
+	mu  sync.Mutex
+	ids map[int64]bool
+}
+
+var campaignRunners = &campaignRunnerSet{ids: map[int64]bool{}}
+
+func (r *campaignRunnerSet) running(id int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ids[id]
+}
+
+func (r *campaignRunnerSet) start(id int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ids[id] {
+		return false
+	}
+	r.ids[id] = true
+	return true
+}
+
+func (r *campaignRunnerSet) stop(id int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.ids, id)
 }

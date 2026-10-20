@@ -865,6 +865,10 @@ func (s *Server) Routes() http.Handler {
 		// (wa_bot_ai_providers_v1 / wa_bot_dspy_pipeline_v1).
 		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/ai/{restaurantId}", s.handleBOBotAIGet)
 		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/ai/{restaurantId}", s.handleBOBotAIPut)
+		// Privileged conversations of the connected WhatsApp (groups and
+		// contacts) that may run the full backoffice catalogue.
+		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/ai/{restaurantId}/privileged-contacts", s.handleBOBotPrivilegedContactsGet)
+		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/ai/{restaurantId}/privileged-contacts", s.handleBOBotPrivilegedContactsPut)
 		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/pipeline/{restaurantId}", s.handleBOBotPipelineGet)
 		// Booking WhatsApp notifications (confirmation / reconfirmation) — bkg-wa-notif.
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/booking-notifications", s.handleBOBookingNotificationsGet)

@@ -35,6 +35,23 @@ type botTenantConfig struct {
 	// Coordination id: wa_bot_management_group_v1
 	ManagementGroupName string `json:"management_group_name"`
 	ManagementGroupJID  string `json:"management_group_jid"`
+	// PrivilegedGroupJIDs are the WhatsApp groups where the bot runs with the
+	// full forky catalog (every backoffice operation, with a root auth). It is
+	// a per-restaurant setting so one tenant's privileged group never leaks
+	// into another's.
+	//
+	// Only members of the group get that catalog: the sender is checked
+	// against the provider's participant list (wa_bot_group_membership_v1).
+	// Coordination id: wa_bot_privileged_group_v1
+	PrivilegedGroupJIDs []string `json:"privileged_group_jids"`
+	// PrivilegedContacts are the conversations (groups AND one-to-one
+	// contacts) the operator selected in the backoffice as privileged. A
+	// privileged group is privileged for its members; a privileged contact
+	// is privileged for that conversation alone.
+	//
+	// Every other conversation keeps the regular limits.
+	// Coordination id: wa_bot_privileged_contacts_v1
+	PrivilegedContacts []botPrivilegedContact `json:"privileged_contacts"`
 	// DisableSpecialCRUD turns OFF the special-menu CRUD tools, so a restaurant
 	// that wants the website-only flow for festive dates keeps it even though
 	// the bot runs inside the management group. Coordination id:
@@ -256,6 +273,10 @@ func botToolDefsForChat(cfg botTenantConfig, inGroup bool) []botToolDef {
 		defs = append(defs, botToolDefsSpecialCRUD()...)
 	}
 	defs = append(defs, botToolDefsV2()...)
+	// Coordination id: wa_bot_unsubscribe_v1 - customers only, never the staff group.
+	if !inGroup {
+		defs = append(defs, botToolDefUnsubscribe())
+	}
 	return defs
 }
 
