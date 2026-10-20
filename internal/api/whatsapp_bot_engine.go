@@ -2,7 +2,10 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"strings"
 )
@@ -28,13 +31,14 @@ type botTurnState struct {
 
 // botLoopResult summarizes one agent run.
 type botLoopResult struct {
-	Iterations int
-	ToolCalls  []string
-	Messages   []botMessage // full transcript including tool turns
-	ModelUsed  string       // provider/model that produced the last response
-	Ran        int          // tool calls executed this turn
-	Failed     int          // of those, how many reported an error
-	Exhausted  bool         // budget spent and the model still asked for a tool
+	Iterations  int
+	ToolCalls   []string
+	Messages    []botMessage // full transcript including tool turns
+	ModelUsed   string       // provider/model that produced the last response
+	Ran         int          // tool calls executed this turn
+	Failed      int          // of those, how many reported an error
+	Exhausted   bool         // budget spent and the model still asked for a tool
+	Interrupted bool         // model call failed or the turn deadline passed after tools ran
 }
 
 // botModelCaller performs one model call for the loop and reports which
@@ -51,11 +55,72 @@ func (s *Server) botRunAgentLoop(ctx context.Context, restaurantID int, model st
 	}, system, messages, tools, exec)
 }
 
-// botDefaultMaxIterations is the tool-use budget of one turn when the config
-// does not set one. wa_bot_iter_cap_v1: 8 was not enough for a booking edit
-// that needs catalog lookups first, and a turn that spends the whole budget on
-// tools ends with no text, so the customer got the generic apology.
-const botDefaultMaxIterations = 12
+// wa_bot_noncap_v1: a turn has no fixed tool/iteration limit. The owner asked
+// for none (a long booking edit legitimately needs many lookups). BOT_MAX_ITERATIONS
+// stays only as an optional operator override: 0 or unset means no cap. What ends
+// a turn that is not progressing is the loop guard below, which looks at what the
+// tools returned, not at how many calls were made.
+const (
+	// The same tool with the same input returned the same result this many times IN A ROW.
+	botLoopRepeatLimit = 3
+	// Consecutive rounds in which every tool call failed.
+	botLoopFailRounds = 4
+)
+
+// botLoopGuard detects a turn that is not making progress.
+type botLoopGuard struct {
+	lastKey   string
+	repeats   int
+	failRound int
+	stalled   bool
+	reason    string
+}
+
+// botResultFailed reports whether a tool result is a failure. A JSON result
+// whose top-level "error" is null, empty or false is not a failure (the tool
+// executor reports failures as a top-level {"error": "..."}); non-JSON output keeps the
+// old substring rule.
+func botResultFailed(out string) bool {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &m); err == nil {
+		raw, ok := m["error"]
+		if !ok {
+			// No top-level error key: keep the old rule so a nested real error still counts.
+			return strings.Contains(out, `"error"`)
+		}
+		v := strings.TrimSpace(string(raw))
+		return v != "null" && v != `""` && v != "false"
+	}
+	return strings.Contains(out, `"error"`)
+}
+
+func newBotLoopGuard() *botLoopGuard { return &botLoopGuard{} }
+
+func (g *botLoopGuard) observe(name string, input json.RawMessage, out string) {
+	sum := sha256.Sum256([]byte(name + "\x00" + string(input) + "\x00" + out))
+	key := hex.EncodeToString(sum[:8])
+	// Consecutive repetition only: any different call/result resets the count,
+	// so real progress never accumulates strikes and nothing grows with the turn.
+	if key == g.lastKey {
+		g.repeats++
+	} else {
+		g.lastKey, g.repeats = key, 1
+	}
+	if g.repeats >= botLoopRepeatLimit {
+		g.stalled, g.reason = true, "repeated_identical_call"
+	}
+}
+
+func (g *botLoopGuard) endRound(allFailed bool) {
+	if allFailed {
+		g.failRound++
+	} else {
+		g.failRound = 0
+	}
+	if g.failRound >= botLoopFailRounds {
+		g.stalled, g.reason = true, "consecutive_failed_rounds"
+	}
+}
 
 // botBudgetOperatorNote is appended to the SYSTEM prompt (a trusted channel,
 // never to tool results) for the last model call of a turn, so that call
@@ -69,33 +134,42 @@ const botBudgetExhaustedText = "No he podido completar tu petición. He detenido
 
 // botRunAgentLoopWith is the provider-agnostic loop used by every caller.
 func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
+	// BOT_MAX_ITERATIONS semantics (wa_bot_noncap_v1): unset or 0 = NO cap (the
+	// default). A positive value N is an explicit operator cap: the Nth model
+	// call is the wrap-up call. Negative values are treated as unset.
 	maxIter := s.cfg.BotMaxIterations
-	if maxIter <= 0 {
-		maxIter = botDefaultMaxIterations
+	if maxIter < 0 {
+		maxIter = 0
 	}
+	guard := newBotLoopGuard()
 
 	result := botLoopResult{}
 	msgs := append([]botMessage{}, messages...)
 
-	for i := 0; i < maxIter; i++ {
+	for i := 0; ; i++ {
+		if err := ctx.Err(); err != nil {
+			return botInterrupted(&result, msgs, "context_done", err)
+		}
 		result.Iterations = i + 1
 
-		last := i == maxIter-1
+		// Wrap-up call: only when the loop guard saw no progress, or when an
+		// operator-set cap is reached. Never because of a call count by default.
+		last := guard.stalled || (maxIter > 0 && i == maxIter-1)
 		callSystem := system
-		if last && maxIter > 1 {
+		if last {
 			callSystem = system + botBudgetOperatorNote
 		}
 		resp, used, err := call(ctx, callSystem, msgs, tools)
 		if err != nil {
-			result.Messages = msgs
-			return result, err
+			return botInterrupted(&result, msgs, "model_call_failed", err)
 		}
 		result.ModelUsed = used
 
 		// Append the assistant turn as-is (text + tool_use blocks).
 		assistant := botMessage{Role: "assistant", Content: resp.Content}
 		toolResults := make([]botBlock, 0, 2)
-		if last && maxIter > 1 {
+		roundFailed := 0
+		if last {
 			wantsTool := false
 			for _, block := range resp.Content {
 				if block.Type == "tool_use" {
@@ -105,7 +179,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			if wantsTool {
 				// Budget spent and the model still wants a tool: execute nothing
 				// more (no hidden extra mutation) and answer with the known facts.
-				log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 exhausted iterations=%d ran=%d failed=%d tools=%s", i+1, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
+				log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 exhausted reason=%s iterations=%d ran=%d failed=%d tools=%s", guard.reason, i+1, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
 				result.Exhausted = true
 				msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botBudgetExhaustedText}}})
 				result.Messages = msgs
@@ -122,9 +196,12 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 				out = `{"error":` + jsonQuote(err.Error()) + `}`
 			}
 			result.Ran++
-			if err != nil || strings.Contains(out, `"error"`) {
+			failed := err != nil || botResultFailed(out)
+			if failed {
 				result.Failed++
+				roundFailed++
 			}
+			guard.observe(block.Name, block.Input, out)
 			toolResults = append(toolResults, botBlock{
 				Type:      "tool_result",
 				ToolUseID: block.ID,
@@ -139,6 +216,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			return result, nil
 		}
 
+		guard.endRound(roundFailed == len(toolResults))
 		msgs = append(msgs, assistant, botMessage{Role: "user", Content: toolResults})
 
 		// Coordination id: wa_bot_early_stop_v1 - when every tool of this
@@ -150,9 +228,47 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			return result, nil
 		}
 	}
+}
 
+// botInterruptedText is the fixed reply when the turn cannot continue (model
+// call failed, context too long, or the turn deadline passed) after tools ran.
+const botInterruptedText = "No he podido terminar tu petición: el proceso se interrumpió antes de acabar. Algunas acciones anteriores podrían haberse aplicado; no puedo confirmar que todo haya quedado terminado."
+
+// botInterrupted ends the turn without any further model or tool call. Before
+// any tool ran there is nothing to report, so the error goes to the caller
+// (which sends its usual fallback). After tools ran, the customer gets the
+// fixed honest reply instead of a generic apology.
+// botErrClass maps an error to a fixed, safe label.
+func botErrClass(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	}
+	low := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(low, "context length") || strings.Contains(low, "context window") || strings.Contains(low, "too long") || strings.Contains(low, "maximum context"):
+		return "context_length"
+	case strings.Contains(low, "timeout") || strings.Contains(low, "deadline"):
+		return "timeout"
+	}
+	return "provider_error"
+}
+
+func botInterrupted(result *botLoopResult, msgs []botMessage, reason string, err error) (botLoopResult, error) {
 	result.Messages = msgs
-	return result, nil
+	if result.Ran == 0 {
+		return *result, err
+	}
+	// err.Error() is never logged: provider errors can carry URLs, query
+	// strings, tokens or customer content. Only a fixed class is recorded.
+	log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 interrupted reason=%s class=%s iterations=%d ran=%d failed=%d tools=%s", reason, botErrClass(err), result.Iterations, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
+	result.Interrupted = true
+	result.Messages = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botInterruptedText}}})
+	return *result, nil
 }
 
 func jsonQuote(s string) string {
@@ -177,7 +293,7 @@ func botAllDelivered(content []botBlock, results []botBlock) bool {
 		return false
 	}
 	for _, r := range results {
-		if strings.Contains(r.Content, `"error"`) {
+		if botResultFailed(r.Content) {
 			return false
 		}
 	}

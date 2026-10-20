@@ -693,18 +693,26 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// text, or only read-only tools), send the final assistant text so the
 	// customer is never left in silence. A server-side notice (same-day policy)
 	// counts as delivered and must not be duplicated.
-	if !botDeliveredReply(result.ToolCalls) && !turn.noticeDelivered {
+	sendCtx := ctx
+	if result.Interrupted {
+		// The turn context may already be expired: send the fixed reply on a short fresh one.
+		// WithoutCancel keeps the turn's values (tenant, tracing) but not its expiry.
+		var cancelSend context.CancelFunc
+		sendCtx, cancelSend = context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancelSend()
+	}
+	if (result.Interrupted || !botDeliveredReply(result.ToolCalls)) && !turn.noticeDelivered {
 		if text := botFinalAssistantText(result.Messages); botPlainTextLeaksInternal(text) {
 			// The model typed a contact card or pasted a staff notification as
 			// text: deliver the real intro + vCard instead (wa_bot_context_hygiene_v1).
 			log.Printf("[bot] checkpoint wa_bot_plain_text_rewritten restaurant_id=%d sender=%s", restaurantID, msg.Sender)
-			_, _ = s.botToolSendContact(ctx, restaurantID, msg, tenant, nil)
+			_, _ = s.botToolSendContact(sendCtx, restaurantID, msg, tenant, nil)
 		} else if text != "" {
 			log.Printf("[bot] checkpoint wa_bot_plain_text_fallback restaurant_id=%d sender=%s", restaurantID, msg.Sender)
-			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
+			if gw, ok := s.botGatewayFor(sendCtx, restaurantID); ok && s.sendWhatsAppTextTracked(sendCtx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
 			}
 		} else {
-			s.botSendFallback(ctx, restaurantID, msg.Sender)
+			s.botSendFallback(sendCtx, restaurantID, msg.Sender)
 		}
 	}
 	log.Printf("[bot] restaurant=%d sender=%s iterations=%d model=%s node=%s tools=%s",
