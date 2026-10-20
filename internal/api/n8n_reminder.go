@@ -103,11 +103,12 @@ func needsRiceReminder(arrozType sql.NullString) bool {
 
 // bookingReminderExtras carries the optional booking detail rendered in the
 // reminder. Arroz is always shown (as "No" when absent); tronas and carritos are
-// always shown including 0, mirroring the confirmation message.
+// shown when they were asked (nil = the date's config did not ask, the line is
+// omitted). Coordination id: guest_count_flags_v1
 type bookingReminderExtras struct {
 	ArrozLine     string
-	HighChairs    int
-	BabyStrollers int
+	HighChairs    *int
+	BabyStrollers *int
 	// Coordination id: booking_extras_v1 - only rendered when non-empty.
 	Extras []string
 	// Coordination id: special_booking_v1 - precomputed special booking map
@@ -143,9 +144,24 @@ func buildBookingReminderMessage(customerName, brandName, dateDisplay, timeDispl
 			msg += extra + "\n"
 		}
 	}
-	msg += "👶 Tronas: " + strconv.Itoa(extras.HighChairs) + "\n"
-	msg += "🍼 Carros de bebé: " + strconv.Itoa(extras.BabyStrollers) + "\n"
+	if extras.HighChairs != nil {
+		msg += "👶 Tronas: " + strconv.Itoa(*extras.HighChairs) + "\n"
+	}
+	if extras.BabyStrollers != nil {
+		msg += "🍼 Carros de bebé: " + strconv.Itoa(*extras.BabyStrollers) + "\n"
+	}
 	return msg + "\nPor favor, confirme su asistencia haciendo clic en el botón de abajo:"
+}
+
+// nullInt64Ptr converts a scanned nullable counter into a *int for the
+// reminder extras; NULL (the question was never asked) stays nil so the
+// message omits the line. Coordination id: guest_count_flags_v1
+func nullInt64Ptr(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	n := int(v.Int64)
+	return &n
 }
 
 // bookingReminderArrozLine renders the arroz summary as a single unstarred line
@@ -367,8 +383,8 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 		}
 		extras := bookingReminderExtras{
 			ArrozLine:     bookingReminderArrozLine(booking.ArrozType, booking.ArrozServings),
-			HighChairs:    int(booking.HighChairs.Int64),
-			BabyStrollers: int(booking.BabyStrollers.Int64),
+			HighChairs:    nullInt64Ptr(booking.HighChairs),
+			BabyStrollers: nullInt64Ptr(booking.BabyStrollers),
 		}
 		// Coordination id: special_booking_v1 - surface the precomputed block
 		// so the reminder includes the menu lines + pending adelanto.

@@ -21,7 +21,7 @@ type bookingRow struct {
 	ReservationDate  string
 	ReservationTime  string
 	PartySize        int
-	Children         int
+	Children         sql.NullInt64
 	ContactPhone     sql.NullString
 	ContactPhoneCC   sql.NullString
 	Status           sql.NullString
@@ -102,7 +102,7 @@ func (s *Server) scanBookingRow(ctx context.Context, restaurantID int, rows *sql
 		"reservation_date":           b.ReservationDate,
 		"reservation_time":           b.ReservationTime,
 		"party_size":                 b.PartySize,
-		"children":                   b.Children,
+		"children":                   nullInt64OrNil(b.Children),
 		"has_mobility_issues":        hasMobilityIssues,
 		"mobility_people":            mobilityPeople,
 		"contact_phone":              nullStringOrNil(b.ContactPhone),

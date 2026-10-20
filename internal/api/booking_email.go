@@ -205,9 +205,14 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 	resDate := anyToString(booking["reservation_date"])
 	resTime := anyToString(booking["reservation_time"])
 	partySize, _ := anyToInt(booking["party_size"])
-	children, _ := anyToInt(booking["children"])
-	highChairs, _ := anyToInt(booking["high_chairs"])
-	babyStrollers, _ := anyToInt(booking["baby_strollers"])
+	// Coordination id: guest_count_flags_v1 - a nil counter means the wizard
+	// never asked it on this date; the row is omitted from the email.
+	childrenRaw := booking["children"]
+	highChairsRaw := booking["high_chairs"]
+	babyStrollersRaw := booking["baby_strollers"]
+	children, _ := anyToInt(childrenRaw)
+	highChairs, highChairsErr := anyToInt(highChairsRaw)
+	babyStrollers, babyStrollersErr := anyToInt(babyStrollersRaw)
 	salonName := strings.TrimSpace(anyToString(booking["preferred_salon_name"]))
 	tableNumber := anyToString(booking["table_number"])
 	customerCountryCode := strings.TrimSpace(anyToString(booking["contact_phone_country_code"]))
@@ -280,10 +285,14 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 	}
 	detailsHTML := tableRow("Fecha", htmlEscape(dateDisplay)) +
 		tableRow("Hora", htmlEscape(timeDisplay)) +
-		tableRow("Comensales", strconv.Itoa(partySize)) +
-		tableRow("Adultos", strconv.Itoa(partySize-children)) +
-		tableRow("Niños", strconv.Itoa(children)) +
-		tableRow("Nombre", htmlEscape(customerName))
+		tableRow("Comensales", strconv.Itoa(partySize))
+	// Coordination id: guest_count_flags_v1 - nil children = adults were not
+	// asked on this date, so the Adultos/Niños split is omitted entirely.
+	if childrenRaw != nil {
+		detailsHTML += tableRow("Adultos", strconv.Itoa(partySize-children)) +
+			tableRow("Niños", strconv.Itoa(children))
+	}
+	detailsHTML += tableRow("Nombre", htmlEscape(customerName))
 	if customerPhone != "" {
 		detailsHTML += tableRow("Teléfono", htmlEscape(customerPhone))
 	}
@@ -310,10 +319,10 @@ func buildBookingEmailHTML(brandName string, logoURL string, contactPhone string
 		extrasHTML += "</ul>"
 		detailsHTML += tableRow("Extras", extrasHTML)
 	}
-	if highChairs > 0 {
+	if highChairsRaw != nil && highChairsErr == nil && highChairs > 0 {
 		detailsHTML += tableRow("Tronas", strconv.Itoa(highChairs))
 	}
-	if babyStrollers > 0 {
+	if babyStrollersRaw != nil && babyStrollersErr == nil && babyStrollers > 0 {
 		detailsHTML += tableRow("Carritos", strconv.Itoa(babyStrollers))
 	}
 	if commentary != "" {

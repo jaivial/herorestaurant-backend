@@ -389,20 +389,30 @@ func (s *Server) prepareFrontBooking(r *http.Request, restaurantID int) (*prepar
 		specialSnapshot = snap
 	}
 
+	// Coordination id: guest_count_flags_v1 - counters the date does not ask
+	// for are stored as NULL (not 0) so notifications can omit them.
+	guestFlags, err := s.resolveGuestCountFlags(r.Context(), restaurantID, resDate)
+	if err != nil {
+		return nil, &frontBookingError{Status: http.StatusInternalServerError, Body: map[string]any{
+			"success": false,
+			"message": "No se pudo consultar la configuración de la fecha",
+		}}
+	}
+
 	return &preparedFrontBooking{
 		restaurantID: restaurantID,
 		params: bookingInsertParams{
 			ReservationDate:   resDate,
 			ReservationTime:   resTime,
 			PartySize:         partySize,
-			Children:          children,
+			Children:          nilUnlessAsked(guestFlags.AskAdults, children),
 			CustomerName:      customerName,
 			ContactPhone:      nationalPhone,
 			ContactPhoneCC:    cc,
 			ContactEmail:      contactEmail,
 			Commentary:        commentary,
-			BabyStrollers:     babyStrollers,
-			HighChairs:        highChairs,
+			BabyStrollers:     nilUnlessAsked(guestFlags.AskBabyStrollers, babyStrollers),
+			HighChairs:        nilUnlessAsked(guestFlags.AskHighChairs, highChairs),
 			ArrozTypeJSON:     arrozTypeJSON,
 			ArrozServingsJSON: arrozServingsJSON,
 			SpecialMenu:       boolToTinyint(specialMenu),
@@ -850,17 +860,19 @@ func (s *Server) handleInsertBookingAdmin(w http.ResponseWriter, r *http.Request
 }
 
 type bookingInsertParams struct {
-	ReservationDate   string
-	ReservationTime   string
-	PartySize         int
-	Children          int
+	ReservationDate string
+	ReservationTime string
+	PartySize       int
+	// Coordination id: guest_count_flags_v1 - nil when the date's config does
+	// not ask the question; the column then stores NULL instead of a fake 0.
+	Children          any
 	CustomerName      string
 	ContactPhone      string
 	ContactPhoneCC    string
 	ContactEmail      string
 	Commentary        string
-	BabyStrollers     int
-	HighChairs        int
+	BabyStrollers     any
+	HighChairs        any
 	ArrozTypeJSON     any
 	ArrozServingsJSON any
 	SpecialMenu       int

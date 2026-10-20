@@ -29,8 +29,12 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 	resDate := anyToString(booking["reservation_date"])
 	resTime := anyToString(booking["reservation_time"])
 	partySize, _ := anyToInt(booking["party_size"])
-	highChairs, _ := anyToInt(booking["high_chairs"])
-	babyStrollers, _ := anyToInt(booking["baby_strollers"])
+	// Coordination id: guest_count_flags_v1 - nil counters mean the wizard
+	// never asked them on this date; the lines are omitted from the message.
+	highChairsRaw := booking["high_chairs"]
+	babyStrollersRaw := booking["baby_strollers"]
+	highChairs, _ := anyToInt(highChairsRaw)
+	babyStrollers, _ := anyToInt(babyStrollersRaw)
 
 	specialMenu := toBool(booking["special_menu"])
 
@@ -78,10 +82,16 @@ func buildBookingWhatsAppMessage(brandName string, booking map[string]any, booki
 		}
 	}
 
-	// Tronas and carritos are always listed, including 0, so the customer can
-	// verify at a glance that nothing was requested by mistake.
-	msg += fmt.Sprintf("👶 *Tronas:* %d\n", highChairs)
-	msg += fmt.Sprintf("🍼 *Carros de bebé:* %d\n", babyStrollers)
+	// Tronas and carritos are listed whenever they were asked (including 0),
+	// so the customer can verify at a glance that nothing was requested by
+	// mistake. When the date's config does not ask them (nil), the lines are
+	// omitted. Coordination id: guest_count_flags_v1
+	if highChairsRaw != nil {
+		msg += fmt.Sprintf("👶 *Tronas:* %d\n", highChairs)
+	}
+	if babyStrollersRaw != nil {
+		msg += fmt.Sprintf("🍼 *Carros de bebé:* %d\n", babyStrollers)
+	}
 
 	// Coordination id: special_booking_v1 - special-date bookings append the
 	// paid adelanto (total + per menu), booked menus and principales per menu.

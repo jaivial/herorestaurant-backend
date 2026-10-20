@@ -68,7 +68,10 @@ func publicBookingToResponse(b *publicBooking) publicBookingResponse {
 		arrozDisplay = s
 	}
 
-	children := b.Children
+	children := 0
+	if b.Children.Valid {
+		children = int(b.Children.Int64)
+	}
 	if children < 0 || children > b.PartySize {
 		children = 0
 	}

@@ -48,6 +48,9 @@ type boSpecialDateMenu struct {
 	AdelantoAmount *float64 `json:"adelanto_amount,omitempty"`
 	Price          *float64 `json:"price,omitempty"`
 	Position       int      `json:"position"`
+	// Coordination id: special_menu_completo_v1 - "COMPLETO" flag persisted on
+	// the catalogue menu itself (menus.completo), toggled from this screen.
+	Completo *bool `json:"completo,omitempty"`
 	// Coordination id: special_date_section_menus_v1 - per-section adelanto
 	// when menu_id is a special-type menu.
 	Sections []specialDateSectionAdelanto `json:"sections,omitempty"`
@@ -70,14 +73,20 @@ type boSpecialDateSaveRequest struct {
 	MobilityEnabled    *bool   `json:"mobility_enabled"`
 	// Coordination id: reservation_self_modification_v1 - opt this concrete
 	// special date into the public "modify instead of rebook" self-service.
-	AllowCustomerModification *bool               `json:"allow_customer_modification"`
-	RequiresAdelanto          *bool               `json:"requires_adelanto"`
-	AdelantoPaymentMethods    []string            `json:"adelanto_payment_methods"`
-	AdelantoUnified           *bool               `json:"adelanto_unified"`
-	AdelantoUnifiedAmount     *float64            `json:"adelanto_unified_amount"`
-	PrereservaStartsOn        *string             `json:"prereserva_starts_on"`
-	PrereservaEndsOn          *string             `json:"prereserva_ends_on"`
-	Menus                     []boSpecialDateMenu `json:"menus"`
+	AllowCustomerModification *bool `json:"allow_customer_modification"`
+	// Coordination id: guest_count_flags_v1 - whether the public wizard asks
+	// for adults / high chairs / baby strollers on this date. nil keeps the
+	// stored value's default (true).
+	AskAdults              *bool               `json:"ask_adults"`
+	AskHighChairs          *bool               `json:"ask_high_chairs"`
+	AskBabyStrollers       *bool               `json:"ask_baby_strollers"`
+	RequiresAdelanto       *bool               `json:"requires_adelanto"`
+	AdelantoPaymentMethods []string            `json:"adelanto_payment_methods"`
+	AdelantoUnified        *bool               `json:"adelanto_unified"`
+	AdelantoUnifiedAmount  *float64            `json:"adelanto_unified_amount"`
+	PrereservaStartsOn     *string             `json:"prereserva_starts_on"`
+	PrereservaEndsOn       *string             `json:"prereserva_ends_on"`
+	Menus                  []boSpecialDateMenu `json:"menus"`
 }
 
 func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request) {
@@ -103,6 +112,8 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	var id int64
 	var isActive, prereservaEnabled, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
 	var allowCustomerModification int
+	// Coordination id: guest_count_flags_v1
+	var askAdults, askHighChairs, askBabyStrollers int
 	var title string
 	var description, customNotice sql.NullString
 	var maxPerTable sql.NullInt64
@@ -114,6 +125,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 		SELECT id, is_active, title, description, custom_notice, prereserva_enabled,
 		       max_per_table_enabled, max_per_table, requires_adelanto,
 		       allow_customer_modification,
+		       ask_adults, ask_high_chairs, ask_baby_strollers,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount,
 		       prereserva_starts_on, prereserva_ends_on
 		FROM special_dates
@@ -123,6 +135,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled,
 		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
 		&allowCustomerModification,
+		&askAdults, &askHighChairs, &askBabyStrollers,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
 		&prereservaStartsOn, &prereservaEndsOn,
 	)
@@ -177,12 +190,16 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 			"requires_adelanto":     requiresAdelanto != 0,
 			// Coordination id: reservation_self_modification_v1
 			"allow_customer_modification": allowCustomerModification != 0,
-			"adelanto_payment_methods":    adelantoMethods,
-			"adelanto_unified":            adelantoUnified != 0,
-			"adelanto_unified_amount":     nullIfZeroFloat(adelantoUnifiedAmount.Valid, adelantoUnifiedAmount.Float64),
-			"prereserva_starts_on":        nullIfEmptyTime(prereservaStartsOn),
-			"prereserva_ends_on":          nullIfEmptyTime(prereservaEndsOn),
-			"menus":                       menus,
+			// Coordination id: guest_count_flags_v1
+			"ask_adults":               askAdults != 0,
+			"ask_high_chairs":          askHighChairs != 0,
+			"ask_baby_strollers":       askBabyStrollers != 0,
+			"adelanto_payment_methods": adelantoMethods,
+			"adelanto_unified":         adelantoUnified != 0,
+			"adelanto_unified_amount":  nullIfZeroFloat(adelantoUnifiedAmount.Valid, adelantoUnifiedAmount.Float64),
+			"prereserva_starts_on":     nullIfEmptyTime(prereservaStartsOn),
+			"prereserva_ends_on":       nullIfEmptyTime(prereservaEndsOn),
+			"menus":                    menus,
 		},
 	})
 }
@@ -363,10 +380,12 @@ func (s *Server) handleBOSpecialDatesList(w http.ResponseWriter, r *http.Request
 // loadBOSpecialDateMenus reads the child rows for one special date.
 func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, specialDateID int64) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, menu_id, custom_title, custom_image_url, adelanto_amount, price, position
-		FROM special_date_menus
-		WHERE restaurant_id = ? AND special_date_id = ?
-		ORDER BY position ASC, id ASC
+		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url, sdm.adelanto_amount, sdm.price, sdm.position,
+		       COALESCE(m.completo, 0)
+		FROM special_date_menus sdm
+		LEFT JOIN menus m ON m.id = sdm.menu_id AND m.restaurant_id = sdm.restaurant_id
+		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?
+		ORDER BY sdm.position ASC, sdm.id ASC
 	`, restaurantID, specialDateID)
 	if err != nil {
 		return nil, err
@@ -379,8 +398,8 @@ func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, s
 		var menuID sql.NullInt64
 		var customTitle, customImageURL sql.NullString
 		var adelantoAmount, price sql.NullFloat64
-		var position int
-		if err := rows.Scan(&id, &menuID, &customTitle, &customImageURL, &adelantoAmount, &price, &position); err != nil {
+		var position, completo int
+		if err := rows.Scan(&id, &menuID, &customTitle, &customImageURL, &adelantoAmount, &price, &position, &completo); err != nil {
 			return nil, err
 		}
 		row := map[string]any{
@@ -389,6 +408,8 @@ func (s *Server) loadBOSpecialDateMenus(ctx context.Context, restaurantID int, s
 		}
 		if menuID.Valid {
 			row["menu_id"] = menuID.Int64
+			// Coordination id: special_menu_completo_v1
+			row["completo"] = completo != 0
 		}
 		if customTitle.Valid {
 			row["custom_title"] = customTitle.String
@@ -669,6 +690,20 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	if req.AllowCustomerModification != nil {
 		allowCustomerModificationReq = *req.AllowCustomerModification
 	}
+	// Coordination id: guest_count_flags_v1 - default true so a legacy client
+	// that omits the fields never disables the questions by accident.
+	askAdultsReq := true
+	if req.AskAdults != nil {
+		askAdultsReq = *req.AskAdults
+	}
+	askHighChairsReq := true
+	if req.AskHighChairs != nil {
+		askHighChairsReq = *req.AskHighChairs
+	}
+	askBabyStrollersReq := true
+	if req.AskBabyStrollers != nil {
+		askBabyStrollersReq = *req.AskBabyStrollers
+	}
 	// Coordination id: mobility_issues_v1
 	mobilityEnabledReq := false
 	if req.MobilityEnabled != nil {
@@ -683,9 +718,10 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO special_dates
 			(restaurant_id, date, is_active, title, description, custom_notice, prereserva_enabled,
-			 max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto, allow_customer_modification, adelanto_payment_methods,
+			 max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto, allow_customer_modification,
+			 ask_adults, ask_high_chairs, ask_baby_strollers, adelanto_payment_methods,
 			 adelanto_unified, adelanto_unified_amount, prereserva_starts_on, prereserva_ends_on)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			is_active = VALUES(is_active),
 			title = VALUES(title),
@@ -697,13 +733,17 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			mobility_enabled = VALUES(mobility_enabled),
 			requires_adelanto = VALUES(requires_adelanto),
 			allow_customer_modification = VALUES(allow_customer_modification),
+			ask_adults = VALUES(ask_adults),
+			ask_high_chairs = VALUES(ask_high_chairs),
+			ask_baby_strollers = VALUES(ask_baby_strollers),
 			adelanto_payment_methods = VALUES(adelanto_payment_methods),
 			adelanto_unified = VALUES(adelanto_unified),
 			adelanto_unified_amount = VALUES(adelanto_unified_amount),
 			prereserva_starts_on = VALUES(prereserva_starts_on),
 			prereserva_ends_on = VALUES(prereserva_ends_on)
 	`, a.ActiveRestaurantID, date, boolToInt(isActive), title, description, customNotice, boolToInt(prereservaEnabled),
-		boolToInt(maxPerTableEnabled), maxPerTableVal, boolToInt(mobilityEnabledReq), boolToInt(requiresAdelanto), boolToInt(allowCustomerModificationReq), string(adelantoMethodsJSON),
+		boolToInt(maxPerTableEnabled), maxPerTableVal, boolToInt(mobilityEnabledReq), boolToInt(requiresAdelanto), boolToInt(allowCustomerModificationReq),
+		boolToInt(askAdultsReq), boolToInt(askHighChairsReq), boolToInt(askBabyStrollersReq), string(adelantoMethodsJSON),
 		boolToInt(adelantoUnified), normalizeAdelantoAmount(adelantoUnifiedAmount), prereservaStartsOn, prereservaEndsOn)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando special_dates")
@@ -770,6 +810,17 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			httpx.WriteError(w, http.StatusInternalServerError, "Error insertando special_date_menus")
 			return
 		}
+		// Coordination id: special_menu_completo_v1 - the "COMPLETO" toggle
+		// lives on the catalogue menu so the public site can flag it everywhere
+		// (menu page, home card, burger nav).
+		if m.MenuID != nil && m.Completo != nil {
+			if _, err := tx.ExecContext(r.Context(), `
+				UPDATE menus SET completo = ? WHERE id = ? AND restaurant_id = ?
+			`, boolToInt(*m.Completo), *m.MenuID, a.ActiveRestaurantID); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error guardando completo del menú")
+				return
+			}
+		}
 		// Coordination id: special_date_section_menus_v1
 		if m.MenuID != nil && len(m.Sections) > 0 {
 			sdmID, _ := res.LastInsertId()
@@ -790,6 +841,10 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 		"restaurant_id", a.ActiveRestaurantID,
 		"date", date,
 		"menus", len(cleanMenus),
+		// Coordination id: guest_count_flags_v1
+		"ask_adults", askAdultsReq,
+		"ask_high_chairs", askHighChairsReq,
+		"ask_baby_strollers", askBabyStrollersReq,
 	)
 	s.broadcastBOSpecialDateChange(a.ActiveRestaurantID, "special_date_changed", date, isActive, title)
 

@@ -131,7 +131,7 @@ func TestPublicBookingToResponse(t *testing.T) {
 		ReservationDate: "2026-05-15",
 		ReservationTime: "14:00:00",
 		PartySize:       4,
-		Children:        1,
+		Children:        sql.NullInt64{Int64: 1, Valid: true},
 		CustomerName:    "Juan García",
 		Commentary:      nullSQLStr("Mesa tranquila"),
 		BabyStrollers:   sql.NullInt64{Int64: 1, Valid: true},
