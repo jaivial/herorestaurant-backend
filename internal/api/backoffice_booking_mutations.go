@@ -1246,7 +1246,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 		ReservationDate     string
 		ReservationTime     string
 		PartySize           int
-		Children            int
+		Children            sql.NullInt64
 		ContactPhone        sql.NullString
 		ContactPhoneCC      sql.NullString
 		Status              sql.NullString
@@ -1315,7 +1315,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 			"reservation_date":           b.ReservationDate,
 			"reservation_time":           b.ReservationTime,
 			"party_size":                 b.PartySize,
-			"children":                   b.Children,
+			"children":                   nullInt64OrNil(b.Children),
 			"contact_phone":              nullStringOrNil(b.ContactPhone),
 			"contact_phone_country_code": defaultString(b.ContactPhoneCC, "34"),
 			"status":                     defaultString(b.Status, "pending"),
@@ -1389,7 +1389,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		resDate             string
 		resTime             string
 		partySize           int
-		children            int
+		children            sql.NullInt64
 		contactPhone        sql.NullString
 		contactPhoneCC      sql.NullString
 		status              sql.NullString
@@ -1462,7 +1462,7 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		"reservation_date": resDate,
 		"reservation_time": resTime,
 		"party_size":       int64(partySize),
-		"children":         int64(children),
+		"children":         nullInt64OrNil(children),
 		// Coordination id: mobility_issues_v1
 		"has_mobility_issues":        hasMobilityIssues != 0,
 		"mobility_people":            int64(mobilityPeople),
