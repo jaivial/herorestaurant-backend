@@ -310,10 +310,10 @@ func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme
 			b.WriteString(campaignEmailButtonHTML(m[1], m[2], m[3], theme))
 		case strings.HasPrefix(line, "### "):
 			closeList()
-			fmt.Fprintf(&b, `<h3 style="margin:18px 0 8px;font-size:18px;color:%s">%s</h3>`, theme.Text, renderCampaignInline(line[4:], theme))
+			fmt.Fprintf(&b, `<h3 style="margin:18px 0 8px;font-size:18px;color:%s;text-align:center">%s</h3>`, theme.Text, renderCampaignInline(line[4:], theme))
 		case strings.HasPrefix(line, "## "):
 			closeList()
-			fmt.Fprintf(&b, `<h2 style="margin:20px 0 10px;font-size:22px;color:%s">%s</h2>`, theme.Text, renderCampaignInline(line[3:], theme))
+			fmt.Fprintf(&b, `<h2 style="margin:22px 0 12px;font-size:22px;color:%s;text-align:center">%s</h2>`, theme.Text, renderCampaignInline(line[3:], theme))
 		case strings.HasPrefix(line, "# "):
 			closeList()
 			fmt.Fprintf(&b, `<h1 style="margin:0 0 14px;font-size:27px;color:%s;text-align:center">%s</h1>`, theme.Accent, renderCampaignInline(line[2:], theme))

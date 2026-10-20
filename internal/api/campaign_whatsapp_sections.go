@@ -216,8 +216,10 @@ func campaignPickCTAs(buttons []string) (cta, rest []string) {
 func (s *Server) deliverCampaignWhatsAppUnified(ctx context.Context, restaurantID int, gw WhatsAppGateway, coordID, num, brandName, markdown string, extraChoices []string) error {
 	text, image, buttons := campaignUnifiedWhatsApp(markdown, brandName)
 	cta, rest := campaignPickCTAs(buttons)
-	rest = append(rest, extraChoices...)
-	for _, b := range rest {
+	// Only the opt-out link stays as a line in the text; the other links that
+	// do not fit the 2 buttons are left out of the WhatsApp message on purpose.
+	_ = rest
+	for _, b := range extraChoices {
 		label, url, _ := strings.Cut(b, "|")
 		text += "\n\n" + strings.TrimSpace(label) + ": " + strings.TrimSpace(url)
 	}
