@@ -937,7 +937,10 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
 		return
 	}
-	if c.Status == "sending" {
+	// A 'sending' campaign whose runner died (backend restart/deploy) can be
+	// resumed: only the still-pending recipients are sent, sent rows are never
+	// repeated (uq_campaign_target + status).
+	if c.Status == "sending" && campaignRunners.running(c.ID) {
 		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
 		return
 	}
@@ -954,7 +957,14 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE campaigns SET status = 'sending' WHERE id = ?`, c.ID)
 	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets))
-	go s.runCampaignSend(context.WithoutCancel(r.Context()), a.ActiveRestaurantID, c.ID)
+	if !campaignRunners.start(c.ID) {
+		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
+		return
+	}
+	go func() {
+		defer campaignRunners.stop(c.ID)
+		s.runCampaignSend(context.WithoutCancel(r.Context()), a.ActiveRestaurantID, c.ID)
+	}()
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID, "queued": len(targets)})
 }
 
@@ -1186,4 +1196,35 @@ func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Req
 		"total":       total,
 		"total_pages": totalPages,
 	})
+}
+
+// campaignRunners tracks the in-process send goroutines so a campaign left in
+// 'sending' by a restart can be resumed without ever running twice.
+type campaignRunnerSet struct {
+	mu  sync.Mutex
+	ids map[int64]bool
+}
+
+var campaignRunners = &campaignRunnerSet{ids: map[int64]bool{}}
+
+func (r *campaignRunnerSet) running(id int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ids[id]
+}
+
+func (r *campaignRunnerSet) start(id int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ids[id] {
+		return false
+	}
+	r.ids[id] = true
+	return true
+}
+
+func (r *campaignRunnerSet) stop(id int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.ids, id)
 }
