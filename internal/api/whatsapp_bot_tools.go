@@ -273,6 +273,10 @@ func botToolDefsForChat(cfg botTenantConfig, inGroup bool) []botToolDef {
 		defs = append(defs, botToolDefsSpecialCRUD()...)
 	}
 	defs = append(defs, botToolDefsV2()...)
+	// Coordination id: wa_bot_unsubscribe_v1 - customers only, never the staff group.
+	if !inGroup {
+		defs = append(defs, botToolDefUnsubscribe())
+	}
 	return defs
 }
 
