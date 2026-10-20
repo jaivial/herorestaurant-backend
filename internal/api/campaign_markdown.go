@@ -20,6 +20,10 @@ type campaignTheme struct {
 	FontFamily string `json:"fontFamily"`
 	MaxWidth   int    `json:"maxWidth"`
 	Align      string `json:"align"`
+	// LogoURL optionally replaces the restaurant logo in the header of this
+	// campaign only (e.g. a PNG with an opaque background that stays readable in
+	// dark mode clients).
+	LogoURL string `json:"logoUrl"`
 }
 
 // campaignBaseTheme mirrors the transactional email template already used by
@@ -43,6 +47,9 @@ func normalizeCampaignTheme(t campaignTheme) campaignTheme {
 	out.FontFamily = firstNonEmpty(safeFontFamily(t.FontFamily), campaignBaseTheme.FontFamily)
 	if out.MaxWidth < 320 || out.MaxWidth > 900 {
 		out.MaxWidth = 600
+	}
+	if !strings.HasPrefix(out.LogoURL, "https://") || !adCanvasSafeURL(out.LogoURL) || strings.ContainsAny(out.LogoURL, "\"<> '") {
+		out.LogoURL = ""
 	}
 	if out.Align != "center" && out.Align != "right" {
 		out.Align = "left"
@@ -81,6 +88,7 @@ func hexColorOrEmpty(v string) string {
 
 var (
 	mdImageRe  = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)(?:\s*=([0-9]+))?\)`)
+	mdIconRe   = regexp.MustCompile(`!\[icon\]\([^)\s]+(?: =[0-9]+)?\)\s*`)
 	mdLinkRe   = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
 	mdBoldRe   = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	mdItalicRe = regexp.MustCompile(`(^|[^*])\*([^*]+)\*`)
@@ -210,6 +218,23 @@ func campaignWebsiteButtonHTML(websiteURL string, theme campaignTheme) string {
 `, htmlEscape(websiteURL), campaignWebsiteEmailTestID, campaignWebsiteEmailCoordID, theme.Accent, theme.FontFamily, campaignWebsiteCopy)
 }
 
+// campaignEmailButtonRe matches a line that is only a link, optionally preceded
+// by a lucide icon image and/or an emoji: it renders as a centred button.
+var campaignEmailButtonRe = regexp.MustCompile(`^(!\[icon\]\([^)\s]+(?: =[0-9]+)?\)\s*)?[^\w\[!]*\[([^\]]+)\]\((https?://[^)\s]+)\)[^\w]*$`)
+
+// campaignEmailButtonHTML renders a rounded, centred, filled call-to-action.
+func campaignEmailButtonHTML(icon, label, href string, theme campaignTheme) string {
+	if !adCanvasSafeURL(html.UnescapeString(href)) {
+		return ""
+	}
+	iconHTML := ""
+	if strings.TrimSpace(icon) != "" {
+		iconHTML = renderCampaignInline(strings.TrimSpace(icon), theme)
+	}
+	return fmt.Sprintf(`<table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" style="margin:18px auto"><tr><td align="center" bgcolor="%s" style="background-color:%s;border-radius:999px;"><a href="%s" style="display:inline-block;padding:14px 28px;color:#ffffff;font-family:%s;font-size:16px;font-weight:bold;text-decoration:none;border-radius:999px;line-height:1.2">%s%s</a></td></tr></table>`,
+		theme.Accent, theme.Accent, htmlEscape(href), theme.FontFamily, iconHTML, htmlEscape(label))
+}
+
 // renderCampaignInline turns the inline markdown subset into email HTML.
 func renderCampaignInline(line string, theme campaignTheme) string {
 	out := htmlEscape(line)
@@ -224,6 +249,15 @@ func renderCampaignInline(line string, theme campaignTheme) string {
 			return parts[1]
 		}
 		style := `max-width:100%;height:auto;border-radius:10px;display:block;margin:12px 0`
+		if parts[1] == "icon" {
+			// Lucide icon rendered as a small inline PNG (email clients do not
+			// render inline SVG).
+			w := campaignImageWidth(parts[3])
+			if w <= 0 {
+				w = 20
+			}
+			return fmt.Sprintf(`<img src="%s" alt="" width="%d" height="%d" style="display:inline-block;vertical-align:middle;margin:0 8px 3px 0;border:0;width:%dpx;height:%dpx" />`, parts[2], w, w, w, w)
+		}
 		if w := campaignImageWidth(parts[3]); w > 0 {
 			style = fmt.Sprintf("width:%dpx;", w) + style
 		}
@@ -270,6 +304,10 @@ func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme
 			continue
 		}
 		switch {
+		case campaignEmailButtonRe.MatchString(line):
+			closeList()
+			m := campaignEmailButtonRe.FindStringSubmatch(line)
+			b.WriteString(campaignEmailButtonHTML(m[1], m[2], m[3], theme))
 		case strings.HasPrefix(line, "### "):
 			closeList()
 			fmt.Fprintf(&b, `<h3 style="margin:18px 0 8px;font-size:18px;color:%s">%s</h3>`, theme.Text, renderCampaignInline(line[4:], theme))
@@ -326,6 +364,9 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 	// campaigns keep that chrome; without a logo the brand name takes its place
 	// instead of leaving an empty accent strip.
 	headerContent := fmt.Sprintf(`<span style="color:#ffffff;font-size:22px;font-weight:bold;">%s</span>`, htmlEscape(brandName))
+	if theme.LogoURL != "" {
+		logoURL = theme.LogoURL
+	}
 	if strings.TrimSpace(logoURL) != "" {
 		headerContent = fmt.Sprintf(`<img src="%s" alt="%s" style="max-width:200px;height:auto;">`, logoURL, htmlEscape(brandName))
 	}
@@ -343,6 +384,8 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
 <title>%s</title>
 </head>
 <body style="margin:0;padding:0;font-family:%s;line-height:1.6;background-color:%s;">
@@ -492,6 +535,7 @@ func renderCampaignWhatsAppBody(markdown, brandName, unsubscribeURL string, with
 			out = append(out, "———")
 			continue
 		}
+		line = mdIconRe.ReplaceAllString(line, "")
 		line = mdImageRe.ReplaceAllString(line, "$2")
 		line = mdLinkRe.ReplaceAllString(line, "$1: $2")
 		line = strings.TrimPrefix(line, "> ")
@@ -505,8 +549,8 @@ func renderCampaignWhatsAppBody(markdown, brandName, unsubscribeURL string, with
 			line = "- " + strings.TrimPrefix(line, "* ")
 		}
 		line = mdBoldRe.ReplaceAllString(line, "*$1*")
-		line = mdItalicRe.ReplaceAllString(line, "$1_$2_")
-		line = mdCodeRe.ReplaceAllString(line, "```$1```")
+		line = mdItalicRe.ReplaceAllString(line, "${1}_${2}_")
+		line = mdCodeRe.ReplaceAllString(line, "```${1}```")
 		out = append(out, line)
 	}
 	text := strings.Join(out, "\n")
