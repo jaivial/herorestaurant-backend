@@ -155,6 +155,8 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolMemberAttendance(ctx, restaurantID, msg.Sender, input)
 	case "get_member_access":
 		return s.botToolMemberAccess(ctx, restaurantID, msg.Sender)
+	case "unsubscribe_marketing":
+		return s.botToolUnsubscribeMarketing(ctx, restaurantID, msg, input)
 	case "send_menu_buttons":
 		return s.botToolSendButtons(ctx, restaurantID, msg, input)
 	case "send_image", "send_document":
