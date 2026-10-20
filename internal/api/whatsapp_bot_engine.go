@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"strings"
@@ -51,11 +53,47 @@ func (s *Server) botRunAgentLoop(ctx context.Context, restaurantID int, model st
 	}, system, messages, tools, exec)
 }
 
-// botDefaultMaxIterations is the tool-use budget of one turn when the config
-// does not set one. wa_bot_iter_cap_v1: 8 was not enough for a booking edit
-// that needs catalog lookups first, and a turn that spends the whole budget on
-// tools ends with no text, so the customer got the generic apology.
-const botDefaultMaxIterations = 12
+// wa_bot_noncap_v1: a turn has no fixed tool/iteration limit. The owner asked
+// for none (a long booking edit legitimately needs many lookups). BOT_MAX_ITERATIONS
+// stays only as an optional operator override: 0 or unset means no cap. What ends
+// a turn that is not progressing is the loop guard below, which looks at what the
+// tools returned, not at how many calls were made.
+const (
+	// The same tool with the same input returned the same result this many times.
+	botLoopRepeatLimit = 3
+	// Consecutive rounds in which every tool call failed.
+	botLoopFailRounds = 4
+)
+
+// botLoopGuard detects a turn that is not making progress.
+type botLoopGuard struct {
+	seen      map[string]int
+	failRound int
+	stalled   bool
+	reason    string
+}
+
+func newBotLoopGuard() *botLoopGuard { return &botLoopGuard{seen: map[string]int{}} }
+
+func (g *botLoopGuard) observe(name string, input json.RawMessage, out string) {
+	sum := sha256.Sum256([]byte(name + "\x00" + string(input) + "\x00" + out))
+	key := hex.EncodeToString(sum[:8])
+	g.seen[key]++
+	if g.seen[key] >= botLoopRepeatLimit {
+		g.stalled, g.reason = true, "repeated_identical_call"
+	}
+}
+
+func (g *botLoopGuard) endRound(allFailed bool) {
+	if allFailed {
+		g.failRound++
+	} else {
+		g.failRound = 0
+	}
+	if g.failRound >= botLoopFailRounds {
+		g.stalled, g.reason = true, "consecutive_failed_rounds"
+	}
+}
 
 // botBudgetOperatorNote is appended to the SYSTEM prompt (a trusted channel,
 // never to tool results) for the last model call of a turn, so that call
@@ -69,20 +107,24 @@ const botBudgetExhaustedText = "No he podido completar tu petición. He detenido
 
 // botRunAgentLoopWith is the provider-agnostic loop used by every caller.
 func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
-	maxIter := s.cfg.BotMaxIterations
-	if maxIter <= 0 {
-		maxIter = botDefaultMaxIterations
-	}
+	maxIter := s.cfg.BotMaxIterations // <= 0: no fixed cap (wa_bot_noncap_v1)
+	guard := newBotLoopGuard()
 
 	result := botLoopResult{}
 	msgs := append([]botMessage{}, messages...)
 
-	for i := 0; i < maxIter; i++ {
+	for i := 0; ; i++ {
+		if err := ctx.Err(); err != nil {
+			result.Messages = msgs
+			return result, err
+		}
 		result.Iterations = i + 1
 
-		last := i == maxIter-1
+		// Wrap-up call: only when the loop guard saw no progress, or when an
+		// operator-set cap is reached. Never because of a call count by default.
+		last := guard.stalled || (maxIter > 1 && i == maxIter-1)
 		callSystem := system
-		if last && maxIter > 1 {
+		if last {
 			callSystem = system + botBudgetOperatorNote
 		}
 		resp, used, err := call(ctx, callSystem, msgs, tools)
@@ -95,7 +137,8 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		// Append the assistant turn as-is (text + tool_use blocks).
 		assistant := botMessage{Role: "assistant", Content: resp.Content}
 		toolResults := make([]botBlock, 0, 2)
-		if last && maxIter > 1 {
+		roundFailed := 0
+		if last {
 			wantsTool := false
 			for _, block := range resp.Content {
 				if block.Type == "tool_use" {
@@ -105,7 +148,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			if wantsTool {
 				// Budget spent and the model still wants a tool: execute nothing
 				// more (no hidden extra mutation) and answer with the known facts.
-				log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 exhausted iterations=%d ran=%d failed=%d tools=%s", i+1, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
+				log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 exhausted reason=%s iterations=%d ran=%d failed=%d tools=%s", guard.reason, i+1, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
 				result.Exhausted = true
 				msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botBudgetExhaustedText}}})
 				result.Messages = msgs
@@ -122,9 +165,12 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 				out = `{"error":` + jsonQuote(err.Error()) + `}`
 			}
 			result.Ran++
-			if err != nil || strings.Contains(out, `"error"`) {
+			failed := err != nil || strings.Contains(out, `"error"`)
+			if failed {
 				result.Failed++
+				roundFailed++
 			}
+			guard.observe(block.Name, block.Input, out)
 			toolResults = append(toolResults, botBlock{
 				Type:      "tool_result",
 				ToolUseID: block.ID,
@@ -139,6 +185,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			return result, nil
 		}
 
+		guard.endRound(roundFailed == len(toolResults))
 		msgs = append(msgs, assistant, botMessage{Role: "user", Content: toolResults})
 
 		// Coordination id: wa_bot_early_stop_v1 - when every tool of this
@@ -150,9 +197,6 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			return result, nil
 		}
 	}
-
-	result.Messages = msgs
-	return result, nil
 }
 
 func jsonQuote(s string) string {
