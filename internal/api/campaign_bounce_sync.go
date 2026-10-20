@@ -68,59 +68,80 @@ func campaignClassifyBounce(status, action, diag string) string {
 	return "soft"
 }
 
-// campaignParseNDR extracts one event from a raw notice, or ok=false when no
-// recipient can be found.
-func campaignParseNDR(raw, ownMailbox string) (campaignBounceEvent, bool) {
-	ev := campaignBounceEvent{}
+// campaignBounceKey builds the idempotency key: NDR Message-ID plus the
+// failed address, so a DSN that lists several recipients keeps one event per
+// address and a repeated Message-ID never hides another address.
+func campaignBounceKey(msgID, address, raw string) string {
+	base := msgID
+	if base == "" {
+		sum := sha256.Sum256([]byte(raw))
+		base = "sha256:" + hex.EncodeToString(sum[:16])
+	}
+	key := base + "|" + address
+	if len(key) > 190 {
+		sum := sha256.Sum256([]byte(key))
+		key = "sha256:" + hex.EncodeToString(sum[:16])
+	}
+	return key
+}
+
+// campaignParseNDR extracts one event per failed recipient of a raw notice.
+// Only a DSN Final-Recipient field proves whose address failed; an address
+// picked from free text may belong to a stranger, so it can never be hard.
+func campaignParseNDR(raw, ownMailbox string) []campaignBounceEvent {
 	own := strings.ToLower(ownMailbox)
+	msgID := ""
+	if m := campaignNDRMsgIDRe.FindStringSubmatch(raw); m != nil {
+		msgID = m[1]
+	}
+	build := func(addr, seg string, proven bool) campaignBounceEvent {
+		ev := campaignBounceEvent{Address: addr}
+		if m := campaignNDRStatusRe.FindStringSubmatch(seg); m != nil {
+			ev.Status = m[1]
+		} else if m := campaignNDRLooseRe.FindStringSubmatch(seg); m != nil {
+			ev.Status = m[1]
+		}
+		if m := campaignNDRActionRe.FindStringSubmatch(seg); m != nil {
+			ev.Action = strings.ToLower(m[1])
+		}
+		if m := campaignNDRDiagRe.FindStringSubmatch(seg); m != nil {
+			ev.Diag = strings.TrimSpace(m[1])
+			if len(ev.Diag) > 300 {
+				ev.Diag = ev.Diag[:300]
+			}
+		}
+		ev.Key = campaignBounceKey(msgID, addr, raw)
+		ev.Class = campaignClassifyBounce(ev.Status, ev.Action, ev.Diag)
+		if !proven && ev.Class == "hard" {
+			ev.Class = "soft"
+		}
+		return ev
+	}
+	out := []campaignBounceEvent{}
+	seen := map[string]bool{}
+	idx := campaignNDRFinalRe.FindAllStringSubmatchIndex(raw, 12)
+	for i, loc := range idx {
+		addr := strings.ToLower(raw[loc[2]:loc[3]])
+		if addr == own || len(addr) > 190 || seen[addr] || strings.HasPrefix(addr, "mailer-daemon@") || strings.HasPrefix(addr, "postmaster@") {
+			continue
+		}
+		end := len(raw)
+		if i+1 < len(idx) {
+			end = idx[i+1][0]
+		}
+		seen[addr] = true
+		out = append(out, build(addr, raw[loc[0]:end], true))
+	}
+	if len(out) > 0 {
+		return out
+	}
 	for _, m := range campaignBounceAddrRe.FindAllStringSubmatch(raw, 12) {
 		a := strings.ToLower(m[1])
-		if a != own && !strings.HasPrefix(a, "mailer-daemon@") && !strings.HasPrefix(a, "postmaster@") {
-			ev.Address = a
-			break
+		if a != own && len(a) <= 190 && !strings.HasPrefix(a, "mailer-daemon@") && !strings.HasPrefix(a, "postmaster@") {
+			return []campaignBounceEvent{build(a, raw, false)}
 		}
 	}
-	if ev.Address == "" || len(ev.Address) > 190 {
-		return ev, false
-	}
-	// Only the DSN Final-Recipient field proves whose address failed. An
-	// address picked from free text may be a stranger, so it can never be hard.
-	viaFinal := false
-	if m := campaignNDRFinalRe.FindStringSubmatch(raw); m != nil {
-		if a := strings.ToLower(m[1]); a != own && len(a) <= 190 {
-			ev.Address = a
-			viaFinal = true
-		}
-	}
-	if m := campaignNDRStatusRe.FindStringSubmatch(raw); m != nil {
-		ev.Status = m[1]
-	} else if m := campaignNDRLooseRe.FindStringSubmatch(raw); m != nil {
-		ev.Status = m[1]
-	}
-	if m := campaignNDRActionRe.FindStringSubmatch(raw); m != nil {
-		ev.Action = strings.ToLower(m[1])
-	}
-	if m := campaignNDRDiagRe.FindStringSubmatch(raw); m != nil {
-		ev.Diag = strings.TrimSpace(m[1])
-		if len(ev.Diag) > 300 {
-			ev.Diag = ev.Diag[:300]
-		}
-	}
-	if m := campaignNDRMsgIDRe.FindStringSubmatch(raw); m != nil {
-		ev.Key = m[1]
-	} else {
-		sum := sha256.Sum256([]byte(raw))
-		ev.Key = "sha256:" + hex.EncodeToString(sum[:16])
-	}
-	if len(ev.Key) > 190 {
-		sum := sha256.Sum256([]byte(ev.Key))
-		ev.Key = "sha256:" + hex.EncodeToString(sum[:16])
-	}
-	ev.Class = campaignClassifyBounce(ev.Status, ev.Action, ev.Diag)
-	if !viaFinal && ev.Class == "hard" {
-		ev.Class = "soft"
-	}
-	return ev, true
+	return nil
 }
 
 var campaignSMTPCodeRe = regexp.MustCompile(`\b([245]\d\d)[ -]([245]\.\d{1,3}\.\d{1,3})`)
@@ -215,9 +236,7 @@ func campaignReadBounceEvents(host, user, pass string, sinceDays int) ([]campaig
 		if err != nil {
 			continue
 		}
-		if ev, ok := campaignParseNDR(strings.Join(parts, "\n"), user); ok {
-			out = append(out, ev)
-		}
+		out = append(out, campaignParseNDR(strings.Join(parts, "\n"), user)...)
 	}
 	_, _ = run("LOGOUT")
 	return out, nil
@@ -233,7 +252,7 @@ type campaignBounceSyncResult struct {
 
 // campaignSuppressBounce records one fresh hard/soft event in the legacy
 // invalid_emails list (hard only) and in campaign_suppressions. INSERT IGNORE
-// on the unique key keeps an existing baja or earlier verdict untouched.
+// on the unique key keeps an existing baja or earlier verdict untouched; a hard bounce only upgrades an earlier pending_verify row to invalid.
 func (s *Server) campaignSuppressBounce(ctx context.Context, restaurantID int, ev campaignBounceEvent) {
 	if ev.Class == "hard" {
 		_, _ = s.db.ExecContext(ctx, `
@@ -242,8 +261,11 @@ func (s *Server) campaignSuppressBounce(ctx context.Context, restaurantID int, e
 			  AND NOT EXISTS (SELECT 1 FROM invalid_emails WHERE LOWER(TRIM(email)) = ?)
 		`, ev.Address, restaurantID, ev.Address, ev.Address)
 		_, _ = s.db.ExecContext(ctx, `
-			INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
+			INSERT INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
 			SELECT ?, 'email', ?, MAX(id), CONCAT('email no valido: rebote Titan ', ?), 'bounce' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
+			ON DUPLICATE KEY UPDATE
+				reason = IF(source = 'pending_verify', VALUES(reason), reason),
+				source = IF(source = 'pending_verify', 'bounce', source)
 		`, restaurantID, ev.Address, ev.Status, restaurantID, ev.Address)
 		return
 	}
@@ -353,5 +375,6 @@ func (s *Server) runCampaignBounceLoop(ctx context.Context) {
 		for _, id := range ids {
 			_, _ = s.syncCampaignBounces(ctx, id, 2)
 		}
+		s.runCampaignEmailRetries(ctx)
 	}
 }
