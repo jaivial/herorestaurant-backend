@@ -1862,7 +1862,7 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 	logCheckpoint(r, "home_menus_db_query_started", "restaurant_id", strconv.Itoa(restaurantID))
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, menu_type, active, menu_subtitle,
-		       show_menu_preview_image, menu_preview_image_path
+		       show_menu_preview_image, menu_preview_image_path, COALESCE(completo, 0)
 		FROM menus
 		WHERE `+activePublicMenuWhere()+`
 		ORDER BY `+activePublicMenuOrderBy(),
@@ -1887,6 +1887,7 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 			menuSubtitleRaw         sql.NullString
 			showMenuPreviewImageInt int
 			menuPreviewPathRaw      sql.NullString
+			completoInt             int
 		)
 		if err := rows.Scan(
 			&menuID,
@@ -1896,6 +1897,7 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 			&menuSubtitleRaw,
 			&showMenuPreviewImageInt,
 			&menuPreviewPathRaw,
+			&completoInt,
 		); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -1919,6 +1921,7 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 			MenuSubtitle:         anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
 			ShowMenuPreviewImage: showMenuPreviewImageInt != 0,
 			MenuPreviewImageURL:  s.publicMenuMediaURL(r.Context(), restaurantID, menuPreviewPathRaw.String),
+			Completo:             completoInt != 0,
 		})
 	}
 
