@@ -759,6 +759,7 @@ func (s *Server) Routes() http.Handler {
 		campaignsGate := s.requireBOCapability(boCapabilityCampanas)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas", s.handleBOCampaignsList)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/unsubscribed", s.handleBOCampaignUnsubscribed)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/email-validation", s.handleBOCampaignEmailValidation)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas", s.handleBOCampaignCreate)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/preview", s.handleBOCampaignPreview)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/template", s.handleBOCampaignTemplate)
