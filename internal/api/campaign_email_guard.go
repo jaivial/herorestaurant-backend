@@ -28,11 +28,11 @@ var campaignEmailSyntax = regexp.MustCompile(`^[a-z0-9][a-z0-9._%+\-]{0,63}@[a-z
 
 // Typos of the big providers: nobody owns these mailboxes.
 var campaignTypoDomains = map[string]bool{
-	"gmial.com": true, "gmai.com": true, "gmail.es": true, "gamil.com": true, "gmail.co": true, "gmail.con": true, "gmail.cm": true, "gmail.om": true,
+	"gmial.com": true, "gmai.com": true, "gamil.com": true, "gmail.con": true, "gmail.cm": true, "gmail.om": true,
 	"gnail.com": true, "gmaill.com": true, "gmeil.com": true, "gmal.com": true, "gmail.comm": true, "gmail.vom": true, "gmail.xom": true, "gmail.cim": true,
-	"hotmial.com": true, "hotmai.com": true, "hotmail.con": true, "hotmail.co": true, "hotmal.com": true, "hotnail.com": true, "hotmil.com": true, "hotamil.com": true, "hotmail.cm": true, "hotmail.om": true, "hotmaill.com": true,
-	"hotmail.ex": true, "hotmail.ec": true, "outlok.com": true, "outlook.con": true, "outlook.co": true, "outlool.com": true,
-	"yaho.com": true, "yahho.com": true, "yahoo.con": true, "yahoo.co": true, "yaoo.com": true, "yahoo.ed": true, "yahoo.e": true, "yahoo.eS": true,
+	"hotmial.com": true, "hotmai.com": true, "hotmail.con": true, "hotmal.com": true, "hotnail.com": true, "hotmil.com": true, "hotamil.com": true, "hotmail.cm": true, "hotmail.om": true, "hotmaill.com": true,
+	"hotmail.ex": true, "hotmail.ec": true, "outlok.com": true, "outlook.con": true, "outlool.com": true,
+	"yaho.com": true, "yahho.com": true, "yahoo.con": true, "yaoo.com": true, "yahoo.ed": true, "yahoo.e": true,
 	"icloud.con": true, "iclou.com": true, "icoud.com": true,
 }
 
@@ -280,6 +280,11 @@ func (s *Server) campaignEmailBreakerTripped(ctx context.Context, restaurantID i
 			INSERT INTO invalid_emails (id_booking, email, reason)
 			SELECT COALESCE(MAX(id), 0), ?, 'bounce campaña (NDR)' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
 		`, a, restaurantID, a)
+		// Technical invalid: blocks e-mail only, never WhatsApp (not a baja).
+		_, _ = s.db.ExecContext(ctx, `
+			INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
+			SELECT ?, 'email', ?, MAX(id), 'email no valido: rebote (NDR)', 'bounce' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
+		`, restaurantID, a, restaurantID, a)
 	}
 	if fresh > 0 {
 		slog.Default().Warn("campaign.bounce.new", "coord_id", coordID, "campaign_id", campaignID, "new", fresh)

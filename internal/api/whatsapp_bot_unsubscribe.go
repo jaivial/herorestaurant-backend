@@ -18,8 +18,8 @@ import (
 func botToolDefUnsubscribe() botToolDef {
 	return botToolDef{
 		Name:        "unsubscribe_marketing",
-		Description: "Da de baja al cliente que escribe de las campañas y publicidad del restaurante (WhatsApp y, si se pide, también el email de sus reservas). ÚSALA cuando el cliente diga claramente que no quiere recibir más mensajes, promociones o campañas (por ejemplo: \"no quiero recibir más mensajes\", \"darme de baja\", \"quitadme de la lista\", \"stop\"). No la uses para cancelar una reserva ni si solo se queja de un mensaje concreto sin pedir la baja. Si la intención es ambigua, pregunta antes y usa confirmed=true solo cuando el cliente lo haya dejado claro. Después confirma al cliente con send_message que ya no recibirá más campañas (las confirmaciones y recordatorios de sus reservas se siguen enviando).",
-		InputSchema: botSchema(`{"type":"object","properties":{"channel":{"type":"string","enum":["whatsapp","email","all"],"description":"Canal de la baja. Por defecto all (WhatsApp y el email de sus reservas)."},"confirmed":{"type":"boolean","description":"DEBE ser true: el cliente ha pedido claramente la baja"}},"required":["confirmed"]}`),
+		Description: "Da de baja al cliente que escribe de TODAS las campañas y publicidad del restaurante (WhatsApp y email de sus reservas: la baja siempre cubre ambos canales). ÚSALA cuando el cliente diga claramente que no quiere recibir más mensajes, promociones o campañas (por ejemplo: \"no quiero recibir más mensajes\", \"darme de baja\", \"quitadme de la lista\", \"stop\"). No la uses para cancelar una reserva ni si solo se queja de un mensaje concreto sin pedir la baja. Si la intención es ambigua, pregunta antes y usa confirmed=true solo cuando el cliente lo haya dejado claro. Después confirma al cliente con send_message que ya no recibirá más campañas (las confirmaciones y recordatorios de sus reservas se siguen enviando).",
+		InputSchema: botSchema(`{"type":"object","properties":{"confirmed":{"type":"boolean","description":"DEBE ser true: el cliente ha pedido claramente la baja"}},"required":["confirmed"]}`),
 	}
 }
 
@@ -32,10 +32,9 @@ func (s *Server) botToolUnsubscribeMarketing(ctx context.Context, restaurantID i
 	if !in.Confirmed {
 		return botJSON(map[string]any{"error": "requiere confirmed=true cuando el cliente pide claramente la baja"}), nil
 	}
-	channel := strings.ToLower(strings.TrimSpace(in.Channel))
-	if channel != "whatsapp" && channel != "email" {
-		channel = "all"
-	}
+	// Product rule: a manual baja silences the whole contact (WhatsApp and
+	// e-mail), whatever the model passed as channel.
+	channel := "all"
 	phone := normalizeWhatsAppNumber(msg.Sender)
 	if phone == "" {
 		return botJSON(map[string]any{"error": "no se pudo identificar el teléfono del cliente"}), nil
