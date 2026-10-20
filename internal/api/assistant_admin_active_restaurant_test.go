@@ -65,3 +65,45 @@ func TestForkyPathIsSessionScoped(t *testing.T) {
 		}
 	}
 }
+
+// La sesion de servicio es de un superadmin, asi que el catalogo expone
+// operaciones para crear usuarios del panel, asignarlos a restaurantes,
+// cambiarles el rol y revocarles las sesiones. El bot gestiona un
+// restaurante, no las personas que trabajan en el panel.
+//
+// Coordination id: wa_bot_privileged_contacts_v1
+func TestForkyPathIsAccountManagement(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		// Account management: refused.
+		{"/users/12/role", true},
+		{"/users/12/version", true},
+		{"/users", true},
+		{"/roles", true},
+		{"/roles/admin", true},
+		{"/platform/users", true},
+		{"/platform/users/12", true},
+		{"/platform/users/12/assign", true},
+		{"/platform/users/12/password", true},
+		{"/platform/users/12/revoke-sessions", true},
+		{"/platform/users/12/assign/1", true},
+		// Business data: allowed.
+		{"/bookings", false},
+		{"/menus/dia/dishes", false},
+		{"/members", false},
+		{"/members/12", false},
+		{"/members/12/ensure-user", false},
+		{"/tables", false},
+		{"/stock", false},
+		{"/pos/roles/{slug}/permissions", false},
+		{"/bot/ai/1", false},
+		{"/", false},
+	}
+	for _, tc := range cases {
+		if got := forkyPathIsAccountManagement(tc.path); got != tc.want {
+			t.Errorf("forkyPathIsAccountManagement(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}

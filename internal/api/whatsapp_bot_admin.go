@@ -79,6 +79,22 @@ func (s *Server) handleBOBotConfigPut(w http.ResponseWriter, r *http.Request) {
 	if a.Role != "root" {
 		cfg.PrivilegedGroupJIDs = s.botStoredPrivilegedGroupJIDs(r.Context(), a.ActiveRestaurantID)
 		cfg.PrivilegedContacts = s.botStoredPrivilegedContacts(r.Context(), a.ActiveRestaurantID)
+	} else {
+		// A root write may CHANGE the privileged lists, but it may not DROP
+		// them by accident. This route is a general settings form: a body that
+		// simply omits the list (the operator edited the tone) would replace
+		// the whole config_json and silently revoke the selection, which is
+		// the opposite of what the operator asked.
+		//
+		// The dedicated route (bot/ai/{restaurantId}/privileged-contacts) is
+		// the one that writes the selection, and it writes the whole list.
+		// Here, an omitted list means "leave it as it was".
+		if len(cfg.PrivilegedGroupJIDs) == 0 {
+			cfg.PrivilegedGroupJIDs = s.botStoredPrivilegedGroupJIDs(r.Context(), a.ActiveRestaurantID)
+		}
+		if len(cfg.PrivilegedContacts) == 0 {
+			cfg.PrivilegedContacts = s.botStoredPrivilegedContacts(r.Context(), a.ActiveRestaurantID)
+		}
 	}
 
 	raw, _ := json.Marshal(cfg)
