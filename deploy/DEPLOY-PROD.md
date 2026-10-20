@@ -44,6 +44,38 @@ DNS (Bunny): backoffice.alqueriavillacarmen.com A → 65.109.100.94
 Repo `backofficereact`: `Dockerfile.prod` (build vike + runtime bun) y
 `.env.prod.example`.
 
+## Release con gate (recomendado)
+
+`deploy/release-backend-prod.sh` y `deploy/release-backoffice-prod.sh` hacen
+un despliegue con las protecciones que el runbook manual no cubre:
+
+- **Contexto cerrado**: se construye desde una exportacion inmutable del ref
+  exacto (`git archive`), no desde un arbol que se mueva. El contexto de
+  `docker build` se captura al empezar, asi que un build iniciado antes de un
+  commit construye el commit anterior sin avisar.
+- **Gate de contenido antes de tocar nada**: la imagen tiene que llevar los
+  sentinels del fix (los mensajes de error de los guards, no los nombres de
+  las funciones: un rename no puede borrar el mensaje, y si el nombre). Si
+  falta alguno, aborta sin parar el contenedor.
+- **El contenedor vivo es la verdad, no el tag**: se comparan y, si un build
+  tardio movio el tag de produccion, se corrige al final.
+- **Env verbatim**: se captura el env del contenedor vivo entero, y se
+  comprueban las variables criticas del contenedor nuevo antes de seguir.
+- **Rollback preparado antes**: la imagen rodante queda etiquetada y el
+  contenedor viejo se conserva hasta que el nuevo responde.
+
+```bash
+# backend (contexto multi-repo: backend/ + preactvillacarmen/)
+sudo deploy/release-backend-prod.sh origin/main
+
+# backoffice (su propio repo)
+sudo deploy/release-backoffice-prod.sh origin/dev
+```
+
+Un gate que no se ha probado en los dos sentidos no es un gate: antes de
+confiar en el, pasale una imagen sin los sentinels y comprueba que la
+rechaza.
+
 ## Redeploys futuros
 
 ```bash
