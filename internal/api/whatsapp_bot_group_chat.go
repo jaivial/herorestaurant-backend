@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -235,6 +238,25 @@ type botOwnJIDsEntry struct {
 	// of the bot's own participant). It is the bot's own identities only and
 	// is reused when a later read of the provider fails.
 	good []string
+	// goodAt is when good was verified by the provider. A degraded refresh
+	// never renews it; good is reusable only for botOwnJIDsTTL after goodAt.
+	goodAt time.Time
+	// goodFP binds good to the instance and stored phone it was verified for.
+	goodFP string
+}
+
+// botOwnJIDsFingerprint identifies the instance and stored bot phone an
+// identity set belongs to, without putting either in logs.
+func botOwnJIDsFingerprint(baseURL, instance string, own []string) string {
+	digits := make([]string, 0, len(own))
+	for _, v := range own {
+		if d := botWhatsappIDDigits(v); d != "" {
+			digits = append(digits, d)
+		}
+	}
+	sort.Strings(digits)
+	sum := sha256.Sum256([]byte(baseURL + "|" + instance + "|" + strings.Join(digits, ",")))
+	return hex.EncodeToString(sum[:6])
 }
 
 // botOwnJIDsCached returns the previously learned identities for the restaurant
@@ -258,12 +280,12 @@ func botOwnJIDsCached(restaurantID int) []string {
 }
 
 // botOwnJIDsRemember stores the identities learned from the provider.
-func botOwnJIDsRemember(restaurantID int, jids []string) {
+func botOwnJIDsRemember(restaurantID int, jids []string, fp string) {
 	if len(jids) == 0 {
 		return
 	}
 	botOwnJIDsCache.Lock()
-	botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: jids, at: time.Now(), good: jids}
+	botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: jids, at: time.Now(), good: jids, goodAt: time.Now(), goodFP: fp}
 	botOwnJIDsCache.Unlock()
 }
 
@@ -271,12 +293,13 @@ func botOwnJIDsRemember(restaurantID int, jids []string) {
 // last provider-verified set (if any) is merged in, so a transient outage does
 // not drop the LID the bot is mentioned by. Only the bot's own identities are
 // ever in either set.
-func botOwnJIDsRememberDegraded(restaurantID int, own []string, reason string) []string {
+func botOwnJIDsRememberDegraded(restaurantID int, own []string, reason, fp string) []string {
 	botOwnJIDsCache.Lock()
 	defer botOwnJIDsCache.Unlock()
 	prev := botOwnJIDsCache.byRID[restaurantID]
 	merged := own
-	if len(prev.good) > 0 {
+	reuse := fp != "" && prev.goodFP == fp && len(prev.good) > 0 && time.Since(prev.goodAt) < botOwnJIDsTTL
+	if reuse {
 		seen := map[string]struct{}{}
 		merged = make([]string, 0, len(prev.good)+len(own))
 		for _, v := range append(append([]string{}, prev.good...), own...) {
@@ -287,10 +310,10 @@ func botOwnJIDsRememberDegraded(restaurantID int, own []string, reason string) [
 			merged = append(merged, v)
 		}
 	}
-	log.Printf("[bot] checkpoint wa_bot_own_jids_v1 restaurant_id=%d degraded=true reason=%s own=%d verified_reused=%d",
-		restaurantID, reason, len(merged), len(prev.good))
+	log.Printf("[bot] checkpoint wa_bot_own_jids_v1 restaurant_id=%d degraded=true reason=%s own=%d verified_reused=%t",
+		restaurantID, reason, len(merged), reuse)
 	if len(merged) > 0 {
-		botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: merged, at: time.Now(), degraded: true, good: prev.good}
+		botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: merged, at: time.Now(), degraded: true, good: prev.good, goodAt: prev.goodAt, goodFP: prev.goodFP}
 	}
 	return merged
 }
@@ -322,11 +345,11 @@ func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []s
 	gw, ok := s.botGatewayFor(ctx, restaurantID)
 	if !ok {
 		// Short-lived: a missing gateway must not pin the phone-only set.
-		return botOwnJIDsRememberDegraded(restaurantID, own, "no_gateway")
+		return botOwnJIDsRememberDegraded(restaurantID, own, "no_gateway", "")
 	}
 	evo, ok := gw.(*evolutionGateway)
 	if !ok {
-		return botOwnJIDsRememberDegraded(restaurantID, own, "not_evolution")
+		return botOwnJIDsRememberDegraded(restaurantID, own, "not_evolution", "")
 	}
 	// The number the instance really uses, asked from the instance itself.
 	phone := botProviderInstanceOwnerPhone(ctx, evo.baseURL, evo.apiKey, evo.instanceName)
@@ -340,16 +363,17 @@ func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []s
 			}
 		}
 	}
+	fp := botOwnJIDsFingerprint(evo.baseURL, evo.instanceName, own)
 	raw := botProviderFetchAllGroups(ctx, evo.baseURL, evo.apiKey, evo.instanceName)
 	if len(raw) == 0 {
 		// Provider down: the phone plus the last verified set, cached only
 		// briefly so the next webhook retries the provider.
-		return botOwnJIDsRememberDegraded(restaurantID, own, "provider_empty")
+		return botOwnJIDsRememberDegraded(restaurantID, own, "provider_empty", fp)
 	}
 	// The LID is the form a mention actually uses, so it goes first, then the
 	// phone forms as a fallback.
 	merged := append(botGroupOwnJIDsFromGroups(raw, phone), own...)
-	botOwnJIDsRemember(restaurantID, merged)
+	botOwnJIDsRemember(restaurantID, merged, fp)
 	return merged
 }
 
