@@ -91,7 +91,7 @@ func (s *Server) botLLMCall(ctx context.Context, restaurantID int, modelOverride
 			m = strings.TrimSpace(s.cfg.MiniMaxModel)
 		}
 		if m == "" {
-			m = "MiniMax-M3"
+			m = "MiniMax-M3.1-Flash"
 		}
 		model = m
 	}

@@ -149,7 +149,7 @@ func (s *Server) resolveMiniMaxModel(ctx context.Context, restaurantID int, feat
 	if strings.TrimSpace(s.cfg.MiniMaxModel) != "" {
 		return s.cfg.MiniMaxModel
 	}
-	return "MiniMax-M3"
+	return "MiniMax-M3.1-Flash"
 }
 
 // hasMiniMaxConfig reports whether a restaurant has a DB-stored MiniMax API key.
