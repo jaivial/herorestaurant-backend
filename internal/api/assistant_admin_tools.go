@@ -242,6 +242,26 @@ func (s *Server) assistantAdminDescribe(ctx context.Context, _ int, input json.R
 	return botJSON(map[string]any{"tool": "admin_describe", "operations": out, "unknown": unknown}), nil
 }
 
+// forkyPathIsSessionScoped reports whether the path acts on the session's
+// own account (its password, its preferences) rather than on the business
+// data.
+//
+// The service session the bot uses belongs to a real superadmin, so these
+// operations would act on that person's account: the bot must not be able to
+// change the credentials of the account it borrows.
+func forkyPathIsSessionScoped(path string) bool {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return false
+	}
+	// "/me" and "/me/..." are the account's own routes. "/members/..." are
+	// the other people's accounts and are legitimate backoffice operations.
+	if p == "/me" {
+		return true
+	}
+	return strings.HasPrefix(p, "/me/")
+}
+
 // forkyPathIsActiveRestaurant reports whether the path is the one that
 // rebinds the session to another restaurant.
 func forkyPathIsActiveRestaurant(path string) bool {
@@ -333,6 +353,15 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// for it: the restaurant is already the right one.
 	if rid > 0 && forkyPathIsActiveRestaurant(op.Path) {
 		return "", fmt.Errorf("el bot no puede cambiar de restaurante: ya opera en el %d", rid)
+	}
+	// The operations that act on the SESSION ITSELF are refused for the same
+	// reason, and with a sharper edge: the service session belongs to a real
+	// superadmin, so /me/password would change THAT PERSON's password and
+	// /me/preferences would change their preferences. The bot has no
+	// identity of its own to change, and it must never be able to touch the
+	// credentials of the account it borrows.
+	if forkyPathIsSessionScoped(op.Path) {
+		return "", fmt.Errorf("el bot no puede ejecutar %s: son operaciones sobre la cuenta de la sesion, no sobre el restaurante", op.Path)
 	}
 	path, err := forkyRenderPath(op.Path, in.PathParams)
 	if err != nil {

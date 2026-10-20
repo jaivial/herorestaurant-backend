@@ -37,3 +37,31 @@ func TestAdminCatalogHasActiveRestaurantOp(t *testing.T) {
 		t.Error("el guard no reconoce la ruta de rebind")
 	}
 }
+
+// La sesion de servicio del bot pertenece a un superadmin real, asi que las
+// operaciones sobre la cuenta de la sesion (/me/password) no deben poder
+// ejecutarse: cambiarian el password de esa persona.
+//
+// Coordination id: wa_bot_privileged_contacts_v1
+func TestForkyPathIsSessionScoped(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/me", true},
+		{"/me/password", true},
+		{"/me/preferences", true},
+		{"/active-restaurant", false},
+		{"/members", false},
+		{"/members/12", false},
+		{"/members/12/ensure-user", false},
+		{"/bot/ai/1", false},
+		{"/dashboard/metrics", false},
+		{"/", false},
+	}
+	for _, tc := range cases {
+		if got := forkyPathIsSessionScoped(tc.path); got != tc.want {
+			t.Errorf("forkyPathIsSessionScoped(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
