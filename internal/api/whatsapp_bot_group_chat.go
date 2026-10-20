@@ -219,31 +219,80 @@ var botOwnJIDsCache = struct {
 	byRID map[int]botOwnJIDsEntry
 }{byRID: map[int]botOwnJIDsEntry{}}
 
+// botOwnJIDsDegradedTTL bounds how long a degraded answer (the provider could
+// not be read, so only the database phone is known) is reused. The phone alone
+// never matches a mention by LID, which is the form every Baileys group uses,
+// so a degraded answer cached for the full botOwnJIDsTTL silenced the bot in
+// its groups for up to 30 minutes after one provider blip. A short TTL turns
+// that into one retry shortly after, not one per message.
+const botOwnJIDsDegradedTTL = 45 * time.Second
+
 type botOwnJIDsEntry struct {
-	jids []string
-	at   time.Time
+	jids     []string
+	at       time.Time
+	degraded bool
+	// good is the last set that included a provider-verified identity (the LID
+	// of the bot's own participant). It is the bot's own identities only and
+	// is reused when a later read of the provider fails.
+	good []string
 }
 
 // botOwnJIDsCached returns the previously learned identities for the restaurant
-// when they are still fresh.
+// when they are still fresh. A degraded entry is fresh only for
+// botOwnJIDsDegradedTTL.
 func botOwnJIDsCached(restaurantID int) []string {
 	botOwnJIDsCache.Lock()
 	defer botOwnJIDsCache.Unlock()
 	e, ok := botOwnJIDsCache.byRID[restaurantID]
-	if !ok || time.Since(e.at) >= botOwnJIDsTTL {
+	if !ok {
+		return nil
+	}
+	ttl := botOwnJIDsTTL
+	if e.degraded {
+		ttl = botOwnJIDsDegradedTTL
+	}
+	if time.Since(e.at) >= ttl {
 		return nil
 	}
 	return e.jids
 }
 
-// botOwnJIDsRemember stores the learned identities for the restaurant.
+// botOwnJIDsRemember stores the identities learned from the provider.
 func botOwnJIDsRemember(restaurantID int, jids []string) {
 	if len(jids) == 0 {
 		return
 	}
 	botOwnJIDsCache.Lock()
-	botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: jids, at: time.Now()}
+	botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: jids, at: time.Now(), good: jids}
 	botOwnJIDsCache.Unlock()
+}
+
+// botOwnJIDsRememberDegraded stores an answer built without the provider. The
+// last provider-verified set (if any) is merged in, so a transient outage does
+// not drop the LID the bot is mentioned by. Only the bot's own identities are
+// ever in either set.
+func botOwnJIDsRememberDegraded(restaurantID int, own []string, reason string) []string {
+	botOwnJIDsCache.Lock()
+	defer botOwnJIDsCache.Unlock()
+	prev := botOwnJIDsCache.byRID[restaurantID]
+	merged := own
+	if len(prev.good) > 0 {
+		seen := map[string]struct{}{}
+		merged = make([]string, 0, len(prev.good)+len(own))
+		for _, v := range append(append([]string{}, prev.good...), own...) {
+			if _, dup := seen[v]; dup {
+				continue
+			}
+			seen[v] = struct{}{}
+			merged = append(merged, v)
+		}
+	}
+	log.Printf("[bot] checkpoint wa_bot_own_jids_v1 restaurant_id=%d degraded=true reason=%s own=%d verified_reused=%d",
+		restaurantID, reason, len(merged), len(prev.good))
+	if len(merged) > 0 {
+		botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: merged, at: time.Now(), degraded: true, good: prev.good}
+	}
+	return merged
 }
 
 // botGroupFetchOwnJIDs returns every identifier the bot answers to, so a
@@ -272,15 +321,12 @@ func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []s
 	own := s.botGroupOwnJIDs(ctx, restaurantID)
 	gw, ok := s.botGatewayFor(ctx, restaurantID)
 	if !ok {
-		// Cache the database-only answer too, so a missing gateway does not
-		// re-attempt the lookup on every inbound message.
-		botOwnJIDsRemember(restaurantID, own)
-		return own
+		// Short-lived: a missing gateway must not pin the phone-only set.
+		return botOwnJIDsRememberDegraded(restaurantID, own, "no_gateway")
 	}
 	evo, ok := gw.(*evolutionGateway)
 	if !ok {
-		botOwnJIDsRemember(restaurantID, own)
-		return own
+		return botOwnJIDsRememberDegraded(restaurantID, own, "not_evolution")
 	}
 	// The number the instance really uses, asked from the instance itself.
 	phone := botProviderInstanceOwnerPhone(ctx, evo.baseURL, evo.apiKey, evo.instanceName)
@@ -296,12 +342,9 @@ func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []s
 	}
 	raw := botProviderFetchAllGroups(ctx, evo.baseURL, evo.apiKey, evo.instanceName)
 	if len(raw) == 0 {
-		// Provider down: fall back to the phone and cache it, so a transient
-		// outage costs one attempt per TTL instead of one per message.
-		if len(own) > 0 {
-			botOwnJIDsRemember(restaurantID, own)
-		}
-		return own
+		// Provider down: the phone plus the last verified set, cached only
+		// briefly so the next webhook retries the provider.
+		return botOwnJIDsRememberDegraded(restaurantID, own, "provider_empty")
 	}
 	// The LID is the form a mention actually uses, so it goes first, then the
 	// phone forms as a fallback.
@@ -454,6 +497,8 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 	}
 	if !botGroupMentionsBot(mentions, quotedFrom, in.Text, in.OwnJIDs) {
 		botGroupMessageAudit(0, groupJID, participant, "skipped_not_mentioned")
+		log.Printf("[bot] checkpoint wa_bot_group_mention_v1 detail own_jids=%d mentions=%d quoted=%d",
+			len(in.OwnJIDs), len(mentions), len(quotedFrom))
 		return waInbound{}, false
 	}
 
