@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	emailverifier "github.com/AfterShip/email-verifier"
 	"log/slog"
 	"net"
 	"regexp"
@@ -80,21 +81,40 @@ func campaignDomainHasMail(domain string) bool {
 	return ok
 }
 
+// campaignEmailVerifier is AfterShip/email-verifier (MIT) used ONLY for its
+// local checks: address syntax, disposable-domain list and domain typo
+// suggestion. SMTP verification, Gravatar and auto-update are deliberately
+// never enabled: no connection to any recipient mail server is ever made
+// (outbound port 25 is closed and mailbox probing is not approved), and no
+// address leaves the process.
+var campaignEmailVerifier = emailverifier.NewVerifier().EnableDomainSuggest()
+
 // campaignEmailLooksDeliverable returns false (with a short reason) for
-// addresses that would almost certainly bounce.
+// addresses that would almost certainly bounce. Reason "dominio con errata"
+// means a suspected typo: callers keep those blocked as pending verification,
+// never as proven invalid and never auto-corrected.
 func campaignEmailLooksDeliverable(addr string) (bool, string) {
 	addr = strings.ToLower(strings.TrimSpace(addr))
 	if !campaignEmailSyntax.MatchString(addr) || strings.Contains(addr, "..") {
+		return false, "sintaxis"
+	}
+	syn := campaignEmailVerifier.ParseAddress(addr)
+	if !syn.Valid {
 		return false, "sintaxis"
 	}
 	domain := addr[strings.LastIndex(addr, "@")+1:]
 	if campaignTypoDomains[strings.ToLower(domain)] {
 		return false, "dominio con errata"
 	}
-	if campaignDisposableDomains[domain] {
+	if campaignDisposableDomains[domain] || campaignEmailVerifier.IsDisposable(domain) {
 		return false, "dominio desechable"
 	}
 	if !campaignDomainHasMail(domain) {
+		// A dead domain that is one edit away from a known provider is a
+		// probable typo (pending), otherwise it simply cannot receive mail.
+		if sug := campaignEmailVerifier.SuggestDomain(domain); sug != "" && sug != domain {
+			return false, "dominio con errata"
+		}
 		return false, "dominio sin correo (MX)"
 	}
 	return true, ""
