@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"strings"
 )
@@ -64,11 +63,9 @@ const botDefaultMaxIterations = 12
 const botBudgetOperatorNote = "\n\n[Instrucción del operador: es el último paso de este turno. No llames a más herramientas. Responde al usuario solo con lo que las herramientas ya confirmaron y di explícitamente qué falta por hacer. No afirmes ningún cambio que no haya confirmado una herramienta.]"
 
 // botBudgetExhaustedText is the fixed reply when the model still asks for a
-// tool on its last allowed call. It states only what is known (how many steps
-// ran, how many failed) and never claims an effect.
-func botBudgetExhaustedText(ran, failed int) string {
-	return fmt.Sprintf("No he podido terminar tu petición en este turno: se agotó el límite de pasos y paré antes de hacer más cambios. Se ejecutaron %d pasos (%d con error). No he repetido ni deshecho nada; puede que algún cambio ya esté aplicado, así que comprueba el estado antes de volver a pedírmelo.", ran, failed)
-}
+// tool on its last allowed call. It claims nothing about outcomes: counters and
+// tool names stay in the logs only.
+const botBudgetExhaustedText = "No he podido completar tu petición. He detenido el proceso antes de ejecutar más acciones. Algunas acciones anteriores podrían haberse aplicado; no puedo confirmar que todo haya quedado terminado."
 
 // botRunAgentLoopWith is the provider-agnostic loop used by every caller.
 func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
@@ -108,9 +105,9 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			if wantsTool {
 				// Budget spent and the model still wants a tool: execute nothing
 				// more (no hidden extra mutation) and answer with the known facts.
-				log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 exhausted iterations=%d ran=%d failed=%d", i+1, result.Ran, result.Failed)
+				log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 exhausted iterations=%d ran=%d failed=%d tools=%s", i+1, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
 				result.Exhausted = true
-				msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botBudgetExhaustedText(result.Ran, result.Failed)}}})
+				msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botBudgetExhaustedText}}})
 				result.Messages = msgs
 				return result, nil
 			}
