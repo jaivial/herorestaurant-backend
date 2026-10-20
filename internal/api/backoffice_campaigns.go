@@ -961,7 +961,9 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
 		return
 	}
+	campaignRunnersWG.Add(1)
 	go func() {
+		defer campaignRunnersWG.Done()
 		defer campaignRunners.stop(c.ID)
 		s.runCampaignSend(context.WithoutCancel(r.Context()), a.ActiveRestaurantID, c.ID)
 	}()
@@ -996,6 +998,11 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			break
 		}
 		for _, p := range batch {
+			// Shutdown: stop before the next delivery, leave the rest pending.
+			if campaignShuttingDown() {
+				slog.Default().Info("campaign.send.interrupted_by_shutdown", "coord_id", c.CoordID, "campaign_id", campaignID)
+				return
+			}
 			// Re-read the do-not-contact list right before each delivery: a
 			// recipient that unsubscribes after the audience snapshot (the run
 			// can last hours at WhatsApp pacing) must never get the message.
@@ -1015,10 +1022,13 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = NOW() WHERE id = ?`, p.id)
 				slog.Default().Info("campaign.delivery.sent", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID)
 			}
+			pause := campaignChannelPause("email", c.EmailPerMinute)
 			if p.t.Channel == "whatsapp" {
-				time.Sleep(campaignChannelPause("whatsapp", c.WhatsAppPerMin))
-			} else {
-				time.Sleep(campaignChannelPause("email", c.EmailPerMinute))
+				pause = campaignChannelPause("whatsapp", c.WhatsAppPerMin)
+			}
+			if !campaignPause(pause) {
+				slog.Default().Info("campaign.send.interrupted_by_shutdown", "coord_id", c.CoordID, "campaign_id", campaignID)
+				return
 			}
 		}
 	}

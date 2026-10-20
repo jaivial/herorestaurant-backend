@@ -18,6 +18,8 @@ services:
       dockerfile: backend/Dockerfile.prod
     container_name: newvillacarmen-backend-prod
     restart: unless-stopped
+    # Let a campaign runner finish the delivery in flight before the kill.
+    stop_grace_period: 40s
     network_mode: host
     env_file:
       - ../.env.prod
