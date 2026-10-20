@@ -1038,6 +1038,9 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 					}
 				}
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, truncate(sendErr.Error(), 500), p.id)
+				if p.t.Channel == "email" {
+					s.scheduleCampaignEmailRetry(ctx, p.id, sendErr.Error())
+				}
 				slog.Default().Warn("campaign.delivery.failed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID, "err", sendErr.Error())
 			} else {
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = NOW() WHERE id = ?`, p.id)

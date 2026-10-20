@@ -137,6 +137,7 @@ type campaignBounceState struct {
 	lastPoll time.Time
 	tripped  bool
 	started  bool
+	baseID   int64
 }
 
 var campaignBounceStates = struct {
@@ -286,13 +287,16 @@ func (s *Server) campaignEmailBreakerTripped(ctx context.Context, restaurantID i
 	}
 	if !st.started {
 		// First poll of this run: notices already in the mailbox were applied by
-		// the sync (idempotent) but only bounces that arrive from now on trip it.
+		// the sync (idempotent). Only events recorded after this point trip it,
+		// whoever (this breaker, the endpoint or the background loop) applied them.
 		st.started = true
+		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM campaign_bounce_events WHERE restaurant_id = ?`, restaurantID).Scan(&st.baseID)
 		return false
 	}
-	newTotal := res.FreshHard + res.FreshSoft
+	newTotal := 0
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaign_bounce_events WHERE restaurant_id = ? AND id > ?`, restaurantID, st.baseID).Scan(&newTotal)
 	if newTotal > 0 {
-		slog.Default().Warn("campaign.bounce.new", "coord_id", coordID, "campaign_id", campaignID, "hard", res.FreshHard, "soft", res.FreshSoft)
+		slog.Default().Warn("campaign.bounce.new", "coord_id", coordID, "campaign_id", campaignID, "events", newTotal, "hard", res.FreshHard, "soft", res.FreshSoft)
 	}
 	if newTotal >= campaignBounceTripAfter {
 		st.tripped = true
