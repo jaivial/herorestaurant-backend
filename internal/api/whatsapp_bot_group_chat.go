@@ -390,7 +390,9 @@ type evoGroupInput struct {
 	MessageType  string
 	Text         string
 	MentionText  []string
-	MentionedJID string
+	// MentionedJID holds the mentioned members, in any of the forms the
+	// provider writes them.
+	MentionedJID []string
 	// QuotedParticipant is the author of the quoted message, when the
 	// message replies to another one. Empty otherwise.
 	QuotedParticipant string
@@ -438,7 +440,7 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 	}
 
 	mentions := make([]string, 0, 2)
-	for _, m := range append(append([]string{}, in.MentionText...), in.MentionedJID) {
+	for _, m := range append(append([]string{}, in.MentionText...), in.MentionedJID...) {
 		if v := strings.TrimSpace(m); v != "" {
 			mentions = append(mentions, v)
 		}
