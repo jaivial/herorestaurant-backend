@@ -444,6 +444,10 @@ type evoUpsertData struct {
 		Conversation    string `json:"conversation"`
 		ExtendedTextMsg struct {
 			Text string `json:"text"`
+			// The provider nests the context INSIDE the extended text
+			// message: who was mentioned and who wrote the quoted
+			// message live there.
+			ContextInfo evoMessageContext `json:"contextInfo"`
 		} `json:"extendedTextMessage"`
 		ListResponseMsg struct {
 			Title             string `json:"title"`
@@ -467,10 +471,66 @@ type evoUpsertData struct {
 		// Baileys reports the rendered mentions in mentionText and the JID
 		// that was mentioned in contextInfo.mentionedJid.
 		MentionText []string `json:"mentionText"`
-		ContextInfo struct {
-			MentionedJID string `json:"mentionedJid"`
-		} `json:"contextInfo"`
+		// Some provider versions put the context next to the content
+		// instead of inside it: both are read.
+		ContextInfo evoMessageContext `json:"contextInfo"`
 	} `json:"message"`
+}
+
+// evoMessageContext is the context of a message: who was mentioned and who
+// wrote the message that this one quotes.
+type evoMessageContext struct {
+	// MentionedJIDs holds the mentioned members, in any of the forms the
+	// provider writes them.
+	MentionedJIDs evoMentionedJIDs `json:"mentionedJid"`
+	// QuotedParticipant is the author of the quoted message: on a reply
+	// ("quoting" in the WhatsApp UI) it is who wrote the quoted text, which
+	// is how a quote of the bot is recognised.
+	QuotedParticipant string `json:"participant"`
+}
+
+// merge fills the empty fields of the context with the ones of a fallback
+// context, so both places where the provider can put it are read.
+func (c evoMessageContext) merge(fallback evoMessageContext) evoMessageContext {
+	if len(c.MentionedJIDs) == 0 {
+		c.MentionedJIDs = fallback.MentionedJIDs
+	}
+	if c.QuotedParticipant == "" {
+		c.QuotedParticipant = fallback.QuotedParticipant
+	}
+	return c
+}
+
+// evoMentionedJIDs reads the mentioned members of a message. The provider
+// writes them as a single value or as a list depending on the version, and a
+// field that does not fit the shape MUST NOT break the whole payload: a
+// message that fails to parse is a message the bot never sees.
+type evoMentionedJIDs []string
+
+func (m *evoMentionedJIDs) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		*m = nil
+		return nil
+	}
+	if strings.HasPrefix(raw, "[") {
+		var list []string
+		if err := json.Unmarshal(data, &list); err != nil {
+			// An unreadable mention is ignored, not fatal: the message
+			// still has to reach the bot.
+			*m = nil
+			return nil
+		}
+		*m = list
+		return nil
+	}
+	var one string
+	if err := json.Unmarshal(data, &one); err != nil {
+		*m = nil
+		return nil
+	}
+	*m = []string{one}
+	return nil
 }
 
 func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
@@ -513,6 +573,8 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	// explicitly mentioned; replies go to the group JID and the transcript is
 	// keyed by the group so members share one thread.
 	if botGroupIsGroupJID(jid) {
+		// The context is read from both places the provider can put it.
+		ctxInfo := d.Message.ExtendedTextMsg.ContextInfo.merge(d.Message.ContextInfo)
 		return parseEvolutionGroupMessage(evoGroupInput{
 			Instance:  strings.TrimSpace(env.Instance),
 			GroupJID:  jid,
@@ -525,13 +587,17 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 			MessageType:  d.MessageType,
 			Text:         text,
 			MentionText:  d.Message.MentionText,
-			MentionedJID: strings.TrimSpace(d.Message.ContextInfo.MentionedJID),
-			AudioB64:     botAudioBase64(isAudio, d.Message.Base64),
-			IsAudio:      isAudio,
-			DocumentB64:  documentB64,
-			DocumentName: documentName,
-			Ignored:      ignored,
-			OwnJIDs:      g.ownJIDs,
+			MentionedJID: ctxInfo.MentionedJIDs,
+			// The author of the quoted message: a reply to the bot is the
+			// other way of addressing it when the mention chip is not
+			// rendered (wa_bot_group_mention_v1).
+			QuotedParticipant: ctxInfo.QuotedParticipant,
+			AudioB64:          botAudioBase64(isAudio, d.Message.Base64),
+			IsAudio:           isAudio,
+			DocumentB64:       documentB64,
+			DocumentName:      documentName,
+			Ignored:           ignored,
+			OwnJIDs:           g.ownJIDs,
 		})
 	}
 
