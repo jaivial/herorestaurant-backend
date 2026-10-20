@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"strings"
 )
 
@@ -47,11 +48,21 @@ func (s *Server) botRunAgentLoop(ctx context.Context, restaurantID int, model st
 	}, system, messages, tools, exec)
 }
 
+// botDefaultMaxIterations is the tool-use budget of one turn when the config
+// does not set one. wa_bot_iter_cap_v1: 8 was not enough for a booking edit
+// that needs catalog lookups first, and a turn that spends the whole budget on
+// tools ends with no text, so the customer got the generic apology.
+const botDefaultMaxIterations = 14
+
+// botWrapUpNote is added to the tool results of the second-to-last iteration
+// so the last model call answers instead of asking for yet another tool.
+const botWrapUpNote = "[Aviso del sistema: queda un solo paso. No llames a más herramientas: responde ya al usuario con lo que has hecho y lo que falta, en una sola respuesta.]"
+
 // botRunAgentLoopWith is the provider-agnostic loop used by every caller.
 func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
 	maxIter := s.cfg.BotMaxIterations
 	if maxIter <= 0 {
-		maxIter = 8
+		maxIter = botDefaultMaxIterations
 	}
 
 	result := botLoopResult{}
@@ -93,6 +104,10 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			return result, nil
 		}
 
+		if i == maxIter-2 {
+			toolResults = append(toolResults, botBlock{Type: "text", Text: botWrapUpNote})
+			log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 wrap_up_requested iteration=%d max=%d", i+1, maxIter)
+		}
 		msgs = append(msgs, assistant, botMessage{Role: "user", Content: toolResults})
 
 		// Coordination id: wa_bot_early_stop_v1 - when every tool of this
