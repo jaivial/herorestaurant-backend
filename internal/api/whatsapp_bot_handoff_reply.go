@@ -107,7 +107,7 @@ func (s *Server) botHandoffReplyText(ctx context.Context, restaurantID int, msg 
 			sys.WriteString("Empieza explicando esto con tus palabras: " + p + "\n")
 		}
 	}
-	sys.WriteString("Describe lo que el cliente PIDE (\"tu petición de cambiar la reserva a 8 personas\"), nunca lo presentes como un dato ya confirmado de su reserva (no digas \"tu reserva para 8 personas\"). Trata al cliente de tú salvo que él use usted.\n")
+	sys.WriteString("Describe lo que el cliente PIDE con sus propias palabras, sin añadir cifras, fechas, nombres ni datos que no aparezcan en su mensaje. Nunca lo presentes como un dato ya confirmado de su reserva. Trata al cliente de tú salvo que él use usted.\n")
 	sys.WriteString("Reglas: responde en el MISMO idioma que el mensaje del cliente; tono cercano y natural, sin repetir fórmulas hechas; como mucho un emoji; NO des teléfonos, emails ni horarios; NO prometas nada concreto (plazos, precios, que se hará el cambio); no uses Markdown salvo *negrita*; no inventes datos.\n")
 	if d := strings.TrimSpace(detail); d != "" {
 		sys.WriteString("Contexto interno (no lo cites literal): " + d + "\n")
