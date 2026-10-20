@@ -111,7 +111,11 @@ type boAdCTA struct {
 // Coordination id: ads_layout_v1 - a "multiple" anuncio renders a wizard: a
 // column of cards (one per step) where each card advances to its announcement.
 type boAdStep struct {
-	Canvas          *boAdCanvas `json:"canvas,omitempty"`
+	Canvas *boAdCanvas `json:"canvas,omitempty"`
+	// Coordination id: ads_step_card_canvas_v1 - optional free-form canvas
+	// for the wizard CARD face (what shows before "Ver mas"). Absent keeps
+	// the classic card (title, description, background, buttons).
+	CardCanvas      *boAdCanvas `json:"card_canvas,omitempty"`
 	ID              string      `json:"id"`
 	Title           string      `json:"title"`
 	Description     string      `json:"description"`
@@ -460,6 +464,11 @@ func normalizeBOAdLayout(input *boAdLayout) (*boAdLayout, error) {
 		if step.Canvas != nil {
 			if err := validateBOAdCanvas(step.Canvas); err != nil {
 				return nil, fmt.Errorf("step %s: %w", step.ID, err)
+			}
+		}
+		if step.CardCanvas != nil {
+			if err := validateBOAdCanvas(step.CardCanvas); err != nil {
+				return nil, fmt.Errorf("step %s card: %w", step.ID, err)
 			}
 		}
 		step.Buttons, step.Content = buttons, content
