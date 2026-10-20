@@ -316,7 +316,7 @@ func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme
 			fmt.Fprintf(&b, `<h2 style="margin:20px 0 10px;font-size:22px;color:%s">%s</h2>`, theme.Text, renderCampaignInline(line[3:], theme))
 		case strings.HasPrefix(line, "# "):
 			closeList()
-			fmt.Fprintf(&b, `<h1 style="margin:0 0 14px;font-size:27px;color:%s">%s</h1>`, theme.Accent, renderCampaignInline(line[2:], theme))
+			fmt.Fprintf(&b, `<h1 style="margin:0 0 14px;font-size:27px;color:%s;text-align:center">%s</h1>`, theme.Accent, renderCampaignInline(line[2:], theme))
 		case strings.HasPrefix(line, "> "):
 			closeList()
 			fmt.Fprintf(&b, `<blockquote style="margin:14px 0;padding:10px 14px;border-left:4px solid %s;background:%s11">%s</blockquote>`, theme.Accent, theme.Accent, renderCampaignInline(line[2:], theme))
@@ -573,4 +573,13 @@ func renderCampaignWhatsAppBody(markdown, brandName, unsubscribeURL string, with
 		}
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// campaignUnsubscribeChoice is the opt-out button alone (the restaurant website
+// button is not repeated when the campaign declares its own buttons).
+func campaignUnsubscribeChoice(unsubscribeURL string) []string {
+	if unsub := strings.TrimSpace(unsubscribeURL); unsub != "" {
+		return []string{campaignUnsubscribeButtonCopy + "|" + unsub}
+	}
+	return nil
 }
