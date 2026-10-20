@@ -848,6 +848,12 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		fallback := appendCampaignUnsubscribeLine(
 			appendCampaignWebsiteLine(renderCampaignWhatsAppBody(c.BodyMarkdown, branding.BrandName, "", false), siteURL),
 			unsubscribeURL)
+		// Campaigns that declare buttons (standalone link lines) go out as one
+		// group per section: real image(s), the text, and one interactive
+		// button per link, then the website / opt-out buttons.
+		if sections, hasButtons := splitCampaignWASections(c.BodyMarkdown); hasButtons && gwOK {
+			return s.deliverCampaignWhatsAppSections(ctx, restaurantID, gw, c.CoordID, num, branding.BrandName, sections, choices)
+		}
 		// A markdown image becomes a real WhatsApp media message with the rest
 		// of the body as caption; extra images stay as URLs inside the text.
 		// Evolution cannot mix media and buttons in one call, so the button

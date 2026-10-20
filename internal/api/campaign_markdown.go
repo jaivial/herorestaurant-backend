@@ -505,8 +505,8 @@ func renderCampaignWhatsAppBody(markdown, brandName, unsubscribeURL string, with
 			line = "- " + strings.TrimPrefix(line, "* ")
 		}
 		line = mdBoldRe.ReplaceAllString(line, "*$1*")
-		line = mdItalicRe.ReplaceAllString(line, "$1_$2_")
-		line = mdCodeRe.ReplaceAllString(line, "```$1```")
+		line = mdItalicRe.ReplaceAllString(line, "${1}_${2}_")
+		line = mdCodeRe.ReplaceAllString(line, "```${1}```")
 		out = append(out, line)
 	}
 	text := strings.Join(out, "\n")
