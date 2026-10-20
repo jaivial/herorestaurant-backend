@@ -208,41 +208,6 @@ func campaignPickCTAs(buttons []string) (cta, rest []string) {
 	return cta, rest
 }
 
-// campaignWAMaxCTA is the real provider limit: Evolution rejects an interactive
-// message with more than 2 URL buttons ("at most 2 CTA buttons are allowed").
-const campaignWAMaxCTA = 2
-
-// campaignPickCTAs returns the buttons that get a real interactive button (the
-// pre-booking link first, then menu links, then the rest in order) and the
-// remaining ones, which travel as "label: url" lines in the same message.
-func campaignPickCTAs(buttons []string) (cta, rest []string) {
-	rank := func(b string) int {
-		_, u, _ := strings.Cut(b, "|")
-		switch {
-		case strings.Contains(u, "date="):
-			return 0
-		case strings.Contains(u, "/menu/"):
-			return 1
-		}
-		return 2
-	}
-	picked := map[int]bool{}
-	for r := 0; r <= 2 && len(cta) < campaignWAMaxCTA; r++ {
-		for i, b := range buttons {
-			if len(cta) < campaignWAMaxCTA && !picked[i] && rank(b) == r {
-				cta = append(cta, b)
-				picked[i] = true
-			}
-		}
-	}
-	for i, b := range buttons {
-		if !picked[i] {
-			rest = append(rest, b)
-		}
-	}
-	return cta, rest
-}
-
 // deliverCampaignWhatsAppUnified sends ONE interactive message holding the whole
 // campaign: header image, text, up to 2 CTA buttons and the remaining links as
 // lines (the opt-out link included).
