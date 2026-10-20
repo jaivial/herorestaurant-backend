@@ -61,25 +61,37 @@ func (s *Server) botRunAgentLoop(ctx context.Context, restaurantID int, model st
 const (
 	// The same tool with the same input returned the same result this many times.
 	botLoopRepeatLimit = 3
+	// Only the most recent calls are compared, so memory stays bounded and
+	// real progress (new calls pushing old ones out) never accumulates a strike.
+	botLoopWindow = 24
 	// Consecutive rounds in which every tool call failed.
 	botLoopFailRounds = 4
 )
 
 // botLoopGuard detects a turn that is not making progress.
 type botLoopGuard struct {
-	seen      map[string]int
+	recent    []string
 	failRound int
 	stalled   bool
 	reason    string
 }
 
-func newBotLoopGuard() *botLoopGuard { return &botLoopGuard{seen: map[string]int{}} }
+func newBotLoopGuard() *botLoopGuard { return &botLoopGuard{} }
 
 func (g *botLoopGuard) observe(name string, input json.RawMessage, out string) {
 	sum := sha256.Sum256([]byte(name + "\x00" + string(input) + "\x00" + out))
 	key := hex.EncodeToString(sum[:8])
-	g.seen[key]++
-	if g.seen[key] >= botLoopRepeatLimit {
+	g.recent = append(g.recent, key)
+	if len(g.recent) > botLoopWindow {
+		g.recent = g.recent[len(g.recent)-botLoopWindow:]
+	}
+	n := 0
+	for _, k := range g.recent {
+		if k == key {
+			n++
+		}
+	}
+	if n >= botLoopRepeatLimit {
 		g.stalled, g.reason = true, "repeated_identical_call"
 	}
 }
