@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"preactvillacarmen/internal/api"
@@ -37,7 +40,31 @@ func main() {
 
 	server := api.NewServer(db, cfg)
 	log.Printf("Hero Restaurant API starting on %s", cfg.Addr)
-	log.Fatal(newHTTPServer(cfg.Addr, server.Routes()).ListenAndServe())
+	srv := newHTTPServer(cfg.Addr, server.Routes())
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.ListenAndServe() }()
+
+	// Campaigns a previous process left in 'sending' are only reported unless
+	// CAMPAIGN_AUTO_RESUME=1 (see campaign_runner_durable.go).
+	server.RecoverInterruptedCampaigns(context.Background())
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	case sig := <-stop:
+		log.Printf("Received %v: stopping campaign runners after the delivery in flight", sig)
+		api.BeginCampaignShutdown()
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancelShutdown()
+		_ = srv.Shutdown(shutdownCtx)
+		if !api.WaitCampaignRunners(20 * time.Second) {
+			log.Printf("Campaign runners did not stop in time; pending rows stay pending")
+		}
+	}
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
