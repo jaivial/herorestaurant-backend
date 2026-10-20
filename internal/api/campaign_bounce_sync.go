@@ -375,5 +375,6 @@ func (s *Server) runCampaignBounceLoop(ctx context.Context) {
 		for _, id := range ids {
 			_, _ = s.syncCampaignBounces(ctx, id, 2)
 		}
+		s.runCampaignEmailRetries(ctx)
 	}
 }
