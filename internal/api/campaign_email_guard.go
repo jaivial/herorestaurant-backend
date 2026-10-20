@@ -279,44 +279,20 @@ func (s *Server) campaignEmailBreakerTripped(ctx context.Context, restaurantID i
 	if err != nil || strings.EqualFold(cfg.Provider, "gmail") {
 		return false
 	}
-	bounced, err := campaignReadBounces(cfg.SMTPHost, cfg.SMTPUsername, cfg.SMTPPassword)
+	res, err := s.syncCampaignBounces(ctx, restaurantID, 1)
 	if err != nil {
 		slog.Default().Warn("campaign.bounce.read_failed", "coord_id", coordID, "campaign_id", campaignID, "err", err.Error())
 		return false
 	}
 	if !st.started {
+		// First poll of this run: notices already in the mailbox were applied by
+		// the sync (idempotent) but only bounces that arrive from now on trip it.
 		st.started = true
-		for a := range bounced {
-			st.baseline[a] = true
-			st.seen[a] = true
-		}
 		return false
 	}
-	fresh := 0
-	for a := range bounced {
-		if st.seen[a] {
-			continue
-		}
-		st.seen[a] = true
-		fresh++
-		_, _ = s.db.ExecContext(ctx, `
-			INSERT INTO invalid_emails (id_booking, email, reason)
-			SELECT COALESCE(MAX(id), 0), ?, 'bounce campaña (NDR)' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
-		`, a, restaurantID, a)
-		// Technical invalid: blocks e-mail only, never WhatsApp (not a baja).
-		_, _ = s.db.ExecContext(ctx, `
-			INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
-			SELECT ?, 'email', ?, MAX(id), 'email no valido: rebote (NDR)', 'bounce' FROM bookings WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ?
-		`, restaurantID, a, restaurantID, a)
-	}
-	if fresh > 0 {
-		slog.Default().Warn("campaign.bounce.new", "coord_id", coordID, "campaign_id", campaignID, "new", fresh)
-	}
-	newTotal := 0
-	for a := range st.seen {
-		if !st.baseline[a] {
-			newTotal++
-		}
+	newTotal := res.FreshHard + res.FreshSoft
+	if newTotal > 0 {
+		slog.Default().Warn("campaign.bounce.new", "coord_id", coordID, "campaign_id", campaignID, "hard", res.FreshHard, "soft", res.FreshSoft)
 	}
 	if newTotal >= campaignBounceTripAfter {
 		st.tripped = true

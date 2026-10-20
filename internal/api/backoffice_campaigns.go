@@ -1029,6 +1029,14 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			}
 			sendErr := s.deliverCampaignTo(ctx, restaurantID, c, p.t)
 			if sendErr != nil {
+				if p.t.Channel == "email" {
+					// SMTP rejection at send time (different evidence than an IMAP
+					// NDR): only a permanent bad-address reply invalidates the
+					// address; any other failure just stays a failed row.
+					if cls := campaignSMTPErrorClass(sendErr.Error()); cls == "hard" {
+						s.campaignSuppressBounce(ctx, restaurantID, campaignBounceEvent{Address: strings.ToLower(strings.TrimSpace(p.t.Target)), Status: "5.1.1", Class: "hard"})
+					}
+				}
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, truncate(sendErr.Error(), 500), p.id)
 				slog.Default().Warn("campaign.delivery.failed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID, "err", sendErr.Error())
 			} else {
