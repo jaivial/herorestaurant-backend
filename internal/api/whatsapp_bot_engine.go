@@ -30,13 +30,14 @@ type botTurnState struct {
 
 // botLoopResult summarizes one agent run.
 type botLoopResult struct {
-	Iterations int
-	ToolCalls  []string
-	Messages   []botMessage // full transcript including tool turns
-	ModelUsed  string       // provider/model that produced the last response
-	Ran        int          // tool calls executed this turn
-	Failed     int          // of those, how many reported an error
-	Exhausted  bool         // budget spent and the model still asked for a tool
+	Iterations  int
+	ToolCalls   []string
+	Messages    []botMessage // full transcript including tool turns
+	ModelUsed   string       // provider/model that produced the last response
+	Ran         int          // tool calls executed this turn
+	Failed      int          // of those, how many reported an error
+	Exhausted   bool         // budget spent and the model still asked for a tool
+	Interrupted bool         // model call failed or the turn deadline passed after tools ran
 }
 
 // botModelCaller performs one model call for the loop and reports which
@@ -59,21 +60,35 @@ func (s *Server) botRunAgentLoop(ctx context.Context, restaurantID int, model st
 // a turn that is not progressing is the loop guard below, which looks at what the
 // tools returned, not at how many calls were made.
 const (
-	// The same tool with the same input returned the same result this many times.
+	// The same tool with the same input returned the same result this many times IN A ROW.
 	botLoopRepeatLimit = 3
-	// Only the most recent calls are compared, so memory stays bounded and
-	// real progress (new calls pushing old ones out) never accumulates a strike.
-	botLoopWindow = 24
 	// Consecutive rounds in which every tool call failed.
 	botLoopFailRounds = 4
 )
 
 // botLoopGuard detects a turn that is not making progress.
 type botLoopGuard struct {
-	recent    []string
+	lastKey   string
+	repeats   int
 	failRound int
 	stalled   bool
 	reason    string
+}
+
+// botResultFailed reports whether a tool result is a failure. A JSON result
+// with "error": null (or empty) is not a failure; non-JSON output keeps the
+// old substring rule.
+func botResultFailed(out string) bool {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &m); err == nil {
+		raw, ok := m["error"]
+		if !ok {
+			return false
+		}
+		v := strings.TrimSpace(string(raw))
+		return v != "null" && v != `""` && v != "false"
+	}
+	return strings.Contains(out, `"error"`)
 }
 
 func newBotLoopGuard() *botLoopGuard { return &botLoopGuard{} }
@@ -81,17 +96,14 @@ func newBotLoopGuard() *botLoopGuard { return &botLoopGuard{} }
 func (g *botLoopGuard) observe(name string, input json.RawMessage, out string) {
 	sum := sha256.Sum256([]byte(name + "\x00" + string(input) + "\x00" + out))
 	key := hex.EncodeToString(sum[:8])
-	g.recent = append(g.recent, key)
-	if len(g.recent) > botLoopWindow {
-		g.recent = g.recent[len(g.recent)-botLoopWindow:]
+	// Consecutive repetition only: any different call/result resets the count,
+	// so real progress never accumulates strikes and nothing grows with the turn.
+	if key == g.lastKey {
+		g.repeats++
+	} else {
+		g.lastKey, g.repeats = key, 1
 	}
-	n := 0
-	for _, k := range g.recent {
-		if k == key {
-			n++
-		}
-	}
-	if n >= botLoopRepeatLimit {
+	if g.repeats >= botLoopRepeatLimit {
 		g.stalled, g.reason = true, "repeated_identical_call"
 	}
 }
@@ -119,7 +131,13 @@ const botBudgetExhaustedText = "No he podido completar tu petición. He detenido
 
 // botRunAgentLoopWith is the provider-agnostic loop used by every caller.
 func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
-	maxIter := s.cfg.BotMaxIterations // <= 0: no fixed cap (wa_bot_noncap_v1)
+	// BOT_MAX_ITERATIONS semantics (wa_bot_noncap_v1): unset or 0 = NO cap (the
+	// default). A positive value N is an explicit operator cap: the Nth model
+	// call is the wrap-up call. Negative values are treated as unset.
+	maxIter := s.cfg.BotMaxIterations
+	if maxIter < 0 {
+		maxIter = 0
+	}
 	guard := newBotLoopGuard()
 
 	result := botLoopResult{}
@@ -127,22 +145,20 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 
 	for i := 0; ; i++ {
 		if err := ctx.Err(); err != nil {
-			result.Messages = msgs
-			return result, err
+			return botInterrupted(&result, msgs, "context_done", err)
 		}
 		result.Iterations = i + 1
 
 		// Wrap-up call: only when the loop guard saw no progress, or when an
 		// operator-set cap is reached. Never because of a call count by default.
-		last := guard.stalled || (maxIter > 1 && i == maxIter-1)
+		last := guard.stalled || (maxIter > 0 && i == maxIter-1)
 		callSystem := system
 		if last {
 			callSystem = system + botBudgetOperatorNote
 		}
 		resp, used, err := call(ctx, callSystem, msgs, tools)
 		if err != nil {
-			result.Messages = msgs
-			return result, err
+			return botInterrupted(&result, msgs, "model_call_failed", err)
 		}
 		result.ModelUsed = used
 
@@ -177,7 +193,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 				out = `{"error":` + jsonQuote(err.Error()) + `}`
 			}
 			result.Ran++
-			failed := err != nil || strings.Contains(out, `"error"`)
+			failed := err != nil || botResultFailed(out)
 			if failed {
 				result.Failed++
 				roundFailed++
@@ -211,6 +227,25 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 	}
 }
 
+// botInterruptedText is the fixed reply when the turn cannot continue (model
+// call failed, context too long, or the turn deadline passed) after tools ran.
+const botInterruptedText = "No he podido terminar tu petición: el proceso se interrumpió antes de acabar. Algunas acciones anteriores podrían haberse aplicado; no puedo confirmar que todo haya quedado terminado."
+
+// botInterrupted ends the turn without any further model or tool call. Before
+// any tool ran there is nothing to report, so the error goes to the caller
+// (which sends its usual fallback). After tools ran, the customer gets the
+// fixed honest reply instead of a generic apology.
+func botInterrupted(result *botLoopResult, msgs []botMessage, reason string, err error) (botLoopResult, error) {
+	result.Messages = msgs
+	if result.Ran == 0 {
+		return *result, err
+	}
+	log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 interrupted reason=%s iterations=%d ran=%d failed=%d tools=%s err=%v", reason, result.Iterations, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","), err)
+	result.Interrupted = true
+	result.Messages = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botInterruptedText}}})
+	return *result, nil
+}
+
 func jsonQuote(s string) string {
 	raw, _ := json.Marshal(s)
 	return string(raw)
@@ -233,7 +268,7 @@ func botAllDelivered(content []botBlock, results []botBlock) bool {
 		return false
 	}
 	for _, r := range results {
-		if strings.Contains(r.Content, `"error"`) {
+		if botResultFailed(r.Content) {
 			return false
 		}
 	}
