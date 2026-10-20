@@ -145,3 +145,52 @@ func (s *Server) deliverCampaignWhatsAppSections(ctx context.Context, restaurant
 	}
 	return nil
 }
+
+// whatsappMenuImageSender is implemented by gateways whose interactive message
+// can carry a header image, so image, text and buttons travel as ONE message.
+type whatsappMenuImageSender interface {
+	SendMenuImage(ctx context.Context, to, text, imageURL string, choices []string) error
+}
+
+// campaignUnifiedWhatsApp builds the single-message form of a campaign: the
+// text without button lines, the first image and every button in order.
+func campaignUnifiedWhatsApp(markdown, brandName string) (text, image string, buttons []string) {
+	sections, _ := splitCampaignWASections(markdown)
+	var parts []string
+	for _, sec := range sections {
+		if image == "" && len(sec.Images) > 0 {
+			image = sec.Images[0]
+		}
+		buttons = append(buttons, sec.Buttons...)
+		if t := strings.TrimSpace(renderCampaignWhatsAppBody(sec.Text, "", "", false)); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	text = strings.Join(parts, "\n\n")
+	if b := strings.TrimSpace(brandName); b != "" {
+		text = "*" + b + "*\n" + text
+	}
+	return strings.TrimSpace(text), image, buttons
+}
+
+// deliverCampaignWhatsAppUnified sends one interactive message holding the
+// whole campaign: header image, text and all buttons (campaign buttons first,
+// then the extra choices such as the opt-out).
+func (s *Server) deliverCampaignWhatsAppUnified(ctx context.Context, restaurantID int, gw WhatsAppGateway, coordID, num, brandName, markdown string, extraChoices []string) error {
+	text, image, buttons := campaignUnifiedWhatsApp(markdown, brandName)
+	choices := append(append([]string{}, buttons...), extraChoices...)
+	if sender, ok := gw.(whatsappMenuImageSender); ok && image != "" {
+		if err := sender.SendMenuImage(ctx, num, text, image, choices); err == nil {
+			return nil
+		}
+	}
+	if err := gw.SendMenu(ctx, num, text, choices); err == nil {
+		return nil
+	}
+	fallback := text
+	for _, c := range choices {
+		label, url, _ := strings.Cut(c, "|")
+		fallback += "\n\n" + label + ": " + url
+	}
+	return s.sendCampaignWhatsAppText(ctx, restaurantID, gw, coordID, num, fallback)
+}

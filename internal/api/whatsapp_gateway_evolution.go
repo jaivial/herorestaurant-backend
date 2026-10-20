@@ -659,3 +659,23 @@ func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool)
 	}
 	return out, true
 }
+
+// SendMenuImage is SendMenu with a header image (Evolution thumbnailUrl), so the
+// image, text and buttons arrive as a single message.
+func (g *evolutionGateway) SendMenuImage(ctx context.Context, to, text, imageURL string, choices []string) error {
+	buttons := make([]map[string]any, 0, len(choices))
+	for i, c := range choices {
+		label, target, hasTarget := strings.Cut(c, "|")
+		label = strings.TrimSpace(label)
+		target = strings.TrimSpace(target)
+		if hasTarget && isHTTPURL(target) {
+			buttons = append(buttons, map[string]any{"type": "url", "displayText": label, "url": target})
+			continue
+		}
+		buttons = append(buttons, map[string]any{"type": "reply", "displayText": firstNonEmpty(label, strings.TrimSpace(c)), "id": fmt.Sprintf("opt_%d", i)})
+	}
+	title, description := splitMenuTitleAndDescription(text)
+	return g.post(ctx, g.msgPath("sendButtons"), map[string]any{
+		"number": to, "title": title, "description": description, "buttons": buttons, "thumbnailUrl": imageURL,
+	})
+}
