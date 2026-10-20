@@ -190,7 +190,7 @@ func Load() Config {
 		BotSameDayContactPhone:      strings.TrimSpace(os.Getenv("BOT_SAME_DAY_CONTACT_PHONE")),
 		BotTimeout:                  time.Duration(getenvInt("BOT_MINIMAX_TIMEOUT_SECONDS", 45, 5, 300)) * time.Second,
 		BotMaxTokens:                getenvInt("BOT_MINIMAX_MAX_TOKENS", BotDefaultMaxTokens, 128, BotMaxTokensCeiling),
-		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 14, 1, 20),
+		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 12, 1, 20),
 		BotContextSQLitePath:        strings.TrimSpace(getenv("BOT_CONTEXT_SQLITE_PATH", "./data/whatsapp-bot-context.sqlite")),
 		BotPipelineURL:              strings.TrimSpace(getenv("BOT_PIPELINE_URL", "http://127.0.0.1:18195")),
 		BotDailyTurnsCap:            getenvInt("BOT_DAILY_TURNS_CAP", 2000, 1, 1000000),
