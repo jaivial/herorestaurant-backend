@@ -242,6 +242,34 @@ func (s *Server) assistantAdminDescribe(ctx context.Context, _ int, input json.R
 	return botJSON(map[string]any{"tool": "admin_describe", "operations": out, "unknown": unknown}), nil
 }
 
+// forkyPathIsAccountManagement reports whether the path manages the ACCOUNTS
+// of the panel (who can log in and with what role) rather than the business
+// data of a restaurant.
+//
+// The bot is a restaurant operator: the business data is its business
+// (reservations, menus, members, tables, stock, POS). The people behind the
+// panel are not: the service session it borrows is a superadmin, so these
+// operations would let a message change who can log into the backoffice.
+func forkyPathIsAccountManagement(path string) bool {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return false
+	}
+	// The panel's own accounts and their roles.
+	if p == "/users" || strings.HasPrefix(p, "/users/") {
+		return true
+	}
+	if p == "/roles" || strings.HasPrefix(p, "/roles/") {
+		return true
+	}
+	// The platform-level user administration (superadmin section): create,
+	// patch, assign a restaurant, set a password, revoke sessions.
+	if p == "/platform/users" || strings.HasPrefix(p, "/platform/users/") {
+		return true
+	}
+	return false
+}
+
 // forkyPathIsSessionScoped reports whether the path acts on the session's
 // own account (its password, its preferences) rather than on the business
 // data.
@@ -362,6 +390,19 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// credentials of the account it borrows.
 	if forkyPathIsSessionScoped(op.Path) {
 		return "", fmt.Errorf("el bot no puede ejecutar %s: son operaciones sobre la cuenta de la sesion, no sobre el restaurante", op.Path)
+	}
+	// The ACCOUNT MANAGEMENT operations are refused too. The service session
+	// is a superadmin, so the catalog exposes operations that create panel
+	// users, assign them to restaurants, change their roles and revoke their
+	// sessions. The bot manages a restaurant, not the people who work in the
+	// panel: giving it those operations would let a message in a group
+	// change who can log into the backoffice, or lock a colleague out.
+	//
+	// The bot is a restaurant operator: the business data is its business
+	// (reservations, menus, members, tables, stock, POS). The people behind
+	// the panel are not.
+	if forkyPathIsAccountManagement(op.Path) {
+		return "", fmt.Errorf("el bot no puede ejecutar %s: es una operacion de gestion de cuentas del panel, no de datos del restaurante", op.Path)
 	}
 	path, err := forkyRenderPath(op.Path, in.PathParams)
 	if err != nil {
