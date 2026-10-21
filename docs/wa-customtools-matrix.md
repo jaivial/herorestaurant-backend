@@ -1,6 +1,6 @@
 # Matriz global de custom tools — WhatsApp (bot) y Forky (panel / MCP / plugin)
 
-**Rama:** `feat/wa-customtools-matrix` · **Base:** `main` @ `03d565b` · **Coordinación:** `wa_customtools_matrix_v1`
+**Rama:** `agent/wa-customtools-v2-20261021` (sobre `feat/wa-customtools-matrix` @ `8462944`, que parte de `main` @ `03d565b`) · **Coordinación:** `wa_customtools_matrix_v1`, `wa_bot_menu_ws_v1`
 
 Mapeo completo de **todos los endpoints API y todos los métodos socket** del backend, con la
 herramienta que los cubre en cada superficie, la exclusión documentada cuando no la hay, y el
@@ -138,6 +138,7 @@ invita a repetir: pide reconciliar en el panel (§9.3).
 | `*_read(recurso)` | tool de lectura parametrizada `resource×action` (`assistant_domain_read.go`): reutiliza el handler real con sus gates exactos. |
 | `manage_backoffice` | **nuevo**: tool WA `resource×action` que **propone** una operación del panel y la aplica solo tras `OK <código>`. |
 | `manage_bot_access` | **nuevo**: tool WA `resource×action` del plano de control (tool grants + grupo de gestión),también propose→OK. |
+| `beverage_set` · `beverage_create` · `beverage_delete` · `weekday_set` | **nuevo**: las 4 operaciones de socket del editor de menús que **no tienen gemelo REST** (`WS /admin/group-menus-v2/ws`), como tools WA propose→OK con método+ruta fijados (`wa_bot_menu_ws_v1`). |
 | EXCLUIDO | no hay tool y no se va a crear; el motivo está en la celda. |
 
 ---
@@ -849,8 +850,8 @@ Estas rutas **no** son alcanzables por `admin_call` hoy: son parte de los huecos
 | `GET` | `/admin/vinos/ws` | `handleBOVinosAIWS` | socket | `sync`/`refresh` (la generación de IA es el POST `/vinos/{id}/image/ai`, fuera del mapa) |
 | `GET` | `/admin/comida/ws` | `handleBOComidaAIWS` | socket | sin métodos de entrada (difunde el progreso de la IA) |
 | `GET` | `/admin/comida/technical-sheets/ws` | `handleBOTechnicalSheetsWS` | socket | `search` (búsqueda de fichas) |
-| `GET` | `/admin/group-menus-v2/ws` | `handleBOGroupMenusV2AIWS` | socket | `beverage_set/create/delete`, `weekday_set`, `editor_preview_set`, `special_section_image_upload` (escritura) + lecturas |
-| `GET` | `/admin/bookings/documents/ws` | `handleBOBookingDocumentsWS` | socket | `bookingDocumentUpload/List/Delete` (subida de ficheros) |
+| `GET` | `/admin/group-menus-v2/ws` | `handleBOGroupMenusV2AIWS` | socket | escrituras **WS-only sin gemelo REST** `beverage_set/create/delete` y `weekday_set` → tools WA `beverage_*`/`weekday_set` (propose→OK, §9.3.1); `editor_preview_set`, `special_section_image_upload` (preview y binarios) sin tool; lecturas → `admin_call`/`menus_read(beverage_options)` |
+| `GET` | `/admin/bookings/documents/ws` | `handleBOBookingDocumentsWS` | socket | `bookingDocumentUpload`/`bookingDocumentList` (binarios, fuera de alcance) · **`bookingDocumentDelete` EXCLUIDO** (borrado destructivo en Bunny, §10) |
 | `GET` | `/admin/members/whatsapp/ws` | `handleBOMembersWhatsAppWS` | socket | solo difunde el estado de la conexión |
 | `GET` | `/admin/config/stripe-connect/ws` | `handleBOStripeConnectWS` | socket | solo difunde el estado de Stripe Connect |
 | `POST` | `/admin/{tipo}/{id}/image`, `/admin/vinos/{id}/image*`, `/admin/branding/logo`, `/admin/members/{id}/avatar`, `/admin/tables/{id}/texture-image`, `/admin/group-menus-v2/.../image*`, `/admin/config/ads/{adId}/image/*`, `/admin/config/special-dates/menu-image`, `/admin/invoices/{id}/upload-image` | varios | `Image`/`Upload`/`Avatar` | binarios y generación de imagen: fuera del alcance de las tools de texto |
@@ -883,9 +884,20 @@ backoffice, no replicar la web pública en el chat). Se documentan para que la m
 
 ## 8. Matriz D — métodos socket (WebSocket)
 
-Todos los sockets viven en `internal/api` (9 `websocket.Upgrader`); no hay SSE. Ningún método de
-socket tiene tool propia: los sockets del backoffice son **superficies de edición en vivo** y su
-efecto real es una operación REST, que sí está en la matriz A.
+Todos los sockets viven en `internal/api` (9 `websocket.Upgrader`); no hay SSE.
+
+Cobertura de sus métodos, con honestidad de estado:
+
+- La mayoría de los métodos de escritura **replican una operación REST** que sí está en la
+  matriz A: en esas filas la tool es la de la operación REST equivalente.
+- **4 métodos NO tienen gemelo REST** (las escrituras del editor de menús
+  `beverage_set`/`beverage_create`/`beverage_delete`/`weekday_set`): desde esta rama tienen
+  **tools WA propias** propose→OK (`wa_bot_menu_ws_v1`, §9.3.1). El efecto lo aplican las
+  mismas funciones de dominio que el socket y emiten la **misma difusión** del panel
+  (`beverage_options`/`weekday_saved`); no pasan por la conexión WebSocket.
+- `bookingDocumentDelete` queda **EXCLUIDO** (§10, borrado destructivo en Bunny).
+- El resto (`editor_preview_set`, `special_section_image_upload`, subidas, syncs y difusión)
+  **no tiene tool**: binarios o superficie de edición en vivo fuera del alcance textual.
 
 | Socket | Método (cliente→servidor) | Efecto | Tool que lo cubre |
 |---|---|---|---|
@@ -896,10 +908,10 @@ efecto real es una operación REST, que sí está en la matriz A.
 | `/admin/tables/ws` | `table_edit`, `layout_edit`, `template_edit`, `template_delete` (escritura), `sync`, `refresh`, `join_tables` | edición de mesas en vivo | `admin_call` (escritura → `manage_backoffice` tras `OK`) |
 | `/admin/fichaje/ws` | `ad_save` (escritura), `ad_schedule_check`, `join_restaurant` | anuncios del restaurante | `admin_call` (`/config/ads`) |
 | `/admin/comida/technical-sheets/ws` | `search` | búsqueda paginada de fichas | `sheets_read(list)` |
-| `/admin/group-menus-v2/ws` | `beverage_list/set/create/delete`, `weekday_refresh/set`, `editor_preview_set`, `special_section_image_upload`, `sync`/`refresh`/`join*` | edición de menús v2 | `admin_call` para las REST equivalentes |
+| `/admin/group-menus-v2/ws` | `beverage_list/set/create/delete`, `weekday_refresh/set`, `editor_preview_set`, `special_section_image_upload`, `sync`/`refresh`/`join*` | edición de menús v2 | **WS-only sin gemelo REST:** `beverage_set`, `beverage_create`, `beverage_delete`, `weekday_set` → tools WA propose→OK (§9.3.1) · lecturas: `admin_call` (`menus_read(beverage_options)`) · `editor_preview_set`/`special_section_image_upload`/`sync`/`refresh`/`join*` → sin tool (preview, binarios o difusión) |
 | `/admin/vinos/ws` | `sync`, `refresh` | instantáneas de la IA de imagen | — (la IA es el POST `/vinos/{id}/image/ai`, fuera del mapa) |
 | `/admin/comida/ws` | — (solo difusión) | progreso de la IA | — |
-| `/admin/bookings/documents/ws` | `bookingDocumentUpload`, `bookingDocumentList`, `bookingDocumentDelete` | ficheros de reserva | — (fuera de alcance: subida de ficheros) |
+| `/admin/bookings/documents/ws` | `bookingDocumentUpload`, `bookingDocumentList`, `bookingDocumentDelete` | ficheros de reserva | `bookingDocumentUpload`/`List`: sin tool (binarios, fuera de alcance) · **`bookingDocumentDelete`: EXCLUIDO** (borrado destructivo en Bunny, §10) |
 | `/admin/reservas/ws` | — (solo difusión) | `reservas_columns` | — |
 | `/admin/members/whatsapp/ws` | — (solo difusión) | estado de la conexión | `get_bot_status` |
 | `/admin/config/stripe-connect/ws` | — (solo difusión) | estado de Stripe | — |
@@ -977,6 +989,39 @@ Mecánica de la cadena (idéntica a la revisada de PR588, con dos diferencias ex
 | Método y ruta | — | **fijados en la propuesta**: si el catálogo cambia dentro del TTL, la operación se rechaza en vez de aplicar algo que nadie vio |
 | Slot de la propuesta | `booking_id=0` compartido | slot propio (`-1` panel, `-2` control): una propuesta de panel no la mata una propuesta de reserva y el slot del control es único |
 
+### 9.3.1 Operaciones WS-only del editor de menús (4) — resueltas en esta rama
+
+El editor de menús del panel escribe cuatro operaciones **por socket que no tienen gemelo
+REST** (la única ruta REST de la familia es la lectura
+`GET /admin/group-menus-v2/{id}/beverage-options`): `manage_backoffice` no las alcanza porque
+no están en el catálogo `forky_admin_ops.json`, y `admin_call` tampoco. Desde esta rama cada
+una tiene **tool propia del bot** con la misma cadena y la misma frontera:
+
+| Operación WS (tipo de mensaje) | Efecto real | Tool WhatsApp | Forky (panel/MCP/plugin) |
+|---|---|---|---|
+| `beverage_set` | `upsertMenuBeverageSelection` → `menu_beverage_options` (selección de bebida **de ese menú**) | `beverage_set` (propose→OK) | sin tool propia; la misma escritura la hace el editor del panel por socket |
+| `beverage_create` | `createRestaurantBeverageOption` → `restaurant_beverage_options` (`is_custom=1`, sin seleccionarla en el menú) | `beverage_create` (propose→OK) | idem |
+| `beverage_delete` | `deleteRestaurantBeverageOption` → `active=0` (borrado lógico, solo `is_custom=1`) | `beverage_delete` (propose→OK) | idem |
+| `weekday_set` | `saveBOMenuWeekday` → `menu_weekday_availability` (días en que el menú se puede reservar) | `weekday_set` (propose→OK) | idem |
+
+Mecánica (`wa_bot_menu_ws_v1`, `internal/api/whatsapp_bot_menu_ws_tools.go`), idéntica en
+garantías a la de `manage_backoffice`:
+
+| Pieza | Valor |
+|---|---|
+| Frontera | `botPrivilegedActor` en **cada** llamada (grupo exacto + membresía fresca + teléfono verificado) |
+| Cadena | propose→OK: el código viaja por el gateway al chat, nunca por el modelo; solo lo consume `OK <código>` del **mismo actor** en el **mismo chat** |
+| Método y ruta fijados | `WS /admin/group-menus-v2/ws` guardados en la propuesta; si cambian al aprobar, se rechaza |
+| Cuerpo | el **mismo sobre JSON** que emite el editor (`type`, `menu_id`, …): una línea, nunca truncado; `type` lo fija la tool, nunca el modelo |
+| Efectos | solo las tablas del menú + la **misma difusión** del panel (`beverage_options`/`weekday_saved`) con `correlation_id = wa_bot_menu_ws:<id_propuesta>`; sin avisos a clientes, sin envíos, sin ficheros |
+| Contención | `menu_id` debe pertenecer al tenant (validado antes de proponer y antes de aplicar); `beverage_delete` solo `is_custom=1`; `weekday` se canonicaliza |
+| Resultado | tres valores: rechazo de validación (nada escrito, seguro), aplicado, o **incierto** → propuesta marcada `uncertain`, consumida y sin reintento (verificar en el panel) |
+| Slot | `-3` (`botProposalSlotMenuWS`): una propuesta de menú no mata ni es mata por propuestas de reserva (`0`), de panel (`−1`) ni de control (`−2`) |
+
+**Paridad honesta:** la cobertura WS-only es **del bot de WhatsApp**; el registro de Forky no
+gana tools nuevas (el humano del panel ya escribe por el propio socket, y el asistente Forky
+no tiene estas escrituras — no se afirma paridad que no exista).
+
 ### 9.4 Plano de control del bot
 
 No existía ninguna tool para gestionar el acceso del propio bot (quién está autorizado, qué
@@ -1018,6 +1063,7 @@ de WA.
 | Importaciones masivas (`/admin/stock/items/import`, `/admin/pos/products/import*`) | no implementada | fuera de alcance |
 | Tenants / superadmin (`/admin/platform*`) | no implementada | gestión de la plataforma |
 | Subidas de ficheros e imágenes (binarios) | no implementada | fuera del alcance textual; algunas sí están en el panel vía `admin_call` |
+| Ficheros de reserva — **`booking_document_delete`** (socket `bookingDocumentDelete` sobre `/admin/bookings/documents/ws`) | **no implementada, decisión explícita** | es destructivo sobre **almacenamiento Bunny** (borrado remoto sin copia de restauración desde el chat): ningún preview ni código vuelve incierto ese borrado en reversible. Los binarios están fuera del alcance textual y la purga de documentos de una reserva ya solo la hace `booking_propose_cancel` (que conserva copia, §10.2) |
 
 ### 10.2 Efectos que alcanzan al cliente (auditoría `wa_backoffice_client_notices_v1`)
 
@@ -1098,6 +1144,9 @@ Se listan en `docs/FORKY_API.md` (generado por `go run ./cmd/forky-docs`). Resum
   `config_propose_{day,daily_limit,mesas,salon_condesa}`.
 - **Nuevas en esta rama**: `manage_backoffice` (operaciones del panel), `manage_bot_access`
   (plano de control del bot).
+- **Menú WS-only, sin gemelo REST (propose→OK, `wa_bot_menu_ws_v1`)**: `beverage_set`,
+  `beverage_create`, `beverage_delete`, `weekday_set` — las 4 operaciones de socket del editor
+  de menús del §9.3.1. Ninguna está en el registro de Forky (son tools del bot).
 
 ### 11.3 Tools de Forky que NO llegan a WhatsApp (`botForkyExcludedFromWA`)
 
@@ -1127,6 +1176,7 @@ convertirse en un bypass de esa puerta.
 | El bot no puede cambiar el grupo de gestión a un grupo que no esté en el entorno | el bot responde con las tools de staff en el grupo de gestión: un grupo no autorizado nunca debe recibir tráfico de staff | — |
 | **Cobertura automática de la frontera nueva** (grupo de env + prueba fresca + actor teléfono) | en esta sesión no se han escrito tests (restricción del encargo) | escribir los tests de la frontera cuando se autorice |
 | Normalización de los jids de env (solo `@g.us`, recortados) | lacubría un test borrado con la otra vía de privilegio (§12.1) | con la autorización de tests |
+| El asistente Forky (panel/MCP/plugin) no puede escribir las 4 operaciones WS-only del menú | no tienen gemelo REST, así que `admin_call` no las alcanza, y la capacidad del panel ya la tiene el humano en el propio editor de menús: darlas al asistente exige una tool dedicada con `confirmation_token` (no se ha pedido) | una tool Forky `menu_ws_write` con confirmación, si se quiere paridad |
 
 ### 12.1 Los tres ficheros de test borrados: justificación estricta
 
@@ -1165,3 +1215,13 @@ escriben tests en esta sesión por la restricción del encargo; queda pendiente 
    actor en el mismo chat; el código no sirve en otro chat ni para otro actor.
 6. `manage_bot_access` con `action=list` exige la misma frontera; `management_group` con nombre
    (sin JID) se rechaza.
+7. Tools WS-only del menú (`beverage_set`, `beverage_create`, `beverage_delete`,
+   `weekday_set`): la propuesta empieza por `Propuesta de operacion del panel (<op>):
+   WS /admin/group-menus-v2/ws` (método y ruta fijados); un `menu_id` de otro restaurante, una
+   bebida inexistente o no personalizada (`beverage_delete`), un `name` vacío o un `weekday`
+   inválido se rechazan **antes** de crear propuesta; el `OK <código>` del mismo actor en el
+   mismo chat aplica y el panel abierto recibe `beverage_options`/`weekday_saved` con
+   `correlation_id=wa_bot_menu_ws:<id_propuesta>` (punto de observación entre backend y
+   frontend); un fallo de escritura marca la propuesta `uncertain` (consumida, sin reintento).
+8. `booking_document_delete` sigue **sin tool**: no aparece en ningún catálogo del bot ni de
+   Forky y su exclusión consta en §10 (Bunny, borrado destructivo).
