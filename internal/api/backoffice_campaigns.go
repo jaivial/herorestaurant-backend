@@ -516,6 +516,10 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 	// The previews must show the opt-out button the recipient gets, so the shell
 	// is built with a placeholder link (an unknown booking id inserts nothing).
 	unsubscribeURL := campaignUnsubscribePreviewURL(campaignAbsoluteBase(websiteURL))
+	footerAddress, footerEmail := "", ""
+	if ownLoaded {
+		footerAddress, footerEmail = branding.Address, branding.Email
+	}
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success":         true,
 		"theme":           theme,
@@ -525,11 +529,7 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 		"unsubscribe_url": unsubscribeURL,
 		// The editor renders the markdown locally and drops it in this exact
 		// shell, so the preview matches the delivered email byte for byte.
-			footerAddress, footerEmail := "", ""
-	if ownLoaded {
-		footerAddress, footerEmail = branding.Address, branding.Email
-	}
-	httpx.WriteJSON(w, 200, map[string]any{
+		"shell":            campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, campaignEmailBodyPlaceholder, websiteURL, unsubscribeURL, s.campaignEmailIdentityLine(r.Context(), a.ActiveRestaurantID), footerAddress, footerEmail),
 		"body_placeholder": campaignEmailBodyPlaceholder,
 	})
 }
