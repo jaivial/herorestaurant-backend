@@ -161,6 +161,8 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolGMenuRemovePropose(ctx, restaurantID, msg, input)
 	case "booking_propose_set_floor":
 		return s.botToolFloorPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_set_flags":
+		return s.botToolFlagsPropose(ctx, restaurantID, msg, input)
 	case "create_special_booking":
 		return s.botToolCreateSpecialBooking(ctx, restaurantID, msg, tenant, input)
 	case "modify_special_booking":
