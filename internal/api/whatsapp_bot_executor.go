@@ -129,11 +129,12 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolGetSpecialDateInfo(ctx, restaurantID, input)
 	case "get_special_date_bookings":
 		return s.botToolGetSpecialDateBookings(ctx, restaurantID, input)
-	// Coordination id: wa_bot_admin_reads_v1 - read-only staff group tools.
+	// Coordination id: wa_bot_admin_reads_v1 - read-only staff group tools;
+	// each handler re-authorizes through botSpecialAdminAuthorize (fail closed).
 	case "list_cancelled_bookings":
-		return s.botToolListCancelledBookings(ctx, restaurantID, input)
+		return s.botToolListCancelledBookings(ctx, restaurantID, msg, input)
 	case "list_tables":
-		return s.botToolListTables(ctx, restaurantID, input)
+		return s.botToolListTables(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_special_crud_v1 - full special-menu CRUD. Each
 	// one re-validates through the same server core the backoffice uses.
 	case "special_booking_get":

@@ -29,7 +29,10 @@ func botToolDefsAdminReads() []botToolDef {
 	}
 }
 
-func (s *Server) botToolListCancelledBookings(ctx context.Context, restaurantID int, input json.RawMessage) (string, error) {
+func (s *Server) botToolListCancelledBookings(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
+	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
+		return botJSON(map[string]any{"error": "no autorizado"}), nil
+	}
 	var in struct {
 		Date string `json:"date"`
 	}
@@ -89,7 +92,10 @@ func (s *Server) botToolListCancelledBookings(ctx context.Context, restaurantID 
 	}), nil
 }
 
-func (s *Server) botToolListTables(ctx context.Context, restaurantID int, input json.RawMessage) (string, error) {
+func (s *Server) botToolListTables(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
+	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
+		return botJSON(map[string]any{"error": "no autorizado"}), nil
+	}
 	areaRows, err := s.db.QueryContext(ctx, `
 		SELECT id, name FROM restaurant_areas
 		WHERE restaurant_id = ? AND is_active = 1

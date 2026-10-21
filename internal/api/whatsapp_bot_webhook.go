@@ -655,6 +655,9 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		botTools := botToolDefsForChat(tenant, true)
 		if botSpecialAdminToolsAllowed(restaurantID, msg) {
 			botTools = append(botTools, botSpecialAdminToolDefs()...)
+			// wa_bot_admin_reads_v1: read-only staff reads share the exact
+			// admin scope gate (scope group + privileged turn + fresh member).
+			botTools = append(botTools, botToolDefsAdminReads()...)
 		}
 		tools = botMergeToolDefs(botTools, botForkyToolDefs())
 		normalExec := exec

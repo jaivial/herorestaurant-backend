@@ -272,10 +272,6 @@ func botToolDefsForChat(cfg botTenantConfig, inGroup bool) []botToolDef {
 	if inGroup && !cfg.DisableSpecialCRUD {
 		defs = append(defs, botToolDefsSpecialCRUD()...)
 	}
-	if inGroup {
-		// wa_bot_admin_reads_v1: read-only staff tools, never customer chats.
-		defs = append(defs, botToolDefsAdminReads()...)
-	}
 	defs = append(defs, botToolDefsV2()...)
 	// Coordination id: wa_bot_unsubscribe_v1 - customers only, never the staff group.
 	if !inGroup {
