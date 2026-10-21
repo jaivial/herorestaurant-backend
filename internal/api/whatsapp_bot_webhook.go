@@ -57,6 +57,9 @@ type botWebhookMessage struct {
 	// into the prompt only for privileged turns.
 	DocumentB64  string
 	DocumentName string
+	// ActorPhoneJID: provider phone JID of a one-to-one chat whose number the
+	// webhook matched to a member of the special-admin group (set only then).
+	ActorPhoneJID string
 }
 
 // parseBotWebhookMessage extracts the message from a UAZAPI webhook body.
@@ -623,6 +626,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	}
 	// Coordination id: wa_bot_privileged_group_v1 - privileged group prompt block.
 	promptData.PrivilegedGroup = msg.PrivilegedGroup
+	promptData.SpecialAdminTools = botSpecialAdminToolsAllowed(restaurantID, msg)
 	// Document understanding is privileged-only: the inline document is
 	// extracted BEFORE the loop and appended to the last user message so the
 	// model reads the file content as part of the request. On any failure the
@@ -649,6 +653,24 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		// schema the bot's executor understands, and the executor routes it
 		// to the bot path, not to the forky path.
 		botTools := botToolDefsForChat(tenant, true)
+		if botSpecialAdminToolsAllowed(restaurantID, msg) {
+			botTools = append(botTools, botSpecialAdminToolDefs()...)
+			// wa_bot_admin_reads_v1: read-only staff reads share the exact
+			// admin scope gate (scope group + privileged turn + fresh member).
+			botTools = append(botTools, botToolDefsAdminReads()...)
+		}
+		// Coordination id: wa_backoffice_ops_v1 / wa_bot_privileged_control_v1:
+		// the backoffice operation surface and the control plane of the bot.
+		// They are advertised on every privileged turn and re-prove the actor
+		// (the verified phone of a current member of the authorized group) on
+		// every call.
+		botTools = append(botTools, botToolDefsBackoffice()...)
+		// Coordination id: wa_bot_menu_ws_v1: the four WS-only menu
+		// operations (beverage_set/create/delete, weekday_set) have no REST
+		// twin in the catalogue, so they are advertised as their own
+		// propose->OK tools; every call re-proves the actor with the same
+		// boundary as the rest of the surface.
+		botTools = append(botTools, botToolDefsMenuWS()...)
 		tools = botMergeToolDefs(botTools, botForkyToolDefs())
 		normalExec := exec
 		// A name the bot defines belongs to the bot, even when forky also has
@@ -664,8 +686,42 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			botOwned[d.Name] = struct{}{}
 		}
 		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+			// Coordination id: wa_bot_privileged_control_v1 - a configured
+			// grant restricts which custom tools this chat may call. The
+			// filtered catalog is UX, THIS is the guard, and it covers the
+			// forky tools too (they do not reach the bot executor).
+			if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
+				log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d tool=%s denied", restaurantID, name)
+				return botJSON(map[string]any{"error": reason}), nil
+			}
+			// Temporary containment (wa_bot_admin_write_denied_v1): these bot-owned
+			// mutations are gated only by a confirmed=true the model writes itself,
+			// which is not a human approval. Refused in the server for privileged
+			// groups until an approval bound to the exact preview exists. Reads,
+			// messaging and add_booking_note are unchanged.
+			if botPrivilegedDeniedWrites[name] {
+				log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
+				return botJSON(map[string]any{"error": "esta operación está desactivada temporalmente para el bot (no se ejecuta). No la reintentes ni busques otra vía: di al grupo que debe hacerse en el panel de administración."}), nil
+			}
 			if _, ok := assistantToolLookup(name); ok {
 				if _, mine := botOwned[name]; !mine {
+					// Enforcement mirror of the catalog filter
+					// (wa_bot_forky_excluded_v1): these forky reads stay
+					// panel/MCP-only; the WA staff path uses the dedicated
+					// gated tools instead. Refused even if a merged tool list
+					// ever exposes the name to the model.
+					if _, excluded := botForkyExcludedFromWA[name]; excluded {
+						log.Printf("[bot] checkpoint wa_bot_forky_excluded_v1 restaurant_id=%d tool=%s", restaurantID, name)
+						return botJSON(map[string]any{"error": "esa consulta del panel no está disponible en este chat. Usa la herramienta dedicada del bot equivalente si existe; si no, debe consultarse en el panel de administración."}), nil
+					}
+					// A forky write tool the bot does not own is a generic panel
+					// mutation whose confirmation token the model redeems itself:
+					// refused in the server (wa_bot_admin_write_denied_v1). Reads and
+					// the bot's own tools are unchanged.
+					if def, _ := assistantToolLookup(name); def.Write {
+						log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
+						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, di al grupo que esa operación no está soportada y que debe hacerse en el panel. No busques otra vía."}), nil
+					}
 					return s.assistantExecuteTool(s.botPrivilegedForkyContext(ctx, restaurantID), restaurantID, name, input)
 				}
 			}
@@ -677,6 +733,10 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		return s.botLLMCallRouted(ctx, restaurantID, routing, sessionID, system, msgs, tools)
 	}
 
+	// Coordination id: wa_bot_privileged_control_v1 - per-chat tool control:
+	// the catalog offered to the model is filtered, and the executor
+	// re-checks.
+	tools = botToolGrantsFilter(tools, tenant, msg.ChatJID)
 	result, err := s.botRunAgentLoopWith(ctx, caller, system, messages, tools, exec)
 	if decisionID > 0 {
 		s.botConversation.SetDecisionModel(ctx, decisionID, result.ModelUsed, map[string]any{
@@ -693,18 +753,26 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// text, or only read-only tools), send the final assistant text so the
 	// customer is never left in silence. A server-side notice (same-day policy)
 	// counts as delivered and must not be duplicated.
-	if !botDeliveredReply(result.ToolCalls) && !turn.noticeDelivered {
+	sendCtx := ctx
+	if result.Interrupted {
+		// The turn context may already be expired: send the fixed reply on a short fresh one.
+		// WithoutCancel keeps the turn's values (tenant, tracing) but not its expiry.
+		var cancelSend context.CancelFunc
+		sendCtx, cancelSend = context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancelSend()
+	}
+	if (result.Interrupted || !botDeliveredReply(result.ToolCalls)) && !turn.noticeDelivered {
 		if text := botFinalAssistantText(result.Messages); botPlainTextLeaksInternal(text) {
 			// The model typed a contact card or pasted a staff notification as
 			// text: deliver the real intro + vCard instead (wa_bot_context_hygiene_v1).
 			log.Printf("[bot] checkpoint wa_bot_plain_text_rewritten restaurant_id=%d sender=%s", restaurantID, msg.Sender)
-			_, _ = s.botToolSendContact(ctx, restaurantID, msg, tenant, nil)
+			_, _ = s.botToolSendContact(sendCtx, restaurantID, msg, tenant, nil)
 		} else if text != "" {
 			log.Printf("[bot] checkpoint wa_bot_plain_text_fallback restaurant_id=%d sender=%s", restaurantID, msg.Sender)
-			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok && s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
+			if gw, ok := s.botGatewayFor(sendCtx, restaurantID); ok && s.sendWhatsAppTextTracked(sendCtx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
 			}
 		} else {
-			s.botSendFallback(ctx, restaurantID, msg.Sender)
+			s.botSendFallback(sendCtx, restaurantID, msg.Sender)
 		}
 	}
 	log.Printf("[bot] restaurant=%d sender=%s iterations=%d model=%s node=%s tools=%s",
@@ -761,4 +829,16 @@ func (s *Server) botSendFallback(ctx context.Context, restaurantID int, sender s
 	}
 	if s.sendWhatsAppTextTracked(ctx, restaurantID, gw, sender, fallback, "agent_fallback") == nil {
 	}
+}
+
+// botPrivilegedDeniedWrites lists the bot-owned destructive or special-booking
+// mutations refused for privileged groups while their confirmation is only a
+// model-written flag.
+var botPrivilegedDeniedWrites = map[string]bool{
+	"create_booking":         true,
+	"modify_booking":         true,
+	"cancel_booking":         true,
+	"modify_special_booking": true,
+	"cancel_special_booking": true,
+	"create_special_booking": true,
 }

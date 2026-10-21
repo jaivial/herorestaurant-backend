@@ -73,15 +73,33 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 	// The tenant config is needed both by the group gate and by the message
 	// that follows it, so it is loaded once, before the branch.
 	tenant := s.loadBotTenantConfig(r.Context(), restaurantID)
-	// isPrivileged is computed ONCE and reused below: computing it twice
-	// would let the gate and the turn disagree if one of them changed.
+	// wa_bot_privileged_boundary_v1: the privilege is decided ONCE, here, and
+	// only by the boundary: the authorized group of the ENVIRONMENT, or a
+	// private chat whose PROVIDER PHONE belongs to a current member of it.
 	//
-	// The conversation is matched by BOTH of its identities: the provider
-	// lists a 1:1 chat by WhatsApp's opaque @lid and delivers the message
-	// addressed to the phone number, so a selection made on one form has to
-	// match the other.
-	// Coordination id: wa_bot_privileged_contacts_v1
-	isPrivileged := botConversationIsPrivileged(s, tenant, in.ChatJID, in.ChatJIDAlt)
+	// The conversations selected in the backoffice (wa_bot_privileged_contacts_v1)
+	// are NOT a credential: a selection is a preference, not a proof of
+	// identity (deviation B1 of PR588, corrected). The actor is always a
+	// verified phone, never a LID.
+	actorPhoneJID := ""
+	if !botGroupIsGroupJID(in.ChatJID) {
+		// The provider phone alias of a 1:1 chat. A chat the provider only
+		// addresses by its opaque LID has no phone: it cannot be an actor.
+		actorPhoneJID = botSpecialAdminDMPhoneJID(in.ChatJID, in.ChatJIDAlt)
+	}
+	isPrivileged := false
+	if !in.FromMe && !in.Ignored {
+		probe := botWebhookMessage{
+			Sender: in.Sender, Text: in.Text, MessageID: in.MessageID, FromMe: in.FromMe,
+			IsGroup: botGroupIsGroupJID(in.ChatJID), ChatJID: in.ChatJID,
+			ParticipantJID: in.ParticipantJID, ActorPhoneJID: actorPhoneJID,
+		}
+		if phone, ok := s.botPrivilegedTurnAllowed(r.Context(), restaurantID, probe); ok {
+			isPrivileged = true
+			actorPhoneJID = phone
+			log.Printf("[bot] checkpoint wa_bot_privileged_boundary_v1 restaurant_id=%d decision=privileged chat=%s", restaurantID, in.ChatJID)
+		}
+	}
 	if botGroupIsGroupJID(in.ChatJID) {
 		isManagement := s.botGroupIsManagementGroup(r.Context(), restaurantID, in.ChatJID, tenant)
 		if !isManagement && !isPrivileged {
@@ -90,6 +108,15 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if !in.Mentioned {
+			// wa_bot_special_admin_v2: an unmentioned message can only be an
+			// exact approval; the interceptor re-proves scope, actor and code.
+			if isPrivileged && !in.FromMe && botSpecialAdminInScope(restaurantID, in.ChatJID) {
+				am := botWebhookMessage{Sender: in.Sender, Text: in.Text, MessageID: in.MessageID, IsGroup: true, ChatJID: in.ChatJID, ParticipantJID: in.ParticipantJID, PrivilegedGroup: true, ActorPhoneJID: actorPhoneJID}
+				if s.botSpecialAdminTryApprove(r.Context(), restaurantID, am) {
+					httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "group": true, "special_admin_approval": true})
+					return
+				}
+			}
 			reason := "skipped_not_mentioned"
 			if isPrivileged {
 				reason = "skipped_not_mentioned_privileged"
@@ -100,13 +127,16 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		}
 		// Membership gate (wa_bot_group_membership_v1): the privileged catalog is
 		// the whole backoffice with a root auth, so the sender must be a member
-		// of the group. The provider's participant list is the source of truth
-		// and the check is fail-closed: when membership cannot be proven, the
-		// turn is served as an ordinary group turn, never as a privileged one.
+		// of the AUTHORIZED group. The provider's participant list is the source
+		// of truth and the check is fail-closed: when membership cannot be
+		// proven, the message is skipped instead of being served.
 		//
-		// Only the privileged path is gated this way. The management group keeps
-		// its current behaviour (the forwarded request is the point there).
-		if isPrivileged && botPrivilegedConversationIsGroup(tenant, in.ChatJID) &&
+		// The boundary already proved the membership with a FRESH fetch, so a
+		// privileged turn never reaches this gate. The gate keeps the
+		// previous behaviour of everybody else: a member the provider knows
+		// (even only by its LID) is served as an ordinary group turn, and
+		// only a NON member is dropped.
+		if botGroupIsGroupJID(in.ChatJID) && s.botPrivilegedChatIsScopeGroup(restaurantID, in.ChatJID) && !isPrivileged &&
 			!s.botGroupSenderIsMember(r.Context(), restaurantID, in.ChatJID, in.ParticipantJID) {
 			log.Printf("[bot] checkpoint wa_bot_group_membership_v1 restaurant_id=%d group=%s participant=%s decision=skipped_not_group_member", restaurantID, in.ChatJID, in.ParticipantJID)
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "skipped_not_group_member")
@@ -120,11 +150,11 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted")
 		}
 	} else if isPrivileged {
-		// A privileged one-to-one contact (wa_bot_privileged_contacts_v1): the
-		// conversation itself was selected in the backoffice, so there is no
-		// membership to check and no mention to demand: it is that person
-		// writing to the bot.
-		log.Printf("[bot] checkpoint wa_bot_privileged_contacts_v1 restaurant_id=%d chat=%s decision=accepted_privileged_contact", restaurantID, in.ChatJID)
+		// A privileged private chat (wa_bot_privileged_boundary_v1): the
+		// provider phone of the conversation belongs to a CURRENT member of
+		// the authorized group, proven with a fresh fetch. There is no mention
+		// to demand: it is that person writing to the bot.
+		log.Printf("[bot] checkpoint wa_bot_privileged_boundary_v1 restaurant_id=%d chat=%s decision=accepted_privileged_contact", restaurantID, in.ChatJID)
 		botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted_privileged_contact")
 	}
 
@@ -161,8 +191,15 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		// It reuses the value computed at the gate: computing it twice would
 		// let the gate and the turn disagree if the config changed in between.
 		PrivilegedGroup: isPrivileged,
+		ActorPhoneJID:   actorPhoneJID,
 		DocumentB64:     in.DocumentB64,
 		DocumentName:    in.DocumentName,
+	}
+	// wa_bot_special_admin_v2: an exact "OK <code>" from the verified requester
+	// is handled here, before any model turn, and never reaches the model.
+	if isPrivileged && s.botSpecialAdminTryApprove(r.Context(), restaurantID, msg) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "special_admin_approval": true})
+		return
 	}
 	s.processInboundBotMessage(w, r, restaurantID, msg)
 }

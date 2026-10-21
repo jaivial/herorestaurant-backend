@@ -148,10 +148,65 @@ func forkyFold(v string) string {
 	return r.Replace(strings.ToLower(v))
 }
 
+// forkyAdminAliasGroups: Spanish/English synonym groups for catalog discovery.
+// The ops index mixes English names (admin_get_pos_cash_days_current) with
+// Spanish descriptions, so a bare substring match is nearly blind in one of
+// the two languages ("caja" found 0 of the 13 cash ops). Query-side expansion
+// only: the generated ops map is not touched, and a word matches when ANY of
+// its aliases appears in the op haystack. Keep groups small and domain-real:
+// an over-broad alias turns discovery into noise.
+var forkyAdminAliasGroups = [][]string{
+	{"caja", "cash"},
+	{"caduc", "expir", "vencim", "shelf"},
+	{"almacen", "warehouse"},
+	{"turno", "shift"},
+	{"miembro", "member", "staff", "equipo", "personal", "team"},
+	{"cierre", "closure", "close"},
+	{"articulo", "item"},
+	{"reserva", "booking"},
+	{"factura", "invoice"},
+	{"campana", "campaign"},
+	{"anuncio", "ads"},
+	{"carta", "menu"},
+	{"horario", "schedule"},
+	{"fichaje", "clock"},
+	{"mesa", "table"},
+	{"pedido", "order"},
+	{"cocina", "kitchen"},
+	{"precio", "price"},
+	{"cliente", "customer"},
+	{"usuario", "user"},
+	{"informe", "report"},
+}
+
+var forkyAdminAliases = func() map[string][]string {
+	m := map[string][]string{}
+	for _, g := range forkyAdminAliasGroups {
+		for _, w := range g {
+			m[w] = g
+		}
+	}
+	return m
+}()
+
 func forkyAdminMatch(op forkyAdminOp, q string) bool {
 	hay := forkyFold(op.Name + " " + op.Path + " " + op.Description + " " + op.Section + " " + strings.Join(op.Screens, " "))
 	for _, w := range strings.Fields(forkyFold(q)) {
-		if len(w) >= 3 && !strings.Contains(hay, w) {
+		if len(w) < 3 {
+			continue
+		}
+		candidates := forkyAdminAliases[w]
+		if candidates == nil {
+			candidates = []string{w}
+		}
+		ok := false
+		for _, c := range candidates {
+			if strings.Contains(hay, c) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
 			return false
 		}
 	}
@@ -165,6 +220,62 @@ func forkyAdminSummary(op forkyAdminOp) map[string]any {
 	}
 	return map[string]any{"name": op.Name, "method": op.Method, "path": op.Path, "section": op.Section,
 		"write": op.Write, "risk": op.Risk, "description": desc}
+}
+
+// forkyAdminOpByName returns the catalogued operation with that name.
+//
+// Coordination id: wa_backoffice_ops_v1: the WhatsApp surface proposes
+// operations by name too, so both surfaces share ONE catalogue.
+func forkyAdminOpByName(name string) (forkyAdminOp, bool) {
+	loadForkyAdminOps()
+	op, ok := forkyAdminByName[strings.TrimSpace(name)]
+	return op, ok
+}
+
+// assistantBackofficeWrite executes the backoffice_write tool: ONE catalogued
+// WRITE operation, through the real route, with the ACL and the tenant scope
+// of the caller.
+//
+// Coordination id: wa_backoffice_ops_v1: it is the typed twin of admin_call
+// for writes, and it shares the very same replay, so the two can never
+// diverge on what an operation does.
+func (s *Server) assistantBackofficeWrite(ctx context.Context, rid int, input json.RawMessage) (string, error) {
+	var in struct {
+		Name              string          `json:"name"`
+		PathParams        map[string]any  `json:"path_params"`
+		Query             map[string]any  `json:"query"`
+		Body              json.RawMessage `json:"body"`
+		Confirmed         bool            `json:"confirmed"`
+		ConfirmationToken string          `json:"confirmation_token"`
+	}
+	if err := json.Unmarshal(input, &in); err != nil {
+		return "", fmt.Errorf("argumentos inválidos")
+	}
+	// The ACL of the catalog: the operation has to be one this user may run.
+	ops, _, err := s.forkyAdminVisibleOps(ctx)
+	if err != nil {
+		return "", err
+	}
+	var op forkyAdminOp
+	for _, o := range ops {
+		if o.Name == in.Name {
+			op = o
+		}
+	}
+	if op.Name == "" {
+		return "", fmt.Errorf("operación desconocida para este usuario: %s (usa admin_catalog)", in.Name)
+	}
+	if !op.Write {
+		return "", fmt.Errorf("%s es una operación de lectura: usa admin_call", op.Name)
+	}
+	if !in.Confirmed {
+		return s.assistantRequireConfirmation(rid, "backoffice_write", input)
+	}
+	// The token is bound to (restaurant, tool, canonical arguments).
+	if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, "backoffice_write", input); err != nil {
+		return "", err
+	}
+	return s.assistantAdminReplay(ctx, rid, op, in.PathParams, in.Query, in.Body)
 }
 
 func (s *Server) assistantAdminCatalog(ctx context.Context, _ int, input json.RawMessage) (string, error) {
@@ -341,6 +452,14 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	if op.Name == "" {
 		return "", fmt.Errorf("operación desconocida para este usuario: %s (usa admin_catalog)", in.Name)
 	}
+	// A bot turn is a model acting on a chat message: it may read through the
+	// catalogue, but a generic panel write is refused here, in the server. The
+	// confirmation token is issued to and redeemed by the same model, so it is
+	// not a human decision; the dedicated bot tools carry their own checks.
+	if op.Write && isBotPrivilegedTurn(ctx) {
+		log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d", rid)
+		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call). Si lo pedido tiene una herramienta dedicada, úsala; si no, di al grupo que esa operación no está soportada y que debe hacerse en el panel. No busques otra vía."}), nil
+	}
 	if op.Write {
 		if !in.Confirmed {
 			return s.assistantRequireConfirmation(rid, "admin_call", input)
@@ -350,10 +469,15 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 			return "", err
 		}
 	}
-	token, ok := boSessionTokenFromContext(ctx)
-	if !ok {
-		return "", fmt.Errorf("sesión del panel no disponible")
-	}
+	return s.assistantAdminReplay(ctx, rid, op, in.PathParams, in.Query, in.Body)
+}
+
+// assistantAdminOpGuards are the refusals that apply to EVERY replay of a
+// catalogued operation, whoever asks for it: the tenant it belongs to and the
+// surfaces the bot may never touch.
+//
+// Coordination id: wa_backoffice_ops_v1
+func assistantAdminOpGuards(op forkyAdminOp, rid int, pathParams map[string]any) error {
 	// Tenant scope: a path that addresses a restaurant must address THIS
 	// restaurant. Without this the model could put another tenant's id in the
 	// path and the replay would read or write that tenant's data with the
@@ -363,12 +487,12 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// never a legitimate call: it is either a mistake or an attempt to reach
 	// another tenant.
 	if rid > 0 && forkyPathHasParam(op.Path, "restaurantId") {
-		got := strings.TrimSpace(fmt.Sprint(in.PathParams["restaurantId"]))
+		got := strings.TrimSpace(fmt.Sprint(pathParams["restaurantId"]))
 		if got == "" {
-			got = strings.TrimSpace(fmt.Sprint(in.PathParams["restaurant_id"]))
+			got = strings.TrimSpace(fmt.Sprint(pathParams["restaurant_id"]))
 		}
 		if got != "" && got != strconv.Itoa(rid) {
-			return "", fmt.Errorf("operación fuera del restaurante del bot: la ruta apunta a %s y este bot opera en %d", got, rid)
+			return fmt.Errorf("operación fuera del restaurante del bot: la ruta apunta a %s y este bot opera en %d", got, rid)
 		}
 	}
 	// The same scope applies to the operation that REBINDS the session to
@@ -380,7 +504,7 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// The bot has exactly one restaurant, so the operation has no meaning
 	// for it: the restaurant is already the right one.
 	if rid > 0 && forkyPathIsActiveRestaurant(op.Path) {
-		return "", fmt.Errorf("el bot no puede cambiar de restaurante: ya opera en el %d", rid)
+		return fmt.Errorf("el bot no puede cambiar de restaurante: ya opera en el %d", rid)
 	}
 	// The operations that act on the SESSION ITSELF are refused for the same
 	// reason, and with a sharper edge: the service session belongs to a real
@@ -389,7 +513,7 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// identity of its own to change, and it must never be able to touch the
 	// credentials of the account it borrows.
 	if forkyPathIsSessionScoped(op.Path) {
-		return "", fmt.Errorf("el bot no puede ejecutar %s: son operaciones sobre la cuenta de la sesion, no sobre el restaurante", op.Path)
+		return fmt.Errorf("el bot no puede ejecutar %s: son operaciones sobre la cuenta de la sesion, no sobre el restaurante", op.Path)
 	}
 	// The ACCOUNT MANAGEMENT operations are refused too. The service session
 	// is a superadmin, so the catalog exposes operations that create panel
@@ -402,14 +526,32 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// (reservations, menus, members, tables, stock, POS). The people behind
 	// the panel are not.
 	if forkyPathIsAccountManagement(op.Path) {
-		return "", fmt.Errorf("el bot no puede ejecutar %s: es una operacion de gestion de cuentas del panel, no de datos del restaurante", op.Path)
+		return fmt.Errorf("el bot no puede ejecutar %s: es una operacion de gestion de cuentas del panel, no de datos del restaurante", op.Path)
 	}
-	path, err := forkyRenderPath(op.Path, in.PathParams)
+	return nil
+}
+
+// assistantAdminReplay runs ONE catalogued operation against the REAL router,
+// with the session of the caller: the same gates, the same business rules and
+// the same tenant scope that protect it in the panel.
+//
+// Coordination id: wa_backoffice_ops_v1: shared by admin_call (panel / MCP /
+// plugin) and by the WhatsApp approval of manage_backoffice, so the two
+// surfaces can never diverge on what an operation does.
+func (s *Server) assistantAdminReplay(ctx context.Context, rid int, op forkyAdminOp, pathParams map[string]any, query map[string]any, rawBody json.RawMessage) (string, error) {
+	if err := assistantAdminOpGuards(op, rid, pathParams); err != nil {
+		return "", err
+	}
+	token, ok := boSessionTokenFromContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("sesión del panel no disponible")
+	}
+	path, err := forkyRenderPath(op.Path, pathParams)
 	if err != nil {
 		return "", err
 	}
 	q := url.Values{}
-	for k, v := range in.Query {
+	for k, v := range query {
 		q.Set(k, fmt.Sprint(v))
 	}
 	// The admin subrouter is mounted at /admin, and the /api prefix rewrite runs
@@ -421,8 +563,8 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 		target += "?" + q.Encode()
 	}
 	var body *strings.Reader
-	if op.Write && len(in.Body) > 0 && string(in.Body) != "null" {
-		body = strings.NewReader(string(in.Body))
+	if op.Write && len(rawBody) > 0 && string(rawBody) != "null" {
+		body = strings.NewReader(string(rawBody))
 	} else {
 		body = strings.NewReader("")
 	}
@@ -522,6 +664,24 @@ var assistantAdminTools = []assistantTool{
 		Schema:      json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["name"]}`),
 		Handler: func(s *Server, ctx context.Context, rid int, in json.RawMessage) (string, error) {
 			return s.assistantAdminCall(ctx, rid, in)
+		},
+	},
+	{
+		// Coordination id: wa_backoffice_ops_v1: the typed twin of admin_call
+		// for WRITES. It runs the very same operation through the real route
+		// (assistantAdminReplay), so the panel rules, the tenant scope and the
+		// audit are the ones of the product.
+		//
+		// It is BackofficeOnly and explicitly excluded from WhatsApp
+		// (botForkyExcludedFromWA): in a chat the write needs a HUMAN
+		// approval (the propose->OK chain of manage_backoffice), never a
+		// confirmed=true that the model writes itself.
+		Name: "backoffice_write", Section: assistantSessionSection, BackofficeOnly: true,
+		Description: "Ejecuta UNA operación de ESCRITURA del backoffice (del catálogo de admin_catalog/admin_describe) con las reglas del panel: path_params para los {ids} de la ruta, query para filtros y body con el JSON de la escritura. Requiere confirmed=true y el confirmation_token que devuelve la primera llamada con confirmed=false; pide confirmación al usuario antes.",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Nombre de la operación del catálogo (admin_catalog)"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["name"]}`),
+		Write:       true, Confirm: true,
+		Handler: func(s *Server, ctx context.Context, rid int, in json.RawMessage) (string, error) {
+			return s.assistantBackofficeWrite(ctx, rid, in)
 		},
 	},
 }

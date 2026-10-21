@@ -118,8 +118,12 @@ func TestBotRunAgentLoop_MaxIterations(t *testing.T) {
 	if result.Iterations != 3 {
 		t.Errorf("iterations = %d, want 3", result.Iterations)
 	}
-	if execCount != 3 {
-		t.Errorf("execCount = %d", execCount)
+	// wa_bot_noncap_v1: with the budget spent, the tool call of the LAST
+	// response is deliberately NOT executed (no hidden extra mutation): rounds
+	// 1-2 run the tool, round 3 hits the cap and the loop answers with the
+	// exhausted notice (botBudgetExhaustedText).
+	if execCount != 2 {
+		t.Errorf("execCount = %d, want 2", execCount)
 	}
 }
 

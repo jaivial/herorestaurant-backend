@@ -36,8 +36,16 @@ func TestForkyAdminMapIsValidAndSafe(t *testing.T) {
 		if op.Path == "/login" || op.Path == "/logout" {
 			t.Errorf("auth route in the map: %s", op.Path)
 		}
-		if op.Write != (op.Method != "GET") {
-			t.Errorf("write flag of %s does not follow the method", op.Name)
+		// wa_customtools_get_writes_v1: a non-GET is always a write, and a GET
+		// may be flagged write ONLY when the audit marked it (the generator
+		// appends "GET con escritura: <reason>" to its description). A GET that
+		// writes must stay behind the approval chain, so the flag is what the
+		// safety nets key on — never "method == GET" alone.
+		if op.Method != "GET" && !op.Write {
+			t.Errorf("operation %s writes by method %s but is not flagged write", op.Name, op.Method)
+		}
+		if op.Method == "GET" && op.Write && !strings.Contains(op.Description, "GET con escritura") {
+			t.Errorf("GET %s is flagged write without the audited description (wa_customtools_get_writes_v1)", op.Name)
 		}
 	}
 }

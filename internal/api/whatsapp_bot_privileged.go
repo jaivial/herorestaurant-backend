@@ -20,16 +20,18 @@ import (
 
 // Coordination id: wa_bot_privileged_group_v1
 //
-// Inside the configured privileged WhatsApp group(s) the bot runs its turn
-// with the FULL forky assistant tool registry (no preventive restrictions):
-// the tools listed in assistantToolRegistry are offered to the model and
-// executed through s.assistantExecuteTool with a synthetic root backoffice
-// auth, so authorization AND the audit row stay on the real production path
-// (the Unsafe executor is never called directly).
+// Inside the authorized WhatsApp group (or in a private chat of a current
+// member of it) the bot runs its turn with the FULL forky assistant tool
+// registry (no preventive restrictions): the tools listed in
+// assistantToolRegistry are offered to the model and executed through
+// s.assistantExecuteTool with a synthetic root backoffice auth, so
+// authorization AND the audit row stay on the real production path (the Unsafe
+// executor is never called directly).
 //
 // Everywhere else the bot behavior is byte-for-byte unchanged: every branch
-// below is gated on msg.PrivilegedGroup, which is only set for groups listed
-// in config.BotPrivilegedGroupJIDs, and an empty config disables the feature
+// below is gated on msg.PrivilegedGroup, which is ONLY set by the privilege
+// boundary (wa_bot_privileged_boundary_v1:
+// botPrivilegedTurnAllowed), and an empty configuration disables the feature
 // completely.
 
 // botDocumentMaxBytes bounds the inline document payload accepted for
@@ -42,53 +44,36 @@ const botDocumentMaxRunes = 12000
 // botDocumentTruncationMarker is appended when the extracted text is capped.
 const botDocumentTruncationMarker = "…[truncado]"
 
-// botPrivilegedGroupSet normalizes the configured JIDs into a lookup set.
-// Values are trimmed; anything that is not a @g.us id is dropped so a stray
-// phone number in the env var can never enable the feature.
-func botPrivilegedGroupSet(jids []string) map[string]struct{} {
-	out := make(map[string]struct{}, len(jids))
-	for _, j := range jids {
-		j = strings.TrimSpace(j)
-		if j == "" || !strings.HasSuffix(j, "@g.us") {
-			continue
-		}
-		out[j] = struct{}{}
-	}
-	return out
-}
-
-// botGroupIsPrivileged reports whether the chat JID belongs to a configured
-// privileged conversation. An empty config is always false: the feature is
-// off.
-//
-// There are two ways to be privileged:
-//
-//   - the conversation was SELECTED in the backoffice
-//     (tenant.PrivilegedContacts): a group or a one-to-one contact;
-//   - the group is listed in BOT_PRIVILEGED_GROUP_JIDS (the global env) or
-//     in tenant.PrivilegedGroupJIDs (the per-restaurant list).
-//
-// The env list still applies, so an installation that has not been migrated
-// keeps working; the tenant lists only ever ADD conversations.
-func (s *Server) botGroupIsPrivileged(jid string, tenant botTenantConfig) bool {
-	jid = strings.TrimSpace(jid)
-	if jid == "" {
-		return false
-	}
-	if _, ok := botPrivilegedContactJIDs(tenant)[jid]; ok {
-		return true
-	}
-	if len(s.cfg.BotPrivilegedGroupJIDs) > 0 {
-		if _, ok := botPrivilegedGroupSet(s.cfg.BotPrivilegedGroupJIDs)[jid]; ok {
-			return true
-		}
-	}
-	if len(tenant.PrivilegedGroupJIDs) > 0 {
-		if _, ok := botPrivilegedGroupSet(tenant.PrivilegedGroupJIDs)[jid]; ok {
-			return true
-		}
-	}
-	return false
+// botForkyExcludedFromWA lists forky tools that must NOT reach the WhatsApp
+// bot, neither in the catalog (botForkyToolDefs) nor via the execution router
+// (wa_bot_forky_excluded_v1). They exist only for authenticated panel/MCP
+// sessions: their data goes through dedicated WA staff tools with the fresh
+// member gate (botSpecialAdminAuthorize), and the synthetic root context of
+// the privileged path must not become a bypass for that gate.
+var botForkyExcludedFromWA = map[string]struct{}{
+	"cancelled_bookings_list":  {},
+	"special_dates_list":       {},
+	"tables_list":              {},
+	"campaigns_list":           {},
+	"whatsapp_connection_get":  {},
+	"menu_visibility_list":     {},
+	"legal_pages_list":         {},
+	"site_builder_drafts_list": {},
+	"pos_read":                 {},
+	"stock_read":               {},
+	"members_read":             {},
+	"fichaje_read":             {},
+	"sheets_read":              {},
+	"menus_read":               {},
+	"reservas_read":            {},
+	"website_read":             {},
+	"campaigns_read":           {},
+	"invoices_read":            {},
+	// Coordination id: wa_backoffice_ops_v1: the typed write of the panel.
+	// In a chat the write needs a HUMAN approval (the propose->OK chain of
+	// manage_backoffice), never a confirmed=true that the model writes
+	// itself, so this tool never reaches WhatsApp.
+	"backoffice_write": {},
 }
 
 // botForkyToolDefs converts the full assistant (forky) tool registry into the
@@ -99,9 +84,29 @@ func botForkyToolDefs() []botToolDef {
 	defs := assistantToolDefs()
 	out := make([]botToolDef, 0, len(defs))
 	for _, d := range defs {
+		if _, excluded := botForkyExcludedFromWA[d.Name]; excluded {
+			continue
+		}
 		out = append(out, botToolDef{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema})
 	}
 	return out
+}
+
+// botServiceContext is the context of the bot's replay of a panel route: the
+// synthetic root auth and the SERVICE SESSION (a real panel session bound to
+// the restaurant).
+//
+// It carries NO "privileged turn" marker: the marker means "a model is
+// acting on a chat message", and the approval of a proposal is not that (it
+// is the human decision that the marker stands in for).
+//
+// Coordination id: wa_backoffice_ops_v1
+func (s *Server) botServiceContext(ctx context.Context, restaurantID int) context.Context {
+	ctx = withBOAuth(ctx, boAuth{Role: "root", User: boUser{Role: "root"}})
+	if token, err := s.botServiceSession(ctx, restaurantID); err == nil && token != "" {
+		ctx = botServiceSessionTokenForContext(ctx, token)
+	}
+	return ctx
 }
 
 // botPrivilegedForkyContext wraps ctx with the minimal privileged backoffice
@@ -117,12 +122,18 @@ func botForkyToolDefs() []botToolDef {
 // is a real bo_sessions row owned by the deployment's superadmin, bound to
 // the restaurant, so the replay is authorized by the same code that
 // authorizes a human. See whatsapp_bot_service_session.go.
+// botPrivilegedTurnKey marks a context that belongs to a WhatsApp bot turn (a
+// model acting on a chat message, not a human in the panel).
+type botPrivilegedTurnKey struct{}
+
+func isBotPrivilegedTurn(ctx context.Context) bool {
+	v, _ := ctx.Value(botPrivilegedTurnKey{}).(bool)
+	return v
+}
+
 func (s *Server) botPrivilegedForkyContext(ctx context.Context, restaurantID int) context.Context {
-	ctx = withBOAuth(ctx, boAuth{Role: "root", User: boUser{Role: "root"}})
-	if token, err := s.botServiceSession(ctx, restaurantID); err == nil && token != "" {
-		ctx = botServiceSessionTokenForContext(ctx, token)
-	}
-	return ctx
+	ctx = s.botServiceContext(ctx, restaurantID)
+	return context.WithValue(ctx, botPrivilegedTurnKey{}, true)
 }
 
 // botDocumentTurnNote extracts the inline document of a privileged turn and

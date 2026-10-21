@@ -50,27 +50,6 @@ func botPrivilegedContactsFromConfig(tenant botTenantConfig) []botPrivilegedCont
 	return out
 }
 
-// botPrivilegedContactJIDs returns just the jids, for a quick lookup.
-func botPrivilegedContactJIDs(tenant botTenantConfig) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, c := range botPrivilegedContactsFromConfig(tenant) {
-		out[c.JID] = struct{}{}
-	}
-	return out
-}
-
-// botPrivilegedContactIsGroup reports whether the privileged conversation is a
-// group, which is what decides if the membership check applies.
-func botPrivilegedContactIsGroup(tenant botTenantConfig, jid string) (bool, bool) {
-	jid = strings.TrimSpace(jid)
-	for _, c := range botPrivilegedContactsFromConfig(tenant) {
-		if c.JID == jid {
-			return c.IsGroup, true
-		}
-	}
-	return false, false
-}
-
 // botSavePrivilegedContacts stores the privileged conversations of a tenant,
 // keeping the rest of the bot config untouched.
 //
@@ -96,15 +75,31 @@ func (s *Server) botSavePrivilegedContacts(ctx context.Context, restaurantID int
 	}
 	// Read the stored config, change only the privileged contacts, write it
 	// back.
+	//
+	// The document is patched SURGICALLY: re-serialising the parsed struct
+	// would drop every field the struct does not know (the tool grants of
+	// another writer, a field added by a newer deploy...).
 	var current sql.NullString
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
 	`, restaurantID).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	tenant := parseBotTenantConfig(current.String)
-	tenant.PrivilegedContacts = clean
-	merged, err := json.Marshal(tenant)
+	doc := map[string]any{}
+	if strings.TrimSpace(current.String) != "" {
+		if err := json.Unmarshal([]byte(current.String), &doc); err != nil {
+			return errors.New("bot privileged contacts: la configuracion guardada no se pudo leer")
+		}
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	values := make([]any, 0, len(clean))
+	for _, c := range clean {
+		values = append(values, map[string]any{"jid": c.JID, "name": c.Name, "isGroup": c.IsGroup})
+	}
+	doc["privileged_contacts"] = values
+	merged, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}
@@ -118,73 +113,6 @@ func (s *Server) botSavePrivilegedContacts(ctx context.Context, restaurantID int
 	// but a new selection means the old session is no longer needed.
 	botServiceSessionReset(restaurantID)
 	return nil
-}
-
-// botPrivilegedConversationIsGroup reports whether a privileged conversation is
-// a group.
-//
-// The distinction decides which gate applies: a privileged GROUP is
-// privileged for its members, so the sender has to be one of them; a
-// privileged CONTACT is the conversation itself, so there is nobody else to
-// check.
-//
-// A conversation that is not in the selection is not privileged, so the answer
-// is false and the caller keeps the regular limits.
-func botPrivilegedConversationIsGroup(tenant botTenantConfig, jid string) bool {
-	isGroup, ok := botPrivilegedContactIsGroup(tenant, jid)
-	if ok {
-		return isGroup
-	}
-	// A group listed in the env or in the per-restaurant list is a group too.
-	j := strings.TrimSpace(jid)
-	for _, v := range tenant.PrivilegedGroupJIDs {
-		if strings.TrimSpace(v) == j {
-			return true
-		}
-	}
-	return strings.HasSuffix(j, "@g.us")
-}
-
-// botConversationIsPrivileged reports whether the conversation is privileged,
-// given BOTH of its identities.
-//
-// WhatsApp addresses the same 1:1 chat by two forms: the opaque @lid and the
-// phone-number JID. The provider lists the chat by one of them and delivers
-// the inbound message addressed to the other, so the gate has to try both: a
-// selection made on the listed form has to match the delivered one, or the
-// privilege would silently never apply.
-//
-// The alternate identity is empty for groups (a group has a single id) and for
-// a conversation the provider only knows by one form.
-//
-// The alternate identity is only consulted for a ONE-TO-ONE conversation, and
-// only against the one-to-one selections. A group and a contact are different
-// things: a 1:1 message must never be served as a privileged GROUP, because
-// the privileged group path is the one that checks membership and skips the
-// mention requirement. Letting the alternate identity cross that line would
-// hand the root catalog to a 1:1 chat that was never selected, with no
-// membership check at all.
-func botConversationIsPrivileged(s *Server, tenant botTenantConfig, jid, altJID string) bool {
-	if s.botGroupIsPrivileged(jid, tenant) {
-		return true
-	}
-	alt := strings.TrimSpace(altJID)
-	if alt == "" {
-		return false
-	}
-	// The alternate identity of a 1:1 chat is another 1:1 identity. If the
-	// main one is a group, the alternate cannot be a contact and vice versa:
-	// a mismatch means the two ids do not address the same conversation.
-	if botGroupIsGroupJID(jid) != botGroupIsGroupJID(alt) {
-		return false
-	}
-	// And it only matches a one-to-one selection: a group is privileged
-	// through the group lists, which are checked by the group path with its
-	// membership gate.
-	if botGroupIsGroupJID(alt) {
-		return false
-	}
-	return s.botGroupIsPrivileged(alt, tenant)
 }
 
 // botStoredPrivilegedContacts returns the privileged conversations a tenant

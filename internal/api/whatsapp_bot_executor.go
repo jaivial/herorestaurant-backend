@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -21,6 +22,13 @@ func (s *Server) botToolExecutorFor(restaurantID int, msg botWebhookMessage, ten
 // repeated send_contact calls collapse into a single vCard delivery.
 func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage, tenant botTenantConfig, state *botTurnState) botToolExecutor {
 	return func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		// Coordination id: wa_bot_privileged_control_v1 - a configured grant
+		// restricts which custom tools this chat may call. The filtered
+		// catalog is UX, THIS is the guard, and it applies to every turn.
+		if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
+			log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d tool=%s denied", restaurantID, name)
+			return botJSON(map[string]any{"error": reason}), nil
+		}
 		// Same-day policy is enforced before any mutation tool runs.
 		if blocked, out := s.botSameDayOperation(ctx, restaurantID, msg, tenant, name, input); blocked {
 			if state != nil {
@@ -129,8 +137,87 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolGetSpecialDateInfo(ctx, restaurantID, input)
 	case "get_special_date_bookings":
 		return s.botToolGetSpecialDateBookings(ctx, restaurantID, input)
+	// Coordination id: wa_bot_admin_reads_v1 - read-only staff group tools;
+	// each handler re-authorizes through botSpecialAdminAuthorize (fail closed).
+	case "list_cancelled_bookings":
+		return s.botToolListCancelledBookings(ctx, restaurantID, msg, input)
+	case "list_tables":
+		return s.botToolListTables(ctx, restaurantID, msg, input)
+	case "list_special_dates":
+		return s.botToolListSpecialDates(ctx, restaurantID, msg, input)
+	case "get_booking_config":
+		return s.botToolGetBookingConfig(ctx, restaurantID, msg, input)
+	case "bookings_summary":
+		return s.botToolBookingsSummary(ctx, restaurantID, msg, input)
+	case "list_campaigns":
+		return s.botToolListCampaigns(ctx, restaurantID, msg, input)
+	case "get_bot_status":
+		return s.botToolGetBotStatus(ctx, restaurantID, msg, input)
+	case "list_menu_visibility":
+		return s.botToolListMenuVisibility(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_special_crud_v1 - full special-menu CRUD. Each
 	// one re-validates through the same server core the backoffice uses.
+	case "special_booking_get":
+		return s.botToolSpecialBookingGet(ctx, restaurantID, msg, input)
+	case "special_booking_propose_adelanto":
+		return s.botToolSpecialPropose(ctx, restaurantID, msg, "adelanto", input)
+	case "special_booking_propose_menus":
+		return s.botToolSpecialPropose(ctx, restaurantID, msg, "menus", input)
+	case "special_booking_propose_reschedule":
+		return s.botToolSpecialPropose(ctx, restaurantID, msg, "reschedule", input)
+	case "booking_propose_reschedule":
+		return s.botToolSpecialPropose(ctx, restaurantID, msg, "reschedule_normal", input)
+	case "booking_propose_cancel":
+		return s.botToolSpecialPropose(ctx, restaurantID, msg, "cancel", input)
+	case "booking_propose_restore":
+		return s.botToolSpecialPropose(ctx, restaurantID, msg, "restore", input)
+	case "booking_propose_create":
+		return s.botToolCreatePropose(ctx, restaurantID, msg, input)
+	case "special_booking_propose_create":
+		return s.botToolSpecialCreatePropose(ctx, restaurantID, msg, input)
+	case "config_propose_day":
+		return s.botToolConfigDayPropose(ctx, restaurantID, msg, input)
+	case "config_propose_daily_limit":
+		return s.botToolConfigDailyLimitPropose(ctx, restaurantID, msg, input)
+	case "config_propose_mesas":
+		return s.botToolConfigMesasPropose(ctx, restaurantID, msg, input)
+	case "config_propose_salon_condesa":
+		return s.botToolConfigSalonCondesaPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_edit":
+		return s.botToolEditPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_set_rice":
+		return s.botToolRicePropose(ctx, restaurantID, msg, input)
+	case "booking_propose_set_group_menu":
+		return s.botToolGMenuPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_set_extras":
+		return s.botToolExtrasPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_set_mobility":
+		return s.botToolMobilityPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_remove_group_menu":
+		return s.botToolGMenuRemovePropose(ctx, restaurantID, msg, input)
+	case "booking_propose_set_floor":
+		return s.botToolFloorPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_set_flags":
+		return s.botToolFlagsPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_catalog_extra_create":
+		return s.botToolCatalogExtraCreatePropose(ctx, restaurantID, msg, input)
+	case "booking_propose_catalog_extra_delete":
+		return s.botToolCatalogExtraDeletePropose(ctx, restaurantID, msg, input)
+	case "booking_propose_notif_settings":
+		return s.botToolNotifSettingsPropose(ctx, restaurantID, msg, input)
+	// Coordination id: wa_backoffice_ops_v1 / wa_bot_privileged_control_v1 -
+	// the backoffice operation surface and the control plane of the bot. Both
+	// re-prove the actor (the verified phone of a current member of the
+	// authorized group) and never apply anything without the human approval.
+	case "manage_backoffice":
+		return s.botToolManageBackoffice(ctx, restaurantID, msg, input)
+	case "manage_bot_access":
+		return s.botToolManageBotAccess(ctx, restaurantID, msg, input)
+	// Coordination id: wa_bot_menu_ws_v1 - the four WS-only menu operations
+	// (no REST twin): one shared propose handler, the same actor gate and the
+	// same propose->OK chain as the backoffice surface.
+	case "beverage_set", "beverage_create", "beverage_delete", "weekday_set":
+		return s.botToolMenuWSPropose(ctx, restaurantID, msg, name, input)
 	case "create_special_booking":
 		return s.botToolCreateSpecialBooking(ctx, restaurantID, msg, tenant, input)
 	case "modify_special_booking":

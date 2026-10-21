@@ -57,6 +57,12 @@ type botTenantConfig struct {
 	// the bot runs inside the management group. Coordination id:
 	// wa_bot_special_crud_v1
 	DisableSpecialCRUD bool `json:"disable_special_crud"`
+	// ToolGrants control WHICH custom tools each conversation may call: Tools
+	// ["*"] = full catalog, concrete names = only those, and no grant for the
+	// chat = unchanged behavior. They only ever RESTRICT, never grant beyond
+	// the catalog the chat already gets, so they never widen the privilege
+	// boundary. Coordination id: wa_bot_privileged_control_v1
+	ToolGrants []botToolGrant `json:"tool_grants,omitempty"`
 }
 
 func parseBotTenantConfig(raw string) botTenantConfig {

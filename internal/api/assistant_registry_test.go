@@ -79,6 +79,7 @@ func TestAssistantToolRegistrySectionsValid(t *testing.T) {
 		"reservas": true, "menus": true, "comida": true, "stock": true, "pos": true,
 		"ajustes": true, "miembros": true, "fichaje": true, "horarios": true,
 		"facturas": true, "reportes": true, "estadisticas": true,
+		"campanas":      true, // boSectionCampanas (backoffice_rbac.go): campaigns_list/campaigns_read
 		"estado_cuenta": true, "website": true, "site-builder": true, "plataforma": true,
 		assistantSessionSection: true, // admin trio: ACL per operation [FORKY-ADMIN-TOOLS-S01]
 	}

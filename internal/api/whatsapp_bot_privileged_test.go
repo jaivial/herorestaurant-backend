@@ -11,44 +11,9 @@ import (
 	"testing"
 
 	"github.com/xuri/excelize/v2"
-
-	"preactvillacarmen/internal/config"
 )
 
 // --- gate ----------------------------------------------------------------
-
-// botExtractDocumentText gating (wa_bot_privileged_group_v1): empty config is
-// always off; only listed @g.us JIDs match; non-@g.us values are ignored.
-func TestBotGroupIsPrivileged(t *testing.T) {
-	tests := []struct {
-		name string
-		jids []string
-		in   string
-		want bool
-	}{
-		{"empty config always false", nil, "120363@g.us", false},
-		{"empty config empty jid", nil, "", false},
-		{"match", []string{"120363040916666666@g.us"}, "120363040916666666@g.us", true},
-		{"match trims input", []string{"120363040916666666@g.us"}, " 120363040916666666@g.us ", true},
-		{"other group no match", []string{"120363040916666666@g.us"}, "999@g.us", false},
-		{"non g.us values ignored", []string{"34600111222@s.whatsapp.net", "notagroup"}, "34600111222@s.whatsapp.net", false},
-		{"non g.us set never matches", []string{"34600111222@s.whatsapp.net"}, "34600111222@s.whatsapp.net", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := &Server{cfg: config.Config{BotPrivilegedGroupJIDs: tt.jids}}
-			if got := s.botGroupIsPrivileged(tt.in, botTenantConfig{}); got != tt.want {
-				t.Errorf("botGroupIsPrivileged(%q) with %v = %v, want %v", tt.in, tt.jids, got, tt.want)
-			}
-			// The set builder must agree with the server lookup.
-			set := botPrivilegedGroupSet(tt.jids)
-			_, inSet := set[strings.TrimSpace(tt.in)]
-			if inSet != tt.want {
-				t.Errorf("set lookup %v disagrees with server lookup %v", inSet, tt.want)
-			}
-		})
-	}
-}
 
 // --- forky defs conversion ------------------------------------------------
 
@@ -58,13 +23,25 @@ func TestBotForkyToolDefs(t *testing.T) {
 		t.Fatal("botForkyToolDefs() returned an empty list")
 	}
 	registry := assistantToolDefs()
-	if len(defs) != len(registry) {
-		t.Errorf("converted %d defs, registry has %d", len(defs), len(registry))
+	// The conversion drops EXACTLY the documented exclusions
+	// (botForkyExcludedFromWA, §11.3 de docs/wa-customtools-matrix.md): every
+	// other registry tool reaches the bot list, and no excluded one leaks.
+	want := 0
+	for _, d := range registry {
+		if _, excluded := botForkyExcludedFromWA[d.Name]; !excluded {
+			want++
+		}
+	}
+	if len(defs) != want {
+		t.Errorf("converted %d defs, want %d (registry has %d)", len(defs), want, len(registry))
 	}
 	seen := map[string]bool{}
 	for _, d := range defs {
 		if d.Name == "" {
 			t.Error("converted def with empty name")
+		}
+		if _, excluded := botForkyExcludedFromWA[d.Name]; excluded {
+			t.Errorf("excluded tool %q reached the bot defs", d.Name)
 		}
 		if seen[d.Name] {
 			t.Errorf("duplicate tool name %q", d.Name)

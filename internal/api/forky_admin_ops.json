@@ -427,9 +427,9 @@
     "reservasGate"
    ],
    "section": "reservas",
-   "write": false,
-   "risk": "read",
-   "description": "GET /bookings/{id}/qr (handleBOBookingQR)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: ensureBookingQR escribe la URL del QR y sube a Bunny)",
    "screens": [
     "/app/facturas",
     "/app/reservas",
@@ -515,9 +515,9 @@
     "reservasGate"
    ],
    "section": "reservas",
-   "write": false,
-   "risk": "read",
-   "description": "GET /bookings (handleBOBookingsList)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: purgeOrphanedBookingDocumentsAsync borra documentos)",
    "screens": [
     "/app/facturas",
     "/app/reservas",
@@ -548,6 +548,36 @@
     "/app/reservas/tables",
     "/m/app/reservas"
    ]
+  },
+  {
+   "name": "admin_get_bot_ai_restaurantid_privileged_contacts",
+   "method": "GET",
+   "path": "/bot/ai/{restaurantId}/privileged-contacts",
+   "handler": "handleBOBotPrivilegedContactsGet",
+   "gates": [
+    "s.requireBOSession",
+    "rootOnlyGate"
+   ],
+   "section": "root",
+   "write": false,
+   "risk": "read",
+   "description": "Privileged conversations of the connected WhatsApp (groups and contacts) that may run the full backoffice catalogue.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_bot_ai_restaurantid_privileged_contacts",
+   "method": "PUT",
+   "path": "/bot/ai/{restaurantId}/privileged-contacts",
+   "handler": "handleBOBotPrivilegedContactsPut",
+   "gates": [
+    "s.requireBOSession",
+    "rootOnlyGate"
+   ],
+   "section": "root",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /bot/ai/{restaurantId}/privileged-contacts (handleBOBotPrivilegedContactsPut)",
+   "screens": []
   },
   {
    "name": "admin_get_bot_ai_restaurantid",
@@ -802,6 +832,38 @@
    ]
   },
   {
+   "name": "admin_post_campanas_bounces_sync",
+   "method": "POST",
+   "path": "/campanas/bounces/sync",
+   "handler": "handleBOCampaignBounceSync",
+   "gates": [
+    "s.requireBOSession",
+    "reservasGate",
+    "campaignsGate"
+   ],
+   "section": "reservas",
+   "write": true,
+   "risk": "write",
+   "description": "POST /campanas/bounces/sync (handleBOCampaignBounceSync)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_campanas_email_validation",
+   "method": "POST",
+   "path": "/campanas/email-validation",
+   "handler": "handleBOCampaignEmailValidation",
+   "gates": [
+    "s.requireBOSession",
+    "reservasGate",
+    "campaignsGate"
+   ],
+   "section": "reservas",
+   "write": true,
+   "risk": "write",
+   "description": "POST /campanas/email-validation (handleBOCampaignEmailValidation)",
+   "screens": []
+  },
+  {
    "name": "admin_post_campanas_preview",
    "method": "POST",
    "path": "/campanas/preview",
@@ -1054,9 +1116,9 @@
     "menusGate"
    ],
    "section": "menus",
-   "write": false,
-   "risk": "read",
-   "description": "GET /comida/bebidas/categorias (handleBOComidaBebidaCategoriesList)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: ensureBaseBebidaCategories inserta filas)",
    "screens": []
   },
   {
@@ -1146,9 +1208,9 @@
     "menusGate"
    ],
    "section": "menus",
-   "write": false,
-   "risk": "read",
-   "description": "Unified category catalogue (per food type + global). Declared before the /comida/{tipo} wildcard so the static \"categorias\" segment wins.",
+   "write": true,
+   "risk": "write",
+   "description": "Unified category catalogue (per food type + global). Declared before the /comida/{tipo} wildcard so the static \"categorias\" segment wins. (GET con escritura: listLegacyComidaCategories inserta filas)",
    "screens": []
   },
   {
@@ -1207,9 +1269,9 @@
     "menusGate"
    ],
    "section": "menus",
-   "write": false,
-   "risk": "read",
-   "description": "New comida module endpoints (typed routes).",
+   "write": true,
+   "risk": "write",
+   "description": "New comida module endpoints (typed routes). (GET con escritura: ensureBasePlatoCategories inserta filas)",
    "screens": []
   },
   {
@@ -1965,9 +2027,9 @@
     "reservasGate"
    ],
    "section": "reservas",
-   "write": false,
-   "risk": "read",
-   "description": "GET /config/floors/defaults (handleBOConfigFloorsDefaultsGet)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: loadDefaultFloors inserta plantas)",
    "screens": [
     "/app/config"
    ]
@@ -1999,9 +2061,9 @@
     "reservasGate"
    ],
    "section": "reservas",
-   "write": false,
-   "risk": "read",
-   "description": "GET /config/floors (handleBOConfigFloorsGet)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: loadDefaultFloors inserta plantas)",
    "screens": [
     "/app/config",
     "/app/reservas/config",
@@ -2568,9 +2630,9 @@
     "rootOnlyGate"
    ],
    "section": "root",
-   "write": false,
-   "risk": "read",
-   "description": "\"Cobros online\" (connected account); no keys per tenant.",
+   "write": true,
+   "risk": "write",
+   "description": "\"Cobros online\" (connected account); no keys per tenant. (GET con escritura: refreshConnectAccount cachea la cuenta de Stripe)",
    "screens": []
   },
   {
@@ -3054,9 +3116,9 @@
     "menusGate"
    ],
    "section": "menus",
-   "write": false,
-   "risk": "read",
-   "description": "GET /group-menus-v2/{id}/sections/{sectionId}/dishes (handleBOGroupMenusV2GetSectionDishes)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: boV2GeneralDessertDishes materializa postres)",
    "screens": []
   },
   {
@@ -3129,9 +3191,9 @@
     "menusGate"
    ],
    "section": "menus",
-   "write": false,
-   "risk": "read",
-   "description": "GET /group-menus-v2/{id}/slider (handleBOGroupMenusV2GetSlider)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: loadAIImageConfig puede reescribir la clave del proveedor)",
    "screens": []
   },
   {
@@ -3354,9 +3416,9 @@
     "menusGate"
    ],
    "section": "menus",
-   "write": false,
-   "risk": "read",
-   "description": "GET /group-menus-v2/{id} (handleBOGroupMenusV2Get)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: ensureBOMenuV2SectionsFromSnapshot materializa secciones)",
    "screens": []
   },
   {
@@ -3614,6 +3676,81 @@
     "/app/miembros/mi-horario",
     "/m/app/horarios"
    ]
+  },
+  {
+   "name": "admin_post_instatic_ensure_restaurantid",
+   "method": "POST",
+   "path": "/instatic/ensure/{restaurantId}",
+   "handler": "handleEnsure",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /instatic/ensure/{restaurantId} (handleEnsure)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_instatic_provision_domain_restaurantid",
+   "method": "POST",
+   "path": "/instatic/provision-domain/{restaurantId}",
+   "handler": "handleProvisionDomain",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /instatic/provision-domain/{restaurantId} (handleProvisionDomain)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_instatic_publish_restaurantid",
+   "method": "POST",
+   "path": "/instatic/publish/{restaurantId}",
+   "handler": "handlePublish",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /instatic/publish/{restaurantId} (handlePublish)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_instatic_seed_restaurantid",
+   "method": "POST",
+   "path": "/instatic/seed/{restaurantId}",
+   "handler": "handleSeed",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /instatic/seed/{restaurantId} (handleSeed)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_instatic_status_restaurantid",
+   "method": "GET",
+   "path": "/instatic/status/{restaurantId}",
+   "handler": "handleStatus",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /instatic/status/{restaurantId} (handleStatus)",
+   "screens": []
   },
   {
    "name": "admin_patch_integrations_uazapi_servers_id",
@@ -4000,9 +4137,9 @@
     "s.requireBOSession"
    ],
    "section": "session",
-   "write": false,
-   "risk": "read",
-   "description": "GET /me (handleBOMe)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: auto-repara la sesion)",
    "screens": [
     "/app/facturas",
     "/app/fichaje",
@@ -4062,9 +4199,9 @@
    ],
    "section": "miembros",
    "roles_admin": true,
-   "write": false,
-   "risk": "read",
-   "description": "GET /members/whatsapp/connection (handleBOMembersWhatsAppConnectionStatus)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: whatsappConnectionSnapshot actualiza la instancia)",
    "screens": []
   },
   {
@@ -4719,9 +4856,9 @@
     "menusGate"
    ],
    "section": "menus",
-   "write": false,
-   "risk": "read",
-   "description": "Backoffice menu management.",
+   "write": true,
+   "risk": "write",
+   "description": "Backoffice menu management. (GET con escritura: ensureMenuVisibilityRows inserta filas)",
    "screens": []
   },
   {
@@ -5371,9 +5508,9 @@
     "posReportsGate"
    ],
    "section": "pos",
-   "write": false,
-   "risk": "read",
-   "description": "GET /pos/accounting/export.csv (handleBOAccountingExport)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: inserta la fila de auditoria de la exportacion)",
    "screens": [
     "/app/pos"
    ]
@@ -7700,6 +7837,36 @@
    ]
   },
   {
+   "name": "admin_delete_site_builder_assets_assetid",
+   "method": "DELETE",
+   "path": "/site-builder/assets/{assetId}",
+   "handler": "handleDeleteAsset",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /site-builder/assets/{assetId} (handleDeleteAsset)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_assets_assetid",
+   "method": "GET",
+   "path": "/site-builder/assets/{assetId}",
+   "handler": "handleGetAsset",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /site-builder/assets/{assetId} (handleGetAsset)",
+   "screens": []
+  },
+  {
    "name": "admin_post_site_builder_billing_checkout",
    "method": "POST",
    "path": "/site-builder/billing/checkout",
@@ -7712,6 +7879,66 @@
    "write": true,
    "risk": "write",
    "description": "Domain purchase billing (Stripe Checkout).",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_site_builder_bindings_bindingid",
+   "method": "DELETE",
+   "path": "/site-builder/bindings/{bindingId}",
+   "handler": "handleDeleteBinding",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /site-builder/bindings/{bindingId} (handleDeleteBinding)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_site_builder_bindings_bindingid",
+   "method": "PUT",
+   "path": "/site-builder/bindings/{bindingId}",
+   "handler": "handleUpdateBinding",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /site-builder/bindings/{bindingId} (handleUpdateBinding)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_components_type",
+   "method": "GET",
+   "path": "/site-builder/components/{type}",
+   "handler": "handleGetComponentByType",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /site-builder/components/{type} (handleGetComponentByType)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_components",
+   "method": "GET",
+   "path": "/site-builder/components",
+   "handler": "handleListComponents",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "Component Registry (read-only)",
    "screens": []
   },
   {
@@ -7757,6 +7984,336 @@
    "write": false,
    "risk": "read",
    "description": "Cloudflare Registrar: domain search + purchase.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_domains_domainid_verify",
+   "method": "POST",
+   "path": "/site-builder/domains/{domainId}/verify",
+   "handler": "handleVerifyDomain",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /site-builder/domains/{domainId}/verify (handleVerifyDomain)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_site_builder_domains_domainid",
+   "method": "DELETE",
+   "path": "/site-builder/domains/{domainId}",
+   "handler": "handleDeleteDomain",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /site-builder/domains/{domainId} (handleDeleteDomain)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_site_builder_pages_pageid",
+   "method": "DELETE",
+   "path": "/site-builder/pages/{pageId}",
+   "handler": "handleDeletePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /site-builder/pages/{pageId} (handleDeletePage)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_pages_pageid",
+   "method": "GET",
+   "path": "/site-builder/pages/{pageId}",
+   "handler": "handleGetPage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /site-builder/pages/{pageId} (handleGetPage)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_site_builder_pages_pageid",
+   "method": "PUT",
+   "path": "/site-builder/pages/{pageId}",
+   "handler": "handleUpdatePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /site-builder/pages/{pageId} (handleUpdatePage)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_assets",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/assets",
+   "handler": "handleListAssets",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "Assets CRUD",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_bindings",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/bindings",
+   "handler": "handleListBindings",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "Bindings",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_bindings",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/bindings",
+   "handler": "handleCreateBinding",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /site-builder/sites/{siteId}/bindings (handleCreateBinding)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_domains",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/domains",
+   "handler": "handleListDomains",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "Domains",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_domains",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/domains",
+   "handler": "handleCreateDomain",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /site-builder/sites/{siteId}/domains (handleCreateDomain)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_pages",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/pages",
+   "handler": "handleListPages",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "Pages CRUD",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_pages",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/pages",
+   "handler": "handleCreatePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /site-builder/sites/{siteId}/pages (handleCreatePage)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_publish_status",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/publish-status",
+   "handler": "handleGetPublishStatus",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /site-builder/sites/{siteId}/publish-status (handleGetPublishStatus)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_publish",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/publish",
+   "handler": "handlePublishSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "Publish",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_versions",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/versions",
+   "handler": "handleListVersions",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "Versions",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_versions",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/versions",
+   "handler": "handleCreateVersion",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /site-builder/sites/{siteId}/versions (handleCreateVersion)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_site_builder_sites_siteid",
+   "method": "DELETE",
+   "path": "/site-builder/sites/{siteId}",
+   "handler": "handleDeleteSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /site-builder/sites/{siteId} (handleDeleteSite)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}",
+   "handler": "handleGetSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /site-builder/sites/{siteId} (handleGetSite)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_site_builder_sites_siteid",
+   "method": "PUT",
+   "path": "/site-builder/sites/{siteId}",
+   "handler": "handleUpdateSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /site-builder/sites/{siteId} (handleUpdateSite)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites",
+   "method": "GET",
+   "path": "/site-builder/sites",
+   "handler": "handleListSites",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "Sites CRUD",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites",
+   "method": "POST",
+   "path": "/site-builder/sites",
+   "handler": "handleCreateSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /site-builder/sites (handleCreateSite)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_versions_versionid",
+   "method": "GET",
+   "path": "/site-builder/versions/{versionId}",
+   "handler": "handleGetVersion",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /site-builder/versions/{versionId} (handleGetVersion)",
    "screens": []
   },
   {
@@ -7991,9 +8548,9 @@
     "stockOCRUploadGate"
    ],
    "section": "stock",
-   "write": false,
-   "risk": "read",
-   "description": "GET /stock/documents/{id}/original (handleBOStockDocumentOriginalGet)",
+   "write": true,
+   "risk": "write",
+   "description": "(GET con escritura: inserta la fila de auditoria de acceso)",
    "screens": []
   },
   {
@@ -9044,9 +9601,9 @@
     "stockViewGate"
    ],
    "section": "stock",
-   "write": false,
-   "risk": "read",
-   "description": "Stock control. Section gate is admin-only by default; role table can grant it later.",
+   "write": true,
+   "risk": "write",
+   "description": "Stock control. Section gate is admin-only by default; role table can grant it later. (GET con escritura: inserta el almacen por defecto)",
    "screens": []
   },
   {
@@ -9296,6 +9853,411 @@
    "write": true,
    "risk": "write",
    "description": "POST /vinos (handleBOVinoCreate)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_assets_id",
+   "method": "DELETE",
+   "path": "/website-builder/assets/{id}",
+   "handler": "DeleteAsset",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /website-builder/assets/{id} (DeleteAsset)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_assets",
+   "method": "GET",
+   "path": "/website-builder/assets",
+   "handler": "ListAssets",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/assets (ListAssets)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_components_id",
+   "method": "GET",
+   "path": "/website-builder/components/{id}",
+   "handler": "GetComponent",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/components/{id} (GetComponent)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_components",
+   "method": "GET",
+   "path": "/website-builder/components",
+   "handler": "ListComponents",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/components (ListComponents)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_history",
+   "method": "GET",
+   "path": "/website-builder/history",
+   "handler": "PublishHistory",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/history (PublishHistory)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_pages_id",
+   "method": "DELETE",
+   "path": "/website-builder/pages/{id}",
+   "handler": "DeletePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /website-builder/pages/{id} (DeletePage)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_pages_id",
+   "method": "PUT",
+   "path": "/website-builder/pages/{id}",
+   "handler": "UpdatePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /website-builder/pages/{id} (UpdatePage)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_pages_pageid_sections",
+   "method": "GET",
+   "path": "/website-builder/pages/{pageId}/sections",
+   "handler": "ListSections",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/pages/{pageId}/sections (ListSections)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_pages_pageid_sections",
+   "method": "POST",
+   "path": "/website-builder/pages/{pageId}/sections",
+   "handler": "CreateSection",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /website-builder/pages/{pageId}/sections (CreateSection)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_pages",
+   "method": "GET",
+   "path": "/website-builder/pages",
+   "handler": "ListPages",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/pages (ListPages)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_pages",
+   "method": "POST",
+   "path": "/website-builder/pages",
+   "handler": "CreatePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /website-builder/pages (CreatePage)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_preview",
+   "method": "GET",
+   "path": "/website-builder/preview",
+   "handler": "PreviewWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/preview (PreviewWebsite)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_publish",
+   "method": "POST",
+   "path": "/website-builder/publish",
+   "handler": "PublishWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /website-builder/publish (PublishWebsite)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_section_components_reorder",
+   "method": "PUT",
+   "path": "/website-builder/section-components/reorder",
+   "handler": "ReorderSectionComponents",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /website-builder/section-components/reorder (ReorderSectionComponents)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_section_components_id",
+   "method": "DELETE",
+   "path": "/website-builder/section-components/{id}",
+   "handler": "DeleteSectionComponent",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /website-builder/section-components/{id} (DeleteSectionComponent)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_section_components_id",
+   "method": "PUT",
+   "path": "/website-builder/section-components/{id}",
+   "handler": "UpdateSectionComponent",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /website-builder/section-components/{id} (UpdateSectionComponent)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_sections_reorder",
+   "method": "PUT",
+   "path": "/website-builder/sections/reorder",
+   "handler": "ReorderSections",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /website-builder/sections/reorder (ReorderSections)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_sections_id",
+   "method": "DELETE",
+   "path": "/website-builder/sections/{id}",
+   "handler": "DeleteSection",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /website-builder/sections/{id} (DeleteSection)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_sections_id",
+   "method": "PUT",
+   "path": "/website-builder/sections/{id}",
+   "handler": "UpdateSection",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /website-builder/sections/{id} (UpdateSection)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_sections_sectionid_components",
+   "method": "GET",
+   "path": "/website-builder/sections/{sectionId}/components",
+   "handler": "ListSectionComponents",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/sections/{sectionId}/components (ListSectionComponents)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_sections_sectionid_components",
+   "method": "POST",
+   "path": "/website-builder/sections/{sectionId}/components",
+   "handler": "CreateSectionComponent",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /website-builder/sections/{sectionId}/components (CreateSectionComponent)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_templates_id",
+   "method": "GET",
+   "path": "/website-builder/templates/{id}",
+   "handler": "GetTemplate",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/templates/{id} (GetTemplate)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_templates",
+   "method": "GET",
+   "path": "/website-builder/templates",
+   "handler": "ListTemplates",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "Legacy routes (section-based model)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_website",
+   "method": "DELETE",
+   "path": "/website-builder/website",
+   "handler": "DeleteWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "destructive",
+   "description": "DELETE /website-builder/website (DeleteWebsite)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_website",
+   "method": "GET",
+   "path": "/website-builder/website",
+   "handler": "GetWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "read",
+   "description": "GET /website-builder/website (GetWebsite)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_website",
+   "method": "POST",
+   "path": "/website-builder/website",
+   "handler": "CreateWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "POST /website-builder/website (CreateWebsite)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_website",
+   "method": "PUT",
+   "path": "/website-builder/website",
+   "handler": "UpdateWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "write",
+   "description": "PUT /website-builder/website (UpdateWebsite)",
    "screens": []
   },
   {

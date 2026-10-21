@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -114,7 +115,15 @@ func beverageOptionSlug(raw string) string {
 }
 
 func (s *Server) upsertMenuBeverageSelection(restaurantID int, menuID, optionID int64, selected bool) error {
-	_, err := s.db.Exec(`
+	return upsertMenuBeverageSelectionQ(context.Background(), s.db, restaurantID, menuID, optionID, selected)
+}
+
+// upsertMenuBeverageSelectionQ is the write core of beverage_set, parameterised
+// by the querier so the bot's propose->OK apply runs the VERY SAME write inside
+// its claim transaction (wa_bot_admin_menu_v2): one implementation, two
+// surfaces, never a re-implementation that could drift.
+func upsertMenuBeverageSelectionQ(ctx context.Context, q execQueryer, restaurantID int, menuID, optionID int64, selected bool) error {
+	_, err := q.ExecContext(ctx, `
 		INSERT INTO menu_beverage_options (menu_id, restaurant_id, beverage_option_id, selected)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE selected = VALUES(selected), updated_at = CURRENT_TIMESTAMP
@@ -123,6 +132,13 @@ func (s *Server) upsertMenuBeverageSelection(restaurantID int, menuID, optionID 
 }
 
 func (s *Server) createRestaurantBeverageOption(restaurantID int, name string) (beverageOption, error) {
+	return createRestaurantBeverageOptionQ(context.Background(), s.db, restaurantID, name)
+}
+
+// createRestaurantBeverageOptionQ is the write core of beverage_create
+// (wa_bot_admin_menu_v2): same upsert, same slug semantics, parameterised by
+// the querier for the claim transaction.
+func createRestaurantBeverageOptionQ(ctx context.Context, q execQueryer, restaurantID int, name string) (beverageOption, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 255 {
 		return beverageOption{}, sql.ErrNoRows
@@ -131,7 +147,7 @@ func (s *Server) createRestaurantBeverageOption(restaurantID int, name string) (
 	if slug == "" {
 		return beverageOption{}, sql.ErrNoRows
 	}
-	_, err := s.db.Exec(`
+	_, err := q.ExecContext(ctx, `
 		INSERT INTO restaurant_beverage_options (restaurant_id, slug, name, is_custom, active)
 		VALUES (?, ?, ?, 1, 1)
 		ON DUPLICATE KEY UPDATE name = VALUES(name), active = 1
@@ -141,7 +157,7 @@ func (s *Server) createRestaurantBeverageOption(restaurantID int, name string) (
 	}
 	var option beverageOption
 	var custom, selected int
-	err = s.db.QueryRow(`
+	err = q.QueryRowContext(ctx, `
 		SELECT id, slug, name, is_custom, 0
 		FROM restaurant_beverage_options
 		WHERE restaurant_id = ? AND slug = ? LIMIT 1
@@ -152,7 +168,14 @@ func (s *Server) createRestaurantBeverageOption(restaurantID int, name string) (
 }
 
 func (s *Server) deleteRestaurantBeverageOption(restaurantID int, optionID int64) error {
-	_, err := s.db.Exec(`
+	return deleteRestaurantBeverageOptionQ(context.Background(), s.db, restaurantID, optionID)
+}
+
+// deleteRestaurantBeverageOptionQ is the write core of beverage_delete: a
+// logical delete restricted to custom options (is_custom=1), never a physical
+// row removal (wa_bot_admin_menu_v2).
+func deleteRestaurantBeverageOptionQ(ctx context.Context, q execQueryer, restaurantID int, optionID int64) error {
+	_, err := q.ExecContext(ctx, `
 		UPDATE restaurant_beverage_options
 		SET active = 0
 		WHERE id = ? AND restaurant_id = ? AND is_custom = 1

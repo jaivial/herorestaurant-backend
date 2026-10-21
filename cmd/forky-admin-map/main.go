@@ -42,6 +42,9 @@ var (
 	groupRe   = regexp.MustCompile(`^(\s*)(\w+): \{\s*$`)
 	methodRe  = regexp.MustCompile(`^(\s*)(?:async )?(\w+)\(`)
 	clientRe  = regexp.MustCompile("[`\"']/api/admin(/[^`\"'?$]*)")
+	// subRouteRe matches the routes registered by the sub-registrars (a
+	// receiver other than s, or a plain function call).
+	subRouteRe = regexp.MustCompile(`r\.(Get|Post|Put|Patch|Delete)\("([^"]+)",\s*(?:s\.|wb\.|m\.)?(\w+)`)
 	// Section of each gate variable; the first match wins.
 	sections = []struct{ prefix, section string }{
 		{"reservasGate", "reservas"}, {"menusGate", "menus"}, {"ajustesGate", "ajustes"},
@@ -51,6 +54,49 @@ var (
 		{"pos", "pos"}, {"s.requireBOPOS", "pos"}, {"rootOnlyGate", "root"}, {"s.requireBOSuperadmin", "superadmin"},
 	}
 )
+
+// subRegistrars are the route tables that live in ANOTHER file but are
+// registered inside the /admin tree (server.go mounts them with a Group).
+// The generator reads server.go only, so they are parsed here with the gates
+// of the Group that wraps them.
+var subRegistrars = []struct {
+	file   string
+	prefix string
+	gates  []string
+}{
+	{file: "internal/api/site_builder.go", prefix: "", gates: []string{"s.requireBOSession", "ajustesGate"}},
+	{file: "internal/api/website_builder.go", prefix: "", gates: []string{"s.requireBOSession", "ajustesGate"}},
+	{file: "internal/api/instatic_manager.go", prefix: "/instatic", gates: []string{"s.requireBOSession", "ajustesGate"}},
+}
+
+// writeSideEffectGETs are the GET routes whose handler WRITES: the ensure*/
+// seed* helpers materialise rows, some handlers refresh a provider and a few
+// write audit rows. The HTTP method does not tell the truth about them, so
+// the map marks them as writes: the WhatsApp containment refuses them and
+// Forky asks for a human confirmation.
+//
+// Coordination id: wa_customtools_get_writes_v1
+var writeSideEffectGETs = map[string]string{
+	"/menu-visibility":                                 "ensureMenuVisibilityRows inserta filas",
+	"/comida/platos/categorias":                        "ensureBasePlatoCategories inserta filas",
+	"/comida/bebidas/categorias":                       "ensureBaseBebidaCategories inserta filas",
+	"/comida/categorias":                               "listLegacyComidaCategories inserta filas",
+	"/group-menus-v2/{id}":                             "ensureBOMenuV2SectionsFromSnapshot materializa secciones",
+	"/group-menus-v2/{id}/sections/{sectionId}/dishes": "boV2GeneralDessertDishes materializa postres",
+	"/group-menus-v2/{id}/slider":                      "loadAIImageConfig puede reescribir la clave del proveedor",
+	"/config/floors":                                   "loadDefaultFloors inserta plantas",
+	"/config/floors/defaults":                          "loadDefaultFloors inserta plantas",
+	"/bookings":                                        "purgeOrphanedBookingDocumentsAsync borra documentos",
+	"/bookings/{id}/qr":                                "ensureBookingQR escribe la URL del QR y sube a Bunny",
+	"/members/whatsapp/connection":                     "whatsappConnectionSnapshot actualiza la instancia",
+	"/stock/warehouses":                                "inserta el almacen por defecto",
+	"/stock/documents/{id}/original":                   "inserta la fila de auditoria de acceso",
+	"/pos/accounting/export.csv":                       "inserta la fila de auditoria de la exportacion",
+	"/me":                                              "auto-repara la sesion",
+	"/config/stripe-connect":                           "refreshConnectAccount cachea la cuenta de Stripe",
+	"/config/ai-image":                                 "loadAIImageConfig puede reescribir la clave del proveedor",
+	"/comida/ai-image/status":                          "loadAIImageConfig puede reescribir la clave del proveedor",
+}
 
 func main() {
 	server := flag.String("server", "internal/api/server.go", "server.go with the /admin routes")
@@ -96,11 +142,39 @@ func main() {
 		o := op{Method: method, Path: path, Handler: handler, Gates: gates, Section: sectionOf(gates),
 			RolesAdmin: contains(gates, "rolesAdminGate"), Write: method != "GET", Risk: riskOf(method, path),
 			Description: docAbove(lines, i), Screens: screensOf(path, sources)}
+		applyWriteSideEffect(&o)
 		if o.Description == "" {
 			o.Description = fmt.Sprintf("%s %s (%s)", method, path, handler)
 		}
 		o.Name = uniqueName(method, path, taken)
 		ops = append(ops, o)
+	}
+	// The sub-registrars mounted inside the /admin tree.
+	for _, sub := range subRegistrars {
+		body, err := os.ReadFile(sub.file)
+		if err != nil {
+			log.Fatal(err)
+		}
+		subLines := strings.Split(string(body), "\n")
+		for i, line := range subLines {
+			m := subRouteRe.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			method, path, handler := strings.ToUpper(m[1]), sub.prefix+m[2], m[3]
+			if skipHdlRe.MatchString(handler) || strings.HasSuffix(path, "/ws") {
+				continue
+			}
+			o := op{Method: method, Path: path, Handler: handler, Gates: sub.gates, Section: sectionOf(sub.gates),
+				Write: method != "GET", Risk: riskOf(method, path),
+				Description: docAbove(subLines, i), Screens: screensOf(path, sources)}
+			applyWriteSideEffect(&o)
+			if o.Description == "" {
+				o.Description = fmt.Sprintf("%s %s (%s)", method, path, handler)
+			}
+			o.Name = uniqueName(method, path, taken)
+			ops = append(ops, o)
+		}
 	}
 	sort.Slice(ops, func(a, b int) bool { return ops[a].Path+ops[a].Method < ops[b].Path+ops[b].Method })
 	doc := map[string]any{"version": 1, "coordination_id": "FORKY-ADMIN-TOOLS-S01", "screens": screens, "operations": ops}
@@ -113,6 +187,21 @@ func main() {
 		count[o.Section]++
 	}
 	fmt.Fprintf(os.Stderr, "forky.admin.map coord=FORKY-ADMIN-TOOLS-S01 operations=%d screens=%d sections=%v\n", len(ops), len(screens), count)
+}
+
+// applyWriteSideEffect marks a GET that WRITES as a write, so neither
+// surface can treat it as a harmless read.
+func applyWriteSideEffect(o *op) {
+	if o.Method != "GET" {
+		return
+	}
+	reason, ok := writeSideEffectGETs[o.Path]
+	if !ok {
+		return
+	}
+	o.Write = true
+	o.Risk = "write"
+	o.Description = strings.TrimSpace(o.Description + " (GET con escritura: " + reason + ")")
 }
 
 func splitGates(raw string) []string {

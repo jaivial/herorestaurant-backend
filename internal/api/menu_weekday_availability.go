@@ -109,11 +109,18 @@ func (s *Server) loadBOMenuWeekdays(ctx context.Context, restaurantID int, menuI
 
 // saveBOMenuWeekday upserts a single weekday flag for a menu.
 func (s *Server) saveBOMenuWeekday(ctx context.Context, restaurantID int, menuID int64, weekday string, available bool) error {
+	return saveBOMenuWeekdayQ(ctx, s.db, restaurantID, menuID, weekday, available)
+}
+
+// saveBOMenuWeekdayQ is the write core of weekday_set, parameterised by the
+// querier so the bot's propose->OK apply runs the VERY SAME write inside its
+// claim transaction (wa_bot_admin_menu_v2).
+func saveBOMenuWeekdayQ(ctx context.Context, q execQueryer, restaurantID int, menuID int64, weekday string, available bool) error {
 	key := normalizeBOMenuWeekday(weekday)
 	if key == "" {
 		return errInvalidBOMenuWeekday
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := q.ExecContext(ctx, `
 		INSERT INTO menu_weekday_availability (restaurant_id, menu_id, weekday, available)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE available = VALUES(available)

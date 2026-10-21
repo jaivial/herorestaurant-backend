@@ -16,18 +16,12 @@ import (
 // boundary, not a UX detail. Two conditions must hold before a turn is
 // privileged:
 //
-//  1. the chat is a configured privileged group (botGroupIsPrivileged), and
-//  2. the sender is a MEMBER of that group.
+//  1. the chat is the authorized group of the ENVIRONMENT
+//     (wa_bot_privileged_boundary_v1), and
+//  2. the sender is a CURRENT member of that group, with a FRESH provider
+//     fetch of the participant list.
 //
-// Condition 2 was missing. WhatsApp only delivers a group message to a member,
-// so in practice a non-member cannot write there; but the webhook is a public
-// HTTP endpoint and the group id is a static string in the environment. A
-// forged payload carrying the privileged group id and an arbitrary
-// participant would otherwise be served the root catalog. Membership is
-// therefore verified against the provider's own participant list for that
-// group before the turn is treated as privileged.
-//
-// The check is fail-closed: if the provider cannot be reached, the turn is
+// Condition 2 is fail-closed: if the provider cannot be reached, the turn is
 // served as an ordinary group turn (no forky catalog), never as a privileged
 // one. A provider outage must not widen the blast radius.
 
@@ -58,10 +52,14 @@ type botGroupMembers struct {
 	// lids are the members addressed by their opaque LID
 	// ("262096671481918" from "262096671481918:0@lid").
 	lids map[string]struct{}
+	// phoneByLID maps a member's opaque LID to the phone the provider gave
+	// for it, so the identity of a group message is a PHONE and never a LID
+	// (wa_bot_privileged_boundary_v1: the actor is always a verified phone).
+	phoneByLID map[string]string
 }
 
 func newBotGroupMembers() botGroupMembers {
-	return botGroupMembers{phones: map[string]struct{}{}, lids: map[string]struct{}{}}
+	return botGroupMembers{phones: map[string]struct{}{}, lids: map[string]struct{}{}, phoneByLID: map[string]string{}}
 }
 
 // empty reports whether nothing could be proven.
@@ -127,15 +125,23 @@ func botGroupMemberPhonesFromPayload(raw []byte, groupJID string) botGroupMember
 		}
 		for _, p := range g.Participants {
 			// The phone form: the number, however the provider spells it.
+			phone := ""
 			if d := botGroupPhoneDigits(p.PhoneNumber); d != "" {
 				out.phones[d] = struct{}{}
+				phone = d
 			}
 			if d := botGroupPhoneDigits(p.Jid); d != "" {
 				out.phones[d] = struct{}{}
+				phone = d
 			}
 			// The LID form: the opaque id, without the device suffix.
 			if d := botGroupLidDigits(p.ID); d != "" {
 				out.lids[d] = struct{}{}
+				// The provider reports both forms for the same person, so the
+				// LID can be resolved to the phone it belongs to.
+				if phone != "" {
+					out.phoneByLID[d] = phone
+				}
 			}
 		}
 		return out
@@ -216,10 +222,22 @@ func (s *Server) botProviderInstanceName(ctx context.Context, restaurantID int) 
 // provider and the short-lived cache. An empty list means the membership
 // could not be proven, so the caller can fail closed.
 func (s *Server) botGroupMembers(ctx context.Context, restaurantID int, groupJID string) botGroupMembers {
+	members, _ := s.botGroupMembersCached(ctx, restaurantID, groupJID)
+	return members
+}
+
+// botGroupMembersCached returns the participant list of the group AND whether
+// the cache had an entry for it.
+//
+// The difference matters: an entry that is EMPTY means the provider failed
+// (the answer is "cannot prove"), while no entry at all means the list was
+// never fetched (the caller may fetch it once). Without the difference a
+// degraded provider would cost a full provider round trip on EVERY message.
+func (s *Server) botGroupMembersCached(ctx context.Context, restaurantID int, groupJID string) (botGroupMembers, bool) {
 	groupJID = strings.TrimSpace(groupJID)
 	empty := newBotGroupMembers()
 	if groupJID == "" {
-		return empty
+		return empty, false
 	}
 	// The cache is keyed by (instance, group): the participant list comes
 	// from ONE tenant's provider, so the instance is part of the key.
@@ -227,7 +245,7 @@ func (s *Server) botGroupMembers(ctx context.Context, restaurantID int, groupJID
 	if instanceName == "" {
 		// Without an instance there is nothing to key on and nothing to
 		// fetch from: fail closed.
-		return empty
+		return empty, false
 	}
 
 	// Short-lived cache: the privileged gate runs on every group message and
@@ -235,16 +253,18 @@ func (s *Server) botGroupMembers(ctx context.Context, restaurantID int, groupJID
 	key := botGroupMembersCacheKey(instanceName, groupJID)
 	botGroupMembersCache.Lock()
 	if e, ok := botGroupMembersCache.byInstanceGroup[key]; ok {
-		if time.Since(e.at) < botGroupMembersCacheTTL {
-			botGroupMembersCache.Unlock()
-			return e.members
-		}
-		// A negative entry (nothing could be proven) is held for a shorter
-		// time: a renamed or deleted group would otherwise make EVERY
-		// message wait for the provider timeout before being refused.
+		// A negative entry (nothing could be proven) is held for a SHORT
+		// time: a provider blip must not keep the group without its
+		// privileged catalog for a whole minute. It is checked FIRST,
+		// because the 60 s window of a positive entry would otherwise
+		// swallow it.
 		if e.members.empty() && time.Since(e.at) < botGroupMembersCacheFailTTL {
 			botGroupMembersCache.Unlock()
-			return e.members
+			return e.members, true
+		}
+		if time.Since(e.at) < botGroupMembersCacheTTL {
+			botGroupMembersCache.Unlock()
+			return e.members, true
 		}
 	}
 	botGroupMembersCache.Unlock()
@@ -253,7 +273,7 @@ func (s *Server) botGroupMembers(ctx context.Context, restaurantID int, groupJID
 	botGroupMembersCache.Lock()
 	botGroupMembersCache.byInstanceGroup[key] = botGroupMembersEntry{members: members, at: time.Now()}
 	botGroupMembersCache.Unlock()
-	return members
+	return members, true
 }
 
 // botGroupSenderIsMember reports whether the sender of a group message is a
@@ -286,4 +306,27 @@ func botGroupSenderInMembers(members botGroupMembers, senderJID string) bool {
 	}
 	_, ok := members.phones[d]
 	return ok
+}
+
+// botGroupMemberPhone returns the PHONE of a member, or "" when the provider
+// does not know one (a member addressed only by its opaque LID whose entry
+// carries no phoneNumber). The phone is what identifies the actor, so a member
+// without a known phone cannot act as a privileged actor.
+func botGroupMemberPhone(members botGroupMembers, senderJID string) string {
+	senderJID = strings.TrimSpace(senderJID)
+	if senderJID == "" {
+		return ""
+	}
+	if strings.HasSuffix(senderJID, "@lid") {
+		d := botGroupLidDigits(senderJID)
+		if d == "" {
+			return ""
+		}
+		return members.phoneByLID[d]
+	}
+	d := botGroupPhoneDigits(senderJID)
+	if d == "" {
+		return ""
+	}
+	return d + "@s.whatsapp.net"
 }

@@ -380,6 +380,28 @@ func bookingDocumentTitle(title, original string) string {
 }
 
 func (s *Server) insertBookingDocument(ctx context.Context, doc bookingDocument) (int64, error) {
+	if doc.BookingID != nil {
+		// Attached to a booking: the INSERT reads the booking row with a lock, so
+		// it waits for any in-flight cancel of that booking and then inserts
+		// nothing if the booking is gone (no document is left pointing at a
+		// deleted booking, which the orphan sweep would delete for good).
+		res, err := s.db.ExecContext(ctx, `
+		INSERT INTO booking_documents
+			(restaurant_id, booking_id, uploaded_by, title, original_filename,
+			 content_type, size_bytes, storage_path)
+		SELECT b.restaurant_id, b.id, ?, ?, ?, ?, ?, ?
+		FROM bookings b WHERE b.restaurant_id = ? AND b.id = ?`,
+			doc.UploadedBy, doc.Title, doc.OriginalFilename, doc.ContentType, doc.SizeBytes, doc.StoragePath,
+			doc.RestaurantID, *doc.BookingID)
+		if err != nil {
+			log.Printf("[booking_documents_v1] insert_failed restaurant=%d err=%v", doc.RestaurantID, err)
+			return 0, err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return 0, errors.New("la reserva ya no existe")
+		}
+		return res.LastInsertId()
+	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO booking_documents
 			(restaurant_id, booking_id, uploaded_by, title, original_filename,
@@ -394,8 +416,6 @@ func (s *Server) insertBookingDocument(ctx context.Context, doc bookingDocument)
 	return res.LastInsertId()
 }
 
-// listBookingDocuments returns the live documents of a booking, oldest first so
-// the UI keeps the order the staff attached them in.
 func (s *Server) listBookingDocuments(ctx context.Context, restaurantID int, bookingID int64) ([]bookingDocument, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, restaurant_id, booking_id, uploaded_by, title, original_filename,

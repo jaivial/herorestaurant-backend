@@ -17,6 +17,14 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `restaurant_info` | reservas | read | no | `{"type":"object","properties":{}}` |
 | `bookings_summary` | reservas | read | no | `{"type":"object","properties":{"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"}}}` |
 | `bookings_list` | reservas | read | no | `{"type":"object","properties":{"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"limit":{"type":"integer"}}}` |
+| `cancelled_bookings_list` | reservas | read | no | `{"type":"object","properties":{"date":{"type":"string","description":"Fecha YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto hoy)"}}}` |
+| `special_dates_list` | reservas | read | no | `{"type":"object","properties":{}}` |
+| `campaigns_list` | campanas | read | no | `{"type":"object","properties":{"campaign_id":{"type":"integer","description":"ID de campaña concreto (opcional)"}}}` |
+| `whatsapp_connection_get` | plataforma | read | no | `{"type":"object","properties":{}}` |
+| `menu_visibility_list` | menus | read | no | `{"type":"object","properties":{}}` |
+| `legal_pages_list` | website | read | no | `{"type":"object","properties":{"slug":{"type":"string","description":"aviso-legal, booking-policies, proteccion-datos o special-booking-politics (opcional)"}}}` |
+| `site_builder_drafts_list` | website | read | no | `{"type":"object","properties":{}}` |
+| `tables_list` | reservas | read | no | `{"type":"object","properties":{}}` |
 | `restaurant_query` | reservas | read | no | `{"type":"object","properties":{"resource":{"type":"string","enum":["bookings","menus","wines"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["resource"]}` |
 | `create_booking` | reservas | write | sí | `{"type":"object","properties":{"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","time","people","name","confirmed"]}` |
 | `update_booking` | reservas | write | sí | `{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}` |
@@ -51,6 +59,15 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `stock_warehouses_list` | stock | read | no | `{"type":"object","properties":{}}` |
 | `stock_categories_list` | stock | read | no | `{"type":"object","properties":{}}` |
 | `stock_items_list` | stock | read | no | `{"type":"object","properties":{"search":{"type":"string"},"kind":{"type":"string"},"category_id":{"type":"integer"},"warehouse_id":{"type":"integer"},"page":{"type":"integer"},"page_size":{"type":"integer"},"sort":{"type":"string"}}}` |
+| `stock_read` | stock | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"q":{"type":"string"},"days":{"type":"string"},"scenario":{"type":"string"},"category_id":{"type":"string"},"food_type":{"type":"string"},"scope_key":{"type":"string"},"scope_kind":{"type":"string"}}}` |
+| `members_read` | miembros | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"year":{"type":"string"},"view":{"type":"string"}}}` |
+| `fichaje_read` | fichaje | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"}}}` |
+| `sheets_read` | comida | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"category_id":{"type":"string"},"q":{"type":"string"},"status":{"type":"string"}}}` |
+| `menus_read` | menus | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"section_id":{"type":"string"},"date":{"type":"string"},"status":{"type":"string"},"include_drafts":{"type":"string"}}}` |
+| `reservas_read` | reservas | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date":{"type":"string"}}}` |
+| `website_read` | website | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"}}}` |
+| `campaigns_read` | campanas | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"}}}` |
+| `invoices_read` | facturas | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"name":{"type":"string"},"party_size":{"type":"string"},"phone":{"type":"string"},"time":{"type":"string"}}}` |
 | `stock_item_movements_list` | stock | read | no | `{"type":"object","properties":{"id":{"type":"integer"},"page":{"type":"integer"},"page_size":{"type":"integer"}},"required":["id"]}` |
 | `stock_summary` | stock | read | no | `{"type":"object","properties":{}}` |
 | `stock_movement_create` | stock | write | sí | `{"type":"object","properties":{"item_id":{"type":"integer"},"warehouse_id":{"type":"integer"},"quantity":{"type":"number"},"unit_id":{"type":"integer"},"type":{"type":"string"},"direction":{"type":"string"},"waste_reason":{"type":"string"},"note":{"type":"string"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["item_id","warehouse_id","quantity","unit_id","type","idempotency_key","confirmed"]}` |
@@ -60,6 +77,7 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `waste_costs_list` | stock | read | no | `{"type":"object","properties":{"limit":{"type":"integer"}}}` |
 | `pos_visits_list` | pos | read | no | `{"type":"object","properties":{"status":{"type":"string"}}}` |
 | `pos_tickets_list` | pos | read | no | `{"type":"object","properties":{"status":{"type":"string"}}}` |
+| `pos_read` | pos | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"date":{"type":"string","description":"YYYY-MM-DD"},"date_from":{"type":"string"},"date_to":{"type":"string"},"shift_id":{"type":"string"},"station_id":{"type":"string"}}}` |
 | `pos_cash_closures_list` | pos | read | no | `{"type":"object","properties":{"shift_id":{"type":"integer"}}}` |
 | `pos_cash_summary` | pos | read | no | `{"type":"object","properties":{"shift_id":{"type":"integer"}}}` |
 | `pos_cash_closure_create` | pos | write | sí | `{"type":"object","properties":{"shift_id":{"type":"integer"},"terminal_key":{"type":"string"},"closure_type":{"type":"string","enum":["X","Y","Z"]},"counted_cash_cents":{"type":"integer"},"note":{"type":"string"},"discrepancy_reason":{"type":"string"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["closure_type","idempotency_key","confirmed"]}` |
@@ -84,41 +102,4 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `admin_catalog` | session | read | no | `{"type":"object","properties":{"q":{"type":"string"},"section":{"type":"string"},"writes_only":{"type":"boolean"},"limit":{"type":"integer"},"offset":{"type":"integer"}}}` |
 | `admin_describe` | session | read | no | `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"name":{"type":"string"}}}` |
 | `admin_call` | session | read | no | `{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["name"]}` |
-
-
-## Trío admin (todas las operaciones del backoffice) [FORKY-ADMIN-TOOLS-S01]
-
-`admin_catalog` / `admin_describe` / `admin_call` exponen las 516 operaciones de la API `/admin`
-del backoffice (mapa generado `internal/api/forky_admin_ops.json`, con la pantalla del backoffice
-que usa cada ruta). Regenerar tras cambiar rutas en `server.go`:
-
-```sh
-go run ./cmd/forky-admin-map -server internal/api/server.go -pages ../backoffice -o internal/api/forky_admin_ops.json
-```
-
-ACL: el catálogo sólo lista las secciones que la persona abre en el panel (`boAuthCanAccessSection`,
-importancia de rol para `rolesAdminGate`/root, superadmin), y `admin_call` repite la petición por el
-router real (`s.Routes()`) con la cookie `bo_session` de la propia persona (tomada del handshake del
-WebSocket, nunca del modelo) y los secretos del servidor: deciden los mismos gates de la ruta
-(sección, permisos de TPV/stock, plan, root). Las escrituras requieren `confirmed=true` +
-`confirmation_token`. Excluidas: login/logout, WebSockets, subidas de ficheros, `/assistant/*` y las
-rutas públicas.
-
-## Convenciones
-
-- **Scope**: todas las tools se ejecutan contra el restaurante activo autenticado
-  (`restaurant_id` nunca proviene del modelo). El ownership se aplica siempre en
-  SQL (`WHERE restaurant_id=?`).
-- **Permisos**: la sección de cada tool se resuelve contra los mismos permisos de
-  sección del backoffice (RBAC). Las tools `write` requieren además capacidad de
-  escritura en la sección.
-- **Confirmación**: toda tool `write` exige `confirmed=true` + `confirmation_token`
-  emitido por el backend (one-shot, expiración corta, vinculado a argumentos
-  canónicos). `confirmed=false` devuelve `requires_confirmation` con el token.
-- **Seguridad**: las tools marcadas como backoffice exigen sesión autenticada;
-  las sesiones anónimas del asistente público solo pueden ejecutar
-  `restaurant_info` y `restaurant_query`.
-- **Límites**: input ≤ 64 KiB; timeout por tool 5s; máx. 6 iteraciones tool por
-  turno; filas acotadas por tool (default 100, máx 500); rate-limit por IP.
-- **Auditoría**: cada tool call se registra en `assistant_tool_audit`
-  (usuario, restaurante, tool, resumen del resultado, error, duración).
+| `backoffice_write` | session | write | sí | `{"type":"object","properties":{"name":{"type":"string","description":"Nombre de la operación del catálogo (admin_catalog)"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["name"]}` |
