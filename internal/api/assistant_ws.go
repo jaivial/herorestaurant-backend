@@ -413,6 +413,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 	toolMsgs := append([]assistantChatMessage{}, hist...)
 	var final strings.Builder
 	var lastRoundHadError bool
+	exhausted := true
 	for turn := 0; turn < 6; turn++ {
 		result, callErr := c.s.assistantCall(ctx, restaurantID, prompt, toolMsgs, toolDefs, nil)
 		if callErr != nil {
@@ -431,6 +432,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 			_ = c.writeJSON(map[string]any{"type": "delta", "text": turnText})
 		}
 		if len(result.ToolUses) == 0 {
+			exhausted = false
 			break
 		}
 		blocks := make([]map[string]any, 0, len(result.ToolUses)+1)
@@ -462,19 +464,32 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 		}
 		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "user", Content: results})
 	}
-	// If the turn budget ran out with the model only requesting tools, nothing
-	// was streamed and the client would re-enable the box into silence. Close
-	// with an honest message instead: budget exhaustion vs tool failure get
-	// different wording, and neither claims missing permissions (a 403 may be
-	// plan/capability, not the user role). Only fires when nothing useful was
-	// streamed, so it never duplicates or overrides real content.
-	if final.Len() == 0 {
-		msg := "No he podido completar eso en los pasos disponibles. Prueba con una peticion mas concreta o dame un poco mas de contexto."
-		if lastRoundHadError {
-			msg = "No he podido completarlo: una de las consultas necesarias no esta disponible ahora mismo. Prueba con otra cosa o dame un poco mas de contexto."
+	// If the turn budget ran out with the model still requesting tools, close
+	// honestly instead of letting the turn dangle. Two cases:
+	//  - nothing was streamed (final empty): full closing message;
+	//  - an opener was streamed ("busco una alternativa...") but the
+	//    investigation never resolved: append a short closure so neither the
+	//    live client nor the persisted history is left mid-promise. Hypothesis
+	//    (consistent with QA, not proven): a dangling opener primed the NEXT
+	//    turn to keep answering the previous question.
+	// Budget exhaustion vs tool failure get different wording; neither claims
+	// missing permissions (a 403 may be plan/capability, not the user role).
+	if exhausted {
+		if final.Len() == 0 {
+			msg := "No he podido completar eso en los pasos disponibles. Prueba con una peticion mas concreta o dame un poco mas de contexto."
+			if lastRoundHadError {
+				msg = "No he podido completarlo: una de las consultas necesarias no esta disponible ahora mismo. Prueba con otra cosa o dame un poco mas de contexto."
+			}
+			final.WriteString(msg)
+			_ = c.writeJSON(map[string]any{"type": "delta", "text": msg})
+		} else {
+			msg := "No he podido terminar la comprobacion completa en los pasos disponibles; arriba esta lo que he podido averiguar."
+			if lastRoundHadError {
+				msg = "No he podido terminar la comprobacion: una de las consultas necesarias no esta disponible ahora mismo; arriba esta lo que he podido averiguar."
+			}
+			final.WriteString("\n\n" + msg)
+			_ = c.writeJSON(map[string]any{"type": "delta", "text": "\n\n" + msg})
 		}
-		final.WriteString(msg)
-		_ = c.writeJSON(map[string]any{"type": "delta", "text": msg})
 	}
 	// Never persist an unusable reply: it would come back as history on the next
 	// turn and prime the model to produce more of the same. Dropping it keeps
