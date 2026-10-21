@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -21,6 +22,13 @@ func (s *Server) botToolExecutorFor(restaurantID int, msg botWebhookMessage, ten
 // repeated send_contact calls collapse into a single vCard delivery.
 func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage, tenant botTenantConfig, state *botTurnState) botToolExecutor {
 	return func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		// Coordination id: wa_bot_privileged_control_v1 - a configured grant
+		// restricts which custom tools this chat may call. The filtered
+		// catalog is UX, THIS is the guard, and it applies to every turn.
+		if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
+			log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d tool=%s denied", restaurantID, name)
+			return botJSON(map[string]any{"error": reason}), nil
+		}
 		// Same-day policy is enforced before any mutation tool runs.
 		if blocked, out := s.botSameDayOperation(ctx, restaurantID, msg, tenant, name, input); blocked {
 			if state != nil {
@@ -197,6 +205,14 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolCatalogExtraDeletePropose(ctx, restaurantID, msg, input)
 	case "booking_propose_notif_settings":
 		return s.botToolNotifSettingsPropose(ctx, restaurantID, msg, input)
+	// Coordination id: wa_backoffice_ops_v1 / wa_bot_privileged_control_v1 -
+	// the backoffice operation surface and the control plane of the bot. Both
+	// re-prove the actor (the verified phone of a current member of the
+	// authorized group) and never apply anything without the human approval.
+	case "manage_backoffice":
+		return s.botToolManageBackoffice(ctx, restaurantID, msg, input)
+	case "manage_bot_access":
+		return s.botToolManageBotAccess(ctx, restaurantID, msg, input)
 	case "create_special_booking":
 		return s.botToolCreateSpecialBooking(ctx, restaurantID, msg, tenant, input)
 	case "modify_special_booking":

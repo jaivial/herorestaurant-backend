@@ -659,6 +659,12 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// admin scope gate (scope group + privileged turn + fresh member).
 			botTools = append(botTools, botToolDefsAdminReads()...)
 		}
+		// Coordination id: wa_backoffice_ops_v1 / wa_bot_privileged_control_v1:
+		// the backoffice operation surface and the control plane of the bot.
+		// They are advertised on every privileged turn and re-prove the actor
+		// (the verified phone of a current member of the authorized group) on
+		// every call.
+		botTools = append(botTools, botToolDefsBackoffice()...)
 		tools = botMergeToolDefs(botTools, botForkyToolDefs())
 		normalExec := exec
 		// A name the bot defines belongs to the bot, even when forky also has
@@ -713,6 +719,10 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		return s.botLLMCallRouted(ctx, restaurantID, routing, sessionID, system, msgs, tools)
 	}
 
+	// Coordination id: wa_bot_privileged_control_v1 - per-chat tool control:
+	// the catalog offered to the model is filtered, and the executor
+	// re-checks.
+	tools = botToolGrantsFilter(tools, tenant, msg.ChatJID)
 	result, err := s.botRunAgentLoopWith(ctx, caller, system, messages, tools, exec)
 	if decisionID > 0 {
 		s.botConversation.SetDecisionModel(ctx, decisionID, result.ModelUsed, map[string]any{

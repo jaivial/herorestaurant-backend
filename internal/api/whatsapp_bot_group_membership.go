@@ -58,10 +58,14 @@ type botGroupMembers struct {
 	// lids are the members addressed by their opaque LID
 	// ("262096671481918" from "262096671481918:0@lid").
 	lids map[string]struct{}
+	// phoneByLID maps a member's opaque LID to the phone the provider gave
+	// for it, so the identity of a group message is a PHONE and never a LID
+	// (wa_bot_privileged_boundary_v1: the actor is always a verified phone).
+	phoneByLID map[string]string
 }
 
 func newBotGroupMembers() botGroupMembers {
-	return botGroupMembers{phones: map[string]struct{}{}, lids: map[string]struct{}{}}
+	return botGroupMembers{phones: map[string]struct{}{}, lids: map[string]struct{}{}, phoneByLID: map[string]string{}}
 }
 
 // empty reports whether nothing could be proven.
@@ -127,15 +131,23 @@ func botGroupMemberPhonesFromPayload(raw []byte, groupJID string) botGroupMember
 		}
 		for _, p := range g.Participants {
 			// The phone form: the number, however the provider spells it.
+			phone := ""
 			if d := botGroupPhoneDigits(p.PhoneNumber); d != "" {
 				out.phones[d] = struct{}{}
+				phone = d
 			}
 			if d := botGroupPhoneDigits(p.Jid); d != "" {
 				out.phones[d] = struct{}{}
+				phone = d
 			}
 			// The LID form: the opaque id, without the device suffix.
 			if d := botGroupLidDigits(p.ID); d != "" {
 				out.lids[d] = struct{}{}
+				// The provider reports both forms for the same person, so the
+				// LID can be resolved to the phone it belongs to.
+				if phone != "" {
+					out.phoneByLID[d] = phone
+				}
 			}
 		}
 		return out
@@ -286,4 +298,27 @@ func botGroupSenderInMembers(members botGroupMembers, senderJID string) bool {
 	}
 	_, ok := members.phones[d]
 	return ok
+}
+
+// botGroupMemberPhone returns the PHONE of a member, or "" when the provider
+// does not know one (a member addressed only by its opaque LID whose entry
+// carries no phoneNumber). The phone is what identifies the actor, so a member
+// without a known phone cannot act as a privileged actor.
+func botGroupMemberPhone(members botGroupMembers, senderJID string) string {
+	senderJID = strings.TrimSpace(senderJID)
+	if senderJID == "" {
+		return ""
+	}
+	if strings.HasSuffix(senderJID, "@lid") {
+		d := botGroupLidDigits(senderJID)
+		if d == "" {
+			return ""
+		}
+		return members.phoneByLID[d]
+	}
+	d := botGroupPhoneDigits(senderJID)
+	if d == "" {
+		return ""
+	}
+	return d + "@s.whatsapp.net"
 }

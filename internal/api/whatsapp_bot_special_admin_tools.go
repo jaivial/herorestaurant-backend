@@ -87,6 +87,10 @@ func botSpecialAdminDMPhoneJID(chatJID, altJID string) string {
 // botSpecialAdminToolsAllowed: tools are registered for the authorised group
 // itself, or for a one-to-one chat whose phone the webhook already matched to
 // a member of that group. Everything is re-proved with a fresh fetch on use.
+//
+// Coordination id: wa_bot_privileged_boundary_v1: msg.PrivilegedGroup is only
+// set by the boundary, and msg.ActorPhoneJID is the VERIFIED phone of the
+// actor (never a LID).
 func botSpecialAdminToolsAllowed(restaurantID int, msg botWebhookMessage) bool {
 	if msg.FromMe || botSpecialAdminScopeGroup(restaurantID) == "" || !msg.PrivilegedGroup {
 		return false
@@ -109,16 +113,18 @@ func (s *Server) botSpecialAdminFreshMember(ctx context.Context, restaurantID in
 // botSpecialAdminAuthorize is the single gate for every tool of this file. It
 // returns the actor identity and the chat the turn came from (the group, or the
 // member's own one-to-one chat).
+//
+// Coordination id: wa_bot_privileged_boundary_v1: the actor is ALWAYS the
+// verified phone (msg.ActorPhoneJID), in the group path as well: a member the
+// provider only reports by its opaque LID has no phone and cannot act. The
+// membership is re-proved with a FRESH fetch of the scope group's participant
+// list.
 func (s *Server) botSpecialAdminAuthorize(ctx context.Context, restaurantID int, msg botWebhookMessage) (actor, origin string, ok bool) {
 	if !botSpecialAdminToolsAllowed(restaurantID, msg) {
 		return "", "", false
 	}
 	scope := botSpecialAdminScopeGroup(restaurantID)
-	if msg.IsGroup {
-		actor = strings.TrimSpace(msg.ParticipantJID)
-	} else {
-		actor = strings.TrimSpace(msg.ActorPhoneJID)
-	}
+	actor = strings.TrimSpace(msg.ActorPhoneJID)
 	if actor == "" || !s.botSpecialAdminFreshMember(ctx, restaurantID, scope, actor) {
 		return "", "", false
 	}
@@ -892,7 +898,10 @@ type botSpecialProposalRow struct {
 // turn. It returns true when the message was an approval attempt and has been
 // fully handled (the model must not see it).
 func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg botWebhookMessage) bool {
-	if !botSpecialAdminToolsAllowed(rid, msg) {
+	// wa_bot_special_admin_v2 (the scope flow) OR wa_bot_privileged_boundary_v1
+	// (the operations of the backoffice surface and the control plane of the
+	// bot). Everything else keeps ignoring "OK <code>" messages.
+	if !botSpecialAdminToolsAllowed(rid, msg) && !msg.PrivilegedGroup {
 		return false
 	}
 	s.botSpecialAdminFlushNotifyThrottled(ctx, rid)
@@ -902,16 +911,20 @@ func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg bot
 	}
 	scope := botSpecialAdminScopeGroup(rid)
 	origin := strings.TrimSpace(msg.ChatJID)
-	actor := strings.TrimSpace(msg.ParticipantJID)
-	if !msg.IsGroup {
-		actor = strings.TrimSpace(msg.ActorPhoneJID)
-	}
+	// Coordination id: wa_bot_privileged_boundary_v1: the actor is the
+	// VERIFIED phone of the sender, in the group path as well. A LID is never
+	// an actor (deviation B3).
+	actor := strings.TrimSpace(msg.ActorPhoneJID)
 	reply := func(t string) {
 		if gw, ok := s.botGatewayFor(ctx, rid); ok {
 			_ = gw.SendText(ctx, origin, t)
 		}
 	}
-	if actor == "" || !s.botSpecialAdminFreshMember(ctx, rid, scope, actor) {
+	// Proof of the actor: a CURRENT member of an authorized group, with a
+	// FRESH provider fetch. A private chat without that proof is refused
+	// (deviation B2). The proposal can only be approved by the very actor
+	// that made it (match.Actor below).
+	if actor == "" || !s.botPrivilegedActorVerified(ctx, rid, actor) {
 		s.botSpecialAdminEvent(ctx, s.db, rid, 0, "approve_rejected_actor", actor, origin, nil)
 		return true
 	}
@@ -984,9 +997,13 @@ func botSpecialLockRefs(ctx context.Context, tx *sql.Tx, rid int, date string) e
 }
 
 func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWebhookMessage, p botSpecialProposalRow) (string, error) {
+	// The proposals of the backoffice operations and of the control plane
+	// carry their own payload; the rest carry the booking arguments.
 	var args botSpecialProposalArgs
-	if json.Unmarshal([]byte(p.Args), &args) != nil {
-		return "", errors.New("propuesta ilegible")
+	if p.Op != "backoffice" && p.Op != "access" {
+		if json.Unmarshal([]byte(p.Args), &args) != nil {
+			return "", errors.New("propuesta ilegible")
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1005,6 +1022,21 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return "", errors.New("la propuesta ya no está vigente")
+	}
+	// Coordination id: wa_backoffice_ops_v1: the backoffice operation runs on
+	// the real route, with its own transaction, so it cannot share the claim's
+	// one. The claim is committed first: the code is consumed exactly once and
+	// a failure of the operation leaves nothing live to retry.
+	if p.Op == "backoffice" {
+		if err := tx.Commit(); err != nil {
+			return "", errors.New("error interno")
+		}
+		return s.botBackofficeExecute(ctx, rid, msg, p)
+	}
+	// Coordination id: wa_bot_privileged_control_v1: the control plane writes
+	// the tenant config, so the claim and the write commit together.
+	if p.Op == "access" {
+		return s.botAccessExecute(ctx, tx, rid, p)
 	}
 	if p.Op == "edit" {
 		return s.botEditExecute(ctx, tx, rid, msg, p)

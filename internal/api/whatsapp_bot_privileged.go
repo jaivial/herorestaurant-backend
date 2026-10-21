@@ -20,16 +20,18 @@ import (
 
 // Coordination id: wa_bot_privileged_group_v1
 //
-// Inside the configured privileged WhatsApp group(s) the bot runs its turn
-// with the FULL forky assistant tool registry (no preventive restrictions):
-// the tools listed in assistantToolRegistry are offered to the model and
-// executed through s.assistantExecuteTool with a synthetic root backoffice
-// auth, so authorization AND the audit row stay on the real production path
-// (the Unsafe executor is never called directly).
+// Inside the authorized WhatsApp group (or in a private chat of a current
+// member of it) the bot runs its turn with the FULL forky assistant tool
+// registry (no preventive restrictions): the tools listed in
+// assistantToolRegistry are offered to the model and executed through
+// s.assistantExecuteTool with a synthetic root backoffice auth, so
+// authorization AND the audit row stay on the real production path (the Unsafe
+// executor is never called directly).
 //
 // Everywhere else the bot behavior is byte-for-byte unchanged: every branch
-// below is gated on msg.PrivilegedGroup, which is only set for groups listed
-// in config.BotPrivilegedGroupJIDs, and an empty config disables the feature
+// below is gated on msg.PrivilegedGroup, which is ONLY set by the privilege
+// boundary (wa_bot_privileged_boundary_v1:
+// botPrivilegedTurnAllowed), and an empty configuration disables the feature
 // completely.
 
 // botDocumentMaxBytes bounds the inline document payload accepted for
@@ -57,19 +59,21 @@ func botPrivilegedGroupSet(jids []string) map[string]struct{} {
 	return out
 }
 
-// botGroupIsPrivileged reports whether the chat JID belongs to a configured
-// privileged conversation. An empty config is always false: the feature is
-// off.
+// botGroupIsPrivileged reports whether the chat JID belongs to a conversation
+// SELECTED in the backoffice (or to a group of the environment).
 //
-// There are two ways to be privileged:
+// Coordination id: wa_bot_privileged_boundary_v1
 //
-//   - the conversation was SELECTED in the backoffice
-//     (tenant.PrivilegedContacts): a group or a one-to-one contact;
-//   - the group is listed in BOT_PRIVILEGED_GROUP_JIDS (the global env) or
-//     in tenant.PrivilegedGroupJIDs (the per-restaurant list).
+// ADVISORY ONLY: the privilege decision does NOT go through this function. A
+// selection made in the backoffice is a preference, not a proof of identity,
+// so it never grants the privileged catalog on its own (deviation B1 of
+// PR588, corrected). The single decision point is
+// botPrivilegedTurnAllowed (whatsapp_bot_privileged_boundary.go), which
+// requires the authorized group of the ENVIRONMENT and a verified phone.
 //
 // The env list still applies, so an installation that has not been migrated
-// keeps working; the tenant lists only ever ADD conversations.
+// keeps working; the tenant lists only ever ADD conversations to the
+// selection shown in the backoffice.
 func (s *Server) botGroupIsPrivileged(jid string, tenant botTenantConfig) bool {
 	jid = strings.TrimSpace(jid)
 	if jid == "" {
@@ -116,6 +120,11 @@ var botForkyExcludedFromWA = map[string]struct{}{
 	"website_read":             {},
 	"campaigns_read":           {},
 	"invoices_read":            {},
+	// Coordination id: wa_backoffice_ops_v1: the typed write of the panel.
+	// In a chat the write needs a HUMAN approval (the propose->OK chain of
+	// manage_backoffice), never a confirmed=true that the model writes
+	// itself, so this tool never reaches WhatsApp.
+	"backoffice_write": {},
 }
 
 // botForkyToolDefs converts the full assistant (forky) tool registry into the
@@ -132,6 +141,23 @@ func botForkyToolDefs() []botToolDef {
 		out = append(out, botToolDef{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema})
 	}
 	return out
+}
+
+// botServiceContext is the context of the bot's replay of a panel route: the
+// synthetic root auth and the SERVICE SESSION (a real panel session bound to
+// the restaurant).
+//
+// It carries NO "privileged turn" marker: the marker means "a model is
+// acting on a chat message", and the approval of a proposal is not that (it
+// is the human decision that the marker stands in for).
+//
+// Coordination id: wa_backoffice_ops_v1
+func (s *Server) botServiceContext(ctx context.Context, restaurantID int) context.Context {
+	ctx = withBOAuth(ctx, boAuth{Role: "root", User: boUser{Role: "root"}})
+	if token, err := s.botServiceSession(ctx, restaurantID); err == nil && token != "" {
+		ctx = botServiceSessionTokenForContext(ctx, token)
+	}
+	return ctx
 }
 
 // botPrivilegedForkyContext wraps ctx with the minimal privileged backoffice
@@ -157,12 +183,8 @@ func isBotPrivilegedTurn(ctx context.Context) bool {
 }
 
 func (s *Server) botPrivilegedForkyContext(ctx context.Context, restaurantID int) context.Context {
-	ctx = withBOAuth(ctx, boAuth{Role: "root", User: boUser{Role: "root"}})
-	ctx = context.WithValue(ctx, botPrivilegedTurnKey{}, true)
-	if token, err := s.botServiceSession(ctx, restaurantID); err == nil && token != "" {
-		ctx = botServiceSessionTokenForContext(ctx, token)
-	}
-	return ctx
+	ctx = s.botServiceContext(ctx, restaurantID)
+	return context.WithValue(ctx, botPrivilegedTurnKey{}, true)
 }
 
 // botDocumentTurnNote extracts the inline document of a privileged turn and
