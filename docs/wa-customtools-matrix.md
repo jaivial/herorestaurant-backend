@@ -17,7 +17,7 @@ hueco (`FALTA`) cuando falta.
 | Fuente | Qué aporta | Cómo se refresca |
 |---|---|---|
 | `internal/api/server.go` | Tabla de rutas real (chi). Gates exactos por ruta. | fuente primaria |
-| `internal/api/forky_admin_ops.json` | Mapa generado de las **558** operaciones `/admin` con sus gates, sección y riesgo. | `go run ./cmd/forky-admin-map -server internal/api/server.go -pages ../backoffice -o internal/api/forky_admin_ops.json` |
+| `internal/api/forky_admin_ops.json` | Mapa generado de las **622** operaciones `/admin` con sus gates, sección y riesgo. | `go run ./cmd/forky-admin-map -server internal/api/server.go -pages ../backoffice -o internal/api/forky_admin_ops.json` |
 | `internal/api/assistant_registry.go` | Registro de tools de Forky (nombre, sección, `Write`, `Confirm`, `BackofficeOnly`, schema). | fuente primaria |
 | `internal/api/assistant_domain_read.go` | Núcleo de lectura reutilizable `resource×action` (`*_read`). | fuente primaria |
 | `internal/api/whatsapp_bot_*.go` | Tools propias del bot (staff reads + `*_propose_*`). | fuente primaria |
@@ -77,6 +77,19 @@ Reglas que se aplican y que **no** admiten atajo:
 - Hay **un único slot** de propuesta de acceso viva por tenant: una propuesta nueva **supersede**
   la anterior (disponibilidad) y el *claim* sigue siendo atómico (`RowsAffected == 1`).
 
+**Dónde se configura el grupo autorizado:** en el **entorno**, no en el panel.
+`BOT_SPECIAL_ADMIN_SCOPES` (`<restaurant_id>=<jid @g.us>;…`) o `BOT_PRIVILEGED_GROUP_JIDS`
+(lista global). La selección de conversaciones privilegiadas del panel
+(`privileged_contacts` / `privileged_group_jids` en `whatsapp_bot_config.config_json`) **sigue
+existiendo y se sigue mostrando**, pero deja de ser una credencial: es una preferencia. Si el
+grupo autorizado no está en el entorno, el bot no entra en modo privilegiado en ninguna
+conversación (fail closed).
+
+**Cómo se prueba la pertenencia:** la lista cacheada de participantes es el **filtro de entrada
+barato** (un número que la cache no conoce no es candidato y no gasta una llamada al proveedor);
+la lista **fresca** es la que decide. Un turno privilegiado en el grupo, una tool de
+administración y una aprobación usan **la misma prueba**, así que no pueden discrepar.
+
 ---
 
 ## 3. Leyenda de cobertura
@@ -103,11 +116,11 @@ Reglas que se aplican y que **no** admiten atajo:
 | `/admin/booking-extras` | 1 | 2 | 3 |
 | `/admin/booking-notifications` | 1 | 1 | 2 |
 | `/admin/bookings` | 10 | 4 | 14 |
-| `/admin/bot` | 4 | 4 | 8 |
+| `/admin/bot` | 5 | 5 | 10 |
 | `/admin/branding` | 1 | 1 | 2 |
 | `/admin/cafes` | 1 | 4 | 5 |
 | `/admin/calendar` | 1 | 0 | 1 |
-| `/admin/campanas` | 7 | 6 | 13 |
+| `/admin/campanas` | 7 | 8 | 15 |
 | `/admin/comida` | 14 | 25 | 39 |
 | `/admin/config` | 24 | 33 | 57 |
 | `/admin/dashboard` | 1 | 0 | 1 |
@@ -117,6 +130,7 @@ Reglas que se aplican y que **no** admiten atajo:
 | `/admin/group-menus` | 2 | 4 | 6 |
 | `/admin/group-menus-v2` | 7 | 27 | 34 |
 | `/admin/horarios` | 5 | 3 | 8 |
+| `/admin/instatic` | 1 | 4 | 5 |
 | `/admin/integrations` | 2 | 3 | 5 |
 | `/admin/invoices` | 5 | 7 | 12 |
 | `/admin/legal-pages` | 2 | 1 | 3 |
@@ -130,21 +144,24 @@ Reglas que se aplican y que **no** admiten atajo:
 | `/admin/postres` | 1 | 3 | 4 |
 | `/admin/restaurant` | 1 | 1 | 2 |
 | `/admin/roles` | 1 | 1 | 2 |
-| `/admin/site-builder` | 1 | 3 | 4 |
+| `/admin/site-builder` | 14 | 18 | 32 |
 | `/admin/stock` | 34 | 46 | 80 |
 | `/admin/tables` | 2 | 5 | 7 |
 | `/admin/users` | 0 | 2 | 2 |
 | `/admin/vinos` | 2 | 3 | 5 |
 | `/admin/website` | 3 | 4 | 7 |
+| `/admin/website-builder` | 11 | 16 | 27 |
 | `/admin/widget` | 1 | 1 | 2 |
-| **TOTAL** | **222** | **336** | **558** |
+| **TOTAL** | **248** | **374** | **622** |
 
-**Totales: 558 operaciones** (222 lecturas, 336 escrituras) de las 600+ rutas del panel: el mapa
+**Totales: 622 operaciones** (231 lecturas, 391 escrituras) de las 700+ rutas del panel: el mapa
 generado excluye a propósito los *handlers* `WS|WebSocket|Upload|Image|Avatar|Import|OCR` (§6).
+
+De las 622, **19 GET** están marcados como escritura porque su handler escribe (§9.2).
 
 ---
 
-## 5. Matriz A — endpoints `/admin` (558 operaciones)
+## 5. Matriz A — endpoints `/admin` (622 operaciones)
 
 Ruta relativa a `/admin`; en producción es `/api/admin/...`. Los **gates** son la cadena exacta de
 middleware de `server.go`. La columna *Herramienta Forky* incluye `admin_call` como camino genérico
@@ -170,7 +187,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `DELETE` | `/booking-extras/{id}` | `s.requireBOSession`, `reservasGate` | reservas | destructive | `catalog_delete(booking_extras)`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `booking_propose_catalog_extra_delete` |
 | `GET` | `/booking-notifications` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `reservas_read(booking_notifications)` | `admin_call` (lectura) |
 | `PUT` | `/booking-notifications` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `whatsapp_bot_config_update(notif)`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `booking_propose_notif_settings` |
-| `GET` | `/bookings` | `s.requireBOSession`, `reservasGate` | reservas | read | `bookings_list`<br>`bookings_summary` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/bookings` | `s.requireBOSession`, `reservasGate` | reservas | write | `bookings_list`<br>`bookings_summary` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/bookings` | `s.requireBOSession`, `reservasGate` | reservas | write | `create_booking`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/bookings/cancelled` | `s.requireBOSession`, `reservasGate` | reservas | read | `cancelled_bookings_list` | `list_cancelled_bookings` |
 | `POST` | `/bookings/cancelled/{id}/reactivate` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — writes-control legacy RETENIDO |
@@ -182,16 +199,18 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `PATCH` | `/bookings/{id}` | `s.requireBOSession`, `reservasGate` | reservas | write | `update_booking`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `booking_propose_edit` |
 | `POST` | `/bookings/{id}/cancel` | `s.requireBOSession`, `reservasGate` | reservas | destructive | `delete_booking`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `booking_propose_cancel` |
 | `GET` | `/bookings/{id}/documents` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
-| `GET` | `/bookings/{id}/qr` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/bookings/{id}/qr` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `GET` | `/bookings/{id}/receipt.pdf` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/bot/ai/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — clave de proveedor — fuera de alcance |
 | `PUT` | `/bot/ai/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — clave de proveedor — fuera de alcance |
+| `GET` | `/bot/ai/{restaurantId}/privileged-contacts` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura) |
+| `PUT` | `/bot/ai/{restaurantId}/privileged-contacts` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — clave de proveedor: fuera de alcance |
 | `GET` | `/bot/config` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | read | `whatsapp_bot_config_get` | `whatsapp_bot_config_get` |
 | `PUT` | `/bot/config` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/bot/pipeline/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — pipeline DSPy — se deja solo al panel |
 | `GET` | `/bot/settings/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — prompt del bot — se deja solo al panel |
 | `PUT` | `/bot/settings/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — prompt del bot — se deja solo al panel |
-| `POST` | `/bot/settings/{restaurantId}/preview` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/bot/settings/{restaurantId}/preview` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — el prompt del bot se cambia en el panel |
 | `GET` | `/branding` | `s.requireBOSession`, `reservasGate` | reservas | read | `branding_get` | `branding_get` |
 | `POST` | `/branding` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/cafes` | `s.requireBOSession`, `menusGate` | menus | read | `catalog_list(cafes)` | `catalog_list(cafes)` |
@@ -202,29 +221,31 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/calendar` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/campanas` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | read | `campaigns_list` | `list_campaigns` |
 | `POST` | `/campanas` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/campanas/bounces/sync` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — campanas: envian a clientes reales, fuera de alcance |
+| `POST` | `/campanas/email-validation` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — campanas: envian a clientes reales, fuera de alcance |
 | `POST` | `/campanas/preview` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — envío real a clientes — fuera de alcance |
 | `GET` | `/campanas/template` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | read | `campaigns_read(template)` | `admin_call` (lectura) |
 | `GET` | `/campanas/unsubscribed` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | read | `campaigns_list` | `admin_call` (lectura) |
-| `DELETE` | `/campanas/{campaignId}` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `DELETE` | `/campanas/{campaignId}` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — campanas: envian a clientes reales, fuera de alcance |
 | `GET` | `/campanas/{campaignId}` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
-| `PUT` | `/campanas/{campaignId}` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/campanas/{campaignId}` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — campanas: envian a clientes reales, fuera de alcance |
 | `GET` | `/campanas/{campaignId}/audience` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/campanas/{campaignId}/recipients` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/campanas/{campaignId}/send` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — envío real a clientes — fuera de alcance |
 | `GET` | `/campanas/{campaignId}/status` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/campanas/{campaignId}/test` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — envío real a clientes — fuera de alcance |
-| `GET` | `/comida/bebidas/categorias` | `s.requireBOSession`, `menusGate` | menus | read | `catalog_list(bebidas)` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/comida/bebidas/categorias` | `s.requireBOSession`, `menusGate` | menus | write | `catalog_list(bebidas)` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/comida/bebidas/categorias` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/comida/bebidas/categorias/check` | `s.requireBOSession`, `menusGate` | menus | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/comida/bulk-stock-link/apply` | `s.requireBOSession`, `withBOStockTimeout`, `productionTypeGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/comida/bulk-stock-link/preview` | `s.requireBOSession`, `withBOStockTimeout`, `productionTypeGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/comida/categorias` | `s.requireBOSession`, `menusGate` | menus | read | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/comida/categorias` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/comida/categorias` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `DELETE` | `/comida/categorias/{id}` | `s.requireBOSession`, `menusGate` | menus | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/comida/categorias/{id}` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/comida/counts` | `s.requireBOSession`, `menusGate` | menus | read | `menus_read(comida_counts)` | `menus_read(comida_counts)` |
 | `PATCH` | `/comida/items/{id}/production-type` | `s.requireBOSession`, `withBOStockTimeout`, `productionTypeGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/comida/platos/categorias` | `s.requireBOSession`, `menusGate` | menus | read | `catalog_list(comida)` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/comida/platos/categorias` | `s.requireBOSession`, `menusGate` | menus | write | `catalog_list(comida)` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/comida/platos/categorias` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/comida/technical-sheets` | `s.requireBOSession`, `withBOStockTimeout`, `sheetsViewGate` | stock | read | `sheets_read(list)` | `admin_call` (lectura) |
 | `POST` | `/comida/technical-sheets` | `s.requireBOSession`, `withBOStockTimeout`, `sheetsManageGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -270,10 +291,10 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/config/defaults` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/config/email-provider` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | EXCLUIDO — clave de proveedor — fuera de alcance |
 | `POST` | `/config/email-provider` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — clave de proveedor — fuera de alcance |
-| `GET` | `/config/floors` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/config/floors` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/config/floors` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/config/floors/date` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/config/floors/defaults` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/config/floors/defaults` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/config/floors/defaults` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/config/hour-split` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/config/hour-split` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -304,7 +325,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/config/special-dates` | `s.requireBOSession`, `reservasGate` | reservas | read | `special_dates_list` | `list_special_dates` |
 | `POST` | `/config/special-dates` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/config/special-dates/stats` | `s.requireBOSession`, `reservasGate` | reservas | read | `reservas_read(special_date_stats)` | `reservas_read(special_date_stats)` |
-| `GET` | `/config/stripe-connect` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/config/stripe-connect` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/config/stripe-connect/dashboard` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — onboarding Stripe — fuera de alcance |
 | `GET` | `/config/stripe-connect/delete-precheck` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/config/stripe-connect/disconnect` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — onboarding Stripe — fuera de alcance |
@@ -315,7 +336,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/domains/quote` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — COBRO real (dominio) — fuera de alcance |
 | `POST` | `/domains/register` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — COBRO real (dominio) — fuera de alcance |
 | `GET` | `/domains/search` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
-| `POST` | `/domains/verify` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/domains/verify` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — dinero real (dominio): fuera de alcance |
 | `POST` | `/fichaje/admin/start` | `s.requireBOSession`, `fichajeGate`, `rolesAdminGate` | fichaje | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/fichaje/admin/stop` | `s.requireBOSession`, `fichajeGate`, `rolesAdminGate` | fichaje | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/fichaje/entries` | `s.requireBOSession`, `fichajeGate`, `rolesAdminGate` | fichaje | read | `fichaje_entries_list` | `fichaje_entries_list` |
@@ -332,7 +353,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/group-menus-v2/drafts` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/group-menus-v2/postres/resolve` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `DELETE` | `/group-menus-v2/{id}` | `s.requireBOSession`, `menusGate` | menus | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/group-menus-v2/{id}` | `s.requireBOSession`, `menusGate` | menus | read | `menu_get` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/group-menus-v2/{id}` | `s.requireBOSession`, `menusGate` | menus | write | `menu_get` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `PATCH` | `/group-menus-v2/{id}/basics` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/group-menus-v2/{id}/beverage-options` | `s.requireBOSession`, `menusGate` | menus | read | `menus_read(beverage_options)` | `admin_call` (lectura) |
 | `PATCH` | `/group-menus-v2/{id}/menu-type` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -344,11 +365,11 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `DELETE` | `/group-menus-v2/{id}/sections/{sectionId}` | `s.requireBOSession`, `menusGate` | menus | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/group-menus-v2/{id}/sections/{sectionId}/annotations` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/group-menus-v2/{id}/sections/{sectionId}/dessert-source` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/group-menus-v2/{id}/sections/{sectionId}/dishes` | `s.requireBOSession`, `menusGate` | menus | read | `menu_sections_get`<br>`menus_read(group_menus_v2_section_dishes)` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/group-menus-v2/{id}/sections/{sectionId}/dishes` | `s.requireBOSession`, `menusGate` | menus | write | `menu_sections_get`<br>`menus_read(group_menus_v2_section_dishes)` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `PUT` | `/group-menus-v2/{id}/sections/{sectionId}/dishes` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/group-menus-v2/{id}/sections/{sectionId}/visibility` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/group-menus-v2/{id}/slider` | `s.requireBOSession`, `menusGate` | menus | read | `menus_read(group_menus_v2_slider)` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/group-menus-v2/{id}/slider` | `s.requireBOSession`, `menusGate` | menus | write | `menus_read(group_menus_v2_slider)` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `PATCH` | `/group-menus-v2/{id}/slider` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PUT` | `/group-menus-v2/{id}/special-cta` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PUT` | `/group-menus-v2/{id}/special-group-booking` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -374,34 +395,39 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/horarios/my-schedule` | `s.requireBOSession`, `fichajeGate` | fichaje | read | `admin_call` | `admin_call` (lectura) |
 | `DELETE` | `/horarios/{id}` | `s.requireBOSession`, `horariosGate` | horarios | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PUT` | `/horarios/{id}` | `s.requireBOSession`, `horariosGate` | horarios | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/instatic/ensure/{restaurantId}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — arranca el generador de webs: se hace desde el panel |
+| `POST` | `/instatic/provision-domain/{restaurantId}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — arranca el generador de webs: se hace desde el panel |
+| `POST` | `/instatic/publish/{restaurantId}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — arranca el generador de webs: se hace desde el panel |
+| `POST` | `/instatic/seed/{restaurantId}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — arranca el generador de webs: se hace desde el panel |
+| `GET` | `/instatic/status/{restaurantId}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/integrations` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `integrations_get` | `integrations_get` |
 | `POST` | `/integrations` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/integrations/uazapi/servers` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | read | `admin_call` | EXCLUIDO — infra de proveedor — fuera de alcance |
 | `POST` | `/integrations/uazapi/servers` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — infra de proveedor — fuera de alcance |
-| `PATCH` | `/integrations/uazapi/servers/{id}` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PATCH` | `/integrations/uazapi/servers/{id}` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — infra de proveedor: fuera de alcance |
 | `GET` | `/invoices` | `s.requireBOSession`, `facturasGate` | facturas | read | `invoices_list` | `invoices_list` |
 | `POST` | `/invoices` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/invoices/search-reservation` | `s.requireBOSession`, `facturasGate` | facturas | read | `invoices_read(search_reservation)` | `admin_call` (lectura) |
-| `DELETE` | `/invoices/{id}` | `s.requireBOSession`, `facturasGate` | facturas | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `DELETE` | `/invoices/{id}` | `s.requireBOSession`, `facturasGate` | facturas | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — las facturas las emite el restaurante: fuera de alcance |
 | `GET` | `/invoices/{id}` | `s.requireBOSession`, `facturasGate` | facturas | read | `invoice_get` | `invoice_get` |
-| `PUT` | `/invoices/{id}` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/invoices/{id}` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — las facturas las emite el restaurante: fuera de alcance |
 | `GET` | `/invoices/{id}/comments` | `s.requireBOSession`, `facturasGate` | facturas | read | `admin_call` | `admin_call` (lectura) |
-| `POST` | `/invoices/{id}/comments` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `DELETE` | `/invoices/{id}/comments/{commentId}` | `s.requireBOSession`, `facturasGate` | facturas | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `PUT` | `/invoices/{id}/comments/{commentId}` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/invoices/{id}/comments` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — las facturas las emite el restaurante: fuera de alcance |
+| `DELETE` | `/invoices/{id}/comments/{commentId}` | `s.requireBOSession`, `facturasGate` | facturas | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — las facturas las emite el restaurante: fuera de alcance |
+| `PUT` | `/invoices/{id}/comments/{commentId}` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — las facturas las emite el restaurante: fuera de alcance |
 | `GET` | `/invoices/{id}/pdf` | `s.requireBOSession`, `facturasGate` | facturas | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/invoices/{id}/send` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — envío real de factura — fuera de alcance |
 | `GET` | `/legal-pages` | `s.requireBOSession`, `reservasGate` | reservas | read | `legal_pages_list` | `admin_call` (lectura) |
 | `GET` | `/legal-pages/{slug}` | `s.requireBOSession`, `reservasGate` | reservas | read | `legal_pages_list` | `admin_call` (lectura) |
 | `POST` | `/legal-pages/{slug}` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/me` | `s.requireBOSession` | session | read | `admin_call` | EXCLUIDO — operación sobre la cuenta de la sesión |
+| `GET` | `/me` | `s.requireBOSession` | session | write | `admin_call` | EXCLUIDO — operación sobre la cuenta de la sesión |
 | `POST` | `/me/password` | `s.requireBOSession` | session | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PUT` | `/me/preferences` | `s.requireBOSession` | session | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/members` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `members_list` | `members_list` |
 | `POST` | `/members` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/members/whatsapp/cancel` | `s.requireBOSession`, `rootOnlyGate` | root | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de la conexión — fuera de alcance |
 | `POST` | `/members/whatsapp/connect` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de la conexión — fuera de alcance |
-| `GET` | `/members/whatsapp/connection` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `whatsapp_connection_get` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/members/whatsapp/connection` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `whatsapp_connection_get` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/members/whatsapp/disconnect` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de la conexión — fuera de alcance |
 | `POST` | `/members/whatsapp/flush-queue` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — envío real a clientes — fuera de alcance |
 | `POST` | `/members/whatsapp/send` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — envío real a clientes — fuera de alcance |
@@ -426,7 +452,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/members/{id}/time-balance` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `member_balance_get` | `member_balance_get` |
 | `POST` | `/members/{id}/whatsapp/verification/confirm` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — verificación de identidad — fuera de alcance |
 | `POST` | `/members/{id}/whatsapp/verification/send` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — envío real de WhatsApp — fuera de alcance |
-| `GET` | `/menu-visibility` | `s.requireBOSession`, `menusGate` | menus | read | `menu_visibility_list` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/menu-visibility` | `s.requireBOSession`, `menusGate` | menus | write | `menu_visibility_list` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/menu-visibility` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/menus/dia` | `s.requireBOSession`, `menusGate` | menus | read | `menus_list` | `menus_list` |
 | `POST` | `/menus/dia/dishes` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -442,13 +468,13 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/platform/dashboard` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/platform/domains` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/platform/restaurants` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
-| `POST` | `/platform/restaurants` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `PATCH` | `/platform/restaurants/{id}` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/platform/restaurants` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestion de la plataforma: fuera de alcance |
+| `PATCH` | `/platform/restaurants/{id}` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestion de la plataforma: fuera de alcance |
 | `POST` | `/platform/restaurants/{id}/activate` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de tenants (superadmin) — fuera de alcance |
 | `POST` | `/platform/restaurants/{id}/deactivate` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de tenants (superadmin) — fuera de alcance |
 | `GET` | `/platform/stripe-connect` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
-| `PUT` | `/platform/stripe-connect/restaurants/{id}/fee` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `PUT` | `/platform/stripe-connect/settings` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/platform/stripe-connect/restaurants/{id}/fee` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — dinero real: fuera de alcance |
+| `PUT` | `/platform/stripe-connect/settings` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — dinero real: fuera de alcance |
 | `GET` | `/platform/stripe/payments` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/platform/stripe/refund` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — devolución de dinero — fuera de alcance |
 | `GET` | `/platform/subscriptions` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
@@ -458,7 +484,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/platform/users` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
 | `PATCH` | `/platform/users/{id}` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
 | `POST` | `/platform/users/{id}/assign` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
-| `DELETE` | `/platform/users/{id}/assign/{restaurantId}` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `DELETE` | `/platform/users/{id}/assign/{restaurantId}` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestion de la plataforma: fuera de alcance |
 | `POST` | `/platform/users/{id}/password` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
 | `POST` | `/platform/users/{id}/revoke-sessions` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
 | `GET` | `/platform/whatsapp` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
@@ -469,7 +495,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `DELETE` | `/platos/{id}` | `s.requireBOSession`, `menusGate` | menus | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/platos/{id}` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/platos/{id}/toggle` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/pos/accounting/export.csv` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posReportsGate` | pos | read | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/pos/accounting/export.csv` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posReportsGate` | pos | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/pos/activation-acceptances` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSettingsGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/pos/activation-readiness` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSettingsGate` | pos | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/pos/bootstrap` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posViewGate` | pos | read | `admin_call` | `admin_call` (lectura) |
@@ -526,8 +552,8 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `PATCH` | `/pos/packs/{id}` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posCatalogGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/pos/packs/{packId}/components` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posCatalogGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/pos/pin` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | read | `admin_call` | `admin_call` (lectura) |
-| `POST` | `/pos/pin` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `POST` | `/pos/pin/verify` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/pos/pin` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — PIN del TPV: se cambia en el panel |
+| `POST` | `/pos/pin/verify` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — PIN del TPV: se cambia en el panel |
 | `GET` | `/pos/products` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posViewGate` | pos | read | `pos_read(products_list)`<br>`catalog_list(pos_products)` | `admin_call` (lectura) |
 | `POST` | `/pos/products` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posCatalogGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `DELETE` | `/pos/products/{id}` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posCatalogGate` | pos | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -544,7 +570,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/pos/reservations/eligible` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posViewGate` | pos | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/pos/reservations/{bookingId}/visit` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posViewGate` | pos | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/pos/roles/{slug}/permissions` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSettingsGate` | pos | read | `admin_call` | `admin_call` (lectura) |
-| `PUT` | `/pos/roles/{slug}/permissions` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSettingsGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/pos/roles/{slug}/permissions` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSettingsGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — permisos de los roles del TPV: se cambian en el panel |
 | `GET` | `/pos/service-periods` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posViewGate` | pos | read | `pos_read(service_periods)` | `admin_call` (lectura) |
 | `POST` | `/pos/service-periods` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSettingsGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `DELETE` | `/pos/service-periods/{id}` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSettingsGate` | pos | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -603,10 +629,38 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `PATCH` | `/restaurant/pages/visibility` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/roles` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `admin_call` | EXCLUIDO — gestión de cuentas del panel |
 | `POST` | `/roles` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
+| `DELETE` | `/site-builder/assets/{assetId}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — ficheros del sitio: se gestionan en el panel |
+| `GET` | `/site-builder/assets/{assetId}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/site-builder/billing/checkout` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — COBRO real (Stripe) — fuera de alcance |
+| `DELETE` | `/site-builder/bindings/{bindingId}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/site-builder/bindings/{bindingId}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/site-builder/components` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `GET` | `/site-builder/components/{type}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/site-builder/domains/provision` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — COBRO real (dominio) — fuera de alcance |
 | `POST` | `/site-builder/domains/register` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — COBRO real (dominio) — fuera de alcance |
 | `GET` | `/site-builder/domains/search` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `DELETE` | `/site-builder/domains/{domainId}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — dinero real (dominio): fuera de alcance |
+| `POST` | `/site-builder/domains/{domainId}/verify` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — dinero real (dominio): fuera de alcance |
+| `DELETE` | `/site-builder/pages/{pageId}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/site-builder/pages/{pageId}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `PUT` | `/site-builder/pages/{pageId}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/site-builder/sites` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/site-builder/sites` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `DELETE` | `/site-builder/sites/{siteId}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/site-builder/sites/{siteId}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `PUT` | `/site-builder/sites/{siteId}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/site-builder/sites/{siteId}/assets` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `GET` | `/site-builder/sites/{siteId}/bindings` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/site-builder/sites/{siteId}/bindings` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/site-builder/sites/{siteId}/domains` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/site-builder/sites/{siteId}/domains` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/site-builder/sites/{siteId}/pages` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/site-builder/sites/{siteId}/pages` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/site-builder/sites/{siteId}/publish` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/site-builder/sites/{siteId}/publish-status` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `GET` | `/site-builder/sites/{siteId}/versions` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/site-builder/sites/{siteId}/versions` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/site-builder/versions/{versionId}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
 | `PUT` | `/stock/affluence` | `s.requireBOSession`, `withBOStockTimeout`, `stockForecastGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/stock/ai/recommendations` | `s.requireBOSession`, `stockForecastGate`, `stockCostsViewGate`, `s.requireBOStockAI` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — llamada a IA externa (coste) — se deja solo al panel |
 | `GET` | `/stock/categories` | `s.requireBOSession`, `withBOStockTimeout`, `stockViewGate` | stock | read | `stock_categories_list` | `stock_categories_list` |
@@ -618,12 +672,12 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/stock/counts/{id}` | `s.requireBOSession`, `withBOStockTimeout`, `stockViewGate` | stock | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/stock/counts/{id}/close` | `s.requireBOSession`, `withBOStockTimeout`, `stockCountCloseGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/stock/documents` | `s.requireBOSession`, `stockOCRUploadGate` | stock | read | `stock_read(documents_list)` | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
-| `POST` | `/stock/documents/extract-text` | `s.requireBOSession`, `stockOCRUploadGate`, `s.requireBOStockAI` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/stock/documents/extract-text` | `s.requireBOSession`, `stockOCRUploadGate`, `s.requireBOStockAI` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get retenido (superficie de prompt-injection) |
 | `GET` | `/stock/documents/{id}` | `s.requireBOSession`, `stockOCRUploadGate` | stock | read | `admin_call` | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `POST` | `/stock/documents/{id}/confirm-invoice` | `s.requireBOSession`, `stockOCRConfirmGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `POST` | `/stock/documents/{id}/confirm-recipe` | `s.requireBOSession`, `stockOCRConfirmGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `DELETE` | `/stock/documents/{id}/original` | `s.requireBOSession`, `stockOCRConfirmGate` | stock | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
-| `GET` | `/stock/documents/{id}/original` | `s.requireBOSession`, `stockOCRUploadGate` | stock | read | `admin_call` | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
+| `GET` | `/stock/documents/{id}/original` | `s.requireBOSession`, `stockOCRUploadGate` | stock | write | `admin_call` | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `POST` | `/stock/documents/{id}/reject` | `s.requireBOSession`, `stockOCRUploadGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `PATCH` | `/stock/documents/{id}/review` | `s.requireBOSession`, `stockOCRUploadGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `GET` | `/stock/expiring` | `s.requireBOSession`, `withBOStockTimeout`, `stockViewGate` | stock | read | `stock_read(expiring)` | `admin_call` (lectura) |
@@ -665,7 +719,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/stock/reconciliation` | `s.requireBOSession`, `withBOStockTimeout`, `stockViewGate` | stock | read | `stock_read(reconciliation)` | `admin_call` (lectura) |
 | `POST` | `/stock/reconciliation/rebuild` | `s.requireBOSession`, `withBOStockTimeout`, `stockSettingsGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/stock/roles/{slug}/permissions` | `s.requireBOSession`, `withBOStockTimeout`, `stockSettingsGate` | stock | read | `admin_call` | `admin_call` (lectura) |
-| `PUT` | `/stock/roles/{slug}/permissions` | `s.requireBOSession`, `withBOStockTimeout`, `stockSettingsGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/stock/roles/{slug}/permissions` | `s.requireBOSession`, `withBOStockTimeout`, `stockSettingsGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — permisos de los roles de stock: se cambian en el panel |
 | `GET` | `/stock/settings` | `s.requireBOSession`, `withBOStockTimeout`, `stockViewGate` | stock | read | `stock_read(settings)` | `admin_call` (lectura) |
 | `PATCH` | `/stock/settings` | `s.requireBOSession`, `withBOStockTimeout`, `stockSettingsGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/stock/settings/classify-seasonality` | `s.requireBOSession`, `stockSettingsGate`, `s.requireBOStockAI` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — llamada a IA externa (coste) — se deja solo al panel |
@@ -683,7 +737,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/stock/vat-rates` | `s.requireBOSession`, `withBOStockTimeout`, `stockCostsManageGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `DELETE` | `/stock/vat-rates/{id}` | `s.requireBOSession`, `withBOStockTimeout`, `stockCostsManageGate` | stock | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/stock/vat-rates/{id}` | `s.requireBOSession`, `withBOStockTimeout`, `stockCostsManageGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/stock/warehouses` | `s.requireBOSession`, `withBOStockTimeout`, `stockViewGate` | stock | read | `stock_warehouses_list` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `GET` | `/stock/warehouses` | `s.requireBOSession`, `withBOStockTimeout`, `stockViewGate` | stock | write | `stock_warehouses_list` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/stock/warehouses` | `s.requireBOSession`, `withBOStockTimeout`, `stockWarehousesGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `DELETE` | `/stock/warehouses/{id}` | `s.requireBOSession`, `withBOStockTimeout`, `stockWarehousesGate` | stock | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/stock/warehouses/{id}` | `s.requireBOSession`, `withBOStockTimeout`, `stockWarehousesGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -704,6 +758,33 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/website` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `website_read(premium_website)` | `admin_call` (lectura) |
 | `POST` | `/website` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PUT` | `/website` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/website-builder/assets` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `DELETE` | `/website-builder/assets/{id}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — ficheros del sitio: se gestionan en el panel |
+| `GET` | `/website-builder/components` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `GET` | `/website-builder/components/{id}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `GET` | `/website-builder/history` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `GET` | `/website-builder/pages` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/website-builder/pages` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `DELETE` | `/website-builder/pages/{id}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/website-builder/pages/{id}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/website-builder/pages/{pageId}/sections` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/website-builder/pages/{pageId}/sections` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/website-builder/preview` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/website-builder/publish` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/website-builder/section-components/reorder` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `DELETE` | `/website-builder/section-components/{id}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/website-builder/section-components/{id}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/website-builder/sections/reorder` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `DELETE` | `/website-builder/sections/{id}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/website-builder/sections/{id}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/website-builder/sections/{sectionId}/components` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/website-builder/sections/{sectionId}/components` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/website-builder/templates` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `GET` | `/website-builder/templates/{id}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `DELETE` | `/website-builder/website` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/website-builder/website` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
+| `POST` | `/website-builder/website` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/website-builder/website` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/website/ai-generate` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — llamada a IA externa (coste) — se deja solo al panel |
 | `GET` | `/website/menu-templates` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `website_read(menu_templates)` | `admin_call` (lectura) |
 | `PUT` | `/website/menu-templates` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -799,12 +880,13 @@ panel ha seguido creciendo. Hoy **`admin_call` no alcanza**:
 - `POST /admin/campanas/email-validation`, `POST /admin/campanas/bounces/sync` (de `#537`),
 - `GET|PUT /admin/bot/ai/{restaurantId}/privileged-contacts` (de `#503`),
 - **todas** las rutas registradas por sub-registradores dentro de `/admin`:
-  `site-builder/*` (30), `website-builder/*` (33) e `instatic/*` (5) — el generador solo lee
+  `site-builder/*` (30), `website-builder/*` (25) e `instatic/*` (5) — el generador solo leía
   `server.go`, y estas se registran desde `site_builder.go`, `website_builder.go` e
   `instatic_manager.go`.
 
 → **Resuelto en esta rama**: el generador pasa a leer también los sub-registradores (con los gates
-del `Group` que los envuelve) y el mapa se regenera.
+del `Group` que los envuelve) y el mapa se regenera: **558 → 622 operaciones** (`admin_call`
+alcanza ahora las 64 que faltaban).
 
 ### 9.2 GETs del backoffice que escriben (19 auditados)
 
@@ -837,12 +919,23 @@ contención de WA los rechaza y Forky los exige con `confirmed=true` + `confirma
 
 ### 9.3 Escrituras del panel sin tool en WhatsApp
 
-De 336 escrituras, 20 tienen tool `*_propose_*` propia; el resto (campañas, carta, menús v2,
+De 391 escrituras, 20 tienen tool `*_propose_*` propia; el resto (campañas, carta, menús v2,
 miembros, stock, TPV, facturas, configuración) **no** tenía ninguna: el bot solo podía leer.
 
 → **Resuelto en esta rama** con `manage_backoffice` (tool WA `resource×action`): propone la
 operación del panel y la aplica **solo** tras `OK <código>` del actor verificado, reutilizando la
 ruta real (sus gates, sus reglas y su scoping de tenant).
+
+Mecánica de la cadena (idéntica a la revisada de PR588, con dos diferencias explícitas):
+
+| Pieza | PR588 | Aquí |
+|---|---|---|
+| `scope_group_jid` persistido | siempre el grupo de env | igual |
+| `origin_chat_jid` / `actor_jid` | origen y actor | igual (el actor es el **teléfono** verificado) |
+| Código | `botSha`, nunca en claro | igual |
+| TTL | 10 min | igual |
+| *Claim* | `RowsAffected == 1` | igual |
+| `before_hash` + `FOR UPDATE` | en la misma tx del apply | igual en el plano de control (`access`); en `backoffice` el apply corre por la ruta real (otra tx), así que el *claim* se confirma **antes** y una operación que falle deja la propuesta consumida (fail closed: hay que proponer de nuevo) |
 
 ### 9.4 Plano de control del bot
 
