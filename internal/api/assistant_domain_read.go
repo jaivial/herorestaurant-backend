@@ -21,7 +21,11 @@ import (
 // PII exports are NOT allowlisted by design.
 
 type domainReadSpec struct {
-	handler  func(*Server) http.HandlerFunc
+	handler func(*Server) http.HandlerFunc
+	// gates replays the exact middleware chain the route applies in
+	// server.go (feature flag, permission/section/role gates) before the
+	// handler runs, so tool access can never exceed HTTP route access.
+	gates    func(*Server) []func(http.Handler) http.Handler
 	urlParam string            // chi URLParam fed from input id ("" = resource takes no id)
 	query    map[string]string // typed input field -> handler query param
 	desc     string
@@ -95,7 +99,7 @@ func (s *Server) assistantDomainRead(ctx context.Context, tool string, resources
 		}
 		call.URLParam = map[string]string{spec.urlParam: in.ID}
 	}
-	body, code, err := s.assistantCallHandler(ctx, spec.handler(s), call)
+	body, code, err := s.assistantCallHandler(ctx, gatedDomainHandler(s, spec), call)
 	if err != nil {
 		return "", err
 	}
@@ -108,16 +112,75 @@ func (s *Server) assistantDomainRead(ctx context.Context, tool string, resources
 // POS reads. Every handler verified: pure GET (no Exec/DML), tenant from the
 // session boAuth, output = own-tenant aggregates/catalog, no PII/secrets.
 var posReadResources = map[string]domainReadSpec{
-	"shift_current":    {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSShiftCurrent }, desc: "turno POS abierto ahora"},
-	"cash_day_current": {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCashDayCurrent }, query: map[string]string{"date": "date"}, desc: "caja del día (por defecto hoy)"},
-	"cash_days_range":  {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCashDaysRange }, query: map[string]string{"date_from": "from", "date_to": "to"}, desc: "resumen de cajas por rango"},
-	"cash_movements":   {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCashMovements }, query: map[string]string{"shift_id": "shiftId"}, desc: "movimientos de caja de un turno"},
-	"cash_closure_get": {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCashClosureGet }, urlParam: "id", desc: "detalle de un cierre de caja"},
-	"tickets_series":   {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSTicketsSeries }, query: map[string]string{"date": "date"}, desc: "series/estado de tickets de un día"},
-	"tickets_hourly":   {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSTicketsHourly }, query: map[string]string{"date": "date"}, desc: "tickets por hora de un día"},
-	"sales_report":     {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSSalesReport }, query: map[string]string{"date_from": "from", "date_to": "to"}, desc: "ventas por día y servicio (por defecto últimos 30 días)"},
-	"covers_report":    {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCoversReport }, query: map[string]string{"date_from": "from", "date_to": "to"}, desc: "comensales por rango"},
-	"products_list":    {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSProductsList }, desc: "catálogo POS de productos"},
-	"kitchen_queue":    {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSKitchenQueue }, query: map[string]string{"station_id": "stationId"}, desc: "cola de cocina"},
-	"service_periods":  {handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSServicePeriodsList }, desc: "servicios de comedor configurados"},
+	"shift_current":    {gates: posReadGates(posPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSShiftCurrent }, desc: "turno POS abierto ahora"},
+	"cash_day_current": {gates: posReadGates(posPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCashDayCurrent }, query: map[string]string{"date": "date"}, desc: "caja del día (por defecto hoy)"},
+	"cash_days_range":  {gates: posReadGates(posPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCashDaysRange }, query: map[string]string{"date_from": "from", "date_to": "to"}, desc: "resumen de cajas por rango"},
+	"cash_movements":   {gates: posReadGates(posPermissionReports), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCashMovements }, query: map[string]string{"shift_id": "shiftId"}, desc: "movimientos de caja de un turno"},
+	"cash_closure_get": {gates: posReadGates(posPermissionReports), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCashClosureGet }, urlParam: "id", desc: "detalle de un cierre de caja"},
+	"tickets_series":   {gates: posViewOrFichajeReadGates(), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSTicketsSeries }, query: map[string]string{"date": "date"}, desc: "series/estado de tickets de un día"},
+	"tickets_hourly":   {gates: posViewOrFichajeReadGates(), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSTicketsHourly }, query: map[string]string{"date": "date"}, desc: "tickets por hora de un día"},
+	"sales_report":     {gates: posReadGates(posPermissionReports), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSSalesReport }, query: map[string]string{"date_from": "from", "date_to": "to"}, desc: "ventas por día y servicio (por defecto últimos 30 días)"},
+	"covers_report":    {gates: posReadGates(posPermissionReports), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSCoversReport }, query: map[string]string{"date_from": "from", "date_to": "to"}, desc: "comensales por rango"},
+	"products_list":    {gates: posReadGates(posPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSProductsList }, desc: "catálogo POS de productos"},
+	"kitchen_queue":    {gates: posReadGates(posPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSKitchenQueue }, query: map[string]string{"station_id": "stationId"}, desc: "cola de cocina"},
+	"service_periods":  {gates: posReadGates(posPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOPOSServicePeriodsList }, desc: "servicios de comedor configurados"},
+}
+
+// gatedDomainHandler wraps a domain-read handler with the same gate
+// middleware the original HTTP route uses, evaluated against the real
+// backoffice session in ctx (fail closed, same as the route).
+func gatedDomainHandler(s *Server, spec domainReadSpec) http.HandlerFunc {
+	h := http.Handler(http.HandlerFunc(spec.handler(s)))
+	if spec.gates != nil {
+		for _, g := range spec.gates(s) {
+			h = g(h)
+		}
+	}
+	return h.ServeHTTP
+}
+
+func posReadGates(perms ...string) func(*Server) []func(http.Handler) http.Handler {
+	return func(s *Server) []func(http.Handler) http.Handler {
+		gs := []func(http.Handler) http.Handler{s.requireBOPOSFeature}
+		for _, p := range perms {
+			gs = append(gs, s.requireBOPOSPermission(p))
+		}
+		return gs
+	}
+}
+
+func posViewOrFichajeReadGates() func(*Server) []func(http.Handler) http.Handler {
+	return func(s *Server) []func(http.Handler) http.Handler {
+		return []func(http.Handler) http.Handler{s.requireBOPOSFeature, s.requireBOPOSViewOrFichajeAdmin}
+	}
+}
+
+func stockReadGates(perms ...string) func(*Server) []func(http.Handler) http.Handler {
+	return func(s *Server) []func(http.Handler) http.Handler {
+		gs := make([]func(http.Handler) http.Handler, 0, len(perms))
+		for _, p := range perms {
+			gs = append(gs, s.requireBOStockPermission(p))
+		}
+		return gs
+	}
+}
+
+// stockAdminReadGates mirrors routes gated by a stock permission AND the
+// backoffice admin-role gate (requireBORoleImportanceAtLeast(90)).
+func stockAdminReadGates(perms ...string) func(*Server) []func(http.Handler) http.Handler {
+	return func(s *Server) []func(http.Handler) http.Handler {
+		gs := make([]func(http.Handler) http.Handler, 0, len(perms)+1)
+		for _, p := range perms {
+			gs = append(gs, s.requireBOStockPermission(p))
+		}
+		return append(gs, s.requireBORoleImportanceAtLeast(90))
+	}
+}
+
+// sectionAdminGates mirrors routes gated by a backoffice section AND the
+// admin-role gate (members, fichaje labour data).
+func sectionAdminGates(section string) func(*Server) []func(http.Handler) http.Handler {
+	return func(s *Server) []func(http.Handler) http.Handler {
+		return []func(http.Handler) http.Handler{s.requireBOSection(section), s.requireBORoleImportanceAtLeast(90)}
+	}
 }
