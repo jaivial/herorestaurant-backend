@@ -25,10 +25,11 @@ type domainReadSpec struct {
 	// gates replays the exact middleware chain the route applies in
 	// server.go (feature flag, permission/section/role gates) before the
 	// handler runs, so tool access can never exceed HTTP route access.
-	gates    func(*Server) []func(http.Handler) http.Handler
-	urlParam string            // chi URLParam fed from input id ("" = resource takes no id)
-	query    map[string]string // typed input field -> handler query param
-	desc     string
+	gates     func(*Server) []func(http.Handler) http.Handler
+	urlParam  string            // chi URLParam fed from input id ("" = resource takes no id)
+	urlParam2 string            // second chi URLParam fed from input section_id ("" = none)
+	query     map[string]string // typed input field -> handler query param
+	desc      string
 }
 
 type domainReadInput struct {
@@ -48,6 +49,13 @@ type domainReadInput struct {
 	ScopeKind  string `json:"scope_kind,omitempty"`
 	Year       string `json:"year,omitempty"`
 	View       string `json:"view,omitempty"`
+	Name       string `json:"name,omitempty"`
+	PartySize  string `json:"party_size,omitempty"`
+	Phone      string `json:"phone,omitempty"`
+	Time       string `json:"time,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Drafts     string `json:"include_drafts,omitempty"`
+	SectionID  string `json:"section_id,omitempty"`
 }
 
 func (in domainReadInput) fields() map[string]string {
@@ -97,6 +105,27 @@ func (in domainReadInput) fields() map[string]string {
 	if in.View != "" {
 		m["view"] = in.View
 	}
+	if in.Name != "" {
+		m["name"] = in.Name
+	}
+	if in.PartySize != "" {
+		m["party_size"] = in.PartySize
+	}
+	if in.Phone != "" {
+		m["phone"] = in.Phone
+	}
+	if in.Time != "" {
+		m["time"] = in.Time
+	}
+	if in.Status != "" {
+		m["status"] = in.Status
+	}
+	if in.Drafts != "" {
+		m["include_drafts"] = in.Drafts
+	}
+	if in.SectionID != "" {
+		m["section_id"] = in.SectionID
+	}
 	return m
 }
 
@@ -122,6 +151,12 @@ func (s *Server) assistantDomainRead(ctx context.Context, tool string, resources
 			}
 			continue
 		}
+		if field == "section_id" {
+			if spec.urlParam2 == "" {
+				return botJSON(map[string]any{"error": fmt.Sprintf("el recurso %s no admite section_id", in.Resource)}), nil
+			}
+			continue
+		}
 		q, ok := spec.query[field]
 		if !ok {
 			return botJSON(map[string]any{"error": fmt.Sprintf("el recurso %s no admite el parámetro %s", in.Resource, field)}), nil
@@ -134,6 +169,15 @@ func (s *Server) assistantDomainRead(ctx context.Context, tool string, resources
 			return botJSON(map[string]any{"error": fmt.Sprintf("el recurso %s requiere id", in.Resource)}), nil
 		}
 		call.URLParam = map[string]string{spec.urlParam: in.ID}
+	}
+	if spec.urlParam2 != "" {
+		if in.SectionID == "" {
+			return botJSON(map[string]any{"error": fmt.Sprintf("el recurso %s requiere section_id", in.Resource)}), nil
+		}
+		if call.URLParam == nil {
+			call.URLParam = map[string]string{}
+		}
+		call.URLParam[spec.urlParam2] = in.SectionID
 	}
 	body, code, err := s.assistantCallHandler(ctx, gatedDomainHandler(s, spec), call)
 	if err != nil {
@@ -213,6 +257,17 @@ func stockAdminReadGates(perms ...string) func(*Server) []func(http.Handler) htt
 	}
 }
 
+// sectionReadGates replays routes gated purely by backoffice section(s).
+func sectionReadGates(sections ...string) func(*Server) []func(http.Handler) http.Handler {
+	return func(s *Server) []func(http.Handler) http.Handler {
+		gs := make([]func(http.Handler) http.Handler, 0, len(sections))
+		for _, sec := range sections {
+			gs = append(gs, s.requireBOSection(sec))
+		}
+		return gs
+	}
+}
+
 // sectionAdminGates mirrors routes gated by a backoffice section AND the
 // admin-role gate (members, fichaje labour data).
 func sectionAdminGates(section string) func(*Server) []func(http.Handler) http.Handler {
@@ -263,4 +318,61 @@ var membersReadResources = map[string]domainReadSpec{
 var fichajeReadResources = map[string]domainReadSpec{
 	"labour_cost":  {gates: sectionAdminGates(boSectionFichaje), handler: func(s *Server) http.HandlerFunc { return s.handleBOFichajeLabourCost }, query: map[string]string{"date_from": "from", "date_to": "to"}, desc: "coste laboral por rango"},
 	"hourly_costs": {gates: sectionAdminGates(boSectionFichaje), handler: func(s *Server) http.HandlerFunc { return s.handleBOFichajeHourlyCosts }, query: map[string]string{"date": "date"}, desc: "costes por hora de un día"},
+}
+
+// Technical-sheet reads (fichas técnicas): recetas/alérgenos del tenant.
+var sheetsReadResources = map[string]domainReadSpec{
+	"list":           {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetList }, query: map[string]string{"category_id": "categoryId", "q": "q", "status": "status"}, desc: "fichas técnicas (filtros category_id, q, status)"},
+	"get":            {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetGet }, urlParam: "id", desc: "detalle de una ficha técnica"},
+	"cost":           {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetCost }, urlParam: "id", desc: "coste de una ficha técnica"},
+	"components":     {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetComponentsList }, urlParam: "id", desc: "componentes de una ficha"},
+	"allergens":      {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetAllergensGet }, urlParam: "id", desc: "alérgenos de una ficha"},
+	"usage":          {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetUsage }, urlParam: "id", desc: "dónde se usa una ficha"},
+	"steps":          {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetStepsList }, urlParam: "id", desc: "pasos de elaboración"},
+	"step_image_job": {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetStepImageJobGet }, urlParam: "stepId", desc: "estado del job de imagen de un paso (id = stepId del paso)"},
+}
+
+// Menu reads: conteos, config de carta y menús de grupo del tenant. Los GETs
+// de categorías y el GET de menú v2 siembran filas (ensure*) y NO se
+// allowlistan; las categorías se leen vía catalog comida.
+var menusReadResources = map[string]domainReadSpec{
+	"comida_counts":                 {gates: sectionReadGates(boSectionMenus), handler: func(s *Server) http.HandlerFunc { return s.handleBOComidaCounts }, desc: "conteos de la carta"},
+	"arroz_types":                   {gates: sectionReadGates(boSectionReservas), handler: func(s *Server) http.HandlerFunc { return s.handleBOArrozTypes }, desc: "tipos de arroz"},
+	"beverage_options":              {gates: sectionReadGates(boSectionMenus), handler: func(s *Server) http.HandlerFunc { return s.handleBOBeverageOptionsList }, urlParam: "id", desc: "opciones de bebida de un menú"},
+	"mandatory_menus":               {gates: sectionReadGates(boSectionReservas), handler: func(s *Server) http.HandlerFunc { return s.handleBOMandatoryMenusGet }, query: map[string]string{"date": "date"}, desc: "menús obligatorios por fecha"},
+	"menu_selector":                 {gates: sectionReadGates(boSectionMenus), handler: func(s *Server) http.HandlerFunc { return s.handleBOMenuSelectorGet }, desc: "selector de menú actual"},
+	"group_menus_list":              {gates: sectionReadGates(boSectionMenus), handler: func(s *Server) http.HandlerFunc { return s.handleBOGroupMenusList }, query: map[string]string{"status": "status"}, desc: "menús de grupo legacy"},
+	"group_menu_get":                {gates: sectionReadGates(boSectionMenus), handler: func(s *Server) http.HandlerFunc { return s.handleBOGroupMenuGet }, urlParam: "id", desc: "menú de grupo legacy por id"},
+	"group_menus_v2_list":           {gates: sectionReadGates(boSectionMenus), handler: func(s *Server) http.HandlerFunc { return s.handleBOGroupMenusV2List }, query: map[string]string{"include_drafts": "includeDrafts"}, desc: "menús de grupo v2"},
+	"group_menus_v2_special":        {gates: sectionReadGates(boSectionMenus), handler: func(s *Server) http.HandlerFunc { return s.handleBOGroupMenusV2ListSpecialSections }, urlParam: "id", desc: "secciones especiales de un menú v2"},
+	"group_menus_v2_slider":         {gates: sectionReadGates(boSectionMenus), handler: func(s *Server) http.HandlerFunc { return s.handleBOGroupMenusV2GetSlider }, urlParam: "id", desc: "slider de un menú v2"},
+	"group_menus_v2_section_dishes": {gates: sectionReadGates(boSectionMenus), handler: func(s *Server) http.HandlerFunc { return s.handleBOGroupMenusV2GetSectionDishes }, urlParam: "id", urlParam2: "sectionId", desc: "platos de una sección de menú v2 (id + section_id)"},
+}
+
+// Reservas reads: cambios y config del tenant.
+var reservasReadResources = map[string]domainReadSpec{
+	"bookings_modified":     {gates: sectionReadGates(boSectionReservas), handler: func(s *Server) http.HandlerFunc { return s.handleBOBookingsModifiedByDate }, query: map[string]string{"date": "date"}, desc: "reservas modificadas por fecha"},
+	"booking_notifications": {gates: sectionAdminGates(boSectionMiembros), handler: func(s *Server) http.HandlerFunc { return s.handleBOBookingNotificationsGet }, desc: "config de notificaciones de reserva"},
+	"special_date_stats":    {gates: sectionReadGates(boSectionReservas), handler: func(s *Server) http.HandlerFunc { return s.handleBOSpecialDateStats }, query: map[string]string{"date": "date"}, desc: "estadísticas de una fecha especial"},
+}
+
+// Website reads: config pública del tenant (anuncios, widget, plantillas).
+var websiteReadResources = map[string]domainReadSpec{
+	"widget_settings":   {gates: sectionReadGates(boSectionReservas), handler: func(s *Server) http.HandlerFunc { return s.handleBOWidgetSettingsGet }, desc: "config del widget de reservas"},
+	"ads_list":          {gates: sectionReadGates(boSectionAnuncios), handler: func(s *Server) http.HandlerFunc { return s.handleBOAdsList }, desc: "anuncios/popups configurados"},
+	"premium_website":   {gates: sectionReadGates(boSectionAjustes), handler: func(s *Server) http.HandlerFunc { return s.handleBOPremiumWebsiteGet }, desc: "web premium del tenant"},
+	"website_templates": {gates: sectionReadGates(boSectionAjustes), handler: func(s *Server) http.HandlerFunc { return s.handleBOPremiumWebsiteTemplates }, desc: "catálogo de plantillas web"},
+	"menu_templates":    {gates: sectionReadGates(boSectionAjustes), handler: func(s *Server) http.HandlerFunc { return s.handleBOPremiumWebsiteMenuTemplatesGet }, desc: "plantillas de carta web"},
+}
+
+// Campaigns reads: contenido de plantilla (la audiencia se excluye: muestra PII).
+var campaignsReadResources = map[string]domainReadSpec{
+	"template": {gates: func(s *Server) []func(http.Handler) http.Handler {
+		return []func(http.Handler) http.Handler{s.requireBOSection(boSectionReservas), s.requireBOCapability(boCapabilityCampanas)}
+	}, handler: func(s *Server) http.HandlerFunc { return s.handleBOCampaignTemplate }, desc: "plantilla actual de campaña"},
+}
+
+// Invoices reads: búsqueda de reserva para facturar (datos del propio tenant).
+var invoicesReadResources = map[string]domainReadSpec{
+	"search_reservation": {gates: sectionReadGates(boSectionFacturas), handler: func(s *Server) http.HandlerFunc { return s.handleBOInvoicesSearchReservation }, query: map[string]string{"date_from": "date_from", "date_to": "date_to", "name": "name", "party_size": "party_size", "phone": "phone", "time": "time"}, desc: "buscar reserva para facturar (filtros fecha/nombre/comensales/teléfono/hora)"},
 }
