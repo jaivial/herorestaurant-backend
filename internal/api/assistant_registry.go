@@ -64,6 +64,20 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
+		Name: "campaigns_list", Description: "Estado operativo de las campañas de marketing del restaurante activo: nombre, estado, canales y contadores por canal (enviados, pendientes, pausados, fallidos), sin datos de destinatarios.",
+		Schema: json.RawMessage(`{"type":"object","properties":{"campaign_id":{"type":"integer","description":"ID de campaña concreto (opcional)"}}}`), BackofficeOnly: true, Section: "campanas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.adminReadCampaigns(ctx, rid, input)
+		},
+	},
+	{
+		Name: "whatsapp_connection_get", Description: "Estado de la conexión de WhatsApp del bot del restaurante activo: si el plan lo incluye, si hay instancia provisionada, estado de la conexión y número conectado. Nunca devuelve QR ni códigos de emparejamiento.",
+		Schema: json.RawMessage(`{"type":"object","properties":{}}`), BackofficeOnly: true, Section: "plataforma",
+		Handler: func(s *Server, ctx context.Context, rid int, _ json.RawMessage) (string, error) {
+			return s.adminReadWhatsappConnection(ctx, rid)
+		},
+	},
+	{
 		Name: "tables_list", Description: "Lista los salones (áreas) activos del restaurante activo y sus mesas activas: número, nombre, forma y capacidad.",
 		Schema: json.RawMessage(`{"type":"object","properties":{}}`), BackofficeOnly: true, Section: "reservas",
 		Handler: func(s *Server, ctx context.Context, rid int, _ json.RawMessage) (string, error) {

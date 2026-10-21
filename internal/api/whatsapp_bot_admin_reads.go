@@ -44,6 +44,16 @@ func botToolDefsAdminReads() []botToolDef {
 			Description: "Conteo de reservas por rango de fechas (por defecto desde hoy a 7 días, máximo 31 fechas incluidas): para cada día, reservas activas y comensales, con las canceladas contadas aparte, y totales del rango. Son conteos de reservas, no ocupación física de mesas. ÚSALO cuando el grupo pregunte cómo va la semana o cuántas reservas hay entre dos fechas.",
 			InputSchema: botSchema(`{"type":"object","properties":{"date_from":{"type":"string","description":"Fecha inicio YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto hoy)"},"date_to":{"type":"string","description":"Fecha fin YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto +6 días; máximo 31 fechas incluidas)"}}}`),
 		},
+		{
+			Name:        "list_campaigns",
+			Description: "Estado operativo de las campañas de marketing del restaurante: nombre, estado, canales y contadores por canal (enviados, pendientes, pausados, fallidos), sin datos de destinatarios. ÚSALO cuando el grupo pregunte cómo va una campaña.",
+			InputSchema: botSchema(`{"type":"object","properties":{"campaign_id":{"type":"integer","description":"ID de campaña concreto (opcional; por defecto las 10 más recientes)"}}}`),
+		},
+		{
+			Name:        "get_bot_status",
+			Description: "Estado de la conexión de WhatsApp del bot del restaurante: si el plan lo incluye, si hay instancia provisionada, estado de la conexión y número conectado. ÚSALO cuando el grupo pregunte si el bot está conectado o por qué no responde.",
+			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+		},
 	}
 }
 
@@ -459,4 +469,134 @@ func (s *Server) botToolBookingsSummary(ctx context.Context, restaurantID int, m
 		"total_cancelled": totalCancelled,
 		"note":            "Conteos de reservas por día de la reserva: activas y comensales por un lado; canceladas aparte, sumando el registro de cancelaciones y las marcadas en bookings.",
 	}), nil
+}
+
+// adminReadCampaigns is the shared core behind the WA staff tool and the
+// Forky campaigns_list tool: operational campaign state and per-channel
+// recipient counters only — never recipient targets (PII).
+func (s *Server) adminReadCampaigns(ctx context.Context, restaurantID int, input json.RawMessage) (string, error) {
+	var in struct {
+		CampaignID int `json:"campaign_id"`
+	}
+	_ = json.Unmarshal(input, &in)
+	q := `
+		SELECT id, name, COALESCE(subject,''), status, COALESCE(channels,''),
+		       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS created,
+		       COALESCE(DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i'),'') AS sent
+		FROM campaigns
+		WHERE restaurant_id = ?`
+	args := []any{restaurantID}
+	if in.CampaignID > 0 {
+		q += " AND id = ?"
+		args = append(args, in.CampaignID)
+	}
+	q += " ORDER BY id DESC LIMIT 10"
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return botJSON(map[string]any{"error": "no se pudieron cargar las campañas"}), nil
+	}
+	defer rows.Close()
+	type camp struct {
+		ID       int    `json:"id"`
+		Name     string `json:"name"`
+		Subject  string `json:"subject,omitempty"`
+		Status   string `json:"status"`
+		Channels string `json:"channels"`
+		Created  string `json:"created"`
+		SentAt   string `json:"sent_at,omitempty"`
+	}
+	camps := make([]camp, 0)
+	ids := make([]int, 0)
+	for rows.Next() {
+		var c camp
+		if err := rows.Scan(&c.ID, &c.Name, &c.Subject, &c.Status, &c.Channels, &c.Created, &c.SentAt); err != nil {
+			return botJSON(map[string]any{"error": "no se pudieron leer las campañas"}), nil
+		}
+		camps = append(camps, c)
+		ids = append(ids, c.ID)
+	}
+	// Per-channel status counters, no recipient rows (targets are PII).
+	counts := map[int]map[string]map[string]int{}
+	for _, id := range ids {
+		crows, err := s.db.QueryContext(ctx, `
+			SELECT channel, status, COUNT(*)
+			FROM campaign_recipients
+			WHERE restaurant_id = ? AND campaign_id = ?
+			GROUP BY channel, status
+		`, restaurantID, id)
+		if err != nil {
+			return botJSON(map[string]any{"error": "no se pudieron cargar los contadores"}), nil
+		}
+		byCh := map[string]map[string]int{}
+		for crows.Next() {
+			var ch, st string
+			var n int
+			if err := crows.Scan(&ch, &st, &n); err != nil {
+				crows.Close()
+				return botJSON(map[string]any{"error": "no se pudieron leer los contadores"}), nil
+			}
+			if byCh[ch] == nil {
+				byCh[ch] = map[string]int{}
+			}
+			byCh[ch][st] = n
+		}
+		crows.Close()
+		counts[id] = byCh
+	}
+	out := make([]map[string]any, 0, len(camps))
+	for _, c := range camps {
+		out = append(out, map[string]any{
+			"id": c.ID, "name": c.Name, "subject": c.Subject, "status": c.Status,
+			"channels": c.Channels, "created": c.Created, "sent_at": c.SentAt,
+			"recipients": counts[c.ID],
+		})
+	}
+	return botJSON(map[string]any{"count": len(out), "campaigns": out}), nil
+}
+
+// adminReadWhatsappConnection is the shared core behind the WA staff tool and
+// the Forky whatsapp_connection_get tool. Operational state ONLY: it never
+// returns QR payloads, pair codes, sessions, tokens or headers — the raw
+// provider payload carries those and is deliberately not reused here.
+func (s *Server) adminReadWhatsappConnection(ctx context.Context, restaurantID int) (string, error) {
+	entitled, err := s.hasActiveRecurringFeature(ctx, restaurantID, boPremiumWhatsAppFeatureKey)
+	if err != nil {
+		return botJSON(map[string]any{"error": "no se pudo comprobar el plan"}), nil
+	}
+	if !entitled {
+		return botJSON(map[string]any{"entitled": false, "connected": false, "message": "El plan no incluye el bot de WhatsApp"}), nil
+	}
+	rec, found, err := s.loadRestaurantUAZAPIInstance(ctx, restaurantID)
+	if err != nil {
+		return botJSON(map[string]any{"error": "no se pudo cargar la instancia"}), nil
+	}
+	if !found {
+		return botJSON(map[string]any{"entitled": true, "provisioned": false, "connected": false, "message": "No hay una instancia de WhatsApp provisionada"}), nil
+	}
+	status := normalizeUAZAPIConnectionStatus(rec.Status)
+	if !rec.IsActive {
+		status = "disconnected"
+	}
+	return botJSON(map[string]any{
+		"entitled":        true,
+		"provisioned":     true,
+		"status":          status,
+		"connected":       isUAZAPIConnected(status),
+		"connected_phone": emptyStringToNil(rec.ConnectedPhone),
+		"updated_at":      emptyStringToNil(rec.UpdatedAt),
+	}), nil
+}
+
+func (s *Server) botToolListCampaigns(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
+	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
+		return botJSON(map[string]any{"error": "no autorizado"}), nil
+	}
+	return s.adminReadCampaigns(ctx, restaurantID, input)
+}
+
+func (s *Server) botToolGetBotStatus(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
+	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
+		return botJSON(map[string]any{"error": "no autorizado"}), nil
+	}
+	return s.adminReadWhatsappConnection(ctx, restaurantID)
 }
