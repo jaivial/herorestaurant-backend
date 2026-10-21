@@ -412,6 +412,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 	toolDefs := assistantToolDefs()
 	toolMsgs := append([]assistantChatMessage{}, hist...)
 	var final strings.Builder
+	var lastRoundHadError bool
 	for turn := 0; turn < 6; turn++ {
 		result, callErr := c.s.assistantCall(ctx, restaurantID, prompt, toolMsgs, toolDefs, nil)
 		if callErr != nil {
@@ -441,6 +442,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 		}
 		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: blocks})
 		results := make([]map[string]any, 0, len(result.ToolUses))
+		lastRoundHadError = false
 		for _, use := range result.ToolUses {
 			// Live trace for the chat (ThinkingState rows): the tool name only, never the
 			// input (it can carry customer data). [FORKY-ADMIN-TOOLS-S01]
@@ -453,9 +455,26 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 			if toolErr != nil {
 				out = botJSON(map[string]any{"error": toolErr.Error()})
 			}
+			if toolErr != nil || strings.Contains(out, "\"error\"") {
+				lastRoundHadError = true
+			}
 			results = append(results, map[string]any{"type": "tool_result", "tool_use_id": use.ID, "content": out})
 		}
 		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "user", Content: results})
+	}
+	// If the turn budget ran out with the model only requesting tools, nothing
+	// was streamed and the client would re-enable the box into silence. Close
+	// with an honest message instead: budget exhaustion vs tool failure get
+	// different wording, and neither claims missing permissions (a 403 may be
+	// plan/capability, not the user role). Only fires when nothing useful was
+	// streamed, so it never duplicates or overrides real content.
+	if final.Len() == 0 {
+		msg := "No he podido completar eso en los pasos disponibles. Prueba con una peticion mas concreta o dame un poco mas de contexto."
+		if lastRoundHadError {
+			msg = "No he podido completarlo: una de las consultas necesarias no esta disponible ahora mismo. Prueba con otra cosa o dame un poco mas de contexto."
+		}
+		final.WriteString(msg)
+		_ = c.writeJSON(map[string]any{"type": "delta", "text": msg})
 	}
 	// Never persist an unusable reply: it would come back as history on the next
 	// turn and prime the model to produce more of the same. Dropping it keeps
