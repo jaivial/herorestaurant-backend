@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Coordination id: wa_bot_admin_reads_v1
@@ -687,7 +688,12 @@ func (s *Server) adminReadLegalPages(ctx context.Context, restaurantID int, inpu
 		}
 		truncated := false
 		if len(html) > 4000 {
-			html = html[:4000]
+			// Byte cap without splitting a multi-byte rune at the edge.
+			cut := 4000
+			for cut > 0 && !utf8.RuneStart(html[cut]) {
+				cut--
+			}
+			html = html[:cut]
 			truncated = true
 		}
 		return botJSON(map[string]any{
@@ -722,13 +728,15 @@ func (s *Server) adminReadLegalPages(ctx context.Context, restaurantID int, inpu
 // carry long untrusted text). Pages are reached only through sites already
 // scoped to the active restaurant, so no cross-tenant draft can leak.
 func (s *Server) adminReadSiteBuilderDrafts(ctx context.Context, restaurantID int) (string, error) {
+	// LIMIT+1 and pop: the extra row PROVES truncation instead of guessing it
+	// from len == LIMIT (which is also true when the total is exactly LIMIT).
 	srows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, COALESCE(subdomain, ''), COALESCE(custom_domain, ''), COALESCE(status, ''),
 		       COALESCE(DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ'), '')
 		FROM site_builder_sites
 		WHERE restaurant_id = ?
 		ORDER BY updated_at DESC
-		LIMIT 10
+		LIMIT 11
 	`, restaurantID)
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudieron cargar los sitios"}), nil
@@ -744,6 +752,11 @@ func (s *Server) adminReadSiteBuilderDrafts(ctx context.Context, restaurantID in
 		sites = append(sites, sr)
 	}
 	srows.Close()
+	sitesTruncated := false
+	if len(sites) > 10 {
+		sites = sites[:10]
+		sitesTruncated = true
+	}
 	out := make([]map[string]any, 0, len(sites))
 	for _, sr := range sites {
 		prows, err := s.db.QueryContext(ctx, `
@@ -752,7 +765,7 @@ func (s *Server) adminReadSiteBuilderDrafts(ctx context.Context, restaurantID in
 			FROM site_builder_pages
 			WHERE site_id = ?
 			ORDER BY is_home DESC, name ASC
-			LIMIT 20
+			LIMIT 21
 		`, sr.id)
 		if err != nil {
 			return botJSON(map[string]any{"error": "no se pudieron cargar las páginas"}), nil
@@ -768,10 +781,17 @@ func (s *Server) adminReadSiteBuilderDrafts(ctx context.Context, restaurantID in
 			pages = append(pages, map[string]any{"id": pid, "slug": slug, "name": name, "page_type": ptype, "is_home": home != 0, "updated_at": upd})
 		}
 		prows.Close()
+		pagesTruncated := false
+		if len(pages) > 20 {
+			pages = pages[:20]
+			pagesTruncated = true
+		}
 		out = append(out, map[string]any{
 			"id": sr.id, "name": sr.name, "subdomain": sr.sub, "custom_domain": sr.dom,
-			"status": sr.status, "updated_at": sr.upd, "pages": pages,
+			"status": sr.status, "updated_at": sr.upd,
+			"returned_pages": len(pages), "pages_truncated": pagesTruncated, "pages": pages,
 		})
 	}
-	return botJSON(map[string]any{"count": len(out), "tz": "UTC", "sites": out}), nil
+	// Counts are RETURNED rows, never totals: truncation flags carry the rest.
+	return botJSON(map[string]any{"returned_sites": len(out), "sites_truncated": sitesTruncated, "tz": "UTC", "sites": out}), nil
 }
