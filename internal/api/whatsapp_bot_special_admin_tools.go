@@ -1027,10 +1027,11 @@ func botSpecialLockRefs(ctx context.Context, tx *sql.Tx, rid int, date string) e
 }
 
 func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWebhookMessage, p botSpecialProposalRow) (string, error) {
-	// The proposals of the backoffice operations and of the control plane
-	// carry their own payload; the rest carry the booking arguments.
+	// The proposals of the backoffice operations, of the WS-only menu
+	// operations and of the control plane carry their own payload; the rest
+	// carry the booking arguments.
 	var args botSpecialProposalArgs
-	if p.Op != "backoffice" && p.Op != "access" {
+	if p.Op != "backoffice" && p.Op != "access" && p.Op != "menu_ws" {
 		if json.Unmarshal([]byte(p.Args), &args) != nil {
 			return "", errors.New("propuesta ilegible")
 		}
@@ -1062,6 +1063,16 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 			return "", errors.New("error interno")
 		}
 		return s.botBackofficeExecute(ctx, rid, msg, p)
+	}
+	// Coordination id: wa_bot_menu_ws_v1: the WS-only menu operations write
+	// through the server's own helpers (outside this claim's transaction), so
+	// the claim is committed FIRST — exactly like the backoffice replay: the
+	// code is consumed once and a failure leaves nothing live to retry.
+	if p.Op == "menu_ws" {
+		if err := tx.Commit(); err != nil {
+			return "", errors.New("error interno")
+		}
+		return s.botMenuWSExecute(ctx, rid, msg, p)
 	}
 	// Coordination id: wa_bot_privileged_control_v1: the control plane writes
 	// the tenant config, so the claim and the write commit together.

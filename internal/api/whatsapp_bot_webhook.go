@@ -665,6 +665,12 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		// (the verified phone of a current member of the authorized group) on
 		// every call.
 		botTools = append(botTools, botToolDefsBackoffice()...)
+		// Coordination id: wa_bot_menu_ws_v1: the four WS-only menu
+		// operations (beverage_set/create/delete, weekday_set) have no REST
+		// twin in the catalogue, so they are advertised as their own
+		// propose->OK tools; every call re-proves the actor with the same
+		// boundary as the rest of the surface.
+		botTools = append(botTools, botToolDefsMenuWS()...)
 		tools = botMergeToolDefs(botTools, botForkyToolDefs())
 		normalExec := exec
 		// A name the bot defines belongs to the bot, even when forky also has

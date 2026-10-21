@@ -213,6 +213,11 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolManageBackoffice(ctx, restaurantID, msg, input)
 	case "manage_bot_access":
 		return s.botToolManageBotAccess(ctx, restaurantID, msg, input)
+	// Coordination id: wa_bot_menu_ws_v1 - the four WS-only menu operations
+	// (no REST twin): one shared propose handler, the same actor gate and the
+	// same propose->OK chain as the backoffice surface.
+	case "beverage_set", "beverage_create", "beverage_delete", "weekday_set":
+		return s.botToolMenuWSPropose(ctx, restaurantID, msg, name, input)
 	case "create_special_booking":
 		return s.botToolCreateSpecialBooking(ctx, restaurantID, msg, tenant, input)
 	case "modify_special_booking":
