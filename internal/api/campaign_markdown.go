@@ -204,6 +204,31 @@ func campaignUnsubscribeFooterHTML(unsubscribeURL string, theme campaignTheme) s
 `, htmlEscape(unsubscribeURL), campaignUnsubscribeEmailTestID, campaignUnsubscribeEmailCoordID, theme.Text, theme.Text, theme.FontFamily, campaignUnsubscribeCopy)
 }
 
+// campaignIdentityFooterHTML renders the sender-identification line required in
+// commercial email footers (LSSI art. 10). The approved line comes from config
+// (platform_settings.campaign_email_identity_line); when unset it falls back to
+// the restaurant record (brand, postal address, contact email), dropping any
+// part that is not configured instead of inventing it.
+func campaignIdentityFooterHTML(identityLine, brandName, address, email string) string {
+	if v := strings.TrimSpace(identityLine); v != "" {
+		return fmt.Sprintf(`<p style="margin:0 0 8px;font-size:12px;color:#666;text-align:center;">%s</p>`, htmlEscape(v))
+	}
+	parts := make([]string, 0, 3)
+	if v := strings.TrimSpace(brandName); v != "" {
+		parts = append(parts, htmlEscape(v))
+	}
+	if v := strings.TrimSpace(address); v != "" {
+		parts = append(parts, htmlEscape(v))
+	}
+	if v := strings.TrimSpace(email); v != "" {
+		parts = append(parts, htmlEscape(v))
+	}
+	if len(parts) < 2 {
+		return ""
+	}
+	return fmt.Sprintf(`<p style="margin:0 0 8px;font-size:12px;color:#666;text-align:center;">%s</p>`, strings.Join(parts, " · "))
+}
+
 // campaignWebsiteButtonHTML renders the centred call-to-action that opens the
 // restaurant website. It sits below the campaign body and just above the footer,
 // and is dropped entirely when the restaurant has no website configured.
@@ -280,14 +305,14 @@ func renderCampaignInline(line string, theme campaignTheme) string {
 // email-safe HTML document using the campaign theme. It never appends the
 // opt-out footer; the send path uses renderCampaignEmailHTMLWithUnsubscribe.
 func renderCampaignEmailHTML(markdown string, theme campaignTheme, brandName, logoURL, websiteURL string) string {
-	return renderCampaignEmailHTMLWithUnsubscribe(markdown, theme, brandName, logoURL, websiteURL, "")
+	return renderCampaignEmailHTMLWithUnsubscribe(markdown, theme, brandName, logoURL, websiteURL, "", "", "", "")
 }
 
 // renderCampaignEmailHTMLWithUnsubscribe behaves like renderCampaignEmailHTML
 // and, when unsubscribeURL is not empty, appends the opt-out footer button.
 // websiteURL adds the restaurant website button, below the body and above the
 // footer; an empty URL renders no button at all.
-func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme, brandName, logoURL, websiteURL, unsubscribeURL string) string {
+func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme, brandName, logoURL, websiteURL, unsubscribeURL, identityLine, identityAddress, identityEmail string) string {
 	theme = normalizeCampaignTheme(theme)
 	var b strings.Builder
 	inList := false
@@ -336,7 +361,7 @@ func renderCampaignEmailHTMLWithUnsubscribe(markdown string, theme campaignTheme
 	}
 	closeList()
 
-	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, b.String(), websiteURL, unsubscribeURL)
+	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, b.String(), websiteURL, unsubscribeURL, identityLine, identityAddress, identityEmail)
 }
 
 // campaignEmailBodyPlaceholder marks where the rendered markdown goes when the
@@ -349,17 +374,18 @@ const campaignEmailBodyPlaceholder = "{{CAMPAIGN_BODY}}"
 // exact markup. It adds no opt-out footer; the send path uses
 // campaignEmailShellWithUnsubscribe.
 func campaignEmailShell(theme campaignTheme, brandName, logoURL, bodyHTML, websiteURL string) string {
-	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, bodyHTML, websiteURL, "")
+	return campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, bodyHTML, websiteURL, "", "", "", "")
 }
 
 // campaignEmailShellWithUnsubscribe behaves like campaignEmailShell and adds the
 // restaurant website button (below the body, just above the footer) when
 // websiteURL is not empty plus the opt-out footer when unsubscribeURL is not
 // empty.
-func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, bodyHTML, websiteURL, unsubscribeURL string) string {
+func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, bodyHTML, websiteURL, unsubscribeURL, identityLine, identityAddress, identityEmail string) string {
 	theme = normalizeCampaignTheme(theme)
 	webButton := campaignWebsiteButtonHTML(websiteURL, theme)
 	unsubFooter := campaignUnsubscribeFooterHTML(unsubscribeURL, theme)
+	identityFooter := campaignIdentityFooterHTML(identityLine, brandName, identityAddress, identityEmail)
 	// Header band of the booking confirmation template. It is always rendered so
 	// campaigns keep that chrome; without a logo the brand name takes its place
 	// instead of leaving an empty accent strip.
@@ -396,7 +422,7 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 %s
 %s
 <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
-<p style="font-size:12px;color:#666;text-align:center;">Este es un email automatico, por favor no responda a este mensaje.<br>&copy; %s. Todos los derechos reservados.</p>
+%s<p style="font-size:12px;color:#666;text-align:center;">Este es un email automatico, por favor no responda a este mensaje.<br>&copy; %s. Todos los derechos reservados.</p>
 </td>
 </tr>
 </table>
@@ -413,6 +439,7 @@ func campaignEmailShellWithUnsubscribe(theme campaignTheme, brandName, logoURL, 
 		bodyHTML,
 		webButton,
 		unsubFooter,
+		identityFooter,
 		htmlEscape(brandName),
 	)
 }

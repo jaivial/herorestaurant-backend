@@ -520,7 +520,7 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 		"unsubscribe_url": unsubscribeURL,
 		// The editor renders the markdown locally and drops it in this exact
 		// shell, so the preview matches the delivered email byte for byte.
-		"shell":            campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, campaignEmailBodyPlaceholder, websiteURL, unsubscribeURL),
+		"shell":            campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, campaignEmailBodyPlaceholder, websiteURL, unsubscribeURL, "", "", ""),
 		"body_placeholder": campaignEmailBodyPlaceholder,
 	})
 }
@@ -544,7 +544,7 @@ func (s *Server) handleBOCampaignPreview(w http.ResponseWriter, r *http.Request)
 	unsubscribeURL := campaignUnsubscribePreviewURL(siteURL)
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success":  true,
-		"html":     renderCampaignEmailHTMLWithUnsubscribe(in.BodyMarkdown, in.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL),
+		"html":     renderCampaignEmailHTMLWithUnsubscribe(in.BodyMarkdown, in.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL, s.campaignEmailIdentityLine(r.Context(), a.ActiveRestaurantID), branding.Address, branding.Email),
 		"whatsapp": renderCampaignWhatsAppTextWithUnsubscribe(in.BodyMarkdown, branding.BrandName, siteURL, unsubscribeURL),
 	})
 }
@@ -932,11 +932,26 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	fromName := firstNonEmpty(branding.EmailFromName, branding.BrandName, "Restaurante")
 	fromAddr := resolveEmailFromAddr(branding, cfg)
 	subject := firstNonEmpty(c.Subject, c.Name)
-	html := renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL)
+	html := renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL, s.campaignEmailIdentityLine(ctx, restaurantID), branding.Address, branding.Email)
 	return sendViaConfig(ctx, cfg, fromName, fromAddr, target.Target, subject, html)
 }
 
 // handleBOCampaignSend materializes the audience then drains it in background.
+
+// campaignEmailIdentityLine returns the operator-approved sender-identification
+// line for campaign email footers (LSSI art. 10). It is configuration, not
+// contact data: it is only ever set from an explicitly approved text. The key
+// is scoped per restaurant (campaign_email_identity_line.r<ID>) so one
+// tenant's identity can never leak into another tenant's campaigns. Empty
+// when not configured; the renderer then falls back to the restaurant record.
+func (s *Server) campaignEmailIdentityLine(ctx context.Context, restaurantID int) string {
+	var v string
+	if err := s.db.QueryRowContext(ctx, `SELECT setting_value FROM platform_settings WHERE setting_key = CONCAT('campaign_email_identity_line.r', ?)`, restaurantID).Scan(&v); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
+}
+
 func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
