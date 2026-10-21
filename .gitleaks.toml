@@ -17,4 +17,10 @@ regexes = [
   '''0123456789abcdefghijklmnop''',
   '''0987654321fedcba987654321''',
   '''sk-ant-minimax-1234567890''',
+  # FALSE POSITIVE of the built-in `vault-service-token` rule (case-insensitive
+  # `s.` + 24 alphanumerics): Go method references on the Server receiver such
+  # as `s.handleBOGroupMenusV2List` match that legacy Vault token shape. The
+  # pattern requires an UPPERCASE letter right after `handle`, and real legacy
+  # Vault tokens are lowercase-only, so no genuine token is exempted.
+  '''s\.handle[A-Z][A-Za-z0-9]*''',
 ]
