@@ -689,24 +689,29 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 }
 
 // campaignLedgerByTarget indexes the already-materialized recipients of a
-// campaign (key = channel|campaignCanonicalTarget) so the audience preview and
-// the send handler can tell "new pending eligible" from "already in the
-// ledger" with the exact same normalization the insert path uses.
-func (s *Server) campaignLedgerByTarget(ctx context.Context, campaignID int64) map[string]bool {
+// campaign (key = channel|campaignCanonicalTarget) so the audience preview can
+// tell "new pending eligible" from "already in the ledger" with the exact same
+// normalization the insert path uses. Fail-closed by design: any read error is
+// propagated instead of returning an empty map, so the preview can never
+// report an inflated "new" count because the ledger could not be read.
+func (s *Server) campaignLedgerByTarget(ctx context.Context, campaignID int64) (map[string]bool, error) {
 	ledger := map[string]bool{}
 	rows, err := s.db.QueryContext(ctx, `SELECT channel, target FROM campaign_recipients WHERE campaign_id = ?`, campaignID)
 	if err != nil {
-		return ledger
+		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var channel, target string
-		if rows.Scan(&channel, &target) != nil {
-			continue
+		if err := rows.Scan(&channel, &target); err != nil {
+			return nil, err
 		}
 		ledger[channel+"|"+campaignCanonicalTarget(channel, target)] = true
 	}
-	return ledger
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ledger, nil
 }
 
 func (s *Server) handleBOCampaignAudience(w http.ResponseWriter, r *http.Request) {
@@ -744,7 +749,15 @@ func (s *Server) handleBOCampaignAudience(w http.ResponseWriter, r *http.Request
 			whats++
 		}
 	}
-	ledger := s.campaignLedgerByTarget(r.Context(), c.ID)
+	ledger, err := s.campaignLedgerByTarget(r.Context(), c.ID)
+	if err != nil {
+		// Fail-closed honest preview: without the ledger the "new" split is
+		// unknowable, so the request fails instead of ever reporting an
+		// inflated "new" caused by a failed read.
+		slog.Default().Warn("campaign.audience.ledger_read_failed", "coord_id", c.CoordID, "campaign_id", c.ID, "err", err.Error())
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error comprobando el ledger de destinatarios"})
+		return
+	}
 	newEmails, newWhats, already, newTargets := 0, 0, 0, []campaignTarget{}
 	for _, t := range targets {
 		if ledger[t.Channel+"|"+campaignCanonicalTarget(t.Channel, t.Target)] {
@@ -1260,14 +1273,23 @@ func (s *Server) handleBOCampaignResume(w http.ResponseWriter, r *http.Request) 
 	rows.Close()
 	requeued, skipped := 0, 0
 	for _, p := range paused {
+		// Exact counters: RowsAffected, not err == nil — a concurrent update
+		// can leave the statement succeeding on zero rows, and the reported
+		// statistics must count only what the DB actually changed.
 		if sup.blocked(p.channel, p.target) {
-			if _, err := s.db.ExecContext(r.Context(), `UPDATE campaign_recipients SET status = 'skipped', error = 'baja comprobada al reanudar' WHERE id = ? AND status = 'paused'`, p.id); err == nil {
-				skipped++
+			res, err := s.db.ExecContext(r.Context(), `UPDATE campaign_recipients SET status = 'skipped', error = 'baja comprobada al reanudar' WHERE id = ? AND status = 'paused'`, p.id)
+			if err == nil {
+				if n, _ := res.RowsAffected(); n > 0 {
+					skipped++
+				}
 			}
 			continue
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE campaign_recipients SET status = 'pending', error = NULL WHERE id = ? AND status = 'paused'`, p.id); err == nil {
-			requeued++
+		res, err := s.db.ExecContext(r.Context(), `UPDATE campaign_recipients SET status = 'pending', error = NULL WHERE id = ? AND status = 'paused'`, p.id)
+		if err == nil {
+			if n, _ := res.RowsAffected(); n > 0 {
+				requeued++
+			}
 		}
 	}
 	campaignBounceFor(c.ID).reset()
