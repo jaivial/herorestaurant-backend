@@ -355,14 +355,19 @@ func (s *Server) botToolBookingsSummary(ctx context.Context, restaurantID int, m
 	}
 	// Cancelled storage is mixed: panel/bot cancellation MOVES the row to
 	// cancelled_bookings (DELETE from bookings), while other flows only mark
-	// status in bookings. Count both sources for the reservation day; a moved
-	// row no longer exists in bookings, so the two sources cannot double-count
-	// the same booking.
+	// status in bookings. Count both sources for the reservation day. The
+	// NOT EXISTS guard keeps a booking that (by migration or a partial move)
+	// exists in BOTH tables marked-cancelled from being counted twice; the
+	// cancelled_bookings log wins for that id.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d') AS d,
 		       SUM(CASE WHEN LOWER(TRIM(status)) IN ('cancelled','cancelada','canceled') THEN 0 ELSE 1 END),
 		       COALESCE(SUM(CASE WHEN LOWER(TRIM(status)) IN ('cancelled','cancelada','canceled') THEN 0 ELSE party_size END),0),
-		       SUM(CASE WHEN LOWER(TRIM(status)) IN ('cancelled','cancelada','canceled') THEN 1 ELSE 0 END)
+		       SUM(CASE WHEN LOWER(TRIM(status)) IN ('cancelled','cancelada','canceled')
+		                AND NOT EXISTS (SELECT 1 FROM cancelled_bookings cb
+		                                WHERE cb.restaurant_id = bookings.restaurant_id
+		                                  AND cb.booking_id = bookings.id)
+		                THEN 1 ELSE 0 END)
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date >= ? AND reservation_date <= ?
 		GROUP BY reservation_date
