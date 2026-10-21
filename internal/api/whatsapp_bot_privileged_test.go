@@ -23,13 +23,25 @@ func TestBotForkyToolDefs(t *testing.T) {
 		t.Fatal("botForkyToolDefs() returned an empty list")
 	}
 	registry := assistantToolDefs()
-	if len(defs) != len(registry) {
-		t.Errorf("converted %d defs, registry has %d", len(defs), len(registry))
+	// The conversion drops EXACTLY the documented exclusions
+	// (botForkyExcludedFromWA, §11.3 de docs/wa-customtools-matrix.md): every
+	// other registry tool reaches the bot list, and no excluded one leaks.
+	want := 0
+	for _, d := range registry {
+		if _, excluded := botForkyExcludedFromWA[d.Name]; !excluded {
+			want++
+		}
+	}
+	if len(defs) != want {
+		t.Errorf("converted %d defs, want %d (registry has %d)", len(defs), want, len(registry))
 	}
 	seen := map[string]bool{}
 	for _, d := range defs {
 		if d.Name == "" {
 			t.Error("converted def with empty name")
+		}
+		if _, excluded := botForkyExcludedFromWA[d.Name]; excluded {
+			t.Errorf("excluded tool %q reached the bot defs", d.Name)
 		}
 		if seen[d.Name] {
 			t.Errorf("duplicate tool name %q", d.Name)
