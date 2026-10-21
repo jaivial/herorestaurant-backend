@@ -261,7 +261,7 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 			amount, payment_method, account_image_url, invoice_date, payment_date,
 			status, is_reservation, reservation_id, reservation_date,
 			reservation_customer_name, reservation_party_size, pdf_url,
-			subtotal, iva_rate, iva_amount, total,
+			currency, subtotal, iva_rate, iva_amount, total,
 			created_at, updated_at
 	` + baseWhere + orderBy + " LIMIT ? OFFSET ?"
 	queryArgs := append(append([]any{}, args...), params.Limit, offset)
@@ -286,6 +286,7 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 			&inv.Amount, &inv.PaymentMethod, &inv.AccountImageURL, &inv.InvoiceDate, &inv.PaymentDate,
 			&inv.Status, &inv.IsReservation, &inv.ReservationID, &inv.ReservationDate,
 			&inv.ReservationCustomerName, &inv.ReservationPartySize, &inv.PdfURL,
+			&inv.Currency,
 			&subtotal, &ivaRate, &ivaAmount, &totalF,
 			&inv.CreatedAt, &inv.UpdatedAt,
 		)
@@ -342,7 +343,7 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 			amount, payment_method, account_image_url, invoice_date, payment_date,
 			status, is_reservation, reservation_id, reservation_date,
 			reservation_customer_name, reservation_party_size, pdf_url,
-			subtotal, iva_rate, iva_amount, total,
+			currency, subtotal, iva_rate, iva_amount, total,
 			created_at, updated_at
 		FROM invoices
 		WHERE id = ? AND restaurant_id = ?
@@ -354,6 +355,7 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 		&inv.Amount, &inv.PaymentMethod, &inv.AccountImageURL, &inv.InvoiceDate, &inv.PaymentDate,
 		&inv.Status, &inv.IsReservation, &inv.ReservationID, &inv.ReservationDate,
 		&inv.ReservationCustomerName, &inv.ReservationPartySize, &inv.PdfURL,
+		&inv.Currency,
 		&getSubtotal, &getIvaRate, &getIvaAmount, &getTotal,
 		&inv.CreatedAt, &inv.UpdatedAt,
 	)
