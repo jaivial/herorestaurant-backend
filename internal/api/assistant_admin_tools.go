@@ -148,10 +148,65 @@ func forkyFold(v string) string {
 	return r.Replace(strings.ToLower(v))
 }
 
+// forkyAdminAliasGroups: Spanish/English synonym groups for catalog discovery.
+// The ops index mixes English names (admin_get_pos_cash_days_current) with
+// Spanish descriptions, so a bare substring match is nearly blind in one of
+// the two languages ("caja" found 0 of the 13 cash ops). Query-side expansion
+// only: the generated ops map is not touched, and a word matches when ANY of
+// its aliases appears in the op haystack. Keep groups small and domain-real:
+// an over-broad alias turns discovery into noise.
+var forkyAdminAliasGroups = [][]string{
+	{"caja", "cash"},
+	{"caduc", "expir", "vencim", "shelf"},
+	{"almacen", "warehouse"},
+	{"turno", "shift"},
+	{"miembro", "member", "staff", "equipo", "personal", "team"},
+	{"cierre", "closure", "close"},
+	{"articulo", "item"},
+	{"reserva", "booking"},
+	{"factura", "invoice"},
+	{"campana", "campaign"},
+	{"anuncio", "ads"},
+	{"carta", "menu"},
+	{"horario", "schedule"},
+	{"fichaje", "clock"},
+	{"mesa", "table"},
+	{"pedido", "order"},
+	{"cocina", "kitchen"},
+	{"precio", "price"},
+	{"cliente", "customer"},
+	{"usuario", "user"},
+	{"informe", "report"},
+}
+
+var forkyAdminAliases = func() map[string][]string {
+	m := map[string][]string{}
+	for _, g := range forkyAdminAliasGroups {
+		for _, w := range g {
+			m[w] = g
+		}
+	}
+	return m
+}()
+
 func forkyAdminMatch(op forkyAdminOp, q string) bool {
 	hay := forkyFold(op.Name + " " + op.Path + " " + op.Description + " " + op.Section + " " + strings.Join(op.Screens, " "))
 	for _, w := range strings.Fields(forkyFold(q)) {
-		if len(w) >= 3 && !strings.Contains(hay, w) {
+		if len(w) < 3 {
+			continue
+		}
+		candidates := forkyAdminAliases[w]
+		if candidates == nil {
+			candidates = []string{w}
+		}
+		ok := false
+		for _, c := range candidates {
+			if strings.Contains(hay, c) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
 			return false
 		}
 	}
