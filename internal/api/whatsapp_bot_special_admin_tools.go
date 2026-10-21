@@ -227,6 +227,11 @@ func botSpecialAdminToolDefs() []botToolDef {
 			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"extra_id":{"type":"integer"}},"required":["extra_id"]}`),
 		},
 		{
+			Name:        "booking_propose_notif_settings",
+			Description: "PROPONE activar o desactivar el WhatsApp de confirmación de reserva del restaurante (las próximas reservas creadas lo reciben o no; los emails de confirmación no cambian; la reconfirmación programada no se toca). NO lo aplica: guarda una propuesta exacta y envía al grupo una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Pide siempre confirmación del usuario antes de proponer.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"send_confirmation":{"type":"boolean"}},"required":["send_confirmation"]}`),
+		},
+		{
 			Name:        "booking_propose_create",
 			Description: "PROPONE crear una reserva NORMAL nueva (sin menú de grupo, arroces, extras ni fecha especial: esas se crean desde el panel). NO la crea: guarda una propuesta exacta y envía al grupo una vista previa con un código; se crea cuando la misma persona escribe 'OK' y ese código en el mismo chat. Pide antes fecha, hora, comensales, nombre y teléfono (no los inventes). Rechaza fechas pasadas, días cerrados y fechas especiales. Si ya existe una reserva con los mismos datos (fecha, hora, teléfono y comensales), lo dice y solo sigue si el usuario confirma expresamente el duplicado con allow_duplicate_of. No avisa al cliente ni emite avisos externos.",
 			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"date":{"type":"string","description":"YYYY-MM-DD"},"time":{"type":"string","description":"HH:MM"},"party_size":{"type":"integer"},"customer_name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string","description":"Prefijo sin + (por defecto 34)"},"contact_email":{"type":"string"},"commentary":{"type":"string"},"children":{"type":"integer"},"baby_strollers":{"type":"integer"},"high_chairs":{"type":"integer"},"preferred_floor_number":{"type":"integer"},"allow_duplicate_of":{"type":"integer","description":"Solo para confirmar expresamente un duplicado legítimo: booking_id de la reserva existente igual"}},"required":["date","time","party_size","customer_name","contact_phone"]}`),
@@ -1006,6 +1011,9 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	if p.Op == "catalog_extra_delete" {
 		return s.botCatalogExtraDeleteExecute(ctx, tx, rid, msg, p)
 	}
+	if p.Op == "notif_settings" {
+		return s.botNotifSettingsExecute(ctx, tx, rid, msg, p)
+	}
 	if p.Op == "create" {
 		return s.botCreateExecute(ctx, tx, rid, msg, p)
 	}
@@ -1642,7 +1650,7 @@ func botCreateAfterKey(rid int, b boNormalizedBooking, allowDup int64) string {
 		"name": b.CustomerName, "phone": b.ContactPhone, "cc": b.ContactPhoneCountryCode,
 		"email": b.ContactEmail, "commentary": b.Commentary.String, "commentary_set": b.Commentary.Valid,
 		"strollers": b.BabyStrollers, "chairs": b.HighChairs,
-		"floor": nullableInt64OrNil(b.PreferredFloorNumber),
+		"floor":        nullableInt64OrNil(b.PreferredFloorNumber),
 		"special_menu": false, "arroz": nil, "extras": nil, "group_menu": nil, "special_json": nil,
 		"allow_duplicate_of": allowDup,
 	}))
