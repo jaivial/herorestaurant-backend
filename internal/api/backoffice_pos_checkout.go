@@ -84,6 +84,10 @@ func (s *Server) preparePOSTicketStock(ctx context.Context, tx *sql.Tx, restaura
 		}
 		lines = append(lines, line)
 	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, false, err
+	}
 	rows.Close()
 	snapshots := []posStockSnapshot{}
 	partial := false
@@ -771,6 +775,11 @@ func (s *Server) handleBOPOSRefund(w http.ResponseWriter, r *http.Request) {
 				_ = snapshotStatus
 				_ = current
 			}
+			if err = rows.Err(); err != nil {
+				rows.Close()
+				httpx.WriteError(w, 500, "Error reading stock return")
+				return
+			}
 			rows.Close()
 		}
 	}
@@ -911,6 +920,10 @@ func (s *Server) handleBOPOSCoversReport(w http.ResponseWriter, r *http.Request)
 	}
 	if _, err := time.Parse("2006-01-02", to); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "to invalido (YYYY-MM-DD)")
+		return
+	}
+	if from > to {
+		httpx.WriteError(w, http.StatusBadRequest, "from no puede ser posterior a to")
 		return
 	}
 	rows, err := s.db.QueryContext(r.Context(), `SELECT ck.service_date,ck.service_type,ck.pos_covers,ck.adjustments,COALESCE(a.covers,0),COALESCE(a.source,'') FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END) pos_covers,COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND c.service_type=v.service_type),0) adjustments FROM pos_visits v WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date,v.service_type) ck LEFT JOIN stock_affluence_daily a ON a.restaurant_id=? AND a.service_date=ck.service_date AND a.service_type=ck.service_type ORDER BY ck.service_date DESC,ck.service_type`, a.ActiveRestaurantID, from, to, a.ActiveRestaurantID)

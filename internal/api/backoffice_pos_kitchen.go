@@ -75,6 +75,10 @@ func (s *Server) handleBOPOSKitchenStationsList(w http.ResponseWriter, r *http.R
 		}
 		items = append(items, map[string]any{"id": id, "name": name, "sortOrder": order, "isActive": active != 0})
 	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading kitchen stations")
+		return
+	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
 }
 
@@ -137,6 +141,10 @@ func (s *Server) handleBOPOSKitchenRoutesList(w http.ResponseWriter, r *http.Req
 			return
 		}
 		items = append(items, map[string]any{"id": id, "stationId": station, "stationName": stationName, "productId": stockNullableDBInt(product), "categoryId": stockNullableDBInt(category), "productName": productName, "categoryName": categoryName, "priority": priority, "isActive": active != 0})
+	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading kitchen routes")
+		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
 }
@@ -248,6 +256,11 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 			return
 		}
 		lines = append(lines, line)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		httpx.WriteError(w, 500, "Error reading kitchen lines")
+		return
 	}
 	rows.Close()
 	if len(lines) == 0 {

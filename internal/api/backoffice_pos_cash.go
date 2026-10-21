@@ -304,7 +304,7 @@ func (s *Server) handleBOPOSCashMovements(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusNotFound, "Shift not found")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by,created_at,COALESCE(approved_by,'') FROM pos_cash_movements WHERE restaurant_id=? AND shift_id=? ORDER BY created_at DESC,id DESC LIMIT 500`, a.ActiveRestaurantID, shiftID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by,created_at,COALESCE(approved_by,'') FROM pos_cash_movements WHERE restaurant_id=? AND shift_id=? ORDER BY created_at DESC,id DESC LIMIT 501`, a.ActiveRestaurantID, shiftID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash movements")
 		return
@@ -325,7 +325,11 @@ func (s *Server) handleBOPOSCashMovements(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reading cash movements")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "shiftId": shiftID, "items": items, "returned": len(items), "truncated": len(items) == 500})
+	truncated := len(items) > 500
+	if truncated {
+		items = items[:500]
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "shiftId": shiftID, "items": items, "returned": len(items), "truncated": truncated})
 }
 
 func (s *Server) handleBOPOSCashMovementCreate(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +416,7 @@ func (s *Server) handleBOPOSCashClosures(w http.ResponseWriter, r *http.Request)
 		where += " AND shift_id=?"
 		args = append(args, requested)
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,shift_id,terminal_key,closure_type,generated_at,opening_cash_cents,sales_gross_cents,refunds_cents,tips_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,covers,note,created_by FROM pos_cash_closures WHERE `+where+` ORDER BY generated_at DESC,id DESC LIMIT 200`, args...)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,shift_id,terminal_key,closure_type,generated_at,opening_cash_cents,sales_gross_cents,refunds_cents,tips_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,covers,note,created_by FROM pos_cash_closures WHERE `+where+` ORDER BY generated_at DESC,id DESC LIMIT 201`, args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash closures")
 		return
@@ -432,7 +436,15 @@ func (s *Server) handleBOPOSCashClosures(w http.ResponseWriter, r *http.Request)
 		}
 		items = append(items, map[string]any{"id": id, "shiftId": shiftID, "terminalKey": terminal, "closureType": kind, "generatedAt": generated, "openingCashCents": opening, "salesGrossCents": gross, "refundsCents": refunds, "tipsCents": tips, "expectedCashCents": expected, "countedCashCents": nullableInt64(counted), "differenceCents": nullableInt64(difference), "ticketCount": count, "covers": covers, "note": posCashNullableString(note), "createdBy": createdBy})
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": items})
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error reading cash closures")
+		return
+	}
+	truncated := len(items) > 200
+	if truncated {
+		items = items[:200]
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": items, "returned": len(items), "truncated": truncated})
 }
 
 func (s *Server) handleBOPOSCashClosureCreate(w http.ResponseWriter, r *http.Request) {
