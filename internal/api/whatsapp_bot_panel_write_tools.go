@@ -112,7 +112,11 @@ func botPanelChangeToolDefs() []botToolDef {
 		{
 			Name: "panel_change",
 			Description: "PROPONE un cambio del panel de administración (una operación del backoffice) para aplicarlo desde el chat. NO lo aplica: guarda la propuesta exacta y envía la vista previa con un código; solo se aplica cuando la persona que lo pidió escribe 'OK <código>' en este chat. " +
-				"operation: nombre de la operación tal cual aparece en admin_catalog, o una operación directa (beverage_set, beverage_create, beverage_delete, weekday_set, booking_document_delete) para lo que no tiene ruta REST. " +
+				"operation: nombre de la operación tal cual aparece en admin_catalog, o una operación directa para lo que no tiene ruta REST: " +
+				"beverage_set {menu_id, option_id, selected} | beverage_create {name} | beverage_delete {option_id} | weekday_set {menu_id, weekday, available} | " +
+				"booking_document_delete {id} | editor_preview_set {menu_id, user_id, open} | table_position_set {id, floor_number, x_pos, y_pos, date?, scope?} | ad_schedule_check {ad_id, starts_at, ends_at} | " +
+				"media_upload {kind: booking_document|special_section|vino|ads, data_base64, filename, mime_type, ...ids} | media_ai {kind: vino|vino_cutout|comida|section_dish|menu_preview|slider|ads_enhance|ads_generate, target_id..., data_base64?, prompt?} | " +
+				"site_builder_call {type: sites.*|pages.*|components.list|publish.*|domains.*, payload} | assistant_tool {name, input}. " +
 				"path_params, query y body: los mismos argumentos que indica admin_describe; params: solo para operaciones directas. " +
 				"Las lecturas NO van por aquí: usa admin_call o staff_domain_read.",
 			InputSchema: botSchema(`{"type":"object","properties":{

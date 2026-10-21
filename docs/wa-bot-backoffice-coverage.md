@@ -42,12 +42,23 @@ herramientas propias + registro forky + `admin_catalog/admin_describe/admin_call
    gestión de cuentas, sin rebindeo de sesión).
 
 2. **Mutaciones WS sin gemelo REST** (no existían en ninguna ruta HTTP, así que
-   ni `admin_call` ni el mapa podían alcanzarlas):
+   ni `admin_call` ni el mapa podían alcanzarlas) → **operaciones directas** de
+   `panel_change`, reutilizando la función de dominio que usa cada handler WS:
    `beverage_set`, `beverage_create`, `beverage_delete`, `weekday_set`,
-   `booking_document_delete` → **operaciones directas** de `panel_change`,
-   reutilizando la función de dominio que usa cada handler WS.
+   `booking_document_delete`, `editor_preview_set`, `table_position_set`,
+   `ad_schedule_check`, `site_builder_call`, `assistant_tool`.
 
-3. **Lecturas excluidas sin herramienta dedicada**: los miembros de
+3. **Media (subidas y generación AI)** (`wa_bot_panel_media_v1`): el replay de
+   `panel_change` solo envía JSON, así que el multipart era inalcanzable →
+   operaciones directas parametrizadas **`media_upload`** (kinds:
+   `booking_document`, `special_section`, `vino`, `ads`) y **`media_ai`**
+   (kinds: `vino`, `vino_cutout`, `comida`, `section_dish`, `menu_preview`,
+   `slider`, `ads_enhance`, `ads_generate`), reutilizando las funciones de
+   dominio reales. Casos con persistencia inline en el handler (logo, avatar,
+   texturas, factura, step image) quedan documentados como pendientes de
+   extracción.
+
+4. **Lecturas excluidas sin herramienta dedicada**: los miembros de
    `botForkyExcludedFromWA` que no tenían equivalente en WhatsApp
    (`pos_read`, `stock_read`, `members_read`, `fichaje_read`, `sheets_read`,
    `menus_read`, `reservas_read`, `website_read`, `campaigns_read`,
@@ -57,15 +68,23 @@ herramientas propias + registro forky + `admin_catalog/admin_describe/admin_call
    del asistente (con sus gates de ruta exactos) limitada a conversaciones
    autorizadas con prueba de pertenencia fresca.
 
+5. **Mapa de operaciones incompleto**: `forky_admin_ops.json` solo cubría
+   `server.go` (558 ops) y perdía los sub-routers `/website-builder/*` (27),
+   `/site-builder/*` (29), `/instatic/*` (5) y 16 rutas JSON → generador
+   `cmd/forky-admin-map` extendido y mapa regenerado: **635 operaciones**, todo
+   `admin_call`/`panel_change` alcanza el 100% de las rutas request/response
+   del panel.
+
 ## Fuera de alcance (por diseño, documentado)
 
 - Auth/sesión (`/login`, `/logout`, `/me/*`, `/active-restaurant`), gestión de
   cuentas (`/users`, `/roles`, `/platform/users*`) y operaciones superadmin de
   plataforma: el bot gestiona el restaurante, no las cuentas del panel.
-- Subidas de media (imágenes/documentos por WS: `bookingDocumentUpload`,
-  `special_section_image_upload`, imágenes AI): el canal del chat es texto +
-  extracción de documentos adjuntos.
+- El turno conversacional del asistente vía WS (`assistant_ws:message`): loop
+  LLM sin vista previa exacta posible; sus efectos deterministas van por
+  `assistant_tool`/`panel_change`.
+- 25 rutas multipart con persistencia inline en el handler (logo de marca,
+  avatar, texturas de mesa, imagen de factura, step image de ficha): pendientes
+  de extraer su función de dominio.
 - Suscripciones WS (streams de eventos en tiempo real): el bot no se suscribe;
-  el equivalente son lecturas bajo demanda (`admin_call`,
-  `staff_domain_read`).
-- `editor_preview_set` (preferencia de UI por usuario de sesión).
+  el equivalente son lecturas bajo demanda (`admin_call`, `staff_domain_read`).
