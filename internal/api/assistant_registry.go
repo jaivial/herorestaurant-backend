@@ -50,6 +50,27 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
+		Name: "cancelled_bookings_list", Description: "Lista las reservas CANCELADAS del restaurante activo para una fecha (por defecto hoy): número de reserva, cliente, teléfono, personas, hora, cuándo se canceló y quién la canceló.",
+		Schema: json.RawMessage(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto hoy)"}}}`), BackofficeOnly: true, Section: "reservas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.adminReadCancelledBookings(ctx, rid, input)
+		},
+	},
+	{
+		Name: "special_dates_list", Description: "Lista las fechas especiales activas del restaurante activo desde hoy en adelante (Navidad, Nochevieja...): título, si tiene pre-reserva, máximo por mesa y los menús vinculados con su adelanto y precio.",
+		Schema: json.RawMessage(`{"type":"object","properties":{}}`), BackofficeOnly: true, Section: "reservas",
+		Handler: func(s *Server, ctx context.Context, rid int, _ json.RawMessage) (string, error) {
+			return s.adminReadSpecialDates(ctx, rid)
+		},
+	},
+	{
+		Name: "tables_list", Description: "Lista los salones (áreas) activos del restaurante activo y sus mesas activas: número, nombre, forma y capacidad.",
+		Schema: json.RawMessage(`{"type":"object","properties":{}}`), BackofficeOnly: true, Section: "reservas",
+		Handler: func(s *Server, ctx context.Context, rid int, _ json.RawMessage) (string, error) {
+			return s.adminReadTables(ctx, rid)
+		},
+	},
+	{
 		Name: "restaurant_query", Description: "Consulta datos agregados seguros del restaurante activo. resource: bookings, menus o wines.",
 		Schema: json.RawMessage(`{"type":"object","properties":{"resource":{"type":"string","enum":["bookings","menus","wines"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["resource"]}`), Section: "reservas",
 		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {

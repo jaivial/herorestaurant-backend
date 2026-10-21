@@ -91,6 +91,18 @@ func (s *Server) botGroupIsPrivileged(jid string, tenant botTenantConfig) bool {
 	return false
 }
 
+// botForkyExcludedFromWA lists forky tools that must NOT reach the WhatsApp
+// bot, neither in the catalog (botForkyToolDefs) nor via the execution router
+// (wa_bot_forky_excluded_v1). They exist only for authenticated panel/MCP
+// sessions: their data goes through dedicated WA staff tools with the fresh
+// member gate (botSpecialAdminAuthorize), and the synthetic root context of
+// the privileged path must not become a bypass for that gate.
+var botForkyExcludedFromWA = map[string]struct{}{
+	"cancelled_bookings_list": {},
+	"special_dates_list":      {},
+	"tables_list":             {},
+}
+
 // botForkyToolDefs converts the full assistant (forky) tool registry into the
 // bot's tool-list shape. Original names are kept: the privileged executor
 // router distinguishes forky tools by assistantToolLookup(name), which is
@@ -99,6 +111,9 @@ func botForkyToolDefs() []botToolDef {
 	defs := assistantToolDefs()
 	out := make([]botToolDef, 0, len(defs))
 	for _, d := range defs {
+		if _, excluded := botForkyExcludedFromWA[d.Name]; excluded {
+			continue
+		}
 		out = append(out, botToolDef{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema})
 	}
 	return out

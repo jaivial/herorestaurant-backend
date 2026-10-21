@@ -685,6 +685,15 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			}
 			if _, ok := assistantToolLookup(name); ok {
 				if _, mine := botOwned[name]; !mine {
+					// Enforcement mirror of the catalog filter
+					// (wa_bot_forky_excluded_v1): these forky reads stay
+					// panel/MCP-only; the WA staff path uses the dedicated
+					// gated tools instead. Refused even if a merged tool list
+					// ever exposes the name to the model.
+					if _, excluded := botForkyExcludedFromWA[name]; excluded {
+						log.Printf("[bot] checkpoint wa_bot_forky_excluded_v1 restaurant_id=%d tool=%s", restaurantID, name)
+						return botJSON(map[string]any{"error": "esa consulta del panel no está disponible en este chat. Usa la herramienta dedicada del bot equivalente si existe; si no, debe consultarse en el panel de administración."}), nil
+					}
 					// A forky write tool the bot does not own is a generic panel
 					// mutation whose confirmation token the model redeems itself:
 					// refused in the server (wa_bot_admin_write_denied_v1). Reads and

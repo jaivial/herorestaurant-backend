@@ -51,6 +51,12 @@ func (s *Server) botToolListCancelledBookings(ctx context.Context, restaurantID 
 	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
 		return botJSON(map[string]any{"error": "no autorizado"}), nil
 	}
+	return s.adminReadCancelledBookings(ctx, restaurantID, input)
+}
+
+// adminReadCancelledBookings is the shared core behind the WA staff tool and
+// the Forky cancelled_bookings_list tool (same args and output).
+func (s *Server) adminReadCancelledBookings(ctx context.Context, restaurantID int, input json.RawMessage) (string, error) {
 	var in struct {
 		Date string `json:"date"`
 	}
@@ -114,6 +120,12 @@ func (s *Server) botToolListTables(ctx context.Context, restaurantID int, msg bo
 	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
 		return botJSON(map[string]any{"error": "no autorizado"}), nil
 	}
+	return s.adminReadTables(ctx, restaurantID)
+}
+
+// adminReadTables is the shared core behind the WA staff tool and the Forky
+// tables_list tool (same output).
+func (s *Server) adminReadTables(ctx context.Context, restaurantID int) (string, error) {
 	areaRows, err := s.db.QueryContext(ctx, `
 		SELECT id, name FROM restaurant_areas
 		WHERE restaurant_id = ? AND is_active = 1
@@ -178,6 +190,12 @@ func (s *Server) botToolListSpecialDates(ctx context.Context, restaurantID int, 
 	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
 		return botJSON(map[string]any{"error": "no autorizado"}), nil
 	}
+	return s.adminReadSpecialDates(ctx, restaurantID)
+}
+
+// adminReadSpecialDates is the shared core behind the WA staff tool and the
+// Forky special_dates_list tool (same output).
+func (s *Server) adminReadSpecialDates(ctx context.Context, restaurantID int) (string, error) {
 	today := botTodayISO()
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, DATE_FORMAT(date, '%Y-%m-%d') AS d, title, prereserva_enabled,
