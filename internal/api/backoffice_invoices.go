@@ -1133,7 +1133,6 @@ func (s *Server) handleBOInvoiceSendWhatsApp(w http.ResponseWriter, r *http.Requ
 			// concurrent request's inflight state can never be overwritten.
 			pdfURL := attempt.PdfURL
 			if pdfURL == "" {
-				var pdfBytes []byte
 				if b, pdfErr := s.generateInvoicePDF(r.Context(), inv, info, branding); pdfErr != nil {
 					log.Printf("[invoice-wa] PDF generation failed for #%d: %v", inv.ID, pdfErr)
 				} else if len(b) > 0 && s.bunnyConfigured(r.Context(), inv.RestaurantID) {
