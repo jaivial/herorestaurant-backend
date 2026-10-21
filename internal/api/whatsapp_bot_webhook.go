@@ -626,6 +626,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	}
 	// Coordination id: wa_bot_privileged_group_v1 - privileged group prompt block.
 	promptData.PrivilegedGroup = msg.PrivilegedGroup
+	promptData.SpecialAdminTools = botSpecialAdminToolsAllowed(restaurantID, msg)
 	// Document understanding is privileged-only: the inline document is
 	// extracted BEFORE the loop and appended to the last user message so the
 	// model reads the file content as part of the request. On any failure the
