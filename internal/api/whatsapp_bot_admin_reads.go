@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -40,8 +41,8 @@ func botToolDefsAdminReads() []botToolDef {
 		},
 		{
 			Name:        "bookings_summary",
-			Description: "Resumen de ocupación por rango de fechas (por defecto desde hoy a 7 días, máximo 31 días): para cada día, reservas activas y comensales, con las canceladas contadas aparte, y totales del rango. ÚSALO cuando el grupo pregunte cómo va la semana o qué ocupación hay entre dos fechas.",
-			InputSchema: botSchema(`{"type":"object","properties":{"date_from":{"type":"string","description":"Fecha inicio YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto hoy)"},"date_to":{"type":"string","description":"Fecha fin YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto +6 días; máximo 31 días de rango)"}}}`),
+			Description: "Conteo de reservas por rango de fechas (por defecto desde hoy a 7 días, máximo 31 fechas incluidas): para cada día, reservas activas y comensales, con las canceladas contadas aparte, y totales del rango. Son conteos de reservas, no ocupación física de mesas. ÚSALO cuando el grupo pregunte cómo va la semana o cuántas reservas hay entre dos fechas.",
+			InputSchema: botSchema(`{"type":"object","properties":{"date_from":{"type":"string","description":"Fecha inicio YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto hoy)"},"date_to":{"type":"string","description":"Fecha fin YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto +6 días; máximo 31 fechas incluidas)"}}}`),
 		},
 	}
 }
@@ -349,24 +350,50 @@ func (s *Server) botToolBookingsSummary(ctx context.Context, restaurantID int, m
 	if toT.Before(fromT) {
 		return botJSON(map[string]any{"error": "date_to no puede ser anterior a date_from"}), nil
 	}
-	if toT.Sub(fromT) > 31*24*time.Hour {
-		return botJSON(map[string]any{"error": "rango máximo 31 días"}), nil
+	if toT.Sub(fromT) > 30*24*time.Hour {
+		return botJSON(map[string]any{"error": "rango máximo 31 fechas incluidas"}), nil
 	}
+	// Cancelled storage is mixed: panel/bot cancellation MOVES the row to
+	// cancelled_bookings (DELETE from bookings), while other flows only mark
+	// status in bookings. Count both sources for the reservation day; a moved
+	// row no longer exists in bookings, so the two sources cannot double-count
+	// the same booking.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT reservation_date,
-		       SUM(CASE WHEN status IN ('cancelled','canceled') THEN 0 ELSE 1 END),
-		       COALESCE(SUM(CASE WHEN status IN ('cancelled','canceled') THEN 0 ELSE party_size END),0),
-		       SUM(CASE WHEN status IN ('cancelled','canceled') THEN 1 ELSE 0 END)
+		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d') AS d,
+		       SUM(CASE WHEN LOWER(TRIM(status)) IN ('cancelled','cancelada','canceled') THEN 0 ELSE 1 END),
+		       COALESCE(SUM(CASE WHEN LOWER(TRIM(status)) IN ('cancelled','cancelada','canceled') THEN 0 ELSE party_size END),0),
+		       SUM(CASE WHEN LOWER(TRIM(status)) IN ('cancelled','cancelada','canceled') THEN 1 ELSE 0 END)
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date >= ? AND reservation_date <= ?
 		GROUP BY reservation_date
 		ORDER BY reservation_date
-		LIMIT 32
+		LIMIT 31
 	`, restaurantID, fromISO, toISO)
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo cargar el resumen"}), nil
 	}
 	defer rows.Close()
+	cancelRows, err := s.db.QueryContext(ctx, `
+		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d') AS d, COUNT(*)
+		FROM cancelled_bookings
+		WHERE restaurant_id = ? AND reservation_date >= ? AND reservation_date <= ?
+		GROUP BY reservation_date
+		ORDER BY reservation_date
+		LIMIT 31
+	`, restaurantID, fromISO, toISO)
+	if err != nil {
+		return botJSON(map[string]any{"error": "no se pudo cargar el resumen"}), nil
+	}
+	defer cancelRows.Close()
+	cancelledByDay := map[string]int{}
+	for cancelRows.Next() {
+		var d string
+		var n int
+		if err := cancelRows.Scan(&d, &n); err != nil {
+			return botJSON(map[string]any{"error": "no se pudo leer el resumen"}), nil
+		}
+		cancelledByDay[d] = n
+	}
 	type day struct {
 		Date      string `json:"date"`
 		DateES    string `json:"date_es"`
@@ -382,11 +409,24 @@ func (s *Server) botToolBookingsSummary(ctx context.Context, restaurantID int, m
 		if err := rows.Scan(&d, &n, &p, &c); err != nil {
 			return botJSON(map[string]any{"error": "no se pudo leer el resumen"}), nil
 		}
+		c += cancelledByDay[d]
 		days = append(days, day{Date: d, DateES: botFormatISODateES(d), Bookings: n, Diners: p, Cancelled: c})
 		totalBookings += n
 		totalDiners += p
 		totalCancelled += c
 	}
+	seen := map[string]bool{}
+	for _, dy := range days {
+		seen[dy.Date] = true
+	}
+	for d, n := range cancelledByDay {
+		if seen[d] {
+			continue
+		}
+		days = append(days, day{Date: d, DateES: botFormatISODateES(d), Cancelled: n})
+		totalCancelled += n
+	}
+	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
 	return botJSON(map[string]any{
 		"date_from":       fromISO,
 		"date_to":         toISO,
@@ -394,6 +434,6 @@ func (s *Server) botToolBookingsSummary(ctx context.Context, restaurantID int, m
 		"total_bookings":  totalBookings,
 		"total_diners":    totalDiners,
 		"total_cancelled": totalCancelled,
-		"note":            "Reservas activas y comensales por un lado; canceladas contadas aparte.",
+		"note":            "Conteos de reservas por día de la reserva: activas y comensales por un lado; canceladas aparte, sumando el registro de cancelaciones y las marcadas en bookings.",
 	}), nil
 }
