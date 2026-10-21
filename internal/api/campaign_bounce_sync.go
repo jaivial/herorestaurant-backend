@@ -46,10 +46,9 @@ var (
 	campaignNDRActionRe = regexp.MustCompile(`(?im)^action:\s*([a-z]+)`)
 	campaignNDRDiagRe   = regexp.MustCompile(`(?im)^diagnostic-code:\s*(.+)$`)
 	campaignNDRMsgIDRe  = regexp.MustCompile(`(?im)^message-id:\s*(<[^>\r\n]+>)`)
-	campaignNDRFinalRe  = regexp.MustCompile(`(?im)^final-recipient:\s*rfc822;\s*<?([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})`)
-	campaignNDROrigRe   = regexp.MustCompile(`(?im)^original-recipient:\s*rfc822;\s*<?([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})`)
+	campaignNDRFinalRe  = regexp.MustCompile(`(?im)^(?:final|original)-recipient:\s*rfc822;\s*<?([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})`)
 	campaignNDRLooseRe  = regexp.MustCompile(`\b([45]\.\d{1,3}\.\d{1,3})\b`)
-	campaignHardTextRe  = regexp.MustCompile(`(?i)user unknown|unknown user|no such user|does not exist|mailbox not found|invalid recipient|recipient address rejected|address rejected|no mailbox here|account (?:is )?disabled|unrouteable address`)
+	campaignHardTextRe  = regexp.MustCompile(`(?i)user unknown|unknown user|no such user|does not exist|mailbox not found|mailbox unavailable|invalid recipient|recipient address rejected|address rejected|no mailbox here|account (?:is )?disabled|unrouteable address`)
 )
 
 // campaignClassifyBounce decides the class of one notice. Conservative: only
@@ -120,12 +119,7 @@ func campaignParseNDR(raw, ownMailbox string) []campaignBounceEvent {
 	}
 	out := []campaignBounceEvent{}
 	seen := map[string]bool{}
-	// Segment per Final-Recipient only: Original-Recipient sits right after it in
-	// the same DSN block and used to cut the segment before Status/Diagnostic.
 	idx := campaignNDRFinalRe.FindAllStringSubmatchIndex(raw, 12)
-	if len(idx) == 0 {
-		idx = campaignNDROrigRe.FindAllStringSubmatchIndex(raw, 12)
-	}
 	for i, loc := range idx {
 		addr := strings.ToLower(raw[loc[2]:loc[3]])
 		if addr == own || len(addr) > 190 || seen[addr] || strings.HasPrefix(addr, "mailer-daemon@") || strings.HasPrefix(addr, "postmaster@") {

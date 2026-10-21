@@ -119,14 +119,25 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	s.instatic = newInstaticManager(db, cfg)
 	s.instatic.StartSupervisor()
 	s.siteBuilderHub = newSiteBuilderWSHub()
-	go s.runBOFichajeAutoCutLoop()
-	go s.runCampaignBounceLoop(context.Background()) // camp_bounce_sync_v1
-	go s.runPreShiftReminderLoop(context.Background())
-	go s.runStockDigestLoop(context.Background())
-	go s.runBookingReminderLoop(context.Background())
-	go s.runWhatsAppOutboxLoop(context.Background())
-	go s.runWhatsAppWatchdogLoop(context.Background()) // wa_connection_watchdog_v1
-	go s.runBotPipelineDemoLoop(context.Background())  // wa_bot_dspy_compiled_v4
+	// bo_dev_workers_gate_v1: a dev clone serving a copied production-like DB
+	// (e.g. an offline desktop migration) must not start background workers:
+	// they write audit/failure rows and can attempt external sends against
+	// copied customer data. Fail closed: any non-empty value other than an
+	// explicit "0" disables the loops (a typo can never enable them); unset or
+	// empty keeps the production default UNCHANGED. The raw value is never
+	// logged: it may be a misconfiguration or a secret.
+	if v := strings.TrimSpace(os.Getenv("BO_DISABLE_BACKGROUND_WORKERS")); v != "" && v != "0" {
+		log.Printf("[workers] background loops disabled by BO_DISABLE_BACKGROUND_WORKERS (dev mode): fichaje, campaign-bounce, pre-shift, stock, booking-reminder, wa-outbox, wa-watchdog, bot-pipeline-demo not started")
+	} else {
+		go s.runBOFichajeAutoCutLoop()
+		go s.runCampaignBounceLoop(context.Background()) // camp_bounce_sync_v1
+		go s.runPreShiftReminderLoop(context.Background())
+		go s.runStockDigestLoop(context.Background())
+		go s.runBookingReminderLoop(context.Background())
+		go s.runWhatsAppOutboxLoop(context.Background())
+		go s.runWhatsAppWatchdogLoop(context.Background()) // wa_connection_watchdog_v1
+		go s.runBotPipelineDemoLoop(context.Background())  // wa_bot_dspy_compiled_v4
+	}
 	return s
 }
 
@@ -1018,6 +1029,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, facturasGate).Put("/invoices/{id}", s.handleBOInvoiceUpdate)
 		r.With(s.requireBOSession, facturasGate).Delete("/invoices/{id}", s.handleBOInvoiceDelete)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/send", s.handleBOInvoiceSend)
+		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/send-whatsapp", s.handleBOInvoiceSendWhatsApp)
+		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/send-whatsapp/attempt", s.handleBOInvoiceWhatsAppAttempt)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/pdf", s.handleBOInvoicePdf)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/upload-image", s.handleBOInvoiceUploadImage)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/search-reservation", s.handleBOInvoicesSearchReservation)
