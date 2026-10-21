@@ -21,9 +21,6 @@ func assistantCatalogResources() map[string]struct{ table, idCol, name, desc, pr
 		"pos_products": {"pos_products", "id", "name", "description", "price_gross_cents", "is_active", ""},
 		"stock_items":  {"stock_items", "id", "name", "description", "", "is_active", "image_url"},
 		"members":      {"restaurant_members", "id", "first_name", "email", "", "is_active", "photo_url"},
-		// POSTRES has no description/price columns of its own: DESCRIPCION is
-		// the name and doubles as the description slot.
-		"postres": {"POSTRES", "NUM", "DESCRIPCION", "DESCRIPCION", "", "active", "foto_url"},
 	}
 	out := map[string]struct{ table, idCol, name, desc, price, softDelete, foto string }{}
 	for k, v := range m {
@@ -66,6 +63,14 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 	// by the legacy num, so it cannot go through the generic statements below.
 	if strings.ToLower(in.Resource) == "vinos" {
 		return s.assistantVinoCatalogTool(ctx, rid, name, raw)
+	}
+	// Postres cannot use the generic statements either: it has no price
+	// column and its name doubles as its description, and the shared
+	// resource map is also the dispatch for catalog_create/update/delete, so
+	// registering it there would enable writes with no granted scope. It
+	// goes through a read-only typed path instead.
+	if strings.ToLower(in.Resource) == "postres" {
+		return s.assistantPostresCatalogTool(ctx, rid, name, raw)
 	}
 	spec, ok := assistantCatalogResources()[strings.ToLower(in.Resource)]
 	if !ok {
@@ -179,6 +184,74 @@ func (s *Server) assistantCatalogTool(ctx context.Context, rid int, name string,
 		}
 		n, _ := res.RowsAffected()
 		return botJSON(map[string]any{"deleted": n == 1}), nil
+	}
+	return "", fmt.Errorf("tool no soportada")
+}
+
+// assistantPostresCatalogTool serves the "postres" resource of the catalog
+// tools as READ-ONLY (list/get only). POSTRES is a plain table with a numeric
+// id, but it has no price column and DESCRIPCION doubles as name and
+// description, so the generic CRUD statements do not fit it (the INSERT would
+// name the same column twice). More importantly, the generic resource map is
+// shared by catalog_create/update/delete: registering postres there would
+// have enabled writes with no granted write scope. Unknown tool names fail
+// closed.
+func (s *Server) assistantPostresCatalogTool(ctx context.Context, rid int, name string, raw json.RawMessage) (string, error) {
+	if rid <= 0 || s.db == nil {
+		return "", fmt.Errorf("restaurante activo no disponible")
+	}
+	var in struct {
+		Search string
+		ID     int
+		Limit  int
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return "", err
+	}
+	switch name {
+	case "catalog_list":
+		limit := in.Limit
+		if limit < 1 || limit > 100 {
+			limit = 50
+		}
+		q := "SELECT NUM,DESCRIPCION,foto_url FROM POSTRES WHERE restaurant_id=?"
+		args := []any{rid}
+		if in.Search != "" {
+			q += " AND DESCRIPCION LIKE ?"
+			args = append(args, "%"+in.Search+"%")
+		}
+		q += " ORDER BY NUM DESC LIMIT " + strconv.Itoa(limit)
+		rows, e := s.db.QueryContext(ctx, q, args...)
+		if e != nil {
+			return "", e
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var id int
+			var n string // DESCRIPCION is NOT NULL in the POSTRES schema
+			var f sql.NullString
+			if e = rows.Scan(&id, &n, &f); e != nil {
+				return "", e
+			}
+			var fv any
+			if f.Valid {
+				fv = f.String
+			}
+			out = append(out, map[string]any{"id": id, "name": n, "description": n, "price": nil, "foto": fv})
+		}
+		return botJSON(map[string]any{"resource": "postres", "items": out}), rows.Err()
+	case "catalog_get":
+		var id int
+		var n string
+		e := s.db.QueryRowContext(ctx, "SELECT NUM,DESCRIPCION FROM POSTRES WHERE restaurant_id=? AND NUM=?", rid, in.ID).Scan(&id, &n)
+		if e != nil {
+			return "", e
+		}
+		return botJSON(map[string]any{"id": id, "name": n, "description": n, "price": nil}), nil
+	case "catalog_create", "catalog_update", "catalog_delete":
+		// Explicit read-only enforcement: postres has no granted write scope.
+		return "", fmt.Errorf("postres es un recurso de solo lectura")
 	}
 	return "", fmt.Errorf("tool no soportada")
 }
