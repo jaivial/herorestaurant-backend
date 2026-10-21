@@ -174,6 +174,9 @@ func (s *Server) assistantDomainRead(ctx context.Context, tool string, resources
 		if in.SectionID == "" {
 			return botJSON(map[string]any{"error": fmt.Sprintf("el recurso %s requiere section_id", in.Resource)}), nil
 		}
+		if call.URLParam == nil {
+			call.URLParam = map[string]string{}
+		}
 		call.URLParam[spec.urlParam2] = in.SectionID
 	}
 	body, code, err := s.assistantCallHandler(ctx, gatedDomainHandler(s, spec), call)
@@ -326,7 +329,7 @@ var sheetsReadResources = map[string]domainReadSpec{
 	"allergens":      {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetAllergensGet }, urlParam: "id", desc: "alérgenos de una ficha"},
 	"usage":          {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetUsage }, urlParam: "id", desc: "dónde se usa una ficha"},
 	"steps":          {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetStepsList }, urlParam: "id", desc: "pasos de elaboración"},
-	"step_image_job": {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetStepImageJobGet }, urlParam: "stepId", desc: "estado del job de imagen de un paso"},
+	"step_image_job": {gates: stockReadGates(stockPermissionSheetsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOTechnicalSheetStepImageJobGet }, urlParam: "stepId", desc: "estado del job de imagen de un paso (id = stepId del paso)"},
 }
 
 // Menu reads: conteos, config de carta y menús de grupo del tenant. Los GETs

@@ -379,7 +379,7 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
-		Name: "sheets_read", Description: "Fichas técnicas del restaurante activo: list (category_id, q, status), get/cost/components/allergens/usage/steps (id), step_image_job (id=job).",
+		Name: "sheets_read", Description: "Fichas técnicas del restaurante activo: list (category_id, q, status), get/cost/components/allergens/usage/steps (id), step_image_job (id=stepId del paso).",
 		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"category_id":{"type":"string"},"q":{"type":"string"},"status":{"type":"string"}}}`), BackofficeOnly: true, Section: "comida",
 		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
 			return s.assistantDomainRead(ctx, "sheets_read", sheetsReadResources, input)
