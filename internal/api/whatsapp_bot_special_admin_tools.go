@@ -15,6 +15,8 @@ import (
 	"math/big"
 	"os"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -167,6 +169,16 @@ func botSpecialAdminToolDefs() []botToolDef {
 			Name:        "booking_propose_reschedule",
 			Description: "PROPONE cambiar la fecha, la hora y/o los comensales de una reserva NORMAL (sin menú de grupo, sin arroces, no de fecha especial; para esas usa special_booking_propose_reschedule o el panel). NO lo aplica: guarda una propuesta exacta, envía al grupo una vista previa con un código y se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Solo cambia fecha, hora, comensales (y niños/movilidad si dependen de ellos), actualiza ocupación e historial y no avisa al cliente.",
 			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string","description":"Nueva fecha YYYY-MM-DD"},"time":{"type":"string","description":"Nueva hora HH:MM"},"party_size":{"type":"integer","description":"Nuevo número de comensales"}},"required":["booking_id"]}`),
+		},
+		{
+			Name:        "booking_propose_cancel",
+			Description: "PROPONE cancelar una reserva (normal o de fecha especial) por su booking_id. NO la cancela: guarda una propuesta exacta y envía al grupo una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Al aplicarse la reserva se archiva en Canceladas y se libera la ocupación. No avisa al cliente. Pide siempre el booking_id y confirma con el usuario cuál es antes de proponer.",
+			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer"}},"required":["booking_id"]}`),
+		},
+		{
+			Name:        "booking_propose_restore",
+			Description: "PROPONE restaurar una reserva que cancelaste con booking_propose_cancel, tal como estaba (mismo id, todos los datos, menú especial y abonos incluidos; no usa la reactivación del panel, que pierde datos). NO la restaura: envía al grupo una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Solo vale para reservas canceladas por el bot con copia completa guardada. No avisa al cliente.",
+			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer"}},"required":["booking_id"]}`),
 		},
 	}
 }
@@ -595,6 +607,12 @@ func (s *Server) botToolSpecialPropose(ctx context.Context, rid int, msg botWebh
 		}
 		args = botSpecialProposalArgs{Menus: in.Menus, NewDate: in.Date, NewTime: in.Time, NewParty: in.PartySize}
 	}
+	if op == "cancel" {
+		return s.botCancelPropose(ctx, rid, msg, actor, origin, in.BookingID)
+	}
+	if op == "restore" {
+		return s.botRestorePropose(ctx, rid, msg, actor, origin, in.BookingID)
+	}
 	row, err := s.botLoadSpecialRow(ctx, rid, in.BookingID)
 	if op == "reschedule_normal" {
 		if err != nil {
@@ -660,6 +678,14 @@ func (s *Server) botToolSpecialPropose(ctx context.Context, rid int, msg botWebh
 		preview = fmt.Sprintf("Propuesta (reserva #%d, %s, %d comensales): cambiar menús. Antes: %s. Después: %s. Total: %s -> %s. Abonos registrados se conservan (%s).",
 			in.BookingID, row.Date, row.Party, botSpecialDiffMenus(snap), botSpecialDiffMenus(after), botEUR(bTotals["total_eur"].(float64)), botEUR(aTotals["total_eur"].(float64)), botEUR(aTotals["abonado_eur"].(float64)))
 	}
+	return s.botProposalPersist(ctx, rid, msg, op, in.BookingID, args, actor, origin, beforeHash, afterHash, preview, code)
+}
+
+// botProposalPersist stores a proposal, supersedes the previous one for the
+// booking, sends the preview + code straight to the origin chat and activates
+// it only after the gateway accepted the send. Shared by every op.
+func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhookMessage, op string, bookingID int64, args botSpecialProposalArgs, actor, origin, beforeHash, afterHash, preview, code string) (string, error) {
+	in := struct{ BookingID int64 }{bookingID}
 	argsJSON, _ := json.Marshal(args)
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -871,6 +897,9 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	if n, _ := res.RowsAffected(); n != 1 {
 		return "", errors.New("la propuesta ya no está vigente")
 	}
+	if p.Op == "restore" {
+		return s.botRestoreExecute(ctx, tx, rid, msg, p)
+	}
 	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, botSpecialRowSelect+" FOR UPDATE", rid, p.BookingID))
 	if err != nil {
 		return "", errors.New("la reserva ya no existe")
@@ -879,7 +908,7 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 		if row.Special {
 			return "", errors.New("la reserva ahora es de fecha especial; pide una propuesta nueva")
 		}
-	} else if !row.Special {
+	} else if p.Op != "cancel" && !row.Special {
 		return "", errors.New("la reserva ya no es una reserva especial")
 	}
 	// Version check over the WHOLE row (every column), not a subset.
@@ -889,6 +918,9 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	}
 	if full != p.Before {
 		return stale(errBotSpecialStale.Error())
+	}
+	if p.Op == "cancel" {
+		return s.botCancelExecute(ctx, tx, rid, msg, p, row)
 	}
 	preOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, botSpecialColumnsFor(p.Op)...)
 	if err != nil {
@@ -1134,4 +1166,380 @@ func (s *Server) botNormalRescheduleGuard(ctx context.Context, rid int, cur map[
 		return errors.New("la fecha destino es una fecha especial (o no se pudo comprobar): no se mueve una reserva normal ahí")
 	}
 	return nil
+}
+
+func (s *Server) botCancelPropose(ctx context.Context, rid int, msg botWebhookMessage, actor, origin string, bookingID int64) (string, error) {
+	row, err := s.botLoadSpecialRow(ctx, rid, bookingID)
+	if err != nil {
+		return botJSON(map[string]any{"error": "no hay una reserva con ese id"}), nil
+	}
+	if rerr := botSpecialRescheduleAllowedRow(row); rerr != nil {
+		return botJSON(map[string]any{"error": strings.Replace(rerr.Error(), "se mueven", "se cancelan", 1)}), nil
+	}
+	if berr := botCancelBlockers(ctx, s.db, rid, bookingID, false); berr != nil {
+		return botJSON(map[string]any{"error": berr.Error()}), nil
+	}
+	beforeHash, herr := botFullRowHash(ctx, s.db, rid, bookingID)
+	if herr != nil {
+		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
+	}
+	code, cerr := botSpecialNewCode()
+	if cerr != nil {
+		return botJSON(map[string]any{"error": "no se pudo generar la propuesta"}), nil
+	}
+	extra := ""
+	if row.Special {
+		var snap specialBookingSnapshot
+		if json.Unmarshal([]byte(row.Raw), &snap) == nil {
+			extra = fmt.Sprintf(" Es de fecha especial; abonado registrado: %s (los abonos y el menú especial NO se recuperan automáticamente si se reactiva desde el panel).", botEUR(botSnapTotals(snap)["abonado_eur"].(float64)))
+		}
+	}
+	preview := fmt.Sprintf("Propuesta: CANCELAR la reserva #%d (%s %s, %d comensales, estado %s).%s Se archiva en Canceladas y se libera la ocupación. Esta operación no mueve dinero: no ejecuta ningún reembolso ni cobro y no aplica ninguna política de depósito; los pagos ya registrados ni se devuelven ni se modifican (el abono queda solo en la copia de la reserva). No emite el aviso n8n booking.cancelled del panel. No se avisa al cliente ni se envían mensajes. Se conserva una copia completa para poder restaurarla tal cual (booking_propose_restore).",
+		bookingID, row.Date, row.Time, row.Party, row.Status, extra)
+	afterHash := botSha("cancel|" + beforeHash)
+	return s.botProposalPersist(ctx, rid, msg, "cancel", bookingID, botSpecialProposalArgs{}, actor, origin, beforeHash, afterHash, preview, code)
+}
+
+// botCancelExecute archives and deletes the booking inside the approval
+// transaction (same data moves as the panel cancel: cancelled_bookings row,
+// occupancy release, DELETE) and keeps a full copy of the row in the
+// proposal result for restoration. It does NOT purge booking documents and
+// does NOT emit the n8n webhook or notify the customer.
+func (s *Server) botCancelExecute(ctx context.Context, tx *sql.Tx, rid int, msg botWebhookMessage, p botSpecialProposalRow, row *botSpecialRow) (string, error) {
+	if rerr := botSpecialRescheduleAllowedRow(row); rerr != nil {
+		return "", rerr
+	}
+	if berr := botCancelBlockers(ctx, tx, rid, p.BookingID, true); berr != nil {
+		return "", berr
+	}
+	// Full copy of the row (every column) for restoration.
+	rows, err := tx.QueryContext(ctx, "SELECT * FROM bookings WHERE restaurant_id = ? AND id = ?", rid, p.BookingID)
+	if err != nil {
+		return "", errors.New("error interno")
+	}
+	cols, _ := rows.Columns()
+	backup := map[string]any{}
+	if rows.Next() {
+		vals := make([]sql.RawBytes, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if rows.Scan(ptrs...) != nil {
+			rows.Close()
+			return "", errors.New("error interno")
+		}
+		for i, c := range cols {
+			if vals[i] == nil {
+				backup[c] = nil
+			} else {
+				backup[c] = string(vals[i])
+			}
+		}
+	}
+	rows.Close()
+	if len(backup) == 0 {
+		return "", errors.New("la reserva ya no existe")
+	}
+	mhRows, merr := tx.QueryContext(ctx, "SELECT * FROM modification_history WHERE booking_id = ? ORDER BY id", p.BookingID)
+	if merr != nil {
+		return "", errors.New("error interno")
+	}
+	modHist, merr := botScanAllRows(mhRows)
+	if merr != nil {
+		return "", errors.New("error interno")
+	}
+	var floor, salon sql.NullInt64
+	var custName, phone, email, commentary, arroz, arrozServ, principales sql.NullString
+	var strollers, chairs, specialMenu, groupMenu sql.NullInt64
+	var date, tm string
+	var party int
+	if err := tx.QueryRowContext(ctx, `SELECT DATE_FORMAT(reservation_date,'%Y-%m-%d'), TIME_FORMAT(reservation_time,'%H:%i:%s'), party_size, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, babyStrollers, highChairs, special_menu, menu_de_grupo_id, principales_json, preferred_floor_number, preferred_salon_id FROM bookings WHERE restaurant_id = ? AND id = ?`, rid, p.BookingID).
+		Scan(&date, &tm, &party, &custName, &phone, &email, &commentary, &arroz, &arrozServ, &strollers, &chairs, &specialMenu, &groupMenu, &principales, &floor, &salon); err != nil {
+		return "", errors.New("error interno")
+	}
+	cres, err := tx.ExecContext(ctx, `INSERT INTO cancelled_bookings (restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, babyStrollers, highChairs, cancellation_date, cancelled_by, cancelled_by_user_id, cancelled_by_name, special_menu, menu_de_grupo_id, principales_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'whatsapp', 0, 'Bot WhatsApp (dirección)', ?, ?, ?)`,
+		rid, p.BookingID, date, party, tm, custName.String, phone.String, email.String, commentary.String, nullStringOrNil(arroz), nullStringOrNil(arrozServ), nullIntToInt(strollers), nullIntToInt(chairs), int64OrZero(specialMenu), nullInt64OrNil(groupMenu), nullStringOrNil(principales))
+	if err != nil {
+		return "", errors.New("no se pudo archivar la reserva; no se aplicó nada")
+	}
+	cancelledID, cerr := cres.LastInsertId()
+	if cerr != nil || cancelledID <= 0 {
+		return "", errors.New("no se pudo archivar la reserva; no se aplicó nada")
+	}
+	if err := s.applyBookingLocationOccupancy(ctx, tx, rid, date, floor, salon, party, -1); err != nil {
+		return "", errors.New("no se pudo liberar la ocupación; no se aplicó nada")
+	}
+	res, err := tx.ExecContext(ctx, "DELETE FROM bookings WHERE id = ? AND restaurant_id = ?", p.BookingID, rid)
+	if err != nil {
+		return "", errors.New("error al cancelar; no se aplicó nada")
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return "", errors.New("la reserva ya no existe")
+	}
+	notice := fmt.Sprintf("Reserva #%d cancelada (%s %s, %d comensales). Archivada en Canceladas. No se ha avisado al cliente ni se ha hecho ningún reembolso o cobro.", p.BookingID, date, strings.TrimSuffix(tm, ":00"), party)
+	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice, "row_backup": backup, "modification_history_backup": modHist, "cancelled_id": cancelledID})
+	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+		return "", errors.New("error interno")
+	}
+	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
+	if err := tx.Commit(); err != nil {
+		log.Printf("[bot] wa_bot_special_admin_v2 commit_unknown rid=%d proposal=%d err=%v", rid, p.ID, err)
+		return "", errors.New("no pude confirmar si se guardó; consulta la reserva antes de repetir")
+	}
+	s.broadcastBookingChanged(rid, p.BookingID, "booking_cancelled")
+	return notice, nil
+}
+
+// botRestoreSource loads the full-row backup written by a bot cancel plus the
+// matching cancelled_bookings archive row.
+func (s *Server) botRestoreSource(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, rid int, bookingID int64, lock bool) (backup map[string]any, cancelledID, proposalID int64, err error) {
+	backup, _, cancelledID, proposalID, err = s.botRestoreSourceFull(ctx, q, rid, bookingID, lock)
+	return
+}
+
+// RETENTION INVARIANT: the result_json of a cancel proposal in state 'done'
+// (row_backup, modification_history_backup, cancelled_id) is the ONLY complete
+// copy of the cancelled booking that booking_propose_restore can use. Any future
+// cleanup or retention job on wa_bot_op_proposals must exclude op='cancel' rows
+// in state 'done' whose booking is still absent from bookings.
+func (s *Server) botRestoreSourceFull(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, rid int, bookingID int64, lock bool) (backup map[string]any, modHist []map[string]any, cancelledID, proposalID int64, err error) {
+	suffix := ""
+	if lock {
+		suffix = " FOR UPDATE"
+	}
+	var rj sql.NullString
+	if err = q.QueryRowContext(ctx, `SELECT id, result_json FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=? AND op='cancel' AND state='done' ORDER BY id DESC LIMIT 1`+suffix, rid, bookingID).Scan(&proposalID, &rj); err != nil {
+		return nil, nil, 0, 0, errors.New("no hay una cancelación hecha por el bot con copia completa de esa reserva (las canceladas desde el panel se reactivan allí y pierden datos)")
+	}
+	var r struct {
+		Backup  map[string]any   `json:"row_backup"`
+		ModHist []map[string]any `json:"modification_history_backup"`
+		CID     int64            `json:"cancelled_id"`
+	}
+	if json.Unmarshal([]byte(rj.String), &r) != nil || len(r.Backup) == 0 {
+		return nil, nil, 0, 0, errors.New("la copia de la reserva no está disponible")
+	}
+	if r.CID <= 0 {
+		return nil, nil, 0, 0, errors.New("la copia de la cancelación no identifica su archivo en Canceladas")
+	}
+	// The archive row must be the exact one this cancel created (same id), not
+	// merely the latest for the booking.
+	if err = q.QueryRowContext(ctx, `SELECT id FROM cancelled_bookings WHERE id=? AND restaurant_id=? AND booking_id=?`+suffix, r.CID, rid, bookingID).Scan(&cancelledID); err != nil {
+		return nil, nil, 0, 0, errors.New("la reserva ya no figura en Canceladas")
+	}
+	var n int
+	if err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM bookings WHERE restaurant_id=? AND id=?`, rid, bookingID).Scan(&n); err != nil || n != 0 {
+		return nil, nil, 0, 0, errors.New("ya existe una reserva con ese id")
+	}
+	return r.Backup, r.ModHist, cancelledID, proposalID, nil
+}
+
+func botBackupStr(b map[string]any, k string) string {
+	if v, ok := b[k].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func botBackupKey(backup map[string]any, modHist []map[string]any, cancelledID, proposalID int64) (before, after string) {
+	h := botSha(botCanon(backup) + "|" + botCanon(modHist))
+	return botSha(fmt.Sprintf("restore|%d|%d|%s", proposalID, cancelledID, h)), botSha("restored|" + h)
+}
+
+func (s *Server) botRestoreDateOK(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, rid int, backup map[string]any) error {
+	date := botBackupStr(backup, "reservation_date")
+	if len(date) > 10 {
+		date = date[:10]
+	}
+	loc, _ := time.LoadLocation("Europe/Madrid")
+	if loc == nil {
+		loc = time.UTC
+	}
+	n := time.Now().In(loc)
+	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
+	if d, err := time.Parse("2006-01-02", date); err != nil || d.Before(today) {
+		return errors.New("la fecha de la reserva ya pasó: no se restaura desde aquí")
+	}
+	var closed int
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM closed_days WHERE restaurant_id = ? AND date = ?", rid, date).Scan(&closed); err != nil || closed > 0 {
+		return errors.New("el día " + date + " está cerrado (o no se pudo comprobar): no se restaura")
+	}
+	return nil
+}
+
+func (s *Server) botRestorePropose(ctx context.Context, rid int, msg botWebhookMessage, actor, origin string, bookingID int64) (string, error) {
+	backup, modHist, cancelledID, proposalID, err := s.botRestoreSourceFull(ctx, s.db, rid, bookingID, false)
+	if err != nil {
+		return botJSON(map[string]any{"error": err.Error()}), nil
+	}
+	if derr := s.botRestoreDateOK(ctx, s.db, rid, backup); derr != nil {
+		return botJSON(map[string]any{"error": derr.Error()}), nil
+	}
+	code, cerr := botSpecialNewCode()
+	if cerr != nil {
+		return botJSON(map[string]any{"error": "no se pudo generar la propuesta"}), nil
+	}
+	extra := ""
+	if sj := botBackupStr(backup, "special_json"); strings.TrimSpace(sj) != "" {
+		var snap specialBookingSnapshot
+		if json.Unmarshal([]byte(sj), &snap) == nil {
+			extra = fmt.Sprintf(" Es de fecha especial; se recupera el menú especial y el abonado registrado (%s).", botEUR(botSnapTotals(snap)["abonado_eur"].(float64)))
+		}
+	}
+	before, after := botBackupKey(backup, modHist, cancelledID, proposalID)
+	preview := fmt.Sprintf("Propuesta: RESTAURAR la reserva #%d tal como estaba antes de cancelarla (%s %s, %s comensales, estado %s), con el mismo id y todos sus datos. Restaura la copia histórica guardada al cancelar, sin recalcular menús, precios, abonos ni condiciones actuales.%s Se quita de Canceladas y se vuelve a ocupar el aforo (sin comprobación de aforo). No se ejecuta ningún cobro ni reembolso. No se avisa al cliente.",
+		bookingID, strings.TrimSpace(botBackupStr(backup, "reservation_date")), strings.TrimSuffix(botBackupStr(backup, "reservation_time"), ":00"), botBackupStr(backup, "party_size"), botBackupStr(backup, "status"), extra)
+	return s.botProposalPersist(ctx, rid, msg, "restore", bookingID, botSpecialProposalArgs{}, actor, origin, before, after, preview, code)
+}
+
+func (s *Server) botRestoreExecute(ctx context.Context, tx *sql.Tx, rid int, msg botWebhookMessage, p botSpecialProposalRow) (string, error) {
+	stale := func(why string) (string, error) {
+		_ = tx.Rollback()
+		s.markStale(ctx, rid, p, msg)
+		return "", errors.New(why)
+	}
+	backup, modHist, cancelledID, proposalID, err := s.botRestoreSourceFull(ctx, tx, rid, p.BookingID, true)
+	if err != nil {
+		return stale(err.Error())
+	}
+	if before, _ := botBackupKey(backup, modHist, cancelledID, proposalID); before != p.Before {
+		return stale("la copia o el archivo de la reserva cambiaron; pide una propuesta nueva")
+	}
+	if derr := s.botRestoreDateOK(ctx, tx, rid, backup); derr != nil {
+		return stale(derr.Error())
+	}
+	cols := make([]string, 0, len(backup))
+	for c := range backup {
+		if !regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`).MatchString(c) {
+			return stale("copia con columnas inesperadas")
+		}
+		cols = append(cols, c)
+	}
+	sort.Strings(cols)
+	q := make([]string, len(cols))
+	args := make([]any, len(cols))
+	names := make([]string, len(cols))
+	for i, c := range cols {
+		q[i] = "?"
+		names[i] = "`" + c + "`"
+		args[i] = backup[c]
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO bookings ("+strings.Join(names, ",")+") VALUES ("+strings.Join(q, ",")+")", args...); err != nil {
+		return "", errors.New("no se pudo restaurar la reserva; no se aplicó nada")
+	}
+	for _, mh := range modHist {
+		mcols := make([]string, 0, len(mh))
+		for c := range mh {
+			if !regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`).MatchString(c) {
+				return "", errors.New("historial con columnas inesperadas; no se aplicó nada")
+			}
+			mcols = append(mcols, c)
+		}
+		sort.Strings(mcols)
+		mq := make([]string, len(mcols))
+		mn := make([]string, len(mcols))
+		ma := make([]any, len(mcols))
+		for i, c := range mcols {
+			mq[i], mn[i], ma[i] = "?", "`"+c+"`", mh[c]
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO modification_history ("+strings.Join(mn, ",")+") VALUES ("+strings.Join(mq, ",")+")", ma...); err != nil {
+			return "", errors.New("no se pudo restaurar el historial; no se aplicó nada")
+		}
+	}
+	party, _ := strconv.Atoi(botBackupStr(backup, "party_size"))
+	var floor, salon any
+	if v, e := strconv.ParseInt(botBackupStr(backup, "preferred_floor_number"), 10, 64); e == nil {
+		floor = v
+	}
+	if v, e := strconv.ParseInt(botBackupStr(backup, "preferred_salon_id"), 10, 64); e == nil {
+		salon = v
+	}
+	date := botBackupStr(backup, "reservation_date")
+	if len(date) > 10 {
+		date = date[:10]
+	}
+	if err := s.applyBookingLocationOccupancy(ctx, tx, rid, date, floor, salon, party, 1); err != nil {
+		return "", errors.New("no se pudo recuperar la ocupación; no se aplicó nada")
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM cancelled_bookings WHERE id = ? AND restaurant_id = ?", cancelledID, rid); err != nil {
+		return "", errors.New("no se pudo quitar de Canceladas; no se aplicó nada")
+	}
+	hashAfter, herr := botFullRowHash(ctx, tx, rid, p.BookingID)
+	if herr != nil || hashAfter == "" {
+		return "", errors.New("verificación fallida; no se aplicó nada")
+	}
+	notice := fmt.Sprintf("Reserva #%d restaurada tal como estaba. Quitada de Canceladas. No se ha avisado al cliente ni se ha hecho ningún cobro o reembolso.", p.BookingID)
+	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
+	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+		return "", errors.New("error interno")
+	}
+	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
+	if err := tx.Commit(); err != nil {
+		log.Printf("[bot] wa_bot_special_admin_v2 commit_unknown rid=%d proposal=%d err=%v", rid, p.ID, err)
+		return "", errors.New("no pude confirmar si se guardó; consulta la reserva antes de repetir")
+	}
+	s.broadcastBookingChanged(rid, p.BookingID, "booking_created")
+	return notice, nil
+}
+
+// botCancelBlockers refuses a bot cancel when the delete would not be a clean,
+// reversible move: live attached documents (the orphan-document sweep deletes
+// their stored files for good) or linked invoices (FK, would abort the delete).
+func botCancelBlockers(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, rid int, bookingID int64, lock bool) error {
+	var docs, inv int
+	// In the execute transaction the count is a locking read (next-key locks on
+	// the booking_documents index range); document inserts also lock the
+	// booking row, so a document cannot slip in between this check and the DELETE.
+	sfx := ""
+	if lock {
+		sfx = " FOR UPDATE"
+	}
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM booking_documents WHERE restaurant_id = ? AND booking_id = ? AND deleted_at IS NULL`+sfx, rid, bookingID).Scan(&docs); err != nil {
+		return errors.New("no se pudo comprobar los documentos de la reserva; no se cancela")
+	}
+	if docs > 0 {
+		return errors.New("la reserva tiene documentos adjuntos: la limpieza automática los borraría para siempre; cancélala desde el panel")
+	}
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM invoices WHERE reservation_id = ?`+sfx, bookingID).Scan(&inv); err != nil {
+		return errors.New("no se pudo comprobar las facturas de la reserva; no se cancela")
+	}
+	if inv > 0 {
+		return errors.New("la reserva tiene facturas asociadas: no se cancela desde aquí")
+	}
+	return nil
+}
+
+func botScanAllRows(rows *sql.Rows) ([]map[string]any, error) {
+	defer rows.Close()
+	cols, _ := rows.Columns()
+	var out []map[string]any
+	for rows.Next() {
+		vals := make([]sql.RawBytes, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		m := map[string]any{}
+		for i, c := range cols {
+			if vals[i] == nil {
+				m[c] = nil
+			} else {
+				m[c] = string(vals[i])
+			}
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
