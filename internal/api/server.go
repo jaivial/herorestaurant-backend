@@ -1018,6 +1018,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, facturasGate).Put("/invoices/{id}", s.handleBOInvoiceUpdate)
 		r.With(s.requireBOSession, facturasGate).Delete("/invoices/{id}", s.handleBOInvoiceDelete)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/send", s.handleBOInvoiceSend)
+		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/send-whatsapp", s.handleBOInvoiceSendWhatsApp)
+		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/send-whatsapp/attempt", s.handleBOInvoiceWhatsAppAttempt)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/pdf", s.handleBOInvoicePdf)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/upload-image", s.handleBOInvoiceUploadImage)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/search-reservation", s.handleBOInvoicesSearchReservation)
