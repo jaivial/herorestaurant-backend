@@ -519,11 +519,19 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 	if v := strings.TrimSpace(in.QuotedParticipant); v != "" {
 		quotedFrom = []string{v}
 	}
+	mentioned := true
 	if !botGroupMentionsBot(mentions, quotedFrom, in.Text, in.OwnJIDs) {
-		botGroupMessageAudit(0, groupJID, participant, "skipped_not_mentioned")
-		log.Printf("[bot] checkpoint wa_bot_group_mention_v1 detail own_jids=%d mentions=%d quoted=%d",
-			len(in.OwnJIDs), len(mentions), len(quotedFrom))
-		return waInbound{}, false
+		// wa_bot_special_admin_v2: an exact "OK <code>" approval is not a
+		// request to the model, so it needs no mention. It is passed on with
+		// Mentioned=false and the webhook decides (scope, actor, code); any
+		// other unmentioned message is still dropped here.
+		if _, shaped := botSpecialNormalizeOK(in.Text); !shaped {
+			botGroupMessageAudit(0, groupJID, participant, "skipped_not_mentioned")
+			log.Printf("[bot] checkpoint wa_bot_group_mention_v1 detail own_jids=%d mentions=%d quoted=%d",
+				len(in.OwnJIDs), len(mentions), len(quotedFrom))
+			return waInbound{}, false
+		}
+		mentioned = false
 	}
 
 	// The LLM must read the request, not the mention chip: strip it.
@@ -549,7 +557,7 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 		AudioB64:       in.AudioB64,
 		DocumentB64:    in.DocumentB64,
 		DocumentName:   in.DocumentName,
-		Mentioned:      true,
+		Mentioned:      mentioned,
 		MentionJIDs:    mentions,
 		OwnJIDs:        in.OwnJIDs,
 	}, true

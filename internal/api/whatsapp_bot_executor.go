@@ -131,6 +131,12 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolGetSpecialDateBookings(ctx, restaurantID, input)
 	// Coordination id: wa_bot_special_crud_v1 - full special-menu CRUD. Each
 	// one re-validates through the same server core the backoffice uses.
+	case "special_booking_get":
+		return s.botToolSpecialBookingGet(ctx, restaurantID, msg, input)
+	case "special_booking_propose_adelanto":
+		return s.botToolSpecialPropose(ctx, restaurantID, msg, "adelanto", input)
+	case "special_booking_propose_menus":
+		return s.botToolSpecialPropose(ctx, restaurantID, msg, "menus", input)
 	case "create_special_booking":
 		return s.botToolCreateSpecialBooking(ctx, restaurantID, msg, tenant, input)
 	case "modify_special_booking":
