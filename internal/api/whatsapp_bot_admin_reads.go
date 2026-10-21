@@ -28,6 +28,11 @@ func botToolDefsAdminReads() []botToolDef {
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),
 		},
 		{
+			Name:        "get_booking_config",
+			Description: "Configuración operativa de reservas del restaurante: modo de apertura, horas por defecto (mediodía/noche), días de la semana que abre, límite diario de comensales, límites de mesas de dos/tres, si permite elegir salón/planta y la pregunta de movilidad. Con una fecha indica además si ese día usa el horario por defecto o un override. ÚSALO cuando el grupo pregunte por la configuración de reservas.",
+			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha YYYY-MM-DD o dd/MM/yyyy (opcional)"}}}`),
+		},
+		{
 			Name:        "list_tables",
 			Description: "Lista los salones (áreas) activos y sus mesas activas: número, nombre, forma y capacidad. ÚSALO cuando el grupo pregunte qué mesas o salones hay configurados.",
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),
@@ -237,4 +242,67 @@ func (s *Server) botToolListSpecialDates(ctx context.Context, restaurantID int, 
 		out = append(out, entry)
 	}
 	return botJSON(map[string]any{"count": len(out), "special_dates": out}), nil
+}
+
+func (s *Server) botToolGetBookingConfig(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
+	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
+		return botJSON(map[string]any{"error": "no autorizado"}), nil
+	}
+	var in struct {
+		Date string `json:"date"`
+	}
+	_ = json.Unmarshal(input, &in)
+	defaults, err := s.loadReservationDefaults(ctx, restaurantID)
+	if err != nil {
+		return botJSON(map[string]any{"error": "no se pudo cargar la configuración"}), nil
+	}
+	out := map[string]any{
+		"opening_mode":            defaults.OpeningMode,
+		"morning_hours":           defaults.MorningHours,
+		"night_hours":             defaults.NightHours,
+		"weekday_open":            defaults.WeekdayOpen,
+		"daily_limit":             defaults.DailyLimit,
+		"mesas_de_dos_limit":      defaults.MesasDeDosLimit,
+		"mesas_de_tres_limit":     defaults.MesasDeTresLimit,
+		"hour_split_enabled":      defaults.HourSplitEnabled,
+		"allow_floor_reservation": defaults.AllowFloorReservation,
+		"allow_salon_reservation": defaults.AllowSalonReservation,
+		"mobility_enabled":        defaults.MobilityEnabled,
+	}
+	if in.Date != "" {
+		dateISO, err := parseBotDate(in.Date)
+		if err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+		var hoursRaw, modeRaw sql.NullString
+		err = s.db.QueryRowContext(ctx, `
+			SELECT hoursarray, opening_mode
+			FROM openinghours
+			WHERE restaurant_id = ? AND dateselected = ?
+			LIMIT 1
+		`, restaurantID, dateISO).Scan(&hoursRaw, &modeRaw)
+		if err != nil && err != sql.ErrNoRows {
+			return botJSON(map[string]any{"error": "no se pudo consultar el día"}), nil
+		}
+		source := "default"
+		mode := defaults.OpeningMode
+		morning := defaults.MorningHours
+		night := defaults.NightHours
+		if list, ok := parseHoursJSON(hoursRaw); ok {
+			source = "override"
+			morning, night = splitHoursByShift(list)
+			if modeRaw.Valid && modeRaw.String != "" {
+				mode = normalizeOpeningMode(modeRaw.String)
+			} else {
+				mode = modeFromHours(morning, night)
+			}
+		}
+		out["date"] = dateISO
+		out["date_es"] = botFormatISODateES(dateISO)
+		out["day_source"] = source
+		out["day_opening_mode"] = mode
+		out["day_morning_hours"] = morning
+		out["day_night_hours"] = night
+	}
+	return botJSON(out), nil
 }
