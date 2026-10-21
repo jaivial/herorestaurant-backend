@@ -357,6 +357,13 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
+		Name: "stock_read", Description: "Lecturas de stock del restaurante activo sin tool específica (document_get retenido: la extracción OCR requiere minimización de salida). Recursos: valuation, vat_list, suppliers_list, supplier_prices (id, days), supplier_aliases (id), settings, reconciliation, recipe_get (id), margin_targets, margin_scopes, margin_scope_resolve (category_id/food_type/scope_key/scope_kind), margin_scope_defaults, labour_members, item_units (id), item_options (q), forecast (scenario), expiring (days), documents_list, count_get (id), costing, permissions_mine.",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"q":{"type":"string"},"days":{"type":"string"},"scenario":{"type":"string"},"category_id":{"type":"string"},"food_type":{"type":"string"},"scope_key":{"type":"string"},"scope_kind":{"type":"string"}}}`), BackofficeOnly: true, Section: "stock",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "stock_read", stockReadResources, input)
+		},
+	},
+	{
 		Name: "stock_item_movements_list", Description: "Lista los movimientos de un artículo de stock del restaurante activo.",
 		Schema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"},"page":{"type":"integer"},"page_size":{"type":"integer"}},"required":["id"]}`), BackofficeOnly: true, Section: "stock",
 		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {

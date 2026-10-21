@@ -32,13 +32,20 @@ type domainReadSpec struct {
 }
 
 type domainReadInput struct {
-	Resource  string `json:"resource"`
-	ID        string `json:"id,omitempty"`
-	Date      string `json:"date,omitempty"`
-	DateFrom  string `json:"date_from,omitempty"`
-	DateTo    string `json:"date_to,omitempty"`
-	ShiftID   string `json:"shift_id,omitempty"`
-	StationID string `json:"station_id,omitempty"`
+	Resource   string `json:"resource"`
+	ID         string `json:"id,omitempty"`
+	Date       string `json:"date,omitempty"`
+	DateFrom   string `json:"date_from,omitempty"`
+	DateTo     string `json:"date_to,omitempty"`
+	ShiftID    string `json:"shift_id,omitempty"`
+	StationID  string `json:"station_id,omitempty"`
+	Q          string `json:"q,omitempty"`
+	Days       string `json:"days,omitempty"`
+	Scenario   string `json:"scenario,omitempty"`
+	CategoryID string `json:"category_id,omitempty"`
+	FoodType   string `json:"food_type,omitempty"`
+	ScopeKey   string `json:"scope_key,omitempty"`
+	ScopeKind  string `json:"scope_kind,omitempty"`
 }
 
 func (in domainReadInput) fields() map[string]string {
@@ -60,6 +67,27 @@ func (in domainReadInput) fields() map[string]string {
 	}
 	if in.StationID != "" {
 		m["station_id"] = in.StationID
+	}
+	if in.Q != "" {
+		m["q"] = in.Q
+	}
+	if in.Days != "" {
+		m["days"] = in.Days
+	}
+	if in.Scenario != "" {
+		m["scenario"] = in.Scenario
+	}
+	if in.CategoryID != "" {
+		m["category_id"] = in.CategoryID
+	}
+	if in.FoodType != "" {
+		m["food_type"] = in.FoodType
+	}
+	if in.ScopeKey != "" {
+		m["scope_key"] = in.ScopeKey
+	}
+	if in.ScopeKind != "" {
+		m["scope_kind"] = in.ScopeKind
 	}
 	return m
 }
@@ -183,4 +211,30 @@ func sectionAdminGates(section string) func(*Server) []func(http.Handler) http.H
 	return func(s *Server) []func(http.Handler) http.Handler {
 		return []func(http.Handler) http.Handler{s.requireBOSection(section), s.requireBORoleImportanceAtLeast(90)}
 	}
+}
+
+// Stock reads, same audit: pure GETs, session tenant, own-tenant data, no
+// secrets/PII. stock role-permissions config stays out (authorization config).
+var stockReadResources = map[string]domainReadSpec{
+	"valuation":             {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockValuation }, desc: "valoración del inventario"},
+	"vat_list":              {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockVATList }, desc: "tipos de IVA de stock"},
+	"suppliers_list":        {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSuppliersList }, desc: "proveedores (id, nombre, notas)"},
+	"supplier_prices":       {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSupplierPricesGet }, urlParam: "id", query: map[string]string{"days": "days"}, desc: "precios de un proveedor"},
+	"supplier_aliases":      {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSupplierAliasesGet }, urlParam: "id", desc: "alias de producto de un proveedor"},
+	"settings":              {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSettingsGet }, desc: "configuración operativa de stock"},
+	"reconciliation":        {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockReconciliationGet }, desc: "diferencias niveles vs movimientos"},
+	"recipe_get":            {gates: stockReadGates(stockPermissionRecipesView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockRecipeGet }, urlParam: "id", desc: "detalle de una receta"},
+	"margin_targets":        {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginTargets }, desc: "objetivos de margen"},
+	"margin_scopes":         {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginScopesList }, desc: "ámbitos de margen"},
+	"margin_scope_resolve":  {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginScopeResolve }, query: map[string]string{"category_id": "categoryId", "food_type": "foodType", "scope_key": "scopeKey", "scope_kind": "scopeKind"}, desc: "resuelve el margen aplicable"},
+	"margin_scope_defaults": {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginScopeDefaults }, desc: "bandas de margen por defecto"},
+	"labour_members":        {gates: stockReadGates(stockPermissionCostsManage), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockLabourMembers }, desc: "miembros con coste laboral"},
+	"item_units":            {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockItemUnitsList }, urlParam: "id", desc: "unidades de un artículo"},
+	"item_options":          {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockItemOptions }, query: map[string]string{"q": "q"}, desc: "opciones de artículos (búsqueda q)"},
+	"forecast":              {gates: stockReadGates(stockPermissionForecastView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockForecast }, query: map[string]string{"scenario": "scenario"}, desc: "previsión de consumo"},
+	"expiring":              {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockExpiring }, query: map[string]string{"days": "days"}, desc: "stock por caducar (days)"},
+	"documents_list":        {gates: stockReadGates(stockPermissionOCRUpload), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockDocumentsList }, desc: "documentos escaneados (metadatos)"},
+	"count_get":             {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockCountGet }, urlParam: "id", desc: "detalle de un conteo"},
+	"costing":               {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockCosting }, desc: "costes por receta/plato"},
+	"permissions_mine":      {handler: func(s *Server) http.HandlerFunc { return s.handleBOStockPermissionsMine }, desc: "mis permisos de stock"},
 }
