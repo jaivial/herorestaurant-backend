@@ -58,14 +58,14 @@ var assistantToolRegistry = []assistantTool{
 	},
 	{
 		Name: "special_dates_list", Description: "Lista las fechas especiales activas del restaurante activo desde hoy en adelante (Navidad, Nochevieja...): título, si tiene pre-reserva, máximo por mesa y los menús vinculados con su adelanto y precio.",
-		Schema: json.RawMessage(`{"type":"object","properties":{}}`), Section: "reservas",
+		Schema: json.RawMessage(`{"type":"object","properties":{}}`), BackofficeOnly: true, Section: "reservas",
 		Handler: func(s *Server, ctx context.Context, rid int, _ json.RawMessage) (string, error) {
 			return s.adminReadSpecialDates(ctx, rid)
 		},
 	},
 	{
 		Name: "tables_list", Description: "Lista los salones (áreas) activos del restaurante activo y sus mesas activas: número, nombre, forma y capacidad.",
-		Schema: json.RawMessage(`{"type":"object","properties":{}}`), Section: "reservas",
+		Schema: json.RawMessage(`{"type":"object","properties":{}}`), BackofficeOnly: true, Section: "reservas",
 		Handler: func(s *Server, ctx context.Context, rid int, _ json.RawMessage) (string, error) {
 			return s.adminReadTables(ctx, rid)
 		},
