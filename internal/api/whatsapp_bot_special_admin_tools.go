@@ -892,7 +892,10 @@ type botSpecialProposalRow struct {
 // turn. It returns true when the message was an approval attempt and has been
 // fully handled (the model must not see it).
 func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg botWebhookMessage) bool {
-	if !botSpecialAdminToolsAllowed(rid, msg) {
+	// wa_bot_special_admin_v2 (scope flow) OR wa_bot_privileged_control_v1
+	// (an allowed contact/group of this bot version). Everything else keeps
+	// ignoring "OK <code>" messages.
+	if !botSpecialAdminToolsAllowed(rid, msg) && !msg.PrivilegedGroup {
 		return false
 	}
 	s.botSpecialAdminFlushNotifyThrottled(ctx, rid)
@@ -905,13 +908,27 @@ func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg bot
 	actor := strings.TrimSpace(msg.ParticipantJID)
 	if !msg.IsGroup {
 		actor = strings.TrimSpace(msg.ActorPhoneJID)
+		if actor == "" {
+			// wa_bot_privileged_control_v1: a one-to-one chat the provider only
+			// addresses by its LID is its own credential (the requester is the
+			// conversation the operator selected).
+			actor = origin
+		}
 	}
 	reply := func(t string) {
 		if gw, ok := s.botGatewayFor(ctx, rid); ok {
 			_ = gw.SendText(ctx, origin, t)
 		}
 	}
-	if actor == "" || !s.botSpecialAdminFreshMember(ctx, rid, scope, actor) {
+	// Proof of actor. The scope flow keeps proving membership of the scope
+	// group (wa_bot_special_admin_v2). The control flow of this bot version
+	// has no env scope: an allowed GROUP proves membership of its own
+	// participant list (fresh fetch) and an allowed CONTACT is the credential.
+	proof, needProof := scope, true
+	if !botSpecialAdminInScope(rid, origin) {
+		proof, needProof = origin, msg.IsGroup
+	}
+	if actor == "" || (needProof && !s.botSpecialAdminFreshMember(ctx, rid, proof, actor)) {
 		s.botSpecialAdminEvent(ctx, s.db, rid, 0, "approve_rejected_actor", actor, origin, nil)
 		return true
 	}
@@ -1005,6 +1022,11 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return "", errors.New("la propuesta ya no está vigente")
+	}
+	if p.Op == "access" {
+		// Coordination id: wa_bot_privileged_control_v1 - the claim above and
+		// this write commit together, exactly like the booking ops.
+		return s.botAccessExecute(ctx, tx, rid, p)
 	}
 	if p.Op == "edit" {
 		return s.botEditExecute(ctx, tx, rid, msg, p)

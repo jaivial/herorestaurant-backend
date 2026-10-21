@@ -659,6 +659,10 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// admin scope gate (scope group + privileged turn + fresh member).
 			botTools = append(botTools, botToolDefsAdminReads()...)
 		}
+		// Coordination id: wa_bot_privileged_control_v1 - the control plane of
+		// this bot version (allowed chats + per-chat tool grants + allergen
+		// data) exists ONLY in allowed (privileged) contacts and groups.
+		botTools = append(botTools, botToolDefsPrivilegedControl()...)
 		tools = botMergeToolDefs(botTools, botForkyToolDefs())
 		normalExec := exec
 		// A name the bot defines belongs to the bot, even when forky also has
@@ -674,6 +678,12 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			botOwned[d.Name] = struct{}{}
 		}
 		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+			// Coordination id: wa_bot_tool_grants_v1 - the per-chat grant guard
+			// also covers the forky names, which never reach botExecuteTool.
+			if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
+				log.Printf("[bot] checkpoint wa_bot_tool_grants_v1 restaurant_id=%d tool=%s", restaurantID, name)
+				return botJSON(map[string]any{"error": reason}), nil
+			}
 			// Temporary containment (wa_bot_admin_write_denied_v1): these bot-owned
 			// mutations are gated only by a confirmed=true the model writes itself,
 			// which is not a human approval. Refused in the server for privileged
@@ -713,6 +723,9 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		return s.botLLMCallRouted(ctx, restaurantID, routing, sessionID, system, msgs, tools)
 	}
 
+	// Coordination id: wa_bot_tool_grants_v1 - per-chat tool control: the
+	// catalog offered to the model is filtered, and the executor re-checks.
+	tools = botToolGrantsFilter(tools, tenant, msg.ChatJID)
 	result, err := s.botRunAgentLoopWith(ctx, caller, system, messages, tools, exec)
 	if decisionID > 0 {
 		s.botConversation.SetDecisionModel(ctx, decisionID, result.ModelUsed, map[string]any{
