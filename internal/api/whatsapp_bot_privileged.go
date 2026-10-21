@@ -101,6 +101,8 @@ var botForkyExcludedFromWA = map[string]struct{}{
 	"cancelled_bookings_list": {},
 	"special_dates_list":      {},
 	"tables_list":             {},
+	"campaigns_list":          {},
+	"whatsapp_connection_get": {},
 }
 
 // botForkyToolDefs converts the full assistant (forky) tool registry into the
