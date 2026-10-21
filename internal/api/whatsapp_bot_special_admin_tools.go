@@ -158,6 +158,11 @@ func botSpecialAdminToolDefs() []botToolDef {
 			Description: "PROPONE cambiar los menús de una reserva de fecha especial conservando los abonos y el resto. NO lo aplica: envía al grupo una vista previa con el cambio y un código; se aplica cuando la misma persona escribe 'OK <código>'. No ves el código ni digas que está hecho. menus: lista de {special_date_menu_id, count, sections?:[{section_id,count}]} (ids de get_special_date_menu).",
 			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer"},"menus":{"type":"array","items":{"type":"object","properties":{"special_date_menu_id":{"type":"integer"},"count":{"type":"integer"},"sections":{"type":"array","items":{"type":"object","properties":{"section_id":{"type":"integer"},"count":{"type":"integer"}},"required":["section_id","count"]}}},"required":["special_date_menu_id","count"]}}},"required":["booking_id","menus"]}`),
 		},
+		{
+			Name:        "special_booking_propose_reschedule",
+			Description: "PROPONE cambiar la fecha, la hora y/o el número de comensales de una reserva de fecha especial (puedes pasar solo lo que cambia). Si cambian los comensales o la fecha, pasa también `menus` con las cantidades nuevas cuando no cuadren. NO lo aplica: guarda una propuesta exacta, envía al grupo una vista previa con un código y se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Conserva los abonos, el resto de datos de la reserva y actualiza la ocupación y el historial de cambios.",
+			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string","description":"Nueva fecha YYYY-MM-DD"},"time":{"type":"string","description":"Nueva hora HH:MM"},"party_size":{"type":"integer","description":"Nuevo número de comensales"},"menus":{"type":"array","items":{"type":"object","properties":{"special_date_menu_id":{"type":"integer"},"count":{"type":"integer"}},"required":["special_date_menu_id","count"]}}},"required":["booking_id"]}`),
+		},
 	}
 }
 
@@ -352,6 +357,40 @@ func botSpecialInputFromCurrent(current map[string]any) (in boNormalizeInput, er
 // botSpecialBuildNext validates the patched booking exactly as the canonical
 // PATCH does (same normaliser) and applies the same preservation rules.
 func (s *Server) botSpecialBuildNext(ctx context.Context, rid int, id int64, req *specialBookingReq) (boNormalizedBooking, map[string]any, error) {
+	return s.botSpecialBuildNextOv(ctx, rid, id, req, nil)
+}
+
+// botSpecialOverride moves the booking to another date, time or party size.
+type botSpecialOverride struct {
+	Date, Time string
+	Party      int
+}
+
+func botOvFromArgs(op string, a botSpecialProposalArgs) *botSpecialOverride {
+	if op != "reschedule" {
+		return nil
+	}
+	return &botSpecialOverride{Date: a.NewDate, Time: a.NewTime, Party: a.NewParty}
+}
+
+// botSpecialAfterKey is the exact "after" the approver saw: the special block
+// plus, for a reschedule, the final date, time and party size.
+func botSpecialAfterKey(op string, next boNormalizedBooking) string {
+	if op == "reschedule" {
+		return botSha(botCanon(next.SpecialJSON) + "|" + next.ReservationDate + "|" + next.ReservationTime + "|" + fmt.Sprint(next.PartySize) + "|" + fmt.Sprint(next.Children, next.HasMobilityIssues, next.MobilityPeople))
+	}
+	return botSha(botCanon(next.SpecialJSON))
+}
+
+// botSpecialColumnsFor lists the only bookings columns the op may change.
+func botSpecialColumnsFor(op string) []string {
+	if op == "reschedule" {
+		return append([]string{"reservation_date", "reservation_time", "party_size", "children", "has_mobility_issues", "mobility_people"}, botSpecialColumns...)
+	}
+	return botSpecialColumns
+}
+
+func (s *Server) botSpecialBuildNextOv(ctx context.Context, rid int, id int64, req *specialBookingReq, ov *botSpecialOverride) (boNormalizedBooking, map[string]any, error) {
 	current, err := s.boFetchBookingByID(ctx, rid, int(id))
 	if err != nil {
 		return boNormalizedBooking{}, nil, errors.New("reserva no encontrada")
@@ -362,6 +401,17 @@ func (s *Server) botSpecialBuildNext(ctx context.Context, rid int, id int64, req
 	}
 	in.Special = req
 	in.SpecialTouched = true
+	if ov != nil {
+		if ov.Date != "" {
+			in.ReservationDate = ov.Date
+		}
+		if ov.Time != "" {
+			in.ReservationTime = ov.Time
+		}
+		if ov.Party > 0 {
+			in.PartySize = ov.Party
+		}
+	}
 	next, err := s.boNormalizeAndValidateBookingInput(ctx, rid, in)
 	if err != nil {
 		return next, nil, err
@@ -386,6 +436,10 @@ type botSpecialProposalArgs struct {
 	Method string                  `json:"method,omitempty"`
 	Amount float64                 `json:"amount,omitempty"`
 	Menus  []specialBookingMenuReq `json:"menus,omitempty"`
+	// reschedule (date/time/party). Empty/zero = unchanged.
+	NewDate  string `json:"new_date,omitempty"`
+	NewTime  string `json:"new_time,omitempty"`
+	NewParty int    `json:"new_party,omitempty"`
 }
 
 // botSpecialApplyArgs merges the proposal args into the stored snapshot.
@@ -396,6 +450,10 @@ func botSpecialApplyArgs(op string, snap specialBookingSnapshot, a botSpecialPro
 		req.AdelantosPaid = append(req.AdelantosPaid, specialBookingAdelantoPaid{Method: a.Method, Amount: a.Amount})
 	case "menus":
 		req.Menus = a.Menus
+	case "reschedule":
+		if len(a.Menus) > 0 {
+			req.Menus = a.Menus
+		}
 	default:
 		return nil, errors.New("operación desconocida")
 	}
@@ -466,6 +524,9 @@ func (s *Server) botToolSpecialPropose(ctx context.Context, rid int, msg botWebh
 		Method    string                  `json:"method"`
 		Amount    float64                 `json:"amount"`
 		Menus     []specialBookingMenuReq `json:"menus"`
+		Date      string                  `json:"date"`
+		Time      string                  `json:"time"`
+		PartySize int                     `json:"party_size"`
 	}
 	if json.Unmarshal(input, &in) != nil || in.BookingID <= 0 {
 		return botJSON(map[string]any{"error": "argumentos inválidos"}), nil
@@ -488,6 +549,32 @@ func (s *Server) botToolSpecialPropose(ctx context.Context, rid int, msg botWebh
 			return botJSON(map[string]any{"error": "menus vacío"}), nil
 		}
 		args = botSpecialProposalArgs{Menus: in.Menus}
+	case "reschedule":
+		in.Date, in.Time = strings.TrimSpace(in.Date), strings.TrimSpace(in.Time)
+		if in.Date == "" && in.Time == "" && in.PartySize == 0 {
+			return botJSON(map[string]any{"error": "indica la fecha, la hora o los comensales nuevos"}), nil
+		}
+		if in.Date != "" {
+			d, derr := time.Parse("2006-01-02", in.Date)
+			loc, _ := time.LoadLocation("Europe/Madrid")
+			if loc == nil {
+				loc = time.UTC
+			}
+			n := time.Now().In(loc)
+			today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
+			if derr != nil || d.Before(today) {
+				return botJSON(map[string]any{"error": "fecha inválida o pasada (usa YYYY-MM-DD)"}), nil
+			}
+		}
+		if in.Time != "" {
+			if _, terr := time.Parse("15:04", in.Time); terr != nil {
+				return botJSON(map[string]any{"error": "hora inválida (usa HH:MM)"}), nil
+			}
+		}
+		if in.PartySize < 0 || in.PartySize > 500 {
+			return botJSON(map[string]any{"error": "comensales inválidos"}), nil
+		}
+		args = botSpecialProposalArgs{Menus: in.Menus, NewDate: in.Date, NewTime: in.Time, NewParty: in.PartySize}
 	}
 	row, err := s.botLoadSpecialRow(ctx, rid, in.BookingID)
 	if err != nil || !row.Special {
@@ -497,15 +584,20 @@ func (s *Server) botToolSpecialPropose(ctx context.Context, rid int, msg botWebh
 	if json.Unmarshal([]byte(row.Raw), &snap) != nil {
 		return botJSON(map[string]any{"error": "el bloque especial almacenado no se pudo leer"}), nil
 	}
+	if op == "reschedule" {
+		if rerr := botSpecialRescheduleAllowedRow(row); rerr != nil {
+			return botJSON(map[string]any{"error": rerr.Error()}), nil
+		}
+	}
 	req, err := botSpecialApplyArgs(op, snap, args)
 	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-	next, _, err := s.botSpecialBuildNext(ctx, rid, in.BookingID, req)
+	next, curMap, err := s.botSpecialBuildNextOv(ctx, rid, in.BookingID, req, botOvFromArgs(op, args))
 	if err != nil {
 		return botJSON(map[string]any{"error": "la validación rechaza el cambio: " + err.Error()}), nil
 	}
-	afterHash := botSha(botCanon(next.SpecialJSON))
+	afterHash := botSpecialAfterKey(op, next)
 	beforeHash, herr := botFullRowHash(ctx, s.db, rid, in.BookingID)
 	if herr != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
@@ -520,9 +612,16 @@ func (s *Server) botToolSpecialPropose(ctx context.Context, rid int, msg botWebh
 	}
 	bTotals, aTotals := botSnapTotals(snap), botSnapTotals(after)
 	var preview string
+	depsText := ""
+	if op == "reschedule" {
+		depsText, _ = botSpecialRescheduleDeps(curMap, next)
+	}
 	if op == "adelanto" {
 		preview = fmt.Sprintf("Propuesta (reserva #%d, %s, %d comensales): registrar abono de %s por %s. Abonado: %s -> %s. Adelanto requerido: %s. Solo anota un pago ya recibido: no cobra ni envía nada al cliente.",
 			in.BookingID, row.Date, row.Party, botEUR(args.Amount), args.Method, botEUR(bTotals["abonado_eur"].(float64)), botEUR(aTotals["abonado_eur"].(float64)), botEUR(aTotals["adelanto_requerido_eur"].(float64)))
+	} else if op == "reschedule" {
+		preview = fmt.Sprintf("Propuesta (reserva #%d): mover de %s %s (%d comensales) a %s %s (%d comensales). Menús: %s. Total: %s -> %s. Abonos registrados se conservan (%s). Estado actual: %s.%s Se actualizan la ocupación y el historial de cambios. SIN comprobación de aforo (se fuerza como en el panel de dirección). No se avisa al cliente.",
+			in.BookingID, row.Date, row.Time, row.Party, next.ReservationDate, strings.TrimSuffix(next.ReservationTime, ":00"), next.PartySize, botSpecialDiffMenus(after), botEUR(bTotals["total_eur"].(float64)), botEUR(aTotals["total_eur"].(float64)), botEUR(aTotals["abonado_eur"].(float64)), row.Status, depsText)
 	} else {
 		preview = fmt.Sprintf("Propuesta (reserva #%d, %s, %d comensales): cambiar menús. Antes: %s. Después: %s. Total: %s -> %s. Abonos registrados se conservan (%s).",
 			in.BookingID, row.Date, row.Party, botSpecialDiffMenus(snap), botSpecialDiffMenus(after), botEUR(bTotals["total_eur"].(float64)), botEUR(aTotals["total_eur"].(float64)), botEUR(aTotals["abonado_eur"].(float64)))
@@ -750,12 +849,22 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	if full != p.Before {
 		return stale(errBotSpecialStale.Error())
 	}
-	preOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, botSpecialColumns...)
+	preOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, botSpecialColumnsFor(p.Op)...)
 	if err != nil {
 		return "", errors.New("error interno")
 	}
 	if err := botSpecialLockRefs(ctx, tx, rid, row.Date); err != nil {
 		return "", errors.New("error interno")
+	}
+	if p.Op == "reschedule" {
+		if rerr := botSpecialRescheduleAllowedRow(row); rerr != nil {
+			return "", rerr
+		}
+	}
+	if p.Op == "reschedule" && args.NewDate != "" && args.NewDate != row.Date {
+		if err := botSpecialLockRefs(ctx, tx, rid, args.NewDate); err != nil {
+			return "", errors.New("error interno")
+		}
 	}
 	var snap specialBookingSnapshot
 	if json.Unmarshal([]byte(row.Raw), &snap) != nil {
@@ -765,25 +874,29 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	if err != nil {
 		return "", err
 	}
-	next, _, err := s.botSpecialBuildNext(ctx, rid, p.BookingID, req)
+	next, _, err := s.botSpecialBuildNextOv(ctx, rid, p.BookingID, req, botOvFromArgs(p.Op, args))
 	if err != nil {
 		return "", errors.New("la validación rechaza el cambio: " + err.Error())
 	}
-	if botSha(botCanon(next.SpecialJSON)) != p.After {
+	if botSpecialAfterKey(p.Op, next) != p.After {
 		return stale("el resultado ya no coincide con la vista previa (menús o precios cambiados); pide una propuesta nueva")
 	}
 	// Special-only write: the three special columns and nothing else.
 	spJSON, _ := next.SpecialJSON.(string)
-	if _, err := tx.ExecContext(ctx, `UPDATE bookings SET is_special_booking = ?, is_prereserva = ?, special_json = ? WHERE restaurant_id = ? AND id = ?`,
+	if p.Op == "reschedule" {
+		if err := s.botSpecialRescheduleWrite(ctx, tx, rid, p, row, next, spJSON); err != nil {
+			return "", err
+		}
+	} else if _, err := tx.ExecContext(ctx, `UPDATE bookings SET is_special_booking = ?, is_prereserva = ?, special_json = ? WHERE restaurant_id = ? AND id = ?`,
 		boolToTinyint(next.IsSpecialBooking), boolToTinyint(next.IsPrereserva), spJSON, rid, p.BookingID); err != nil {
 		return "", errors.New("error al guardar")
 	}
-	postOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, botSpecialColumns...)
+	postOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, botSpecialColumnsFor(p.Op)...)
 	if err != nil || postOthers != preOthers {
 		return "", errors.New("verificación fallida: cambió una columna fuera del bloque especial; no se aplicó nada")
 	}
 	// Second validation just before commit: reference data read again.
-	if again, _, err := s.botSpecialBuildNext(ctx, rid, p.BookingID, req); err != nil || botSha(botCanon(again.SpecialJSON)) != p.After {
+	if again, _, err := s.botSpecialBuildNextOv(ctx, rid, p.BookingID, req, botOvFromArgs(p.Op, args)); err != nil || botSpecialAfterKey(p.Op, again) != p.After {
 		return stale("los datos de referencia cambiaron durante la aplicación; no se aplicó nada")
 	}
 	var after specialBookingSnapshot
@@ -861,4 +974,91 @@ func (s *Server) botSpecialAdminFlushNotify(ctx context.Context, rid int) {
 		}
 		_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET notify_state='sent' WHERE id=? AND notify_state='pending'`, x.id)
 	}
+}
+
+// botSpecialRescheduleWrite moves a special booking to a new date, time or
+// party size inside the caller's transaction. It writes ONLY the date, time,
+// party size, the party-dependent normalised columns and the special block;
+// then it reconciles the occupancy ledger and records the change history, the
+// same side effects the backoffice PATCH has. The caller verifies afterwards
+// that no other column of the row moved.
+func (s *Server) botSpecialRescheduleWrite(ctx context.Context, tx *sql.Tx, rid int, p botSpecialProposalRow, old *botSpecialRow, next boNormalizedBooking, spJSON string) error {
+	var floor, salon sql.NullInt64
+	var custName, phone string
+	var oldChildren, oldMobPeople int
+	if err := tx.QueryRowContext(ctx, `SELECT preferred_floor_number, preferred_salon_id, customer_name, COALESCE(contact_phone,''), COALESCE(children,0), COALESCE(mobility_people,0) FROM bookings WHERE restaurant_id = ? AND id = ?`, rid, p.BookingID).Scan(&floor, &salon, &custName, &phone, &oldChildren, &oldMobPeople); err != nil {
+		return errors.New("error interno")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE bookings SET reservation_date = ?, reservation_time = ?, party_size = ?, children = ?, has_mobility_issues = ?, mobility_people = ?, is_special_booking = ?, is_prereserva = ?, special_json = ? WHERE restaurant_id = ? AND id = ?`,
+		next.ReservationDate, next.ReservationTime, next.PartySize, next.Children, boolToTinyint(next.HasMobilityIssues), next.MobilityPeople,
+		boolToTinyint(next.IsSpecialBooking), boolToTinyint(next.IsPrereserva), spJSON, rid, p.BookingID); err != nil {
+		return errors.New("error al guardar")
+	}
+	if next.ReservationDate != old.Date || next.PartySize != old.Party {
+		var f, sl any
+		if floor.Valid {
+			f = floor.Int64
+		}
+		if salon.Valid {
+			sl = salon.Int64
+		}
+		if err := s.applyBookingLocationDelta(ctx, tx, rid, old.Date, f, sl, old.Party, next.ReservationDate, f, sl, next.PartySize); err != nil {
+			return errors.New("no se pudo actualizar la ocupación; no se aplicó nada")
+		}
+	}
+	rec := func(field, oldV, newV string) error {
+		if oldV == newV {
+			return nil
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, ?, ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`,
+			rid, p.BookingID, old.Date, field, oldV, newV, custName, phone)
+		return err
+	}
+	oldTime := old.Time
+	newTime := strings.TrimSuffix(next.ReservationTime, ":00")
+	for _, e := range [][3]string{{"date", old.Date, next.ReservationDate}, {"time", oldTime, newTime}, {"party_size", fmt.Sprint(old.Party), fmt.Sprint(next.PartySize)}, {"children", fmt.Sprint(oldChildren), fmt.Sprint(next.Children)}, {"mobility_people", fmt.Sprint(oldMobPeople), fmt.Sprint(next.MobilityPeople)}} {
+		if err := rec(e[0], e[1], e[2]); err != nil {
+			return errors.New("no se pudo registrar el historial; no se aplicó nada")
+		}
+	}
+	return nil
+}
+
+// botSpecialRescheduleAllowedRow rejects a reschedule of a cancelled/closed
+// booking (no hidden reactivation) or of one whose original date already passed.
+func botSpecialRescheduleAllowedRow(row *botSpecialRow) error {
+	switch strings.ToLower(strings.TrimSpace(row.Status)) {
+	case "pending", "confirmed":
+	default:
+		return errors.New("la reserva está en estado '" + row.Status + "': solo se mueven reservas pendientes o confirmadas")
+	}
+	loc, _ := time.LoadLocation("Europe/Madrid")
+	if loc == nil {
+		loc = time.UTC
+	}
+	n := time.Now().In(loc)
+	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
+	if d, err := time.Parse("2006-01-02", row.Date); err != nil || d.Before(today) {
+		return errors.New("la reserva original es de una fecha pasada: no se mueve desde aquí")
+	}
+	return nil
+}
+
+// botSpecialRescheduleDeps summarises children/mobility values that the
+// normaliser recomputes from the party size, old vs new, for the preview.
+func botSpecialRescheduleDeps(current map[string]any, next boNormalizedBooking) (text string, changed bool) {
+	oc, _ := current["children"].(int64)
+	om, _ := current["mobility_people"].(int64)
+	oh, _ := current["has_mobility_issues"].(bool)
+	var parts []string
+	if int(oc) != next.Children {
+		parts = append(parts, fmt.Sprintf("niños %d -> %d", oc, next.Children))
+	}
+	if int(om) != next.MobilityPeople || oh != next.HasMobilityIssues {
+		parts = append(parts, fmt.Sprintf("personas con movilidad reducida %d -> %d", om, next.MobilityPeople))
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return " Se ajustan por el nuevo número de comensales: " + strings.Join(parts, ", ") + ".", true
 }

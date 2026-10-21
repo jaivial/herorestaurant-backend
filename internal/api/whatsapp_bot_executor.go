@@ -137,6 +137,8 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolSpecialPropose(ctx, restaurantID, msg, "adelanto", input)
 	case "special_booking_propose_menus":
 		return s.botToolSpecialPropose(ctx, restaurantID, msg, "menus", input)
+	case "special_booking_propose_reschedule":
+		return s.botToolSpecialPropose(ctx, restaurantID, msg, "reschedule", input)
 	case "create_special_booking":
 		return s.botToolCreateSpecialBooking(ctx, restaurantID, msg, tenant, input)
 	case "modify_special_booking":
