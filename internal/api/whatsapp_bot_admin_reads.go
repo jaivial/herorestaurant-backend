@@ -751,6 +751,11 @@ func (s *Server) adminReadSiteBuilderDrafts(ctx context.Context, restaurantID in
 		}
 		sites = append(sites, sr)
 	}
+	// A stream error mid-iteration must not pass as a complete snapshot.
+	if err := srows.Err(); err != nil {
+		srows.Close()
+		return botJSON(map[string]any{"error": "no se pudieron leer los sitios"}), nil
+	}
 	srows.Close()
 	sitesTruncated := false
 	if len(sites) > 10 {
@@ -779,6 +784,10 @@ func (s *Server) adminReadSiteBuilderDrafts(ctx context.Context, restaurantID in
 				return botJSON(map[string]any{"error": "no se pudieron leer las páginas"}), nil
 			}
 			pages = append(pages, map[string]any{"id": pid, "slug": slug, "name": name, "page_type": ptype, "is_home": home != 0, "updated_at": upd})
+		}
+		if err := prows.Err(); err != nil {
+			prows.Close()
+			return botJSON(map[string]any{"error": "no se pudieron leer las páginas"}), nil
 		}
 		prows.Close()
 		pagesTruncated := false
