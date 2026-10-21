@@ -122,16 +122,19 @@ type backofficeOpPlan struct {
 // docs/wa-customtools-matrix.md (seccion 10): retained surfaces, real money,
 // real sends to clients and provider credentials.
 //
-// The match is a PREFIX of the path: "/campanas/" refuses every campaign
-// operation, reads included, because the campaign surface sends to real
-// clients.
+// The match is by PATH SEGMENT: "/campanas" refuses "/campanas" and
+// "/campanas/{id}/send", but not "/campanasfoo". When Method is set, only
+// that verb is refused ("DELETE /members/{id}" does not block the update of
+// the same member); when Exact is set, the path must match exactly and the
+// subtree is NOT covered.
 var botBackofficeOpRefusals = []struct {
 	Method string
+	Exact  bool
 	Match  string
 	Reason string
 }{
-	{Method: "DELETE", Match: "/members/{id}", Reason: "baja de un miembro del equipo: se hace en el panel"},
-	{Method: "POST", Match: "/members", Reason: "alta de un miembro (crea una cuenta del panel y manda una invitacion): se hace en el panel"},
+	{Method: "DELETE", Exact: true, Match: "/members/{id}", Reason: "baja de un miembro del equipo: se hace en el panel"},
+	{Method: "POST", Exact: true, Match: "/members", Reason: "alta de un miembro (crea una cuenta del panel y manda una invitacion): se hace en el panel"},
 	{Match: "/bookings/cancelled", Reason: "writes-control legacy retenido: la reactivacion de reservas la hace el restaurante en el panel"},
 	{Match: "/stock/documents", Reason: "OCR document_get retenido (superficie de prompt-injection)"},
 	{Match: "/stock/ocr-scan", Reason: "OCR document_get retenido (superficie de prompt-injection)"},
@@ -192,6 +195,12 @@ func botBackofficeOpRefusal(op forkyAdminOp) string {
 	p := strings.TrimSpace(op.Path)
 	for _, r := range botBackofficeOpRefusals {
 		if r.Method != "" && !strings.EqualFold(r.Method, op.Method) {
+			continue
+		}
+		if r.Exact {
+			if p == r.Match {
+				return r.Reason
+			}
 			continue
 		}
 		if p == r.Match || strings.HasPrefix(p, r.Match+"/") {
@@ -421,8 +430,13 @@ func (s *Server) botBackofficeExecute(ctx context.Context, rid int, msg botWebho
 	}
 	log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s applied", rid, op.Name)
 	notice := "Aplicado: " + op.Method + " " + op.Path + ". " + out
+	// The result is a best-effort trace: the operation ALREADY happened, so a
+	// failure here must not change what the chat is told. It is logged, not
+	// swallowed.
 	if rj, mErr := json.Marshal(map[string]any{"op": p.Op, "operation": op.Name, "notice": notice}); mErr == nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID)
+		if _, wErr := s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); wErr != nil {
+			log.Printf("[bot] wa_backoffice_ops_v1 rid=%d proposal=%d result_write_failed err=%v", rid, p.ID, wErr)
+		}
 	}
 	return notice, nil
 }
@@ -813,9 +827,17 @@ func (s *Server) botAccessExecute(ctx context.Context, tx *sql.Tx, rid int, p bo
 	}
 	log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d applied resource=%s action=%s", rid, a.Resource, a.Action)
 	// A changed grant set makes the old panel service session unnecessary.
+	//
+	// KNOWN GAP: the reset only forgets the CACHED token: the bo_sessions row
+	// it created stays valid until it expires (12 h). The session is bound to
+	// the restaurant and to a superadmin, and it was already reachable, so
+	// this does not open a new door, but it is not a revocation. Revoking the
+	// row is a change of the session layer, out of this scope.
 	botServiceSessionReset(rid)
 	if rj, mErr := json.Marshal(map[string]any{"op": p.Op, "resource": a.Resource, "action": a.Action, "notice": summary}); mErr == nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID)
+		if _, wErr := s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); wErr != nil {
+			log.Printf("[bot] wa_bot_privileged_control_v1 rid=%d proposal=%d result_write_failed err=%v", rid, p.ID, wErr)
+		}
 	}
 	return summary, nil
 }

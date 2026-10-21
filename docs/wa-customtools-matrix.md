@@ -60,7 +60,7 @@ ambos son 1:1 con el actor:
 
 | Camino | Condición | Prueba |
 |---|---|---|
-| **(a) grupo autorizado** | el chat es exactamente el grupo de *env* (`BOT_SPECIAL_ADMIN_SCOPES` por tenant y/o `BOT_PRIVILEGED_GROUP_JIDS`) | `botGroupSenderIsMember` contra la lista de participantes **fresca** del proveedor |
+| **(a) grupo autorizado** | el chat es exactamente el grupo de *env* (`BOT_SPECIAL_ADMIN_SCOPES` por tenant y/o `BOT_PRIVILEGED_GROUP_JIDS`) | `botPrivilegedMemberPhone`: lista de participantes **fresca** del proveedor (`botGroupSenderIsMember` es solo el filtro cacheado de entrada) |
 | **(b) privado de un miembro actual** | chat 1:1 y el teléfono del actor (`ActorPhoneJID`) es **miembro ACTUAL** de ese grupo | `botSpecialAdminFreshMember` (fetch fresco, sin caché) |
 
 Reglas que se aplican y que **no** admiten atajo:
@@ -208,14 +208,14 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/bookings/{id}/documents` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/bookings/{id}/qr` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `GET` | `/bookings/{id}/receipt.pdf` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
-| `GET` | `/bot/ai/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — clave de proveedor — fuera de alcance |
+| `GET` | `/bot/ai/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura; su escritura está EXCLUIDA) |
 | `PUT` | `/bot/ai/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — clave de proveedor — fuera de alcance |
 | `GET` | `/bot/ai/{restaurantId}/privileged-contacts` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura) |
 | `PUT` | `/bot/ai/{restaurantId}/privileged-contacts` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — clave de proveedor: fuera de alcance |
 | `GET` | `/bot/config` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | read | `whatsapp_bot_config_get` | `whatsapp_bot_config_get` |
 | `PUT` | `/bot/config` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — el prompt del bot (reglas e instrucciones) se cambia en el panel |
-| `GET` | `/bot/pipeline/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — pipeline DSPy — se deja solo al panel |
-| `GET` | `/bot/settings/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — prompt del bot — se deja solo al panel |
+| `GET` | `/bot/pipeline/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura; su escritura está EXCLUIDA) |
+| `GET` | `/bot/settings/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura; su escritura está EXCLUIDA) |
 | `PUT` | `/bot/settings/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — prompt del bot — se deja solo al panel |
 | `POST` | `/bot/settings/{restaurantId}/preview` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — el prompt del bot se cambia en el panel |
 | `GET` | `/branding` | `s.requireBOSession`, `reservasGate` | reservas | read | `branding_get` | `branding_get` |
@@ -284,9 +284,9 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/config/ads` | `s.requireBOSession`, `adsGate` | anuncios | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `DELETE` | `/config/ads/{adId}` | `s.requireBOSession`, `adsGate` | anuncios | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PUT` | `/config/ads/{adId}` | `s.requireBOSession`, `adsGate` | anuncios | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/config/bunny-storage` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — clave de proveedor — fuera de alcance |
+| `GET` | `/config/bunny-storage` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura; su escritura está EXCLUIDA) |
 | `POST` | `/config/bunny-storage` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — clave de proveedor — fuera de alcance |
-| `GET` | `/config/chatgpt-plugin/tokens` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — credencial del plugin — fuera de alcance |
+| `GET` | `/config/chatgpt-plugin/tokens` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura; su escritura está EXCLUIDA) |
 | `POST` | `/config/chatgpt-plugin/tokens` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — credencial del plugin — fuera de alcance |
 | `POST` | `/config/chatgpt-plugin/tokens/revoke` | `s.requireBOSession`, `rootOnlyGate` | root | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — credencial del plugin — fuera de alcance |
 | `POST` | `/config/check-website` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — llamada externa — se deja solo al panel |
@@ -296,7 +296,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/config/day` | `s.requireBOSession`, `reservasGate` | reservas | write | `booking_limits_update`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `config_propose_day` |
 | `GET` | `/config/defaults` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/config/defaults` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/config/email-provider` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | EXCLUIDO — clave de proveedor — fuera de alcance |
+| `GET` | `/config/email-provider` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura; su escritura está EXCLUIDA) |
 | `POST` | `/config/email-provider` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — clave de proveedor — fuera de alcance |
 | `GET` | `/config/floors` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/config/floors` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -314,7 +314,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/config/mesas-de-dos` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `config_propose_mesas(2)` |
 | `GET` | `/config/mesas-de-tres` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/config/mesas-de-tres` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `config_propose_mesas(3)` |
-| `GET` | `/config/minimax` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — clave de proveedor — fuera de alcance |
+| `GET` | `/config/minimax` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura; su escritura está EXCLUIDA) |
 | `POST` | `/config/minimax` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — clave de proveedor — fuera de alcance |
 | `GET` | `/config/mobility-day` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/config/mobility-day` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -409,7 +409,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/instatic/status/{restaurantId}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/integrations` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `integrations_get` | `integrations_get` |
 | `POST` | `/integrations` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — credenciales y webhooks de integracion: se cambian en el panel |
-| `GET` | `/integrations/uazapi/servers` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | read | `admin_call` | EXCLUIDO — infra de proveedor — fuera de alcance |
+| `GET` | `/integrations/uazapi/servers` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | read | `admin_call` | `admin_call` (lectura; su escritura está EXCLUIDA) |
 | `POST` | `/integrations/uazapi/servers` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — infra de proveedor — fuera de alcance |
 | `PATCH` | `/integrations/uazapi/servers/{id}` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — credenciales y webhooks de integracion: se cambian en el panel |
 | `GET` | `/invoices` | `s.requireBOSession`, `facturasGate` | facturas | read | `invoices_list` | `invoices_list` |
@@ -427,11 +427,11 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/legal-pages` | `s.requireBOSession`, `reservasGate` | reservas | read | `legal_pages_list` | `admin_call` (lectura) |
 | `GET` | `/legal-pages/{slug}` | `s.requireBOSession`, `reservasGate` | reservas | read | `legal_pages_list` | `admin_call` (lectura) |
 | `POST` | `/legal-pages/{slug}` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/me` | `s.requireBOSession` | session | write | `admin_call` | EXCLUIDO — operación sobre la cuenta de la sesión |
-| `POST` | `/me/password` | `s.requireBOSession` | session | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `PUT` | `/me/preferences` | `s.requireBOSession` | session | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `GET` | `/me` | `s.requireBOSession` | session | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
+| `POST` | `/me/password` | `s.requireBOSession` | session | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — operacion sobre la cuenta de la sesion (guarda del replay) |
+| `PUT` | `/me/preferences` | `s.requireBOSession` | session | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — operacion sobre la cuenta de la sesion (guarda del replay) |
 | `GET` | `/members` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `members_list` | `members_list` |
-| `POST` | `/members` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/members` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — alta de un miembro (crea una cuenta del panel y manda una invitacion): se hace en el panel |
 | `POST` | `/members/whatsapp/cancel` | `s.requireBOSession`, `rootOnlyGate` | root | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de la conexión — fuera de alcance |
 | `POST` | `/members/whatsapp/connect` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de la conexión — fuera de alcance |
 | `GET` | `/members/whatsapp/connection` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `whatsapp_connection_get` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
@@ -444,7 +444,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `PATCH` | `/members/{id}` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/members/{id}/compensations` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `members_read(compensations_list)` | `admin_call` (lectura) |
 | `POST` | `/members/{id}/compensations` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `DELETE` | `/members/{id}/compensations/{compensationId}` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — baja de un miembro del equipo: se hace en el panel |
+| `DELETE` | `/members/{id}/compensations/{compensationId}` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/members/{id}/compensations/{compensationId}` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/members/{id}/ensure-user` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — alta de una cuenta del panel: fuera de alcance |
 | `POST` | `/members/{id}/invitation/resend` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — envío real de correo — fuera de alcance |
@@ -487,7 +487,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/platform/subscriptions` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/platform/subscriptions/{id}/toggle` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de tenants (superadmin) — fuera de alcance |
 | `GET` | `/platform/uazapi-servers` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
-| `GET` | `/platform/users` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | EXCLUIDO — gestión de cuentas del panel |
+| `GET` | `/platform/users` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | EXCLUIDO — gestion de cuentas del panel (guarda del replay) |
 | `POST` | `/platform/users` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
 | `PATCH` | `/platform/users/{id}` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
 | `POST` | `/platform/users/{id}/assign` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
@@ -634,7 +634,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `PATCH` | `/postres/{id}` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/restaurant/pages/visibility` | `s.requireBOSession`, `menusGate` | menus | read | `admin_call` | `admin_call` (lectura) |
 | `PATCH` | `/restaurant/pages/visibility` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/roles` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `admin_call` | EXCLUIDO — gestión de cuentas del panel |
+| `GET` | `/roles` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `admin_call` | EXCLUIDO — gestion de cuentas del panel (guarda del replay) |
 | `POST` | `/roles` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de cuentas del panel |
 | `DELETE` | `/site-builder/assets/{assetId}` | `s.requireBOSession`, `ajustesGate` | ajustes | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — ficheros del sitio: se gestionan en el panel |
 | `GET` | `/site-builder/assets/{assetId}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
@@ -678,13 +678,13 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/stock/counts` | `s.requireBOSession`, `withBOStockTimeout`, `stockCountPerformGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/stock/counts/{id}` | `s.requireBOSession`, `withBOStockTimeout`, `stockViewGate` | stock | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/stock/counts/{id}/close` | `s.requireBOSession`, `withBOStockTimeout`, `stockCountCloseGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `GET` | `/stock/documents` | `s.requireBOSession`, `stockOCRUploadGate` | stock | read | `stock_read(documents_list)` | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
+| `GET` | `/stock/documents` | `s.requireBOSession`, `stockOCRUploadGate` | stock | read | `stock_read(documents_list)` | `admin_call` (lectura; su escritura está EXCLUIDA) |
 | `POST` | `/stock/documents/extract-text` | `s.requireBOSession`, `stockOCRUploadGate`, `s.requireBOStockAI` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get retenido (superficie de prompt-injection) |
-| `GET` | `/stock/documents/{id}` | `s.requireBOSession`, `stockOCRUploadGate` | stock | read | `admin_call` | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
+| `GET` | `/stock/documents/{id}` | `s.requireBOSession`, `stockOCRUploadGate` | stock | read | `admin_call` | `admin_call` (lectura; su escritura está EXCLUIDA) |
 | `POST` | `/stock/documents/{id}/confirm-invoice` | `s.requireBOSession`, `stockOCRConfirmGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `POST` | `/stock/documents/{id}/confirm-recipe` | `s.requireBOSession`, `stockOCRConfirmGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `DELETE` | `/stock/documents/{id}/original` | `s.requireBOSession`, `stockOCRConfirmGate` | stock | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
-| `GET` | `/stock/documents/{id}/original` | `s.requireBOSession`, `stockOCRUploadGate` | stock | write | `admin_call` | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
+| `GET` | `/stock/documents/{id}/original` | `s.requireBOSession`, `stockOCRUploadGate` | stock | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `POST` | `/stock/documents/{id}/reject` | `s.requireBOSession`, `stockOCRUploadGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `PATCH` | `/stock/documents/{id}/review` | `s.requireBOSession`, `stockOCRUploadGate` | stock | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — OCR document_get RETENIDO (superficie prompt-injection) |
 | `GET` | `/stock/expiring` | `s.requireBOSession`, `withBOStockTimeout`, `stockViewGate` | stock | read | `stock_read(expiring)` | `admin_call` (lectura) |
@@ -798,7 +798,6 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/website/templates` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `website_read(website_templates)` | `admin_call` (lectura) |
 | `GET` | `/widget/settings` | `s.requireBOSession`, `reservasGate` | reservas | read | `website_read(widget_settings)` | `admin_call` (lectura) |
 | `PUT` | `/widget/settings` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-
 ---
 
 ## 6. Matriz B — rutas `/admin` fuera del mapa generado
@@ -898,7 +897,7 @@ del `Group` que los envuelve) y el mapa se regenera.
 
 El flag `write` del mapa se derivaba del **método HTTP**, así que 19 GETs que **escriben** estaban
 marcados como lectura y eran alcanzables desde WhatsApp sin confirmación (17 de ellos están en el
-mapa; los otros dos, cuyo handler lleva `Image`, quedan fuera del mapa por el filtro del generador). Auditoría completa
+mapa; los otros dos,whose handler lleva `Image`, quedan fuera del mapa por el filtro del generador). Auditoría completa
 (`wa_customtools_get_writes_v1`):
 
 | GET | Qué escribe |
@@ -1057,13 +1056,28 @@ convertirse en un bypass de esa puerta.
 
 ---
 
-## 12. Verificación manual (sin tests automáticos)
+## 12. Huecos conocidos (a conciencia, con su motivo)
+
+| Hueco | Por qué queda | Qué haría falta |
+|---|---|---|
+| La selección de conversaciones del panel no concede privilegio | corrección de la frontera (B1): la lista de la BD es una preferencia, no una prueba de identidad | migrar el grupo autorizado a `BOT_PRIVILEGED_GROUP_JIDS` / `BOT_SPECIAL_ADMIN_SCOPES` (el `GET` del panel ya devuelve `authorized_groups` y la nota) |
+| `botServiceSessionReset` no revoca la fila `bo_sessions` | solo olvida el token cacheado; la fila sigue viva hasta su caducidad (12 h) | revocar la fila: es un cambio de la capa de sesión, fuera de este alcance |
+| Las escrituras del TPV (cobrar, descontar, cerrar caja/turno) **sí** son proponibles | son la operación propia del restaurante y el panel las permite; la cubren la aprobación humana y la vista previa exacta | una decisión del operador sobre qué es "dinero real" en su TPV |
+| `POST /admin/site-builder/sites/{id}/publish` y `POST /admin/website-builder/publish` son proponibles | publicar el sitio es una operación del restaurante; la compra de dominios sí está excluida | — |
+| Un `GET` que escribe sigue siendo alcanzable por `admin_call` en **Forky** (con confirmación) | el mapa lo marca `write: true`, así que pide `confirmed=true` + `confirmation_token`; el panel tiene el mismo efecto al abrir esas pantallas | — |
+| Los borrados de datos del restaurante (menús, platos, stock, mesas, compensación) son proponibles | son borrados lógicos de datos del propio restaurante, con vista previa exacta y aprobación humana | — |
+| El bot no puede cambiar el grupo de gestión a un grupo que no esté en el entorno | el bot responde con las tools de staff en el grupo de gestión: un grupo no autorizado nunca debe recibir tráfico de staff | — |
+
+---
+
+## 13. Verificación manual (sin tests automáticos)
 
 1. `go build ./...` y `go vet ./internal/api` (build acotado: `systemd-run --user --scope -p MemoryMax=8G`).
 2. `go run ./cmd/forky-admin-map -server internal/api/server.go -pages ../backoffice -o internal/api/forky_admin_ops.json`
    → el mapa debe incluir ya las rutas de `site-builder`, `website-builder`, `instatic`,
    `campanas/email-validation`, `campanas/bounces/sync` y `bot/ai/{id}/privileged-contacts`, y los
-   19 GET que escriben deben aparecer con `write: true`.
+   **17** GET que escriben (de los 19 auditados: los otros dos, cuyo handler lleva `Image`, quedan
+   fuera del mapa) deben aparecer con `write: true`.
 3. `go run ./cmd/forky-docs > docs/FORKY_API.md` → el registro debe incluir la tool nueva de
    Forky.
 4. En el grupo autorizado: un mensaje de un **miembro actual** ofrece el catálogo completo; un
