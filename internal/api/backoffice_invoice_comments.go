@@ -37,16 +37,18 @@ func (s *Server) handleBOInvoiceCommentsList(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	_ = a // used for auth check
-
+	// Tenant ownership: only comments of invoices owned by the session
+	// restaurant. A foreign or nonexistent invoice yields an empty list
+	// (uniform outcome, no existence leak across tenants).
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT c.id, c.invoice_id, c.content, c.user_id, COALESCE(u.name, u.email, '') as user_name,
 		       c.created_at, c.updated_at
 		FROM bo_invoice_comments c
+		JOIN invoices i ON i.id = c.invoice_id AND i.restaurant_id = ?
 		LEFT JOIN bo_users u ON u.id = c.user_id
 		WHERE c.invoice_id = ?
 		ORDER BY c.created_at ASC
-	`, invoiceID)
+	`, a.ActiveRestaurantID, invoiceID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error fetching comments")
 		return
@@ -109,6 +111,22 @@ func (s *Server) handleBOInvoiceCommentCreate(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Tenant ownership: refuse comments on invoices the session restaurant
+	// does not own. Foreign and nonexistent invoices get the same 404 (no
+	// existence leak across tenants).
+	var owned int
+	err = s.db.QueryRowContext(r.Context(), `
+		SELECT 1 FROM invoices WHERE id = ? AND restaurant_id = ?
+	`, invoiceID, a.ActiveRestaurantID).Scan(&owned)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			httpx.WriteError(w, http.StatusNotFound, "Invoice not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "Error checking invoice")
+		return
+	}
+
 	now := time.Now()
 	res, err := s.db.ExecContext(r.Context(), `
 		INSERT INTO bo_invoice_comments (invoice_id, content, user_id, created_at)
@@ -138,7 +156,7 @@ func (s *Server) handleBOInvoiceCommentCreate(w http.ResponseWriter, r *http.Req
 
 // PUT /api/admin/invoices/{id}/comments/{commentId}
 func (s *Server) handleBOInvoiceCommentUpdate(w http.ResponseWriter, r *http.Request) {
-	_, ok := boAuthFromContext(r.Context())
+	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
@@ -173,11 +191,15 @@ func (s *Server) handleBOInvoiceCommentUpdate(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Tenant ownership: the invoice must belong to the session restaurant.
+	// A foreign invoice yields the same "Comment not found" outcome as a
+	// nonexistent one (uniform, no existence leak).
 	result, err := s.db.ExecContext(r.Context(), `
 		UPDATE bo_invoice_comments
 		SET content = ?, updated_at = NOW()
 		WHERE id = ? AND invoice_id = ?
-	`, content, commentID, invoiceID)
+		  AND invoice_id IN (SELECT id FROM invoices WHERE restaurant_id = ?)
+	`, content, commentID, invoiceID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating comment")
 		return
@@ -217,7 +239,7 @@ func (s *Server) handleBOInvoiceCommentUpdate(w http.ResponseWriter, r *http.Req
 
 // DELETE /api/admin/invoices/{id}/comments/{commentId}
 func (s *Server) handleBOInvoiceCommentDelete(w http.ResponseWriter, r *http.Request) {
-	_, ok := boAuthFromContext(r.Context())
+	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
@@ -235,10 +257,12 @@ func (s *Server) handleBOInvoiceCommentDelete(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Tenant ownership: same uniform outcome as Update.
 	result, err := s.db.ExecContext(r.Context(), `
 		DELETE FROM bo_invoice_comments
 		WHERE id = ? AND invoice_id = ?
-	`, commentID, invoiceID)
+		  AND invoice_id IN (SELECT id FROM invoices WHERE restaurant_id = ?)
+	`, commentID, invoiceID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error deleting comment")
 		return
