@@ -57,7 +57,7 @@ var botPrivilegedControlToolNames = func() map[string]bool {
 // botToolDefsPrivilegedControl is the catalog of this bot version. Registered
 // ONLY for allowed (privileged) contacts and groups.
 func botToolDefsPrivilegedControl() []botToolDef {
-	return []botToolDef{
+	defs := []botToolDef{
 		{
 			Name: "manage_bot_access",
 			Description: "Gestiona el ACCESO de esta versión del bot desde el chat: quién está autorizado (contactos y/o grupos de WhatsApp), qué herramientas personalizadas puede usar cada conversación y cuál es el grupo de gestión. " +
@@ -86,6 +86,12 @@ func botToolDefsPrivilegedControl() []botToolDef {
 			}}`),
 		},
 	}
+	// Coordination ids: wa_bot_staff_reads_v2 / wa_bot_panel_write_v1 - the
+	// rest of this bot version's surface: the dedicated staff reads and the
+	// approved panel writes (the missing halves of the backoffice coverage).
+	defs = append(defs, botToolDefsStaffReads()...)
+	defs = append(defs, botPanelChangeToolDefs()...)
+	return defs
 }
 
 // botToolGrantsForChat returns the grant stored for one conversation, if any.

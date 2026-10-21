@@ -691,7 +691,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// messaging and add_booking_note are unchanged.
 			if botPrivilegedDeniedWrites[name] {
 				log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
-				return botJSON(map[string]any{"error": "esta operación está desactivada temporalmente para el bot (no se ejecuta). No la reintentes ni busques otra vía: di al grupo que debe hacerse en el panel de administración."}), nil
+				return botJSON(map[string]any{"error": "esta operación directa está desactivada para el bot (no se ejecuta). No la reintentes: usa la herramienta de PROPUESTA equivalente (booking_propose_create/edit/cancel, special_booking_propose_create, booking_propose_restore...), que se aplica con 'OK <código>'."}), nil
 			}
 			if _, ok := assistantToolLookup(name); ok {
 				if _, mine := botOwned[name]; !mine {
@@ -710,7 +710,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 					// the bot's own tools are unchanged.
 					if def, _ := assistantToolLookup(name); def.Write {
 						log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
-						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, di al grupo que esa operación no está soportada y que debe hacerse en el panel. No busques otra vía."}), nil
+						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel directamente. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, PROPON el cambio equivalente con panel_change (se aplica cuando el usuario responde 'OK <código>'). No busques otra vía."}), nil
 					}
 					return s.assistantExecuteTool(s.botPrivilegedForkyContext(ctx, restaurantID), restaurantID, name, input)
 				}

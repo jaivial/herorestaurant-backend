@@ -1028,6 +1028,11 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 		// this write commit together, exactly like the booking ops.
 		return s.botAccessExecute(ctx, tx, rid, p)
 	}
+	if p.Op == "panel" {
+		// Coordination id: wa_bot_panel_write_v1 - the claim above commits
+		// together with the successful panel write.
+		return s.botPanelExecute(ctx, tx, rid, p)
+	}
 	if p.Op == "edit" {
 		return s.botEditExecute(ctx, tx, rid, msg, p)
 	}

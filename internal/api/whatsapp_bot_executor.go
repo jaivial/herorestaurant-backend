@@ -151,6 +151,12 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolManageAccess(ctx, restaurantID, msg, input)
 	case "get_dish_allergens":
 		return s.botToolDishAllergens(ctx, restaurantID, input)
+	// Coordination ids: wa_bot_staff_reads_v2 / wa_bot_panel_write_v1 - the
+	// dedicated staff reads and the approved panel writes of this version.
+	case "staff_domain_read":
+		return s.botToolStaffDomainRead(ctx, restaurantID, msg, input)
+	case "panel_change":
+		return s.botToolPanelChange(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_admin_reads_v1 - read-only staff group tools;
 	// each handler re-authorizes through botSpecialAdminAuthorize (fail closed).
 	case "list_cancelled_bookings":
