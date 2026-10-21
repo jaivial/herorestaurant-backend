@@ -149,6 +149,14 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolCreatePropose(ctx, restaurantID, msg, input)
 	case "special_booking_propose_create":
 		return s.botToolSpecialCreatePropose(ctx, restaurantID, msg, input)
+	case "config_propose_day":
+		return s.botToolConfigDayPropose(ctx, restaurantID, msg, input)
+	case "config_propose_daily_limit":
+		return s.botToolConfigDailyLimitPropose(ctx, restaurantID, msg, input)
+	case "config_propose_mesas":
+		return s.botToolConfigMesasPropose(ctx, restaurantID, msg, input)
+	case "config_propose_salon_condesa":
+		return s.botToolConfigSalonCondesaPropose(ctx, restaurantID, msg, input)
 	case "booking_propose_edit":
 		return s.botToolEditPropose(ctx, restaurantID, msg, input)
 	case "booking_propose_set_rice":
