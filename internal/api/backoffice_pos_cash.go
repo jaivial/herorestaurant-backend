@@ -321,7 +321,11 @@ func (s *Server) handleBOPOSCashMovements(w http.ResponseWriter, r *http.Request
 		}
 		items = append(items, map[string]any{"id": id, "shiftId": shiftID, "terminalKey": terminal, "type": kind, "amountCents": amount, "reason": reason, "idempotencyKey": key, "createdBy": actor, "approvedBy": approvedBy, "createdAt": created})
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "shiftId": shiftID, "items": items})
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error reading cash movements")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "shiftId": shiftID, "items": items, "returned": len(items), "truncated": len(items) == 500})
 }
 
 func (s *Server) handleBOPOSCashMovementCreate(w http.ResponseWriter, r *http.Request) {

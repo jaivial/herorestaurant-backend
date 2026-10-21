@@ -439,7 +439,15 @@ func (s *Server) handleBOPOSKitchenQueue(w http.ResponseWriter, r *http.Request)
 			lines = append(lines, map[string]any{"id": lineID, "productName": name, "quantity": quantity, "action": action, "notes": notes})
 		}
 		lineRows.Close()
+		if qErr = lineRows.Err(); qErr != nil {
+			httpx.WriteError(w, 500, "Error reading kitchen dispatch lines")
+			return
+		}
 		items = append(items, map[string]any{"id": id, "stationId": station, "stationName": stationName, "ticketId": ticket, "ticketNumber": number, "tableName": table, "status": status, "createdAt": created, "lines": lines})
+	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading kitchen queue")
+		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
 }

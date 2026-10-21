@@ -49,6 +49,10 @@ func (s *Server) handleBOPOSSalesReport(w http.ResponseWriter, r *http.Request) 
 		}
 		items = append(items, map[string]any{"date": normalizePOSDate(date), "serviceType": service, "tickets": tickets, "grossCents": gross, "refundedCents": refund, "netCents": gross - refund, "covers": covers})
 	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading report")
+		return
+	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "from": from, "to": to, "items": items})
 }
 func (s *Server) handleBOPOSCardReconciliation(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +78,10 @@ func (s *Server) handleBOPOSCardReconciliation(w http.ResponseWriter, r *http.Re
 			return
 		}
 		items = append(items, map[string]any{"date": normalizePOSDate(date), "payments": payments, "amountCents": amount, "cardRefundsCents": cardRefunds, "referencedPayments": referenced, "uniqueReferences": uniqueReferences, "referencesComplete": referenced == payments, "referencesUnique": uniqueReferences == payments})
+	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading report")
+		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "from": from, "to": to, "items": items})
 }
@@ -101,6 +109,10 @@ func (s *Server) handleBOPOSStockReport(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		items = append(items, map[string]any{"status": status, "snapshots": count, "quantityBase": qty})
+	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading report")
+		return
 	}
 	var exceptions int
 	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_stock_exceptions WHERE restaurant_id=? AND status='OPEN'`, a.ActiveRestaurantID).Scan(&exceptions)
@@ -139,6 +151,10 @@ func (s *Server) handleBOPOSCoversRebuild(w http.ResponseWriter, r *http.Request
 		}
 		keys = append(keys, k)
 	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading report")
+		return
+	}
 	rows.Close()
 	for _, k := range keys {
 		if _, err = s.rebuildPOSAffluenceKey(r.Context(), tx, a.ActiveRestaurantID, k.date, k.service); err != nil {
@@ -172,6 +188,10 @@ func (s *Server) handleBOPOSStockExceptionsList(w http.ResponseWriter, r *http.R
 			return
 		}
 		items = append(items, map[string]any{"id": id, "ticketId": ticketID, "ticketLineId": stockNullableDBInt(lineID), "code": code, "status": status, "message": message, "productName": name, "createdAt": created})
+	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading report")
+		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
 }

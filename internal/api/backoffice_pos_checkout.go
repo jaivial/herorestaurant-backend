@@ -905,6 +905,14 @@ func (s *Server) handleBOPOSCoversReport(w http.ResponseWriter, r *http.Request)
 	if to == "" {
 		to = time.Now().Format("2006-01-02")
 	}
+	if _, err := time.Parse("2006-01-02", from); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "from invalido (YYYY-MM-DD)")
+		return
+	}
+	if _, err := time.Parse("2006-01-02", to); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "to invalido (YYYY-MM-DD)")
+		return
+	}
 	rows, err := s.db.QueryContext(r.Context(), `SELECT ck.service_date,ck.service_type,ck.pos_covers,ck.adjustments,COALESCE(a.covers,0),COALESCE(a.source,'') FROM (SELECT v.service_date,v.service_type,SUM(CASE WHEN v.status='CLOSED' AND v.channel='DINE_IN' THEN v.covers ELSE 0 END) pos_covers,COALESCE((SELECT SUM(c.delta_covers) FROM pos_cover_adjustments c WHERE c.restaurant_id=v.restaurant_id AND c.service_date=v.service_date AND c.service_type=v.service_type),0) adjustments FROM pos_visits v WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ? GROUP BY v.service_date,v.service_type) ck LEFT JOIN stock_affluence_daily a ON a.restaurant_id=? AND a.service_date=ck.service_date AND a.service_type=ck.service_type ORDER BY ck.service_date DESC,ck.service_type`, a.ActiveRestaurantID, from, to, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading covers")
@@ -920,6 +928,10 @@ func (s *Server) handleBOPOSCoversReport(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		items = append(items, map[string]any{"date": normalizePOSDate(date), "serviceType": service, "posCovers": pos, "adjustments": adjustments, "computedCovers": aggregatePOSCovers(nil, pos+adjustments), "aggregateCovers": aggregate, "source": source})
+	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading covers")
+		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
 }
