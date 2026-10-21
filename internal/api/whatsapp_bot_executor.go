@@ -149,6 +149,8 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolCreatePropose(ctx, restaurantID, msg, input)
 	case "booking_propose_edit":
 		return s.botToolEditPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_set_rice":
+		return s.botToolRicePropose(ctx, restaurantID, msg, input)
 	case "create_special_booking":
 		return s.botToolCreateSpecialBooking(ctx, restaurantID, msg, tenant, input)
 	case "modify_special_booking":

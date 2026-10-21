@@ -182,6 +182,11 @@ func botSpecialAdminToolDefs() []botToolDef {
 			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"booking_id":{"type":"integer"},"customer_name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string","description":"Prefijo sin +"},"contact_email":{"type":"string","description":"Vacío = email por defecto del restaurante"},"table_number":{"type":"string","description":"Vacío = sin mesa"},"commentary":{"type":"string","description":"Vacío = sin comentario"},"children":{"type":"integer"},"baby_strollers":{"type":"integer"},"high_chairs":{"type":"integer"}},"required":["booking_id"]}`),
 		},
 		{
+			Name:        "booking_propose_set_rice",
+			Description: "PROPONE poner, cambiar o quitar el arroz de una reserva NORMAL sin menú de grupo (con menú de grupo el arroz es el propio menú: se cambia desde el panel). NO lo aplica: guarda una propuesta exacta y envía al grupo una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. items: lista de {type, servings}; usa SOLO nombres exactos de rice_menu para la fecha de la reserva; la suma de raciones no puede superar los comensales; una lista vacía quita el arroz (la vista previa lo dice claramente). No cambia fecha, hora, comensales, menús ni ocupación. No avisa al cliente. Pide siempre el booking_id y confirma con el usuario el cambio antes de proponer.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"booking_id":{"type":"integer"},"items":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"type":{"type":"string","description":"Nombre exacto del arroz según rice_menu"},"servings":{"type":"integer","description":"Raciones (mínimo 1)"}},"required":["type","servings"]}}},"required":["booking_id","items"]}`),
+		},
+		{
 			Name:        "booking_propose_create",
 			Description: "PROPONE crear una reserva NORMAL nueva (sin menú de grupo, arroces, extras ni fecha especial: esas se crean desde el panel). NO la crea: guarda una propuesta exacta y envía al grupo una vista previa con un código; se crea cuando la misma persona escribe 'OK' y ese código en el mismo chat. Pide antes fecha, hora, comensales, nombre y teléfono (no los inventes). Rechaza fechas pasadas, días cerrados y fechas especiales. Si ya existe una reserva con los mismos datos (fecha, hora, teléfono y comensales), lo dice y solo sigue si el usuario confirma expresamente el duplicado con allow_duplicate_of. No avisa al cliente ni emite avisos externos.",
 			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"date":{"type":"string","description":"YYYY-MM-DD"},"time":{"type":"string","description":"HH:MM"},"party_size":{"type":"integer"},"customer_name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string","description":"Prefijo sin + (por defecto 34)"},"contact_email":{"type":"string"},"commentary":{"type":"string"},"children":{"type":"integer"},"baby_strollers":{"type":"integer"},"high_chairs":{"type":"integer"},"preferred_floor_number":{"type":"integer"},"allow_duplicate_of":{"type":"integer","description":"Solo para confirmar expresamente un duplicado legítimo: booking_id de la reserva existente igual"}},"required":["date","time","party_size","customer_name","contact_phone"]}`),
@@ -927,6 +932,9 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	}
 	if p.Op == "edit" {
 		return s.botEditExecute(ctx, tx, rid, msg, p)
+	}
+	if p.Op == "set_rice" {
+		return s.botRiceExecute(ctx, tx, rid, msg, p)
 	}
 	if p.Op == "create" {
 		return s.botCreateExecute(ctx, tx, rid, msg, p)
