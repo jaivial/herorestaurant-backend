@@ -484,9 +484,14 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 	}
 	reference, _ := s.loadRestaurantBranding(r.Context(), campaignTemplateReferenceRestaurant)
 	branding := reference
+	// ownLoaded gates the footer identity: when the operator's own branding
+	// cannot be loaded, the footer must omit address/email rather than stamp
+	// the REFERENCE restaurant's identity (cross-tenant misrepresentation).
+	ownLoaded := a.ActiveRestaurantID == campaignTemplateReferenceRestaurant
 	if a.ActiveRestaurantID != campaignTemplateReferenceRestaurant {
 		if own, err := s.loadRestaurantBranding(r.Context(), a.ActiveRestaurantID); err == nil {
 			branding = own
+			ownLoaded = true
 		}
 	}
 	// Optional theme overrides let the editor refresh the shell when the user
@@ -520,7 +525,11 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 		"unsubscribe_url": unsubscribeURL,
 		// The editor renders the markdown locally and drops it in this exact
 		// shell, so the preview matches the delivered email byte for byte.
-		"shell":            campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, campaignEmailBodyPlaceholder, websiteURL, unsubscribeURL, s.campaignEmailIdentityLine(r.Context(), a.ActiveRestaurantID), branding.Address, branding.Email),
+			footerAddress, footerEmail := "", ""
+	if ownLoaded {
+		footerAddress, footerEmail = branding.Address, branding.Email
+	}
+	httpx.WriteJSON(w, 200, map[string]any{
 		"body_placeholder": campaignEmailBodyPlaceholder,
 	})
 }
