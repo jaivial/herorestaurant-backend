@@ -81,9 +81,16 @@ Reglas que se aplican y que **no** admiten atajo:
 `BOT_SPECIAL_ADMIN_SCOPES` (`<restaurant_id>=<jid @g.us>;…`) o `BOT_PRIVILEGED_GROUP_JIDS`
 (lista global). La selección de conversaciones privilegiadas del panel
 (`privileged_contacts` / `privileged_group_jids` en `whatsapp_bot_config.config_json`) **sigue
-existiendo y se sigue mostrando**, pero deja de ser una credencial: es una preferencia. Si el
-grupo autorizado no está en el entorno, el bot no entra en modo privilegiado en ninguna
-conversación (fail closed).
+existiendo y se sigue mostrando**, pero deja de ser una credencial: es una preferencia. El
+`GET /admin/bot/ai/{restaurantId}/privileged-contacts` devuelve ahora `authorized_groups` y una
+`note` que lo dice, para que la pantalla no prometa lo que el servidor ya no hace. Si el grupo
+autorizado no está en el entorno, el bot no entra en modo privilegiado en ninguna conversación
+(fail closed).
+
+> **Migración (operativa):** una instalación que tenía el grupo privilegiado **solo** en la
+> selección del panel deja de tenerlo hasta que el grupo esté en el entorno. Es el sentido de la
+> corrección (la lista de la BD no es una credencial), pero hay que migrar la variable de entorno
+> antes de desplegar.
 
 **Cómo se prueba la pertenencia:** la lista cacheada de participantes es el **filtro de entrada
 barato** (un número que la cache no conoce no es candidato y no gasta una llamada al proveedor);
@@ -206,7 +213,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/bot/ai/{restaurantId}/privileged-contacts` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | `admin_call` (lectura) |
 | `PUT` | `/bot/ai/{restaurantId}/privileged-contacts` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — clave de proveedor: fuera de alcance |
 | `GET` | `/bot/config` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | read | `whatsapp_bot_config_get` | `whatsapp_bot_config_get` |
-| `PUT` | `/bot/config` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `PUT` | `/bot/config` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — el prompt del bot (reglas e instrucciones) se cambia en el panel |
 | `GET` | `/bot/pipeline/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — pipeline DSPy — se deja solo al panel |
 | `GET` | `/bot/settings/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | read | `admin_call` | EXCLUIDO — prompt del bot — se deja solo al panel |
 | `PUT` | `/bot/settings/{restaurantId}` | `s.requireBOSession`, `rootOnlyGate` | root | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — prompt del bot — se deja solo al panel |
@@ -220,7 +227,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/cafes/{id}/toggle` | `s.requireBOSession`, `menusGate` | menus | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/calendar` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/campanas` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | read | `campaigns_list` | `list_campaigns` |
-| `POST` | `/campanas` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/campanas` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — campanas: envian a clientes reales, fuera de alcance |
 | `POST` | `/campanas/bounces/sync` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — campanas: envian a clientes reales, fuera de alcance |
 | `POST` | `/campanas/email-validation` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — campanas: envian a clientes reales, fuera de alcance |
 | `POST` | `/campanas/preview` | `s.requireBOSession`, `reservasGate`, `campaignsGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — envío real a clientes — fuera de alcance |
@@ -401,12 +408,12 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/instatic/seed/{restaurantId}` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — arranca el generador de webs: se hace desde el panel |
 | `GET` | `/instatic/status/{restaurantId}` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/integrations` | `s.requireBOSession`, `ajustesGate` | ajustes | read | `integrations_get` | `integrations_get` |
-| `POST` | `/integrations` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/integrations` | `s.requireBOSession`, `ajustesGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — credenciales y webhooks de integracion: se cambian en el panel |
 | `GET` | `/integrations/uazapi/servers` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | read | `admin_call` | EXCLUIDO — infra de proveedor — fuera de alcance |
 | `POST` | `/integrations/uazapi/servers` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — infra de proveedor — fuera de alcance |
-| `PATCH` | `/integrations/uazapi/servers/{id}` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — infra de proveedor: fuera de alcance |
+| `PATCH` | `/integrations/uazapi/servers/{id}` | `s.requireBOSession`, `ajustesGate`, `rolesAdminGate` | ajustes | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — credenciales y webhooks de integracion: se cambian en el panel |
 | `GET` | `/invoices` | `s.requireBOSession`, `facturasGate` | facturas | read | `invoices_list` | `invoices_list` |
-| `POST` | `/invoices` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/invoices` | `s.requireBOSession`, `facturasGate` | facturas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — las facturas las emite el restaurante: fuera de alcance |
 | `GET` | `/invoices/search-reservation` | `s.requireBOSession`, `facturasGate` | facturas | read | `invoices_read(search_reservation)` | `admin_call` (lectura) |
 | `DELETE` | `/invoices/{id}` | `s.requireBOSession`, `facturasGate` | facturas | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — las facturas las emite el restaurante: fuera de alcance |
 | `GET` | `/invoices/{id}` | `s.requireBOSession`, `facturasGate` | facturas | read | `invoice_get` | `invoice_get` |
@@ -473,8 +480,8 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/platform/restaurants/{id}/activate` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de tenants (superadmin) — fuera de alcance |
 | `POST` | `/platform/restaurants/{id}/deactivate` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestión de tenants (superadmin) — fuera de alcance |
 | `GET` | `/platform/stripe-connect` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
-| `PUT` | `/platform/stripe-connect/restaurants/{id}/fee` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — dinero real: fuera de alcance |
-| `PUT` | `/platform/stripe-connect/settings` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — dinero real: fuera de alcance |
+| `PUT` | `/platform/stripe-connect/restaurants/{id}/fee` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestion de la plataforma: fuera de alcance |
+| `PUT` | `/platform/stripe-connect/settings` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — gestion de la plataforma: fuera de alcance |
 | `GET` | `/platform/stripe/payments` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
 | `POST` | `/platform/stripe/refund` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — devolución de dinero — fuera de alcance |
 | `GET` | `/platform/subscriptions` | `s.requireBOSession`, `s.requireBOSuperadmin` | superadmin | read | `admin_call` | `admin_call` (lectura) |
@@ -597,7 +604,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/pos/tickets/{id}/courses/fire` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posKitchenGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/pos/tickets/{id}/customer` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/pos/tickets/{id}/discount` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posDiscountGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `POST` | `/pos/tickets/{id}/fiscal-document` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posRefundGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/pos/tickets/{id}/fiscal-document` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posRefundGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — documento fiscal: fuera de alcance |
 | `POST` | `/pos/tickets/{id}/guest-label` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/pos/tickets/{id}/kitchen-dispatches` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/pos/tickets/{id}/lines` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
@@ -608,7 +615,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `POST` | `/pos/tickets/{id}/lines/{lineId}/void` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posLineVoidGate` | pos | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `PATCH` | `/pos/tickets/{id}/operator` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/pos/tickets/{id}/recall` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
-| `POST` | `/pos/tickets/{id}/refunds` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posRefundGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/pos/tickets/{id}/refunds` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posRefundGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — devolucion de dinero: fuera de alcance |
 | `POST` | `/pos/tickets/{id}/tags` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `POST` | `/pos/tickets/{id}/void` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posSellGate` | pos | destructive | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
 | `GET` | `/pos/visits` | `s.requireBOSession`, `s.requireBOPOSFeature`, `withBOPOSTimeout`, `posViewGate` | pos | read | `pos_visits_list` | `pos_visits_list` |
@@ -880,13 +887,12 @@ panel ha seguido creciendo. Hoy **`admin_call` no alcanza**:
 - `POST /admin/campanas/email-validation`, `POST /admin/campanas/bounces/sync` (de `#537`),
 - `GET|PUT /admin/bot/ai/{restaurantId}/privileged-contacts` (de `#503`),
 - **todas** las rutas registradas por sub-registradores dentro de `/admin`:
-  `site-builder/*` (30), `website-builder/*` (25) e `instatic/*` (5) — el generador solo leía
+  `site-builder/*` (30), `website-builder/*` (33) e `instatic/*` (5) — el generador solo lee
   `server.go`, y estas se registran desde `site_builder.go`, `website_builder.go` e
   `instatic_manager.go`.
 
 → **Resuelto en esta rama**: el generador pasa a leer también los sub-registradores (con los gates
-del `Group` que los envuelve) y el mapa se regenera: **558 → 622 operaciones** (`admin_call`
-alcanza ahora las 64 que faltaban).
+del `Group` que los envuelve) y el mapa se regenera.
 
 ### 9.2 GETs del backoffice que escriben (19 auditados)
 
@@ -919,7 +925,7 @@ contención de WA los rechaza y Forky los exige con `confirmed=true` + `confirma
 
 ### 9.3 Escrituras del panel sin tool en WhatsApp
 
-De 391 escrituras, 20 tienen tool `*_propose_*` propia; el resto (campañas, carta, menús v2,
+De 336 escrituras, 20 tienen tool `*_propose_*` propia; el resto (campañas, carta, menús v2,
 miembros, stock, TPV, facturas, configuración) **no** tenía ninguna: el bot solo podía leer.
 
 → **Resuelto en esta rama** con `manage_backoffice` (tool WA `resource×action`): propone la
@@ -936,6 +942,8 @@ Mecánica de la cadena (idéntica a la revisada de PR588, con dos diferencias ex
 | TTL | 10 min | igual |
 | *Claim* | `RowsAffected == 1` | igual |
 | `before_hash` + `FOR UPDATE` | en la misma tx del apply | igual en el plano de control (`access`); en `backoffice` el apply corre por la ruta real (otra tx), así que el *claim* se confirma **antes** y una operación que falle deja la propuesta consumida (fail closed: hay que proponer de nuevo) |
+| Método y ruta | — | **fijados en la propuesta**: si el catálogo cambia dentro del TTL, la operación se rechaza en vez de aplicar algo que nadie vio |
+| Slot de la propuesta | `booking_id=0` compartido | slot propio (`-1` panel, `-2` control): una propuesta de panel no la mata una propuesta de reserva y el slot del control es único |
 
 ### 9.4 Plano de control del bot
 
@@ -959,15 +967,27 @@ de WA.
 
 | Superficie | Qué | Por qué |
 |---|---|---|
-| OCR `document_get` (`/admin/stock/documents/*`, `/admin/stock/ocr-scan`) | no implementada | superficie de prompt-injection; queda retenida hasta un diseño con salida minimizada |
+| OCR `document_get` (`/admin/stock/documents*`, `/admin/stock/ocr-scan`) | no implementada | superficie de prompt-injection; queda retenida hasta un diseño con salida minimizada |
 | Writes-control legacy (`POST /admin/bookings/cancelled/{id}/reactivate`, `reactivate_booking.php`) | no implementada | decisión expresa: la reactivación de reservas la hace el restaurante en el panel |
 | Gestión de cuentas del panel (`/admin/users*`, `/admin/roles*`, `/admin/platform/users*`) | no implementada | el bot gestiona el restaurante, no las personas que usan el panel |
 | Sesión (`/admin/me*`) y `/admin/active-restaurant` | no implementada | la sesión de servicio es de un superadmin real; el bot no toca sus credenciales ni cambia de restaurante |
-| Cobros (`/admin/site-builder/billing/checkout`, `/admin/domains/*`, `/admin/config/stripe-connect/*`, `/admin/platform/stripe/refund`) | no implementada | dinero real |
-| Envío a clientes (`/admin/campanas/{id}/send|test`, `/admin/campanas/preview`, `/admin/members/whatsapp/send|flush-queue`, `/admin/invoices/{id}/send`, `emailAdvertising/*`) | no implementada | mensajes reales a clientes |
-| Claves de proveedor (`/admin/config/minimax`, `/admin/config/bunny-storage`, `/admin/config/ai-image*`, `/admin/bot/ai/*`, `/admin/config/chatgpt-plugin/tokens*`, `/admin/integrations/uazapi/servers*`) | no implementada | credenciales |
+| Cobros (`/admin/site-builder/billing/*`, `/admin/domains*`, `/admin/config/stripe-connect/*`, `/admin/platform/stripe/*`, `/admin/pos/tickets/{id}/refunds`, `/admin/pos/tickets/{id}/fiscal-document`) | no implementada | dinero real |
+| Suscripciones de WhatsApp (`/admin/members/whatsapp/subscribe|cancel`) | no implementada | importe real + provisión de la instancia |
+| Envío a clientes (`/admin/campanas*`, `/admin/members/whatsapp/send|flush-queue`, `/admin/emailAdvertising/*`) | no implementada | mensajes reales a clientes |
+| Facturas (`/admin/invoices*`) | no implementada | las emite el restaurante |
+| Claves de proveedor e integraciones (`/admin/config/minimax`, `/admin/config/bunny-storage`, `/admin/config/ai-image*`, `/admin/config/email-provider`, `/admin/bot/ai*`, `/admin/config/chatgpt-plugin/tokens*`, `/admin/integrations*`) | no implementada | credenciales y webhooks de salida |
+| Prompt y pipeline del bot (`/admin/bot/config`, `/admin/bot/settings*`, `/admin/bot/pipeline*`) | no implementada | el prompt son las reglas del bot: se cambian en el panel |
+| Permisos de roles del TPV y del stock (`/admin/pos/roles*`, `/admin/pos/pin`, `/admin/stock/roles*`) | no implementada | permisos de personas, no de datos |
+| Ficheros y generador de webs (`/admin/site-builder/assets*`, `/admin/website-builder/assets*`, `/admin/instatic*`) | no implementada | binarios y procesos: se gestionan en el panel |
+| Importaciones masivas (`/admin/stock/items/import`, `/admin/pos/products/import*`) | no implementada | fuera de alcance |
+| Tenants / superadmin (`/admin/platform*`) | no implementada | gestión de la plataforma |
 | Subidas de ficheros e imágenes (binarios) | no implementada | fuera del alcance textual; algunas sí están en el panel vía `admin_call` |
-| Tenants / superadmin (`/admin/platform/*` salvo lecturas de catálogo) | no implementada | gestión de la plataforma |
+
+La lista que aplica el servidor es `botBackofficeOpRefusals`
+(`internal/api/whatsapp_bot_backoffice_tools.go`): el mismo prefijo por **segmentos de ruta**
+(`/campanas` cubre `/campanas` y `/campanas/{id}/send`, pero no `/campanasfoo`), y se comprueba
+**antes** de describir la operación, de modo que el modelo ni siquiera puede planificar una
+operación que el chat no va a ejecutar.
 
 ---
 

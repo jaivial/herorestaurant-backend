@@ -121,10 +121,21 @@ func (s *Server) botPrivilegedTurnAllowed(ctx context.Context, restaurantID int,
 // identifies the actor: a member the provider reports only by its opaque LID,
 // with no phone, cannot act.
 func (s *Server) botPrivilegedMemberPhone(ctx context.Context, restaurantID int, groupJID, senderJID string) (string, bool) {
-	cached := s.botGroupMembers(ctx, restaurantID, groupJID)
-	if !cached.empty() && !botGroupSenderInMembers(cached, senderJID) {
+	// The cached list is the cheap entry filter: a sender the cache does not
+	// know is not a candidate, and no provider round trip is spent on it.
+	//
+	// An entry that EXISTS but is empty means the provider failed: the answer
+	// is "cannot prove", so the turn is refused WITHOUT paying a round trip
+	// (a degraded provider would otherwise cost every customer message its
+	// whole timeout).
+	cached, ok := s.botGroupMembersCached(ctx, restaurantID, groupJID)
+	if !ok {
 		return "", false
 	}
+	if !botGroupSenderInMembers(cached, senderJID) {
+		return "", false
+	}
+	// The sender LOOKS like a member: the FRESH list is the one that decides.
 	members := s.botGroupMembersFromProvider(ctx, restaurantID, "", groupJID)
 	if members.empty() {
 		return "", false

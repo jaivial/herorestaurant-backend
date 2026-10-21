@@ -83,6 +83,13 @@ func (s *Server) handleBOBotPrivilegedContactsGet(w http.ResponseWriter, r *http
 		"success":  true,
 		"chats":    chats,
 		"selected": botPrivilegedContactsFromConfig(tenant),
+		// Coordination id: wa_bot_privileged_boundary_v1: the selection is
+		// ADVISORY. The privilege comes from the authorized group of the
+		// environment and from the current membership of it, never from this
+		// list, so the operator has to know it (the panel shows it as the
+		// privileged conversations).
+		"authorized_groups": s.botPrivilegedScopeGroups(rid),
+		"note":              "Las conversaciones autorizadas las decide el grupo autorizado del entorno (BOT_PRIVILEGED_GROUP_JIDS / BOT_SPECIAL_ADMIN_SCOPES) y la pertenencia actual a ese grupo. Esta seleccion es informativa: no concede el catalogo completo por si sola.",
 	})
 }
 

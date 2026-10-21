@@ -228,10 +228,22 @@ func (s *Server) botProviderInstanceName(ctx context.Context, restaurantID int) 
 // provider and the short-lived cache. An empty list means the membership
 // could not be proven, so the caller can fail closed.
 func (s *Server) botGroupMembers(ctx context.Context, restaurantID int, groupJID string) botGroupMembers {
+	members, _ := s.botGroupMembersCached(ctx, restaurantID, groupJID)
+	return members
+}
+
+// botGroupMembersCached returns the participant list of the group AND whether
+// the cache had an entry for it.
+//
+// The difference matters: an entry that is EMPTY means the provider failed
+// (the answer is "cannot prove"), while no entry at all means the list was
+// never fetched (the caller may fetch it once). Without the difference a
+// degraded provider would cost a full provider round trip on EVERY message.
+func (s *Server) botGroupMembersCached(ctx context.Context, restaurantID int, groupJID string) (botGroupMembers, bool) {
 	groupJID = strings.TrimSpace(groupJID)
 	empty := newBotGroupMembers()
 	if groupJID == "" {
-		return empty
+		return empty, false
 	}
 	// The cache is keyed by (instance, group): the participant list comes
 	// from ONE tenant's provider, so the instance is part of the key.
@@ -239,7 +251,7 @@ func (s *Server) botGroupMembers(ctx context.Context, restaurantID int, groupJID
 	if instanceName == "" {
 		// Without an instance there is nothing to key on and nothing to
 		// fetch from: fail closed.
-		return empty
+		return empty, false
 	}
 
 	// Short-lived cache: the privileged gate runs on every group message and
@@ -249,14 +261,14 @@ func (s *Server) botGroupMembers(ctx context.Context, restaurantID int, groupJID
 	if e, ok := botGroupMembersCache.byInstanceGroup[key]; ok {
 		if time.Since(e.at) < botGroupMembersCacheTTL {
 			botGroupMembersCache.Unlock()
-			return e.members
+			return e.members, true
 		}
 		// A negative entry (nothing could be proven) is held for a shorter
 		// time: a renamed or deleted group would otherwise make EVERY
 		// message wait for the provider timeout before being refused.
 		if e.members.empty() && time.Since(e.at) < botGroupMembersCacheFailTTL {
 			botGroupMembersCache.Unlock()
-			return e.members
+			return e.members, true
 		}
 	}
 	botGroupMembersCache.Unlock()
@@ -265,7 +277,7 @@ func (s *Server) botGroupMembers(ctx context.Context, restaurantID int, groupJID
 	botGroupMembersCache.Lock()
 	botGroupMembersCache.byInstanceGroup[key] = botGroupMembersEntry{members: members, at: time.Now()}
 	botGroupMembersCache.Unlock()
-	return members
+	return members, true
 }
 
 // botGroupSenderIsMember reports whether the sender of a group message is a

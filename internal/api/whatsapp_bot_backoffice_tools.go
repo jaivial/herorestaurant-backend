@@ -29,6 +29,16 @@ import (
 // (wa_bot_privileged_boundary_v1) and their writes only happen after a human
 // approval ("OK <código>") by the SAME verified actor in the SAME chat.
 
+// The proposal slots of the new surface. booking_id is the slot of a
+// proposal (uq_wa_op_active is (restaurant_id, booking_id, active)), so a
+// dedicated slot keeps a pending panel operation from being superseded by an
+// unrelated booking proposal, and gives the access proposals the single slot
+// they are supposed to have.
+const (
+	botProposalSlotBackoffice = int64(-1)
+	botProposalSlotAccess     = int64(-2)
+)
+
 // botBackofficePreviewMaxBody is the biggest body that still fits in the
 // preview the human reads. A bigger one is refused: the approval has to be
 // informed.
@@ -90,8 +100,14 @@ func (s *Server) botConfigRaw(ctx context.Context, restaurantID int) string {
 // backofficeOpPlan is the LITERAL description of one operation: the
 // catalogued operation, the values of its path parameters, its query and its
 // body. It is what the human approves, so nothing may be implicit in it.
+//
+// Method and Path are pinned at propose time: if the catalogue changes
+// between the proposal and the approval (a deploy inside the TTL), the
+// operation is refused instead of applying something the human did not see.
 type backofficeOpPlan struct {
 	Op         string          `json:"op"`
+	Method     string          `json:"method,omitempty"`
+	Path       string          `json:"path,omitempty"`
 	PathParams map[string]any  `json:"path_params,omitempty"`
 	Query      map[string]any  `json:"query,omitempty"`
 	Body       json.RawMessage `json:"body,omitempty"`
@@ -109,20 +125,26 @@ var botBackofficeOpRefusals = []struct {
 	Match  string
 	Reason string
 }{
-	{"/bookings/cancelled/", "writes-control legacy retenido: la reactivacion de reservas la hace el restaurante en el panel"},
+	{"/bookings/cancelled", "writes-control legacy retenido: la reactivacion de reservas la hace el restaurante en el panel"},
 	{"/stock/documents", "OCR document_get retenido (superficie de prompt-injection)"},
 	{"/stock/ocr-scan", "OCR document_get retenido (superficie de prompt-injection)"},
 	{"/stock/items/import", "importacion masiva: fuera de alcance"},
 	{"/pos/products/import", "importacion masiva: fuera de alcance"},
-	{"/campanas/", "campanas: envian a clientes reales, fuera de alcance"},
-	{"/emailAdvertising/", "envio real a clientes: fuera de alcance"},
+	{"/campanas", "campanas: envian a clientes reales, fuera de alcance"},
+	{"/emailAdvertising", "envio real a clientes: fuera de alcance"},
 	{"/members/whatsapp/send", "envio real a clientes: fuera de alcance"},
 	{"/members/whatsapp/flush-queue", "envio real a clientes: fuera de alcance"},
+	{"/members/whatsapp/subscribe", "alta de suscripcion con importe: dinero real, fuera de alcance"},
+	{"/members/whatsapp/cancel", "baja de suscripcion con importe: dinero real, fuera de alcance"},
+	{"/members/whatsapp/connect", "provision de la conexion: se hace desde el panel"},
+	{"/members/whatsapp/disconnect", "provision de la conexion: se hace desde el panel"},
 	{"/members/{id}/password-reset/send", "envio real de correo: fuera de alcance"},
 	{"/members/{id}/invitation/resend", "envio real de correo: fuera de alcance"},
-	{"/invoices/", "las facturas las emite el restaurante: fuera de alcance"},
+	{"/invoices", "las facturas las emite el restaurante: fuera de alcance"},
 	{"/config/stripe-connect", "dinero real: fuera de alcance"},
 	{"/platform/stripe", "dinero real: fuera de alcance"},
+	{"/pos/tickets/{id}/refunds", "devolucion de dinero: fuera de alcance"},
+	{"/pos/tickets/{id}/fiscal-document", "documento fiscal: fuera de alcance"},
 	{"/domains", "dinero real (dominio): fuera de alcance"},
 	{"/site-builder/billing", "dinero real: fuera de alcance"},
 	{"/site-builder/domains", "dinero real (dominio): fuera de alcance"},
@@ -134,23 +156,27 @@ var botBackofficeOpRefusals = []struct {
 	{"/config/bunny-storage", "clave de proveedor: fuera de alcance"},
 	{"/config/ai-image", "clave de proveedor: fuera de alcance"},
 	{"/config/email-provider", "clave de proveedor: fuera de alcance"},
-	{"/bot/ai/", "clave de proveedor: fuera de alcance"},
-	{"/integrations/uazapi/servers", "infra de proveedor: fuera de alcance"},
-	{"/bot/settings/", "el prompt del bot se cambia en el panel"},
-	{"/bot/pipeline/", "el pipeline del bot se cambia en el panel"},
-	{"/platform/", "gestion de la plataforma: fuera de alcance"},
-	{"/pos/roles/", "permisos de los roles del TPV: se cambian en el panel"},
+	{"/bot/ai", "clave de proveedor: fuera de alcance"},
+	{"/bot/config", "el prompt del bot (reglas e instrucciones) se cambia en el panel"},
+	{"/bot/settings", "el prompt del bot se cambia en el panel"},
+	{"/bot/pipeline", "el pipeline del bot se cambia en el panel"},
+	{"/integrations", "credenciales y webhooks de integracion: se cambian en el panel"},
+	{"/platform", "gestion de la plataforma: fuera de alcance"},
+	{"/pos/roles", "permisos de los roles del TPV: se cambian en el panel"},
 	{"/pos/pin", "PIN del TPV: se cambia en el panel"},
-	{"/stock/roles/", "permisos de los roles de stock: se cambian en el panel"},
+	{"/stock/roles", "permisos de los roles de stock: se cambian en el panel"},
 	{"/roles", "gestion de cuentas del panel: fuera de alcance"},
-	{"/users/", "gestion de cuentas del panel: fuera de alcance"},
+	{"/users", "gestion de cuentas del panel: fuera de alcance"},
 }
 
 // botBackofficeOpRefusal returns the reason the operation is refused, or "".
+//
+// The match is by PATH SEGMENT: "/campanas" refuses "/campanas" and
+// "/campanas/{id}/send", but not "/campanasfoo".
 func botBackofficeOpRefusal(op forkyAdminOp) string {
 	p := strings.TrimSpace(op.Path)
 	for _, r := range botBackofficeOpRefusals {
-		if strings.HasPrefix(p, r.Match) {
+		if p == r.Match || strings.HasPrefix(p, r.Match+"/") {
 			return r.Reason
 		}
 	}
@@ -162,6 +188,9 @@ func botBackofficeOpRefusal(op forkyAdminOp) string {
 //
 // The preview is NEVER truncated: a human who cannot see the whole change
 // cannot approve it knowingly. A body that does not fit is refused, not cut.
+//
+// Every value is flattened to ONE line: a value with a newline could forge a
+// second line in the preview and misrepresent the operation being approved.
 func botBackofficePreview(op forkyAdminOp, plan backofficeOpPlan) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Propuesta de operacion del panel: %s %s", op.Method, op.Path)
@@ -173,7 +202,7 @@ func botBackofficePreview(op forkyAdminOp, plan backofficeOpPlan) (string, error
 		sort.Strings(keys)
 		parts := make([]string, 0, len(keys))
 		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%v", k, plan.PathParams[k]))
+			parts = append(parts, fmt.Sprintf("%s=%s", k, botBackofficeFlat(plan.PathParams[k])))
 		}
 		fmt.Fprintf(&b, " (%s)", strings.Join(parts, ", "))
 	}
@@ -185,7 +214,7 @@ func botBackofficePreview(op forkyAdminOp, plan backofficeOpPlan) (string, error
 		sort.Strings(keys)
 		parts := make([]string, 0, len(keys))
 		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%v", k, plan.Query[k]))
+			parts = append(parts, fmt.Sprintf("%s=%s", k, botBackofficeFlat(plan.Query[k])))
 		}
 		fmt.Fprintf(&b, " ?%s", strings.Join(parts, "&"))
 	}
@@ -194,6 +223,12 @@ func botBackofficePreview(op forkyAdminOp, plan backofficeOpPlan) (string, error
 		if len(body) > botBackofficePreviewMaxBody {
 			return "", fmt.Errorf("el cuerpo de la operacion es demasiado grande (%d caracteres) para que se pueda revisar en la vista previa: reduce la operacion o hazla en varios pasos", len(body))
 		}
+		// The body has to be ONE line: a body with newlines could forge a
+		// line of the preview, and the preview IS the thing the human
+		// approves. Compact JSON is enough.
+		if strings.ContainsAny(body, "\n\r") {
+			return "", errors.New("el cuerpo de la operacion debe ir en una sola linea (JSON compacto) para que la vista previa sea exacta")
+		}
 		fmt.Fprintf(&b, " cuerpo: %s", body)
 	}
 	if op.Risk != "" {
@@ -201,6 +236,26 @@ func botBackofficePreview(op forkyAdminOp, plan backofficeOpPlan) (string, error
 	}
 	b.WriteString(". Nada esta aplicado todavia.")
 	return b.String(), nil
+}
+
+// botBackofficeFlat renders a value in ONE line: the newlines and the
+// control characters become spaces, so a value can never forge a line of the
+// preview.
+func botBackofficeFlat(v any) string {
+	s := fmt.Sprint(v)
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		if r < 0x20 {
+			return -1
+		}
+		return r
+	}, s)
+	if len(s) > 120 {
+		s = s[:120] + "…"
+	}
+	return s
 }
 
 // botToolManageBackoffice executes manage_backoffice.
@@ -239,6 +294,13 @@ func (s *Server) botToolManageBackoffice(ctx context.Context, rid int, msg botWe
 	if in.Action == "" {
 		in.Action = "propose"
 	}
+	// The refusal is checked BEFORE the description: an operation the chat
+	// may not run is not even described, so the model does not build a plan
+	// around it.
+	if reason := botBackofficeOpRefusal(op); reason != "" {
+		log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s decision=refused", rid, op.Name)
+		return botJSON(map[string]any{"error": "esta operacion no se puede hacer desde el chat: " + reason}), nil
+	}
 	if in.Action == "describe" {
 		return botJSON(map[string]any{
 			"operation": op.Name, "method": op.Method, "path": op.Path,
@@ -252,11 +314,7 @@ func (s *Server) botToolManageBackoffice(ctx context.Context, rid int, msg botWe
 	if !op.Write {
 		return botJSON(map[string]any{"error": "esa operacion es de lectura: consultala con admin_call o con la herramienta dedicada"}), nil
 	}
-	if reason := botBackofficeOpRefusal(op); reason != "" {
-		log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s decision=refused", rid, op.Name)
-		return botJSON(map[string]any{"error": "esta operacion no se puede hacer desde el chat: " + reason}), nil
-	}
-	plan := backofficeOpPlan{Op: op.Name, PathParams: in.PathParams, Query: in.Query, Body: in.Body}
+	plan := backofficeOpPlan{Op: op.Name, Method: op.Method, Path: op.Path, PathParams: in.PathParams, Query: in.Query, Body: in.Body}
 	// The path parameters are validated BEFORE the proposal exists: a proposal
 	// that cannot even be rendered is not a proposal.
 	if _, err := forkyRenderPath(op.Path, in.PathParams); err != nil {
@@ -271,7 +329,7 @@ func (s *Server) botToolManageBackoffice(ctx context.Context, rid int, msg botWe
 		return botJSON(map[string]any{"error": "no se pudo generar el codigo de confirmacion"}), nil
 	}
 	log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s proposed", rid, op.Name)
-	return s.botProposalPersist(ctx, rid, msg, "backoffice", 0, plan, "backoffice:"+op.Name, actor, origin, "", "", preview, code)
+	return s.botProposalPersist(ctx, rid, msg, "backoffice", botProposalSlotBackoffice, plan, "backoffice:"+op.Name, actor, origin, "", "", preview, code)
 }
 
 // botBackofficeExecute applies an approved backoffice proposal.
@@ -289,6 +347,13 @@ func (s *Server) botBackofficeExecute(ctx context.Context, rid int, msg botWebho
 	if !ok {
 		return "", errors.New("la operacion ya no esta en el catalogo")
 	}
+	// The catalogue may have changed between the proposal and the approval
+	// (a deploy inside the TTL). The human approved a concrete method and
+	// path: if they are not the ones of the catalogue now, the operation is
+	// refused instead of applying something nobody saw.
+	if plan.Method != "" && (plan.Method != op.Method || plan.Path != op.Path) {
+		return "", errors.New("la operacion cambio en el catalogo desde la vista previa; pide una propuesta nueva")
+	}
 	if !op.Write {
 		return "", errors.New("la propuesta no es una escritura")
 	}
@@ -304,12 +369,59 @@ func (s *Server) botBackofficeExecute(ctx context.Context, rid int, msg botWebho
 	if err != nil {
 		return "", err
 	}
+	// The replay answers 200 with a payload even when the route refused the
+	// operation (403, 409, 500...). Announcing that as "applied" would tell
+	// the human the opposite of the truth, so the status decides.
+	if applied, reason := botBackofficeReplayApplied(out); !applied {
+		log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s decision=refused_by_route", rid, op.Name)
+		return "", errors.New("la operacion no se aplico: " + reason)
+	}
 	log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s applied", rid, op.Name)
 	notice := "Aplicado: " + op.Method + " " + op.Path + ". " + out
 	if rj, mErr := json.Marshal(map[string]any{"op": p.Op, "operation": op.Name, "notice": notice}); mErr == nil {
 		_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID)
 	}
 	return notice, nil
+}
+
+// botBackofficeReplayApplied reads the answer of the replay and tells whether
+// the operation really happened.
+func botBackofficeReplayApplied(out string) (bool, string) {
+	var res struct {
+		OK     bool            `json:"ok"`
+		Status int             `json:"status"`
+		Data   json.RawMessage `json:"data"`
+		Text   string          `json:"data_text"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		// An unreadable answer is not a proof of success.
+		return false, "la operacion no devolvio una respuesta legible"
+	}
+	if res.OK {
+		return true, ""
+	}
+	reason := ""
+	if len(res.Data) > 0 {
+		var payload map[string]any
+		if json.Unmarshal(res.Data, &payload) == nil {
+			for _, k := range []string{"message", "error"} {
+				if v, ok := payload[k].(string); ok && strings.TrimSpace(v) != "" {
+					reason = strings.TrimSpace(v)
+					break
+				}
+			}
+		}
+	}
+	if reason == "" {
+		reason = strings.TrimSpace(res.Text)
+	}
+	if len(reason) > 300 {
+		reason = reason[:300]
+	}
+	if reason == "" {
+		reason = fmt.Sprintf("la ruta respondio %d", res.Status)
+	}
+	return false, reason
 }
 
 // ---- the control plane of the bot ------------------------------------------
@@ -393,42 +505,42 @@ type botAccessArgs struct {
 	Tools    []string `json:"tools"`
 }
 
-// botAccessApply is the pure state transition of every control resource. It
-// mutates the tenant config and returns the summary that reaches the chat as
-// the approval notice.
+// botAccessApply is the pure state transition of every control resource: it
+// patches the RAW config document, so the fields this code does not know
+// survive untouched (re-serialising the parsed struct would drop them, and a
+// corrupt config would be silently replaced by a valid one).
+//
+// scopeGroups are the authorized groups of the environment: the management
+// group can only be pointed at one of them, because the bot answers with the
+// staff tools there and a group the operator has not authorized must never
+// receive staff traffic.
 //
 // Coordination id: wa_bot_privileged_control_v1: the authorized conversations
 // are NOT managed here: the privilege comes from the environment and from the
 // current membership of the group (wa_bot_privileged_boundary_v1), never from
 // a list stored in the database.
-func botAccessApply(tenant *botTenantConfig, a botAccessArgs) (string, error) {
+func botAccessApply(doc map[string]any, a botAccessArgs, scopeGroups []string) (string, error) {
 	switch a.Resource {
 	case "tool_grants":
 		jid := strings.TrimSpace(a.Target)
 		if jid == "" {
 			return "", errors.New("falta target (el JID de la conversacion)")
 		}
-		out := make([]botToolGrant, 0, len(tenant.ToolGrants))
-		for _, g := range tenant.ToolGrants {
-			if strings.TrimSpace(g.JID) != jid {
+		grants := botAccessGrants(doc)
+		out := make([]map[string]any, 0, len(grants))
+		for _, g := range grants {
+			if botAccessGrantJID(g) != jid {
 				out = append(out, g)
 			}
 		}
 		switch a.Action {
 		case "remove":
-			if len(out) == len(tenant.ToolGrants) {
+			if len(out) == len(grants) {
 				return "", fmt.Errorf("no habia permisos de herramientas para %s", jid)
 			}
-			tenant.ToolGrants = out
+			doc["tool_grants"] = out
 			return fmt.Sprintf("Aplicado: %s vuelve a tener el catalogo completo de herramientas.", jid), nil
 		case "set":
-			if len(a.Tools) == 0 {
-				if len(out) == len(tenant.ToolGrants) {
-					return "", fmt.Errorf("no habia permisos de herramientas para %s", jid)
-				}
-				tenant.ToolGrants = out
-				return fmt.Sprintf("Aplicado: %s vuelve a tener el catalogo completo de herramientas.", jid), nil
-			}
 			tools := make([]string, 0, len(a.Tools))
 			seen := map[string]struct{}{}
 			for _, t := range a.Tools {
@@ -442,7 +554,21 @@ func botAccessApply(tenant *botTenantConfig, a botAccessArgs) (string, error) {
 				seen[t] = struct{}{}
 				tools = append(tools, t)
 			}
-			tenant.ToolGrants = append(out, botToolGrant{JID: jid, Tools: tools})
+			// An empty list means "the full catalogue", never "nothing": a
+			// grant with no tools would leave the conversation without a
+			// single read tool, which is not what an empty list asks for.
+			if len(tools) == 0 {
+				if len(out) == len(grants) {
+					return "", fmt.Errorf("no habia permisos de herramientas para %s", jid)
+				}
+				doc["tool_grants"] = out
+				return fmt.Sprintf("Aplicado: %s vuelve a tener el catalogo completo de herramientas.", jid), nil
+			}
+			values := make([]any, 0, len(tools))
+			for _, t := range tools {
+				values = append(values, t)
+			}
+			doc["tool_grants"] = append(out, map[string]any{"jid": jid, "tools": values})
 			return fmt.Sprintf("Aplicado: %s solo puede usar las herramientas: %s.", jid, strings.Join(tools, ", ")), nil
 		}
 		return "", fmt.Errorf("action invalida para tool_grants: %s (usa set o remove)", a.Action)
@@ -456,19 +582,56 @@ func botAccessApply(tenant *botTenantConfig, a botAccessArgs) (string, error) {
 		if !botGroupIsGroupJID(t) {
 			return "", errors.New("el grupo de gestion se fija por su JID (@g.us), no por su nombre")
 		}
-		tenant.ManagementGroupJID = t
+		// And it can only be one of the AUTHORIZED groups: the bot answers
+		// there with the staff tools, so a group the operator has not
+		// authorized must never become the target of the staff traffic.
+		if !botScopeHasGroup(scopeGroups, t) {
+			return "", errors.New("el grupo de gestion solo puede fijarse a un grupo autorizado del entorno; el resto se cambia en el panel")
+		}
+		doc["management_group_jid"] = t
 		if n := strings.TrimSpace(a.Name); n != "" {
-			tenant.ManagementGroupName = n
+			doc["management_group_name"] = n
 		}
 		return fmt.Sprintf("Aplicado: grupo de gestion fijado por JID (%s).", t), nil
 	}
 	return "", fmt.Errorf("resource invalido: %s (usa tool_grants o management_group)", a.Resource)
 }
 
+// botAccessGrants reads the per-chat tool grants of the raw config document.
+func botAccessGrants(doc map[string]any) []map[string]any {
+	raw, ok := doc["tool_grants"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		if g, ok := item.(map[string]any); ok {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// botAccessGrantJID returns the jid of a raw grant.
+func botAccessGrantJID(g map[string]any) string {
+	jid, _ := g["jid"].(string)
+	return strings.TrimSpace(jid)
+}
+
+// botScopeHasGroup reports whether the list holds the group.
+func botScopeHasGroup(list []string, value string) bool {
+	for _, v := range list {
+		if strings.TrimSpace(v) == value {
+			return true
+		}
+	}
+	return false
+}
+
 // botAccessPreview is the exact human summary of the access proposal.
-func botAccessPreview(a botAccessArgs) (string, error) {
-	var probe botTenantConfig
-	if _, err := botAccessApply(&probe, a); err != nil {
+func botAccessPreview(a botAccessArgs, scopeGroups []string) (string, error) {
+	probe := map[string]any{}
+	if _, err := botAccessApply(probe, a, scopeGroups); err != nil {
 		return "", err
 	}
 	verb := map[string]string{"set": "FIJAR", "remove": "QUITAR"}[a.Action]
@@ -510,7 +673,7 @@ func (s *Server) botToolManageBotAccess(ctx context.Context, rid int, msg botWeb
 	if a.Action != "set" && a.Action != "remove" {
 		return botJSON(map[string]any{"error": "action invalida: usa list, set o remove"}), nil
 	}
-	preview, err := botAccessPreview(a)
+	preview, err := botAccessPreview(a, s.botPrivilegedScopeGroups(rid))
 	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
@@ -522,7 +685,7 @@ func (s *Server) botToolManageBotAccess(ctx context.Context, rid int, msg botWeb
 	// config moves before the code arrives, the apply is refused as stale.
 	before := botSha(s.botConfigRaw(ctx, rid))
 	log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d resource=%s action=%s proposed", rid, a.Resource, a.Action)
-	return s.botProposalPersist(ctx, rid, msg, "access", 0, a, "access:"+a.Resource+":"+a.Action, actor, origin, before, "", preview, code)
+	return s.botProposalPersist(ctx, rid, msg, "access", botProposalSlotAccess, a, "access:"+a.Resource+":"+a.Action, actor, origin, before, "", preview, code)
 }
 
 // botAccessExecute applies an approved access proposal inside the approval
@@ -539,12 +702,23 @@ func (s *Server) botAccessExecute(ctx context.Context, tx *sql.Tx, rid int, p bo
 	if p.Before != "" && p.Before != botSha(current.String) {
 		return "", errors.New("la configuracion cambio desde la vista previa; pide una propuesta nueva")
 	}
-	tenant := parseBotTenantConfig(current.String)
-	summary, err := botAccessApply(&tenant, a)
+	// The config is patched SURGICALLY: the document is never re-serialised
+	// from the parsed struct, so the fields this code does not know survive
+	// and a corrupt config is refused instead of being silently replaced.
+	doc := map[string]any{}
+	if strings.TrimSpace(current.String) != "" {
+		if err := json.Unmarshal([]byte(current.String), &doc); err != nil {
+			return "", errors.New("la configuracion del bot no se pudo leer; pide una propuesta nueva")
+		}
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	summary, err := botAccessApply(doc, a, s.botPrivilegedScopeGroups(rid))
 	if err != nil {
 		return "", err
 	}
-	raw, err := json.Marshal(tenant)
+	raw, err := json.Marshal(doc)
 	if err != nil {
 		return "", errors.New("error interno")
 	}

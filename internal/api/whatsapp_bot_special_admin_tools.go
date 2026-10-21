@@ -132,22 +132,36 @@ func (s *Server) botSpecialAdminAuthorize(ctx context.Context, restaurantID int,
 }
 
 // botSpecialAdminMayNotify is the privacy boundary for notices that are not a
-// direct reply to a verified request (supersede and queued results). The scope
-// group itself is always allowed; a one-to-one chat only while its phone is a
-// CURRENT member (fresh fetch). A former member gets nothing, not even an id.
+// direct reply to a verified request (supersede and queued results). The
+// authorized groups themselves are always allowed; a one-to-one chat only while
+// its phone is a CURRENT member (fresh fetch). A former member gets nothing,
+// not even an id.
+//
+// Coordination id: wa_bot_privileged_boundary_v1: the authorized groups are the
+// ones of the environment, not the ones stored in the database.
 func (s *Server) botSpecialAdminMayNotify(ctx context.Context, rid int, chat string) bool {
-	scope := botSpecialAdminScopeGroup(rid)
 	chat = strings.TrimSpace(chat)
-	if scope == "" || chat == "" {
+	if chat == "" {
 		return false
 	}
-	if chat == scope {
-		return true
+	groups := s.botPrivilegedScopeGroups(rid)
+	if len(groups) == 0 {
+		return false
+	}
+	for _, g := range groups {
+		if chat == g {
+			return true
+		}
 	}
 	if !strings.HasSuffix(chat, "@s.whatsapp.net") {
 		return false
 	}
-	return s.botSpecialAdminFreshMember(ctx, rid, scope, chat)
+	for _, g := range groups {
+		if s.botSpecialAdminFreshMember(ctx, rid, g, chat) {
+			return true
+		}
+	}
+	return false
 }
 
 func botSpecialAdminToolDefs() []botToolDef {
@@ -800,8 +814,14 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 		// op: approval claims by code_hash + state='sent' + active=1, and a
 		// superseded row is state='superseded', active=NULL. The dedup key
 		// still travels in args for correlation and the execute re-check.
-		chatsQ = `SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=0 AND active=1`
-		supQ = `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=0 AND active=1`
+		//
+		// The backoffice operations and the control plane carry their OWN slot
+		// (a negative booking_id): a pending panel operation is not
+		// superseded by an unrelated booking proposal, and the access
+		// proposals keep the single slot they are supposed to have.
+		slot := in.BookingID
+		chatsQ = fmt.Sprintf(`SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=%d AND active=1`, slot)
+		supQ = fmt.Sprintf(`UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=%d AND active=1`, slot)
 		supArgs = []any{rid}
 	}
 	if rs, qerr := tx.QueryContext(ctx, chatsQ, supArgs...); qerr == nil {

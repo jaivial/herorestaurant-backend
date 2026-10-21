@@ -131,11 +131,10 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		// of truth and the check is fail-closed: when membership cannot be
 		// proven, the message is skipped instead of being served.
 		//
-		// The boundary already proved the membership for a privileged turn
-		// (with a FRESH fetch); this gate keeps the previous behaviour of a
-		// non-member: the message does not reach the model at all.
-		if botGroupIsGroupJID(in.ChatJID) && s.botPrivilegedChatIsScopeGroup(restaurantID, in.ChatJID) &&
-			!s.botGroupSenderIsMember(r.Context(), restaurantID, in.ChatJID, in.ParticipantJID) {
+		// The boundary already proved the membership with a FRESH fetch, so
+		// this gate costs nothing: in the authorized group, "not privileged"
+		// IS "not a proven member".
+		if botGroupIsGroupJID(in.ChatJID) && s.botPrivilegedChatIsScopeGroup(restaurantID, in.ChatJID) && !isPrivileged {
 			log.Printf("[bot] checkpoint wa_bot_group_membership_v1 restaurant_id=%d group=%s participant=%s decision=skipped_not_group_member", restaurantID, in.ChatJID, in.ParticipantJID)
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "skipped_not_group_member")
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_group_member"})

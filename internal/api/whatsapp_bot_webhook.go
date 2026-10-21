@@ -680,6 +680,14 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			botOwned[d.Name] = struct{}{}
 		}
 		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+			// Coordination id: wa_bot_privileged_control_v1 - a configured
+			// grant restricts which custom tools this chat may call. The
+			// filtered catalog is UX, THIS is the guard, and it covers the
+			// forky tools too (they do not reach the bot executor).
+			if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
+				log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d tool=%s denied", restaurantID, name)
+				return botJSON(map[string]any{"error": reason}), nil
+			}
 			// Temporary containment (wa_bot_admin_write_denied_v1): these bot-owned
 			// mutations are gated only by a confirmed=true the model writes itself,
 			// which is not a human approval. Refused in the server for privileged
