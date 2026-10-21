@@ -910,10 +910,11 @@ func (s *Server) handleBOInvoiceSendWhatsApp(w http.ResponseWriter, r *http.Requ
 		IdempotencyKey *string `json:"idempotency_key,omitempty"`
 		ConfirmPhone   bool    `json:"confirm_phone,omitempty"`
 		// RetryStage ("text"|"pdf") is the operator's explicit decision to
-		// re-run one stage left inflight/unknown by a crashed or uncertain
-		// attempt (duplicate risk acknowledged in the UI after verifying
-		// with the customer). Claims are age-guarded so a live concurrent
-		// request cannot be reclaimed.
+		// re-run one stage left unknown by a crashed or uncertain attempt
+		// (duplicate risk acknowledged in the UI after verifying with the
+		// customer). Claims never touch inflight: a live concurrent request
+		// keeps its stage and the claim just fails (0 rows). pending/error
+		// claim directly; unknown only via this explicit retry.
 		RetryStage string `json:"retry_stage,omitempty"`
 	}
 	json.NewDecoder(r.Body).Decode(&req) // body optional except the key
