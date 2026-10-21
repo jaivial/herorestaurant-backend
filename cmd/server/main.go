@@ -44,12 +44,15 @@ func main() {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.ListenAndServe() }()
 
+	// Install the signal handler before recovery so a SIGTERM during the
+	// startup window is not missed (review nit R1).
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+
 	// Campaigns a previous process left in 'sending' are only reported unless
 	// CAMPAIGN_AUTO_RESUME=1 (see campaign_runner_durable.go).
 	server.RecoverInterruptedCampaigns(context.Background())
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	select {
 	case err := <-serveErr:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
