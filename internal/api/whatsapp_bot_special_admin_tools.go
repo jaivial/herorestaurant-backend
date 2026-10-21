@@ -177,6 +177,11 @@ func botSpecialAdminToolDefs() []botToolDef {
 			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer"}},"required":["booking_id"]}`),
 		},
 		{
+			Name:        "booking_propose_edit",
+			Description: "PROPONE editar datos básicos de una reserva existente (normal o de fecha especial): nombre, teléfono, email, mesa, comentario, niños, carritos o tronas. NO lo aplica: guarda una propuesta exacta y envía al grupo una vista previa con los cambios y un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Solo cambia lo que pases; fecha, hora, comensales, salón, menús y ocupación no se tocan (para eso están booking_propose_reschedule o el panel). El comentario no se puede editar en reservas con menú de grupo (se genera solo). No avisa al cliente. Pide siempre el booking_id y confirma con el usuario qué cambia antes de proponer.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"booking_id":{"type":"integer"},"customer_name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string","description":"Prefijo sin +"},"contact_email":{"type":"string","description":"Vacío = email por defecto del restaurante"},"table_number":{"type":"string","description":"Vacío = sin mesa"},"commentary":{"type":"string","description":"Vacío = sin comentario"},"children":{"type":"integer"},"baby_strollers":{"type":"integer"},"high_chairs":{"type":"integer"}},"required":["booking_id"]}`),
+		},
+		{
 			Name:        "booking_propose_create",
 			Description: "PROPONE crear una reserva NORMAL nueva (sin menú de grupo, arroces, extras ni fecha especial: esas se crean desde el panel). NO la crea: guarda una propuesta exacta y envía al grupo una vista previa con un código; se crea cuando la misma persona escribe 'OK' y ese código en el mismo chat. Pide antes fecha, hora, comensales, nombre y teléfono (no los inventes). Rechaza fechas pasadas, días cerrados y fechas especiales. Si ya existe una reserva con los mismos datos (fecha, hora, teléfono y comensales), lo dice y solo sigue si el usuario confirma expresamente el duplicado con allow_duplicate_of. No avisa al cliente ni emite avisos externos.",
 			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"date":{"type":"string","description":"YYYY-MM-DD"},"time":{"type":"string","description":"HH:MM"},"party_size":{"type":"integer"},"customer_name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string","description":"Prefijo sin + (por defecto 34)"},"contact_email":{"type":"string"},"commentary":{"type":"string"},"children":{"type":"integer"},"baby_strollers":{"type":"integer"},"high_chairs":{"type":"integer"},"preferred_floor_number":{"type":"integer"},"allow_duplicate_of":{"type":"integer","description":"Solo para confirmar expresamente un duplicado legítimo: booking_id de la reserva existente igual"}},"required":["date","time","party_size","customer_name","contact_phone"]}`),
@@ -920,6 +925,9 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	if n, _ := res.RowsAffected(); n != 1 {
 		return "", errors.New("la propuesta ya no está vigente")
 	}
+	if p.Op == "edit" {
+		return s.botEditExecute(ctx, tx, rid, msg, p)
+	}
 	if p.Op == "create" {
 		return s.botCreateExecute(ctx, tx, rid, msg, p)
 	}
@@ -1133,13 +1141,14 @@ func (s *Server) botSpecialRescheduleWrite(ctx context.Context, tx *sql.Tx, rid 
 	return nil
 }
 
-// botSpecialRescheduleAllowedRow rejects a reschedule of a cancelled/closed
-// booking (no hidden reactivation) or of one whose original date already passed.
-func botSpecialRescheduleAllowedRow(row *botSpecialRow) error {
+// botSpecialRowAllowedFor rejects an operation on a cancelled/closed booking
+// or one in the past. verbPlural/verbSingular name the operation in the
+// messages ("mueven"/"mueve", "editan"/"edita", "cancelan"/"cancela").
+func botSpecialRowAllowedFor(row *botSpecialRow, verbPlural, verbSingular string) error {
 	switch strings.ToLower(strings.TrimSpace(row.Status)) {
 	case "pending", "confirmed":
 	default:
-		return errors.New("la reserva está en estado '" + row.Status + "': solo se mueven reservas pendientes o confirmadas")
+		return errors.New("la reserva está en estado '" + row.Status + "': solo se " + verbPlural + " reservas pendientes o confirmadas")
 	}
 	loc, _ := time.LoadLocation("Europe/Madrid")
 	if loc == nil {
@@ -1148,9 +1157,15 @@ func botSpecialRescheduleAllowedRow(row *botSpecialRow) error {
 	n := time.Now().In(loc)
 	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
 	if d, err := time.Parse("2006-01-02", row.Date); err != nil || d.Before(today) {
-		return errors.New("la reserva original es de una fecha pasada: no se mueve desde aquí")
+		return errors.New("la reserva original es de una fecha pasada: no se " + verbSingular + " desde aquí")
 	}
 	return nil
+}
+
+// botSpecialRescheduleAllowedRow rejects a reschedule of a cancelled/closed
+// booking (no hidden reactivation) or of one whose original date already passed.
+func botSpecialRescheduleAllowedRow(row *botSpecialRow) error {
+	return botSpecialRowAllowedFor(row, "mueven", "mueve")
 }
 
 // botSpecialRescheduleDeps summarises children/mobility values that the
@@ -1199,8 +1214,8 @@ func (s *Server) botCancelPropose(ctx context.Context, rid int, msg botWebhookMe
 	if err != nil {
 		return botJSON(map[string]any{"error": "no hay una reserva con ese id"}), nil
 	}
-	if rerr := botSpecialRescheduleAllowedRow(row); rerr != nil {
-		return botJSON(map[string]any{"error": strings.Replace(rerr.Error(), "se mueven", "se cancelan", 1)}), nil
+	if rerr := botSpecialRowAllowedFor(row, "cancelan", "cancela"); rerr != nil {
+		return botJSON(map[string]any{"error": rerr.Error()}), nil
 	}
 	if berr := botCancelBlockers(ctx, s.db, rid, bookingID, false); berr != nil {
 		return botJSON(map[string]any{"error": berr.Error()}), nil
@@ -1840,6 +1855,365 @@ func (s *Server) botCreateExecute(ctx context.Context, tx *sql.Tx, rid int, msg 
 		return "", errors.New("no pude confirmar si se creó: consulta el resultado de la propuesta o el panel antes de repetir")
 	}
 	s.broadcastBookingChanged(rid, id64, "booking_created")
+	return notice, nil
+}
+
+// botEditArgs are the requested field changes of a booking_propose_edit
+// proposal. Only non-nil fields are touched; everything else stays untouched.
+type botEditArgs struct {
+	CustomerName   *string `json:"customer_name,omitempty"`
+	ContactPhone   *string `json:"contact_phone,omitempty"`
+	ContactPhoneCC *string `json:"contact_phone_country_code,omitempty"`
+	ContactEmail   *string `json:"contact_email,omitempty"`
+	TableNumber    *string `json:"table_number,omitempty"`
+	Commentary     *string `json:"commentary,omitempty"`
+	Children       *int    `json:"children,omitempty"`
+	BabyStrollers  *int    `json:"baby_strollers,omitempty"`
+	HighChairs     *int    `json:"high_chairs,omitempty"`
+}
+
+// botEditColumns is the closed set of columns an edit may write; the UPDATE
+// clause is built only from these names.
+var botEditColumns = map[string]bool{
+	"customer_name": true, "contact_phone": true, "contact_phone_country_code": true,
+	"contact_email": true, "table_number": true, "commentary": true,
+	"children": true, "babyStrollers": true, "highChairs": true,
+}
+
+type botEditCurrent struct {
+	Name, Phone, CC, Email, Table, Commentary string
+	TableSet, CommentarySet, GroupMenu        bool
+	Children, Strollers, HighChairs, Party    int
+}
+
+// botEditMasked replaces stored PII in previews and notices: the chat sees the
+// new actor-provided value, never the old value read from the database.
+const botEditMasked = "(actual oculto)"
+
+type botEditChange struct {
+	Col, Label, Old, New string
+	Val                  any
+}
+
+func botEditScanCurrent(row *sql.Row) (*botEditCurrent, error) {
+	var c botEditCurrent
+	var phone, cc, email, table, comm sql.NullString
+	var children, strollers, chairs, gm sql.NullInt64
+	if err := row.Scan(&c.Name, &phone, &cc, &email, &table, &comm, &children, &strollers, &chairs, &gm, &c.Party); err != nil {
+		return nil, err
+	}
+	c.Phone, c.CC, c.Email = phone.String, cc.String, email.String
+	c.Table, c.TableSet = table.String, table.Valid
+	c.Commentary, c.CommentarySet = comm.String, comm.Valid
+	c.Children, c.Strollers, c.HighChairs = int(children.Int64), int(strollers.Int64), int(chairs.Int64)
+	c.GroupMenu = gm.Int64 != 0
+	return &c, nil
+}
+
+const botEditCurrentSelect = `SELECT customer_name, contact_phone, contact_phone_country_code, contact_email, table_number, commentary, children, babyStrollers, highChairs, special_menu, party_size FROM bookings WHERE restaurant_id = ? AND id = ?`
+
+// botEditResolve computes the exact resolved writes for the requested fields,
+// mirroring the panel validation rules (phone normalization, email fallback,
+// children capped at party). Only fields that actually change are returned.
+func (s *Server) botEditResolve(ctx context.Context, rid int, cur *botEditCurrent, in botEditArgs) ([]botEditChange, error) {
+	var out []botEditChange
+	if in.CustomerName != nil {
+		v := strings.TrimSpace(*in.CustomerName)
+		if v == "" {
+			return nil, errors.New("nombre inválido")
+		}
+		if v != cur.Name {
+			out = append(out, botEditChange{Col: "customer_name", Label: "nombre", Old: botEditMasked, New: v, Val: v})
+		}
+	}
+	if in.ContactPhone != nil || in.ContactPhoneCC != nil {
+		cc := cur.CC
+		if in.ContactPhoneCC != nil {
+			cc = strings.TrimSpace(*in.ContactPhoneCC)
+		}
+		ph := cur.Phone
+		if in.ContactPhone != nil {
+			ph = strings.TrimSpace(*in.ContactPhone)
+		}
+		ncc, national, _, ok := normalizePhoneParts(cc, ph)
+		if !ok {
+			return nil, errors.New("teléfono inválido")
+		}
+		if ncc != cur.CC || national != cur.Phone {
+			// Display only the parts the actor provided; parts read from the
+			// database stay masked even on the "new" side.
+			ccPart := "+•••"
+			if in.ContactPhoneCC != nil {
+				ccPart = "+" + ncc
+			}
+			numPart := "•••"
+			if in.ContactPhone != nil {
+				numPart = national
+			}
+			nw := ccPart + " " + numPart
+			if national != cur.Phone {
+				out = append(out, botEditChange{Col: "contact_phone", Label: "teléfono", Old: botEditMasked, New: nw, Val: national})
+			}
+			if ncc != cur.CC {
+				out = append(out, botEditChange{Col: "contact_phone_country_code", Label: "teléfono", Old: botEditMasked, New: nw, Val: ncc})
+			}
+		}
+	}
+	if in.ContactEmail != nil {
+		v := strings.TrimSpace(*in.ContactEmail)
+		if v == "" {
+			// Panel semantics: an empty email stores the restaurant fallback.
+			// The fallback is read from the database, not provided by the
+			// actor, so the display names it without showing the address.
+			v = s.restaurantFallbackEmail(ctx, rid)
+			if v != cur.Email {
+				out = append(out, botEditChange{Col: "contact_email", Label: "email", Old: botEditMasked, New: "email predeterminado del restaurante", Val: v})
+			}
+		} else if v != cur.Email {
+			out = append(out, botEditChange{Col: "contact_email", Label: "email", Old: botEditMasked, New: v, Val: v})
+		}
+	}
+	if in.TableNumber != nil {
+		v := strings.TrimSpace(*in.TableNumber)
+		if v != cur.Table || (v != "") != cur.TableSet {
+			old := botEditMasked
+			if !cur.TableSet {
+				old = "(sin mesa)"
+			}
+			nw := v
+			var val any
+			if v == "" {
+				nw = "(sin mesa)"
+				val = nil
+			} else {
+				val = v
+			}
+			out = append(out, botEditChange{Col: "table_number", Label: "mesa", Old: old, New: nw, Val: val})
+		}
+	}
+	if in.Commentary != nil {
+		if cur.GroupMenu {
+			return nil, errors.New("la reserva tiene menú de grupo y su comentario se genera solo: cámbialo desde el panel")
+		}
+		v := strings.TrimSpace(*in.Commentary)
+		if v != cur.Commentary || (v != "") != cur.CommentarySet {
+			old := botEditMasked
+			if !cur.CommentarySet {
+				old = "(sin comentario)"
+			}
+			nw := v
+			var val any
+			if v == "" {
+				nw = "(sin comentario)"
+				val = nil
+			} else {
+				val = v
+			}
+			out = append(out, botEditChange{Col: "commentary", Label: "comentario", Old: old, New: nw, Val: val})
+		}
+	}
+	if in.Children != nil {
+		if *in.Children < 0 {
+			return nil, errors.New("niños no puede ser negativo")
+		}
+		v := *in.Children
+		if v > cur.Party {
+			v = cur.Party
+		}
+		if v != cur.Children {
+			out = append(out, botEditChange{Col: "children", Label: "niños", Old: fmt.Sprint(cur.Children), New: fmt.Sprint(v), Val: v})
+		}
+	}
+	if in.BabyStrollers != nil {
+		if *in.BabyStrollers < 0 {
+			return nil, errors.New("carritos no puede ser negativo")
+		}
+		if *in.BabyStrollers != cur.Strollers {
+			out = append(out, botEditChange{Col: "babyStrollers", Label: "carritos", Old: fmt.Sprint(cur.Strollers), New: fmt.Sprint(*in.BabyStrollers), Val: *in.BabyStrollers})
+		}
+	}
+	if in.HighChairs != nil {
+		if *in.HighChairs < 0 {
+			return nil, errors.New("tronas no puede ser negativo")
+		}
+		if *in.HighChairs != cur.HighChairs {
+			out = append(out, botEditChange{Col: "highChairs", Label: "tronas", Old: fmt.Sprint(cur.HighChairs), New: fmt.Sprint(*in.HighChairs), Val: *in.HighChairs})
+		}
+	}
+	return out, nil
+}
+
+func botEditAfterKey(bookingID int64, changes []botEditChange) string {
+	m := map[string]any{"booking_id": bookingID}
+	for _, c := range changes {
+		m[c.Col] = c.Val
+	}
+	return botSha("editv1|" + botCanon(m))
+}
+
+func (s *Server) botToolEditPropose(ctx context.Context, rid int, msg botWebhookMessage, input json.RawMessage) (string, error) {
+	actor, origin, ok := s.botSpecialAdminAuthorize(ctx, rid, msg)
+	if !ok {
+		return botJSON(map[string]any{"error": "no autorizado: solo para miembros verificados del grupo de gestión"}), nil
+	}
+	s.botSpecialAdminFlushNotify(ctx, rid)
+	var in struct {
+		BookingID int64 `json:"booking_id"`
+		botEditArgs
+	}
+	dec := json.NewDecoder(bytes.NewReader(input))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&in) != nil || in.BookingID <= 0 {
+		return botJSON(map[string]any{"error": "argumentos inválidos: booking_id y al menos un campo a editar"}), nil
+	}
+	a := in.botEditArgs
+	if a.CustomerName == nil && a.ContactPhone == nil && a.ContactPhoneCC == nil && a.ContactEmail == nil && a.TableNumber == nil && a.Commentary == nil && a.Children == nil && a.BabyStrollers == nil && a.HighChairs == nil {
+		return botJSON(map[string]any{"error": "indica al menos un campo a editar"}), nil
+	}
+	return s.botEditPropose(ctx, rid, msg, actor, origin, in.BookingID, a)
+}
+
+func (s *Server) botEditPropose(ctx context.Context, rid int, msg botWebhookMessage, actor, origin string, bookingID int64, in botEditArgs) (string, error) {
+	row, err := s.botLoadSpecialRow(ctx, rid, bookingID)
+	if err != nil {
+		return botJSON(map[string]any{"error": "no hay una reserva con ese id"}), nil
+	}
+	if rerr := botSpecialRowAllowedFor(row, "editan", "edita"); rerr != nil {
+		return botJSON(map[string]any{"error": rerr.Error()}), nil
+	}
+	cur, cerr := botEditScanCurrent(s.db.QueryRowContext(ctx, botEditCurrentSelect, rid, bookingID))
+	if cerr != nil {
+		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
+	}
+	changes, rerr := s.botEditResolve(ctx, rid, cur, in)
+	if rerr != nil {
+		return botJSON(map[string]any{"error": rerr.Error()}), nil
+	}
+	if len(changes) == 0 {
+		return botJSON(map[string]any{"error": "ningún campo cambiaría: la reserva ya tiene esos valores"}), nil
+	}
+	beforeHash, herr := botFullRowHash(ctx, s.db, rid, bookingID)
+	if herr != nil {
+		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
+	}
+	code, cerr := botSpecialNewCode()
+	if cerr != nil {
+		return botJSON(map[string]any{"error": "no se pudo generar la propuesta"}), nil
+	}
+	parts := make([]string, 0, len(changes))
+	seen := map[string]bool{}
+	for _, c := range changes {
+		if seen[c.Label] {
+			continue
+		}
+		seen[c.Label] = true
+		parts = append(parts, fmt.Sprintf("%s: «%s» → «%s»", c.Label, c.Old, c.New))
+	}
+	preview := fmt.Sprintf("Propuesta: EDITAR la reserva #%d (%s %s, %d comensales): %s. No cambian fecha, hora, comensales, salón, menús ni ocupación. No se avisa al cliente.",
+		bookingID, row.Date, row.Time, row.Party, strings.Join(parts, "; "))
+	after := botEditAfterKey(bookingID, changes)
+	return s.botProposalPersist(ctx, rid, msg, "edit", bookingID, in, "", actor, origin, beforeHash, after, preview, code)
+}
+
+// botEditExecute runs INSIDE the claim transaction: claim + narrow column write
+// + others-hash verification + history + result_json + event commit together.
+func (s *Server) botEditExecute(ctx context.Context, tx *sql.Tx, rid int, msg botWebhookMessage, p botSpecialProposalRow) (string, error) {
+	stale := func(why string) (string, error) {
+		_ = tx.Rollback()
+		s.markStale(ctx, rid, p, msg)
+		return "", errors.New(why)
+	}
+	var in botEditArgs
+	if json.Unmarshal([]byte(p.Args), &in) != nil {
+		return "", errors.New("propuesta ilegible")
+	}
+	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, botSpecialRowSelect+" FOR UPDATE", rid, p.BookingID))
+	if err != nil {
+		return "", errors.New("la reserva ya no existe")
+	}
+	if rerr := botSpecialRowAllowedFor(row, "editan", "edita"); rerr != nil {
+		return "", rerr
+	}
+	full, err := botFullRowHash(ctx, tx, rid, p.BookingID)
+	if err != nil {
+		return "", errors.New("error interno")
+	}
+	if full != p.Before {
+		return stale(errBotSpecialStale.Error())
+	}
+	cur, cerr := botEditScanCurrent(tx.QueryRowContext(ctx, botEditCurrentSelect, rid, p.BookingID))
+	if cerr != nil {
+		return "", errors.New("error interno")
+	}
+	changes, rerr := s.botEditResolve(ctx, rid, cur, in)
+	if rerr != nil {
+		return stale("la validación ya no pasa: " + rerr.Error())
+	}
+	if len(changes) == 0 {
+		return stale("los campos ya tienen los valores pedidos; pide una propuesta nueva")
+	}
+	if botEditAfterKey(p.BookingID, changes) != p.After {
+		return stale("el resultado ya no coincide con la vista previa; pide una propuesta nueva")
+	}
+	cols := make([]string, 0, len(changes))
+	for _, c := range changes {
+		if !botEditColumns[c.Col] {
+			return "", errors.New("columna no permitida; no se aplicó nada")
+		}
+		cols = append(cols, c.Col)
+	}
+	preOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, cols...)
+	if err != nil {
+		return "", errors.New("error interno")
+	}
+	sets := make([]string, len(cols))
+	vals := make([]any, len(cols))
+	for i, c := range changes {
+		sets[i] = "`" + c.Col + "` = ?"
+		vals[i] = c.Val
+	}
+	vals = append(vals, rid, p.BookingID)
+	if _, err := tx.ExecContext(ctx, "UPDATE bookings SET "+strings.Join(sets, ", ")+" WHERE restaurant_id = ? AND id = ?", vals...); err != nil {
+		return "", errors.New("error al guardar; no se aplicó nada")
+	}
+	postOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, cols...)
+	if err != nil || postOthers != preOthers {
+		return "", errors.New("verificación fallida: cambió una columna fuera de la edición; no se aplicó nada")
+	}
+	// History: the panel tracks strollers and high chairs changes; mirror it.
+	for _, c := range changes {
+		if c.Col != "babyStrollers" && c.Col != "highChairs" {
+			continue
+		}
+		field := "strollers"
+		if c.Col == "highChairs" {
+			field = "high_chairs"
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, ?, ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`,
+			rid, p.BookingID, row.Date, field, c.Old, c.New, cur.Name, cur.Phone); err != nil {
+			return "", errors.New("no se pudo registrar el historial; no se aplicó nada")
+		}
+	}
+	parts := make([]string, 0, len(changes))
+	seen := map[string]bool{}
+	for _, c := range changes {
+		if seen[c.Label] {
+			continue
+		}
+		seen[c.Label] = true
+		parts = append(parts, fmt.Sprintf("%s: «%s» → «%s»", c.Label, c.Old, c.New))
+	}
+	notice := fmt.Sprintf("Reserva #%d editada: %s. No se ha avisado al cliente.", p.BookingID, strings.Join(parts, "; "))
+	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
+	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+		return "", errors.New("error interno")
+	}
+	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "changed_columns": cols, "approval_message_id": msg.MessageID})
+	if err := tx.Commit(); err != nil {
+		log.Printf("[bot] wa_bot_special_admin_v2 commit_unknown rid=%d proposal=%d err=%v", rid, p.ID, err)
+		return "", errors.New("no pude confirmar si se guardó; consulta la reserva antes de repetir")
+	}
+	s.broadcastBookingChanged(rid, p.BookingID, "booking_updated")
 	return notice, nil
 }
 
