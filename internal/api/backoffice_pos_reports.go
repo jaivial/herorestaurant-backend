@@ -250,6 +250,11 @@ func (s *Server) handleBOPOSStockExceptionsReplay(w http.ResponseWriter, r *http
 			}
 			candidates = append(candidates, x)
 		}
+		if err = ruleRows.Err(); err != nil {
+			ruleRows.Close()
+			httpx.WriteError(w, 500, "Error reading replay mapping")
+			return
+		}
 		ruleRows.Close()
 		snapshots := []posStockSnapshot{}
 		for _, x := range candidates {
