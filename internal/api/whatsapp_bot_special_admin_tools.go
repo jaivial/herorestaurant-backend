@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -174,6 +175,11 @@ func botSpecialAdminToolDefs() []botToolDef {
 			Name:        "booking_propose_cancel",
 			Description: "PROPONE cancelar una reserva (normal o de fecha especial) por su booking_id. NO la cancela: guarda una propuesta exacta y envía al grupo una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Al aplicarse la reserva se archiva en Canceladas y se libera la ocupación. No avisa al cliente. Pide siempre el booking_id y confirma con el usuario cuál es antes de proponer.",
 			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer"}},"required":["booking_id"]}`),
+		},
+		{
+			Name:        "booking_propose_create",
+			Description: "PROPONE crear una reserva NORMAL nueva (sin menú de grupo, arroces, extras ni fecha especial: esas se crean desde el panel). NO la crea: guarda una propuesta exacta y envía al grupo una vista previa con un código; se crea cuando la misma persona escribe 'OK' y ese código en el mismo chat. Pide antes fecha, hora, comensales, nombre y teléfono (no los inventes). Rechaza fechas pasadas, días cerrados y fechas especiales. Si ya existe una reserva con los mismos datos (fecha, hora, teléfono y comensales), lo dice y solo sigue si el usuario confirma expresamente el duplicado con allow_duplicate_of. No avisa al cliente ni emite avisos externos.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"date":{"type":"string","description":"YYYY-MM-DD"},"time":{"type":"string","description":"HH:MM"},"party_size":{"type":"integer"},"customer_name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string","description":"Prefijo sin + (por defecto 34)"},"contact_email":{"type":"string"},"commentary":{"type":"string"},"children":{"type":"integer"},"baby_strollers":{"type":"integer"},"high_chairs":{"type":"integer"},"preferred_floor_number":{"type":"integer"},"allow_duplicate_of":{"type":"integer","description":"Solo para confirmar expresamente un duplicado legítimo: booking_id de la reserva existente igual"}},"required":["date","time","party_size","customer_name","contact_phone"]}`),
 		},
 		{
 			Name:        "booking_propose_restore",
@@ -678,13 +684,13 @@ func (s *Server) botToolSpecialPropose(ctx context.Context, rid int, msg botWebh
 		preview = fmt.Sprintf("Propuesta (reserva #%d, %s, %d comensales): cambiar menús. Antes: %s. Después: %s. Total: %s -> %s. Abonos registrados se conservan (%s).",
 			in.BookingID, row.Date, row.Party, botSpecialDiffMenus(snap), botSpecialDiffMenus(after), botEUR(bTotals["total_eur"].(float64)), botEUR(aTotals["total_eur"].(float64)), botEUR(aTotals["abonado_eur"].(float64)))
 	}
-	return s.botProposalPersist(ctx, rid, msg, op, in.BookingID, args, actor, origin, beforeHash, afterHash, preview, code)
+	return s.botProposalPersist(ctx, rid, msg, op, in.BookingID, args, "", actor, origin, beforeHash, afterHash, preview, code)
 }
 
 // botProposalPersist stores a proposal, supersedes the previous one for the
 // booking, sends the preview + code straight to the origin chat and activates
 // it only after the gateway accepted the send. Shared by every op.
-func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhookMessage, op string, bookingID int64, args botSpecialProposalArgs, actor, origin, beforeHash, afterHash, preview, code string) (string, error) {
+func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhookMessage, op string, bookingID int64, args any, dedupKey string, actor, origin, beforeHash, afterHash, preview, code string) (string, error) {
 	in := struct{ BookingID int64 }{bookingID}
 	argsJSON, _ := json.Marshal(args)
 
@@ -695,7 +701,20 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 	defer tx.Rollback()
 	var superseded int64
 	var oldChats []string
-	if rs, qerr := tx.QueryContext(ctx, `SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=? AND active=1`, rid, in.BookingID); qerr == nil {
+	chatsQ := `SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=? AND active=1`
+	supQ := `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=? AND active=1`
+	supArgs := []any{rid, in.BookingID}
+	if dedupKey != "" {
+		// Create proposals carry booking_id=0 and uq_wa_op_active is
+		// (restaurant_id, booking_id, active): two active creates would collide.
+		// So at most one create pends per tenant and a new one supersedes ANY
+		// pending create, whatever its natural key. The dedup key still travels
+		// in args for correlation and the execute re-check.
+		chatsQ = `SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND op='create' AND active=1`
+		supQ = `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND op='create' AND active=1`
+		supArgs = []any{rid}
+	}
+	if rs, qerr := tx.QueryContext(ctx, chatsQ, supArgs...); qerr == nil {
 		for rs.Next() {
 			var c string
 			if rs.Scan(&c) == nil {
@@ -704,7 +723,7 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 		}
 		rs.Close()
 	}
-	if res, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=? AND active=1`, rid, in.BookingID); err == nil {
+	if res, err := tx.ExecContext(ctx, supQ, supArgs...); err == nil {
 		superseded, _ = res.RowsAffected()
 	} else {
 		return botJSON(map[string]any{"error": "no se pudo guardar la propuesta"}), nil
@@ -720,12 +739,16 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 		return botJSON(map[string]any{"error": "no se pudo guardar la propuesta"}), nil
 	}
 
+	supNotice := fmt.Sprintf("La propuesta pendiente sobre la reserva #%d se ha sustituido por otra más reciente. El código anterior ya no vale.", in.BookingID)
+	if dedupKey != "" {
+		supNotice = "La propuesta pendiente de crear una reserva se ha sustituido por otra más reciente. El código anterior ya no vale."
+	}
 	for _, c := range oldChats {
 		if !s.botSpecialAdminMayNotify(ctx, rid, c) {
 			continue
 		}
 		if gw, okGw := s.botGatewayFor(ctx, rid); okGw {
-			_ = gw.SendText(ctx, c, fmt.Sprintf("La propuesta pendiente sobre la reserva #%d se ha sustituido por otra más reciente. El código anterior ya no vale.", in.BookingID))
+			_ = gw.SendText(ctx, c, supNotice)
 		}
 	}
 	// The code is delivered straight to the group by the gateway: it is not
@@ -896,6 +919,9 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return "", errors.New("la propuesta ya no está vigente")
+	}
+	if p.Op == "create" {
+		return s.botCreateExecute(ctx, tx, rid, msg, p)
 	}
 	if p.Op == "restore" {
 		return s.botRestoreExecute(ctx, tx, rid, msg, p)
@@ -1197,7 +1223,7 @@ func (s *Server) botCancelPropose(ctx context.Context, rid int, msg botWebhookMe
 	preview := fmt.Sprintf("Propuesta: CANCELAR la reserva #%d (%s %s, %d comensales, estado %s).%s Se archiva en Canceladas y se libera la ocupación. Esta operación no mueve dinero: no ejecuta ningún reembolso ni cobro y no aplica ninguna política de depósito; los pagos ya registrados ni se devuelven ni se modifican (el abono queda solo en la copia de la reserva). No emite el aviso n8n booking.cancelled del panel. No se avisa al cliente ni se envían mensajes. Se conserva una copia completa para poder restaurarla tal cual (booking_propose_restore).",
 		bookingID, row.Date, row.Time, row.Party, row.Status, extra)
 	afterHash := botSha("cancel|" + beforeHash)
-	return s.botProposalPersist(ctx, rid, msg, "cancel", bookingID, botSpecialProposalArgs{}, actor, origin, beforeHash, afterHash, preview, code)
+	return s.botProposalPersist(ctx, rid, msg, "cancel", bookingID, botSpecialProposalArgs{}, "", actor, origin, beforeHash, afterHash, preview, code)
 }
 
 // botCancelExecute archives and deletes the booking inside the approval
@@ -1396,7 +1422,7 @@ func (s *Server) botRestorePropose(ctx context.Context, rid int, msg botWebhookM
 	before, after := botBackupKey(backup, modHist, cancelledID, proposalID)
 	preview := fmt.Sprintf("Propuesta: RESTAURAR la reserva #%d tal como estaba antes de cancelarla (%s %s, %s comensales, estado %s), con el mismo id y todos sus datos. Restaura la copia histórica guardada al cancelar, sin recalcular menús, precios, abonos ni condiciones actuales.%s Se quita de Canceladas y se vuelve a ocupar el aforo (sin comprobación de aforo). No se ejecuta ningún cobro ni reembolso. No se avisa al cliente.",
 		bookingID, strings.TrimSpace(botBackupStr(backup, "reservation_date")), strings.TrimSuffix(botBackupStr(backup, "reservation_time"), ":00"), botBackupStr(backup, "party_size"), botBackupStr(backup, "status"), extra)
-	return s.botProposalPersist(ctx, rid, msg, "restore", bookingID, botSpecialProposalArgs{}, actor, origin, before, after, preview, code)
+	return s.botProposalPersist(ctx, rid, msg, "restore", bookingID, botSpecialProposalArgs{}, "", actor, origin, before, after, preview, code)
 }
 
 func (s *Server) botRestoreExecute(ctx context.Context, tx *sql.Tx, rid int, msg botWebhookMessage, p botSpecialProposalRow) (string, error) {
@@ -1486,6 +1512,334 @@ func (s *Server) botRestoreExecute(ctx context.Context, tx *sql.Tx, rid int, msg
 		return "", errors.New("no pude confirmar si se guardó; consulta la reserva antes de repetir")
 	}
 	s.broadcastBookingChanged(rid, p.BookingID, "booking_created")
+	return notice, nil
+}
+
+// botCreateArgs are the validated inputs of a booking_propose_create proposal.
+// DedupKey is the natural identity of the booking (date, time, canonical phone
+// and party size; the customer name is NOT identity) and correlates proposals.
+type botCreateArgs struct {
+	DedupKey         string `json:"dedup_key"`
+	Date             string `json:"date"`
+	Time             string `json:"time"`
+	PartySize        int    `json:"party_size"`
+	CustomerName     string `json:"customer_name"`
+	ContactPhone     string `json:"contact_phone"`
+	ContactPhoneCC   string `json:"contact_phone_country_code"`
+	ContactEmail     string `json:"contact_email,omitempty"`
+	Commentary       string `json:"commentary,omitempty"`
+	Children         *int   `json:"children,omitempty"`
+	BabyStrollers    *int   `json:"baby_strollers,omitempty"`
+	HighChairs       *int   `json:"high_chairs,omitempty"`
+	PreferredFloor   *int   `json:"preferred_floor_number,omitempty"`
+	AllowDuplicateOf int64  `json:"allow_duplicate_of,omitempty"`
+}
+
+func botCreateDedupKey(rid int, b boNormalizedBooking) string {
+	return botSha(fmt.Sprintf("create|%d|%s|%s|%s|%s|%d", rid, b.ReservationDate, b.ReservationTime, b.ContactPhoneCountryCode, b.ContactPhone, b.PartySize))
+}
+
+// botCreateAfterKey binds the preview to the FULL resolved set the insert will
+// write (validator output: fallback email, resolved floor, capped children...),
+// so any drift between propose and execute is a stale, never a silent change.
+func botCreateAfterKey(rid int, b boNormalizedBooking, allowDup int64) string {
+	return botSha("createv1|" + botCanon(map[string]any{
+		"rid": rid, "date": b.ReservationDate, "time": b.ReservationTime,
+		"party": b.PartySize, "children": b.Children,
+		"name": b.CustomerName, "phone": b.ContactPhone, "cc": b.ContactPhoneCountryCode,
+		"email": b.ContactEmail, "commentary": b.Commentary.String, "commentary_set": b.Commentary.Valid,
+		"strollers": b.BabyStrollers, "chairs": b.HighChairs,
+		"floor": nullableInt64OrNil(b.PreferredFloorNumber),
+		"special_menu": false, "arroz": nil, "extras": nil, "group_menu": nil, "special_json": nil,
+		"allow_duplicate_of": allowDup,
+	}))
+}
+
+// botCreateValidate mirrors the panel create contract: the bot guards (past
+// date, closed day, special date) run first and fail closed, then the exact
+// panel validator normalizes and validates the rest. Reference reads (floors,
+// fallback email, special settings) use the server handle like the reschedule
+// path; the execute re-validates before commit and compares the after key.
+func (s *Server) botCreateValidate(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, rid int, in botCreateArgs) (boNormalizedBooking, error) {
+	out := boNormalizedBooking{}
+	date := strings.TrimSpace(in.Date)
+	d, derr := time.Parse("2006-01-02", date)
+	if derr != nil {
+		return out, errors.New("fecha inválida (YYYY-MM-DD)")
+	}
+	loc, _ := time.LoadLocation("Europe/Madrid")
+	if loc == nil {
+		loc = time.UTC
+	}
+	n := time.Now().In(loc)
+	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, time.UTC)
+	if d.Before(today) {
+		return out, errors.New("la fecha es pasada: no se crea desde aquí")
+	}
+	if in.PartySize <= 0 || in.PartySize > 10000 {
+		return out, errors.New("número de comensales inválido")
+	}
+	if strings.TrimSpace(in.CustomerName) == "" {
+		return out, errors.New("nombre inválido")
+	}
+	for _, v := range []*int{in.Children, in.BabyStrollers, in.HighChairs} {
+		if v != nil && *v < 0 {
+			return out, errors.New("niños, carritos y tronas no pueden ser negativos")
+		}
+	}
+	if in.AllowDuplicateOf < 0 {
+		return out, errors.New("allow_duplicate_of inválido")
+	}
+	var closed int
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM closed_days WHERE restaurant_id = ? AND date = ?", rid, date).Scan(&closed); err != nil || closed > 0 {
+		return out, errors.New("el día " + date + " está cerrado (o no se pudo comprobar): no se crea desde aquí")
+	}
+	if st, _, err := s.loadSpecialDateSettings(ctx, rid, date); err != nil || st != nil {
+		return out, errors.New("la fecha es una fecha especial (o no se pudo comprobar): las reservas de fecha especial se crean desde el panel")
+	}
+	var email *string
+	if v := strings.TrimSpace(in.ContactEmail); v != "" {
+		email = &v
+	}
+	var commentary *string
+	if v := strings.TrimSpace(in.Commentary); v != "" {
+		commentary = &v
+	}
+	return s.boNormalizeAndValidateBookingInput(ctx, rid, boNormalizeInput{
+		ReservationDate:         date,
+		ReservationTime:         strings.TrimSpace(in.Time),
+		PartySize:               in.PartySize,
+		CustomerName:            in.CustomerName,
+		ContactPhone:            strings.TrimSpace(in.ContactPhone),
+		ContactPhoneCountryCode: strings.TrimSpace(in.ContactPhoneCC),
+		ContactEmail:            email,
+		PreferredFloorNumber:    in.PreferredFloor,
+		Commentary:              commentary,
+		Children:                in.Children,
+		BabyStrollers:           in.BabyStrollers,
+		HighChairs:              in.HighChairs,
+	})
+}
+
+// botCreateFindDuplicates returns live bookings with the same natural key
+// (date, time, canonical phone, party). With lock=true the equality on
+// (restaurant_id, reservation_date, reservation_time) rides
+// idx_bookings_restaurant_date_time_id, so the FOR UPDATE read next-key locks
+// that exact range and a twin INSERT (bot or panel) waits for this tx.
+func botCreateFindDuplicates(ctx context.Context, q interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}, rid int, b boNormalizedBooking, lock bool) ([]int64, error) {
+	sfx := ""
+	if lock {
+		sfx = " FOR UPDATE"
+	}
+	rows, err := q.QueryContext(ctx, `SELECT id, contact_phone_country_code, contact_phone, party_size FROM bookings WHERE restaurant_id = ? AND reservation_date = ? AND reservation_time = ?`+sfx, rid, b.ReservationDate, b.ReservationTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var found []int64
+	for rows.Next() {
+		var id, party int64
+		var cc, phone sql.NullString
+		if rows.Scan(&id, &cc, &phone, &party) != nil {
+			return nil, errors.New("error interno")
+		}
+		if cc.String == b.ContactPhoneCountryCode && phone.String == b.ContactPhone && party == int64(b.PartySize) {
+			found = append(found, id)
+		}
+	}
+	return found, rows.Err()
+}
+
+func (s *Server) botToolCreatePropose(ctx context.Context, rid int, msg botWebhookMessage, input json.RawMessage) (string, error) {
+	actor, origin, ok := s.botSpecialAdminAuthorize(ctx, rid, msg)
+	if !ok {
+		return botJSON(map[string]any{"error": "no autorizado: solo para miembros verificados del grupo de gestión"}), nil
+	}
+	s.botSpecialAdminFlushNotify(ctx, rid)
+	var in botCreateArgs
+	// Unknown fields (arroz, group menu, extras, special...) are REJECTED, never
+	// silently ignored: v1 creates plain normal bookings only.
+	dec := json.NewDecoder(bytes.NewReader(input))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&in) != nil {
+		return botJSON(map[string]any{"error": "argumentos inválidos: esta herramienta solo admite date, time, party_size, customer_name, contact_phone, contact_phone_country_code, contact_email, commentary, children, baby_strollers, high_chairs, preferred_floor_number y allow_duplicate_of (menús de grupo, arroces, extras y fechas especiales van por el panel)"}), nil
+	}
+	if strings.TrimSpace(in.Date) == "" || strings.TrimSpace(in.Time) == "" || in.PartySize == 0 || strings.TrimSpace(in.CustomerName) == "" || strings.TrimSpace(in.ContactPhone) == "" {
+		return botJSON(map[string]any{"error": "faltan datos: fecha, hora, comensales, nombre y teléfono son obligatorios"}), nil
+	}
+	return s.botCreatePropose(ctx, rid, msg, actor, origin, in)
+}
+
+func (s *Server) botCreatePropose(ctx context.Context, rid int, msg botWebhookMessage, actor, origin string, in botCreateArgs) (string, error) {
+	b, err := s.botCreateValidate(ctx, s.db, rid, in)
+	if err != nil {
+		return botJSON(map[string]any{"error": err.Error()}), nil
+	}
+	dups, derr := botCreateFindDuplicates(ctx, s.db, rid, b, false)
+	if derr != nil {
+		return botJSON(map[string]any{"error": "no se pudo comprobar si ya existe la reserva"}), nil
+	}
+	if len(dups) > 1 {
+		return botJSON(map[string]any{"error": "ya hay varias reservas con esos mismos datos (fecha, hora, teléfono y comensales): revísalo desde el panel"}), nil
+	}
+	if len(dups) == 1 && in.AllowDuplicateOf != dups[0] {
+		return botJSON(map[string]any{"error": fmt.Sprintf("ya existe la reserva #%d con esos mismos datos (fecha, hora, teléfono y comensales). Si es una reserva distinta legítima, confírmalo expresamente repitiendo la petición con allow_duplicate_of=%d", dups[0], dups[0])}), nil
+	}
+	in.DedupKey = botCreateDedupKey(rid, b)
+	code, cerr := botSpecialNewCode()
+	if cerr != nil {
+		return botJSON(map[string]any{"error": "no se pudo generar la propuesta"}), nil
+	}
+	det := fmt.Sprintf("%s a las %s, %d comensales", b.ReservationDate, strings.TrimSuffix(b.ReservationTime, ":00"), b.PartySize)
+	if b.Children > 0 {
+		det += fmt.Sprintf(" (%d niños)", b.Children)
+	}
+	det += ", a nombre de " + b.CustomerName + ", teléfono +" + b.ContactPhoneCountryCode + " " + b.ContactPhone + ", email " + b.ContactEmail
+	if b.PreferredFloorNumber.Valid {
+		det += fmt.Sprintf(", salón %d", b.PreferredFloorNumber.Int64)
+	}
+	if b.BabyStrollers > 0 {
+		det += fmt.Sprintf(", %d carritos", b.BabyStrollers)
+	}
+	if b.HighChairs > 0 {
+		det += fmt.Sprintf(", %d tronas", b.HighChairs)
+	}
+	if b.Commentary.Valid {
+		det += ", comentario: «" + b.Commentary.String + "»"
+	}
+	extra := ""
+	if len(dups) == 1 {
+		extra = fmt.Sprintf(" Se crea AUNQUE YA EXISTE la reserva #%d con los mismos datos (duplicado legítimo confirmado expresamente).", dups[0])
+	}
+	preview := fmt.Sprintf("Propuesta: CREAR una reserva NUEVA (normal, sin menú de grupo, arroces ni fecha especial): %s.%s Se registra con el estado por defecto del sistema, igual que las creadas desde el panel, y ocupa el aforo sin comprobación de capacidad. NO se avisa al cliente (ni WhatsApp ni email): si hay que avisarle, se hace desde el panel. No emite el aviso n8n booking.created.", det, extra)
+	after := botCreateAfterKey(rid, b, in.AllowDuplicateOf)
+	before := botSha("create|sin-reserva")
+	return s.botProposalPersist(ctx, rid, msg, "create", 0, in, in.DedupKey, actor, origin, before, after, preview, code)
+}
+
+// botCreateExecute runs INSIDE the claim transaction: claim + dedupe + INSERT +
+// occupancy + result_json + event commit or roll back together.
+func (s *Server) botCreateExecute(ctx context.Context, tx *sql.Tx, rid int, msg botWebhookMessage, p botSpecialProposalRow) (string, error) {
+	stale := func(why string) (string, error) {
+		_ = tx.Rollback()
+		s.markStale(ctx, rid, p, msg)
+		return "", errors.New(why)
+	}
+	var in botCreateArgs
+	if json.Unmarshal([]byte(p.Args), &in) != nil {
+		return "", errors.New("propuesta ilegible")
+	}
+	b, err := s.botCreateValidate(ctx, tx, rid, in)
+	if err != nil {
+		return stale("la validación ya no pasa: " + err.Error())
+	}
+	if botCreateDedupKey(rid, b) != in.DedupKey {
+		return stale("la propuesta no coincide con los datos validados; pide una propuesta nueva")
+	}
+	dups, derr := botCreateFindDuplicates(ctx, tx, rid, b, true)
+	if derr != nil {
+		return "", errors.New("no se pudo comprobar duplicados; no se aplicó nada")
+	}
+	if len(dups) > 1 {
+		return stale("ya hay varias reservas con esos mismos datos; revísalo desde el panel")
+	}
+	if len(dups) == 1 && in.AllowDuplicateOf != dups[0] {
+		return stale(fmt.Sprintf("ya existe la reserva #%d con esos mismos datos; si es otra legítima, pide una propuesta nueva confirmándolo expresamente", dups[0]))
+	}
+	if after := botCreateAfterKey(rid, b, in.AllowDuplicateOf); after != p.After {
+		return stale("los datos resueltos cambiaron desde la vista previa; pide una propuesta nueva")
+	}
+	// Same column list and values the panel create writes (boInsertBooking),
+	// but inside the claim transaction.
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO bookings (
+			restaurant_id,
+			reservation_date,
+			party_size,
+			children,
+			reservation_time,
+			customer_name,
+			contact_phone,
+			contact_phone_country_code,
+			commentary,
+			arroz_type,
+			arroz_servings,
+			babyStrollers,
+			highChairs,
+			contact_email,
+			special_menu,
+			menu_de_grupo_id,
+			menu_de_grupo_assigned,
+			principales_json,
+			extras_json,
+			table_number,
+			preferred_floor_number,
+			is_special_booking,
+			is_prereserva,
+			special_json,
+			has_mobility_issues,
+			mobility_people
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		rid,
+		b.ReservationDate,
+		b.PartySize,
+		b.Children,
+		b.ReservationTime,
+		b.CustomerName,
+		b.ContactPhone,
+		b.ContactPhoneCountryCode,
+		nullableStringOrNil(b.Commentary),
+		b.ArrozTypeJSON,
+		b.ArrozServingsJSON,
+		b.BabyStrollers,
+		b.HighChairs,
+		b.ContactEmail,
+		boolToTinyint(b.SpecialMenu),
+		b.MenuDeGrupoID,
+		boolToTinyint(b.MenuDeGrupoAssigned),
+		b.PrincipalesJSON,
+		b.ExtrasJSON,
+		nullableStringOrNil(b.TableNumber),
+		nullableInt64OrNil(b.PreferredFloorNumber),
+		boolToTinyint(b.IsSpecialBooking),
+		boolToTinyint(b.IsPrereserva),
+		nullableStringOrNilFromAny(b.SpecialJSON),
+		boolToTinyint(b.HasMobilityIssues),
+		b.MobilityPeople,
+	)
+	if err != nil {
+		return "", errors.New("no se pudo crear la reserva; no se aplicó nada")
+	}
+	id64, err := res.LastInsertId()
+	if err != nil || id64 <= 0 {
+		return "", errors.New("no se pudo crear la reserva; no se aplicó nada")
+	}
+	if err := s.applyBookingLocationOccupancy(ctx, tx, rid, b.ReservationDate, b.PreferredFloorNumber, nil, b.PartySize, +1); err != nil {
+		return "", errors.New("no se pudo registrar la ocupación; no se aplicó nada")
+	}
+	// Second validation just before commit: reference data read again.
+	again, aerr := s.botCreateValidate(ctx, tx, rid, in)
+	if aerr != nil || botCreateAfterKey(rid, again, in.AllowDuplicateOf) != p.After {
+		return stale("los datos de referencia cambiaron durante la creación; no se aplicó nada")
+	}
+	notice := fmt.Sprintf("Reserva #%d creada: %s %s, %d comensales, a nombre de %s. No se ha avisado al cliente ni se ha emitido ningún aviso externo.", id64, b.ReservationDate, strings.TrimSuffix(b.ReservationTime, ":00"), b.PartySize, b.CustomerName)
+	rj, _ := json.Marshal(map[string]any{"booking_id": id64, "op": p.Op, "notice": notice})
+	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+		return "", errors.New("error interno")
+	}
+	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": id64, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
+	if err := tx.Commit(); err != nil {
+		// Outcome unknown to us: never re-create by matching name/phone/time;
+		// the durable proposal result is the source of truth.
+		log.Printf("[bot] wa_bot_special_admin_v2 commit_unknown rid=%d proposal=%d err=%v", rid, p.ID, err)
+		return "", errors.New("no pude confirmar si se creó: consulta el resultado de la propuesta o el panel antes de repetir")
+	}
+	s.broadcastBookingChanged(rid, id64, "booking_created")
 	return notice, nil
 }
 

@@ -145,6 +145,8 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolSpecialPropose(ctx, restaurantID, msg, "cancel", input)
 	case "booking_propose_restore":
 		return s.botToolSpecialPropose(ctx, restaurantID, msg, "restore", input)
+	case "booking_propose_create":
+		return s.botToolCreatePropose(ctx, restaurantID, msg, input)
 	case "create_special_booking":
 		return s.botToolCreateSpecialBooking(ctx, restaurantID, msg, tenant, input)
 	case "modify_special_booking":
