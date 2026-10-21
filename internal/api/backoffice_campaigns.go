@@ -553,9 +553,21 @@ func (s *Server) handleBOCampaignPreview(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// campaignCanonicalTarget is the ONE normalization every campaign target goes
+// through before it is stored, deduped or compared (migration 130 contract):
+// e-mail = LOWER(TRIM(x)), WhatsApp = normalizeWhatsAppNumber. The audience
+// builder, the delivery-ledger index and the suppression comparison must all
+// use it, so two representations of the same contact can never diverge.
+func campaignCanonicalTarget(channel, target string) string {
+	if channel == "whatsapp" {
+		return normalizeWhatsAppNumber(target)
+	}
+	return strings.ToLower(strings.TrimSpace(target))
+}
+
 // campaignSuppressionFilter is the do-not-contact list of a restaurant, keyed
-// the way campaignAudience compares targets: emails lower-cased, phones through
-// normalizeWhatsAppNumber. campaign_suppressions is the source of truth; the
+// the way campaignAudience compares targets: both sides through
+// campaignCanonicalTarget. campaign_suppressions is the source of truth; the
 // legacy invalid_emails / invalid_phones / no_marketing tables are still
 // honoured so an old bounce or opt-out can never be re-contacted.
 type campaignSuppressionFilter struct {
@@ -565,9 +577,9 @@ type campaignSuppressionFilter struct {
 
 func (f campaignSuppressionFilter) blocked(channel, target string) bool {
 	if channel == "whatsapp" {
-		return f.phones[normalizeWhatsAppNumber(target)]
+		return f.phones[campaignCanonicalTarget("whatsapp", target)]
 	}
-	return f.emails[strings.ToLower(strings.TrimSpace(target))]
+	return f.emails[campaignCanonicalTarget("email", target)]
 }
 
 // loadCampaignSuppressionFilter reads every suppressed target of the restaurant
@@ -585,14 +597,12 @@ func (s *Server) loadCampaignSuppressionFilter(ctx context.Context, restaurantID
 		if err := rows.Scan(&channel, &target); err != nil {
 			continue
 		}
-		if channel == "whatsapp" {
-			if num := normalizeWhatsAppNumber(target); num != "" {
-				f.phones[num] = true
+		if key := campaignCanonicalTarget(channel, target); key != "" {
+			if channel == "whatsapp" {
+				f.phones[key] = true
+			} else {
+				f.emails[key] = true
 			}
-			continue
-		}
-		if mail := strings.ToLower(strings.TrimSpace(target)); mail != "" {
-			f.emails[mail] = true
 		}
 	}
 	return f, rows.Err()
@@ -616,16 +626,15 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 			return
 		}
 		if channel == "whatsapp" {
-			target = normalizeWhatsAppNumber(target)
+			target = campaignCanonicalTarget("whatsapp", target)
 		} else if !strings.Contains(target, "@") {
 			return
 		} else if ok, _ := campaignEmailLooksDeliverable(target); !ok {
 			return
 		} else {
-			// Normalization contract (migration 130): stored e-mail targets are
-			// LOWER(TRIM(x)), so the ledger dedupe (uq_campaign_target) and the
-			// suppression comparison always see one canonical value.
-			target = strings.ToLower(target)
+			// Same canonical form the ledger and the suppression comparison
+			// use: LOWER(TRIM(x)) (migration 130 normalization contract).
+			target = campaignCanonicalTarget("email", target)
 		}
 		if target == "" {
 			return
@@ -633,7 +642,7 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 		if suppressed.blocked(channel, target) {
 			return
 		}
-		key := channel + "|" + strings.ToLower(target)
+		key := channel + "|" + campaignCanonicalTarget(channel, target)
 		if seen[key] {
 			return
 		}
@@ -680,8 +689,9 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 }
 
 // campaignLedgerByTarget indexes the already-materialized recipients of a
-// campaign (channel|lower(target) present) so the audience preview and the
-// send handler can tell "new pending eligible" from "already in the ledger".
+// campaign (key = channel|campaignCanonicalTarget) so the audience preview and
+// the send handler can tell "new pending eligible" from "already in the
+// ledger" with the exact same normalization the insert path uses.
 func (s *Server) campaignLedgerByTarget(ctx context.Context, campaignID int64) map[string]bool {
 	ledger := map[string]bool{}
 	rows, err := s.db.QueryContext(ctx, `SELECT channel, target FROM campaign_recipients WHERE campaign_id = ?`, campaignID)
@@ -694,7 +704,7 @@ func (s *Server) campaignLedgerByTarget(ctx context.Context, campaignID int64) m
 		if rows.Scan(&channel, &target) != nil {
 			continue
 		}
-		ledger[channel+"|"+strings.ToLower(strings.TrimSpace(target))] = true
+		ledger[channel+"|"+campaignCanonicalTarget(channel, target)] = true
 	}
 	return ledger
 }
@@ -720,33 +730,48 @@ func (s *Server) handleBOCampaignAudience(w http.ResponseWriter, r *http.Request
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error calculando destinatarios"})
 		return
 	}
-	// A contact already in the delivery ledger is never re-queued (INSERT
-	// IGNORE on uq_campaign_target), so the operator must see the real
-	// remaining work: "new" are the only rows a send would add, "already"
-	// shows what the ledger already holds for this campaign.
-	ledger := s.campaignLedgerByTarget(r.Context(), c.ID)
-	emails, whats, already, newTargets := 0, 0, 0, []campaignTarget{}
+	// Legacy fields keep their ORIGINAL semantics: the backoffice client
+	// (CampaignAudiencePreview {total, emails, whatsapp, sample}) renders the
+	// whole audience (counters + ETA estimates), so those are never redefined.
+	// The *_new / already_in_ledger fields are the explicit breakdown of what
+	// is NOT in the delivery ledger yet — the only rows a send would add
+	// (INSERT IGNORE on uq_campaign_target never repeats a contact).
+	emails, whats := 0, 0
 	for _, t := range targets {
-		if ledger[t.Channel+"|"+strings.ToLower(t.Target)] {
-			already++
-			continue
-		}
-		newTargets = append(newTargets, t)
 		if t.Channel == "email" {
 			emails++
 		} else {
 			whats++
 		}
 	}
-	sample := newTargets
+	ledger := s.campaignLedgerByTarget(r.Context(), c.ID)
+	newEmails, newWhats, already, newTargets := 0, 0, 0, []campaignTarget{}
+	for _, t := range targets {
+		if ledger[t.Channel+"|"+campaignCanonicalTarget(t.Channel, t.Target)] {
+			already++
+			continue
+		}
+		newTargets = append(newTargets, t)
+		if t.Channel == "email" {
+			newEmails++
+		} else {
+			newWhats++
+		}
+	}
+	sample := targets
 	if len(sample) > 20 {
 		sample = sample[:20]
 	}
+	newSample := newTargets
+	if len(newSample) > 20 {
+		newSample = newSample[:20]
+	}
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success": true, "coord_id": c.CoordID,
-		"total": len(targets), "emails": emails, "whatsapp": whats,
-		"new": len(newTargets), "already_in_ledger": already,
-		"stats": c.Stats, "sample": sample,
+		"total": len(targets), "emails": emails, "whatsapp": whats, "sample": sample,
+		"new": len(newTargets), "new_emails": newEmails, "new_whatsapp": newWhats,
+		"new_sample": newSample, "already_in_ledger": already,
+		"stats": c.Stats,
 	})
 }
 
@@ -1025,7 +1050,7 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE campaigns SET status = 'sending' WHERE id = ?`, c.ID)
-	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets), "queued", queued, "insert_errors", insertFailed)
+	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets), "queued_new", queued, "insert_errors", insertFailed)
 	if !campaignRunners.start(c.ID) {
 		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
 		return
@@ -1034,10 +1059,19 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 		defer campaignRunners.stop(c.ID)
 		s.runCampaignSend(context.WithoutCancel(r.Context()), a.ActiveRestaurantID, c.ID)
 	}()
-	// queued = rows actually added to the ledger; already = contacts the
-	// ledger already holds (sent/pending/paused/failed/skipped), never
-	// repeated; insert_errors = rows the DB refused (not in the ledger).
-	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID, "queued": queued, "already": len(targets) - queued - insertFailed, "insert_errors": insertFailed})
+	// Legacy field preserved: `queued` keeps its original value (the audience
+	// size the operator asked to enqueue, what the BO toast consumes —
+	// sendCampaign {queued}). The explicit new fields are the truth of the
+	// insert: queued_new = rows actually added (RowsAffected of INSERT
+	// IGNORE), already = contacts the ledger already holds (never repeated),
+	// insert_errors = rows the DB refused (not in the ledger).
+	httpx.WriteJSON(w, 200, map[string]any{
+		"success": true, "coord_id": c.CoordID,
+		"queued":        len(targets),
+		"queued_new":    queued,
+		"already":       len(targets) - queued - insertFailed,
+		"insert_errors": insertFailed,
+	})
 }
 
 // runCampaignSend walks the pending rows one by one, throttled so neither the
