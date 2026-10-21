@@ -82,6 +82,20 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 	// match the other.
 	// Coordination id: wa_bot_privileged_contacts_v1
 	isPrivileged := botConversationIsPrivileged(s, tenant, in.ChatJID, in.ChatJIDAlt)
+	// wa_bot_special_admin_v2: a one-to-one chat is privileged for the special
+	// booking tools when its provider phone is a current member of the tenant's
+	// authorised group. The cached list is only the cheap entry filter; every
+	// tool call and approval re-proves membership with a fresh fetch.
+	actorPhoneJID := ""
+	if !botGroupIsGroupJID(in.ChatJID) && !in.FromMe && !in.Ignored {
+		if scope := botSpecialAdminScopeGroup(restaurantID); scope != "" {
+			if pj := botSpecialAdminDMPhoneJID(in.ChatJID, in.ChatJIDAlt); pj != "" && s.botGroupSenderIsMember(r.Context(), restaurantID, scope, pj) {
+				actorPhoneJID = pj
+				isPrivileged = true
+				log.Printf("[bot] checkpoint wa_bot_special_admin_v2 restaurant_id=%d decision=dm_member_privileged", restaurantID)
+			}
+		}
+	}
 	if botGroupIsGroupJID(in.ChatJID) {
 		isManagement := s.botGroupIsManagementGroup(r.Context(), restaurantID, in.ChatJID, tenant)
 		if !isManagement && !isPrivileged {
@@ -90,6 +104,15 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if !in.Mentioned {
+			// wa_bot_special_admin_v2: an unmentioned message can only be an
+			// exact approval; the interceptor re-proves scope, actor and code.
+			if isPrivileged && !in.FromMe && botSpecialAdminInScope(restaurantID, in.ChatJID) {
+				am := botWebhookMessage{Sender: in.Sender, Text: in.Text, MessageID: in.MessageID, IsGroup: true, ChatJID: in.ChatJID, ParticipantJID: in.ParticipantJID, PrivilegedGroup: true}
+				if s.botSpecialAdminTryApprove(r.Context(), restaurantID, am) {
+					httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "group": true, "special_admin_approval": true})
+					return
+				}
+			}
 			reason := "skipped_not_mentioned"
 			if isPrivileged {
 				reason = "skipped_not_mentioned_privileged"
@@ -161,8 +184,15 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		// It reuses the value computed at the gate: computing it twice would
 		// let the gate and the turn disagree if the config changed in between.
 		PrivilegedGroup: isPrivileged,
+		ActorPhoneJID:   actorPhoneJID,
 		DocumentB64:     in.DocumentB64,
 		DocumentName:    in.DocumentName,
+	}
+	// wa_bot_special_admin_v2: an exact "OK <code>" from the verified requester
+	// is handled here, before any model turn, and never reaches the model.
+	if isPrivileged && s.botSpecialAdminTryApprove(r.Context(), restaurantID, msg) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "special_admin_approval": true})
+		return
 	}
 	s.processInboundBotMessage(w, r, restaurantID, msg)
 }

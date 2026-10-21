@@ -57,6 +57,9 @@ type botWebhookMessage struct {
 	// into the prompt only for privileged turns.
 	DocumentB64  string
 	DocumentName string
+	// ActorPhoneJID: provider phone JID of a one-to-one chat whose number the
+	// webhook matched to a member of the special-admin group (set only then).
+	ActorPhoneJID string
 }
 
 // parseBotWebhookMessage extracts the message from a UAZAPI webhook body.
@@ -649,6 +652,9 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		// schema the bot's executor understands, and the executor routes it
 		// to the bot path, not to the forky path.
 		botTools := botToolDefsForChat(tenant, true)
+		if botSpecialAdminToolsAllowed(restaurantID, msg) {
+			botTools = append(botTools, botSpecialAdminToolDefs()...)
+		}
 		tools = botMergeToolDefs(botTools, botForkyToolDefs())
 		normalExec := exec
 		// A name the bot defines belongs to the bot, even when forky also has
