@@ -1009,20 +1009,23 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "No hay destinatarios"})
 		return
 	}
-	queued := 0
+	queued, insertFailed := 0, 0
 	for _, t := range targets {
 		res, err := s.db.ExecContext(r.Context(), `
 			INSERT IGNORE INTO campaign_recipients (campaign_id, restaurant_id, channel, target, name, booking_id, status)
 			VALUES (?, ?, ?, ?, ?, ?, 'pending')
 		`, c.ID, a.ActiveRestaurantID, t.Channel, t.Target, t.Name, nullIfZeroInt64(t.BookingID))
-		if err == nil {
-			if n, _ := res.RowsAffected(); n > 0 {
-				queued++
-			}
+		if err != nil {
+			insertFailed++
+			slog.Default().Warn("campaign.send.insert_failed", "coord_id", c.CoordID, "campaign_id", c.ID, "channel", t.Channel, "err", err.Error())
+			continue
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			queued++
 		}
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE campaigns SET status = 'sending' WHERE id = ?`, c.ID)
-	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets), "queued", queued)
+	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets), "queued", queued, "insert_errors", insertFailed)
 	if !campaignRunners.start(c.ID) {
 		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
 		return
@@ -1032,8 +1035,9 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 		s.runCampaignSend(context.WithoutCancel(r.Context()), a.ActiveRestaurantID, c.ID)
 	}()
 	// queued = rows actually added to the ledger; already = contacts the
-	// ledger already holds (sent/pending/paused/failed/skipped), never repeated.
-	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID, "queued": queued, "already": len(targets) - queued})
+	// ledger already holds (sent/pending/paused/failed/skipped), never
+	// repeated; insert_errors = rows the DB refused (not in the ledger).
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID, "queued": queued, "already": len(targets) - queued - insertFailed, "insert_errors": insertFailed})
 }
 
 // runCampaignSend walks the pending rows one by one, throttled so neither the
@@ -1124,7 +1128,13 @@ run:
 			}
 		}
 	}
-	st, _ := s.campaignStats(ctx, campaignID)
+	st, stErr := s.campaignStats(ctx, campaignID)
+	if stErr != nil {
+		// Without trustworthy stats the end state cannot be decided: leave the
+		// campaign 'sending' (resumable) instead of possibly lying with 'sent'.
+		slog.Default().Warn("campaign.send.stats_failed", "coord_id", c.CoordID, "campaign_id", campaignID, "err", stErr.Error())
+		return
+	}
 	if st.Pending > 0 || st.Paused > 0 {
 		// Interrupted, not finished: 'sending' with no runner is the existing
 		// "resumable" semantic (the send/resume endpoints restart the drain).

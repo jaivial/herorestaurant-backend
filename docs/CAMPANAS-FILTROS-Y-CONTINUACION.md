@@ -50,7 +50,8 @@ entrega**: quien se da de baja durante un envío largo nunca recibe el mensaje.
    (ledger completo por estado); `sample` muestra solo los nuevos.
 4. **`POST /send` reportaba `queued = total audiencia`** incluyendo filas que
    el ledger ya tenía. → **Corregido**: `queued` = filas realmente insertadas
-   (RowsAffected del INSERT IGNORE) y `already` = las ya presentes.
+   (RowsAffected del INSERT IGNORE), `already` = las ya presentes y
+   `insert_errors` = las que la BD rechazó (con warn log `campaign.send.insert_failed`).
 5. **Un error transitorio al leer supresiones quemaba el destinatario** (la
    fila pasaba a `failed` permanente con "no se pudo comprobar la lista de
    bajas"). → **Corregido**: la fila se queda `pending`, se respeta 5 s y
