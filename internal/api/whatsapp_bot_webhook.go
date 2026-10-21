@@ -57,6 +57,10 @@ type botWebhookMessage struct {
 	// into the prompt only for privileged turns.
 	DocumentB64  string
 	DocumentName string
+	// ImageB64/ImageMime: inline imageMessage payload, OCR-read into the turn
+	// for privileged turns. Coordination id: wa_bot_attachment_read_v1
+	ImageB64  string
+	ImageMime string
 	// ActorPhoneJID: provider phone JID of a one-to-one chat whose number the
 	// webhook matched to a member of the special-admin group (set only then).
 	ActorPhoneJID string
@@ -422,10 +426,10 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 	// inline payload are transcribed in the background turn below and then
 	// handled like text; only audios without payload get the fallback here.
 	transcribe := msg.Text == "" && msg.IsAudio && (msg.AudioB64 != "" || msg.MessageID != "")
-	// Coordination id: wa_bot_privileged_group_v1 - a document in a privileged
-	// group is extracted in the turn below, so it must not hit the
+	// Coordination id: wa_bot_attachment_read_v1 - a document OR an image in a
+	// privileged chat is read into the turn below, so it must not hit the
 	// unsupported-media fallback.
-	privilegedDoc := msg.PrivilegedGroup && msg.DocumentB64 != ""
+	privilegedDoc := msg.PrivilegedGroup && botHasReadableAttachment(msg)
 	if msg.Text == "" && !transcribe && !privilegedDoc {
 		// Unsupported media: polite fallback. Voice notes get a specific reply:
 		// the bot is a reservation assistant and cannot listen to audio.
@@ -448,6 +452,10 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Coordination id: wa_bot_reaction_feedback_v1 - the instant content-aware
+	// reaction goes out the moment the message is accepted, before any work.
+	s.botReactToMessage(restaurantID, msg, botContentEmoji(msg))
+
 	// Process in background (bounded): provider webhooks time out quickly.
 	// Messages of one conversation are serialized and coalesced into bursts
 	// (wa_bot_burst_coalesce_v1); the semaphore bounds concurrent workers.
@@ -463,6 +471,9 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 		}
 		go func() {
 			defer func() { <-s.botSem }()
+			// Coordination id: wa_bot_quick_ack_v1 - the quick ack goes out in
+			// PARALLEL with the real task below (allowed chats only).
+			s.botQuickAck(restaurantID, msg)
 			s.botRunConversationWorker(restaurantID, msg.Sender)
 		}()
 	}
@@ -631,10 +642,14 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// extracted BEFORE the loop and appended to the last user message so the
 	// model reads the file content as part of the request. On any failure the
 	// note says so verbatim — content is never invented.
-	if msg.PrivilegedGroup && msg.DocumentB64 != "" {
-		note, extracted := botDocumentTurnNote(msg.DocumentB64, msg.DocumentName)
+	// Coordination id: wa_bot_attachment_read_v1 - documents AND images are
+	// extracted BEFORE the loop and appended to the last user message so the
+	// model reads the content as part of the request. On any failure the note
+	// says so verbatim — content is never invented.
+	if msg.PrivilegedGroup && botHasReadableAttachment(msg) {
+		note, extracted := s.botAttachmentTurnNote(ctx, restaurantID, msg)
 		messages = botAppendTextToLastUserMessage(messages, note)
-		log.Printf("[bot] checkpoint wa_bot_privileged_group_v1 restaurant_id=%d sender=%s document=%s extracted=%t", restaurantID, msg.Sender, msg.DocumentName, extracted)
+		log.Printf("[bot] checkpoint wa_bot_attachment_read_v1 restaurant_id=%d sender=%s media=%s extracted=%t", restaurantID, msg.Sender, msg.MediaKind, extracted)
 	}
 	system := renderBotSystemPrompt(promptData)
 	_, _, memberErr := s.botMemberForPhone(ctx, restaurantID, msg.Sender)
