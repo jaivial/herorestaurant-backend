@@ -701,6 +701,7 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		"PERMISOS: si una herramienta devuelve «permiso insuficiente» o un error de autenticación, el usuario NO tiene acceso a esa acción: dilo tal cual y termina. Nunca simules que la ejecutaste, nunca inventes el dato que devolvería y no lo sustituyas por datos de memoria." +
 		"Cuando una herramienta devuelva un campo de foto (foto, foto_url o foto_path) y el usuario pida ver imágenes, muestra cada foto como imagen Markdown `![nombre](url)` usando ese campo. " +
 		"Para pedir el detalle de las reservas (listado/tabla por cliente, fecha, hora y personas), usa SIEMPRE la herramienta bookings_list; bookings_summary y analytics_report solo dan totales agregados y NO sirven para una tabla de reservas individuales." +
+		"CIERRE TRAS LECTURA: un total 0 o una lista vacía es un DATO válido cuando los filtros aplicados son los correctos para la pregunta (fecha, restaurante, estado), no una señal para repetir la misma búsqueda. Cuando ya tienes TODO lo solicitado con datos suficientes y completos, responde y termina sin llamadas redundantes. SÍ puedes hacer las llamadas necesarias para otras partes de la pregunta, para corregir parámetros propios erróneos (p. ej. una fecha mal calculada) y para pedir la página siguiente si un resultado llega truncado; nunca presentes una página parcial como el total, ni un error o un permiso insuficiente como si fuera un cero." +
 		assistantOutputContract
 	if s.db == nil || restaurantID <= 0 {
 		return base
