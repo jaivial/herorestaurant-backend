@@ -145,6 +145,8 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolListCampaigns(ctx, restaurantID, msg, input)
 	case "get_bot_status":
 		return s.botToolGetBotStatus(ctx, restaurantID, msg, input)
+	case "list_menu_visibility":
+		return s.botToolListMenuVisibility(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_special_crud_v1 - full special-menu CRUD. Each
 	// one re-validates through the same server core the backoffice uses.
 	case "special_booking_get":

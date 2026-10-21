@@ -98,11 +98,14 @@ func (s *Server) botGroupIsPrivileged(jid string, tenant botTenantConfig) bool {
 // member gate (botSpecialAdminAuthorize), and the synthetic root context of
 // the privileged path must not become a bypass for that gate.
 var botForkyExcludedFromWA = map[string]struct{}{
-	"cancelled_bookings_list": {},
-	"special_dates_list":      {},
-	"tables_list":             {},
-	"campaigns_list":          {},
-	"whatsapp_connection_get": {},
+	"cancelled_bookings_list":  {},
+	"special_dates_list":       {},
+	"tables_list":              {},
+	"campaigns_list":           {},
+	"whatsapp_connection_get":  {},
+	"menu_visibility_list":     {},
+	"legal_pages_list":         {},
+	"site_builder_drafts_list": {},
 }
 
 // botForkyToolDefs converts the full assistant (forky) tool registry into the
