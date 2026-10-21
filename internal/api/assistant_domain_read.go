@@ -46,6 +46,8 @@ type domainReadInput struct {
 	FoodType   string `json:"food_type,omitempty"`
 	ScopeKey   string `json:"scope_key,omitempty"`
 	ScopeKind  string `json:"scope_kind,omitempty"`
+	Year       string `json:"year,omitempty"`
+	View       string `json:"view,omitempty"`
 }
 
 func (in domainReadInput) fields() map[string]string {
@@ -88,6 +90,12 @@ func (in domainReadInput) fields() map[string]string {
 	}
 	if in.ScopeKind != "" {
 		m["scope_kind"] = in.ScopeKind
+	}
+	if in.Year != "" {
+		m["year"] = in.Year
+	}
+	if in.View != "" {
+		m["view"] = in.View
 	}
 	return m
 }
@@ -216,25 +224,43 @@ func sectionAdminGates(section string) func(*Server) []func(http.Handler) http.H
 // Stock reads, same audit: pure GETs, session tenant, own-tenant data, no
 // secrets/PII. stock role-permissions config stays out (authorization config).
 var stockReadResources = map[string]domainReadSpec{
-	"valuation":             {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockValuation }, desc: "valoración del inventario"},
-	"vat_list":              {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockVATList }, desc: "tipos de IVA de stock"},
-	"suppliers_list":        {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSuppliersList }, desc: "proveedores (id, nombre, notas)"},
-	"supplier_prices":       {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSupplierPricesGet }, urlParam: "id", query: map[string]string{"days": "days"}, desc: "precios de un proveedor"},
-	"supplier_aliases":      {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSupplierAliasesGet }, urlParam: "id", desc: "alias de producto de un proveedor"},
-	"settings":              {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSettingsGet }, desc: "configuración operativa de stock"},
-	"reconciliation":        {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockReconciliationGet }, desc: "diferencias niveles vs movimientos"},
-	"recipe_get":            {gates: stockReadGates(stockPermissionRecipesView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockRecipeGet }, urlParam: "id", desc: "detalle de una receta"},
-	"margin_targets":        {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginTargets }, desc: "objetivos de margen"},
-	"margin_scopes":         {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginScopesList }, desc: "ámbitos de margen"},
-	"margin_scope_resolve":  {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginScopeResolve }, query: map[string]string{"category_id": "categoryId", "food_type": "foodType", "scope_key": "scopeKey", "scope_kind": "scopeKind"}, desc: "resuelve el margen aplicable"},
-	"margin_scope_defaults": {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginScopeDefaults }, desc: "bandas de margen por defecto"},
-	"labour_members":        {gates: stockReadGates(stockPermissionCostsManage), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockLabourMembers }, desc: "miembros con coste laboral"},
-	"item_units":            {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockItemUnitsList }, urlParam: "id", desc: "unidades de un artículo"},
-	"item_options":          {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockItemOptions }, query: map[string]string{"q": "q"}, desc: "opciones de artículos (búsqueda q)"},
-	"forecast":              {gates: stockReadGates(stockPermissionForecastView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockForecast }, query: map[string]string{"scenario": "scenario"}, desc: "previsión de consumo"},
-	"expiring":              {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockExpiring }, query: map[string]string{"days": "days"}, desc: "stock por caducar (days)"},
-	"documents_list":        {gates: stockReadGates(stockPermissionOCRUpload), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockDocumentsList }, desc: "documentos escaneados (metadatos)"},
-	"count_get":             {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockCountGet }, urlParam: "id", desc: "detalle de un conteo"},
-	"costing":               {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockCosting }, desc: "costes por receta/plato"},
-	"permissions_mine":      {handler: func(s *Server) http.HandlerFunc { return s.handleBOStockPermissionsMine }, desc: "mis permisos de stock"},
+	"valuation":                 {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockValuation }, desc: "valoración del inventario"},
+	"vat_list":                  {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockVATList }, desc: "tipos de IVA de stock"},
+	"suppliers_list":            {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSuppliersList }, desc: "proveedores (id, nombre, notas)"},
+	"supplier_prices":           {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSupplierPricesGet }, urlParam: "id", query: map[string]string{"days": "days"}, desc: "precios de un proveedor"},
+	"supplier_aliases":          {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSupplierAliasesGet }, urlParam: "id", desc: "alias de producto de un proveedor"},
+	"settings":                  {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockSettingsGet }, desc: "configuración operativa de stock"},
+	"reconciliation":            {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockReconciliationGet }, desc: "diferencias niveles vs movimientos"},
+	"recipe_get":                {gates: stockReadGates(stockPermissionRecipesView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockRecipeGet }, urlParam: "id", desc: "detalle de una receta"},
+	"margin_targets":            {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginTargets }, desc: "objetivos de margen"},
+	"margin_scopes":             {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginScopesList }, desc: "ámbitos de margen"},
+	"margin_scope_resolve":      {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginScopeResolve }, query: map[string]string{"category_id": "categoryId", "food_type": "foodType", "scope_key": "scopeKey", "scope_kind": "scopeKind"}, desc: "resuelve el margen aplicable"},
+	"margin_scope_defaults":     {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockMarginScopeDefaults }, desc: "bandas de margen por defecto"},
+	"labour_members":            {gates: stockReadGates(stockPermissionCostsManage), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockLabourMembers }, desc: "miembros con coste laboral"},
+	"item_units":                {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockItemUnitsList }, urlParam: "id", desc: "unidades de un artículo"},
+	"item_options":              {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockItemOptions }, query: map[string]string{"q": "q"}, desc: "opciones de artículos (búsqueda q)"},
+	"forecast":                  {gates: stockReadGates(stockPermissionForecastView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockForecast }, query: map[string]string{"scenario": "scenario"}, desc: "previsión de consumo"},
+	"expiring":                  {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockExpiring }, query: map[string]string{"days": "days"}, desc: "stock por caducar (days)"},
+	"documents_list":            {gates: stockReadGates(stockPermissionOCRUpload), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockDocumentsList }, desc: "documentos escaneados (metadatos)"},
+	"count_get":                 {gates: stockReadGates(stockPermissionView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockCountGet }, urlParam: "id", desc: "detalle de un conteo"},
+	"costing":                   {gates: stockReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOStockCosting }, desc: "costes por receta/plato"},
+	"permissions_mine":          {handler: func(s *Server) http.HandlerFunc { return s.handleBOStockPermissionsMine }, desc: "mis permisos de stock"},
+	"production_labour_list":    {gates: stockAdminReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOProductionLabourList }, urlParam: "id", desc: "costes laborales de una orden de producción"},
+	"production_labour_entries": {gates: stockAdminReadGates(stockPermissionCostsView), handler: func(s *Server) http.HandlerFunc { return s.handleBOProductionLabourEntries }, desc: "entradas laborales de producción"},
+}
+
+// Member reads (club de miembros): asistencia/estadísticas propias del tenant.
+var membersReadResources = map[string]domainReadSpec{
+	"stats":              {urlParam: "id", gates: sectionAdminGates(boSectionMiembros), handler: func(s *Server) http.HandlerFunc { return s.handleBOMemberStats }, query: map[string]string{"date": "date", "view": "view"}, desc: "estadísticas de miembros (date, view)"},
+	"stats_year":         {urlParam: "id", gates: sectionAdminGates(boSectionMiembros), handler: func(s *Server) http.HandlerFunc { return s.handleBOMemberStatsYear }, query: map[string]string{"year": "year"}, desc: "estadísticas de miembros por año"},
+	"stats_range":        {urlParam: "id", gates: sectionAdminGates(boSectionMiembros), handler: func(s *Server) http.HandlerFunc { return s.handleBOMemberStatsRange }, query: map[string]string{"date_from": "from", "date_to": "to"}, desc: "estadísticas de miembros por rango"},
+	"quarter_balance":    {urlParam: "id", gates: sectionAdminGates(boSectionMiembros), handler: func(s *Server) http.HandlerFunc { return s.handleBOMemberQuarterBalance }, query: map[string]string{"date": "date"}, desc: "balance trimestral de miembros"},
+	"table_data":         {urlParam: "id", gates: sectionAdminGates(boSectionMiembros), handler: func(s *Server) http.HandlerFunc { return s.handleBOMemberTableData }, query: map[string]string{"view": "view", "year": "year"}, desc: "tabla de datos de miembros (view, year)"},
+	"compensations_list": {urlParam: "id", gates: sectionAdminGates(boSectionMiembros), handler: func(s *Server) http.HandlerFunc { return s.handleBOMemberCompensationsList }, desc: "compensaciones de miembros"},
+}
+
+// Fichaje reads: costes laborales del tenant.
+var fichajeReadResources = map[string]domainReadSpec{
+	"labour_cost":  {gates: sectionAdminGates(boSectionFichaje), handler: func(s *Server) http.HandlerFunc { return s.handleBOFichajeLabourCost }, query: map[string]string{"date_from": "from", "date_to": "to"}, desc: "coste laboral por rango"},
+	"hourly_costs": {gates: sectionAdminGates(boSectionFichaje), handler: func(s *Server) http.HandlerFunc { return s.handleBOFichajeHourlyCosts }, query: map[string]string{"date": "date"}, desc: "costes por hora de un día"},
 }

@@ -108,6 +108,8 @@ var botForkyExcludedFromWA = map[string]struct{}{
 	"site_builder_drafts_list": {},
 	"pos_read":                 {},
 	"stock_read":               {},
+	"members_read":             {},
+	"fichaje_read":             {},
 }
 
 // botForkyToolDefs converts the full assistant (forky) tool registry into the
