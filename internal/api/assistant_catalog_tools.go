@@ -21,6 +21,9 @@ func assistantCatalogResources() map[string]struct{ table, idCol, name, desc, pr
 		"pos_products": {"pos_products", "id", "name", "description", "price_gross_cents", "is_active", ""},
 		"stock_items":  {"stock_items", "id", "name", "description", "", "is_active", "image_url"},
 		"members":      {"restaurant_members", "id", "first_name", "email", "", "is_active", "photo_url"},
+		// POSTRES has no description/price columns of its own: DESCRIPCION is
+		// the name and doubles as the description slot.
+		"postres": {"POSTRES", "NUM", "DESCRIPCION", "DESCRIPCION", "", "active", "foto_url"},
 	}
 	out := map[string]struct{ table, idCol, name, desc, price, softDelete, foto string }{}
 	for k, v := range m {
