@@ -365,6 +365,11 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 			}
 			sent[id] = qty
 		}
+		if qErr = sentRows.Err(); qErr != nil {
+			sentRows.Close()
+			httpx.WriteError(w, 500, "Error reading dispatch history")
+			return
+		}
 		sentRows.Close()
 		deltas := calculatePOSKitchenDeltas(current, sent)
 		if len(deltas) == 0 {
