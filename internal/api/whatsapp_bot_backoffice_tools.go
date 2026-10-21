@@ -131,6 +131,7 @@ var botBackofficeOpRefusals = []struct {
 	Reason string
 }{
 	{Method: "DELETE", Match: "/members/{id}", Reason: "baja de un miembro del equipo: se hace en el panel"},
+	{Method: "POST", Match: "/members", Reason: "alta de un miembro (crea una cuenta del panel y manda una invitacion): se hace en el panel"},
 	{Match: "/bookings/cancelled", Reason: "writes-control legacy retenido: la reactivacion de reservas la hace el restaurante en el panel"},
 	{Match: "/stock/documents", Reason: "OCR document_get retenido (superficie de prompt-injection)"},
 	{Match: "/stock/ocr-scan", Reason: "OCR document_get retenido (superficie de prompt-injection)"},
@@ -344,6 +345,13 @@ func (s *Server) botToolManageBackoffice(ctx context.Context, rid int, msg botWe
 	if !op.Write {
 		return botJSON(map[string]any{"error": "esa operacion es de lectura: consultala con admin_call o con la herramienta dedicada"}), nil
 	}
+	// A GET that writes under the hood (the ensure*/seed* helpers of the
+	// backoffice) is NOT part of the write surface: the chat asks for the
+	// operation that changes the data, not for one that happens to write
+	// while pretending to read.
+	if op.Method == "GET" {
+		return botJSON(map[string]any{"error": "esa operacion es una lectura (aunque escriba por debajo): consultala con admin_call o con la herramienta dedicada"}), nil
+	}
 	plan := backofficeOpPlan{Op: op.Name, Method: op.Method, Path: op.Path, PathParams: in.PathParams, Query: in.Query, Body: in.Body}
 	// The path parameters are validated BEFORE the proposal exists: a proposal
 	// that cannot even be rendered is not a proposal.
@@ -386,6 +394,11 @@ func (s *Server) botBackofficeExecute(ctx context.Context, rid int, msg botWebho
 	}
 	if !op.Write {
 		return "", errors.New("la propuesta no es una escritura")
+	}
+	// Defence in depth: a GET that writes under the hood never reaches the
+	// route from here, even if the proposal was stored before this rule.
+	if op.Method == "GET" {
+		return "", errors.New("la operacion es una lectura: no se aplica desde el chat")
 	}
 	if reason := botBackofficeOpRefusal(op); reason != "" {
 		return "", errors.New("la operacion no se puede hacer desde el chat: " + reason)

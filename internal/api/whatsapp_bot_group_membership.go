@@ -16,18 +16,12 @@ import (
 // boundary, not a UX detail. Two conditions must hold before a turn is
 // privileged:
 //
-//  1. the chat is a configured privileged group (botGroupIsPrivileged), and
-//  2. the sender is a MEMBER of that group.
+//  1. the chat is the authorized group of the ENVIRONMENT
+//     (wa_bot_privileged_boundary_v1), and
+//  2. the sender is a CURRENT member of that group, with a FRESH provider
+//     fetch of the participant list.
 //
-// Condition 2 was missing. WhatsApp only delivers a group message to a member,
-// so in practice a non-member cannot write there; but the webhook is a public
-// HTTP endpoint and the group id is a static string in the environment. A
-// forged payload carrying the privileged group id and an arbitrary
-// participant would otherwise be served the root catalog. Membership is
-// therefore verified against the provider's own participant list for that
-// group before the turn is treated as privileged.
-//
-// The check is fail-closed: if the provider cannot be reached, the turn is
+// Condition 2 is fail-closed: if the provider cannot be reached, the turn is
 // served as an ordinary group turn (no forky catalog), never as a privileged
 // one. A provider outage must not widen the blast radius.
 

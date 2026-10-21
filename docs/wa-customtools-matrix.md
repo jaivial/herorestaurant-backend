@@ -164,7 +164,7 @@ administración y una aprobación usan **la misma prueba**, así que no pueden d
 **Totales: 622 operaciones** (231 lecturas, 391 escrituras) de las 700+ rutas del panel: el mapa
 generado excluye a propósito los *handlers* `WS|WebSocket|Upload|Image|Avatar|Import|OCR` (§6).
 
-De las 622, **19 GET** están marcados como escritura porque su handler escribe (§9.2).
+De las 622, **17 GET** están marcados como escritura porque su handler escribe (§9.2): los otros dos de la auditoría (`/admin/config/ai-image` y `/admin/comida/ai-image/status`) no están en el mapa, porque su handler cae en el filtro `Image` del generador.
 
 ---
 
@@ -894,10 +894,11 @@ panel ha seguido creciendo. Hoy **`admin_call` no alcanza**:
 → **Resuelto en esta rama**: el generador pasa a leer también los sub-registradores (con los gates
 del `Group` que los envuelve) y el mapa se regenera.
 
-### 9.2 GETs del backoffice que escriben (19 auditados)
+### 9.2 GETs del backoffice que escriben (19 auditados, 17 en el mapa)
 
 El flag `write` del mapa se derivaba del **método HTTP**, así que 19 GETs que **escriben** estaban
-marcados como lectura y eran alcanzables desde WhatsApp sin confirmación. Auditoría completa
+marcados como lectura y eran alcanzables desde WhatsApp sin confirmación (17 de ellos están en el
+mapa; los otros dos, cuyo handler lleva `Image`, quedan fuera del mapa por el filtro del generador). Auditoría completa
 (`wa_customtools_get_writes_v1`):
 
 | GET | Qué escribe |
@@ -974,7 +975,7 @@ de WA.
 | Cobros (`/admin/site-builder/billing/*`, `/admin/domains*`, `/admin/config/stripe-connect/*`, `/admin/platform/stripe/*`, `/admin/pos/tickets/{id}/refunds`, `/admin/pos/tickets/{id}/fiscal-document`) | no implementada | dinero real |
 | Suscripciones de WhatsApp (`/admin/members/whatsapp/subscribe|cancel`) | no implementada | importe real + provisión de la instancia |
 | Verificación de WhatsApp de un miembro (`/admin/members/{id}/whatsapp/verification*`, `/admin/members/{id}/phone/verification*`) | no implementada | envío real de WhatsApp + verificación de identidad |
-| Cuentas de panel de un miembro (`/admin/members/{id}/ensure-user`, `PUT /admin/members/{id}/phone`) | no implementada | alta de una cuenta del panel / cambio de teléfono |
+| Cuentas de panel de un miembro (`POST /admin/members`, `/admin/members/{id}/ensure-user`, `PUT /admin/members/{id}/phone`) | no implementada | alta de un miembro (crea una cuenta del panel y manda una invitación) / cambio de teléfono |
 | Baja de un miembro (`DELETE /admin/members/{id}`) | no implementada | es una persona, no un dato: se hace en el panel |
 | IA con coste (`/admin/stock/ai/recommendations`, `/admin/stock/settings/classify-seasonality`, `/admin/website/ai-generate`, `/admin/config/check-website`) | no implementada | llamadas externas |
 | Envío a clientes (`/admin/campanas*`, `/admin/members/whatsapp/send|flush-queue`, `/admin/emailAdvertising/*`) | no implementada | mensajes reales a clientes |
@@ -989,9 +990,24 @@ de WA.
 
 La lista que aplica el servidor es `botBackofficeOpRefusals`
 (`internal/api/whatsapp_bot_backoffice_tools.go`): el mismo prefijo por **segmentos de ruta**
-(`/campanas` cubre `/campanas` y `/campanas/{id}/send`, pero no `/campanasfoo`), y se comprueba
-**antes** de describir la operación, de modo que el modelo ni siquiera puede planificar una
-operación que el chat no va a ejecutar.
+(`/campanas` cubre `/campanas` y `/campanas/{id}/send`, pero no `/campanasfoo`), con **método
+opcional** (`DELETE /members/{id}` se rechaza sin bloquear la edición del mismo miembro), y se
+comprueba **antes** de describir la operación, de modo que el modelo ni siquiera puede planificar
+una operación que el chat no va a ejecutar.
+
+Tres capas de rechazo, en este orden:
+
+1. **El método**: `manage_backoffice` solo propone escrituras. Un **GET que escribe por debajo**
+   (los `ensure*`/`seed*` del backoffice) es una lectura con efectos colaterales, no parte de la
+   superficie de escritura: se rechaza (`GET /admin/bookings`, `GET /admin/bookings/{id}/qr`,
+   `GET /admin/menu-visibility`, `GET /admin/config/floors*`, `GET /admin/group-menus-v2/{id}`…),
+   igual que en `admin_call`, donde la contención los rechaza por el flag `write` del mapa.
+2. **La lista de negaciones** de arriba (dinero, envíos reales, credenciales, el prompt del bot,
+   cuentas de personas, OCR, reactivaciones, IA de pago).
+3. **Las guardas del replay** (`assistantAdminOpGuards`), que se aplican a toda operación
+   reproducida: cuentas del panel (`/admin/users*`, `/admin/roles*`, `/admin/platform/users*`),
+   operaciones sobre la sesión (`/admin/me*`), cambio de restaurante (`/admin/active-restaurant`) y
+   **cambio de tenant** (un `{restaurantId}` que no sea el del bot).
 
 ---
 

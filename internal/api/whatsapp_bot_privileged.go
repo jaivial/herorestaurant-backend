@@ -44,57 +44,6 @@ const botDocumentMaxRunes = 12000
 // botDocumentTruncationMarker is appended when the extracted text is capped.
 const botDocumentTruncationMarker = "…[truncado]"
 
-// botPrivilegedGroupSet normalizes the configured JIDs into a lookup set.
-// Values are trimmed; anything that is not a @g.us id is dropped so a stray
-// phone number in the env var can never enable the feature.
-func botPrivilegedGroupSet(jids []string) map[string]struct{} {
-	out := make(map[string]struct{}, len(jids))
-	for _, j := range jids {
-		j = strings.TrimSpace(j)
-		if j == "" || !strings.HasSuffix(j, "@g.us") {
-			continue
-		}
-		out[j] = struct{}{}
-	}
-	return out
-}
-
-// botGroupIsPrivileged reports whether the chat JID belongs to a conversation
-// SELECTED in the backoffice (or to a group of the environment).
-//
-// Coordination id: wa_bot_privileged_boundary_v1
-//
-// ADVISORY ONLY: the privilege decision does NOT go through this function. A
-// selection made in the backoffice is a preference, not a proof of identity,
-// so it never grants the privileged catalog on its own (deviation B1 of
-// PR588, corrected). The single decision point is
-// botPrivilegedTurnAllowed (whatsapp_bot_privileged_boundary.go), which
-// requires the authorized group of the ENVIRONMENT and a verified phone.
-//
-// The env list still applies, so an installation that has not been migrated
-// keeps working; the tenant lists only ever ADD conversations to the
-// selection shown in the backoffice.
-func (s *Server) botGroupIsPrivileged(jid string, tenant botTenantConfig) bool {
-	jid = strings.TrimSpace(jid)
-	if jid == "" {
-		return false
-	}
-	if _, ok := botPrivilegedContactJIDs(tenant)[jid]; ok {
-		return true
-	}
-	if len(s.cfg.BotPrivilegedGroupJIDs) > 0 {
-		if _, ok := botPrivilegedGroupSet(s.cfg.BotPrivilegedGroupJIDs)[jid]; ok {
-			return true
-		}
-	}
-	if len(tenant.PrivilegedGroupJIDs) > 0 {
-		if _, ok := botPrivilegedGroupSet(tenant.PrivilegedGroupJIDs)[jid]; ok {
-			return true
-		}
-	}
-	return false
-}
-
 // botForkyExcludedFromWA lists forky tools that must NOT reach the WhatsApp
 // bot, neither in the catalog (botForkyToolDefs) nor via the execution router
 // (wa_bot_forky_excluded_v1). They exist only for authenticated panel/MCP
