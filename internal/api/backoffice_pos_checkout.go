@@ -118,6 +118,10 @@ func (s *Server) preparePOSTicketStock(ctx context.Context, tx *sql.Tx, restaura
 				snapshot.Tracked = true
 				snapshots = append(snapshots, snapshot)
 			}
+			if err = existingRows.Err(); err != nil {
+				existingRows.Close()
+				return nil, false, err
+			}
 			existingRows.Close()
 			continue
 		}
@@ -161,6 +165,10 @@ func (s *Server) preparePOSTicketStock(ctx context.Context, tx *sql.Tx, restaura
 				snapshot.Status = "SHADOW"
 			}
 			lineSnapshots = append(lineSnapshots, snapshot)
+		}
+		if err = ruleRows.Err(); err != nil {
+			ruleRows.Close()
+			return nil, false, err
 		}
 		ruleRows.Close()
 		for _, snapshot := range lineSnapshots {

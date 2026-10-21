@@ -283,6 +283,11 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 			}
 			stations[stationID] = append(stations[stationID], line)
 		}
+		if qErr = routeRows.Err(); qErr != nil {
+			routeRows.Close()
+			httpx.WriteError(w, 500, "Error reading kitchen route")
+			return
+		}
 		routeRows.Close()
 	}
 	priorStations, priorErr := tx.QueryContext(r.Context(), `SELECT DISTINCT d.station_id FROM pos_kitchen_dispatches d JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=d.restaurant_id AND dl.dispatch_id=d.id JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id WHERE d.restaurant_id=? AND (d.ticket_id=? OR l.ticket_id=?) UNION SELECT kt.station_id FROM pos_kitchen_line_transfers kt JOIN pos_ticket_lines l ON l.restaurant_id=kt.restaurant_id AND l.id=kt.to_line_id WHERE kt.restaurant_id=? AND l.ticket_id=?`, a.ActiveRestaurantID, ticketID, ticketID, a.ActiveRestaurantID, ticketID)
@@ -300,6 +305,11 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		if _, ok := stations[stationID]; !ok {
 			stations[stationID] = nil
 		}
+	}
+	if priorErr = priorStations.Err(); priorErr != nil {
+		priorStations.Close()
+		httpx.WriteError(w, 500, "Error reading dispatch history")
+		return
 	}
 	priorStations.Close()
 	if len(stations) == 0 {
