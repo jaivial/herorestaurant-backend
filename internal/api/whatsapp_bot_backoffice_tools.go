@@ -135,6 +135,28 @@ var botBackofficeOpRefusals = []struct {
 }{
 	{Method: "DELETE", Exact: true, Match: "/members/{id}", Reason: "baja de un miembro del equipo: se hace en el panel"},
 	{Method: "POST", Exact: true, Match: "/members", Reason: "alta de un miembro (crea una cuenta del panel y manda una invitacion): se hace en el panel"},
+	// Coordination id: wa_backoffice_client_notices_v1. The panel's own booking
+	// routes have effects the CONTAINED bot tools do not have, and the
+	// dedicated tools are the only path that keeps them contained:
+	//
+	//	POST /bookings          -> avisa al cliente (WhatsApp si
+	//	                            booking_notification_settings.send_confirmation
+	//	                            esta activo, y correo) y emite el webhook
+	//	                            n8n booking.created.
+	//	POST /bookings/{id}/cancel -> PURGA los documentos de la reserva,
+	//	                            emite el webhook n8n booking.cancelled (que
+	//	                            puede avisar al cliente) y no conserva copia
+	//	                            para restaurar.
+	//
+	// The contained equivalents are booking_propose_create (no avisa al
+	// cliente), special_booking_propose_create (si avisa, y su descripcion lo
+	// dice) and booking_propose_cancel (no avisa, no purga y conserva copia
+	// completa para booking_propose_restore).
+	//
+	// The generic replay is REFUSED for these classes: a preview that only
+	// says "risk: destructive" is not an informed approval.
+	{Method: "POST", Exact: true, Match: "/bookings", Reason: "la creacion de reservas por el panel avisa al cliente (WhatsApp y correo) y emite el webhook n8n booking.created: usa booking_propose_create (no avisa) o special_booking_propose_create (si avisa y lo dice)"},
+	{Method: "POST", Exact: true, Match: "/bookings/{id}/cancel", Reason: "la cancelacion por el panel purga los documentos de la reserva y emite el webhook n8n booking.cancelled (que puede avisar al cliente) sin conservar copia: usa booking_propose_cancel (no avisa, no purga y conserva copia para booking_propose_restore)"},
 	{Match: "/bookings/cancelled", Reason: "writes-control legacy retenido: la reactivacion de reservas la hace el restaurante en el panel"},
 	{Match: "/stock/documents", Reason: "OCR document_get retenido (superficie de prompt-injection)"},
 	{Match: "/stock/ocr-scan", Reason: "OCR document_get retenido (superficie de prompt-injection)"},
@@ -269,6 +291,12 @@ func botBackofficePreview(op forkyAdminOp, plan backofficeOpPlan) (string, error
 	if op.Risk != "" {
 		fmt.Fprintf(&b, " [riesgo: %s]", op.Risk)
 	}
+	// The CONSEQUENCES, not the risk label: the human has to know what happens
+	// outside the database before approving.
+	if notice := botBackofficeClientNotice(op); notice != "" {
+		fmt.Fprintf(&b, ". AVISO: %s", notice)
+	}
+	fmt.Fprintf(&b, ". Efectos: %s", botBackofficeConsequence(op))
 	b.WriteString(". Nada esta aplicado todavia.")
 	return b.String(), nil
 }
@@ -383,8 +411,14 @@ func (s *Server) botToolManageBackoffice(ctx context.Context, rid int, msg botWe
 //
 // The claim of the code (single use, atomic) is committed BEFORE the
 // operation runs: the operation itself goes through the real route, with its
-// own transaction, so it cannot share one. A failure of the operation leaves
-// the proposal consumed (fail closed): the human has to propose again.
+// own transaction, so it cannot share one.
+//
+// The outcome is THREE-valued, not two. The claim guarantees at-most-once
+// INTENT, not exactly-once EFFECT: an operation that fails with a 5xx (or that
+// panics) may ALREADY have written. Saying "not applied" then would be a lie
+// that invites a duplicate write, so the uncertain outcome is reported as
+// uncertain and the proposal is marked 'uncertain' (it cannot run again and
+// the audit says why).
 func (s *Server) botBackofficeExecute(ctx context.Context, rid int, msg botWebhookMessage, p botSpecialProposalRow) (string, error) {
 	var plan backofficeOpPlan
 	if err := json.Unmarshal([]byte(p.Args), &plan); err != nil {
@@ -417,37 +451,80 @@ func (s *Server) botBackofficeExecute(ctx context.Context, rid int, msg botWebho
 	// route decide, exactly as they do for a human. The context carries NO
 	// "privileged turn" marker: this is not a model turn, it is the human
 	// approval of a proposal.
-	out, err := s.assistantAdminReplay(s.botServiceContext(ctx, rid), rid, op, plan.PathParams, plan.Query, plan.Body)
-	if err != nil {
-		return "", err
-	}
-	// The replay answers 200 with a payload even when the route refused the
-	// operation (403, 409, 500...). Announcing that as "applied" would tell
-	// the human the opposite of the truth, so the status decides.
-	if applied, reason := botBackofficeReplayApplied(out); !applied {
+	out, state, reason := s.botBackofficeReplay(ctx, rid, op, plan)
+	switch state {
+	case botBackofficeApplied:
+		log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s applied", rid, op.Name)
+		notice := "Aplicado: " + op.Method + " " + op.Path + ". " + out
+		if notes := botBackofficeNotificationSummary(out); notes != "" {
+			notice += " (" + notes + ")"
+		}
+		// The result is a best-effort trace: the operation ALREADY happened,
+		// so a failure here must not change what the chat is told. It is
+		// logged, not swallowed.
+		if rj, mErr := json.Marshal(map[string]any{"op": p.Op, "operation": op.Name, "notice": notice}); mErr == nil {
+			if _, wErr := s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); wErr != nil {
+				log.Printf("[bot] wa_backoffice_ops_v1 rid=%d proposal=%d result_write_failed err=%v", rid, p.ID, wErr)
+			}
+		}
+		return notice, nil
+	case botBackofficeNotApplied:
+		// The route answered and refused: the effect is CERTAINLY not there.
 		log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s decision=refused_by_route", rid, op.Name)
 		return "", errors.New("la operacion no se aplico: " + reason)
+	default:
+		// UNCERTAIN: the effect may or may not be there. The proposal is not
+		// 'done' (it did not complete) but it cannot run again either, and
+		// the human is told to VERIFY before asking for anything else.
+		log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s decision=uncertain reason=%s", rid, op.Name, reason)
+		s.botBackofficeMarkUncertain(ctx, rid, msg, p, reason)
+		return "", &botBackofficeUncertainError{reason: reason}
 	}
-	log.Printf("[bot] checkpoint wa_backoffice_ops_v1 restaurant_id=%d op=%s applied", rid, op.Name)
-	notice := "Aplicado: " + op.Method + " " + op.Path + ". " + out
-	// The result is a best-effort trace: the operation ALREADY happened, so a
-	// failure here must not change what the chat is told. It is logged, not
-	// swallowed.
-	if rj, mErr := json.Marshal(map[string]any{"op": p.Op, "operation": op.Name, "notice": notice}); mErr == nil {
-		if _, wErr := s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); wErr != nil {
-			log.Printf("[bot] wa_backoffice_ops_v1 rid=%d proposal=%d result_write_failed err=%v", rid, p.ID, wErr)
-		}
-	}
-	return notice, nil
 }
 
-// botBackofficeReplayApplied reads the answer of the replay and tells whether
-// the operation really happened.
+// The three outcomes of a replay.
+const (
+	botBackofficeApplied    = "applied"
+	botBackofficeNotApplied = "not_applied"
+	botBackofficeUncertain  = "uncertain"
+)
+
+// botBackofficeUncertainError marks an operation whose EFFECT is unknown: the
+// route may have written before failing, so nobody may assume it did not
+// happen, and nobody may repeat it blindly.
+type botBackofficeUncertainError struct{ reason string }
+
+func (e *botBackofficeUncertainError) Error() string {
+	return "no se pudo confirmar si se aplico (" + e.reason + "): el panel pudo dejarla a medias. Verificala en el panel antes de volver a pedirla; el codigo ya esta consumido y no se propone sola"
+}
+
+// botBackofficeReplay runs the operation and classifies the outcome.
+//
+// A panic in a panel handler must not kill the webhook goroutine nor leave
+// the human without an answer: the effect of a panic is UNCERTAIN.
+func (s *Server) botBackofficeReplay(ctx context.Context, rid int, op forkyAdminOp, plan backofficeOpPlan) (out, state, reason string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[bot] wa_backoffice_ops_v1 rid=%d op=%s panic=%v", rid, op.Name, r)
+			out, state, reason = "", botBackofficeUncertain, fmt.Sprintf("el panel ha fallado de forma inesperada (%v)", r)
+		}
+	}()
+	out, err := s.assistantAdminReplay(s.botServiceContext(ctx, rid), rid, op, plan.PathParams, plan.Query, plan.Body)
+	if err != nil {
+		// The replay never reached the route (guards, session, path): the
+		// operation is CERTAINLY not applied.
+		return "", botBackofficeNotApplied, err.Error()
+	}
+	state, reason = botBackofficeClassify(out)
+	return out, state, reason
+}
+
+// botBackofficeClassify reads the answer of the route and decides what really
+// happened.
 //
 // The backoffice answers a BUSINESS failure with HTTP 200 and
-// {"success": false, "message": ...} (that is the convention of the panel),
-// so the status alone is not a proof: the payload decides too.
-func botBackofficeReplayApplied(out string) (bool, string) {
+// {"success": false, "message": ...}, so the status alone is not a proof.
+func botBackofficeClassify(out string) (state, reason string) {
 	var res struct {
 		OK     bool            `json:"ok"`
 		Status int             `json:"status"`
@@ -455,33 +532,43 @@ func botBackofficeReplayApplied(out string) (bool, string) {
 		Text   string          `json:"data_text"`
 	}
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		// An unreadable answer is not a proof of success.
-		return false, "la operacion no devolvio una respuesta legible"
+		// The route answered, but the answer is unreadable: the status is
+		// unknown, so the effect cannot be proven either way.
+		return botBackofficeUncertain, "la respuesta del panel no se pudo leer"
+	}
+	if res.Status >= 500 {
+		// The route failed AFTER it may have written.
+		return botBackofficeUncertain, fmt.Sprintf("el panel respondio %d", res.Status)
 	}
 	if res.Status >= 400 {
-		return false, botBackofficeReplayReason(res.Status, res.Text, nil)
+		// The route refused: it did not write.
+		return botBackofficeNotApplied, botBackofficeReason(res.Status, res.Text, nil)
 	}
 	var payload map[string]any
 	if len(res.Data) > 0 {
 		_ = json.Unmarshal(res.Data, &payload)
 	}
-	// The panel's business failure: 200 with success=false (or ok=false).
 	if payload != nil {
 		if v, ok := payload["success"].(bool); ok && !v {
-			return false, botBackofficeReplayReason(res.Status, res.Text, payload)
+			return botBackofficeNotApplied, botBackofficeReason(res.Status, res.Text, payload)
 		}
 		if v, ok := payload["ok"].(bool); ok && !v {
-			return false, botBackofficeReplayReason(res.Status, res.Text, payload)
+			return botBackofficeNotApplied, botBackofficeReason(res.Status, res.Text, payload)
 		}
 	}
-	if res.OK {
-		return true, ""
-	}
-	return false, botBackofficeReplayReason(res.Status, res.Text, payload)
+	return botBackofficeApplied, ""
 }
 
-// botBackofficeReplayReason extracts the human reason of a failure.
-func botBackofficeReplayReason(status int, text string, payload map[string]any) string {
+// botBackofficeMarkUncertain records that the effect of the operation is
+// unknown: the proposal is not 'done' (it did not complete), it cannot run
+// again (active stays NULL), and the audit says why.
+func (s *Server) botBackofficeMarkUncertain(ctx context.Context, rid int, msg botWebhookMessage, p botSpecialProposalRow, reason string) {
+	_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='uncertain' WHERE id=? AND state='done'`, p.ID)
+	s.botSpecialAdminEvent(ctx, s.db, rid, p.ID, "execute_uncertain", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "reason": reason})
+}
+
+// botBackofficeReason extracts the human reason of a refusal.
+func botBackofficeReason(status int, text string, payload map[string]any) string {
 	reason := ""
 	if payload != nil {
 		for _, k := range []string{"message", "error"} {
@@ -501,6 +588,93 @@ func botBackofficeReplayReason(status int, text string, payload map[string]any) 
 		reason = fmt.Sprintf("la ruta respondio %d", status)
 	}
 	return reason
+}
+
+// botBackofficeConsequences names the CONCRETE effects of an operation, so
+// the approval is informed. "risk: destructive" is not an approval: the human
+// has to know what happens outside the database.
+//
+// The audit (wa_backoffice_client_notices_v1) walked every helper that
+// reaches a client or destroys something: sendBookingWhatsAppToCustomer,
+// sendBookingConfirmationEmails, the WhatsApp outbox, emitN8nWebhookAsync,
+// purgeBookingDocuments and purgeOrphanedBookingDocuments. In the /admin
+// surface only the booking routes use them, and those two classes are REFUSED
+// for the generic replay (see botBackofficeOpRefusals). So an operation that
+// is not refused has no client effect of that family: the preview says it
+// out loud instead of leaving it implied.
+var botBackofficeConsequences = map[string]string{
+	"PUT /booking-notifications": "no envia nada ahora, pero cambia si las siguientes reservas avisan al cliente por WhatsApp (booking_notification_settings.send_confirmation) y si se manda la reconfirmacion: es un cambio de alcance futuro.",
+	"PATCH /bookings/{id}":       "la edicion del panel no avisa al cliente ni envia mensajes (misma semantica que booking_propose_edit).",
+	"POST /config/ads":           "publica un anuncio visible para los clientes en el sitio: no es un WhatsApp ni un correo, pero cambia lo que ven los clientes.",
+	"PUT /config/ads/{adId}":     "actualiza un anuncio visible para los clientes en el sitio: no es un WhatsApp ni un correo.",
+	"DELETE /config/ads/{adId}":  "retira un anuncio visible para los clientes en el sitio: no es un WhatsApp ni un correo.",
+}
+
+// botBackofficeConsequence returns the consequence line of an operation, or
+// the audited default ("none of the effects that reach a client").
+func botBackofficeConsequence(op forkyAdminOp) string {
+	if c, ok := botBackofficeConsequences[strings.ToUpper(op.Method)+" "+op.Path]; ok {
+		return c
+	}
+	return "sin efectos auditados hacia el cliente (notificacion, webhook n8n o purga de documentos): la auditoria de efectos solo los encuentra en las rutas de reservas, que el replay generico tiene rechazadas."
+}
+
+// botBackofficeClientNotices are the catalogued operations whose EFFECT
+// REACHES a client, or that ARM a future client send.
+//
+// The audit (wa_backoffice_client_notices_v1) walked every notification
+// helper of the backoffice: sendBookingWhatsAppToCustomer,
+// sendBookingConfirmationEmails and the outbox. The routes that call them are
+// the booking creations, and BOTH classes are refused for the generic replay
+// (see botBackofficeOpRefusals): the contained bot tools are the only path.
+//
+// What remains is the SETTING that arms the future sends: it sends nothing
+// now, but it decides whether the next booking reaches the client, so the
+// approval has to say it.
+var botBackofficeClientNotices = map[string]string{
+	"PUT /booking-notifications": "cambia la configuracion de notificaciones de reserva: no envia nada ahora, pero decide si las siguientes reservas avisan al cliente por WhatsApp y si se manda la reconfirmacion.",
+}
+
+// botBackofficeClientNotice returns the client notice of an operation, or "".
+func botBackofficeClientNotice(op forkyAdminOp) string {
+	return botBackofficeClientNotices[strings.ToUpper(op.Method)+" "+op.Path]
+}
+
+// botBackofficeNotificationSummary reports what the route ACTUALLY sent, when
+// the route says so (the booking creation answers with whatsapp_sent and
+// email_sent). An empty string means the operation sent nothing to anyone.
+func botBackofficeNotificationSummary(out string) string {
+	var res struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil || len(res.Data) == 0 {
+		return ""
+	}
+	var payload map[string]any
+	if json.Unmarshal(res.Data, &payload) != nil {
+		return ""
+	}
+	wa, hasWA := payload["whatsapp_sent"].(bool)
+	em, hasEM := payload["email_sent"].(bool)
+	if !hasWA && !hasEM {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if hasWA {
+		parts = append(parts, "WhatsApp al cliente: "+boolES(wa))
+	}
+	if hasEM {
+		parts = append(parts, "correo: "+boolES(em))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// boolES renders a boolean in Spanish.
+func boolES(v bool) string {
+	if v {
+		return "si"
+	}
+	return "no"
 }
 
 // ---- the control plane of the bot ------------------------------------------

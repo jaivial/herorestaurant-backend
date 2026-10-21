@@ -982,6 +982,16 @@ func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg bot
 	}
 	out, err := s.botSpecialAdminExecute(ctx, rid, msg, *match)
 	if err != nil {
+		// Coordination id: wa_backoffice_ops_v1: the outcome of a replay is
+		// three-valued. An UNCERTAIN effect (the route may have written
+		// before failing, or it panicked) is NOT a rejection: saying "no se
+		// aplico" would be a lie that invites a duplicate write.
+		var uncertain *botBackofficeUncertainError
+		if errors.As(err, &uncertain) {
+			s.botSpecialAdminEvent(ctx, s.db, rid, match.ID, "execute_uncertain", actor, origin, map[string]any{"reason": uncertain.reason})
+			reply("⚠️ No se pudo confirmar si se aplicó: " + uncertain.reason + ". El código ya está consumido y NO se propone otra vez: revisa en el panel si la operación quedó a medias antes de volver a pedirla.")
+			return true
+		}
 		s.botSpecialAdminEvent(ctx, s.db, rid, match.ID, "execute_failed", actor, origin, map[string]any{"reason": err.Error()})
 		reply("No se aplicó la propuesta: " + err.Error())
 		return true

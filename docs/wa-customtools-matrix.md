@@ -23,6 +23,28 @@ hueco (`FALTA`) cuando falta.
 | `internal/api/whatsapp_bot_*.go` | Tools propias del bot (staff reads + `*_propose_*`). | fuente primaria |
 | `internal/api/whatsapp_bot_privileged.go` | Lista `botForkyExcludedFromWA` (tools de Forky que NO llegan a WhatsApp). | fuente primaria |
 
+### Qué prueba esta matriz y qué NO
+
+Esta matriz es un **inventario de la superficie** (qué endpoint y qué método de socket existe, y
+qué tool lo cubre) y **NO** una demostración de paridad operación-a-operación:
+
+- Cubre la superficie **`/admin` completa** (622 operaciones con sus gates), las rutas de
+  `/admin` que el mapa generado excluye (§6), la API pública/legacy/widget/plugin/MCP/webhooks
+  (§7) y los **14 sockets con sus métodos** (§8). La API de cliente (`/public/*`, `*.php`,
+  `/widget/*`) **no** tiene tool de admin y no se va a añadir: está fuera del encargo.
+- La cobertura de una operación es **de clase**, no de detalle: una operación de escritura
+  cubierta por `manage_backoffice` lo está por la **misma ruta real** (mismos gates, mismas
+  reglas, mismo scoping) que en el panel, pero con la cadena propose→OK delante; una lectura
+  cubierta por `admin_call` lo está con los gates del panel, no con la semántica de la tool
+  dedicada.
+- La superficie **efectiva** de cada operación (qué efectos tiene: aviso a cliente, webhook
+  n8n, purga de documentos, coste) está auditada en §10.2: la replay genérica tiene **menos**
+  alcance que el panel en las clases con efectos a cliente, porque esas se rechazan.
+- Lo que esta matriz **no** dice: que el bot sea tan bueno como un humano del panel. Las tools
+  de lectura y de escritura del panel tienen tipos de entrada, validaciones y mensajes que la
+  replay por nombre no reproduce: `admin_call`/`manage_backoffice` son el camino **genérico**
+  (el modelo compone la llamada), no una API idiomática por operación.
+
 **El registro de rutas no usa `mux.Handle`/`HandleFunc` estándar:** el router es **chi**
 (`internal/api/server.go:134` `r := chi.NewRouter()`), con sub-registradores
 (`RegisterWidgetRoutes`, `RegisterSiteBuilderRoutes`, `websiteBuilder.RegisterRoutes`,
@@ -96,6 +118,14 @@ autorizado no está en el entorno, el bot no entra en modo privilegiado en ningu
 barato** (un número que la cache no conoce no es candidato y no gasta una llamada al proveedor);
 la lista **fresca** es la que decide. Un turno privilegiado en el grupo, una tool de
 administración y una aprobación usan **la misma prueba**, así que no pueden discrepar.
+
+**Invariante del replay (at-most-once de INTENCIÓN, no de EFECTO):** el claim del código se
+confirma **antes** de ejecutar la operación (la operación corre por la ruta real, con su propia
+transacción, y no puede compartir la del claim). Eso garantiza que el código se consuma **una
+vez**, pero **no** que el efecto ocurra exactamente una vez: una ruta que falla con 5xx, o que
+entra en pánico, puede haber escrito antes de morir. Por eso el resultado de un replay es de
+**tres** valores (rechazado / aplicado / **no confirmado**) y el estado "no confirmado" **no**
+invita a repetir: pide reconciliar en el panel (§9.3).
 
 ---
 
@@ -195,7 +225,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/booking-notifications` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | read | `reservas_read(booking_notifications)` | `admin_call` (lectura) |
 | `PUT` | `/booking-notifications` | `s.requireBOSession`, `miembrosGate`, `rolesAdminGate` | miembros | write | `whatsapp_bot_config_update(notif)`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `booking_propose_notif_settings` |
 | `GET` | `/bookings` | `s.requireBOSession`, `reservasGate` | reservas | write | `bookings_list`<br>`bookings_summary` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
-| `POST` | `/bookings` | `s.requireBOSession`, `reservasGate` | reservas | write | `create_booking`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `manage_backoffice` (propose→OK) |
+| `POST` | `/bookings` | `s.requireBOSession`, `reservasGate` | reservas | write | `create_booking`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — la creacion de reservas por el panel avisa al cliente (WhatsApp y correo) y emite el webhook n8n booking.created: usa booking_propose_create (no avisa) o special_booking_propose_create (si avisa y lo dice) |
 | `GET` | `/bookings/cancelled` | `s.requireBOSession`, `reservasGate` | reservas | read | `cancelled_bookings_list` | `list_cancelled_bookings` |
 | `POST` | `/bookings/cancelled/{id}/reactivate` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — writes-control legacy RETENIDO |
 | `GET` | `/bookings/documents/{docId}/file` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
@@ -204,7 +234,7 @@ para toda operación del mapa (con `confirmed=true` + `confirmation_token` en la
 | `GET` | `/bookings/search` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/bookings/{id}` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `get_booking_details` |
 | `PATCH` | `/bookings/{id}` | `s.requireBOSession`, `reservasGate` | reservas | write | `update_booking`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `booking_propose_edit` |
-| `POST` | `/bookings/{id}/cancel` | `s.requireBOSession`, `reservasGate` | reservas | destructive | `delete_booking`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | `booking_propose_cancel` |
+| `POST` | `/bookings/{id}/cancel` | `s.requireBOSession`, `reservasGate` | reservas | destructive | `delete_booking`<br>*(escritura: `confirmed=true` + `confirmation_token`)* | EXCLUIDO — la cancelacion por el panel purga los documentos de la reserva y emite el webhook n8n booking.cancelled (que puede avisar al cliente) sin conservar copia: usa booking_propose_cancel (no avisa, no purga y conserva copia para booking_propose_restore) |
 | `GET` | `/bookings/{id}/documents` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
 | `GET` | `/bookings/{id}/qr` | `s.requireBOSession`, `reservasGate` | reservas | write | `admin_call` | EXCLUIDO — GET con escritura (marcado `write` en el mapa) |
 | `GET` | `/bookings/{id}/receipt.pdf` | `s.requireBOSession`, `reservasGate` | reservas | read | `admin_call` | `admin_call` (lectura) |
@@ -925,8 +955,9 @@ contención de WA los rechaza y Forky los exige con `confirmed=true` + `confirma
 
 ### 9.3 Escrituras del panel sin tool en WhatsApp
 
-De 336 escrituras, 20 tienen tool `*_propose_*` propia; el resto (campañas, carta, menús v2,
-miembros, stock, TPV, facturas, configuración) **no** tenía ninguna: el bot solo podía leer.
+De 391 escrituras, 20 tienen tool `*_propose_*` propia y 99 están en la lista de negaciones
+(§10); el resto (carta, menús v2, miembros, stock, TPV, configuración) **no** tenía ninguna: el bot
+solo podía leer.
 
 → **Resuelto en esta rama** con `manage_backoffice` (tool WA `resource×action`): propone la
 operación del panel y la aplica **solo** tras `OK <código>` del actor verificado, reutilizando la
@@ -941,7 +972,8 @@ Mecánica de la cadena (idéntica a la revisada de PR588, con dos diferencias ex
 | Código | `botSha`, nunca en claro | igual |
 | TTL | 10 min | igual |
 | *Claim* | `RowsAffected == 1` | igual |
-| `before_hash` + `FOR UPDATE` | en la misma tx del apply | igual en el plano de control (`access`); en `backoffice` el apply corre por la ruta real (otra tx), así que el *claim* se confirma **antes** y una operación que falle deja la propuesta consumida (fail closed: hay que proponer de nuevo) |
+| `before_hash` + `FOR UPDATE` | en la misma tx del apply | igual en el plano de control (`access`); en `backoffice` el apply corre por la ruta real (otra tx), así que el *claim* se confirma **antes** |
+| Resultado del apply | dos valores (aplicado / no aplicado) | **tres**: `RECHAZADO` (la ruta no escribió: seguro), `APLICADO` y `NO CONFIRMADO` (la ruta pudo escribir antes de fallar, o entró en pánico: **el efecto es incierto**). El estado `no confirmado` no invita a repetir: la propuesta queda consumida y marcada `uncertain`, y el chat pide reconciliar en el panel |
 | Método y ruta | — | **fijados en la propuesta**: si el catálogo cambia dentro del TTL, la operación se rechaza en vez de aplicar algo que nadie vio |
 | Slot de la propuesta | `booking_id=0` compartido | slot propio (`-1` panel, `-2` control): una propuesta de panel no la mata una propuesta de reserva y el slot del control es único |
 
@@ -986,6 +1018,32 @@ de WA.
 | Importaciones masivas (`/admin/stock/items/import`, `/admin/pos/products/import*`) | no implementada | fuera de alcance |
 | Tenants / superadmin (`/admin/platform*`) | no implementada | gestión de la plataforma |
 | Subidas de ficheros e imágenes (binarios) | no implementada | fuera del alcance textual; algunas sí están en el panel vía `admin_call` |
+
+### 10.2 Efectos que alcanzan al cliente (auditoría `wa_backoffice_client_notices_v1`)
+
+Se recorrieron **todos** los helpers del backoffice que alcanzan a un cliente o destruyen algo:
+`sendBookingWhatsAppToCustomer`, `sendBookingConfirmationEmails`, la outbox de WhatsApp,
+`emitN8nWebhookAsync` y `purgeBookingDocuments` / `purgeOrphanedBookingDocuments`. En la superficie
+`/admin` **solo las rutas de reservas los usan**:
+
+| Operación del panel | Efecto | Tool dedicada equivalente | Vía genérica |
+|---|---|---|---|
+| `POST /admin/bookings` (crear) | **avisa al cliente**: WhatsApp de confirmación (si `booking_notification_settings.send_confirmation` está activo, **viene activo por defecto**) + correo al cliente y al restaurante; y emite el webhook n8n `booking.created` | `booking_propose_create` (**no** avisa) · `special_booking_propose_create` (sí avisa, y su descripción lo dice) | **RECHAZADA** |
+| `POST /admin/bookings/{id}/cancel` | **purga los documentos** de la reserva, emite el webhook n8n `booking.cancelled` (que puede avisar al cliente) y **no conserva copia** para restaurar | `booking_propose_cancel` (no avisa, no purga y conserva copia completa para `booking_propose_restore`) | **RECHAZADA** |
+| `PATCH /admin/bookings/{id}` (editar) | no avisa, no purga, no emite | `booking_propose_edit` (no avisa) | permitida, con las consecuencias en la vista previa |
+| `PUT /admin/booking-notifications` | no envía nada ahora, pero **arma los envíos futuros** al cliente (`send_confirmation`, `send_reconfirmation`) | `booking_propose_notif_settings` | permitida, con **AVISO explícito** en la vista previa |
+| `POST/PUT/DELETE /admin/config/ads*` | cambia lo que **ven los clientes** en el sitio (no es WhatsApp ni correo) | — | permitida, con las consecuencias en la vista previa |
+
+**Corrección conservadora aplicada (DC63):** las dos clases con efectos a cliente están
+**rechazadas** en el replay genérico. La replay genérica no llega a tener **más** efectos que la
+vía dedicada contenida: es al revés, tiene **menos**. La única vía para crear o cancelar una
+reserva desde el chat son las tools dedicadas (`booking_propose_create`,
+`special_booking_propose_create`, `booking_propose_cancel`), que son las que declaran en su
+descripción si avisan o no.
+
+**La vista previa nombra las consecuencias**, no solo la etiqueta de riesgo: para cada operación
+propuesta dice si avisa a clientes, si emite webhook n8n, si purga documentos y si cuesta dinero.
+`risk: destructive` sin más **no** cuenta como aprobación informada.
 
 La lista que aplica el servidor es `botBackofficeOpRefusals`
 (`internal/api/whatsapp_bot_backoffice_tools.go`): el mismo prefijo por **segmentos de ruta**
@@ -1067,6 +1125,27 @@ convertirse en un bypass de esa puerta.
 | Un `GET` que escribe sigue siendo alcanzable por `admin_call` en **Forky** (con confirmación) | el mapa lo marca `write: true`, así que pide `confirmed=true` + `confirmation_token`; el panel tiene el mismo efecto al abrir esas pantallas | — |
 | Los borrados de datos del restaurante (menús, platos, stock, mesas, compensación) son proponibles | son borrados lógicos de datos del propio restaurante, con vista previa exacta y aprobación humana | — |
 | El bot no puede cambiar el grupo de gestión a un grupo que no esté en el entorno | el bot responde con las tools de staff en el grupo de gestión: un grupo no autorizado nunca debe recibir tráfico de staff | — |
+| **Cobertura automática de la frontera nueva** (grupo de env + prueba fresca + actor teléfono) | en esta sesión no se han escrito tests (restricción del encargo) | escribir los tests de la frontera cuando se autorice |
+| Normalización de los jids de env (solo `@g.us`, recortados) | lacubría un test borrado con la otra vía de privilegio (§12.1) | con la autorización de tests |
+
+### 12.1 Los tres ficheros de test borrados: justificación estricta
+
+| Fichero borrado | Qué afirmaba | Por qué sobra | Qué cobertura queda |
+|---|---|---|---|
+| `whatsapp_bot_privileged_altjid_scope_test.go` | que la identidad alterna de un 1:1 (`@lid` ↔ teléfono) no puede convertir un 1:1 en grupo, y que una **conversación seleccionada en el panel** es privilegiada en sus dos formas | la segunda mitad afirmaba exactamente la **desviación B1** que la corrección de la frontera **prohíbe**: la lista de contactos de la BD como credencial. Con la frontera, la selección no concede privilegio, así que el test afirmaba un comportamiento inexistente (falsa garantía sobre la propiedad más crítica) | la regla "un `@lid` no es un teléfono" sigue vigente **en el código** (`botGroupPhoneDigits` solo acepta `@s.whatsapp.net`) y está cubierta por `whatsapp_bot_group_membership_test.go` (6 tests: parseo de participantes, no cruce teléfono/LID, fail-closed sin lista) |
+| `whatsapp_bot_privileged_jidforms_test.go` | que una conversación **seleccionada** coincide con el mensaje por cualquiera de sus dos formas | mismo motivo: afirmaba la selección como credencial. **No se restaura**: restaurarlo reintroduciría a sabiendas un test que pasa con un comportamiento prohibido (y el código que lo exercise ya no existe) | la coincidencia de formas **sigue existiendo y es necesaria** para la vía (b) de la frontera: la resuelve `botSpecialAdminDMPhoneJID` (teléfono del proveedor) y `botGroupMemberPhone` (teléfono del participante en la lista fresca) |
+| `whatsapp_bot_privileged_tenant_test.go` | que el grupo privilegiado **por tenant** (lista en BD) concede privilegio, y que una lista de env **añade** grupos | la primera mitad es la desviación B1; la segunda sigue siendo cierta, pero la lista de env ya no "añade" nada: es **la** fuente (la de la BD ya no concede nada) | la normalización de la cache de participantes (por instancia y grupo) sigue cubierta en `whatsapp_bot_group_cache_test.go`; la lectura de la selección del panel sigue cubierta en `whatsapp_bot_privileged_contacts_test.go` (`TestBotPrivilegedContactsFromConfig`) |
+
+En esos tres ficheros los helpers que exercise (`botGroupIsPrivileged`, `botConversationIsPrivileged`,
+`botPrivilegedConversationIsGroup`, `botPrivilegedContactJIDs`, `botPrivilegedContactIsGroup`) **se
+borraron también**: ya no los llama ningún código de producción (la frontera no pasa por ellos) y
+su semántica ("la lista de la BD concede privilegio") era la que había que eliminar. Dejarlos
+habría dejado cuatro funciones muertas que un lector podría volver a cablear por error, y una
+suite que "probaría" una propiedad que el sistema ya no tiene.
+
+**Lo que se pierde (gap explícito):** la frontera nueva (grupo de env + pertenencia fresca +
+actor teléfono) y la normalización de los jids de env **no tienen cobertura automática**. No se
+escriben tests en esta sesión por la restricción del encargo; queda pendiente de autorización.
 
 ---
 
