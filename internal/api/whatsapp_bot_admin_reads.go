@@ -166,14 +166,15 @@ func (s *Server) botToolListSpecialDates(ctx context.Context, restaurantID int, 
 	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
 		return botJSON(map[string]any{"error": "no autorizado"}), nil
 	}
+	today := botTodayISO()
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, DATE_FORMAT(date, '%Y-%m-%d') AS d, title, prereserva_enabled,
 		       max_per_table_enabled, max_per_table
 		FROM special_dates
-		WHERE restaurant_id = ? AND is_active = 1 AND date >= CURDATE()
+		WHERE restaurant_id = ? AND is_active = 1 AND date >= ?
 		ORDER BY date ASC
 		LIMIT 30
-	`, restaurantID)
+	`, restaurantID, today)
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudieron cargar las fechas especiales"}), nil
 	}
@@ -184,7 +185,7 @@ func (s *Server) botToolListSpecialDates(ctx context.Context, restaurantID int, 
 		Title              string `json:"title"`
 		PrereservaEnabled  bool   `json:"prereserva_enabled"`
 		MaxPerTableEnabled bool   `json:"max_per_table_enabled"`
-		MaxPerTable        int    `json:"max_per_table,omitempty"`
+		MaxPerTable        sql.NullInt64
 	}
 	items := make([]item, 0)
 	ids := make([]int64, 0)
@@ -205,14 +206,15 @@ func (s *Server) botToolListSpecialDates(ctx context.Context, restaurantID int, 
 			WHERE restaurant_id = ? AND special_date_id = ?
 		`, restaurantID, id)
 		if err != nil {
-			continue
+			// A partial catalogue must not look complete: fail the whole call.
+			return botJSON(map[string]any{"error": "no se pudieron cargar los menús vinculados"}), nil
 		}
 		list := make([]map[string]any, 0)
 		for mrows.Next() {
 			var menuID int64
 			var title, adelanto, price sql.NullString
-			// DECIMAL columns arrive as []byte with this driver: scan as text
-			// and parse, never into NullFloat64 (unsupported Scan at runtime).
+			// Scan DECIMAL as text and parse: keeps the value exact and the
+			// scan independent of the driver's numeric conversion.
 			if err := mrows.Scan(&menuID, &title, &adelanto, &price); err == nil {
 				adv, _ := strconv.ParseFloat(adelanto.String, 64)
 				prc, _ := strconv.ParseFloat(price.String, 64)
@@ -224,11 +226,15 @@ func (s *Server) botToolListSpecialDates(ctx context.Context, restaurantID int, 
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"id": it.ID, "date": it.Date, "date_es": botFormatISODateES(it.Date), "title": it.Title,
 			"prereserva_enabled": it.PrereservaEnabled, "max_per_table_enabled": it.MaxPerTableEnabled,
-			"max_per_table": it.MaxPerTable, "menus": menus[it.ID],
-		})
+			"menus": menus[it.ID],
+		}
+		if it.MaxPerTable.Valid {
+			entry["max_per_table"] = it.MaxPerTable.Int64
+		}
+		out = append(out, entry)
 	}
 	return botJSON(map[string]any{"count": len(out), "special_dates": out}), nil
 }
