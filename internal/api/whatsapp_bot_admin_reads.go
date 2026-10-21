@@ -22,6 +22,11 @@ func botToolDefsAdminReads() []botToolDef {
 			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto hoy)"}}}`),
 		},
 		{
+			Name:        "list_special_dates",
+			Description: "Lista las fechas especiales activas desde hoy en adelante (Navidad, Nochevieja...): título, si tiene pre-reserva, máximo por mesa y los menús vinculados con su adelanto y precio. ÚSALO cuando el grupo pregunte qué fechas especiales hay configuradas o planifique campañas.",
+			InputSchema: botSchema(`{"type":"object","properties":{}}`),
+		},
+		{
 			Name:        "list_tables",
 			Description: "Lista los salones (áreas) activos y sus mesas activas: número, nombre, forma y capacidad. ÚSALO cuando el grupo pregunte qué mesas o salones hay configurados.",
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),
@@ -154,4 +159,72 @@ func (s *Server) botToolListTables(ctx context.Context, restaurantID int, msg bo
 		"tables": tables,
 		"count":  len(tables),
 	}), nil
+}
+
+func (s *Server) botToolListSpecialDates(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
+	if _, _, ok := s.botSpecialAdminAuthorize(ctx, restaurantID, msg); !ok {
+		return botJSON(map[string]any{"error": "no autorizado"}), nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, DATE_FORMAT(date, '%Y-%m-%d') AS d, title, prereserva_enabled,
+		       max_per_table_enabled, max_per_table
+		FROM special_dates
+		WHERE restaurant_id = ? AND is_active = 1 AND date >= CURDATE()
+		ORDER BY date ASC
+		LIMIT 30
+	`, restaurantID)
+	if err != nil {
+		return botJSON(map[string]any{"error": "no se pudieron cargar las fechas especiales"}), nil
+	}
+	defer rows.Close()
+	type item struct {
+		ID                 int64  `json:"id"`
+		Date               string `json:"date"`
+		Title              string `json:"title"`
+		PrereservaEnabled  bool   `json:"prereserva_enabled"`
+		MaxPerTableEnabled bool   `json:"max_per_table_enabled"`
+		MaxPerTable        int    `json:"max_per_table,omitempty"`
+	}
+	items := make([]item, 0)
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var it item
+		if err := rows.Scan(&it.ID, &it.Date, &it.Title, &it.PrereservaEnabled, &it.MaxPerTableEnabled, &it.MaxPerTable); err != nil {
+			return botJSON(map[string]any{"error": "no se pudieron leer las fechas especiales"}), nil
+		}
+		items = append(items, it)
+		ids = append(ids, it.ID)
+	}
+	// Linked menus per special date (adelanto + price), keyed by special date id.
+	menus := map[int64][]map[string]any{}
+	for _, id := range ids {
+		mrows, err := s.db.QueryContext(ctx, `
+			SELECT menu_id, custom_title, adelanto_amount, price
+			FROM special_date_menus
+			WHERE restaurant_id = ? AND special_date_id = ?
+		`, restaurantID, id)
+		if err != nil {
+			continue
+		}
+		list := make([]map[string]any, 0)
+		for mrows.Next() {
+			var menuID int64
+			var title sql.NullString
+			var adelanto, price sql.NullFloat64
+			if err := mrows.Scan(&menuID, &title, &adelanto, &price); err == nil {
+				list = append(list, map[string]any{"menu_id": menuID, "custom_title": title.String, "adelanto_amount": adelanto.Float64, "price": price.Float64})
+			}
+		}
+		mrows.Close()
+		menus[id] = list
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, map[string]any{
+			"id": it.ID, "date": it.Date, "date_es": botFormatISODateES(it.Date), "title": it.Title,
+			"prereserva_enabled": it.PrereservaEnabled, "max_per_table_enabled": it.MaxPerTableEnabled,
+			"max_per_table": it.MaxPerTable, "menus": menus[it.ID],
+		})
+	}
+	return botJSON(map[string]any{"count": len(out), "special_dates": out}), nil
 }
