@@ -131,6 +131,8 @@ type campaignStats struct {
 	Sent    int `json:"sent"`
 	Failed  int `json:"failed"`
 	Pending int `json:"pending"`
+	Paused  int `json:"paused"`
+	Skipped int `json:"skipped"`
 }
 
 type boCampaignInput struct {
@@ -272,9 +274,11 @@ func (s *Server) campaignStats(ctx context.Context, campaignID int64) (campaignS
 		SELECT COUNT(*),
 		       COALESCE(SUM(status = 'sent'), 0),
 		       COALESCE(SUM(status = 'failed'), 0),
-		       COALESCE(SUM(status = 'pending'), 0)
+		       COALESCE(SUM(status = 'pending'), 0),
+		       COALESCE(SUM(status = 'paused'), 0),
+		       COALESCE(SUM(status = 'skipped'), 0)
 		FROM campaign_recipients WHERE campaign_id = ?
-	`, campaignID).Scan(&st.Total, &st.Sent, &st.Failed, &st.Pending)
+	`, campaignID).Scan(&st.Total, &st.Sent, &st.Failed, &st.Pending, &st.Paused, &st.Skipped)
 	return st, err
 }
 
@@ -617,6 +621,11 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 			return
 		} else if ok, _ := campaignEmailLooksDeliverable(target); !ok {
 			return
+		} else {
+			// Normalization contract (migration 130): stored e-mail targets are
+			// LOWER(TRIM(x)), so the ledger dedupe (uq_campaign_target) and the
+			// suppression comparison always see one canonical value.
+			target = strings.ToLower(target)
 		}
 		if target == "" {
 			return
@@ -670,6 +679,26 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 	return out, rows.Err()
 }
 
+// campaignLedgerByTarget indexes the already-materialized recipients of a
+// campaign (channel|lower(target) present) so the audience preview and the
+// send handler can tell "new pending eligible" from "already in the ledger".
+func (s *Server) campaignLedgerByTarget(ctx context.Context, campaignID int64) map[string]bool {
+	ledger := map[string]bool{}
+	rows, err := s.db.QueryContext(ctx, `SELECT channel, target FROM campaign_recipients WHERE campaign_id = ?`, campaignID)
+	if err != nil {
+		return ledger
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channel, target string
+		if rows.Scan(&channel, &target) != nil {
+			continue
+		}
+		ledger[channel+"|"+strings.ToLower(strings.TrimSpace(target))] = true
+	}
+	return ledger
+}
+
 func (s *Server) handleBOCampaignAudience(w http.ResponseWriter, r *http.Request) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
@@ -691,19 +720,34 @@ func (s *Server) handleBOCampaignAudience(w http.ResponseWriter, r *http.Request
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error calculando destinatarios"})
 		return
 	}
-	emails, whats := 0, 0
+	// A contact already in the delivery ledger is never re-queued (INSERT
+	// IGNORE on uq_campaign_target), so the operator must see the real
+	// remaining work: "new" are the only rows a send would add, "already"
+	// shows what the ledger already holds for this campaign.
+	ledger := s.campaignLedgerByTarget(r.Context(), c.ID)
+	emails, whats, already, newTargets := 0, 0, 0, []campaignTarget{}
 	for _, t := range targets {
+		if ledger[t.Channel+"|"+strings.ToLower(t.Target)] {
+			already++
+			continue
+		}
+		newTargets = append(newTargets, t)
 		if t.Channel == "email" {
 			emails++
 		} else {
 			whats++
 		}
 	}
-	sample := targets
+	sample := newTargets
 	if len(sample) > 20 {
 		sample = sample[:20]
 	}
-	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID, "total": len(targets), "emails": emails, "whatsapp": whats, "sample": sample})
+	httpx.WriteJSON(w, 200, map[string]any{
+		"success": true, "coord_id": c.CoordID,
+		"total": len(targets), "emails": emails, "whatsapp": whats,
+		"new": len(newTargets), "already_in_ledger": already,
+		"stats": c.Stats, "sample": sample,
+	})
 }
 
 // handleBOCampaignTest sends one message to the operator-provided target.
@@ -965,14 +1009,23 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "No hay destinatarios"})
 		return
 	}
+	queued, insertFailed := 0, 0
 	for _, t := range targets {
-		_, _ = s.db.ExecContext(r.Context(), `
+		res, err := s.db.ExecContext(r.Context(), `
 			INSERT IGNORE INTO campaign_recipients (campaign_id, restaurant_id, channel, target, name, booking_id, status)
 			VALUES (?, ?, ?, ?, ?, ?, 'pending')
 		`, c.ID, a.ActiveRestaurantID, t.Channel, t.Target, t.Name, nullIfZeroInt64(t.BookingID))
+		if err != nil {
+			insertFailed++
+			slog.Default().Warn("campaign.send.insert_failed", "coord_id", c.CoordID, "campaign_id", c.ID, "channel", t.Channel, "err", err.Error())
+			continue
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			queued++
+		}
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE campaigns SET status = 'sending' WHERE id = ?`, c.ID)
-	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets))
+	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets), "queued", queued, "insert_errors", insertFailed)
 	if !campaignRunners.start(c.ID) {
 		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
 		return
@@ -981,16 +1034,28 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 		defer campaignRunners.stop(c.ID)
 		s.runCampaignSend(context.WithoutCancel(r.Context()), a.ActiveRestaurantID, c.ID)
 	}()
-	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID, "queued": len(targets)})
+	// queued = rows actually added to the ledger; already = contacts the
+	// ledger already holds (sent/pending/paused/failed/skipped), never
+	// repeated; insert_errors = rows the DB refused (not in the ledger).
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "coord_id": c.CoordID, "queued": queued, "already": len(targets) - queued - insertFailed, "insert_errors": insertFailed})
 }
 
 // runCampaignSend walks the pending rows one by one, throttled so neither the
-// SMTP server nor the WhatsApp gateway sees a burst.
+// SMTP server nor the WhatsApp gateway sees a burst. A run that ends with
+// paused or still-pending rows is INTERRUPTED, not finished: the campaign
+// stays 'sending' (resumable) instead of lying with 'sent', and the paused
+// rows wait for the operator to resume them (POST /campanas/{id}/resume).
 func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaignID int64) {
 	c, err := s.loadBOCampaign(ctx, restaurantID, campaignID)
 	if err != nil {
 		return
 	}
+	// Consecutive failures reading the do-not-contact list abort the run
+	// (rows stay pending, the campaign stays resumable) instead of permanently
+	// failing rows on a transient DB/network error.
+	const campaignSuppressionReadMaxFails = 3
+	supReadFails := 0
+run:
 	for {
 		rows, err := s.db.QueryContext(ctx, `SELECT id, channel, target, name, COALESCE(booking_id, 0) FROM campaign_recipients WHERE campaign_id = ? AND status = 'pending' ORDER BY id LIMIT 50`, campaignID)
 		if err != nil {
@@ -1019,10 +1084,20 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			// Re-read the do-not-contact list right before each delivery: a
 			// recipient that unsubscribes after the audience snapshot (the run
 			// can last hours at WhatsApp pacing) must never get the message.
-			if sup, supErr := s.loadCampaignSuppressionFilter(ctx, restaurantID); supErr != nil {
-				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, "no se pudo comprobar la lista de bajas", p.id)
+			sup, supErr := s.loadCampaignSuppressionFilter(ctx, restaurantID)
+			if supErr != nil {
+				supReadFails++
+				slog.Default().Warn("campaign.delivery.suppression_read_failed", "coord_id", c.CoordID, "campaign_id", campaignID, "recipient_id", p.id, "consecutive", supReadFails, "err", supErr.Error())
+				if supReadFails >= campaignSuppressionReadMaxFails {
+					break run
+				}
+				// Leave the row pending and back off: a transient read error
+				// must never burn a recipient (it used to become 'failed').
+				time.Sleep(5 * time.Second)
 				continue
-			} else if sup.blocked(p.t.Channel, p.t.Target) {
+			}
+			supReadFails = 0
+			if sup.blocked(p.t.Channel, p.t.Target) {
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'skipped', error = 'baja' WHERE id = ?`, p.id)
 				slog.Default().Info("campaign.delivery.skipped_unsubscribed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID)
 				continue
@@ -1053,9 +1128,21 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			}
 		}
 	}
+	st, stErr := s.campaignStats(ctx, campaignID)
+	if stErr != nil {
+		// Without trustworthy stats the end state cannot be decided: leave the
+		// campaign 'sending' (resumable) instead of possibly lying with 'sent'.
+		slog.Default().Warn("campaign.send.stats_failed", "coord_id", c.CoordID, "campaign_id", campaignID, "err", stErr.Error())
+		return
+	}
+	if st.Pending > 0 || st.Paused > 0 {
+		// Interrupted, not finished: 'sending' with no runner is the existing
+		// "resumable" semantic (the send/resume endpoints restart the drain).
+		slog.Default().Warn("campaign.send.interrupted", "coord_id", c.CoordID, "campaign_id", campaignID, "sent", st.Sent, "failed", st.Failed, "paused", st.Paused, "pending", st.Pending)
+		return
+	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE campaigns SET status = 'sent', sent_at = NOW() WHERE id = ?`, campaignID)
-	st, _ := s.campaignStats(ctx, campaignID)
-	slog.Default().Info("campaign.send.finished", "coord_id", c.CoordID, "campaign_id", campaignID, "sent", st.Sent, "failed", st.Failed)
+	slog.Default().Info("campaign.send.finished", "coord_id", c.CoordID, "campaign_id", campaignID, "sent", st.Sent, "failed", st.Failed, "skipped", st.Skipped)
 }
 
 func nullIfZeroInt64(v int64) any {
@@ -1063,6 +1150,118 @@ func nullIfZeroInt64(v int64) any {
 		return nil
 	}
 	return v
+}
+
+// handleBOCampaignResume re-queues the PAUSED recipients of a campaign once
+// the operator resolved the cause of the pause (bounce burst investigated,
+// gateway back up). It is the only continuation path for a paused campaign:
+//   - sent/failed/skipped rows are never touched;
+//   - every re-queued target is re-checked against the do-not-contact list
+//     first: a target that is now suppressed becomes 'skipped' (baja), never
+//     pending;
+//   - the in-memory bounce breaker is reset so the next poll re-baselines;
+//   - the ack field is mandatory and logged: it is the operator's explicit,
+//     auditable statement that the prerequisites (including the promotional
+//     consent decision, which is a human matter) are resolved. The endpoint
+//     does not evaluate consent itself; it makes the decision traceable.
+func (s *Server) handleBOCampaignResume(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, 401, "Unauthorized")
+		return
+	}
+	id, err := parseChiPositiveInt64(r, "campaignId")
+	if err != nil {
+		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Id invalido"})
+		return
+	}
+	var body struct {
+		Channel string `json:"channel"`
+		Ack     string `json:"ack"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	channel := strings.ToLower(strings.TrimSpace(body.Channel))
+	if channel != "" && channel != "email" && channel != "whatsapp" {
+		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Canal invalido"})
+		return
+	}
+	ack := strings.TrimSpace(body.Ack)
+	if ack == "" {
+		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Falta ack: describe la causa resuelta que autoriza reanudar (obligatorio para auditar)"})
+		return
+	}
+	c, err := s.loadBOCampaign(r.Context(), a.ActiveRestaurantID, id)
+	if err != nil {
+		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
+		return
+	}
+	sup, err := s.loadCampaignSuppressionFilter(r.Context(), a.ActiveRestaurantID)
+	if err != nil {
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo comprobar la lista de bajas"})
+		return
+	}
+	query := `SELECT id, channel, target FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ? AND status = 'paused'`
+	args := []any{a.ActiveRestaurantID, c.ID}
+	if channel != "" {
+		query += ` AND channel = ?`
+		args = append(args, channel)
+	}
+	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error leyendo destinatarios pausados"})
+		return
+	}
+	type pausedRow struct {
+		id      int64
+		channel string
+		target  string
+	}
+	paused := []pausedRow{}
+	for rows.Next() {
+		var p pausedRow
+		if rows.Scan(&p.id, &p.channel, &p.target) == nil {
+			paused = append(paused, p)
+		}
+	}
+	rows.Close()
+	requeued, skipped := 0, 0
+	for _, p := range paused {
+		if sup.blocked(p.channel, p.target) {
+			if _, err := s.db.ExecContext(r.Context(), `UPDATE campaign_recipients SET status = 'skipped', error = 'baja comprobada al reanudar' WHERE id = ? AND status = 'paused'`, p.id); err == nil {
+				skipped++
+			}
+			continue
+		}
+		if _, err := s.db.ExecContext(r.Context(), `UPDATE campaign_recipients SET status = 'pending', error = NULL WHERE id = ? AND status = 'paused'`, p.id); err == nil {
+			requeued++
+		}
+	}
+	campaignBounceFor(c.ID).reset()
+	// Observational point: the ack travels to the log so any resume is
+	// attributable to an operator decision (coord_id crosses BO + backend).
+	slog.Default().Info("campaign.resume.requested", "coord_id", c.CoordID, "campaign_id", c.ID,
+		"restaurant_id", a.ActiveRestaurantID, "channel", channel, "paused_read", len(paused),
+		"requeued", requeued, "skipped", skipped, "ack", ack)
+	running := false
+	if requeued > 0 {
+		_, _ = s.db.ExecContext(r.Context(), `UPDATE campaigns SET status = 'sending' WHERE id = ?`, c.ID)
+		if campaignRunners.start(c.ID) {
+			running = true
+			go func() {
+				defer campaignRunners.stop(c.ID)
+				s.runCampaignSend(context.WithoutCancel(r.Context()), a.ActiveRestaurantID, c.ID)
+			}()
+		} else {
+			// A live runner re-reads pending rows every batch, so the rows
+			// just re-queued are drained by it without a second runner.
+			running = true
+		}
+	}
+	httpx.WriteJSON(w, 200, map[string]any{
+		"success": true, "coord_id": c.CoordID,
+		"paused_read": len(paused), "requeued": requeued, "skipped": skipped,
+		"running": running,
+	})
 }
 
 // handleBOCampaignRecipients exposes the delivery ledger: which booking id was
@@ -1082,7 +1281,7 @@ func (s *Server) handleBOCampaignRecipients(w http.ResponseWriter, r *http.Reque
 	query := `SELECT id, channel, target, name, COALESCE(booking_id, 0), status, COALESCE(error, ''), COALESCE(DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i'), '')
 		FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ?`
 	args := []any{a.ActiveRestaurantID, id}
-	if status == "sent" || status == "failed" || status == "pending" {
+	if status == "sent" || status == "failed" || status == "pending" || status == "paused" || status == "skipped" {
 		query += ` AND status = ?`
 		args = append(args, status)
 	}
