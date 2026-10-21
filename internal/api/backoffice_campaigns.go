@@ -520,7 +520,7 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 		"unsubscribe_url": unsubscribeURL,
 		// The editor renders the markdown locally and drops it in this exact
 		// shell, so the preview matches the delivered email byte for byte.
-		"shell":            campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, campaignEmailBodyPlaceholder, websiteURL, unsubscribeURL, "", "", ""),
+		"shell":            campaignEmailShellWithUnsubscribe(theme, brandName, logoURL, campaignEmailBodyPlaceholder, websiteURL, unsubscribeURL, s.campaignEmailIdentityLine(r.Context(), a.ActiveRestaurantID), branding.Address, branding.Email),
 		"body_placeholder": campaignEmailBodyPlaceholder,
 	})
 }
