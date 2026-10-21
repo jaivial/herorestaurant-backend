@@ -217,6 +217,16 @@ func botSpecialAdminToolDefs() []botToolDef {
 			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"booking_id":{"type":"integer"},"is_event":{"type":"boolean"},"send_documents_to_client":{"type":"boolean"}},"required":["booking_id"]}`),
 		},
 		{
+			Name:        "booking_propose_catalog_extra_create",
+			Description: "PROPONE añadir un extra personalizado al catálogo del restaurante (por ejemplo «Café incluido»). NO lo aplica: guarda una propuesta exacta y envía al grupo una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Si el identificador ya existía desactivado, lo reactiva; las reservas existentes no cambian. Pide siempre confirmación del usuario antes de proponer.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"name":{"type":"string","minLength":1,"maxLength":255}},"required":["name"]}`),
+		},
+		{
+			Name:        "booking_propose_catalog_extra_delete",
+			Description: "PROPONE desactivar un extra personalizado del catálogo (borrado lógico; los extras fijos del sistema no se pueden eliminar). NO lo aplica: guarda una propuesta exacta y envía al grupo una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Las reservas que ya tienen el extra conservan su copia. Usa `list_booking_extras` para ver el catálogo con los ids. Pide siempre confirmación del usuario antes de proponer.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"extra_id":{"type":"integer"}},"required":["extra_id"]}`),
+		},
+		{
 			Name:        "booking_propose_create",
 			Description: "PROPONE crear una reserva NORMAL nueva (sin menú de grupo, arroces, extras ni fecha especial: esas se crean desde el panel). NO la crea: guarda una propuesta exacta y envía al grupo una vista previa con un código; se crea cuando la misma persona escribe 'OK' y ese código en el mismo chat. Pide antes fecha, hora, comensales, nombre y teléfono (no los inventes). Rechaza fechas pasadas, días cerrados y fechas especiales. Si ya existe una reserva con los mismos datos (fecha, hora, teléfono y comensales), lo dice y solo sigue si el usuario confirma expresamente el duplicado con allow_duplicate_of. No avisa al cliente ni emite avisos externos.",
 			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"date":{"type":"string","description":"YYYY-MM-DD"},"time":{"type":"string","description":"HH:MM"},"party_size":{"type":"integer"},"customer_name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string","description":"Prefijo sin + (por defecto 34)"},"contact_email":{"type":"string"},"commentary":{"type":"string"},"children":{"type":"integer"},"baby_strollers":{"type":"integer"},"high_chairs":{"type":"integer"},"preferred_floor_number":{"type":"integer"},"allow_duplicate_of":{"type":"integer","description":"Solo para confirmar expresamente un duplicado legítimo: booking_id de la reserva existente igual"}},"required":["date","time","party_size","customer_name","contact_phone"]}`),
@@ -745,13 +755,17 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 	supQ := `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=? AND active=1`
 	supArgs := []any{rid, in.BookingID}
 	if dedupKey != "" {
-		// Create proposals carry booking_id=0 and uq_wa_op_active is
-		// (restaurant_id, booking_id, active): two active creates would collide.
-		// So at most one create pends per tenant and a new one supersedes ANY
-		// pending create, whatever its natural key. The dedup key still travels
-		// in args for correlation and the execute re-check.
-		chatsQ = `SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND op='create' AND active=1`
-		supQ = `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND op='create' AND active=1`
+		// No-booking proposals (create, catalog, config) carry booking_id=0 and
+		// uq_wa_op_active is (restaurant_id, booking_id, active): two active
+		// booking_id=0 rows would collide whatever their op. So at most ONE
+		// no-booking proposal pends per tenant, shared by every op without a
+		// natural booking, and a new one supersedes ANY pending booking_id=0
+		// proposal. The superseded row's code can never execute a different
+		// op: approval claims by code_hash + state='sent' + active=1, and a
+		// superseded row is state='superseded', active=NULL. The dedup key
+		// still travels in args for correlation and the execute re-check.
+		chatsQ = `SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=0 AND active=1`
+		supQ = `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=0 AND active=1`
 		supArgs = []any{rid}
 	}
 	if rs, qerr := tx.QueryContext(ctx, chatsQ, supArgs...); qerr == nil {
@@ -781,7 +795,9 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 
 	supNotice := fmt.Sprintf("La propuesta pendiente sobre la reserva #%d se ha sustituido por otra más reciente. El código anterior ya no vale.", in.BookingID)
 	if dedupKey != "" {
-		supNotice = "La propuesta pendiente de crear una reserva se ha sustituido por otra más reciente. El código anterior ya no vale."
+		// Generic on purpose: the superseded no-booking proposal can be any op
+		// (create, catalog, config) and the notice must not leak its details.
+		supNotice = "La propuesta pendiente se ha sustituido por otra más reciente. El código anterior ya no vale."
 	}
 	for _, c := range oldChats {
 		if !s.botSpecialAdminMayNotify(ctx, rid, c) {
@@ -983,6 +999,12 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	}
 	if p.Op == "set_flags" {
 		return s.botFlagsExecute(ctx, tx, rid, msg, p)
+	}
+	if p.Op == "catalog_extra_create" {
+		return s.botCatalogExtraCreateExecute(ctx, tx, rid, msg, p)
+	}
+	if p.Op == "catalog_extra_delete" {
+		return s.botCatalogExtraDeleteExecute(ctx, tx, rid, msg, p)
 	}
 	if p.Op == "create" {
 		return s.botCreateExecute(ctx, tx, rid, msg, p)
