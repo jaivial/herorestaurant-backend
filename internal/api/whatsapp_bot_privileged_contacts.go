@@ -96,15 +96,31 @@ func (s *Server) botSavePrivilegedContacts(ctx context.Context, restaurantID int
 	}
 	// Read the stored config, change only the privileged contacts, write it
 	// back.
+	//
+	// The document is patched SURGICALLY: re-serialising the parsed struct
+	// would drop every field the struct does not know (the tool grants of
+	// another writer, a field added by a newer deploy...).
 	var current sql.NullString
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
 	`, restaurantID).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	tenant := parseBotTenantConfig(current.String)
-	tenant.PrivilegedContacts = clean
-	merged, err := json.Marshal(tenant)
+	doc := map[string]any{}
+	if strings.TrimSpace(current.String) != "" {
+		if err := json.Unmarshal([]byte(current.String), &doc); err != nil {
+			return errors.New("bot privileged contacts: la configuracion guardada no se pudo leer")
+		}
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	values := make([]any, 0, len(clean))
+	for _, c := range clean {
+		values = append(values, map[string]any{"jid": c.JID, "name": c.Name, "isGroup": c.IsGroup})
+	}
+	doc["privileged_contacts"] = values
+	merged, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}

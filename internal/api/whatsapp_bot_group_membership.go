@@ -259,14 +259,16 @@ func (s *Server) botGroupMembersCached(ctx context.Context, restaurantID int, gr
 	key := botGroupMembersCacheKey(instanceName, groupJID)
 	botGroupMembersCache.Lock()
 	if e, ok := botGroupMembersCache.byInstanceGroup[key]; ok {
-		if time.Since(e.at) < botGroupMembersCacheTTL {
+		// A negative entry (nothing could be proven) is held for a SHORT
+		// time: a provider blip must not keep the group without its
+		// privileged catalog for a whole minute. It is checked FIRST,
+		// because the 60 s window of a positive entry would otherwise
+		// swallow it.
+		if e.members.empty() && time.Since(e.at) < botGroupMembersCacheFailTTL {
 			botGroupMembersCache.Unlock()
 			return e.members, true
 		}
-		// A negative entry (nothing could be proven) is held for a shorter
-		// time: a renamed or deleted group would otherwise make EVERY
-		// message wait for the provider timeout before being refused.
-		if e.members.empty() && time.Since(e.at) < botGroupMembersCacheFailTTL {
+		if time.Since(e.at) < botGroupMembersCacheTTL {
 			botGroupMembersCache.Unlock()
 			return e.members, true
 		}

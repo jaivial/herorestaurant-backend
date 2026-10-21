@@ -44,6 +44,10 @@ const (
 // informed.
 const botBackofficePreviewMaxBody = 1200
 
+// botBackofficePreviewMaxValue is the biggest single value (a path parameter
+// or a query value) that still fits in the preview.
+const botBackofficePreviewMaxValue = 400
+
 // botToolDefsBackoffice is the catalogue of the two tools. They are advertised
 // only on privileged turns (the webhook adds them next to the special-admin
 // tools) and every call re-proves the actor.
@@ -122,51 +126,61 @@ type backofficeOpPlan struct {
 // operation, reads included, because the campaign surface sends to real
 // clients.
 var botBackofficeOpRefusals = []struct {
+	Method string
 	Match  string
 	Reason string
 }{
-	{"/bookings/cancelled", "writes-control legacy retenido: la reactivacion de reservas la hace el restaurante en el panel"},
-	{"/stock/documents", "OCR document_get retenido (superficie de prompt-injection)"},
-	{"/stock/ocr-scan", "OCR document_get retenido (superficie de prompt-injection)"},
-	{"/stock/items/import", "importacion masiva: fuera de alcance"},
-	{"/pos/products/import", "importacion masiva: fuera de alcance"},
-	{"/campanas", "campanas: envian a clientes reales, fuera de alcance"},
-	{"/emailAdvertising", "envio real a clientes: fuera de alcance"},
-	{"/members/whatsapp/send", "envio real a clientes: fuera de alcance"},
-	{"/members/whatsapp/flush-queue", "envio real a clientes: fuera de alcance"},
-	{"/members/whatsapp/subscribe", "alta de suscripcion con importe: dinero real, fuera de alcance"},
-	{"/members/whatsapp/cancel", "baja de suscripcion con importe: dinero real, fuera de alcance"},
-	{"/members/whatsapp/connect", "provision de la conexion: se hace desde el panel"},
-	{"/members/whatsapp/disconnect", "provision de la conexion: se hace desde el panel"},
-	{"/members/{id}/password-reset/send", "envio real de correo: fuera de alcance"},
-	{"/members/{id}/invitation/resend", "envio real de correo: fuera de alcance"},
-	{"/invoices", "las facturas las emite el restaurante: fuera de alcance"},
-	{"/config/stripe-connect", "dinero real: fuera de alcance"},
-	{"/platform/stripe", "dinero real: fuera de alcance"},
-	{"/pos/tickets/{id}/refunds", "devolucion de dinero: fuera de alcance"},
-	{"/pos/tickets/{id}/fiscal-document", "documento fiscal: fuera de alcance"},
-	{"/domains", "dinero real (dominio): fuera de alcance"},
-	{"/site-builder/billing", "dinero real: fuera de alcance"},
-	{"/site-builder/domains", "dinero real (dominio): fuera de alcance"},
-	{"/site-builder/assets", "ficheros del sitio: se gestionan en el panel"},
-	{"/website-builder/assets", "ficheros del sitio: se gestionan en el panel"},
-	{"/instatic", "arranca el generador de webs: se hace desde el panel"},
-	{"/config/chatgpt-plugin/tokens", "credencial del plugin: fuera de alcance"},
-	{"/config/minimax", "clave de proveedor: fuera de alcance"},
-	{"/config/bunny-storage", "clave de proveedor: fuera de alcance"},
-	{"/config/ai-image", "clave de proveedor: fuera de alcance"},
-	{"/config/email-provider", "clave de proveedor: fuera de alcance"},
-	{"/bot/ai", "clave de proveedor: fuera de alcance"},
-	{"/bot/config", "el prompt del bot (reglas e instrucciones) se cambia en el panel"},
-	{"/bot/settings", "el prompt del bot se cambia en el panel"},
-	{"/bot/pipeline", "el pipeline del bot se cambia en el panel"},
-	{"/integrations", "credenciales y webhooks de integracion: se cambian en el panel"},
-	{"/platform", "gestion de la plataforma: fuera de alcance"},
-	{"/pos/roles", "permisos de los roles del TPV: se cambian en el panel"},
-	{"/pos/pin", "PIN del TPV: se cambia en el panel"},
-	{"/stock/roles", "permisos de los roles de stock: se cambian en el panel"},
-	{"/roles", "gestion de cuentas del panel: fuera de alcance"},
-	{"/users", "gestion de cuentas del panel: fuera de alcance"},
+	{Method: "DELETE", Match: "/members/{id}", Reason: "baja de un miembro del equipo: se hace en el panel"},
+	{Match: "/bookings/cancelled", Reason: "writes-control legacy retenido: la reactivacion de reservas la hace el restaurante en el panel"},
+	{Match: "/stock/documents", Reason: "OCR document_get retenido (superficie de prompt-injection)"},
+	{Match: "/stock/ocr-scan", Reason: "OCR document_get retenido (superficie de prompt-injection)"},
+	{Match: "/stock/items/import", Reason: "importacion masiva: fuera de alcance"},
+	{Match: "/pos/products/import", Reason: "importacion masiva: fuera de alcance"},
+	{Match: "/campanas", Reason: "campanas: envian a clientes reales, fuera de alcance"},
+	{Match: "/emailAdvertising", Reason: "envio real a clientes: fuera de alcance"},
+	{Match: "/members/whatsapp/send", Reason: "envio real a clientes: fuera de alcance"},
+	{Match: "/members/whatsapp/flush-queue", Reason: "envio real a clientes: fuera de alcance"},
+	{Match: "/members/whatsapp/subscribe", Reason: "alta de suscripcion con importe: dinero real, fuera de alcance"},
+	{Match: "/members/whatsapp/cancel", Reason: "baja de suscripcion con importe: dinero real, fuera de alcance"},
+	{Match: "/members/whatsapp/connect", Reason: "provision de la conexion: se hace desde el panel"},
+	{Match: "/members/whatsapp/disconnect", Reason: "provision de la conexion: se hace desde el panel"},
+	{Match: "/members/{id}/password-reset/send", Reason: "envio real de correo: fuera de alcance"},
+	{Match: "/members/{id}/invitation/resend", Reason: "envio real de correo: fuera de alcance"},
+	{Match: "/members/{id}/whatsapp/verification", Reason: "envio real de WhatsApp y verificacion de identidad: fuera de alcance"},
+	{Match: "/members/{id}/phone/verification", Reason: "envio real de WhatsApp y verificacion de identidad: fuera de alcance"},
+	{Match: "/members/{id}/ensure-user", Reason: "alta de una cuenta del panel: fuera de alcance"},
+	{Match: "/members/{id}/phone", Reason: "cambio del telefono de un miembro: fuera de alcance"},
+	{Match: "/stock/ai/recommendations", Reason: "llamada a IA externa (coste): fuera de alcance"},
+	{Match: "/stock/settings/classify-seasonality", Reason: "llamada a IA externa (coste): fuera de alcance"},
+	{Match: "/config/check-website", Reason: "llamada externa: fuera de alcance"},
+	{Match: "/website/ai-generate", Reason: "llamada a IA externa (coste): fuera de alcance"},
+	{Match: "/invoices", Reason: "las facturas las emite el restaurante: fuera de alcance"},
+	{Match: "/config/stripe-connect", Reason: "dinero real: fuera de alcance"},
+	{Match: "/platform/stripe", Reason: "dinero real: fuera de alcance"},
+	{Match: "/pos/tickets/{id}/refunds", Reason: "devolucion de dinero: fuera de alcance"},
+	{Match: "/pos/tickets/{id}/fiscal-document", Reason: "documento fiscal: fuera de alcance"},
+	{Match: "/domains", Reason: "dinero real (dominio): fuera de alcance"},
+	{Match: "/site-builder/billing", Reason: "dinero real: fuera de alcance"},
+	{Match: "/site-builder/domains", Reason: "dinero real (dominio): fuera de alcance"},
+	{Match: "/site-builder/assets", Reason: "ficheros del sitio: se gestionan en el panel"},
+	{Match: "/website-builder/assets", Reason: "ficheros del sitio: se gestionan en el panel"},
+	{Match: "/instatic", Reason: "arranca el generador de webs: se hace desde el panel"},
+	{Match: "/config/chatgpt-plugin/tokens", Reason: "credencial del plugin: fuera de alcance"},
+	{Match: "/config/minimax", Reason: "clave de proveedor: fuera de alcance"},
+	{Match: "/config/bunny-storage", Reason: "clave de proveedor: fuera de alcance"},
+	{Match: "/config/ai-image", Reason: "clave de proveedor: fuera de alcance"},
+	{Match: "/config/email-provider", Reason: "clave de proveedor: fuera de alcance"},
+	{Match: "/bot/ai", Reason: "clave de proveedor: fuera de alcance"},
+	{Match: "/bot/config", Reason: "el prompt del bot (reglas e instrucciones) se cambia en el panel"},
+	{Match: "/bot/settings", Reason: "el prompt del bot se cambia en el panel"},
+	{Match: "/bot/pipeline", Reason: "el pipeline del bot se cambia en el panel"},
+	{Match: "/integrations", Reason: "credenciales y webhooks de integracion: se cambian en el panel"},
+	{Match: "/platform", Reason: "gestion de la plataforma: fuera de alcance"},
+	{Match: "/pos/roles", Reason: "permisos de los roles del TPV: se cambian en el panel"},
+	{Match: "/pos/pin", Reason: "PIN del TPV: se cambia en el panel"},
+	{Match: "/stock/roles", Reason: "permisos de los roles de stock: se cambian en el panel"},
+	{Match: "/roles", Reason: "gestion de cuentas del panel: fuera de alcance"},
+	{Match: "/users", Reason: "gestion de cuentas del panel: fuera de alcance"},
 }
 
 // botBackofficeOpRefusal returns the reason the operation is refused, or "".
@@ -176,6 +190,9 @@ var botBackofficeOpRefusals = []struct {
 func botBackofficeOpRefusal(op forkyAdminOp) string {
 	p := strings.TrimSpace(op.Path)
 	for _, r := range botBackofficeOpRefusals {
+		if r.Method != "" && !strings.EqualFold(r.Method, op.Method) {
+			continue
+		}
 		if p == r.Match || strings.HasPrefix(p, r.Match+"/") {
 			return r.Reason
 		}
@@ -202,7 +219,11 @@ func botBackofficePreview(op forkyAdminOp, plan backofficeOpPlan) (string, error
 		sort.Strings(keys)
 		parts := make([]string, 0, len(keys))
 		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, botBackofficeFlat(plan.PathParams[k])))
+			flat, err := botBackofficeFlat(plan.PathParams[k])
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, fmt.Sprintf("%s=%s", k, flat))
 		}
 		fmt.Fprintf(&b, " (%s)", strings.Join(parts, ", "))
 	}
@@ -214,7 +235,11 @@ func botBackofficePreview(op forkyAdminOp, plan backofficeOpPlan) (string, error
 		sort.Strings(keys)
 		parts := make([]string, 0, len(keys))
 		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%s", k, botBackofficeFlat(plan.Query[k])))
+			flat, err := botBackofficeFlat(plan.Query[k])
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, fmt.Sprintf("%s=%s", k, flat))
 		}
 		fmt.Fprintf(&b, " ?%s", strings.Join(parts, "&"))
 	}
@@ -238,24 +263,29 @@ func botBackofficePreview(op forkyAdminOp, plan backofficeOpPlan) (string, error
 	return b.String(), nil
 }
 
-// botBackofficeFlat renders a value in ONE line: the newlines and the
-// control characters become spaces, so a value can never forge a line of the
+// botBackofficeFlat renders a value in ONE line: the newlines, the control
+// characters and the Unicode line separators become spaces, so a value can
+// never forge a line of the preview.
+//
+// The value is NOT cut: a value that does not fit the preview is refused (the
+// caller), because a preview that shows less than the request is not a
 // preview.
-func botBackofficeFlat(v any) string {
+func botBackofficeFlat(v any) (string, error) {
 	s := fmt.Sprint(v)
 	s = strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == '\t' {
+		switch r {
+		case '\n', '\r', '\t', '\v', '\f', 0x85, 0x2028, 0x2029:
 			return ' '
 		}
-		if r < 0x20 {
+		if r < 0x20 || r == 0x7f {
 			return -1
 		}
 		return r
 	}, s)
-	if len(s) > 120 {
-		s = s[:120] + "…"
+	if len(s) > botBackofficePreviewMaxValue {
+		return "", fmt.Errorf("un valor de la operacion es demasiado largo (%d caracteres) para que se pueda revisar en la vista previa", len(s))
 	}
-	return s
+	return s, nil
 }
 
 // botToolManageBackoffice executes manage_backoffice.
@@ -386,6 +416,10 @@ func (s *Server) botBackofficeExecute(ctx context.Context, rid int, msg botWebho
 
 // botBackofficeReplayApplied reads the answer of the replay and tells whether
 // the operation really happened.
+//
+// The backoffice answers a BUSINESS failure with HTTP 200 and
+// {"success": false, "message": ...} (that is the convention of the panel),
+// so the status alone is not a proof: the payload decides too.
 func botBackofficeReplayApplied(out string) (bool, string) {
 	var res struct {
 		OK     bool            `json:"ok"`
@@ -397,31 +431,49 @@ func botBackofficeReplayApplied(out string) (bool, string) {
 		// An unreadable answer is not a proof of success.
 		return false, "la operacion no devolvio una respuesta legible"
 	}
+	if res.Status >= 400 {
+		return false, botBackofficeReplayReason(res.Status, res.Text, nil)
+	}
+	var payload map[string]any
+	if len(res.Data) > 0 {
+		_ = json.Unmarshal(res.Data, &payload)
+	}
+	// The panel's business failure: 200 with success=false (or ok=false).
+	if payload != nil {
+		if v, ok := payload["success"].(bool); ok && !v {
+			return false, botBackofficeReplayReason(res.Status, res.Text, payload)
+		}
+		if v, ok := payload["ok"].(bool); ok && !v {
+			return false, botBackofficeReplayReason(res.Status, res.Text, payload)
+		}
+	}
 	if res.OK {
 		return true, ""
 	}
+	return false, botBackofficeReplayReason(res.Status, res.Text, payload)
+}
+
+// botBackofficeReplayReason extracts the human reason of a failure.
+func botBackofficeReplayReason(status int, text string, payload map[string]any) string {
 	reason := ""
-	if len(res.Data) > 0 {
-		var payload map[string]any
-		if json.Unmarshal(res.Data, &payload) == nil {
-			for _, k := range []string{"message", "error"} {
-				if v, ok := payload[k].(string); ok && strings.TrimSpace(v) != "" {
-					reason = strings.TrimSpace(v)
-					break
-				}
+	if payload != nil {
+		for _, k := range []string{"message", "error"} {
+			if v, ok := payload[k].(string); ok && strings.TrimSpace(v) != "" {
+				reason = strings.TrimSpace(v)
+				break
 			}
 		}
 	}
 	if reason == "" {
-		reason = strings.TrimSpace(res.Text)
+		reason = strings.TrimSpace(text)
 	}
 	if len(reason) > 300 {
 		reason = reason[:300]
 	}
 	if reason == "" {
-		reason = fmt.Sprintf("la ruta respondio %d", res.Status)
+		reason = fmt.Sprintf("la ruta respondio %d", status)
 	}
-	return false, reason
+	return reason
 }
 
 // ---- the control plane of the bot ------------------------------------------
@@ -629,8 +681,23 @@ func botScopeHasGroup(list []string, value string) bool {
 }
 
 // botAccessPreview is the exact human summary of the access proposal.
-func botAccessPreview(a botAccessArgs, scopeGroups []string) (string, error) {
+//
+// The probe carries the REAL stored grants: the transition depends on them
+// (a removal needs an existing grant, and an empty tool list means "the full
+// catalogue" only when there IS a grant to remove).
+func botAccessPreview(a botAccessArgs, scopeGroups []string, stored []botToolGrant) (string, error) {
 	probe := map[string]any{}
+	if len(stored) > 0 {
+		grants := make([]any, 0, len(stored))
+		for _, g := range stored {
+			values := make([]any, 0, len(g.Tools))
+			for _, t := range g.Tools {
+				values = append(values, t)
+			}
+			grants = append(grants, map[string]any{"jid": g.JID, "tools": values})
+		}
+		probe["tool_grants"] = grants
+	}
 	if _, err := botAccessApply(probe, a, scopeGroups); err != nil {
 		return "", err
 	}
@@ -673,7 +740,7 @@ func (s *Server) botToolManageBotAccess(ctx context.Context, rid int, msg botWeb
 	if a.Action != "set" && a.Action != "remove" {
 		return botJSON(map[string]any{"error": "action invalida: usa list, set o remove"}), nil
 	}
-	preview, err := botAccessPreview(a, s.botPrivilegedScopeGroups(rid))
+	preview, err := botAccessPreview(a, s.botPrivilegedScopeGroups(rid), s.botStoredTenantConfig(ctx, rid).ToolGrants)
 	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
