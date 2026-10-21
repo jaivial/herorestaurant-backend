@@ -157,6 +157,8 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolExtrasPropose(ctx, restaurantID, msg, input)
 	case "booking_propose_set_mobility":
 		return s.botToolMobilityPropose(ctx, restaurantID, msg, input)
+	case "booking_propose_remove_group_menu":
+		return s.botToolGMenuRemovePropose(ctx, restaurantID, msg, input)
 	case "create_special_booking":
 		return s.botToolCreateSpecialBooking(ctx, restaurantID, msg, tenant, input)
 	case "modify_special_booking":
