@@ -110,6 +110,12 @@ var botForkyExcludedFromWA = map[string]struct{}{
 	"stock_read":               {},
 	"members_read":             {},
 	"fichaje_read":             {},
+	"sheets_read":              {},
+	"menus_read":               {},
+	"reservas_read":            {},
+	"website_read":             {},
+	"campaigns_read":           {},
+	"invoices_read":            {},
 }
 
 // botForkyToolDefs converts the full assistant (forky) tool registry into the

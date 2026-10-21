@@ -379,6 +379,48 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
+		Name: "sheets_read", Description: "Fichas técnicas del restaurante activo: list (category_id, q, status), get/cost/components/allergens/usage/steps (id), step_image_job (id=job).",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"category_id":{"type":"string"},"q":{"type":"string"},"status":{"type":"string"}}}`), BackofficeOnly: true, Section: "comida",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "sheets_read", sheetsReadResources, input)
+		},
+	},
+	{
+		Name: "menus_read", Description: "Lecturas de carta del restaurante activo: comida_counts, arroz_types, beverage_options (id), mandatory_menus (date), menu_selector, group_menus_list (status), group_menu_get (id), group_menus_v2_list (include_drafts), group_menus_v2_special (id), group_menus_v2_slider (id), group_menus_v2_section_dishes (id + section_id).",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"section_id":{"type":"string"},"date":{"type":"string"},"status":{"type":"string"},"include_drafts":{"type":"string"}}}`), BackofficeOnly: true, Section: "menus",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "menus_read", menusReadResources, input)
+		},
+	},
+	{
+		Name: "reservas_read", Description: "Lecturas de reservas del restaurante activo: bookings_modified (date), booking_notifications, special_date_stats (date).",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date":{"type":"string"}}}`), BackofficeOnly: true, Section: "reservas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "reservas_read", reservasReadResources, input)
+		},
+	},
+	{
+		Name: "website_read", Description: "Lecturas de web del restaurante activo: widget_settings, ads_list, premium_website, website_templates, menu_templates.",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"}}}`), BackofficeOnly: true, Section: "website",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "website_read", websiteReadResources, input)
+		},
+	},
+	{
+		Name: "campaigns_read", Description: "Lecturas de campañas del restaurante activo: template (contenido de la plantilla actual). La audiencia NO está disponible (contiene datos de destinatarios).",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"}}}`), BackofficeOnly: true, Section: "campanas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "campaigns_read", campaignsReadResources, input)
+		},
+	},
+	{
+		Name: "invoices_read", Description: "Lecturas de facturación del restaurante activo: search_reservation (date_from/date_to/name/party_size/phone/time) para localizar la reserva de una factura.",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"name":{"type":"string"},"party_size":{"type":"string"},"phone":{"type":"string"},"time":{"type":"string"}}}`), BackofficeOnly: true, Section: "facturas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "invoices_read", invoicesReadResources, input)
+		},
+	},
+	{
 		Name: "stock_item_movements_list", Description: "Lista los movimientos de un artículo de stock del restaurante activo.",
 		Schema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"},"page":{"type":"integer"},"page_size":{"type":"integer"}},"required":["id"]}`), BackofficeOnly: true, Section: "stock",
 		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
