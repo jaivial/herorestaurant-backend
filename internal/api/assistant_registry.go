@@ -418,6 +418,13 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
+		Name: "pos_read", Description: "Lecturas POS del restaurante activo sin tool específica. Recursos: shift_current (turno abierto), cash_day_current (date, por defecto hoy), cash_days_range (date_from/date_to), cash_movements (shift_id), cash_closure_get (id), tickets_series (date), tickets_hourly (date), sales_report (date_from/date_to, por defecto 30 días), covers_report (date_from/date_to), products_list, kitchen_queue (station_id), service_periods.",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"date":{"type":"string","description":"YYYY-MM-DD"},"date_from":{"type":"string"},"date_to":{"type":"string"},"shift_id":{"type":"string"},"station_id":{"type":"string"}}}`), BackofficeOnly: true, Section: "pos",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "pos_read", posReadResources, input)
+		},
+	},
+	{
 		Name: "pos_cash_closures_list", Description: "Lista los cierres de caja POS del restaurante activo.",
 		Schema: json.RawMessage(`{"type":"object","properties":{"shift_id":{"type":"integer"}}}`), BackofficeOnly: true, Section: "pos",
 		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
