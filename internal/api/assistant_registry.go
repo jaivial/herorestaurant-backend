@@ -357,10 +357,25 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
-		Name: "stock_read", Description: "Lecturas de stock del restaurante activo sin tool específica (document_get retenido: la extracción OCR requiere minimización de salida). Recursos: valuation, vat_list, suppliers_list, supplier_prices (id, days), supplier_aliases (id), settings, reconciliation, recipe_get (id), margin_targets, margin_scopes, margin_scope_resolve (category_id/food_type/scope_key/scope_kind), margin_scope_defaults, labour_members, item_units (id), item_options (q), forecast (scenario), expiring (days), documents_list, count_get (id), costing, permissions_mine.",
+		Name: "stock_read", Description: "Lecturas de stock del restaurante activo sin tool específica (document_get retenido: la extracción OCR requiere minimización de salida). Recursos: valuation, vat_list, suppliers_list, supplier_prices (id, days), supplier_aliases (id), settings, reconciliation, recipe_get (id), margin_targets, margin_scopes, margin_scope_resolve (category_id/food_type/scope_key/scope_kind), margin_scope_defaults, labour_members, item_units (id), item_options (q), forecast (scenario), expiring (days), documents_list, count_get (id), costing, permissions_mine, production_labour_list (id), production_labour_entries.",
+
 		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"q":{"type":"string"},"days":{"type":"string"},"scenario":{"type":"string"},"category_id":{"type":"string"},"food_type":{"type":"string"},"scope_key":{"type":"string"},"scope_kind":{"type":"string"}}}`), BackofficeOnly: true, Section: "stock",
 		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
 			return s.assistantDomainRead(ctx, "stock_read", stockReadResources, input)
+		},
+	},
+	{
+		Name: "members_read", Description: "Lecturas del club de miembros del restaurante activo (todas requieren id de miembro): stats (id, date, view), stats_year (id, year), stats_range (id, date_from/date_to), quarter_balance (id, date), table_data (id, view, year), compensations_list (id).",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"year":{"type":"string"},"view":{"type":"string"}}}`), BackofficeOnly: true, Section: "miembros",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "members_read", membersReadResources, input)
+		},
+	},
+	{
+		Name: "fichaje_read", Description: "Lecturas de fichaje del restaurante activo: labour_cost (date_from/date_to), hourly_costs (date).",
+		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"}}}`), BackofficeOnly: true, Section: "fichaje",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantDomainRead(ctx, "fichaje_read", fichajeReadResources, input)
 		},
 	},
 	{
