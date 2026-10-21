@@ -242,6 +242,26 @@ func botSpecialAdminToolDefs() []botToolDef {
 			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"date":{"type":"string","description":"YYYY-MM-DD"},"time":{"type":"string","description":"HH:MM"},"party_size":{"type":"integer"},"customer_name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string","description":"Prefijo sin + (por defecto 34)"},"contact_email":{"type":"string"},"commentary":{"type":"string"},"children":{"type":"integer"},"baby_strollers":{"type":"integer"},"high_chairs":{"type":"integer"},"preferred_floor_number":{"type":"integer"},"special":{"type":"object","additionalProperties":false,"properties":{"menus":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"special_date_menu_id":{"type":"integer"},"count":{"type":"integer"},"adelanto_payment_method":{"type":"string"},"items":{"type":"array","items":{"type":"integer"}},"sections":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"section_id":{"type":"integer"},"count":{"type":"integer"},"items":{"type":"array","items":{"type":"integer"}}},"required":["section_id","count"]}}},"required":["special_date_menu_id","count"]}},"payment_method":{"type":"string"},"adelantos_paid":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"method":{"type":"string"},"amount":{"type":"number"}},"required":["method","amount"]}}},"required":["menus"]},"allow_duplicate_of":{"type":"integer","description":"Solo para confirmar expresamente un duplicado legítimo: booking_id de la reserva existente igual"}},"required":["date","time","party_size","customer_name","contact_phone","special"]}`),
 		},
 		{
+			Name:        "config_propose_day",
+			Description: "PROPONE ABRIR o CERRAR las reservas de una o varias fechas (igual que el panel). NO lo aplica: guarda una propuesta exacta y envía al chat una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. dates = lista de fechas YYYY-MM-DD (máximo 31), is_open = true para abrir, false para cerrar. Efecto inmediato en la disponibilidad que ven los clientes (web y bot); no avisa a nadie.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"dates":{"type":"array","items":{"type":"string","description":"YYYY-MM-DD"},"maxItems":31},"is_open":{"type":"boolean"}},"required":["dates","is_open"]}`),
+		},
+		{
+			Name:        "config_propose_daily_limit",
+			Description: "PROPONE fijar el límite de comensales del día (igual que el panel). NO lo aplica: guarda una propuesta exacta y envía al chat una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. date = YYYY-MM-DD, limit = 0-500. Efecto inmediato en la disponibilidad; no avisa a nadie.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"date":{"type":"string","description":"YYYY-MM-DD"},"limit":{"type":"integer","description":"0-500"}},"required":["date","limit"]}`),
+		},
+		{
+			Name:        "config_propose_mesas",
+			Description: "PROPONE fijar el límite diario de mesas de dos o de tres para una fecha (igual que el panel). NO lo aplica: guarda una propuesta exacta y envía al chat una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. table_kind = \"dos\" o \"tres\", date = YYYY-MM-DD, limit = número 0-999 o \"sin_limite\". Efecto inmediato; no avisa a nadie.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"table_kind":{"type":"string","description":"dos o tres"},"date":{"type":"string","description":"YYYY-MM-DD"},"limit":{"type":"string","description":"0-999 o sin_limite"}},"required":["table_kind","date","limit"]}`),
+		},
+		{
+			Name:        "config_propose_salon_condesa",
+			Description: "PROPONE activar o desactivar el salón condesa para una fecha (igual que el panel). NO lo aplica: guarda una propuesta exacta y envía al chat una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. date = YYYY-MM-DD, state = true para activar, false para desactivar. Efecto inmediato; no avisa a nadie.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"date":{"type":"string","description":"YYYY-MM-DD"},"state":{"type":"boolean"}},"required":["date","state"]}`),
+		},
+		{
 			Name:        "booking_propose_restore",
 			Description: "PROPONE restaurar una reserva que cancelaste con booking_propose_cancel, tal como estaba (mismo id, todos los datos, menú especial y abonos incluidos; no usa la reactivación del panel, que pierde datos). NO la restaura: envía al grupo una vista previa con un código; se aplica cuando la misma persona escribe 'OK' y ese código en el mismo chat. Solo vale para reservas canceladas por el bot con copia completa guardada. No avisa al cliente.",
 			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer"}},"required":["booking_id"]}`),
@@ -1024,6 +1044,18 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	}
 	if p.Op == "special_create" {
 		return s.botSpecialCreateExecute(ctx, tx, rid, msg, p)
+	}
+	if p.Op == "config_day" {
+		return s.botConfigDayExecute(ctx, tx, rid, msg, p)
+	}
+	if p.Op == "config_daily_limit" {
+		return s.botConfigDailyLimitExecute(ctx, tx, rid, msg, p)
+	}
+	if p.Op == "config_mesas" {
+		return s.botConfigMesasExecute(ctx, tx, rid, msg, p)
+	}
+	if p.Op == "config_salon_condesa" {
+		return s.botConfigSalonCondesaExecute(ctx, tx, rid, msg, p)
 	}
 	if p.Op == "restore" {
 		return s.botRestoreExecute(ctx, tx, rid, msg, p)
