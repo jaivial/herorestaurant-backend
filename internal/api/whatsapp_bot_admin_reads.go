@@ -51,7 +51,7 @@ func botToolDefsAdminReads() []botToolDef {
 		},
 		{
 			Name:        "get_bot_status",
-			Description: "Estado de la conexión de WhatsApp del bot del restaurante: si el plan lo incluye, si hay instancia provisionada, estado de la conexión y número conectado. ÚSALO cuando el grupo pregunte si el bot está conectado o por qué no responde.",
+			Description: "Último estado registrado de la conexión de WhatsApp del bot del restaurante (sin consulta en vivo al proveedor): si el plan lo incluye, si hay instancia provisionada, estado de la conexión y número conectado. ÚSALO cuando el grupo pregunte si el bot está conectado o por qué no responde.",
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),
 		},
 	}
@@ -479,10 +479,17 @@ func (s *Server) adminReadCampaigns(ctx context.Context, restaurantID int, input
 		CampaignID int `json:"campaign_id"`
 	}
 	_ = json.Unmarshal(input, &in)
+	if in.CampaignID < 0 {
+		return botJSON(map[string]any{"error": "campaign_id inválido"}), nil
+	}
+	// Timestamps: the MySQL session runs with time_zone=SYSTEM and the prod
+	// system zone is UTC (verified @@system_time_zone=UTC on 2026-10-21), so
+	// DATETIME values are UTC instants and the Z suffix is grounded, not
+	// decorative. created_at is nullable in historical rows: COALESCE to ''.
 	q := `
 		SELECT id, name, COALESCE(subject,''), status, COALESCE(channels,''),
-		       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS created,
-		       COALESCE(DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i'),'') AS sent
+		       COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'),'') AS created,
+		       COALESCE(DATE_FORMAT(sent_at, '%Y-%m-%dT%H:%i:%sZ'),'') AS sent
 		FROM campaigns
 		WHERE restaurant_id = ?`
 	args := []any{restaurantID}
@@ -551,7 +558,7 @@ func (s *Server) adminReadCampaigns(ctx context.Context, restaurantID int, input
 			"recipients": counts[c.ID],
 		})
 	}
-	return botJSON(map[string]any{"count": len(out), "campaigns": out}), nil
+	return botJSON(map[string]any{"count": len(out), "tz": "UTC", "campaigns": out}), nil
 }
 
 // adminReadWhatsappConnection is the shared core behind the WA staff tool and
@@ -577,6 +584,8 @@ func (s *Server) adminReadWhatsappConnection(ctx context.Context, restaurantID i
 	if !rec.IsActive {
 		status = "disconnected"
 	}
+	// updated_at comes from the local instance row (UTC, see above); this is
+	// the last recorded state, not a live provider check.
 	return botJSON(map[string]any{
 		"entitled":        true,
 		"provisioned":     true,
@@ -584,6 +593,8 @@ func (s *Server) adminReadWhatsappConnection(ctx context.Context, restaurantID i
 		"connected":       isUAZAPIConnected(status),
 		"connected_phone": emptyStringToNil(rec.ConnectedPhone),
 		"updated_at":      emptyStringToNil(rec.UpdatedAt),
+		"tz":              "UTC",
+		"state_source":    "db",
 	}), nil
 }
 

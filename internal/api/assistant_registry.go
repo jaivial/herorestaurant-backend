@@ -71,7 +71,7 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
-		Name: "whatsapp_connection_get", Description: "Estado de la conexión de WhatsApp del bot del restaurante activo: si el plan lo incluye, si hay instancia provisionada, estado de la conexión y número conectado. Nunca devuelve QR ni códigos de emparejamiento.",
+		Name: "whatsapp_connection_get", Description: "Último estado registrado de la conexión de WhatsApp del bot del restaurante activo (sin consulta en vivo al proveedor): si el plan lo incluye, si hay instancia provisionada, estado de la conexión y número conectado. Nunca devuelve QR ni códigos de emparejamiento.",
 		Schema: json.RawMessage(`{"type":"object","properties":{}}`), BackofficeOnly: true, Section: "plataforma",
 		Handler: func(s *Server, ctx context.Context, rid int, _ json.RawMessage) (string, error) {
 			return s.adminReadWhatsappConnection(ctx, rid)
