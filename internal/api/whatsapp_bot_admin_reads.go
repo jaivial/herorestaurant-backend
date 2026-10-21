@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strconv"
 )
 
 // Coordination id: wa_bot_admin_reads_v1
@@ -209,10 +210,13 @@ func (s *Server) botToolListSpecialDates(ctx context.Context, restaurantID int, 
 		list := make([]map[string]any, 0)
 		for mrows.Next() {
 			var menuID int64
-			var title sql.NullString
-			var adelanto, price sql.NullFloat64
+			var title, adelanto, price sql.NullString
+			// DECIMAL columns arrive as []byte with this driver: scan as text
+			// and parse, never into NullFloat64 (unsupported Scan at runtime).
 			if err := mrows.Scan(&menuID, &title, &adelanto, &price); err == nil {
-				list = append(list, map[string]any{"menu_id": menuID, "custom_title": title.String, "adelanto_amount": adelanto.Float64, "price": price.Float64})
+				adv, _ := strconv.ParseFloat(adelanto.String, 64)
+				prc, _ := strconv.ParseFloat(price.String, 64)
+				list = append(list, map[string]any{"menu_id": menuID, "custom_title": title.String, "adelanto_amount": adv, "price": prc})
 			}
 		}
 		mrows.Close()
