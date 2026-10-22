@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"preactvillacarmen/internal/httpx"
 )
@@ -9,14 +10,20 @@ import (
 // Coordination id: wa_bot_privileged_contacts_v1
 //
 // The backoffice shows the conversations of the connected WhatsApp and lets
-// the operator pick the privileged ones. Two endpoints:
+// the operator pick the privileged ones. Three endpoints:
 //
 //	GET  /api/admin/bot/ai/{restaurantId}/privileged-contacts
 //	PUT  /api/admin/bot/ai/{restaurantId}/privileged-contacts
+//	POST /api/admin/bot/ai/{restaurantId}/privileged-contacts
 //
 // The GET returns the conversations of the provider plus the ones already
 // selected (which may not be in the provider's answer any more, e.g. a chat
 // that was deleted).
+//
+// Observability point wa_bot_privileged_contacts_v2 (additive): the GET also
+// accepts ?q= (case-insensitive substring over name and jid) and ?page= with
+// ?count= (1..100). Without count the full list is returned, the exact shape
+// the v1 panel consumed. The POST adds one phone number by hand.
 
 // botSettingsRestaurantIDForSession returns the restaurant of the request
 // path, but only when the session may act on it.
@@ -79,9 +86,101 @@ func (s *Server) handleBOBotPrivilegedContactsGet(w http.ResponseWriter, r *http
 		}
 	}
 
+	// wa_bot_privileged_contacts_v2: search + server-side pagination over the
+	// provider conversation list. Without count the whole list comes back.
+	chats = botChatsSearch(chats, r.URL.Query().Get("q"))
+	total := len(chats)
+	page := stockQueryInt(r, "page", 1, 1, 1_000_000)
+	count := stockQueryInt(r, "count", 0, 1, 100)
+	if count > 0 {
+		start := (page - 1) * count
+		if start > total {
+			start = total
+		}
+		end := start + count
+		if end > total {
+			end = total
+		}
+		chats = chats[start:end]
+	} else {
+		page, count = 1, total
+	}
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
 		"chats":    chats,
+		"selected": botPrivilegedContactsFromConfig(tenant),
+		"total":    total,
+		"page":     page,
+		"count":    count,
+		"has_more": page*count < total,
+	})
+}
+
+// botChatsSearch filters the conversations by a case-insensitive substring
+// over the label and the jid. An empty query keeps every chat.
+//
+// Coordination id: wa_bot_privileged_contacts_v2 (GET ?q=)
+func botChatsSearch(chats []waChat, raw string) []waChat {
+	q := strings.ToLower(strings.TrimSpace(raw))
+	if q == "" {
+		return chats
+	}
+	out := make([]waChat, 0, len(chats))
+	for _, c := range chats {
+		if strings.Contains(strings.ToLower(c.Name), q) || strings.Contains(strings.ToLower(c.JID), q) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// handleBOBotPrivilegedContactsPost adds one phone number to the privileged
+// list by hand. It covers a number the operator already knows (a client, a
+// supplier) before the conversation shows up in the provider's chat list: the
+// gate matches the JID, so the privilege applies as soon as that number
+// writes. The high is immediate (no "Guardar" round trip) and idempotent.
+//
+// Coordination id: wa_bot_privileged_contacts_v2 (POST {phone, name})
+func (s *Server) handleBOBotPrivilegedContactsPost(w http.ResponseWriter, r *http.Request) {
+	rid, ok := s.botSettingsRestaurantIDForSession(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "restaurantId inválido")
+		return
+	}
+	var req struct {
+		Phone string `json:"phone"`
+		Name  string `json:"name"`
+	}
+	if err := readJSONBody(r, &req); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "JSON inválido"})
+		return
+	}
+	jid, err := botAccessNormalizeTarget(req.Phone, false)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	tenant := s.loadBotTenantConfig(r.Context(), rid)
+	contacts := botPrivilegedContactsFromConfig(tenant)
+	for _, c := range contacts {
+		if c.JID == jid {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "selected": contacts})
+			return
+		}
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = jid
+	}
+	contacts = append(contacts, botPrivilegedContact{JID: jid, Name: name})
+	if err := s.botSavePrivilegedContacts(r.Context(), rid, contacts); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No se pudo guardar el número"})
+		return
+	}
+	tenant = s.loadBotTenantConfig(r.Context(), rid)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
 		"selected": botPrivilegedContactsFromConfig(tenant),
 	})
 }
