@@ -27,6 +27,12 @@ const assistantMaxFrameRunes = 120
 type assistantChatMessage struct {
 	Role    string
 	Content any
+	// Voice note the row carries (forky F3, coord forky_media_transcribe_v1):
+	// loaded from assistant_messages and replayed to the client in the hello
+	// frame. The model never sees it — assistantCall builds the API body from
+	// Role/Content only.
+	AudioURL        string
+	AudioDurationMS int64
 }
 
 // assistantToolDef uses Anthropic-compatible custom tools. Tool execution is

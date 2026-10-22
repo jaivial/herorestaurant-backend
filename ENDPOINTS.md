@@ -3364,8 +3364,8 @@ Frames are JSON text messages:
 | Direction | Frame | Notes |
 |---|---|---|
 | client → server | `{"type":"hello","session_id":null|int}` | null creates a new session (row owned by user+restaurant); an id reuses the caller's session |
-| server → client | `{"type":"hello","session_id":int,"history":[{role,content}…]}` | last `ASSISTANT_HISTORY_LIMIT` messages, oldest-first |
-| client → server | `{"type":"message","content":"…"}` | one user turn; rejected with a `busy` error while a generation is in flight |
+| server → client | `{"type":"hello","session_id":int,"history":[{role,content,audio_url?,audio_duration_ms?}…]}` | last `ASSISTANT_HISTORY_LIMIT` messages, oldest-first; only voice rows carry `audio_url` + `audio_duration_ms` |
+| client → server | `{"type":"message","content":"…","attachments":[…],"audio":{…}}` | one user turn; `attachments` (forky_attachments_v1) and `audio` (forky_media_transcribe_v1) are optional; rejected with a `busy` error while a generation is in flight |
 | server → client | `{"type":"status","state":"thinking"}` → `{"type":"delta","text":"…"}*` → `{"type":"done"}` | deltas are streamed MiniMax text (≤120 runes per frame) |
 | client → server | `{"type":"ping"}` | server replies `{"type":"pong"}` |
 | server → client | `{"type":"error","message":"…"}` | any failure; no `done` follows |
@@ -3379,12 +3379,39 @@ Behavior:
 - Model: `ASSISTANT_MINIMAX_MODEL` (default `MiniMax-M3`) via the same
   Anthropic-compatible Messages API as the translation system
   (`MINIMAX_BASE_URL`/`MINIMAX_API_KEY`), `stream: true` (SSE).
-- Persistence: `assistant_sessions` / `assistant_messages` (migration 082).
+- Persistence: `assistant_sessions` / `assistant_messages` (migrations 082,
+  191 — `audio_url`/`audio_duration_ms` hold the clip of a voice turn).
 - One generation per connection; client disconnect cancels the LLM call.
 
 Env knobs (defaults): `ASSISTANT_MINIMAX_MODEL` (`MiniMax-M3`),
 `ASSISTANT_TIMEOUT_SECONDS` (60), `ASSISTANT_MAX_TOKENS` (1024),
 `ASSISTANT_HISTORY_LIMIT` (20).
+
+### POST /api/admin/assistant/media/upload · POST /api/admin/assistant/transcribe
+
+Transport for Forky chat media (coord `forky_media_transcribe_v1`). Auth: the
+same backoffice session as the WebSocket.
+
+| Endpoint | Body | Answer |
+|---|---|---|
+| `POST /api/admin/assistant/media/upload` | multipart `file` (≤25 MB) | `{"success":true,"url","path","name","content_type","size"}` — stored as `forky/<restaurantID>/<uuid><ext>` in the restaurant's Bunny zone |
+| `POST /api/admin/assistant/transcribe` | `{"audio_b64"}` | `{"success":true,"text","language"}` — forwarded to the bot pipeline sidecar `/transcribe`, ≤60 s |
+
+A voice note runs BOTH calls in parallel and only then sends one turn:
+
+```
+{"type":"message","content":"<transcript>","audio":{"url":"https://…/forky/1/<uuid>.webm","duration_ms":4200}}
+```
+
+`content` is the whisper transcript — what the model reads as the user's prompt
+(the model never "hears" audio) and the caption the UI shows under the player.
+`audio.url` must live inside the caller's own `forky/<restaurantID>/` folder
+(same tenant rule as `attachments`) and is stored on the message row, so a
+reloaded session replays the clip at its own timestamp.
+
+Transcription engine: the sidecar's local **faster-whisper** model, warmed at
+startup (~4 s for a 6 s clip, Spanish). `BOT_STT_ENGINE` overrides it
+(`bark` stays available but is English-only and pays a cold model download).
 
 ---
 
