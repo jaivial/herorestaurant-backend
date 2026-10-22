@@ -20,6 +20,6 @@ CREATE TABLE IF NOT EXISTS bot_inbound_queue (
     created_at   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at   TIMESTAMP       NULL DEFAULT NULL,
     PRIMARY KEY (id),
-    KEY idx_inbound_state (state, created_at),
-    KEY idx_inbound_msg (restaurant_id, message_id)
+    UNIQUE KEY uq_inbound_msg (restaurant_id, message_id),
+    KEY idx_inbound_state (state, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

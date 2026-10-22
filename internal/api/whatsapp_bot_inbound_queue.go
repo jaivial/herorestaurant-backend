@@ -44,7 +44,7 @@ func (s *Server) botInboundEnqueue(ctx context.Context, restaurantID int, chatKe
 		return
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO bot_inbound_queue (restaurant_id, chat_key, message_id, payload_json)
+		INSERT IGNORE INTO bot_inbound_queue (restaurant_id, chat_key, message_id, payload_json)
 		VALUES (?, ?, ?, ?)
 	`, restaurantID, chatKey, msg.MessageID, string(payload)); err != nil {
 		log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 restaurant_id=%d enqueue_error err=%v", restaurantID, err)
@@ -63,7 +63,11 @@ func (s *Server) botInboundFinish(restaurantID int, messageIDs []string, state s
 		args = append(args, id)
 	}
 	args = append(args, restaurantID)
-	if _, err := s.db.ExecContext(context.Background(), `
+	// Bounded: this runs in the worker's defer, a hung DB call must never
+	// freeze the conversation (PR review iter 1).
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := s.db.ExecContext(ctx, `
 		UPDATE bot_inbound_queue SET state = ?
 		WHERE message_id IN (`+ph+`) AND restaurant_id = ? AND state <> 'done'
 	`, args...); err != nil {
@@ -82,7 +86,10 @@ func (s *Server) botInboundClaim(restaurantID int, messageIDs []string) {
 		args = append(args, id)
 	}
 	args = append(args, restaurantID)
-	if _, err := s.db.ExecContext(context.Background(), `
+	// Bounded (PR review iter 1): the claim runs inline in the worker.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := s.db.ExecContext(ctx, `
 		UPDATE bot_inbound_queue SET state = 'running', started_at = NOW()
 		WHERE message_id IN (`+ph+`) AND restaurant_id = ? AND state = 'pending'
 	`, args...); err != nil {
@@ -102,48 +109,31 @@ func botBurstIDs(burst []botWebhookMessage) []string {
 }
 
 // botInboundRecover replays the turns a crash or a deploy interrupted. Called
-// once at boot, behind the background-workers gate.
+// once at boot, behind the background-workers gate. The SELECT is retried so a
+// transient DB hiccup right after boot does not silently disable the replay
+// (PR review iter 1); migrations.Apply already ran before NewServer, so the
+// table exists.
 func (s *Server) botInboundRecover() {
 	if s.db == nil {
 		return
 	}
-	ctx := context.Background()
-	// Too old to answer: close them instead of surprising a customer hours
-	// later with a reply to a conversation that has moved on.
-	if res, err := s.db.ExecContext(ctx, `
-		UPDATE bot_inbound_queue SET state = 'expired'
-		WHERE state IN ('pending','running') AND created_at < (NOW() - INTERVAL 6 HOUR)
-	`); err == nil {
-		if n, _ := res.RowsAffected(); n > 0 {
-			log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 expired=%d", n)
-		}
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT restaurant_id, chat_key, message_id, payload_json
-		FROM bot_inbound_queue
-		WHERE state IN ('pending','running') AND created_at < (NOW() - INTERVAL 15 SECOND)
-		  AND created_at >= (NOW() - INTERVAL 6 HOUR)
-		ORDER BY id ASC LIMIT ?
-	`, botInboundReplayLimit)
-	if err != nil {
-		log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 recover_error err=%v", err)
-		return
-	}
-	type replayRow struct {
+	var found []struct {
 		rid     int
 		key     string
 		msgID   string
 		payload []byte
 	}
-	var found []replayRow
-	for rows.Next() {
-		var r replayRow
-		if rows.Scan(&r.rid, &r.key, &r.msgID, &r.payload) != nil {
-			continue
+	for attempt := 1; attempt <= 3; attempt++ {
+		var err error
+		found, err = s.botInboundRecoverScan(context.Background())
+		if err == nil {
+			break
 		}
-		found = append(found, r)
+		log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 recover_error attempt=%d err=%v", attempt, err)
+		if attempt < 3 {
+			time.Sleep(2 * time.Second)
+		}
 	}
-	rows.Close()
 	if len(found) == 0 {
 		return
 	}
@@ -179,4 +169,54 @@ func (s *Server) botInboundRecover() {
 		// the same burst (enqueue is idempotent for the coalescer).
 		s.botBursts.enqueue(r.key, msg)
 	}
+}
+
+// botInboundRecoverScan closes the expired rows and returns the ones to
+// replay. The SELECT is separate so the caller can retry it alone.
+func (s *Server) botInboundRecoverScan(ctx context.Context) ([]struct {
+	rid     int
+	key     string
+	msgID   string
+	payload []byte
+}, error) {
+	// Too old to answer: close them instead of surprising a customer hours
+	// later with a reply to a conversation that has moved on.
+	if res, err := s.db.ExecContext(ctx, `
+		UPDATE bot_inbound_queue SET state = 'expired'
+		WHERE state IN ('pending','running') AND created_at < (NOW() - INTERVAL 6 HOUR)
+	`); err == nil {
+		if n, _ := res.RowsAffected(); n > 0 {
+			log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 expired=%d", n)
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT restaurant_id, chat_key, message_id, payload_json
+		FROM bot_inbound_queue
+		WHERE state IN ('pending','running') AND created_at < (NOW() - INTERVAL 15 SECOND)
+		  AND created_at >= (NOW() - INTERVAL 6 HOUR)
+		ORDER BY id ASC LIMIT ?
+	`, botInboundReplayLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var found []struct {
+		rid     int
+		key     string
+		msgID   string
+		payload []byte
+	}
+	for rows.Next() {
+		var r struct {
+			rid     int
+			key     string
+			msgID   string
+			payload []byte
+		}
+		if rows.Scan(&r.rid, &r.key, &r.msgID, &r.payload) != nil {
+			continue
+		}
+		found = append(found, r)
+	}
+	return found, rows.Err()
 }
