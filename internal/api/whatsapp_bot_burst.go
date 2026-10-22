@@ -125,6 +125,10 @@ func (s *Server) botRunConversationWorker(restaurantID int, sender string) {
 		if burst == nil {
 			return
 		}
+		// wa_bot_inbound_queue_v1: the queue rows of this burst. Captured
+		// before the compaction below (kept := burst[:0] reuses the array).
+		queueIDs := botBurstIDs(burst)
+		s.botInboundClaim(restaurantID, queueIDs)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		for i := range burst {
 			burst[i] = s.botPrepareInbound(ctx, restaurantID, burst[i])
@@ -141,15 +145,28 @@ func (s *Server) botRunConversationWorker(restaurantID int, sender string) {
 				log.Printf("[bot] checkpoint wa_bot_burst_coalesce_v1 restaurant_id=%d sender=%s messages=%d", restaurantID, sender, msg.Burst)
 			}
 			func() {
+				ok := false
 				defer func() {
 					if rec := recover(); rec != nil {
 						log.Printf("[bot] restaurant=%d sender=%s PANIC recovered: %v", restaurantID, sender, rec)
 					}
+					// wa_bot_inbound_queue_v1: close this burst's rows.
+					state := "done"
+					if !ok {
+						state = "failed"
+					}
+					s.botInboundFinish(restaurantID, queueIDs, state)
 				}()
 				if err := s.botProcessMessage(ctx, restaurantID, msg, kept...); err != nil {
 					log.Printf("[bot] restaurant=%d sender=%s error: %v", restaurantID, sender, err)
+					return
 				}
+				ok = true
 			}()
+		} else {
+			// Nothing usable (every message was handled with a fallback
+			// during prepare): the rows are answered too.
+			s.botInboundFinish(restaurantID, queueIDs, "done")
 		}
 		cancel()
 	}
