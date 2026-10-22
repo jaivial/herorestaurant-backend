@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 	"time"
 )
@@ -146,7 +145,7 @@ func (s *Server) botToolAddBookingNote(ctx context.Context, restaurantID int, ms
 		return botJSON(map[string]any{"error": "no se pudo guardar la nota"}), nil
 	}
 	s.broadcastBookingChanged(restaurantID, in.BookingID, "booking_updated")
-	log.Printf("[bot] checkpoint wa_bot_tools_v2 restaurant_id=%d sender=%s booking_id=%d note_added", restaurantID, msg.Sender, in.BookingID)
+	botCheckpoint("wa_bot_tools_v2", "restaurant_id=%d sender=%s booking_id=%d note_added", restaurantID, msg.Sender, in.BookingID)
 	return botJSON(map[string]any{"saved": true, "booking_id": in.BookingID, "note": note}), nil
 }
 

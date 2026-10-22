@@ -72,6 +72,9 @@ func (g *trackedGatewayStub) SendText(context.Context, string, string) error { r
 func (g *trackedGatewayStub) SendMenu(context.Context, string, string, []string) error {
 	return g.menuErr
 }
+func (g *trackedGatewayStub) SendPoll(context.Context, string, string, []string, int) error {
+	return nil
+}
 func (g *trackedGatewayStub) SendMedia(context.Context, string, waMedia) error       { return nil }
 func (g *trackedGatewayStub) SendLocation(context.Context, string, waLocation) error { return nil }
 func (g *trackedGatewayStub) SendContact(context.Context, string, waContact) error   { return nil }

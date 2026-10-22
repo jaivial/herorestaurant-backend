@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -58,6 +57,13 @@ type botPipelineDecision struct {
 	BookingOp    string   `json:"booking_op,omitempty"`
 	MissingSlots []string `json:"missing_slots,omitempty"`
 }
+
+// botRepeatHandoffMinConfidence (wa_bot_dup_decision_v1): the minimum
+// classifier confidence for which a "repeat" derivation (duplicate verdict or
+// handoff_human with reason "repeat") is trusted. Below it the message is a
+// NEW query: a low-confidence classification (prod: "Hoka", confidence=0.00,
+// node=handoff_repeat) must never forward "the team already has your request".
+const botRepeatHandoffMinConfidence = 0.25
 
 type botPipelineLM struct {
 	Provider string `json:"provider"`
@@ -199,18 +205,21 @@ func (s *Server) botRunPipeline(ctx context.Context, restaurantID int, msg botWe
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v1 restaurant_id=%d sender=%s unavailable err=%v", restaurantID, msg.Sender, err)
+		botCheckpoint("wa_bot_dspy_pipeline_v1", "restaurant_id=%d sender=%s unavailable err=%v", restaurantID, msg.Sender, err)
 		return botPipelineDecision{}, false
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	var d botPipelineDecision
 	if resp.StatusCode != http.StatusOK || json.Unmarshal(raw, &d) != nil || d.Action == "" {
-		log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v1 restaurant_id=%d sender=%s bad_response status=%d", restaurantID, msg.Sender, resp.StatusCode)
+		botCheckpoint("wa_bot_dspy_pipeline_v1", "restaurant_id=%d sender=%s bad_response status=%d", restaurantID, msg.Sender, resp.StatusCode)
 		return botPipelineDecision{}, false
 	}
-	log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v1 restaurant_id=%d sender=%s intent=%s confidence=%.2f classifier=%s node=%s ms=%d",
-		restaurantID, msg.Sender, d.Intent, d.Confidence, d.Classifier, d.Node, d.ElapsedMS)
+	// Coordination id: wa_bot_dspy_pipeline_v1 - why the turn took its route:
+	// intent, confidence, node, and the repeat/handoff meters that decide a
+	// derivation (handoff_reason=repeat / duplicate_request=true).
+	botCheckpoint("wa_bot_dspy_pipeline_v1", "restaurant_id=%d sender=%s intent=%s confidence=%.2f classifier=%s node=%s handoff_reason=%s duplicate_request=%t anger=%.2f can_handle=%.2f ms=%d",
+		restaurantID, msg.Sender, d.Intent, d.Confidence, d.Classifier, d.Node, d.HandoffReason, d.DuplicateRequest, d.Anger, d.CanHandle, d.ElapsedMS)
 	return d, true
 }
 
@@ -233,7 +242,7 @@ func (s *Server) handleBOBotPipelineGet(w http.ResponseWriter, r *http.Request) 
 	online := graph != nil
 	decisions, err := s.botConversation.RecentDecisions(r.Context(), rid, 200)
 	if err != nil {
-		log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v1 restaurant_id=%d decisions_error=%v", rid, err)
+		botCheckpoint("wa_bot_dspy_pipeline_v1", "restaurant_id=%d decisions_error=%v", rid, err)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "online": online, "graph": graph, "decisions": decisions,
 		"stats": botPipelineStats(decisions), "management": s.botConversation.ManagementRequestStats(r.Context(), rid),
@@ -251,7 +260,7 @@ func (s *Server) botApplyPipelineHandoff(ctx context.Context, restaurantID int, 
 			topic = truncate(msg.Text, 160)
 		}
 		_ = s.botConversation.SetHandoff(ctx, restaurantID, msg.Sender, topic, reason, d.HandoffReason == "repeat")
-		log.Printf("[bot] checkpoint wa_bot_sticky_handoff_v1 restaurant_id=%d sender=%s reason=%s repeat=%t", restaurantID, msg.Sender, reason, d.HandoffReason == "repeat")
+		botCheckpoint("wa_bot_sticky_handoff_v1", "restaurant_id=%d sender=%s reason=%s repeat=%t", restaurantID, msg.Sender, reason, d.HandoffReason == "repeat")
 	}
 	switch d.Action {
 	case "reply":
@@ -261,14 +270,14 @@ func (s *Server) botApplyPipelineHandoff(ctx context.Context, restaurantID int, 
 			if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
 				_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "pipeline_fixed_reply")
 			}
-			log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v3 restaurant_id=%d sender=%s node=%s fixed_reply=true", restaurantID, msg.Sender, d.Node)
+			botCheckpoint("wa_bot_dspy_pipeline_v3", "restaurant_id=%d sender=%s node=%s fixed_reply=true", restaurantID, msg.Sender, d.Node)
 			return true
 		}
 		return false
 	case "handoff_same_day":
 		return s.botSameDayIntentGuard(ctx, restaurantID, msg, tenant)
 	case "handoff_extras":
-		log.Printf("[bot] checkpoint booking_extras_change_blocked restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+		botCheckpoint("booking_extras_change_blocked", "restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 		s.botBlockExtrasChange(ctx, restaurantID, msg, tenant)
 		open("extras")
 		return true
@@ -417,7 +426,7 @@ func (s *Server) runBotPipelineDemoLoop(ctx context.Context) {
 		}
 		next := time.Hour
 		if err := s.botPushPipelineDemos(ctx); err != nil {
-			log.Printf("[bot] checkpoint wa_bot_dspy_compiled_v4 demos_push_error=%v", err)
+			botCheckpoint("wa_bot_dspy_compiled_v4", "demos_push_error=%v", err)
 			next = time.Minute
 		}
 		timer.Reset(next)
@@ -458,7 +467,7 @@ func (s *Server) botPushPipelineDemosFor(ctx context.Context, restaurantID int) 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
-	log.Printf("[bot] checkpoint wa_bot_dspy_compiled_v4 restaurant_id=%d demos_pushed=%d", restaurantID, len(demos))
+	botCheckpoint("wa_bot_dspy_compiled_v4", "restaurant_id=%d demos_pushed=%d", restaurantID, len(demos))
 	return nil
 }
 

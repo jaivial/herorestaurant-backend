@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"preactvillacarmen/internal/diag"
 	"preactvillacarmen/internal/httpx"
 )
 
@@ -357,7 +358,7 @@ func (s *Server) handleBotWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if msg.Ignored {
-		log.Printf("[bot] checkpoint wa_bot_ignore_non_conversational_v1 sender=%s", msg.Sender)
+		botCheckpoint("wa_bot_ignore_non_conversational_v1", "sender=%s", msg.Sender)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "ignored": true})
 		return
 	}
@@ -416,7 +417,7 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 		}
 		s.botRecordConversationMessage(r.Context(), restaurantID, msg.Sender, "user", content, "", "inbound_paused")
 		s.botTouchSession(r.Context(), restaurantID, msg.Sender, msg.PushName)
-		log.Printf("[bot] checkpoint wa_bot_human_takeover_skip restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+		botCheckpoint("wa_bot_human_takeover_skip", "restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "paused": true})
 		return
 	}
@@ -541,9 +542,19 @@ func sanitizeBotPushName(name string) string {
 	return name
 }
 
+// botFallbackReplyText is the generic apology delivered when the agent
+// produced no reply (shared by botSendFallback and the turn diag event).
+const botFallbackReplyText = "Perdona, ahora mismo no puedo responderte. ¿Puedes intentarlo de nuevo en un momento?"
+
 // botProcessMessage runs the full agent turn for an inbound message.
 func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg botWebhookMessage, parts ...botWebhookMessage) error {
 	turnStarted := time.Now()
+	// Coordination id: wa_bot_turn_diag_v1 - the whole turn is correlated by
+	// the existing per-conversation session id (botSessionID, shared with the
+	// LLM session header, the pipeline log and the stored decision trace), so
+	// every diag event of this turn (tool results, guards, reply) reconstructs
+	// it end to end without inventing a new identifier.
+	ctx = diag.WithCoordination(ctx, botSessionID(restaurantID, msg.Sender))
 	tenant := s.loadBotTenantConfig(ctx, restaurantID)
 	if len(parts) == 0 {
 		parts = []botWebhookMessage{msg}
@@ -586,23 +597,44 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		facts := s.botPipelineFacts(ctx, restaurantID, msg)
 		decision, pipelineOK = s.botRunPipeline(ctx, restaurantID, msg, routing, messages, facts)
 	} else {
-		log.Printf("[bot] checkpoint wa_bot_privileged_group_v1 restaurant_id=%d sender=%s decision=privileged_turn_pipeline_skipped", restaurantID, msg.Sender)
+		botCheckpoint("wa_bot_privileged_group_v1", "restaurant_id=%d sender=%s decision=privileged_turn_pipeline_skipped", restaurantID, msg.Sender)
 	}
 	var decisionID int64
 	if pipelineOK {
 		if s.botConversation != nil {
 			id, err := s.botConversation.AppendDecision(ctx, restaurantID, msg.Sender, msg.Text, decision, "")
 			if err != nil {
-				log.Printf("[bot] checkpoint wa_bot_dspy_pipeline_v1 restaurant_id=%d store_error=%v", restaurantID, err)
+				botCheckpoint("wa_bot_dspy_pipeline_v1", "restaurant_id=%d store_error=%v", restaurantID, err)
 			}
 			decisionID = id
 		}
 		msg.Language, msg.DuplicateRequest = decision.Language, decision.DuplicateRequest
+		// Coordination id: wa_bot_dup_decision_v1 - a "repeat" derivation is
+		// only trusted when the classifier was confident enough. Below
+		// botRepeatHandoffMinConfidence (prod 2026-10-22: "Hoka",
+		// confidence=0.00, node=handoff_repeat -> the message was derived to
+		// management and never answered) the message is treated as a NEW query:
+		// the duplicate verdict and the repeat handoff are dropped and the
+		// agent turn runs normally.
+		if msg.DuplicateRequest || (decision.Action == "handoff_human" && decision.HandoffReason == "repeat") {
+			derive := decision.Confidence >= botRepeatHandoffMinConfidence
+			if !derive {
+				msg.DuplicateRequest = false
+				decision.Action = ""
+				decision.HandoffReason = ""
+			}
+			botCheckpointCtx(ctx, "wa_bot_dup_decision_v1", "derive=%t confidence=%.2f threshold=%.2f node=%s intent=%s",
+				derive, decision.Confidence, botRepeatHandoffMinConfidence, decision.Node, decision.Intent)
+		}
 		if decision.HandoffCleared {
 			_ = s.botConversation.ClearHandoff(ctx, restaurantID, msg.Sender)
-			log.Printf("[bot] checkpoint wa_bot_sticky_handoff_v1 restaurant_id=%d sender=%s cleared new_topic", restaurantID, msg.Sender)
+			botCheckpoint("wa_bot_sticky_handoff_v1", "restaurant_id=%d sender=%s cleared new_topic", restaurantID, msg.Sender)
 		}
 		if s.botApplyPipelineHandoff(ctx, restaurantID, msg, tenant, decision) {
+			// Coordination id: wa_bot_turn_end_v1 - closed by the pipeline
+			// handoff route before any agent loop ran.
+			botCheckpointCtx(ctx, "wa_bot_turn_end_v1", "restaurant_id=%d sender=%s message_id=%s reason=handoff node=%s action=%s handoff_reason=%s duplicate_request=%t confidence=%.2f ms=%d",
+				restaurantID, msg.Sender, msg.MessageID, decision.Node, decision.Action, decision.HandoffReason, decision.DuplicateRequest, decision.Confidence, time.Since(turnStarted).Milliseconds())
 			return nil
 		}
 	} else if !msg.PrivilegedGroup {
@@ -610,17 +642,20 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		// a same-day create/modify/cancel gets the AI notice + contact card instead
 		// of a clarifying question the model would ask first.
 		if s.botSameDayIntentGuard(ctx, restaurantID, msg, tenant) {
+			botCheckpointCtx(ctx, "wa_bot_turn_end_v1", "restaurant_id=%d sender=%s message_id=%s reason=same_day_guard ms=%d", restaurantID, msg.Sender, msg.MessageID, time.Since(turnStarted).Milliseconds())
 			return nil
 		}
 		// Coordination id: booking-extras-handoff - extras are managed by the
 		// restaurant; the guard answers with the AI notice + contact card before the
 		// model runs so it can never promise an extras change.
 		if s.botExtrasIntentGuard(ctx, restaurantID, msg, tenant) {
+			botCheckpointCtx(ctx, "wa_bot_turn_end_v1", "restaurant_id=%d sender=%s message_id=%s reason=extras_guard ms=%d", restaurantID, msg.Sender, msg.MessageID, time.Since(turnStarted).Milliseconds())
 			return nil
 		}
 		// Coordination id: wa_bot_allergen_handoff_v1 - never let the model guess
 		// ingredients/allergens; hand over to the restaurant instead.
 		if s.botAllergenIntentGuard(ctx, restaurantID, msg, tenant) {
+			botCheckpointCtx(ctx, "wa_bot_turn_end_v1", "restaurant_id=%d sender=%s message_id=%s reason=allergen_guard ms=%d", restaurantID, msg.Sender, msg.MessageID, time.Since(turnStarted).Milliseconds())
 			return nil
 		}
 	}
@@ -662,7 +697,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	if msg.PrivilegedGroup && botHasReadableAttachment(msg) {
 		note, extracted := s.botAttachmentTurnNote(ctx, restaurantID, msg)
 		messages = botAppendTextToLastUserMessage(messages, note)
-		log.Printf("[bot] checkpoint wa_bot_attachment_read_v1 restaurant_id=%d sender=%s media=%s extracted=%t", restaurantID, msg.Sender, msg.MediaKind, extracted)
+		botCheckpoint("wa_bot_attachment_read_v1", "restaurant_id=%d sender=%s media=%s extracted=%t", restaurantID, msg.Sender, msg.MediaKind, extracted)
 	}
 	system := renderBotSystemPrompt(promptData)
 	_, _, memberErr := s.botMemberForPhone(ctx, restaurantID, msg.Sender)
@@ -709,8 +744,10 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// Coordination id: wa_bot_tool_grants_v1 - the per-chat grant guard
 			// also covers the forky names, which never reach botExecuteTool.
 			if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
-				log.Printf("[bot] checkpoint wa_bot_tool_grants_v1 restaurant_id=%d tool=%s", restaurantID, name)
-				return botJSON(map[string]any{"error": reason}), nil
+				botCheckpoint("wa_bot_tool_grants_v1", "restaurant_id=%d tool=%s", restaurantID, name)
+				// wa_bot_terminal_tool_v1: a non-granted tool will not be granted
+				// mid-turn: the refusal is final and must not be retried.
+				return botJSON(map[string]any{"error": reason, "terminal": true}), nil
 			}
 			// Temporary containment (wa_bot_admin_write_denied_v1): these bot-owned
 			// mutations are gated only by a confirmed=true the model writes itself,
@@ -718,8 +755,11 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// groups until an approval bound to the exact preview exists. Reads,
 			// messaging and add_booking_note are unchanged.
 			if botPrivilegedDeniedWrites[name] && !tenant.PrivilegedDirectWrites {
-				log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
-				return botJSON(map[string]any{"error": "esta operación directa está desactivada para el bot (no se ejecuta). No la reintentes: usa la herramienta de PROPUESTA equivalente (booking_propose_create/edit/cancel, special_booking_propose_create, booking_propose_restore...), que se aplica con 'OK <código>'."}), nil
+				botCheckpoint("wa_bot_admin_write_denied_v1", "restaurant_id=%d tool=%s", restaurantID, name)
+				// wa_bot_terminal_tool_v1: the refusal is the policy itself; the
+				// model insisting on the same call is what burned 22 iterations in
+				// prod. Marked terminal so the loop closes honestly instead.
+				return botJSON(map[string]any{"error": "esta operación directa está desactivada para el bot (no se ejecuta). No la reintentes: usa la herramienta de PROPUESTA equivalente (booking_propose_create/edit/cancel, special_booking_propose_create, booking_propose_restore...), que se aplica con 'OK <código>'.", "terminal": true}), nil
 			}
 			if _, ok := assistantToolLookup(name); ok {
 				if _, mine := botOwned[name]; !mine {
@@ -729,16 +769,18 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 					// gated tools instead. Refused even if a merged tool list
 					// ever exposes the name to the model.
 					if _, excluded := botForkyExcludedFromWA[name]; excluded {
-						log.Printf("[bot] checkpoint wa_bot_forky_excluded_v1 restaurant_id=%d tool=%s", restaurantID, name)
-						return botJSON(map[string]any{"error": "esa consulta del panel no está disponible en este chat. Usa la herramienta dedicada del bot equivalente si existe; si no, debe consultarse en el panel de administración."}), nil
+						botCheckpoint("wa_bot_forky_excluded_v1", "restaurant_id=%d tool=%s", restaurantID, name)
+						// wa_bot_terminal_tool_v1: panel-only query, never available here.
+						return botJSON(map[string]any{"error": "esa consulta del panel no está disponible en este chat. Usa la herramienta dedicada del bot equivalente si existe; si no, debe consultarse en el panel de administración.", "terminal": true}), nil
 					}
 					// A forky write tool the bot does not own is a generic panel
 					// mutation whose confirmation token the model redeems itself:
 					// refused in the server (wa_bot_admin_write_denied_v1). Reads and
 					// the bot's own tools are unchanged.
 					if def, _ := assistantToolLookup(name); def.Write && !tenant.PrivilegedDirectWrites {
-						log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
-						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel directamente. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, PROPON el cambio equivalente con panel_change (se aplica cuando el usuario responde 'OK <código>'). No busques otra vía."}), nil
+						botCheckpoint("wa_bot_admin_write_denied_v1", "restaurant_id=%d tool=%s", restaurantID, name)
+						// wa_bot_terminal_tool_v1: generic panel write, final refusal.
+						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel directamente. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, PROPON el cambio equivalente con panel_change (se aplica cuando el usuario responde 'OK <código>'). No busques otra vía.", "terminal": true}), nil
 					}
 					return s.assistantExecuteTool(s.botPrivilegedForkyContext(ctx, restaurantID), restaurantID, name, input)
 				}
@@ -762,6 +804,10 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		})
 	}
 	if err != nil {
+		// Coordination id: wa_bot_turn_end_v1 - the model call failed before any
+		// tool ran; the customer gets the generic fallback.
+		botCheckpointCtx(ctx, "wa_bot_turn_end_v1", "restaurant_id=%d sender=%s message_id=%s reason=model_call_failed class=%s ms=%d",
+			restaurantID, msg.Sender, msg.MessageID, botErrClass(err), time.Since(turnStarted).Milliseconds())
 		// Never ghost the customer: send a graceful fallback on any LLM failure.
 		s.botSendFallback(ctx, restaurantID, msg.Sender)
 		return err
@@ -778,14 +824,26 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		sendCtx, cancelSend = context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 		defer cancelSend()
 	}
+	// Coordination id: wa_bot_turn_reply_v1 - classify what the customer got
+	// this turn (kind + bounded preview) so a silent or broken reply is visible
+	// next to what happened (wa_bot_turn_end_v1) without reading the transcript.
+	replyKind, replyText := "tool_delivery", ""
+	switch {
+	case turn.noticeDelivered:
+		replyKind = "server_notice"
+	case result.Interrupted:
+		replyKind = "interrupted_notice"
+	}
 	if (result.Interrupted || !botDeliveredReply(result.ToolCalls)) && !turn.noticeDelivered {
 		if text := botFinalAssistantText(result.Messages); botPlainTextLeaksInternal(text) {
 			// The model typed a contact card or pasted a staff notification as
 			// text: deliver the real intro + vCard instead (wa_bot_context_hygiene_v1).
-			log.Printf("[bot] checkpoint wa_bot_plain_text_rewritten restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+			replyKind = "contact_card_rewritten"
+			botCheckpoint("wa_bot_plain_text_rewritten", "restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 			_, _ = s.botToolSendContact(sendCtx, restaurantID, msg, tenant, nil)
-		} else if text != "" {
-			log.Printf("[bot] checkpoint wa_bot_plain_text_fallback restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+		} else if text := botFinalAssistantText(result.Messages); text != "" {
+			replyKind, replyText = "plain_text", text
+			botCheckpoint("wa_bot_plain_text_fallback", "restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 			if gw, ok := s.botGatewayFor(sendCtx, restaurantID); ok {
 				// wa_bot_outbound_guard_v1: no jargon, no walls of text.
 				for _, part := range botOutboundText(text) {
@@ -795,11 +853,24 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 				}
 			}
 		} else {
+			replyKind, replyText = "fallback", botFallbackReplyText
 			s.botSendFallback(sendCtx, restaurantID, msg.Sender)
 		}
 	}
-	log.Printf("[bot] restaurant=%d sender=%s iterations=%d model=%s node=%s tools=%s",
-		restaurantID, msg.Sender, result.Iterations, result.ModelUsed, decision.Node, strings.Join(result.ToolCalls, ","))
+	botCheckpointCtx(ctx, "wa_bot_turn_reply_v1", "restaurant_id=%d sender=%s message_id=%s kind=%s chars=%d preview=%s",
+		restaurantID, msg.Sender, msg.MessageID, replyKind, len(replyText), botDiagPreview(replyText, 160))
+	endReason := "end_turn"
+	switch {
+	case result.Exhausted:
+		endReason = "exhausted"
+	case result.Interrupted:
+		endReason = "interrupted"
+	}
+	// Coordination id: wa_bot_turn_end_v1 - why the turn closed, with how much
+	// work it did (iterations, tool calls, model) and how long it took. This is
+	// the event that reconstructs a turn together with wa_bot_tool_result_v1.
+	botCheckpointCtx(ctx, "wa_bot_turn_end_v1", "restaurant_id=%d sender=%s message_id=%s reason=%s iterations=%d ran=%d failed=%d model=%s node=%s ms=%d tools=%s",
+		restaurantID, msg.Sender, msg.MessageID, endReason, result.Iterations, result.Ran, result.Failed, result.ModelUsed, decision.Node, time.Since(turnStarted).Milliseconds(), strings.Join(result.ToolCalls, ","))
 	return nil
 }
 
@@ -846,13 +917,11 @@ func botFinalAssistantText(msgs []botMessage) string {
 
 // botSendFallback delivers a generic apology when the agent produced no reply.
 func (s *Server) botSendFallback(ctx context.Context, restaurantID int, sender string) {
-	const fallback = "Perdona, ahora mismo no puedo responderte. ¿Puedes intentarlo de nuevo en un momento?"
 	gw, ok := s.botGatewayFor(ctx, restaurantID)
 	if !ok {
 		return
 	}
-	if s.sendWhatsAppTextTracked(ctx, restaurantID, gw, sender, fallback, "agent_fallback") == nil {
-	}
+	s.sendWhatsAppTextTracked(ctx, restaurantID, gw, sender, botFallbackReplyText, "agent_fallback")
 }
 
 // botPrivilegedDeniedWrites lists the bot-owned destructive or special-booking

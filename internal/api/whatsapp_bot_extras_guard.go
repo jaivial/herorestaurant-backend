@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"log"
 	"regexp"
 	"strings"
 	"unicode"
@@ -145,7 +144,7 @@ func (s *Server) botExtrasIntentGuard(ctx context.Context, restaurantID int, msg
 	if !botExtrasMutationIntent(msg.Text, extraNames) {
 		return false
 	}
-	log.Printf("[bot] checkpoint booking_extras_change_blocked restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+	botCheckpoint("booking_extras_change_blocked", "restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 	s.botBlockExtrasChange(ctx, restaurantID, msg, tenant)
 	return true
 }
@@ -154,5 +153,5 @@ func (s *Server) botExtrasIntentGuard(ctx context.Context, restaurantID int, msg
 // extras change request. The requested change is never performed.
 func (s *Server) botBlockExtrasChange(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) {
 	s.botForwardToManagement(ctx, restaurantID, msg, tenant, "extras", "", botManagementPrefixFor("extras", msg.Language), msg.Language, s.botIsDuplicateRequest(msg))
-	log.Printf("[bot] checkpoint booking_extras_change_notified restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+	botCheckpoint("booking_extras_change_notified", "restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 }

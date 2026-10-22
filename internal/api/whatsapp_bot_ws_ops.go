@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -179,7 +178,7 @@ func botWSSiteBuilderCall(s *Server, ctx context.Context, rid int, p map[string]
 	if err != nil || token == "" {
 		return nil, errors.New("sesión del panel no disponible")
 	}
-	log.Printf("[bot] checkpoint wa_bot_panel_wsops_v1 restaurant_id=%d op=site_builder_call type=%s", rid, typ)
+	botCheckpoint("wa_bot_panel_wsops_v1", "restaurant_id=%d op=site_builder_call type=%s", rid, typ)
 	out, err := s.forkyAdminRunOp(rid, token, op, pathParams, nil, body)
 	if err != nil {
 		return nil, err
@@ -230,7 +229,7 @@ func botWSAssistantTool(s *Server, ctx context.Context, rid int, p map[string]an
 		User:               boUser{ID: userID, Role: "root", isSuperadmin: true},
 		ActiveRestaurantID: rid,
 	})
-	log.Printf("[bot] checkpoint wa_bot_panel_wsops_v1 restaurant_id=%d op=assistant_tool tool=%s", rid, name)
+	botCheckpoint("wa_bot_panel_wsops_v1", "restaurant_id=%d op=assistant_tool tool=%s", rid, name)
 	out, err := s.assistantExecuteTool(toolCtx, rid, name, input)
 	if err != nil {
 		return nil, err

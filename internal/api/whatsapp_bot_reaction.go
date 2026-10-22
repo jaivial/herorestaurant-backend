@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -58,10 +57,10 @@ func (s *Server) botReactToMessage(restaurantID int, msg botWebhookMessage, emoj
 		}
 		_, code, err := evo.request(ctx, http.MethodPost, evo.msgPath("sendReaction"), map[string]any{"key": key, "reaction": emoji})
 		if err != nil || code < 200 || code >= 300 {
-			log.Printf("[bot] checkpoint wa_bot_audio_reaction_v1 restaurant_id=%d emoji=%s failed code=%d err=%v", restaurantID, emoji, code, err)
+			botCheckpoint("wa_bot_audio_reaction_v1", "restaurant_id=%d emoji=%s failed code=%d err=%v", restaurantID, emoji, code, err)
 			return
 		}
-		log.Printf("[bot] checkpoint wa_bot_audio_reaction_v1 restaurant_id=%d emoji=%s sent", restaurantID, emoji)
+		botCheckpoint("wa_bot_audio_reaction_v1", "restaurant_id=%d emoji=%s sent", restaurantID, emoji)
 	}()
 }
 

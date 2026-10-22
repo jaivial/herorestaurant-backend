@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 )
@@ -97,15 +96,16 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 	// which custom tools this chat may call; the filtered catalog is UX, THIS
 	// is the guard.
 	if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
-		log.Printf("[bot] checkpoint wa_bot_tool_grants_v1 restaurant_id=%d tool=%s", restaurantID, name)
-		return botJSON(map[string]any{"error": reason}), nil
+		botCheckpoint("wa_bot_tool_grants_v1", "restaurant_id=%d tool=%s", restaurantID, name)
+		// wa_bot_terminal_tool_v1: the grant will not appear mid-turn.
+		return botJSON(map[string]any{"error": reason, "terminal": true}), nil
 	}
 	// Coordination id: wa_bot_privileged_control_v1 - this version of the bot
 	// only exists for the allowed (privileged) contacts and groups: the
 	// control-plane tools are refused server-side in every other chat.
 	if botPrivilegedControlToolNames[name] && !msg.PrivilegedGroup {
-		log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d tool=%s denied", restaurantID, name)
-		return botJSON(map[string]any{"error": "esta herramienta solo está disponible en las conversaciones autorizadas."}), nil
+		botCheckpoint("wa_bot_privileged_control_v1", "restaurant_id=%d tool=%s denied", restaurantID, name)
+		return botJSON(map[string]any{"error": "esta herramienta solo está disponible en las conversaciones autorizadas.", "terminal": true}), nil
 	}
 	switch name {
 	case "send_message":

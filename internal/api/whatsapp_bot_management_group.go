@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -72,7 +71,7 @@ func (s *Server) botManagementGroupJID(ctx context.Context, restaurantID int, te
 	// Evolution returns a JSON array; uazapiJSONRequest wraps non-object bodies.
 	_, code, raw, err := s.uazapiJSONRequest(reqCtx, strings.TrimRight(evo.baseURL, "/")+"/group/fetchAllGroups/"+evo.instanceName+"?getParticipants=false", http.MethodGet, map[string]string{"apikey": evo.apiKey}, nil)
 	if err != nil || code < 200 || code >= 300 {
-		log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d group_lookup_failed code=%d err=%v", restaurantID, code, err)
+		botCheckpoint("wa_bot_management_group_v1", "restaurant_id=%d group_lookup_failed code=%d err=%v", restaurantID, code, err)
 		return ""
 	}
 	jid := botFindGroupJID(raw, name)
@@ -81,7 +80,7 @@ func (s *Server) botManagementGroupJID(ctx context.Context, restaurantID int, te
 		botGroupJIDCache.byRID[restaurantID] = botGroupJIDEntry{jid: jid, at: time.Now()}
 		botGroupJIDCache.Unlock()
 	} else {
-		log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d group_not_found name=%q", restaurantID, name)
+		botCheckpoint("wa_bot_management_group_v1", "restaurant_id=%d group_not_found name=%q", restaurantID, name)
 	}
 	return jid
 }
@@ -304,14 +303,14 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 		if reason == "same_day" {
 			s.botSendSameDayManagementCard(ctx, restaurantID, msg, tenant)
 		}
-		log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d sender=%s reason=%s duplicate=true", restaurantID, msg.Sender, reason)
+		botCheckpoint("wa_bot_management_group_v1", "restaurant_id=%d sender=%s reason=%s duplicate=true", restaurantID, msg.Sender, reason)
 		return true
 	}
 	groupSent := false
 	if jid := s.botManagementGroupJID(ctx, restaurantID, tenant); jid != "" {
 		groupText := s.botManagementGroupText(ctx, restaurantID, msg, reason, detail)
 		if err := gw.SendText(ctx, jid, groupText); err != nil {
-			log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d group_send_failed err=%v", restaurantID, err)
+			botCheckpoint("wa_bot_management_group_v1", "restaurant_id=%d group_send_failed err=%v", restaurantID, err)
 		} else {
 			groupSent = true
 			// The customer's own contact card, so the team can call or save
@@ -321,7 +320,7 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 				cardName = "Cliente " + botFormatPhoneDisplay(msg.Sender)
 			}
 			if err := gw.SendContact(ctx, jid, waContact{FullName: cardName, Phone: digitsOnly(msg.Sender), Organization: "Cliente · WhatsApp bot"}); err != nil {
-				log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d customer_card_failed err=%v", restaurantID, err)
+				botCheckpoint("wa_bot_management_group_v1", "restaurant_id=%d customer_card_failed err=%v", restaurantID, err)
 			}
 		}
 	}
@@ -336,7 +335,7 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 		_ = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, botContactIntroText(""), "management_handoff_notice")
 		name, phone := s.botSameDayContactDetails(ctx, restaurantID, tenant)
 		_, _ = s.botSendContactCardWith(ctx, restaurantID, msg, name, phone)
-		log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d sender=%s reason=%s group_unavailable card_fallback=true", restaurantID, msg.Sender, reason)
+		botCheckpoint("wa_bot_management_group_v1", "restaurant_id=%d sender=%s reason=%s group_unavailable card_fallback=true", restaurantID, msg.Sender, reason)
 		return false
 	}
 	text = s.botHandoffReplyText(ctx, restaurantID, msg, reason, detail, prefix, lang, false)
@@ -344,7 +343,7 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 	if reason == "same_day" {
 		s.botSendSameDayManagementCard(ctx, restaurantID, msg, tenant)
 	}
-	log.Printf("[bot] checkpoint wa_bot_management_group_v1 restaurant_id=%d sender=%s reason=%s forwarded=true", restaurantID, msg.Sender, reason)
+	botCheckpoint("wa_bot_management_group_v1", "restaurant_id=%d sender=%s reason=%s forwarded=true", restaurantID, msg.Sender, reason)
 	return true
 }
 
@@ -355,8 +354,8 @@ func (s *Server) botForwardToManagement(ctx context.Context, restaurantID int, m
 func (s *Server) botSendSameDayManagementCard(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig) {
 	name, phone := s.botSameDayContactDetails(ctx, restaurantID, tenant)
 	if _, err := s.botSendContactCardWith(ctx, restaurantID, msg, name, phone); err != nil {
-		log.Printf("[bot] checkpoint wa_bot_same_day_card_v1 restaurant_id=%d sender=%s card_failed err=%v", restaurantID, msg.Sender, err)
+		botCheckpoint("wa_bot_same_day_card_v1", "restaurant_id=%d sender=%s card_failed err=%v", restaurantID, msg.Sender, err)
 		return
 	}
-	log.Printf("[bot] checkpoint wa_bot_same_day_card_v1 restaurant_id=%d sender=%s card_sent=true", restaurantID, msg.Sender)
+	botCheckpoint("wa_bot_same_day_card_v1", "restaurant_id=%d sender=%s card_sent=true", restaurantID, msg.Sender)
 }

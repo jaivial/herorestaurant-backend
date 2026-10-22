@@ -583,6 +583,33 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	isAudio := d.Message.AudioMessage != nil || d.Message.PtvMessage != nil
 	ignored := botIsIgnoredMessageType(d.MessageType) || d.Message.ReactionMessage != nil || d.Message.ProtocolMessage != nil
 
+	// Coordination id: wa_bot_provider_retry_receipt_v1 - Baileys reports a
+	// failed delivery ("recipient could not decrypt our message": the evo-weai
+	// retry receipts) as a protocolMessage inside messages.upsert. The bot
+	// drops it as non-conversational (ignored), but the signal is recorded so
+	// decryption outages are visible backend-side: key_id is the provider id of
+	// OUR message that failed, remote_jid/participant allow correlating with
+	// the conversation and the provider dashboard.
+	if len(d.Message.ProtocolMessage) > 0 {
+		var pm struct {
+			Type int `json:"type"`
+			Key  struct {
+				ID          string `json:"id"`
+				RemoteJid   string `json:"remoteJid"`
+				Participant string `json:"participant"`
+				FromMe      bool   `json:"fromMe"`
+			} `json:"key"`
+		}
+		if json.Unmarshal(d.Message.ProtocolMessage, &pm) == nil {
+			kind := "protocol"
+			if pm.Type == 1 { // Baileys proto: 1 = retry receipt (msgRetry)
+				kind = "retry_receipt"
+			}
+			botCheckpoint("wa_bot_provider_retry_receipt_v1", "instance=%s kind=%s protocol_type=%d remote_jid=%s key_id=%s participant=%s from_me=%t",
+				strings.TrimSpace(env.Instance), kind, pm.Type, pm.Key.RemoteJid, pm.Key.ID, pm.Key.Participant, pm.Key.FromMe)
+		}
+	}
+
 	// Coordination id: wa_bot_privileged_group_v1 - an inline document (the
 	// webhook is registered with webhookBase64=true) is kept only when bounded
 	// (~11 MB), the same cap as the audio payload.
