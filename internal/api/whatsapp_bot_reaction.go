@@ -51,7 +51,7 @@ func (s *Server) botReactToMessage(restaurantID int, msg botWebhookMessage, emoj
 		// raw participant (which may be an opaque LID, …:59@lid), so the reaction
 		// must use that same value — a phone-form JID is silently dropped.
 		// Coordination id: wa_bot_group_reaction_lid_v1
-		if msg.ParticipantRawJID != "" {
+		if msg.IsGroup && msg.ParticipantRawJID != "" {
 			key["participant"] = msg.ParticipantRawJID
 		} else if msg.IsGroup && msg.ParticipantJID != "" {
 			key["participant"] = msg.ParticipantJID
