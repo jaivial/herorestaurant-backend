@@ -704,7 +704,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// which is not a human approval. Refused in the server for privileged
 			// groups until an approval bound to the exact preview exists. Reads,
 			// messaging and add_booking_note are unchanged.
-			if botPrivilegedDeniedWrites[name] {
+			if botPrivilegedDeniedWrites[name] && !tenant.PrivilegedDirectWrites {
 				log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
 				return botJSON(map[string]any{"error": "esta operación directa está desactivada para el bot (no se ejecuta). No la reintentes: usa la herramienta de PROPUESTA equivalente (booking_propose_create/edit/cancel, special_booking_propose_create, booking_propose_restore...), que se aplica con 'OK <código>'."}), nil
 			}
@@ -723,7 +723,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 					// mutation whose confirmation token the model redeems itself:
 					// refused in the server (wa_bot_admin_write_denied_v1). Reads and
 					// the bot's own tools are unchanged.
-					if def, _ := assistantToolLookup(name); def.Write {
+					if def, _ := assistantToolLookup(name); def.Write && !tenant.PrivilegedDirectWrites {
 						log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
 						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel directamente. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, PROPON el cambio equivalente con panel_change (se aplica cuando el usuario responde 'OK <código>'). No busques otra vía."}), nil
 					}

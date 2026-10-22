@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"math"
 	"math/big"
@@ -603,6 +604,21 @@ func (s *Server) botToolSpecialBookingGet(ctx context.Context, rid int, msg botW
 	return botJSON(map[string]any{"booking_id": in.BookingID, "date": row.Date, "time": row.Time, "people": row.Party, "status": row.Status, "special_data_untrusted": snap, "totals": botSnapTotals(snap)}), nil
 }
 
+// botProposalKindID derives a stable synthetic proposal id (always negative,
+// so it can never collide with a real booking id) from the dedup key's kind:
+// same kind → same slot (a new proposal supersedes the previous one of that
+// kind), different kinds coexist. Deterministic across restarts.
+// Coordination id: wa_bot_restaurant_days_fix_v1
+func botProposalKindID(dedupKey string) int64 {
+	kind := dedupKey
+	if i := strings.IndexByte(kind, ':'); i > 0 {
+		kind = kind[:i]
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(kind))
+	return int64(h.Sum32()%991) + 1
+}
+
 func botSpecialNewCode() (string, error) {
 	out := make([]byte, botSpecialAdminCodeLen)
 	max := big.NewInt(int64(len(botSpecialAdminAlphabet)))
@@ -772,6 +788,19 @@ func (s *Server) botToolSpecialPropose(ctx context.Context, rid int, msg botWebh
 // it only after the gateway accepted the send. Shared by every op.
 func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhookMessage, op string, bookingID int64, args any, dedupKey string, actor, origin, beforeHash, afterHash, preview, code string) (string, error) {
 	in := struct{ BookingID int64 }{bookingID}
+	if dedupKey != "" {
+		// No-booking proposals (create, catalog, config, panel, access) get a
+		// PER-KIND synthetic id: uq_wa_op_active is (restaurant_id, booking_id,
+		// active), so two active rows would collide whatever their op. The id is
+		// negative, so it can never collide with a real booking id, and the hash
+		// makes each op kind its own slot: two proposals of DIFFERENT kinds pend
+		// at the same time (open the date AND create the booking), while a new
+		// proposal of the SAME kind still supersedes the previous one and its
+		// code can never execute (approval claims by code_hash + state='sent' +
+		// active=1; superseded rows are state='superseded', active=NULL).
+		// Coordination id: wa_bot_restaurant_days_fix_v1.
+		in.BookingID = -botProposalKindID(dedupKey)
+	}
 	argsJSON, _ := json.Marshal(args)
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -784,20 +813,6 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 	chatsQ := `SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=? AND active=1`
 	supQ := `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=? AND active=1`
 	supArgs := []any{rid, in.BookingID}
-	if dedupKey != "" {
-		// No-booking proposals (create, catalog, config) carry booking_id=0 and
-		// uq_wa_op_active is (restaurant_id, booking_id, active): two active
-		// booking_id=0 rows would collide whatever their op. So at most ONE
-		// no-booking proposal pends per tenant, shared by every op without a
-		// natural booking, and a new one supersedes ANY pending booking_id=0
-		// proposal. The superseded row's code can never execute a different
-		// op: approval claims by code_hash + state='sent' + active=1, and a
-		// superseded row is state='superseded', active=NULL. The dedup key
-		// still travels in args for correlation and the execute re-check.
-		chatsQ = `SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=0 AND active=1`
-		supQ = `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=0 AND active=1`
-		supArgs = []any{rid}
-	}
 	if rs, qerr := tx.QueryContext(ctx, chatsQ, supArgs...); qerr == nil {
 		for rs.Next() {
 			var c string
@@ -1562,7 +1577,11 @@ func (s *Server) botRestoreDateOK(ctx context.Context, q interface {
 		return errors.New("la fecha de la reserva ya pasó: no se restaura desde aquí")
 	}
 	var closed int
-	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM closed_days WHERE restaurant_id = ? AND date = ?", rid, date).Scan(&closed); err != nil || closed > 0 {
+	// Coordination id: wa_bot_restaurant_days_fix_v1 - the canonical open/close
+	// table is restaurant_days (is_open = 0 means closed); the legacy
+	// closed_days table no longer exists and this query errored into "day
+	// closed", blocking every special-date restore from the chat.
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM restaurant_days WHERE restaurant_id = ? AND date = ? AND is_open = 0", rid, date).Scan(&closed); err != nil || closed > 0 {
 		return errors.New("el día " + date + " está cerrado (o no se pudo comprobar): no se restaura")
 	}
 	return nil
@@ -1761,7 +1780,8 @@ func (s *Server) botCreateValidate(ctx context.Context, q interface {
 		return out, errors.New("allow_duplicate_of inválido")
 	}
 	var closed int
-	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM closed_days WHERE restaurant_id = ? AND date = ?", rid, date).Scan(&closed); err != nil || closed > 0 {
+	// wa_bot_restaurant_days_fix_v1: see the restore gate above.
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM restaurant_days WHERE restaurant_id = ? AND date = ? AND is_open = 0", rid, date).Scan(&closed); err != nil || closed > 0 {
 		return out, errors.New("el día " + date + " está cerrado (o no se pudo comprobar): no se crea desde aquí")
 	}
 	if st, _, err := s.loadSpecialDateSettings(ctx, rid, date); err != nil || st != nil {

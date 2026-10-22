@@ -61,7 +61,7 @@ func botToolDefsPrivilegedControl() []botToolDef {
 		{
 			Name: "manage_bot_access",
 			Description: "Gestiona el ACCESO de esta versión del bot desde el chat: quién está autorizado (contactos y/o grupos de WhatsApp), qué herramientas personalizadas puede usar cada conversación y cuál es el grupo de gestión. " +
-				"resource: 'allowed_chats' (autorizados), 'tool_grants' (herramientas por conversación) o 'management_group' (grupo de gestión). " +
+				"resource: 'allowed_chats' (autorizados), 'tool_grants' (herramientas por conversación), 'management_group' (grupo de gestión) o 'bot_config' (configuración del bot, p.ej. privileged_direct_writes con action=set, target=privileged_direct_writes y name=true/false para que los cambios se apliquen directamente sin OK). " +
 				"action: 'list' consulta el estado actual al momento; 'add'/'remove'/'set' NO aplican nada: generan una propuesta con vista previa exacta y un código que la persona que lo pidió debe confirmar escribiendo 'OK <código>' en este chat. " +
 				"target: teléfono o JID de la conversación (para management_group, el nombre o JID del grupo). tools: para tool_grants, los nombres concretos o ['*'] para todo el catálogo.",
 			InputSchema: botSchema(`{"type":"object","properties":{
@@ -296,8 +296,50 @@ func botAccessApply(tenant *botTenantConfig, a botAccessArgs) (string, error) {
 		tenant.ManagementGroupName = t
 		tenant.ManagementGroupJID = ""
 		return fmt.Sprintf("Aplicado: grupo de gestión fijado por nombre (%s).", t), nil
+	case "bot_config":
+		if a.Action != "set" {
+			return "", fmt.Errorf("action inválida para bot_config: %s (usa set)", a.Action)
+		}
+		switch strings.TrimSpace(a.Target) {
+		case "privileged_direct_writes":
+			// Coordination id: wa_bot_privileged_direct_writes_v1
+			tenant.PrivilegedDirectWrites = strings.EqualFold(strings.TrimSpace(a.Name), "true")
+			state := "DESACTIVADOS"
+			if tenant.PrivilegedDirectWrites {
+				state = "ACTIVADOS"
+			}
+			return fmt.Sprintf("Aplicado: cambios directos %s para las conversaciones autorizadas (las escrituras se ejecutan sin 'OK <código>').", state), nil
+		}
+		return "", fmt.Errorf("clave de configuración no reconocida: %s (usa privileged_direct_writes)", strings.TrimSpace(a.Target))
 	}
 	return "", fmt.Errorf("resource inválido: %s", a.Resource)
+}
+
+// botAccessApplyNow applies an access change directly, without the OK flow:
+// only for tenants with privileged direct writes enabled
+// (wa_bot_privileged_direct_writes_v1).
+func (s *Server) botAccessApplyNow(ctx context.Context, restaurantID int, a botAccessArgs) (string, error) {
+	if s.db == nil {
+		return "", errors.New("base de datos no disponible")
+	}
+	tenant := s.botStoredTenantConfig(ctx, restaurantID)
+	summary, err := botAccessApply(&tenant, a)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(tenant)
+	if err != nil {
+		return "", errors.New("error interno")
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO whatsapp_bot_config (restaurant_id, config_json) VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE config_json = VALUES(config_json)
+	`, restaurantID, string(raw)); err != nil {
+		return "", errors.New("error interno")
+	}
+	botServiceSessionReset(restaurantID)
+	log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d applied-direct resource=%s action=%s", restaurantID, a.Resource, a.Action)
+	return summary, nil
 }
 
 // botAccessPreview is the exact human summary sent to the chat before any
@@ -377,15 +419,25 @@ func (s *Server) botToolManageAccess(ctx context.Context, restaurantID int, msg 
 		tenant := s.botStoredTenantConfig(ctx, restaurantID)
 		log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d action=list", restaurantID)
 		return botJSON(map[string]any{
-			"allowed_chats":    botPrivilegedContactsFromConfig(tenant),
-			"tool_grants":      tenant.ToolGrants,
-			"management_group": map[string]any{"name": tenant.ManagementGroupName, "jid": tenant.ManagementGroupJID},
+			"allowed_chats":            botPrivilegedContactsFromConfig(tenant),
+			"tool_grants":              tenant.ToolGrants,
+			"management_group":         map[string]any{"name": tenant.ManagementGroupName, "jid": tenant.ManagementGroupJID},
+			"privileged_direct_writes": tenant.PrivilegedDirectWrites,
 		}), nil
 	}
 	actor, origin, ok := s.botPrivilegedControlAuthorize(ctx, restaurantID, msg)
 	if !ok {
 		log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d denied=actor", restaurantID)
 		return botJSON(map[string]any{"error": "no autorizado para gestionar el acceso desde este chat"}), nil
+	}
+	// Coordination id: wa_bot_privileged_direct_writes_v1: the owner group
+	// applies access changes directly, without the OK flow.
+	if s.botStoredTenantConfig(ctx, restaurantID).PrivilegedDirectWrites {
+		summary, err := s.botAccessApplyNow(ctx, restaurantID, a)
+		if err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+		return botJSON(map[string]any{"ok": true, "status": summary}), nil
 	}
 	preview, err := botAccessPreview(a)
 	if err != nil {
