@@ -838,6 +838,31 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 		return botJSON(map[string]any{"error": "no se pudo guardar la propuesta"}), nil
 	}
 
+	// Coordination id: wa_bot_privileged_direct_writes_v1: the owner group
+	// applies the change immediately. The proposal row stays as the audit
+	// trail of what ran, the OK flow is skipped entirely and any older pending
+	// proposal of the same kind is superseded first (a new direct apply makes
+	// its code meaningless).
+	if s.loadBotTenantConfig(ctx, rid).PrivilegedDirectWrites {
+		_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=? AND active=1 AND id<>?`, rid, in.BookingID, pid)
+		if r, err := s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='sent' WHERE id=? AND state='pending' AND active=1`, pid); err == nil {
+			if n, _ := r.RowsAffected(); n == 1 {
+				s.botSpecialAdminEvent(ctx, s.db, rid, pid, "preview_accepted", actor, origin, map[string]any{"direct": true})
+				out, err := s.botSpecialAdminExecute(ctx, rid, msg, botSpecialProposalRow{
+					ID: pid, Op: op, BookingID: in.BookingID, Args: string(argsJSON),
+					Before: beforeHash, After: afterHash, Actor: actor,
+				})
+				if err != nil {
+					log.Printf("[bot] checkpoint wa_bot_privileged_direct_writes_v1 restaurant_id=%d op=%s error=%v", rid, op, err)
+					_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE id=? AND active=1`, pid)
+					return botJSON(map[string]any{"ok": false, "error": "no se pudo aplicar: " + err.Error()}), nil
+				}
+				log.Printf("[bot] checkpoint wa_bot_privileged_direct_writes_v1 restaurant_id=%d op=%s applied", rid, op)
+				return botJSON(map[string]any{"ok": true, "status": out, "direct": true}), nil
+			}
+		}
+	}
+
 	supNotice := fmt.Sprintf("La propuesta pendiente sobre la reserva #%d se ha sustituido por otra más reciente. El código anterior ya no vale.", in.BookingID)
 	if dedupKey != "" {
 		// Generic on purpose: the superseded no-booking proposal can be any op

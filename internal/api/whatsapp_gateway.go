@@ -16,6 +16,7 @@ type WhatsAppGateway interface {
 	// Outbound sends.
 	SendText(ctx context.Context, to, text string) error
 	SendMenu(ctx context.Context, to, text string, choices []string) error
+	SendPoll(ctx context.Context, to, question string, options []string, maxChoices int) error
 	SendMedia(ctx context.Context, to string, m waMedia) error
 	SendLocation(ctx context.Context, to string, loc waLocation) error
 	SendContact(ctx context.Context, to string, c waContact) error

@@ -27,6 +27,12 @@ func (g *uazapiGateway) SendText(ctx context.Context, to, text string) error {
 	return g.send(ctx, "text", map[string]any{"number": to, "text": text})
 }
 
+// SendPoll is not supported on the UAZAPI path (Evolution-only feature).
+// Coordination id: wa_bot_poll_v1
+func (g *uazapiGateway) SendPoll(ctx context.Context, to, question string, options []string, maxChoices int) error {
+	return errors.New("polls no soportadas en esta conexión")
+}
+
 func (g *uazapiGateway) SendMenu(ctx context.Context, to, text string, choices []string) error {
 	return g.send(ctx, "menu", map[string]any{
 		"number": to, "type": "button", "text": text, "choices": choices,

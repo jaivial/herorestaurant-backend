@@ -109,6 +109,25 @@ func (g *evolutionGateway) SendMenu(ctx context.Context, to, text string, choice
 	})
 }
 
+// SendPoll sends a WhatsApp poll (Evolution /message/sendPoll). Both payload
+// shapes Evolution has shipped are included (pollMessage object and flat
+// keys), so either server version accepts it. Coordination id: wa_bot_poll_v1
+func (g *evolutionGateway) SendPoll(ctx context.Context, to, question string, options []string, maxChoices int) error {
+	if maxChoices < 1 {
+		maxChoices = 1
+	}
+	if len(options) > 1 && maxChoices > len(options) {
+		maxChoices = len(options)
+	}
+	return g.post(ctx, g.msgPath("sendPoll"), map[string]any{
+		"number":          to,
+		"pollMessage":     map[string]any{"name": question, "selectableCount": maxChoices, "values": options},
+		"name":            question,
+		"selectableCount": maxChoices,
+		"values":          options,
+	})
+}
+
 // splitMenuTitleAndDescription splits a menu message into the short bolded
 // header (first line) and the body (the rest). Callers commonly wrap the header
 // in *...* markdown, which Evolution would otherwise double-nest, so it is
