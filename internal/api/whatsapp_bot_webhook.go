@@ -357,6 +357,10 @@ func (s *Server) handleBotWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if msg.Ignored {
+		// Coordination id: wa_bot_inbound_reaction_key_v1 - the raw key the
+		// phone sent is logged before the message is discarded; the tenant is
+		// not resolved yet on this path, hence restaurant_id=0.
+		botLogInboundReactionKey(0, body)
 		log.Printf("[bot] checkpoint wa_bot_ignore_non_conversational_v1 sender=%s", msg.Sender)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "ignored": true})
 		return
