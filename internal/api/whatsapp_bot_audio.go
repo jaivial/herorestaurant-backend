@@ -20,11 +20,13 @@ import (
 // the normal text flow. The audio is never persisted; only the transcript is
 // stored, prefixed so staff and the model know it came from a voice note.
 //
-// Engine: Bark 3.0 (Underdog, CC-BY 4.0, https://underdog.ai/bark — local
-// model, no API) is the DEFAULT engine through the sidecar. It is
-// English-only, so every failure or empty transcript falls back to
-// faster-whisper automatically. BOT_STT_ENGINE ("bark"|"whisper", default
-// "bark") picks the engine; BOT_STT_LANGUAGE optionally pins the language.
+// Engine: faster-whisper (the sidecar's local model, warmed at startup) is
+// the DEFAULT through the sidecar. Bark 3.0 (Underdog, coord wa_bot_stt_bark_v1)
+// stays reachable through the sidecar's `engine` field, but it is English-only
+// and pays a cold model download on its first call (measured 51 s returning
+// lang=en for Spanish audio), which is why it no longer leads the flow.
+// BOT_STT_ENGINE ("bark"|"whisper", default "whisper") picks the engine;
+// BOT_STT_LANGUAGE optionally pins the language.
 
 const botAudioTranscriptPrefix = "🎤 (audio transcrito) "
 
@@ -33,7 +35,7 @@ func botSTTEngine() string {
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv("BOT_STT_ENGINE"))); v != "" {
 		return v
 	}
-	return "bark"
+	return "whisper"
 }
 
 // botTranscribeAudio transcribes one voice note: engine first, automatic
