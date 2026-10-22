@@ -58,3 +58,53 @@ func (s *Server) botReactToMessage(restaurantID int, msg botWebhookMessage, emoj
 		log.Printf("[bot] checkpoint wa_bot_audio_reaction_v1 restaurant_id=%d emoji=%s sent", restaurantID, emoji)
 	}()
 }
+
+// Coordination id: wa_bot_reaction_feedback_v1
+//
+// Content-aware INSTANT reaction on every accepted message: the user sees
+// right away that the bot understood the kind of message sent (a booking, a
+// question, a menu ask, an allergy warning...). It is a zero-latency
+// heuristic over the text and the media kind — never an LLM call — so the
+// reaction lands before any work starts. Voice notes keep their own
+// lifecycle reactions (received/done/failed).
+func botContentEmoji(msg botWebhookMessage) string {
+	if msg.IsAudio {
+		return botReactReceived
+	}
+	t := strings.ToLower(msg.Text)
+	switch {
+	case msg.ImageB64 != "" || strings.Contains(msg.MediaKind, "imagen"):
+		return "👀"
+	case msg.DocumentB64 != "" || strings.Contains(msg.MediaKind, "documento"):
+		return "📄"
+	case strings.Contains(msg.MediaKind, "vídeo") || strings.Contains(msg.MediaKind, "video"):
+		return "🎬"
+	case strings.Contains(msg.MediaKind, "sticker"):
+		return "😄"
+	case strings.Contains(t, "alerg") || strings.Contains(t, "intoleran"):
+		return "⚠️"
+	case strings.Contains(t, "cancel"):
+		return "🔄"
+	case strings.Contains(t, "reserv") || strings.Contains(t, "mesa") || strings.Contains(t, "cita"):
+		return "📅"
+	case strings.Contains(t, "gracias"):
+		return "🙏"
+	case strings.Contains(t, "hola") || strings.Contains(t, "buenos días") || strings.Contains(t, "buenas"):
+		return "👋"
+	case strings.Contains(t, "carta") || strings.Contains(t, "menú") || strings.Contains(t, "menu") || strings.Contains(t, "arroz") || strings.Contains(t, "plato") || strings.Contains(t, "vino") || strings.Contains(t, "precio"):
+		return "🍽️"
+	case strings.Contains(t, "factura"):
+		return "🧾"
+	case strings.Contains(t, "horario") || strings.Contains(t, "abre") || strings.Contains(t, "cierra"):
+		return "🕒"
+	case strings.Contains(t, "cumple") || strings.Contains(t, "fiesta") || strings.Contains(t, "evento") || strings.Contains(t, "celebra"):
+		return "🎉"
+	case strings.Contains(t, "sí") || strings.Contains(t, "vale") || strings.Contains(t, "perfecto") || strings.Contains(t, "de acuerdo"):
+		return "👌"
+	case strings.Contains(t, "?") || strings.Contains(t, "¿"):
+		return "🤔"
+	case strings.Contains(t, "problema") || strings.Contains(t, "queja") || strings.Contains(t, " mal"):
+		return "😟"
+	}
+	return "👍"
+}

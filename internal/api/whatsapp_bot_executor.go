@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -92,6 +93,20 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 	if len(input) == 0 {
 		input = json.RawMessage(`{}`)
 	}
+	// Coordination id: wa_bot_tool_grants_v1 - a configured grant restricts
+	// which custom tools this chat may call; the filtered catalog is UX, THIS
+	// is the guard.
+	if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
+		log.Printf("[bot] checkpoint wa_bot_tool_grants_v1 restaurant_id=%d tool=%s", restaurantID, name)
+		return botJSON(map[string]any{"error": reason}), nil
+	}
+	// Coordination id: wa_bot_privileged_control_v1 - this version of the bot
+	// only exists for the allowed (privileged) contacts and groups: the
+	// control-plane tools are refused server-side in every other chat.
+	if botPrivilegedControlToolNames[name] && !msg.PrivilegedGroup {
+		log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d tool=%s denied", restaurantID, name)
+		return botJSON(map[string]any{"error": "esta herramienta solo está disponible en las conversaciones autorizadas."}), nil
+	}
 	switch name {
 	case "send_message":
 		return s.botToolSendMessage(ctx, restaurantID, msg, input)
@@ -129,6 +144,19 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolGetSpecialDateInfo(ctx, restaurantID, input)
 	case "get_special_date_bookings":
 		return s.botToolGetSpecialDateBookings(ctx, restaurantID, input)
+	// Coordination ids: wa_bot_privileged_control_v1 / wa_bot_dish_allergens_v1
+	// - the control plane and the data reads of this bot version (allowed
+	// contacts and groups only, checked above).
+	case "manage_bot_access":
+		return s.botToolManageAccess(ctx, restaurantID, msg, input)
+	case "get_dish_allergens":
+		return s.botToolDishAllergens(ctx, restaurantID, input)
+	// Coordination ids: wa_bot_staff_reads_v2 / wa_bot_panel_write_v1 - the
+	// dedicated staff reads and the approved panel writes of this version.
+	case "staff_domain_read":
+		return s.botToolStaffDomainRead(ctx, restaurantID, msg, input)
+	case "panel_change":
+		return s.botToolPanelChange(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_admin_reads_v1 - read-only staff group tools;
 	// each handler re-authorizes through botSpecialAdminAuthorize (fail closed).
 	case "list_cancelled_bookings":

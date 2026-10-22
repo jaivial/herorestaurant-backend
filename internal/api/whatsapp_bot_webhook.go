@@ -57,6 +57,10 @@ type botWebhookMessage struct {
 	// into the prompt only for privileged turns.
 	DocumentB64  string
 	DocumentName string
+	// ImageB64/ImageMime: inline imageMessage payload, OCR-read into the turn
+	// for privileged turns. Coordination id: wa_bot_attachment_read_v1
+	ImageB64  string
+	ImageMime string
 	// ActorPhoneJID: provider phone JID of a one-to-one chat whose number the
 	// webhook matched to a member of the special-admin group (set only then).
 	ActorPhoneJID string
@@ -422,10 +426,10 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 	// inline payload are transcribed in the background turn below and then
 	// handled like text; only audios without payload get the fallback here.
 	transcribe := msg.Text == "" && msg.IsAudio && (msg.AudioB64 != "" || msg.MessageID != "")
-	// Coordination id: wa_bot_privileged_group_v1 - a document in a privileged
-	// group is extracted in the turn below, so it must not hit the
+	// Coordination id: wa_bot_attachment_read_v1 - a document OR an image in a
+	// privileged chat is read into the turn below, so it must not hit the
 	// unsupported-media fallback.
-	privilegedDoc := msg.PrivilegedGroup && msg.DocumentB64 != ""
+	privilegedDoc := msg.PrivilegedGroup && botHasReadableAttachment(msg)
 	if msg.Text == "" && !transcribe && !privilegedDoc {
 		// Unsupported media: polite fallback. Voice notes get a specific reply:
 		// the bot is a reservation assistant and cannot listen to audio.
@@ -448,6 +452,10 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Coordination id: wa_bot_reaction_feedback_v1 - the instant content-aware
+	// reaction goes out the moment the message is accepted, before any work.
+	s.botReactToMessage(restaurantID, msg, botContentEmoji(msg))
+
 	// Process in background (bounded): provider webhooks time out quickly.
 	// Messages of one conversation are serialized and coalesced into bursts
 	// (wa_bot_burst_coalesce_v1); the semaphore bounds concurrent workers.
@@ -463,6 +471,9 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 		}
 		go func() {
 			defer func() { <-s.botSem }()
+			// Coordination id: wa_bot_quick_ack_v1 - the quick ack goes out in
+			// PARALLEL with the real task below (allowed chats only).
+			s.botQuickAck(restaurantID, msg)
 			s.botRunConversationWorker(restaurantID, msg.Sender)
 		}()
 	}
@@ -631,10 +642,14 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// extracted BEFORE the loop and appended to the last user message so the
 	// model reads the file content as part of the request. On any failure the
 	// note says so verbatim — content is never invented.
-	if msg.PrivilegedGroup && msg.DocumentB64 != "" {
-		note, extracted := botDocumentTurnNote(msg.DocumentB64, msg.DocumentName)
+	// Coordination id: wa_bot_attachment_read_v1 - documents AND images are
+	// extracted BEFORE the loop and appended to the last user message so the
+	// model reads the content as part of the request. On any failure the note
+	// says so verbatim — content is never invented.
+	if msg.PrivilegedGroup && botHasReadableAttachment(msg) {
+		note, extracted := s.botAttachmentTurnNote(ctx, restaurantID, msg)
 		messages = botAppendTextToLastUserMessage(messages, note)
-		log.Printf("[bot] checkpoint wa_bot_privileged_group_v1 restaurant_id=%d sender=%s document=%s extracted=%t", restaurantID, msg.Sender, msg.DocumentName, extracted)
+		log.Printf("[bot] checkpoint wa_bot_attachment_read_v1 restaurant_id=%d sender=%s media=%s extracted=%t", restaurantID, msg.Sender, msg.MediaKind, extracted)
 	}
 	system := renderBotSystemPrompt(promptData)
 	_, _, memberErr := s.botMemberForPhone(ctx, restaurantID, msg.Sender)
@@ -659,6 +674,10 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// admin scope gate (scope group + privileged turn + fresh member).
 			botTools = append(botTools, botToolDefsAdminReads()...)
 		}
+		// Coordination id: wa_bot_privileged_control_v1 - the control plane of
+		// this bot version (allowed chats + per-chat tool grants + allergen
+		// data) exists ONLY in allowed (privileged) contacts and groups.
+		botTools = append(botTools, botToolDefsPrivilegedControl()...)
 		tools = botMergeToolDefs(botTools, botForkyToolDefs())
 		normalExec := exec
 		// A name the bot defines belongs to the bot, even when forky also has
@@ -674,6 +693,12 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			botOwned[d.Name] = struct{}{}
 		}
 		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+			// Coordination id: wa_bot_tool_grants_v1 - the per-chat grant guard
+			// also covers the forky names, which never reach botExecuteTool.
+			if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
+				log.Printf("[bot] checkpoint wa_bot_tool_grants_v1 restaurant_id=%d tool=%s", restaurantID, name)
+				return botJSON(map[string]any{"error": reason}), nil
+			}
 			// Temporary containment (wa_bot_admin_write_denied_v1): these bot-owned
 			// mutations are gated only by a confirmed=true the model writes itself,
 			// which is not a human approval. Refused in the server for privileged
@@ -681,7 +706,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// messaging and add_booking_note are unchanged.
 			if botPrivilegedDeniedWrites[name] {
 				log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
-				return botJSON(map[string]any{"error": "esta operación está desactivada temporalmente para el bot (no se ejecuta). No la reintentes ni busques otra vía: di al grupo que debe hacerse en el panel de administración."}), nil
+				return botJSON(map[string]any{"error": "esta operación directa está desactivada para el bot (no se ejecuta). No la reintentes: usa la herramienta de PROPUESTA equivalente (booking_propose_create/edit/cancel, special_booking_propose_create, booking_propose_restore...), que se aplica con 'OK <código>'."}), nil
 			}
 			if _, ok := assistantToolLookup(name); ok {
 				if _, mine := botOwned[name]; !mine {
@@ -700,7 +725,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 					// the bot's own tools are unchanged.
 					if def, _ := assistantToolLookup(name); def.Write {
 						log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
-						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, di al grupo que esa operación no está soportada y que debe hacerse en el panel. No busques otra vía."}), nil
+						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel directamente. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, PROPON el cambio equivalente con panel_change (se aplica cuando el usuario responde 'OK <código>'). No busques otra vía."}), nil
 					}
 					return s.assistantExecuteTool(s.botPrivilegedForkyContext(ctx, restaurantID), restaurantID, name, input)
 				}
@@ -713,6 +738,9 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		return s.botLLMCallRouted(ctx, restaurantID, routing, sessionID, system, msgs, tools)
 	}
 
+	// Coordination id: wa_bot_tool_grants_v1 - per-chat tool control: the
+	// catalog offered to the model is filtered, and the executor re-checks.
+	tools = botToolGrantsFilter(tools, tenant, msg.ChatJID)
 	result, err := s.botRunAgentLoopWith(ctx, caller, system, messages, tools, exec)
 	if decisionID > 0 {
 		s.botConversation.SetDecisionModel(ctx, decisionID, result.ModelUsed, map[string]any{

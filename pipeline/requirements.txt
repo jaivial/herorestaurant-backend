@@ -8,3 +8,9 @@ faster-whisper==1.2.1
 # the image), so pin 14.2.0 — the last 14.x with x86_64 wheels.
 
 av==14.2.0
+# Bark 3.0 (Underdog, CC-BY 4.0): local STT engine for /transcribe
+# (wa_bot_stt_bark_v1). transformers+torch run it on CPU; when absent, the
+# endpoint transparently falls back to faster-whisper.
+transformers>=4.45
+torch>=2.2
+numpy>=1.26

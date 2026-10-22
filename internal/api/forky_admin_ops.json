@@ -11,7 +11,7 @@
    ],
    "section": "session",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /active-restaurant (handleBOSetActiveRestaurant)",
    "screens": []
   },
@@ -26,7 +26,7 @@
    ],
    "section": "estadisticas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /analytics/affluence/seasonal (handleBOAffluenceSeasonal)",
    "screens": []
   },
@@ -41,7 +41,7 @@
    ],
    "section": "estadisticas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Customer affluence over the full bookings history (affluence_stats_v1). Read-only aggregations: bucketed evolution with previous-period delta and the seasonal month/year comparison.",
    "screens": []
   },
@@ -56,7 +56,7 @@
    ],
    "section": "estadisticas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "AI usage + WhatsApp message ledger for Estadísticas \u003e IA y WhatsApp.",
    "screens": []
   },
@@ -71,7 +71,7 @@
    ],
    "section": "estadisticas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Analytics V1 uses an idempotent selected-range rebuild; it has no outbox.",
    "screens": [
     "/app/estadisticas"
@@ -88,7 +88,7 @@
    ],
    "section": "estadisticas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /analytics/refresh (handleBOAnalyticsRefresh)",
    "screens": [
     "/app/estadisticas"
@@ -105,7 +105,7 @@
    ],
    "section": "estadisticas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /analytics/whatsapp-messages (handleBOWhatsAppMessages)",
    "screens": []
   },
@@ -120,7 +120,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /arroz-types (handleBOArrozTypes)",
    "screens": []
   },
@@ -135,7 +135,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /bebidas/{id}/toggle (handleBOBebidasToggle)",
    "screens": []
   },
@@ -150,7 +150,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /bebidas/{id} (handleBOBebidasDelete)",
    "screens": []
   },
@@ -165,7 +165,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /bebidas/{id} (handleBOBebidasPatch)",
    "screens": []
   },
@@ -180,7 +180,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bebidas (handleBOBebidasList)",
    "screens": []
   },
@@ -195,7 +195,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /bebidas (handleBOBebidasCreate)",
    "screens": []
   },
@@ -210,7 +210,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /booking-extras/{id} (handleBOBookingExtrasDelete)",
    "screens": []
   },
@@ -225,7 +225,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /booking-extras (handleBOBookingExtrasList)",
    "screens": []
   },
@@ -240,7 +240,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /booking-extras (handleBOBookingExtrasCreate)",
    "screens": []
   },
@@ -257,7 +257,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Booking WhatsApp notifications (confirmation / reconfirmation) — bkg-wa-notif.",
    "screens": []
   },
@@ -274,7 +274,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /booking-notifications (handleBOBookingNotificationsPut)",
    "screens": []
   },
@@ -289,7 +289,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /bookings/cancelled/{id}/reactivate (handleBOBookingReactivate)",
    "screens": []
   },
@@ -304,7 +304,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings/cancelled (handleBOBookingsCancelledByDate)",
    "screens": []
   },
@@ -319,7 +319,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings/documents/{docId}/file (handleBOBookingDocumentFile)",
    "screens": []
   },
@@ -334,7 +334,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings/export (handleBOBookingsExport)",
    "screens": [
     "/app/reservas",
@@ -352,7 +352,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings/modified (handleBOBookingsModifiedByDate)",
    "screens": []
   },
@@ -367,7 +367,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings/search (handleBOBookingsSearch)",
    "screens": [
     "/app/reservas"
@@ -384,7 +384,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "POST /bookings/{id}/cancel (handleBOBookingCancel)",
    "screens": [
     "/app/facturas",
@@ -406,7 +406,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings/{id}/documents (handleBOBookingDocumentsList)",
    "screens": [
     "/app/facturas",
@@ -428,7 +428,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings/{id}/qr (handleBOBookingQR)",
    "screens": [
     "/app/facturas",
@@ -450,7 +450,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings/{id}/receipt.pdf (handleBOBookingReceiptPDF)",
    "screens": [
     "/app/facturas",
@@ -472,7 +472,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings/{id} (handleBOBookingGet)",
    "screens": [
     "/app/facturas",
@@ -494,7 +494,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /bookings/{id} (handleBOBookingPatch)",
    "screens": [
     "/app/facturas",
@@ -516,7 +516,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bookings (handleBOBookingsList)",
    "screens": [
     "/app/facturas",
@@ -538,7 +538,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /bookings (handleBOBookingCreate)",
    "screens": [
     "/app/facturas",
@@ -548,6 +548,36 @@
     "/app/reservas/tables",
     "/m/app/reservas"
    ]
+  },
+  {
+   "name": "admin_get_bot_ai_restaurantid_privileged_contacts",
+   "method": "GET",
+   "path": "/bot/ai/{restaurantId}/privileged-contacts",
+   "handler": "handleBOBotPrivilegedContactsGet",
+   "gates": [
+    "s.requireBOSession",
+    "rootOnlyGate"
+   ],
+   "section": "root",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve los contactos privilegiados del bot de WhatsApp.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_bot_ai_restaurantid_privileged_contacts",
+   "method": "PUT",
+   "path": "/bot/ai/{restaurantId}/privileged-contacts",
+   "handler": "handleBOBotPrivilegedContactsPut",
+   "gates": [
+    "s.requireBOSession",
+    "rootOnlyGate"
+   ],
+   "section": "root",
+   "write": true,
+   "risk": "medium",
+   "description": "Actualiza los contactos privilegiados del bot de WhatsApp.",
+   "screens": []
   },
   {
    "name": "admin_get_bot_ai_restaurantid",
@@ -560,7 +590,7 @@
    ],
    "section": "root",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Bot AI routing, provider keys, RAG knowledge and DSPy pipeline graph (wa_bot_ai_providers_v1 / wa_bot_dspy_pipeline_v1).",
    "screens": []
   },
@@ -575,7 +605,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /bot/ai/{restaurantId} (handleBOBotAIPut)",
    "screens": []
   },
@@ -592,7 +622,7 @@
    "section": "ajustes",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "WhatsApp bot personalization (per restaurant).",
    "screens": []
   },
@@ -609,7 +639,7 @@
    "section": "ajustes",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /bot/config (handleBOBotConfigPut)",
    "screens": []
   },
@@ -624,7 +654,7 @@
    ],
    "section": "root",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /bot/pipeline/{restaurantId} (handleBOBotPipelineGet)",
    "screens": []
   },
@@ -639,7 +669,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /bot/settings/{restaurantId}/preview (handleBOBotSettingsPreview)",
    "screens": []
   },
@@ -654,7 +684,7 @@
    ],
    "section": "root",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "WhatsApp bot settings per explicit restaurant id + prompt preview (root IA tab).",
    "screens": []
   },
@@ -669,7 +699,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /bot/settings/{restaurantId} (handleBOBotSettingsPut)",
    "screens": []
   },
@@ -684,7 +714,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Branding belongs to the Configuracion page (`/app/config`), which the backoffice navigation maps to the `reservas` section. Gating these endpoints under `ajustes` returned 403 for app-version 0.4 users (who are whitelisted for `reservas` but not for `ajustes`) and broke the logo upload from `/app/config?content=contacto`.",
    "screens": [
     "/app/settings"
@@ -701,7 +731,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /branding (handleBOBrandingSet)",
    "screens": [
     "/app/settings"
@@ -718,7 +748,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /cafes/{id}/toggle (handleBOCafesToggle)",
    "screens": []
   },
@@ -733,7 +763,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /cafes/{id} (handleBOCafesDelete)",
    "screens": []
   },
@@ -748,7 +778,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /cafes/{id} (handleBOCafesPatch)",
    "screens": []
   },
@@ -763,7 +793,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /cafes (handleBOCafesList)",
    "screens": []
   },
@@ -778,7 +808,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /cafes (handleBOCafesCreate)",
    "screens": []
   },
@@ -793,13 +823,45 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /calendar (handleBOCalendarMonth)",
    "screens": [
     "/app/horarios",
     "/app/reservas",
     "/app/reservas/tables"
    ]
+  },
+  {
+   "name": "admin_post_campanas_bounces_sync",
+   "method": "POST",
+   "path": "/campanas/bounces/sync",
+   "handler": "handleBOCampaignBounceSync",
+   "gates": [
+    "s.requireBOSession",
+    "reservasGate",
+    "campaignsGate"
+   ],
+   "section": "reservas",
+   "write": true,
+   "risk": "medium",
+   "description": "Sincroniza los rebotes de correo de las campañas.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_campanas_email_validation",
+   "method": "POST",
+   "path": "/campanas/email-validation",
+   "handler": "handleBOCampaignEmailValidation",
+   "gates": [
+    "s.requireBOSession",
+    "reservasGate",
+    "campaignsGate"
+   ],
+   "section": "reservas",
+   "write": true,
+   "risk": "medium",
+   "description": "Valida los correos de una campaña antes de enviarla.",
+   "screens": []
   },
   {
    "name": "admin_post_campanas_preview",
@@ -813,7 +875,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /campanas/preview (handleBOCampaignPreview)",
    "screens": []
   },
@@ -829,7 +891,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /campanas/template (handleBOCampaignTemplate)",
    "screens": []
   },
@@ -845,7 +907,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /campanas/unsubscribed (handleBOCampaignUnsubscribed)",
    "screens": []
   },
@@ -861,7 +923,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /campanas/{campaignId}/audience (handleBOCampaignAudience)",
    "screens": [
     "/app/campanas/:campaignId"
@@ -879,7 +941,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /campanas/{campaignId}/recipients (handleBOCampaignRecipients)",
    "screens": [
     "/app/campanas/:campaignId"
@@ -897,7 +959,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /campanas/{campaignId}/send (handleBOCampaignSend)",
    "screens": [
     "/app/campanas/:campaignId"
@@ -915,7 +977,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /campanas/{campaignId}/status (handleBOCampaignStatus)",
    "screens": [
     "/app/campanas/:campaignId"
@@ -933,7 +995,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /campanas/{campaignId}/test (handleBOCampaignTest)",
    "screens": [
     "/app/campanas/:campaignId"
@@ -951,7 +1013,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /campanas/{campaignId} (handleBOCampaignDelete)",
    "screens": [
     "/app/campanas/:campaignId"
@@ -969,7 +1031,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /campanas/{campaignId} (handleBOCampaignGet)",
    "screens": [
     "/app/campanas/:campaignId"
@@ -987,7 +1049,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /campanas/{campaignId} (handleBOCampaignUpdate)",
    "screens": [
     "/app/campanas/:campaignId"
@@ -1005,7 +1067,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /campanas (handleBOCampaignsList)",
    "screens": [
     "/app/campanas/:campaignId"
@@ -1023,11 +1085,26 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /campanas (handleBOCampaignCreate)",
    "screens": [
     "/app/campanas/:campaignId"
    ]
+  },
+  {
+   "name": "admin_get_comida_ai_image_status",
+   "method": "GET",
+   "path": "/comida/ai-image/status",
+   "handler": "handleBOAIImageStatus",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve el estado de la configuración de imágenes IA.",
+   "screens": []
   },
   {
    "name": "admin_get_comida_bebidas_categorias_check",
@@ -1040,7 +1117,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/bebidas/categorias/check (handleBOComidaBebidaCategoriesCheck)",
    "screens": []
   },
@@ -1055,7 +1132,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/bebidas/categorias (handleBOComidaBebidaCategoriesList)",
    "screens": []
   },
@@ -1070,7 +1147,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/bebidas/categorias (handleBOComidaBebidaCategoriesCreate)",
    "screens": []
   },
@@ -1086,7 +1163,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/bulk-stock-link/apply (handleBOComidaBulkLinkApply)",
    "screens": []
   },
@@ -1102,7 +1179,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/bulk-stock-link/preview (handleBOComidaBulkLinkPreview)",
    "screens": []
   },
@@ -1117,7 +1194,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /comida/categorias/{id} (handleBOComidaCategoryDelete)",
    "screens": []
   },
@@ -1132,7 +1209,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /comida/categorias/{id} (handleBOComidaCategoryPatch)",
    "screens": []
   },
@@ -1147,7 +1224,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Unified category catalogue (per food type + global). Declared before the /comida/{tipo} wildcard so the static \"categorias\" segment wins.",
    "screens": []
   },
@@ -1162,7 +1239,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/categorias (handleBOComidaCategoryCreate)",
    "screens": []
   },
@@ -1177,7 +1254,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/counts (handleBOComidaCounts)",
    "screens": []
   },
@@ -1193,7 +1270,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /comida/items/{id}/production-type (handleBOComidaProductionTypePatch)",
    "screens": []
   },
@@ -1208,7 +1285,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "New comida module endpoints (typed routes).",
    "screens": []
   },
@@ -1223,7 +1300,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/platos/categorias (handleBOComidaPlatoCategoriesCreate)",
    "screens": []
   },
@@ -1239,7 +1316,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/technical-sheets/ensure (handleBOTechnicalSheetEnsureForProduct)",
    "screens": []
   },
@@ -1255,7 +1332,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/technical-sheets/{id}/allergens (handleBOTechnicalSheetAllergensGet)",
    "screens": []
   },
@@ -1271,7 +1348,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /comida/technical-sheets/{id}/allergens (handleBOTechnicalSheetAllergensPatch)",
    "screens": []
   },
@@ -1287,7 +1364,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /comida/technical-sheets/{id}/components/{componentId} (handleBOTechnicalSheetComponentDelete)",
    "screens": []
   },
@@ -1303,7 +1380,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /comida/technical-sheets/{id}/components/{componentId} (handleBOTechnicalSheetComponentPatch)",
    "screens": []
   },
@@ -1319,7 +1396,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/technical-sheets/{id}/components (handleBOTechnicalSheetComponentsList)",
    "screens": []
   },
@@ -1335,7 +1412,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/technical-sheets/{id}/components (handleBOTechnicalSheetComponentCreate)",
    "screens": []
   },
@@ -1351,7 +1428,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/technical-sheets/{id}/cost (handleBOTechnicalSheetCost)",
    "screens": []
   },
@@ -1367,7 +1444,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/technical-sheets/{id}/duplicate (handleBOTechnicalSheetDuplicate)",
    "screens": []
   },
@@ -1383,7 +1460,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/technical-sheets/{id}/publish (handleBOTechnicalSheetPublish)",
    "screens": []
   },
@@ -1399,8 +1476,40 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /comida/technical-sheets/{id}/steps/order (handleBOTechnicalSheetStepsReorder)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_comida_technical_sheets_id_steps_stepid_image_jobs",
+   "method": "GET",
+   "path": "/comida/technical-sheets/{id}/steps/{stepId}/image-jobs",
+   "handler": "handleBOTechnicalSheetStepImageJobGet",
+   "gates": [
+    "s.requireBOSession",
+    "withBOStockTimeout",
+    "sheetsViewGate"
+   ],
+   "section": "stock",
+   "write": false,
+   "risk": "low",
+   "description": "Lista los trabajos de imagen de un paso de ficha técnica.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_comida_technical_sheets_id_steps_stepid_image_job",
+   "method": "POST",
+   "path": "/comida/technical-sheets/{id}/steps/{stepId}/image-jobs",
+   "handler": "handleBOTechnicalSheetStepImageJobCreate",
+   "gates": [
+    "s.requireBOSession",
+    "withBOStockTimeout",
+    "sheetsImagesAIGate"
+   ],
+   "section": "stock",
+   "write": true,
+   "risk": "medium",
+   "description": "Crea un trabajo de imagen para un paso de ficha técnica.",
    "screens": []
   },
   {
@@ -1415,7 +1524,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /comida/technical-sheets/{id}/steps/{stepId} (handleBOTechnicalSheetStepDelete)",
    "screens": []
   },
@@ -1431,7 +1540,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /comida/technical-sheets/{id}/steps/{stepId} (handleBOTechnicalSheetStepPatch)",
    "screens": []
   },
@@ -1447,7 +1556,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/technical-sheets/{id}/steps (handleBOTechnicalSheetStepsList)",
    "screens": []
   },
@@ -1463,7 +1572,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/technical-sheets/{id}/steps (handleBOTechnicalSheetStepCreate)",
    "screens": []
   },
@@ -1479,7 +1588,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/technical-sheets/{id}/usage (handleBOTechnicalSheetUsage)",
    "screens": []
   },
@@ -1495,7 +1604,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /comida/technical-sheets/{id} (handleBOTechnicalSheetDelete)",
    "screens": []
   },
@@ -1511,7 +1620,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/technical-sheets/{id} (handleBOTechnicalSheetGet)",
    "screens": []
   },
@@ -1527,7 +1636,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /comida/technical-sheets/{id} (handleBOTechnicalSheetPatch)",
    "screens": []
   },
@@ -1543,7 +1652,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/technical-sheets (handleBOTechnicalSheetList)",
    "screens": []
   },
@@ -1559,7 +1668,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/technical-sheets (handleBOTechnicalSheetCreate)",
    "screens": []
   },
@@ -1574,7 +1683,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /comida/{tipo}/{id} (handleBOComidaDelete)",
    "screens": []
   },
@@ -1589,7 +1698,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/{tipo}/{id} (handleBOComidaGet)",
    "screens": []
   },
@@ -1604,7 +1713,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /comida/{tipo}/{id} (handleBOComidaPatch)",
    "screens": []
   },
@@ -1619,7 +1728,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /comida/{tipo} (handleBOComidaList)",
    "screens": []
   },
@@ -1634,9 +1743,26 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /comida/{tipo} (handleBOComidaCreate)",
    "screens": []
+  },
+  {
+   "name": "admin_post_config_ads_adid_image_generate",
+   "method": "POST",
+   "path": "/config/ads/{adId}/image/generate",
+   "handler": "handleBOAdImageGenerate",
+   "gates": [
+    "s.requireBOSession",
+    "adsGate"
+   ],
+   "section": "anuncios",
+   "write": true,
+   "risk": "medium",
+   "description": "Genera con IA la imagen de un anuncio.",
+   "screens": [
+    "/app/anuncios/:adId"
+   ]
   },
   {
    "name": "admin_delete_config_ads_adid",
@@ -1649,7 +1775,7 @@
    ],
    "section": "anuncios",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /config/ads/{adId} (handleBOAdsDelete)",
    "screens": [
     "/app/anuncios/:adId"
@@ -1666,7 +1792,7 @@
    ],
    "section": "anuncios",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /config/ads/{adId} (handleBOAdsUpdate)",
    "screens": [
     "/app/anuncios/:adId"
@@ -1683,7 +1809,7 @@
    ],
    "section": "anuncios",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/ads (handleBOAdsList)",
    "screens": [
     "/app/anuncios/:adId"
@@ -1700,11 +1826,56 @@
    ],
    "section": "anuncios",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/ads (handleBOAdsCreate)",
    "screens": [
     "/app/anuncios/:adId"
    ]
+  },
+  {
+   "name": "admin_get_config_ai_image_providers",
+   "method": "GET",
+   "path": "/config/ai-image/providers",
+   "handler": "handleBOAIImageProvidersGet",
+   "gates": [
+    "s.requireBOSession",
+    "rootOnlyGate"
+   ],
+   "section": "root",
+   "write": false,
+   "risk": "low",
+   "description": "Lista los proveedores de generación de imágenes IA.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_config_ai_image",
+   "method": "GET",
+   "path": "/config/ai-image",
+   "handler": "handleBOAIImageConfigGet",
+   "gates": [
+    "s.requireBOSession",
+    "rootOnlyGate"
+   ],
+   "section": "root",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve la configuración de imágenes IA.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_config_ai_image",
+   "method": "POST",
+   "path": "/config/ai-image",
+   "handler": "handleBOAIImageConfigSet",
+   "gates": [
+    "s.requireBOSession",
+    "rootOnlyGate"
+   ],
+   "section": "root",
+   "write": true,
+   "risk": "medium",
+   "description": "Actualiza la configuración de imágenes IA.",
+   "screens": []
   },
   {
    "name": "admin_get_config_bunny_storage",
@@ -1717,7 +1888,7 @@
    ],
    "section": "root",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/bunny-storage (handleBOBunnyStorageConfigGet)",
    "screens": []
   },
@@ -1732,7 +1903,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/bunny-storage (handleBOBunnyStorageConfigSet)",
    "screens": []
   },
@@ -1747,7 +1918,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "POST /config/chatgpt-plugin/tokens/revoke (handleBOChatGPTPluginTokenRevoke)",
    "screens": []
   },
@@ -1762,7 +1933,7 @@
    ],
    "section": "root",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "ChatGPT plugin credentials — root only. Always scoped to the caller and their active restaurant, so a token can never outlive or exceed the session that created it.",
    "screens": []
   },
@@ -1777,7 +1948,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/chatgpt-plugin/tokens (handleBOChatGPTPluginTokenIssue)",
    "screens": []
   },
@@ -1792,7 +1963,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/check-website (handleBOWebsiteCheck)",
    "screens": []
   },
@@ -1807,7 +1978,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/daily-limit (handleBOConfigDailyLimitGet)",
    "screens": [
     "/app/reservas",
@@ -1826,7 +1997,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/daily-limit (handleBOConfigDailyLimitSet)",
    "screens": [
     "/app/reservas",
@@ -1845,7 +2016,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/day (handleBOConfigDayGet)",
    "screens": [
     "/app/reservas",
@@ -1864,7 +2035,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/day (handleBOConfigDaySet)",
    "screens": [
     "/app/reservas",
@@ -1883,7 +2054,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Backoffice configuration for reservations.",
    "screens": [
     "/app/config"
@@ -1900,7 +2071,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/defaults (handleBOConfigDefaultsSet)",
    "screens": [
     "/app/config"
@@ -1917,7 +2088,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/email-provider (handleBOEmailProviderGet)",
    "screens": [
     "/app/facturas"
@@ -1934,7 +2105,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/email-provider (handleBOEmailProviderSet)",
    "screens": [
     "/app/facturas"
@@ -1951,7 +2122,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/floors/date (handleBOConfigFloorsDateSet)",
    "screens": []
   },
@@ -1966,7 +2137,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/floors/defaults (handleBOConfigFloorsDefaultsGet)",
    "screens": [
     "/app/config"
@@ -1983,7 +2154,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/floors/defaults (handleBOConfigFloorsDefaultsSet)",
    "screens": [
     "/app/config"
@@ -2000,7 +2171,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/floors (handleBOConfigFloorsGet)",
    "screens": [
     "/app/config",
@@ -2019,7 +2190,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/floors (handleBOConfigFloorsSet)",
    "screens": [
     "/app/config",
@@ -2038,7 +2209,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/hour-split-percentages (handleBOConfigHourSplitPercentagesSet)",
    "screens": []
   },
@@ -2053,7 +2224,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "By-hour client split configuration (toggle + per-hour percentages).",
    "screens": [
     "/app/reservas/config"
@@ -2070,7 +2241,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/hour-split (handleBOConfigHourSplitSet)",
    "screens": [
     "/app/reservas/config"
@@ -2087,7 +2258,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Location booking toggles (floor/salon reservation, default + per-date override).",
    "screens": [
     "/app/reservas/config"
@@ -2104,7 +2275,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/location-booking (handleBOConfigLocationBookingSet)",
    "screens": [
     "/app/reservas/config"
@@ -2121,7 +2292,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/mandatory-menus (handleBOMandatoryMenusGet)",
    "screens": [
     "/app/reservas/config"
@@ -2138,7 +2309,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/mandatory-menus (handleBOMandatoryMenusSave)",
    "screens": [
     "/app/reservas/config"
@@ -2155,7 +2326,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/mesas-de-dos (handleBOConfigMesasDeDosGet)",
    "screens": [
     "/app/reservas/config"
@@ -2172,7 +2343,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/mesas-de-dos (handleBOConfigMesasDeDosSet)",
    "screens": [
     "/app/reservas/config"
@@ -2189,7 +2360,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/mesas-de-tres (handleBOConfigMesasDeTresGet)",
    "screens": [
     "/app/reservas/config"
@@ -2206,7 +2377,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/mesas-de-tres (handleBOConfigMesasDeTresSet)",
    "screens": [
     "/app/reservas/config"
@@ -2223,7 +2394,7 @@
    ],
    "section": "root",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "MiniMax AI config (api key + model) — root only.",
    "screens": []
   },
@@ -2238,7 +2409,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/minimax (handleBOMiniMaxConfigSet)",
    "screens": []
   },
@@ -2253,7 +2424,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Mobility question (\"problemas de movilidad\") per-day override over the global default.",
    "screens": []
   },
@@ -2268,7 +2439,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/mobility-day (handleBOConfigMobilityDaySet)",
    "screens": []
   },
@@ -2283,7 +2454,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/opening-hours (handleBOConfigOpeningHoursGet)",
    "screens": [
     "/app/reservas/config"
@@ -2300,7 +2471,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/opening-hours (handleBOConfigOpeningHoursSet)",
    "screens": [
     "/app/reservas/config"
@@ -2317,7 +2488,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/restaurant-info (handleBORestaurantInfoGet)",
    "screens": [
     "/app/config",
@@ -2335,7 +2506,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/restaurant-info (handleBORestaurantInfoSet)",
    "screens": [
     "/app/config",
@@ -2353,7 +2524,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/salon-condesa (handleBOConfigSalonCondesaGet)",
    "screens": []
   },
@@ -2368,7 +2539,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/salon-condesa (handleBOConfigSalonCondesaSet)",
    "screens": []
   },
@@ -2383,7 +2554,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/salons/day-status (handleBOConfigSalonsDayStatusSet)",
    "screens": []
   },
@@ -2398,7 +2569,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /config/salons/{salonId} (handleBOConfigSalonsDelete)",
    "screens": []
   },
@@ -2413,7 +2584,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /config/salons/{salonId} (handleBOConfigSalonsUpdate)",
    "screens": []
   },
@@ -2428,7 +2599,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/salons (handleBOConfigSalonsList)",
    "screens": []
   },
@@ -2443,7 +2614,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/salons (handleBOConfigSalonsCreate)",
    "screens": []
   },
@@ -2458,7 +2629,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/special-dates/stats (handleBOSpecialDateStats)",
    "screens": []
   },
@@ -2473,7 +2644,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Special dates (reservas especiales) — per-date settings CRUD.",
    "screens": [
     "/app/reservas",
@@ -2491,7 +2662,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/special-dates (handleBOSpecialDatesSave)",
    "screens": [
     "/app/reservas",
@@ -2509,7 +2680,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/stripe-connect/dashboard (handleBOStripeConnectDashboard)",
    "screens": []
   },
@@ -2524,7 +2695,7 @@
    ],
    "section": "root",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /config/stripe-connect/delete-precheck (handleBOStripeConnectDeletePrecheck)",
    "screens": []
   },
@@ -2539,7 +2710,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/stripe-connect/disconnect (handleBOStripeConnectDisconnect)",
    "screens": []
   },
@@ -2554,7 +2725,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /config/stripe-connect/onboard (handleBOStripeConnectOnboard)",
    "screens": []
   },
@@ -2569,7 +2740,7 @@
    ],
    "section": "root",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "\"Cobros online\" (connected account); no keys per tenant.",
    "screens": []
   },
@@ -2584,7 +2755,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /dashboard/metrics (handleBODashboardMetrics)",
    "screens": [
     "/app/dashboard",
@@ -2604,7 +2775,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /dishes-catalog/search (handleBODishesCatalogSearch)",
    "screens": []
   },
@@ -2619,7 +2790,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /dishes-catalog/upsert (handleBODishesCatalogUpsert)",
    "screens": []
   },
@@ -2634,7 +2805,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /domains/quote (handleBOPremiumDomainsQuote)",
    "screens": []
   },
@@ -2649,7 +2820,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /domains/register (handleBOPremiumDomainsRegister)",
    "screens": [
     "/app/website"
@@ -2666,7 +2837,7 @@
    ],
    "section": "ajustes",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /domains/search (handleBOPremiumDomainsSearch)",
    "screens": [
     "/app/website"
@@ -2683,7 +2854,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /domains/verify (handleBOPremiumDomainsVerify)",
    "screens": []
   },
@@ -2700,7 +2871,7 @@
    "section": "fichaje",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /fichaje/admin/start (handleBOFichajeAdminStart)",
    "screens": [
     "/app/fichaje",
@@ -2720,7 +2891,7 @@
    "section": "fichaje",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /fichaje/admin/stop (handleBOFichajeAdminStop)",
    "screens": [
     "/app/fichaje",
@@ -2740,7 +2911,7 @@
    "section": "fichaje",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /fichaje/entries/{id} (handleBOFichajeEntryPatch)",
    "screens": []
   },
@@ -2757,7 +2928,7 @@
    "section": "fichaje",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /fichaje/entries (handleBOFichajeEntriesList)",
    "screens": []
   },
@@ -2774,7 +2945,7 @@
    "section": "fichaje",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /fichaje/hourly-costs (handleBOFichajeHourlyCosts)",
    "screens": []
   },
@@ -2791,7 +2962,7 @@
    "section": "fichaje",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /fichaje/labour-cost (handleBOFichajeLabourCost)",
    "screens": [
     "/app/fichaje"
@@ -2808,7 +2979,7 @@
    ],
    "section": "fichaje",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Fichaje and schedules.",
    "screens": []
   },
@@ -2823,7 +2994,7 @@
    ],
    "section": "fichaje",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /fichaje/start (handleBOFichajeStart)",
    "screens": [
     "/app/fichaje"
@@ -2840,7 +3011,7 @@
    ],
    "section": "fichaje",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /fichaje/state (handleBOFichajeState)",
    "screens": [
     "/app/fichaje",
@@ -2858,7 +3029,7 @@
    ],
    "section": "fichaje",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /fichaje/stop (handleBOFichajeStop)",
    "screens": [
     "/app/fichaje"
@@ -2875,7 +3046,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /group-menus-v2/drafts (handleBOGroupMenusV2CreateDraft)",
    "screens": []
   },
@@ -2890,7 +3061,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /group-menus-v2/postres/resolve (handleBOGroupMenusV2ResolvePostres)",
    "screens": []
   },
@@ -2905,7 +3076,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/basics (handleBOGroupMenusV2PatchBasics)",
    "screens": []
   },
@@ -2920,7 +3091,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /group-menus-v2/{id}/beverage-options (handleBOBeverageOptionsList)",
    "screens": []
   },
@@ -2935,7 +3106,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/menu-type (handleBOGroupMenusV2PatchMenuType)",
    "screens": []
   },
@@ -2950,7 +3121,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /group-menus-v2/{id}/publish (handleBOGroupMenusV2Publish)",
    "screens": []
   },
@@ -2965,7 +3136,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /group-menus-v2/{id}/same-day-booking/{dishId} (handleBODishSameDayBookingDelete)",
    "screens": []
   },
@@ -2980,7 +3151,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /group-menus-v2/{id}/same-day-booking/{dishId} (handleBODishSameDayBookingCreate)",
    "screens": []
   },
@@ -2995,7 +3166,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /group-menus-v2/{id}/same-day-booking (handleBODishSameDayBookingList)",
    "screens": []
   },
@@ -3010,7 +3181,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/sections/{sectionId}/annotations (handleBOGroupMenusV2PatchSectionAnnotations)",
    "screens": []
   },
@@ -3025,7 +3196,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/sections/{sectionId}/dessert-source (handleBOGroupMenusV2PatchSectionDessertSource)",
    "screens": []
   },
@@ -3040,7 +3211,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId} (handleBOGroupMenusV2PatchSectionDish)",
    "screens": []
   },
@@ -3055,7 +3226,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /group-menus-v2/{id}/sections/{sectionId}/dishes (handleBOGroupMenusV2GetSectionDishes)",
    "screens": []
   },
@@ -3070,7 +3241,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /group-menus-v2/{id}/sections/{sectionId}/dishes (handleBOGroupMenusV2PutSectionDishes)",
    "screens": []
   },
@@ -3085,7 +3256,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/sections/{sectionId}/visibility (handleBOGroupMenusV2PatchSectionVisibility)",
    "screens": []
   },
@@ -3100,7 +3271,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /group-menus-v2/{id}/sections/{sectionId} (handleBOGroupMenusV2DeleteSection)",
    "screens": []
   },
@@ -3115,8 +3286,38 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /group-menus-v2/{id}/sections (handleBOGroupMenusV2PutSections)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_group_menus_v2_id_slider_images_imageid",
+   "method": "DELETE",
+   "path": "/group-menus-v2/{id}/slider/images/{imageId}",
+   "handler": "handleBOGroupMenusV2DeleteSliderImage",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina una imagen del carrusel de un menú de grupo.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_group_menus_v2_id_slider_images",
+   "method": "PUT",
+   "path": "/group-menus-v2/{id}/slider/images",
+   "handler": "handleBOGroupMenusV2ReorderSliderImages",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "medium",
+   "description": "Reordena las imágenes del carrusel de un menú de grupo.",
    "screens": []
   },
   {
@@ -3130,7 +3331,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /group-menus-v2/{id}/slider (handleBOGroupMenusV2GetSlider)",
    "screens": []
   },
@@ -3145,7 +3346,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/slider (handleBOGroupMenusV2PatchSlider)",
    "screens": []
   },
@@ -3160,7 +3361,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /group-menus-v2/{id}/special-cta (handleBOGroupMenusV2PutSpecialMenuCta)",
    "screens": []
   },
@@ -3175,7 +3376,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /group-menus-v2/{id}/special-group-booking (handleBOSpecialMenuGroupBooking)",
    "screens": []
   },
@@ -3190,7 +3391,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /group-menus-v2/{id}/special-principales (handleBOSpecialMenuPrincipalesToggle)",
    "screens": []
   },
@@ -3205,8 +3406,23 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /group-menus-v2/{id}/special-sections/order (handleBOGroupMenusV2ReorderSpecialSections)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_group_menus_v2_id_special_sections_sectionid_im",
+   "method": "DELETE",
+   "path": "/group-menus-v2/{id}/special-sections/{sectionId}/image",
+   "handler": "handleBOGroupMenusV2DeleteSpecialSectionImage",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina la imagen de una sección especial de un menú de grupo.",
    "screens": []
   },
   {
@@ -3220,7 +3436,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /group-menus-v2/{id}/special-sections/{sectionId}/principales/{dishId} (handleBOSpecialSectionPrincipalDelete)",
    "screens": []
   },
@@ -3235,7 +3451,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /group-menus-v2/{id}/special-sections/{sectionId}/principales (handleBOSpecialSectionPrincipalAdd)",
    "screens": []
   },
@@ -3250,7 +3466,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /group-menus-v2/{id}/special-sections/{sectionId} (handleBOGroupMenusV2DeleteSpecialSection)",
    "screens": []
   },
@@ -3265,7 +3481,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/special-sections/{sectionId} (handleBOGroupMenusV2PatchSpecialSection)",
    "screens": []
   },
@@ -3280,7 +3496,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /group-menus-v2/{id}/special-sections (handleBOGroupMenusV2ListSpecialSections)",
    "screens": []
   },
@@ -3295,7 +3511,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /group-menus-v2/{id}/special-sections (handleBOGroupMenusV2CreateSpecialSection)",
    "screens": []
   },
@@ -3310,7 +3526,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /group-menus-v2/{id}/toggle-active (handleBOGroupMenusV2ToggleActive)",
    "screens": []
   },
@@ -3325,7 +3541,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/visibility (handleBOGroupMenusV2PatchSpecialMenuVisibility)",
    "screens": []
   },
@@ -3340,7 +3556,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /group-menus-v2/{id} (handleBOGroupMenusV2Delete)",
    "screens": []
   },
@@ -3355,7 +3571,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /group-menus-v2/{id} (handleBOGroupMenusV2Get)",
    "screens": []
   },
@@ -3370,7 +3586,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /group-menus-v2 (handleBOGroupMenusV2List)",
    "screens": []
   },
@@ -3385,7 +3601,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /group-menus/{id}/toggle (handleBOGroupMenuToggleActive)",
    "screens": []
   },
@@ -3400,7 +3616,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /group-menus/{id} (handleBOGroupMenuDelete)",
    "screens": []
   },
@@ -3415,7 +3631,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /group-menus/{id} (handleBOGroupMenuGet)",
    "screens": []
   },
@@ -3430,7 +3646,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /group-menus/{id} (handleBOGroupMenuUpdate)",
    "screens": []
   },
@@ -3445,7 +3661,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /group-menus (handleBOGroupMenusList)",
    "screens": []
   },
@@ -3460,7 +3676,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /group-menus (handleBOGroupMenuCreate)",
    "screens": []
   },
@@ -3475,7 +3691,7 @@
    ],
    "section": "horarios",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /horarios/calendar (handleBOHorariosCalendar)",
    "screens": [
     "/app/horarios"
@@ -3492,7 +3708,7 @@
    ],
    "section": "horarios",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /horarios/member-range (handleBOHorariosMemberRange)",
    "screens": []
   },
@@ -3507,7 +3723,7 @@
    ],
    "section": "horarios",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /horarios/month (handleBOHorariosMonth)",
    "screens": [
     "/app/horarios"
@@ -3524,7 +3740,7 @@
    ],
    "section": "fichaje",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /horarios/my-schedule (handleBOHorariosMySchedule)",
    "screens": [
     "/app/horarios",
@@ -3542,7 +3758,7 @@
    ],
    "section": "horarios",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /horarios/{id} (handleBOHorariosDelete)",
    "screens": [
     "/app/fichaje",
@@ -3563,7 +3779,7 @@
    ],
    "section": "horarios",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /horarios/{id} (handleBOHorariosUpdate)",
    "screens": [
     "/app/fichaje",
@@ -3584,7 +3800,7 @@
    ],
    "section": "horarios",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /horarios (handleBOHorariosList)",
    "screens": [
     "/app/fichaje",
@@ -3605,7 +3821,7 @@
    ],
    "section": "horarios",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /horarios (handleBOHorariosAssign)",
    "screens": [
     "/app/fichaje",
@@ -3614,6 +3830,81 @@
     "/app/miembros/mi-horario",
     "/m/app/horarios"
    ]
+  },
+  {
+   "name": "admin_post_instatic_ensure_restaurantid",
+   "method": "POST",
+   "path": "/instatic/ensure/{restaurantId}",
+   "handler": "handleEnsure",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Arranca la instancia web del restaurante si no está activa.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_instatic_provision_domain_restaurantid",
+   "method": "POST",
+   "path": "/instatic/provision-domain/{restaurantId}",
+   "handler": "handleProvisionDomain",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Aprovisiona el dominio de la instancia web del restaurante.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_instatic_publish_restaurantid",
+   "method": "POST",
+   "path": "/instatic/publish/{restaurantId}",
+   "handler": "handlePublish",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Publica la instancia web del restaurante.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_instatic_seed_restaurantid",
+   "method": "POST",
+   "path": "/instatic/seed/{restaurantId}",
+   "handler": "handleSeed",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Siembra la instancia web del restaurante con su plantilla.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_instatic_status_restaurantid",
+   "method": "GET",
+   "path": "/instatic/status/{restaurantId}",
+   "handler": "handleStatus",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve el estado de la instancia web del restaurante.",
+   "screens": []
   },
   {
    "name": "admin_patch_integrations_uazapi_servers_id",
@@ -3628,7 +3919,7 @@
    "section": "ajustes",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /integrations/uazapi/servers/{id} (handleBOUAZAPIServersPatch)",
    "screens": []
   },
@@ -3645,7 +3936,7 @@
    "section": "ajustes",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /integrations/uazapi/servers (handleBOUAZAPIServersList)",
    "screens": []
   },
@@ -3662,7 +3953,7 @@
    "section": "ajustes",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /integrations/uazapi/servers (handleBOUAZAPIServersCreate)",
    "screens": []
   },
@@ -3677,7 +3968,7 @@
    ],
    "section": "ajustes",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Restaurant-level settings (integrations/branding).",
    "screens": [
     "/app/settings"
@@ -3694,7 +3985,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /integrations (handleBOIntegrationsSet)",
    "screens": [
     "/app/settings"
@@ -3711,7 +4002,7 @@
    ],
    "section": "facturas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /invoices/search-reservation (handleBOInvoicesSearchReservation)",
    "screens": [
     "/app/facturas"
@@ -3728,7 +4019,7 @@
    ],
    "section": "facturas",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /invoices/{id}/comments/{commentId} (handleBOInvoiceCommentDelete)",
    "screens": [
     "/app/facturas",
@@ -3746,7 +4037,7 @@
    ],
    "section": "facturas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /invoices/{id}/comments/{commentId} (handleBOInvoiceCommentUpdate)",
    "screens": [
     "/app/facturas",
@@ -3764,7 +4055,7 @@
    ],
    "section": "facturas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /invoices/{id}/comments (handleBOInvoiceCommentsList)",
    "screens": [
     "/app/facturas",
@@ -3782,7 +4073,7 @@
    ],
    "section": "facturas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /invoices/{id}/comments (handleBOInvoiceCommentCreate)",
    "screens": [
     "/app/facturas",
@@ -3800,7 +4091,7 @@
    ],
    "section": "facturas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /invoices/{id}/pdf (handleBOInvoicePdf)",
    "screens": [
     "/app/facturas",
@@ -3818,7 +4109,7 @@
    ],
    "section": "facturas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /invoices/{id}/send (handleBOInvoiceSend)",
    "screens": [
     "/app/facturas",
@@ -3836,7 +4127,7 @@
    ],
    "section": "facturas",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /invoices/{id} (handleBOInvoiceDelete)",
    "screens": [
     "/app/facturas",
@@ -3854,7 +4145,7 @@
    ],
    "section": "facturas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /invoices/{id} (handleBOInvoiceGet)",
    "screens": [
     "/app/facturas",
@@ -3872,7 +4163,7 @@
    ],
    "section": "facturas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /invoices/{id} (handleBOInvoiceUpdate)",
    "screens": [
     "/app/facturas",
@@ -3890,7 +4181,7 @@
    ],
    "section": "facturas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Invoices management",
    "screens": [
     "/app/facturas",
@@ -3908,7 +4199,7 @@
    ],
    "section": "facturas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /invoices (handleBOInvoiceCreate)",
    "screens": [
     "/app/facturas",
@@ -3926,7 +4217,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /legal-pages/{slug} (handleAdminLegalPageGet)",
    "screens": []
   },
@@ -3941,7 +4232,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /legal-pages/{slug} (handleAdminLegalPageUpsert)",
    "screens": []
   },
@@ -3956,7 +4247,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Legal pages CMS (aviso-legal, booking-policies, proteccion-datos). The editor lives on /app/config (Configuracion page), which the backoffice navigation maps to the `reservas` section (sectionForPath in lib/navigation.ts). Gating these endpoints under `ajustes` returned 403 for app-version 0.4 users (whitelisted for `reservas` but not for `ajustes`, e.g. the owner admin after migration 131), breaking the tab with {\"message\":\"Forbidden\"}. Same alignment as #240 did for /branding: the API follows the page's RBAC section.",
    "screens": []
   },
@@ -3970,7 +4261,7 @@
    ],
    "section": "session",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /me/password (handleBOSetPassword)",
    "screens": []
   },
@@ -3984,7 +4275,7 @@
    ],
    "section": "session",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /me/preferences (handleBOPreferencesSet)",
    "screens": [
     "/app/facturas",
@@ -4001,7 +4292,7 @@
    ],
    "section": "session",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /me (handleBOMe)",
    "screens": [
     "/app/facturas",
@@ -4029,7 +4320,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "POST /members/whatsapp/cancel (handleBOMembersWhatsAppCancel)",
    "screens": []
   },
@@ -4046,7 +4337,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/whatsapp/connect (handleBOMembersWhatsAppConnect)",
    "screens": []
   },
@@ -4063,7 +4354,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /members/whatsapp/connection (handleBOMembersWhatsAppConnectionStatus)",
    "screens": []
   },
@@ -4080,7 +4371,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/whatsapp/disconnect (handleBOMembersWhatsAppDisconnect)",
    "screens": []
   },
@@ -4097,7 +4388,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/whatsapp/flush-queue (handleBOMembersWhatsAppFlushQueue)",
    "screens": []
   },
@@ -4114,7 +4405,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/whatsapp/send (handleBOMembersWhatsAppSend)",
    "screens": [
     "/app/miembros"
@@ -4131,7 +4422,7 @@
    ],
    "section": "root",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "The bot connection panel lives on the Contact/Config page, so it must be reachable through the members section it belongs to. Gating it behind `ajustes` hid it for app version 0.4 (that version whitelists miembros but denies ajustes): the status GET returned 403, entitled stayed null and the panel rendered nothing.",
    "screens": [
     "/app/miembros"
@@ -4150,7 +4441,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /members/{id}/compensations/{compensationId} (handleBOMemberCompensationDelete)",
    "screens": [
     "/app/fichaje",
@@ -4176,7 +4467,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /members/{id}/compensations/{compensationId} (handleBOMemberCompensationPatch)",
    "screens": [
     "/app/fichaje",
@@ -4202,7 +4493,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /members/{id}/compensations (handleBOMemberCompensationsList)",
    "screens": [
     "/app/fichaje",
@@ -4228,7 +4519,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/{id}/compensations (handleBOMemberCompensationCreate)",
    "screens": [
     "/app/fichaje",
@@ -4254,7 +4545,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/{id}/ensure-user (handleBOMemberEnsureUser)",
    "screens": [
     "/app/fichaje",
@@ -4280,7 +4571,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/{id}/invitation/resend (handleBOMemberInvitationResend)",
    "screens": [
     "/app/fichaje",
@@ -4306,7 +4597,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/{id}/password-reset/send (handleBOMemberPasswordResetSend)",
    "screens": [
     "/app/fichaje",
@@ -4332,7 +4623,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/{id}/phone/verification/confirm (handleBOMemberWhatsAppVerificationConfirm)",
    "screens": [
     "/app/fichaje",
@@ -4358,7 +4649,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/{id}/phone/verification/send (handleBOMemberWhatsAppVerificationSend)",
    "screens": [
     "/app/fichaje",
@@ -4384,7 +4675,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /members/{id}/phone (handleBOMemberPhonePut)",
    "screens": [
     "/app/fichaje",
@@ -4410,7 +4701,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /members/{id}/stats-range (handleBOMemberStatsRange)",
    "screens": [
     "/app/fichaje",
@@ -4436,7 +4727,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /members/{id}/stats-year (handleBOMemberStatsYear)",
    "screens": [
     "/app/fichaje",
@@ -4462,7 +4753,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /members/{id}/stats (handleBOMemberStats)",
    "screens": [
     "/app/fichaje",
@@ -4488,7 +4779,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /members/{id}/table-data (handleBOMemberTableData)",
    "screens": [
     "/app/fichaje",
@@ -4514,7 +4805,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /members/{id}/time-balance (handleBOMemberQuarterBalance)",
    "screens": [
     "/app/fichaje",
@@ -4540,7 +4831,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/{id}/whatsapp/verification/confirm (handleBOMemberWhatsAppVerificationConfirm)",
    "screens": [
     "/app/fichaje",
@@ -4566,7 +4857,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members/{id}/whatsapp/verification/send (handleBOMemberWhatsAppVerificationSend)",
    "screens": [
     "/app/fichaje",
@@ -4592,7 +4883,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /members/{id} (handleBOMemberDelete)",
    "screens": [
     "/app/fichaje",
@@ -4618,7 +4909,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /members/{id} (handleBOMemberGet)",
    "screens": [
     "/app/fichaje",
@@ -4644,7 +4935,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /members/{id} (handleBOMemberPatch)",
    "screens": [
     "/app/fichaje",
@@ -4670,7 +4961,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Members and role administration.",
    "screens": [
     "/app/fichaje",
@@ -4696,7 +4987,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /members (handleBOMemberCreate)",
    "screens": [
     "/app/fichaje",
@@ -4720,7 +5011,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Backoffice menu management.",
    "screens": []
   },
@@ -4735,7 +5026,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /menu-visibility (handleBOMenuVisibilitySet)",
    "screens": []
   },
@@ -4750,7 +5041,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /menus/dia/dishes/{id} (handleBOMenuDiaDishDelete)",
    "screens": []
   },
@@ -4765,7 +5056,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /menus/dia/dishes/{id} (handleBOMenuDiaDishPatch)",
    "screens": []
   },
@@ -4780,7 +5071,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /menus/dia/dishes (handleBOMenuDiaDishCreate)",
    "screens": []
   },
@@ -4795,7 +5086,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /menus/dia/price (handleBOMenuDiaSetPrice)",
    "screens": []
   },
@@ -4810,7 +5101,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /menus/dia (handleBOMenuDiaGet)",
    "screens": []
   },
@@ -4825,7 +5116,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /menus/finde/dishes/{id} (handleBOMenuFindeDishDelete)",
    "screens": []
   },
@@ -4840,7 +5131,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /menus/finde/dishes/{id} (handleBOMenuFindeDishPatch)",
    "screens": []
   },
@@ -4855,7 +5146,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /menus/finde/dishes (handleBOMenuFindeDishCreate)",
    "screens": []
   },
@@ -4870,7 +5161,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /menus/finde/price (handleBOMenuFindeSetPrice)",
    "screens": []
   },
@@ -4885,7 +5176,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /menus/finde (handleBOMenuFindeGet)",
    "screens": []
   },
@@ -4900,7 +5191,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /menus/selector (handleBOMenuSelectorGet)",
    "screens": [
     "/app/reservas/config",
@@ -4918,7 +5209,7 @@
    ],
    "section": "superadmin",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Platform (superadmin) endpoints — cross-tenant management. All gated by requireBOSuperadmin (is_superadmin=1 only).",
    "screens": [
     "/app/plataforma"
@@ -4935,7 +5226,7 @@
    ],
    "section": "superadmin",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /platform/domains (handlePlatformDomainsList)",
    "screens": []
   },
@@ -4950,7 +5241,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/restaurants/{id}/activate (handlePlatformRestaurantActivate)",
    "screens": []
   },
@@ -4965,7 +5256,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/restaurants/{id}/deactivate (handlePlatformRestaurantDeactivate)",
    "screens": []
   },
@@ -4980,7 +5271,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /platform/restaurants/{id} (handlePlatformRestaurantPatch)",
    "screens": []
   },
@@ -4995,7 +5286,7 @@
    ],
    "section": "superadmin",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /platform/restaurants (handlePlatformRestaurantsList)",
    "screens": []
   },
@@ -5010,7 +5301,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/restaurants (handlePlatformRestaurantCreate)",
    "screens": []
   },
@@ -5025,7 +5316,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /platform/stripe-connect/restaurants/{id}/fee (handlePlatformStripeConnectRestaurantFee)",
    "screens": []
   },
@@ -5040,7 +5331,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /platform/stripe-connect/settings (handlePlatformStripeConnectSettings)",
    "screens": []
   },
@@ -5055,7 +5346,7 @@
    ],
    "section": "superadmin",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /platform/stripe-connect (handlePlatformStripeConnectList)",
    "screens": []
   },
@@ -5070,7 +5361,7 @@
    ],
    "section": "superadmin",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /platform/stripe/payments (handlePlatformStripePaymentsList)",
    "screens": []
   },
@@ -5085,7 +5376,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "POST /platform/stripe/refund (handlePlatformStripeRefund)",
    "screens": []
   },
@@ -5100,7 +5391,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/subscriptions/{id}/toggle (handlePlatformSubscriptionToggle)",
    "screens": []
   },
@@ -5115,7 +5406,7 @@
    ],
    "section": "superadmin",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /platform/subscriptions (handlePlatformSubscriptionsList)",
    "screens": []
   },
@@ -5130,7 +5421,7 @@
    ],
    "section": "superadmin",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /platform/uazapi-servers (handlePlatformUAZAPIServersList)",
    "screens": []
   },
@@ -5145,7 +5436,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /platform/users/{id}/assign/{restaurantId} (handlePlatformUserUnassign)",
    "screens": []
   },
@@ -5160,7 +5451,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/users/{id}/assign (handlePlatformUserAssign)",
    "screens": []
   },
@@ -5175,7 +5466,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/users/{id}/password (handlePlatformUserPasswordReset)",
    "screens": []
   },
@@ -5190,7 +5481,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/users/{id}/revoke-sessions (handlePlatformUserRevokeSessions)",
    "screens": []
   },
@@ -5205,7 +5496,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /platform/users/{id} (handlePlatformUserPatch)",
    "screens": []
   },
@@ -5220,7 +5511,7 @@
    ],
    "section": "superadmin",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /platform/users (handlePlatformUsersList)",
    "screens": []
   },
@@ -5235,7 +5526,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/users (handlePlatformUserCreate)",
    "screens": []
   },
@@ -5250,7 +5541,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/whatsapp/{id}/disconnect (handlePlatformWhatsAppDisconnect)",
    "screens": []
   },
@@ -5265,7 +5556,7 @@
    ],
    "section": "superadmin",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platform/whatsapp/{id}/renew-qr (handlePlatformWhatsAppRenewQR)",
    "screens": []
   },
@@ -5280,7 +5571,7 @@
    ],
    "section": "superadmin",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /platform/whatsapp (handlePlatformWhatsAppList)",
    "screens": []
   },
@@ -5295,7 +5586,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platos/{id}/toggle (handleBOPlatosToggle)",
    "screens": []
   },
@@ -5310,7 +5601,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /platos/{id} (handleBOPlatosDelete)",
    "screens": []
   },
@@ -5325,7 +5616,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /platos/{id} (handleBOPlatosPatch)",
    "screens": []
   },
@@ -5340,7 +5631,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Legacy aliases consumed by current backoffice comida screen.",
    "screens": []
   },
@@ -5355,7 +5646,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /platos (handleBOPlatosCreate)",
    "screens": []
   },
@@ -5372,7 +5663,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/accounting/export.csv (handleBOAccountingExport)",
    "screens": [
     "/app/pos"
@@ -5391,7 +5682,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/activation-acceptances (handleBOPOSActivationAccept)",
    "screens": []
   },
@@ -5408,7 +5699,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/activation-readiness (handleBOPOSActivationReadiness)",
    "screens": []
   },
@@ -5425,7 +5716,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "POS. Paid checkout is authoritative boundary for stock deductions and covers.",
    "screens": []
   },
@@ -5442,7 +5733,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/cash-days/current (handleBOPOSCashDayCurrent)",
    "screens": []
   },
@@ -5459,7 +5750,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/cash-days/{date}/billing (handleBOPOSCashDayBilling)",
    "screens": []
   },
@@ -5476,7 +5767,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/cash-days/{date}/bulk-checkout (handleBOPOSCashDayBulkCheckout)",
    "screens": []
   },
@@ -5493,7 +5784,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/cash-days/{date}/tables (handleBOPOSCashDayTables)",
    "screens": []
   },
@@ -5510,7 +5801,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/cash-days/{id}/close (handleBOPOSCashDayClose)",
    "screens": []
   },
@@ -5527,7 +5818,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/cash-days (handleBOPOSCashDaysRange)",
    "screens": []
   },
@@ -5544,7 +5835,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/cash-days (handleBOPOSCashDayOpen)",
    "screens": []
   },
@@ -5561,7 +5852,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/cash/closures/{id} (handleBOPOSCashClosureGet)",
    "screens": []
   },
@@ -5578,7 +5869,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/cash/closures (handleBOPOSCashClosures)",
    "screens": []
   },
@@ -5595,7 +5886,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/cash/closures (handleBOPOSCashClosureCreate)",
    "screens": []
   },
@@ -5612,7 +5903,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/cash/movements (handleBOPOSCashMovements)",
    "screens": []
   },
@@ -5629,7 +5920,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/cash/movements (handleBOPOSCashMovementCreate)",
    "screens": []
   },
@@ -5646,7 +5937,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/cash/summary (handleBOPOSCashSummary)",
    "screens": []
   },
@@ -5663,7 +5954,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /pos/categories/{id} (handleBOPOSCategoryDelete)",
    "screens": []
   },
@@ -5680,7 +5971,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/categories/{id} (handleBOPOSCategoryPatch)",
    "screens": []
   },
@@ -5697,7 +5988,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/categories (handleBOPOSCategoriesList)",
    "screens": []
   },
@@ -5714,7 +6005,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/categories (handleBOPOSCategoryCreate)",
    "screens": []
   },
@@ -5731,7 +6022,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/covers/adjustments (handleBOPOSCoverAdjustment)",
    "screens": []
   },
@@ -5748,7 +6039,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/covers/reconciliation/rebuild (handleBOPOSCoversRebuild)",
    "screens": []
   },
@@ -5765,7 +6056,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/covers/reconciliation (handleBOPOSCoversReconciliation)",
    "screens": []
   },
@@ -5782,7 +6073,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/covers (handleBOPOSCoversReport)",
    "screens": []
   },
@@ -5799,7 +6090,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/customers/{id}/anonymise (handleBOPOSCustomerAnonymise)",
    "screens": []
   },
@@ -5816,7 +6107,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/customers/{id} (handleBOPOSCustomerGet)",
    "screens": []
   },
@@ -5833,7 +6124,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/customers/{id} (handleBOPOSCustomerPatch)",
    "screens": []
   },
@@ -5850,7 +6141,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/customers (handleBOPOSCustomersSearch)",
    "screens": []
   },
@@ -5867,7 +6158,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/customers (handleBOPOSCustomerCreate)",
    "screens": []
   },
@@ -5884,7 +6175,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/drawer/open (handleBOPOSDrawerOpen)",
    "screens": []
   },
@@ -5901,7 +6192,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/fiscal/series/{seriesId}/verify (handleBOPOSFiscalChainVerify)",
    "screens": []
   },
@@ -5918,7 +6209,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Fiscal groundwork: numbering series, simplified invoice, its duplicate copy and the rectifying invoice for a refund. Issuing is behind the refund permission because both actions create a fiscal record.",
    "screens": []
   },
@@ -5935,7 +6226,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/health (handleBOPOSHealth)",
    "screens": []
   },
@@ -5952,7 +6243,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/kitchen/dispatches/{id}/status (handleBOPOSKitchenDispatchStatus)",
    "screens": []
   },
@@ -5969,7 +6260,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/kitchen/queue (handleBOPOSKitchenQueue)",
    "screens": []
   },
@@ -5986,7 +6277,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /pos/kitchen/routes/{id} (handleBOPOSKitchenRouteDelete)",
    "screens": []
   },
@@ -6003,7 +6294,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/kitchen/routes (handleBOPOSKitchenRoutesList)",
    "screens": []
   },
@@ -6020,7 +6311,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/kitchen/routes (handleBOPOSKitchenRouteCreate)",
    "screens": []
   },
@@ -6037,7 +6328,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/kitchen/stations/{id} (handleBOPOSKitchenStationPatch)",
    "screens": []
   },
@@ -6054,7 +6345,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/kitchen/stations (handleBOPOSKitchenStationsList)",
    "screens": []
   },
@@ -6071,7 +6362,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/kitchen/stations (handleBOPOSKitchenStationCreate)",
    "screens": []
   },
@@ -6088,7 +6379,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/modifier-groups/{groupId}/options (handleBOPOSModifierOptionCreate)",
    "screens": []
   },
@@ -6105,7 +6396,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /pos/modifier-groups/{id} (handleBOPOSModifierGroupDelete)",
    "screens": []
   },
@@ -6122,7 +6413,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/modifier-groups/{id} (handleBOPOSModifierGroupPatch)",
    "screens": []
   },
@@ -6139,7 +6430,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/modifier-groups (handleBOPOSModifierGroups)",
    "screens": []
   },
@@ -6156,7 +6447,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/modifier-groups (handleBOPOSModifierGroupCreate)",
    "screens": []
   },
@@ -6173,7 +6464,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /pos/modifier-options/{id} (handleBOPOSModifierOptionDelete)",
    "screens": []
   },
@@ -6190,7 +6481,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/modifier-options/{id} (handleBOPOSModifierOptionPatch)",
    "screens": []
   },
@@ -6207,7 +6498,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /pos/pack-components/{id} (handleBOPOSPackComponentDelete)",
    "screens": []
   },
@@ -6224,7 +6515,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/pack-components/{id} (handleBOPOSPackComponentPatch)",
    "screens": []
   },
@@ -6241,7 +6532,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /pos/packs/{id} (handleBOPOSPackDelete)",
    "screens": []
   },
@@ -6258,7 +6549,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/packs/{id} (handleBOPOSPackPatch)",
    "screens": []
   },
@@ -6275,7 +6566,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/packs/{packId}/components (handleBOPOSPackComponentCreate)",
    "screens": []
   },
@@ -6292,7 +6583,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/packs (handleBOPOSPacks)",
    "screens": []
   },
@@ -6309,7 +6600,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/packs (handleBOPOSPackCreate)",
    "screens": []
   },
@@ -6326,7 +6617,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/pin/verify (handleBOPOSPinVerify)",
    "screens": []
   },
@@ -6343,7 +6634,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Staff PIN: set your own, verify someone else's to approve an action. Under the sell gate because they are part of working the till rather than administration.",
    "screens": []
   },
@@ -6360,8 +6651,42 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/pin (handleBOPOSPinSet)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_pos_products_import_confirm",
+   "method": "POST",
+   "path": "/pos/products/import-confirm",
+   "handler": "handleBOPOSImportConfirm",
+   "gates": [
+    "s.requireBOSession",
+    "s.requireBOPOSFeature",
+    "withBOPOSTimeout",
+    "posCatalogGate"
+   ],
+   "section": "pos",
+   "write": true,
+   "risk": "medium",
+   "description": "Confirma la importación de productos de la carta al catálogo POS.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_pos_products_import_preview",
+   "method": "POST",
+   "path": "/pos/products/import-preview",
+   "handler": "handleBOPOSImportPreview",
+   "gates": [
+    "s.requireBOSession",
+    "s.requireBOPOSFeature",
+    "withBOPOSTimeout",
+    "posCatalogGate"
+   ],
+   "section": "pos",
+   "write": true,
+   "risk": "medium",
+   "description": "Previsualiza la importación de productos de la carta al catálogo POS.",
    "screens": []
   },
   {
@@ -6377,7 +6702,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/products/{id}/stock-rules (handleBOPOSStockRulesGet)",
    "screens": []
   },
@@ -6394,7 +6719,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /pos/products/{id}/stock-rules (handleBOPOSStockRulesPut)",
    "screens": []
   },
@@ -6411,7 +6736,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /pos/products/{id} (handleBOPOSProductDelete)",
    "screens": []
   },
@@ -6428,7 +6753,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/products/{id} (handleBOPOSProductGet)",
    "screens": []
   },
@@ -6445,7 +6770,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/products/{id} (handleBOPOSProductPatch)",
    "screens": []
   },
@@ -6462,7 +6787,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/products/{productId}/modifier-groups (handleBOPOSProductModifierGroups)",
    "screens": []
   },
@@ -6479,7 +6804,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /pos/products/{productId}/modifier-groups (handleBOPOSProductModifierGroups)",
    "screens": []
   },
@@ -6496,7 +6821,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/products (handleBOPOSProductsList)",
    "screens": []
   },
@@ -6513,7 +6838,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/products (handleBOPOSProductCreate)",
    "screens": []
   },
@@ -6530,7 +6855,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/reports/card-reconciliation (handleBOPOSCardReconciliation)",
    "screens": []
   },
@@ -6547,7 +6872,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/reports/sales.csv (handleBOPOSExportSales)",
    "screens": []
   },
@@ -6564,7 +6889,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/reports/sales (handleBOPOSSalesReport)",
    "screens": []
   },
@@ -6581,7 +6906,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/reports/stock (handleBOPOSStockReport)",
    "screens": []
   },
@@ -6598,7 +6923,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/reservations/eligible (handleBOPOSReservationsEligible)",
    "screens": []
   },
@@ -6615,7 +6940,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/reservations/{bookingId}/visit (handleBOPOSReservationVisit)",
    "screens": []
   },
@@ -6632,7 +6957,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/roles/{slug}/permissions (handleBOPOSRolePermissionsGet)",
    "screens": []
   },
@@ -6649,7 +6974,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /pos/roles/{slug}/permissions (handleBOPOSRolePermissionsPut)",
    "screens": []
   },
@@ -6666,7 +6991,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /pos/service-periods/{id} (handleBOPOSServicePeriodDelete)",
    "screens": []
   },
@@ -6683,7 +7008,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/service-periods/{id} (handleBOPOSServicePeriodPatch)",
    "screens": []
   },
@@ -6700,7 +7025,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/service-periods (handleBOPOSServicePeriodsList)",
    "screens": []
   },
@@ -6717,7 +7042,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/service-periods (handleBOPOSServicePeriodCreate)",
    "screens": []
   },
@@ -6734,7 +7059,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/settings (handleBOPOSSettingsGet)",
    "screens": []
   },
@@ -6751,7 +7076,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/settings (handleBOPOSSettingsPatch)",
    "screens": []
   },
@@ -6768,7 +7093,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/shifts/current (handleBOPOSShiftCurrent)",
    "screens": []
   },
@@ -6785,7 +7110,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/shifts/open (handleBOPOSShiftOpen)",
    "screens": []
   },
@@ -6802,7 +7127,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/shifts/{id}/close (handleBOPOSShiftClose)",
    "screens": []
   },
@@ -6819,7 +7144,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/stock-anomalies/{id}/resolve (handleBOPOSStockAnomalyResolve)",
    "screens": []
   },
@@ -6836,7 +7161,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/stock-anomalies (handleBOPOSStockAnomaliesList)",
    "screens": []
   },
@@ -6853,7 +7178,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/stock-exceptions/replay (handleBOPOSStockExceptionsReplay)",
    "screens": []
   },
@@ -6870,7 +7195,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/stock-exceptions (handleBOPOSStockExceptionsList)",
    "screens": []
   },
@@ -6887,7 +7212,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/stock-readiness (handleBOPOSStockReadiness)",
    "screens": []
   },
@@ -6904,7 +7229,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/tags (handleBOPOSTagsList)",
    "screens": []
   },
@@ -6921,7 +7246,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tags (handleBOPOSTagCreate)",
    "screens": []
   },
@@ -6938,7 +7263,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/tickets/hourly (handleBOPOSTicketsHourly)",
    "screens": []
   },
@@ -6955,7 +7280,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/tickets/series (handleBOPOSTicketsSeries)",
    "screens": []
   },
@@ -6972,7 +7297,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/adjustments (handleBOPOSTicketAdjustment)",
    "screens": [
     "/app/pos"
@@ -6991,7 +7316,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/checkout (handleBOPOSCheckout)",
    "screens": [
     "/app/pos"
@@ -7010,7 +7335,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/courses/fire (handleBOPOSCourseFire)",
    "screens": [
     "/app/pos"
@@ -7029,7 +7354,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Coursing: which courses a ticket has, and firing one to the kitchen.",
    "screens": [
     "/app/pos"
@@ -7048,7 +7373,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/customer (handleBOPOSTicketCustomer)",
    "screens": [
     "/app/pos"
@@ -7067,7 +7392,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/discount (handleBOPOSDiscount)",
    "screens": [
     "/app/pos"
@@ -7086,7 +7411,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/fiscal-document (handleBOPOSFiscalDocument)",
    "screens": [
     "/app/pos"
@@ -7105,7 +7430,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "Naming a separated check is a sell-side action (it happens while the table is still ordering), not an accounting edit.",
    "screens": [
     "/app/pos"
@@ -7124,7 +7449,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/kitchen-dispatches (handleBOPOSKitchenDispatchCreate)",
    "screens": [
     "/app/pos"
@@ -7143,7 +7468,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/lines/{lineId}/comp (handleBOPOSLineComp)",
    "screens": [
     "/app/pos"
@@ -7162,7 +7487,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/lines/{lineId}/move (handleBOPOSLineMove)",
    "screens": [
     "/app/pos"
@@ -7181,7 +7506,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/lines/{lineId}/tags (handleBOPOSLineTagAttach)",
    "screens": [
     "/app/pos"
@@ -7200,7 +7525,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "POST /pos/tickets/{id}/lines/{lineId}/void (handleBOPOSLineVoid)",
    "screens": [
     "/app/pos"
@@ -7219,7 +7544,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/tickets/{id}/lines/{lineId} (handleBOPOSLinePatch)",
    "screens": [
     "/app/pos"
@@ -7238,7 +7563,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/lines (handleBOPOSLineCreate)",
    "screens": [
     "/app/pos"
@@ -7257,7 +7582,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/tickets/{id}/operator (handleBOPOSTicketOperator)",
    "screens": [
     "/app/pos"
@@ -7276,7 +7601,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/recall (handleBOPOSRecall)",
    "screens": [
     "/app/pos"
@@ -7295,7 +7620,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/refunds (handleBOPOSRefund)",
    "screens": [
     "/app/pos"
@@ -7314,7 +7639,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/tickets/{id}/tags (handleBOPOSTicketTagAttach)",
    "screens": [
     "/app/pos"
@@ -7333,7 +7658,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "POST /pos/tickets/{id}/void (handleBOPOSTicketVoid)",
    "screens": [
     "/app/pos"
@@ -7352,7 +7677,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/tickets/{id} (handleBOPOSTicketGet)",
    "screens": [
     "/app/pos"
@@ -7371,7 +7696,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/tickets (handleBOPOSTicketsList)",
    "screens": [
     "/app/pos"
@@ -7390,7 +7715,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "POST /pos/visits/{id}/cancel (handleBOPOSVisitCancel)",
    "screens": [
     "/app/pos"
@@ -7409,7 +7734,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/visits/{id}/close (handleBOPOSVisitClose)",
    "screens": [
     "/app/pos"
@@ -7428,7 +7753,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/visits/{id}/customer (handleBOPOSVisitCustomer)",
    "screens": [
     "/app/pos"
@@ -7447,7 +7772,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/visits/{id}/merge (handleBOPOSVisitMerge)",
    "screens": [
     "/app/pos"
@@ -7466,7 +7791,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/visits/{id}/park (handleBOPOSVisitPark)",
    "screens": [
     "/app/pos"
@@ -7485,7 +7810,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/visits/{id}/tickets (handleBOPOSVisitTicketCreate)",
    "screens": [
     "/app/pos"
@@ -7504,7 +7829,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/visits/{id} (handleBOPOSVisitGet)",
    "screens": [
     "/app/pos"
@@ -7523,7 +7848,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /pos/visits/{id} (handleBOPOSVisitPatch)",
    "screens": [
     "/app/pos"
@@ -7542,7 +7867,7 @@
    ],
    "section": "pos",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /pos/visits (handleBOPOSVisitsList)",
    "screens": [
     "/app/pos"
@@ -7561,7 +7886,7 @@
    ],
    "section": "pos",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /pos/visits (handleBOPOSVisitCreate)",
    "screens": [
     "/app/pos"
@@ -7578,7 +7903,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /postres/{id} (handleBOPostreDelete)",
    "screens": []
   },
@@ -7593,7 +7918,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /postres/{id} (handleBOPostrePatch)",
    "screens": []
   },
@@ -7608,7 +7933,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /postres (handleBOPostresList)",
    "screens": []
   },
@@ -7623,7 +7948,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /postres (handleBOPostreCreate)",
    "screens": []
   },
@@ -7638,7 +7963,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Page visibility belongs to the Carta/Comida pages it configures, so it is gated by the menus section. Gating it under \"ajustes\" returned 403 for app-version 0.4 users (who are whitelisted for comida/menus) and made the food-type settings switch fail.",
    "screens": []
   },
@@ -7653,7 +7978,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /restaurant/pages/visibility (handlePageVisibilityPatch)",
    "screens": []
   },
@@ -7670,7 +7995,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /roles (handleBORolesGet)",
    "screens": [
     "/app/miembros",
@@ -7691,13 +8016,43 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /roles (handleBORoleCreate)",
    "screens": [
     "/app/miembros",
     "/app/miembros/:memberId",
     "/app/miembros/roles"
    ]
+  },
+  {
+   "name": "admin_delete_site_builder_assets_assetid",
+   "method": "DELETE",
+   "path": "/site-builder/assets/{assetId}",
+   "handler": "handleDeleteAsset",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina un recurso de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_assets_assetid",
+   "method": "GET",
+   "path": "/site-builder/assets/{assetId}",
+   "handler": "handleGetAsset",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve un recurso de un sitio.",
+   "screens": []
   },
   {
    "name": "admin_post_site_builder_billing_checkout",
@@ -7710,8 +8065,68 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "Domain purchase billing (Stripe Checkout).",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_site_builder_bindings_bindingid",
+   "method": "DELETE",
+   "path": "/site-builder/bindings/{bindingId}",
+   "handler": "handleDeleteBinding",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina una vinculación de datos.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_site_builder_bindings_bindingid",
+   "method": "PUT",
+   "path": "/site-builder/bindings/{bindingId}",
+   "handler": "handleUpdateBinding",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Actualiza una vinculación de datos.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_components_type",
+   "method": "GET",
+   "path": "/site-builder/components/{type}",
+   "handler": "handleGetComponentByType",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve un componente del editor visual por tipo.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_components",
+   "method": "GET",
+   "path": "/site-builder/components",
+   "handler": "handleListComponents",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista los componentes del editor visual.",
    "screens": []
   },
   {
@@ -7725,7 +8140,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /site-builder/domains/provision (handleRegistrarProvision)",
    "screens": []
   },
@@ -7740,7 +8155,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /site-builder/domains/register (handleRegistrarRegister)",
    "screens": []
   },
@@ -7755,8 +8170,353 @@
    ],
    "section": "ajustes",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Cloudflare Registrar: domain search + purchase.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_domains_domainid_verify",
+   "method": "POST",
+   "path": "/site-builder/domains/{domainId}/verify",
+   "handler": "handleVerifyDomain",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Verifica el dominio de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_site_builder_domains_domainid",
+   "method": "DELETE",
+   "path": "/site-builder/domains/{domainId}",
+   "handler": "handleDeleteDomain",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina un dominio de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_site_builder_pages_pageid",
+   "method": "DELETE",
+   "path": "/site-builder/pages/{pageId}",
+   "handler": "handleDeletePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina una página de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_pages_pageid",
+   "method": "GET",
+   "path": "/site-builder/pages/{pageId}",
+   "handler": "handleGetPage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve una página de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_site_builder_pages_pageid",
+   "method": "PUT",
+   "path": "/site-builder/pages/{pageId}",
+   "handler": "handleUpdatePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Actualiza una página de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_assets",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/assets",
+   "handler": "handleListAssets",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista los recursos de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_assets",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/assets",
+   "handler": "handleUploadAsset",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Registra un recurso (por URL) en un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_bindings",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/bindings",
+   "handler": "handleListBindings",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista las vinculaciones de datos de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_bindings",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/bindings",
+   "handler": "handleCreateBinding",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Crea una vinculación de datos en un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_domains",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/domains",
+   "handler": "handleListDomains",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista los dominios de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_domains",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/domains",
+   "handler": "handleCreateDomain",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Añade un dominio a un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_pages",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/pages",
+   "handler": "handleListPages",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista las páginas de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_pages",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/pages",
+   "handler": "handleCreatePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Crea una página en un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_publish_status",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/publish-status",
+   "handler": "handleGetPublishStatus",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve el estado de publicación de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_publish",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/publish",
+   "handler": "handlePublishSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Publica un sitio del editor visual.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid_versions",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}/versions",
+   "handler": "handleListVersions",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista las versiones de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites_siteid_versions",
+   "method": "POST",
+   "path": "/site-builder/sites/{siteId}/versions",
+   "handler": "handleCreateVersion",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Crea una versión de un sitio.",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_site_builder_sites_siteid",
+   "method": "DELETE",
+   "path": "/site-builder/sites/{siteId}",
+   "handler": "handleDeleteSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina un sitio del editor visual.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites_siteid",
+   "method": "GET",
+   "path": "/site-builder/sites/{siteId}",
+   "handler": "handleGetSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve un sitio del editor visual.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_site_builder_sites_siteid",
+   "method": "PUT",
+   "path": "/site-builder/sites/{siteId}",
+   "handler": "handleUpdateSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Actualiza un sitio del editor visual.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_sites",
+   "method": "GET",
+   "path": "/site-builder/sites",
+   "handler": "handleListSites",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista los sitios del editor visual.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_site_builder_sites",
+   "method": "POST",
+   "path": "/site-builder/sites",
+   "handler": "handleCreateSite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Crea un sitio en el editor visual.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_site_builder_versions_versionid",
+   "method": "GET",
+   "path": "/site-builder/versions/{versionId}",
+   "handler": "handleGetVersion",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve una versión de un sitio.",
    "screens": []
   },
   {
@@ -7771,7 +8531,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /stock/affluence (handleBOStockAffluenceUpsert)",
    "screens": []
   },
@@ -7788,7 +8548,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/ai/recommendations (handleBOStockAIRecommendations)",
    "screens": []
   },
@@ -7804,7 +8564,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/categories/{id} (handleBOStockCategoryDelete)",
    "screens": []
   },
@@ -7820,7 +8580,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/categories/{id} (handleBOStockCategoryPatch)",
    "screens": []
   },
@@ -7836,7 +8596,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/categories (handleBOStockCategoriesList)",
    "screens": []
   },
@@ -7852,7 +8612,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/categories (handleBOStockCategoryCreate)",
    "screens": []
   },
@@ -7868,7 +8628,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/costing (handleBOStockCosting)",
    "screens": []
   },
@@ -7884,7 +8644,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/counts/{id}/close (handleBOStockCountClose)",
    "screens": []
   },
@@ -7900,7 +8660,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/counts/{id} (handleBOStockCountGet)",
    "screens": []
   },
@@ -7916,7 +8676,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/counts (handleBOStockCountCreate)",
    "screens": []
   },
@@ -7932,7 +8692,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/documents/extract-text (handleBOStockDocumentTextExtract)",
    "screens": []
   },
@@ -7947,7 +8707,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/documents/{id}/confirm-invoice (handleBOStockInvoiceConfirm)",
    "screens": []
   },
@@ -7962,7 +8722,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/documents/{id}/confirm-recipe (handleBOStockRecipeDocumentConfirm)",
    "screens": []
   },
@@ -7977,7 +8737,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/documents/{id}/original (handleBOStockDocumentOriginalDelete)",
    "screens": []
   },
@@ -7992,7 +8752,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/documents/{id}/original (handleBOStockDocumentOriginalGet)",
    "screens": []
   },
@@ -8007,7 +8767,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/documents/{id}/reject (handleBOStockDocumentReject)",
    "screens": []
   },
@@ -8022,7 +8782,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/documents/{id}/review (handleBOStockDocumentReview)",
    "screens": []
   },
@@ -8037,7 +8797,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/documents/{id} (handleBOStockDocumentGet)",
    "screens": []
   },
@@ -8052,7 +8812,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/documents (handleBOStockDocumentsList)",
    "screens": []
   },
@@ -8068,7 +8828,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/expiring (handleBOStockExpiring)",
    "screens": []
   },
@@ -8084,7 +8844,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/export (handleBOStockExport)",
    "screens": [
     "/app/stock"
@@ -8102,7 +8862,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/forecast (handleBOStockForecast)",
    "screens": []
   },
@@ -8118,7 +8878,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/item-options (handleBOStockItemOptions)",
    "screens": []
   },
@@ -8134,7 +8894,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/items/{id}/movements (handleBOStockItemMovementsList)",
    "screens": [
     "/app/stock"
@@ -8152,7 +8912,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/items/{id}/movements (handleBOStockMovementCreate)",
    "screens": [
     "/app/stock"
@@ -8170,7 +8930,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/items/{id}/prices (handleBOStockItemPriceCreate)",
    "screens": [
     "/app/stock"
@@ -8188,7 +8948,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/items/{id}/targets (handleBOStockLevelTargetsPatch)",
    "screens": [
     "/app/stock"
@@ -8206,7 +8966,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/items/{id}/units/{unitId} (handleBOStockItemUnitDelete)",
    "screens": [
     "/app/stock"
@@ -8224,7 +8984,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/items/{id}/units (handleBOStockItemUnitsList)",
    "screens": [
     "/app/stock"
@@ -8242,7 +9002,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/items/{id}/units (handleBOStockItemUnitCreate)",
    "screens": [
     "/app/stock"
@@ -8260,7 +9020,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/items/{id} (handleBOStockItemDelete)",
    "screens": [
     "/app/stock"
@@ -8278,7 +9038,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/items/{id} (handleBOStockItemPatch)",
    "screens": [
     "/app/stock"
@@ -8296,7 +9056,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/items (handleBOStockItemsList)",
    "screens": [
     "/app/stock"
@@ -8314,7 +9074,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/items (handleBOStockItemCreate)",
    "screens": [
     "/app/stock"
@@ -8332,7 +9092,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/labour-members (handleBOStockLabourMembers)",
    "screens": []
   },
@@ -8348,7 +9108,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/margin-scopes/defaults (handleBOStockMarginScopeDefaults)",
    "screens": []
   },
@@ -8364,7 +9124,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/margin-scopes/resolve (handleBOStockMarginScopeResolve)",
    "screens": []
   },
@@ -8380,7 +9140,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/margin-scopes/targets (handleBOStockMarginTargets)",
    "screens": []
   },
@@ -8396,7 +9156,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/margin-scopes/{id} (handleBOStockMarginScopeDelete)",
    "screens": []
   },
@@ -8412,7 +9172,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/margin-scopes (handleBOStockMarginScopesList)",
    "screens": []
   },
@@ -8428,7 +9188,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /stock/margin-scopes (handleBOStockMarginScopePut)",
    "screens": []
   },
@@ -8443,7 +9203,7 @@
    ],
    "section": "session",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/permissions/mine (handleBOStockPermissionsMine)",
    "screens": []
   },
@@ -8461,7 +9221,7 @@
    "section": "stock",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/production-labour/entries (handleBOProductionLabourEntries)",
    "screens": []
   },
@@ -8479,7 +9239,7 @@
    "section": "stock",
    "roles_admin": true,
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/production-orders/{id}/labour/{allocationId} (handleBOProductionLabourDelete)",
    "screens": []
   },
@@ -8497,7 +9257,7 @@
    "section": "stock",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/production-orders/{id}/labour (handleBOProductionLabourList)",
    "screens": []
   },
@@ -8515,7 +9275,7 @@
    "section": "stock",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/production-orders/{id}/labour (handleBOProductionLabourCreate)",
    "screens": []
   },
@@ -8533,7 +9293,7 @@
    "section": "stock",
    "roles_admin": true,
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/production-orders (handleBOProductionOrdersList)",
    "screens": []
   },
@@ -8549,7 +9309,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/recipes/{id}/pricing (handleBOStockRecipePricingPatch)",
    "screens": []
   },
@@ -8565,7 +9325,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/recipes/{id}/production/preview (handleBOStockProductionPreview)",
    "screens": []
   },
@@ -8581,7 +9341,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/recipes/{id}/production (handleBOStockProductionCreate)",
    "screens": []
   },
@@ -8597,7 +9357,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/recipes/{id} (handleBOStockRecipeDelete)",
    "screens": []
   },
@@ -8613,7 +9373,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/recipes/{id} (handleBOStockRecipeGet)",
    "screens": []
   },
@@ -8629,7 +9389,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/recipes/{id} (handleBOStockRecipePatch)",
    "screens": []
   },
@@ -8645,7 +9405,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/recipes (handleBOStockRecipesList)",
    "screens": []
   },
@@ -8661,7 +9421,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/recipes (handleBOStockRecipeCreate)",
    "screens": []
   },
@@ -8677,7 +9437,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/reconciliation/rebuild (handleBOStockReconciliationRebuild)",
    "screens": []
   },
@@ -8693,7 +9453,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/reconciliation (handleBOStockReconciliationGet)",
    "screens": []
   },
@@ -8709,7 +9469,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/roles/{slug}/permissions (handleBOStockRolePermissionsGet)",
    "screens": []
   },
@@ -8725,7 +9485,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /stock/roles/{slug}/permissions (handleBOStockRolePermissionsPut)",
    "screens": []
   },
@@ -8741,7 +9501,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/settings/classify-seasonality (handleBOStockSeasonalityClassify)",
    "screens": []
   },
@@ -8757,7 +9517,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/settings (handleBOStockSettingsGet)",
    "screens": []
   },
@@ -8773,7 +9533,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/settings (handleBOStockSettingsPatch)",
    "screens": []
   },
@@ -8789,7 +9549,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/summary (handleBOStockSummary)",
    "screens": []
   },
@@ -8805,7 +9565,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/suppliers/{id}/aliases (handleBOStockSupplierAliasesGet)",
    "screens": []
   },
@@ -8821,7 +9581,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /stock/suppliers/{id}/aliases (handleBOStockSupplierAliasesPut)",
    "screens": []
   },
@@ -8837,7 +9597,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/suppliers/{id}/prices (handleBOStockSupplierPricesGet)",
    "screens": []
   },
@@ -8853,7 +9613,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/suppliers/{id} (handleBOStockSupplierDelete)",
    "screens": []
   },
@@ -8869,7 +9629,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/suppliers/{id} (handleBOStockSupplierPatch)",
    "screens": []
   },
@@ -8885,7 +9645,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/suppliers (handleBOStockSuppliersList)",
    "screens": []
   },
@@ -8901,7 +9661,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/suppliers (handleBOStockSupplierCreate)",
    "screens": []
   },
@@ -8917,7 +9677,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/transfers (handleBOStockTransferCreate)",
    "screens": []
   },
@@ -8933,7 +9693,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/valuation (handleBOStockValuation)",
    "screens": []
   },
@@ -8949,7 +9709,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/vat-rates/{id} (handleBOStockVATDelete)",
    "screens": []
   },
@@ -8965,7 +9725,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/vat-rates/{id} (handleBOStockVATPatch)",
    "screens": []
   },
@@ -8981,7 +9741,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /stock/vat-rates (handleBOStockVATList)",
    "screens": []
   },
@@ -8997,7 +9757,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/vat-rates (handleBOStockVATCreate)",
    "screens": []
   },
@@ -9013,7 +9773,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /stock/warehouses/{id} (handleBOStockWarehouseDelete)",
    "screens": []
   },
@@ -9029,7 +9789,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /stock/warehouses/{id} (handleBOStockWarehousePatch)",
    "screens": []
   },
@@ -9045,7 +9805,7 @@
    ],
    "section": "stock",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Stock control. Section gate is admin-only by default; role table can grant it later.",
    "screens": []
   },
@@ -9061,7 +9821,7 @@
    ],
    "section": "stock",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /stock/warehouses (handleBOStockWarehouseCreate)",
    "screens": []
   },
@@ -9076,7 +9836,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /tables/template/{floorNumber} (handleBOPremiumTablesTemplateDelete)",
    "screens": [
     "/app/reservas/tables"
@@ -9093,7 +9853,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Layout template (cross-day). Owns limit_area_template_points and draw_elements_template for the given floor.",
    "screens": [
     "/app/reservas/tables"
@@ -9110,7 +9870,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /tables/template/{floorNumber} (handleBOPremiumTablesTemplateSave)",
    "screens": [
     "/app/reservas/tables"
@@ -9127,7 +9887,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /tables/{id} (handleBOPremiumTablesDelete)",
    "screens": [
     "/app/reservas/tables"
@@ -9144,7 +9904,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Tables premium endpoints.",
    "screens": [
     "/app/reservas/tables"
@@ -9161,7 +9921,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /tables (handleBOPremiumTablesCreate)",
    "screens": [
     "/app/reservas/tables"
@@ -9178,7 +9938,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /tables (handleBOPremiumTablesUpdate)",
    "screens": [
     "/app/reservas/tables"
@@ -9197,7 +9957,7 @@
    "section": "miembros",
    "roles_admin": true,
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /users/{id}/role (handleBOUserRolePatch)",
    "screens": [
     "/app/miembros/:memberId",
@@ -9216,7 +9976,7 @@
    ],
    "section": "miembros",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "A/B app version management: root only, per user + active restaurant.",
    "screens": [
     "/app/miembros/:memberId",
@@ -9234,7 +9994,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "destructive",
+   "risk": "high",
    "description": "DELETE /vinos/{id} (handleBOVinoDelete)",
    "screens": []
   },
@@ -9249,7 +10009,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /vinos/{id} (handleBOVinoGet)",
    "screens": []
   },
@@ -9264,7 +10024,7 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PATCH /vinos/{id} (handleBOVinoPatch)",
    "screens": []
   },
@@ -9279,7 +10039,7 @@
    ],
    "section": "menus",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /vinos (handleBOVinosList)",
    "screens": []
   },
@@ -9294,8 +10054,413 @@
    ],
    "section": "menus",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /vinos (handleBOVinoCreate)",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_assets_id",
+   "method": "DELETE",
+   "path": "/website-builder/assets/{id}",
+   "handler": "DeleteAsset",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina un recurso multimedia de la web.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_assets",
+   "method": "GET",
+   "path": "/website-builder/assets",
+   "handler": "ListAssets",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista los recursos multimedia de la web.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_components_id",
+   "method": "GET",
+   "path": "/website-builder/components/{id}",
+   "handler": "GetComponent",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve un componente de sección.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_components",
+   "method": "GET",
+   "path": "/website-builder/components",
+   "handler": "ListComponents",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista los componentes disponibles para las secciones.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_history",
+   "method": "GET",
+   "path": "/website-builder/history",
+   "handler": "PublishHistory",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista el historial de publicaciones de la web.",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_pages_id",
+   "method": "DELETE",
+   "path": "/website-builder/pages/{id}",
+   "handler": "DeletePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina una página de la web.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_pages_id",
+   "method": "PUT",
+   "path": "/website-builder/pages/{id}",
+   "handler": "UpdatePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Actualiza una página de la web.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_pages_pageid_sections",
+   "method": "GET",
+   "path": "/website-builder/pages/{pageId}/sections",
+   "handler": "ListSections",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista las secciones de una página.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_pages_pageid_sections",
+   "method": "POST",
+   "path": "/website-builder/pages/{pageId}/sections",
+   "handler": "CreateSection",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Crea una sección en una página.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_pages",
+   "method": "GET",
+   "path": "/website-builder/pages",
+   "handler": "ListPages",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista las páginas de la web.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_pages",
+   "method": "POST",
+   "path": "/website-builder/pages",
+   "handler": "CreatePage",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Crea una página en la web.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_preview",
+   "method": "GET",
+   "path": "/website-builder/preview",
+   "handler": "PreviewWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve la vista previa de la web.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_publish",
+   "method": "POST",
+   "path": "/website-builder/publish",
+   "handler": "PublishWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Publica la web del restaurante.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_section_components_reorder",
+   "method": "PUT",
+   "path": "/website-builder/section-components/reorder",
+   "handler": "ReorderSectionComponents",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Reordena los componentes de una sección.",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_section_components_id",
+   "method": "DELETE",
+   "path": "/website-builder/section-components/{id}",
+   "handler": "DeleteSectionComponent",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina un componente de una sección.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_section_components_id",
+   "method": "PUT",
+   "path": "/website-builder/section-components/{id}",
+   "handler": "UpdateSectionComponent",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Actualiza un componente de una sección.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_sections_reorder",
+   "method": "PUT",
+   "path": "/website-builder/sections/reorder",
+   "handler": "ReorderSections",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Reordena las secciones de una página.",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_sections_id",
+   "method": "DELETE",
+   "path": "/website-builder/sections/{id}",
+   "handler": "DeleteSection",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina una sección de una página.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_sections_id",
+   "method": "PUT",
+   "path": "/website-builder/sections/{id}",
+   "handler": "UpdateSection",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Actualiza una sección de una página.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_sections_sectionid_components",
+   "method": "GET",
+   "path": "/website-builder/sections/{sectionId}/components",
+   "handler": "ListSectionComponents",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista los componentes de una sección.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_sections_sectionid_components",
+   "method": "POST",
+   "path": "/website-builder/sections/{sectionId}/components",
+   "handler": "CreateSectionComponent",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Añade un componente a una sección.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_templates_id",
+   "method": "GET",
+   "path": "/website-builder/templates/{id}",
+   "handler": "GetTemplate",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve una plantilla del constructor de web.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_templates",
+   "method": "GET",
+   "path": "/website-builder/templates",
+   "handler": "ListTemplates",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Lista las plantillas disponibles del constructor de web.",
+   "screens": []
+  },
+  {
+   "name": "admin_delete_website_builder_website",
+   "method": "DELETE",
+   "path": "/website-builder/website",
+   "handler": "DeleteWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "high",
+   "description": "Elimina la web del restaurante.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_website_builder_website",
+   "method": "GET",
+   "path": "/website-builder/website",
+   "handler": "GetWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": false,
+   "risk": "low",
+   "description": "Devuelve la web del restaurante (modelo por secciones).",
+   "screens": []
+  },
+  {
+   "name": "admin_post_website_builder_website",
+   "method": "POST",
+   "path": "/website-builder/website",
+   "handler": "CreateWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Crea la web del restaurante.",
+   "screens": []
+  },
+  {
+   "name": "admin_put_website_builder_website",
+   "method": "PUT",
+   "path": "/website-builder/website",
+   "handler": "UpdateWebsite",
+   "gates": [
+    "s.requireBOSession",
+    "ajustesGate"
+   ],
+   "section": "ajustes",
+   "write": true,
+   "risk": "medium",
+   "description": "Actualiza la web del restaurante.",
    "screens": []
   },
   {
@@ -9309,7 +10474,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /website/ai-generate (handleBOPremiumWebsiteAIGenerate)",
    "screens": [
     "/app/website"
@@ -9326,7 +10491,7 @@
    ],
    "section": "ajustes",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /website/menu-templates (handleBOPremiumWebsiteMenuTemplatesGet)",
    "screens": [
     "/app/settings"
@@ -9343,7 +10508,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /website/menu-templates (handleBOPremiumWebsiteMenuTemplatesUpsert)",
    "screens": [
     "/app/settings"
@@ -9360,7 +10525,7 @@
    ],
    "section": "ajustes",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /website/templates (handleBOPremiumWebsiteTemplates)",
    "screens": []
   },
@@ -9375,7 +10540,7 @@
    ],
    "section": "ajustes",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "GET /website (handleBOPremiumWebsiteGet)",
    "screens": [
     "/app/settings",
@@ -9393,7 +10558,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "POST /website (handleBOPremiumWebsiteUpsert)",
    "screens": [
     "/app/settings",
@@ -9411,7 +10576,7 @@
    ],
    "section": "ajustes",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /website (handleBOPremiumWebsiteUpsert)",
    "screens": [
     "/app/settings",
@@ -9429,7 +10594,7 @@
    ],
    "section": "reservas",
    "write": false,
-   "risk": "read",
+   "risk": "low",
    "description": "Widget settings (booking manager embed).",
    "screens": []
   },
@@ -9444,7 +10609,7 @@
    ],
    "section": "reservas",
    "write": true,
-   "risk": "write",
+   "risk": "medium",
    "description": "PUT /widget/settings (handleBOWidgetSettingsPut)",
    "screens": []
   }

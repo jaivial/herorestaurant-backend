@@ -468,8 +468,11 @@ type evoGroupInput struct {
 	// DocumentB64/DocumentName: inline document payload, wa_bot_privileged_group_v1.
 	DocumentB64  string
 	DocumentName string
-	Ignored      bool
-	OwnJIDs      []string
+	// ImageB64/ImageMime: inline image payload, wa_bot_attachment_read_v1.
+	ImageB64  string
+	ImageMime string
+	Ignored   bool
+	OwnJIDs   []string
 }
 
 // parseEvolutionGroupMessage applies the group mention gate and returns the
@@ -557,6 +560,8 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 		AudioB64:       in.AudioB64,
 		DocumentB64:    in.DocumentB64,
 		DocumentName:   in.DocumentName,
+		ImageB64:       in.ImageB64,
+		ImageMime:      in.ImageMime,
 		Mentioned:      mentioned,
 		MentionJIDs:    mentions,
 		OwnJIDs:        in.OwnJIDs,
