@@ -882,8 +882,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/ai/{restaurantId}", s.handleBOBotAIPut)
 		// Privileged conversations of the connected WhatsApp (groups and
 		// contacts) that may run the full backoffice catalogue.
+		// wa_bot_privileged_contacts_v2: POST adds one phone number by hand.
 		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/ai/{restaurantId}/privileged-contacts", s.handleBOBotPrivilegedContactsGet)
 		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/ai/{restaurantId}/privileged-contacts", s.handleBOBotPrivilegedContactsPut)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/bot/ai/{restaurantId}/privileged-contacts", s.handleBOBotPrivilegedContactsPost)
 		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/pipeline/{restaurantId}", s.handleBOBotPipelineGet)
 		// Booking WhatsApp notifications (confirmation / reconfirmation) — bkg-wa-notif.
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/booking-notifications", s.handleBOBookingNotificationsGet)
