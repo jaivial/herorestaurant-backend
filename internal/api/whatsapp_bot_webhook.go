@@ -776,7 +776,13 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			_, _ = s.botToolSendContact(sendCtx, restaurantID, msg, tenant, nil)
 		} else if text != "" {
 			log.Printf("[bot] checkpoint wa_bot_plain_text_fallback restaurant_id=%d sender=%s", restaurantID, msg.Sender)
-			if gw, ok := s.botGatewayFor(sendCtx, restaurantID); ok && s.sendWhatsAppTextTracked(sendCtx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
+			if gw, ok := s.botGatewayFor(sendCtx, restaurantID); ok {
+				// wa_bot_outbound_guard_v1: no jargon, no walls of text.
+				for _, part := range botOutboundText(text) {
+					if s.sendWhatsAppTextTracked(sendCtx, restaurantID, gw, msg.Sender, part, "agent_plain_text") != nil {
+						break
+					}
+				}
 			}
 		} else {
 			s.botSendFallback(sendCtx, restaurantID, msg.Sender)

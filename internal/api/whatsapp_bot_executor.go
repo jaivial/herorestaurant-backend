@@ -289,10 +289,16 @@ func (s *Server) botToolSendMessage(ctx context.Context, restaurantID int, msg b
 	if !ok {
 		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
 	}
-	if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, in.Message, "agent"); err != nil {
-		return botJSON(map[string]any{"error": err.Error()}), nil
+	parts := botOutboundText(in.Message)
+	if len(parts) == 0 {
+		return botJSON(map[string]any{"error": "el mensaje quedó vacío"}), nil
 	}
-	return botJSON(map[string]any{"sent": true}), nil
+	for _, part := range parts {
+		if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, part, "agent"); err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+	}
+	return botJSON(map[string]any{"sent": true, "parts": len(parts)}), nil
 }
 
 func (s *Server) botToolSendButtons(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
