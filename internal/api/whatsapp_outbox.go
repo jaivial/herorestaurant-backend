@@ -199,7 +199,19 @@ func (s *Server) runWhatsAppOutboxOnce(ctx context.Context) (int, error) {
 		if sendErr == nil {
 			sent++
 		}
-		s.finishWhatsAppDelivery(ctx, row.ID, row.Attempts, sendErr, sendErr != nil && row.Attempts >= whatsappOutboxMaxAttempts)
+		giveUp := sendErr != nil && row.Attempts >= whatsappOutboxMaxAttempts
+		if giveUp && whatsappRecipientUnreachable(sendErr) {
+			// The provider says the number has no WhatsApp devices, so it can
+			// never receive this message. The row has spent its whole retry
+			// budget on the same answer, so the number goes to the
+			// do-not-contact list and the next campaign skips it instead of
+			// failing again (wa_unreachable_suppression_v1). A single attempt
+			// is not enough: the queue exists to absorb a provider that is
+			// briefly confused, and there is no unblock action in the
+			// backoffice.
+			s.suppressUnreachableWhatsappTarget(ctx, row.RestaurantID, row.Recipient, 0, "no esta en WhatsApp: "+truncate(sendErr.Error(), 200))
+		}
+		s.finishWhatsAppDelivery(ctx, row.ID, row.Attempts, sendErr, giveUp)
 	}
 	return sent, nil
 }
