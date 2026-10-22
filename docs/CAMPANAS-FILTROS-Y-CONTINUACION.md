@@ -136,11 +136,38 @@ Estado observado en dev el 2026-10-21: campaigns 23/24/25 `sent`, 26/27
 legacy=2; whatsapp invalid=829, legacy=2; sin bounces ni bajas de
 unsubscribe registradas en dev.
 
-## Qué falta antes de reanudar (no es código)
+## Retoma automática — `camp_auto_retake_v1` (2026-10-22)
 
-- **Consentimiento promocional sin resolver** (asunto humano/legal): la
-  reanudación de los envíos parados requiere decisión explícita. El endpoint
-  `/resume` obliga a declararlo en el `ack` y lo registra en el log, pero no
-  lo evalúa ni lo sustituye.
-- Nadie debe llamar a `/send` ni `/resume` hasta esa decisión; este PR no
-  arranca runners ni reanuda nada.
+Política del operador: **un pico de rebotes congela, no mata**; la pausa se
+retoma **sola** tras la ventana de prevención, sin reanudación manual.
+
+- **Congelación** (ya existente): el breaker pausa las filas de email
+  (`corte por rebotes`; legacy: `pausa bounce HH:MM`) — el proceso NO muere:
+  el runner sigue drenando el resto de canales y termina cuando no queda
+  `pending`; nada se pierde.
+- **Retoma automática** (`runCampaignAutoRetake`, en `campaign_bounce_sync.go`):
+  en **boot** y en **cada tick** del loop de rebotes (15 min por defecto):
+  1. **Ventana de prevención por quiescencia**: si el restaurante NO tiene
+     ningún `campaign_bounce_events` en las últimas `CAMPAIGN_BOUNCE_FREEZE_HOURS`
+     (default **6 h**; `<=0` desactiva la retoma), las filas congeladas vuelven
+     a `pending` (re-comprobando bajas: suprimidas → `skipped`), se resetea el
+     breaker en memoria y se relanza el drenado. Cualquier aviso de rebote
+     fresco **extiende** la ventana (retoma exacta = X horas sin avisos).
+  2. **Drenados huérfanos**: campañas en `sending` con `pending` y sin runner
+     vivo (murió en un redeploy/restart) → arranque de runner automático.
+  - Seguridad: transiciones con `RowsAffected` (idempotentes), solo campañas
+    en `draft`/`sending` (una `sent` jamás se resucita), supresión
+    re-comprobada, log por punto (`campaign.auto_retake.requeued/holding/
+    runner_started/disabled`) con `coord_id`.
+
+## Consentimiento y estado de los envíos
+
+- **Consentimiento promocional: AUTORIZADO por el operador (Jaime) el
+  2026-10-22** en esta tarea («autorizo la reanudación»). La autorización y la
+  retoma automática quedan auditadas en logs (`campaign.auto_retake.*`) y en
+  el status de la tarea (BIZ-62).
+- Con este PR **las campañas paradas se reanudan solas al desplegar** (las
+  congeladas al cumplirse la ventana — ya cumplida para las filas del20-10 —
+  y los drenados huérfanos al primer tick de boot). `/resume` sigue existiendo
+  como vía manual con `ack` (p. ej. si se desactiva la retoma automática).
+- Antes de este PR: los envíos parados esperaban reanudación manual; ya no.

@@ -360,6 +360,10 @@ func (s *Server) runCampaignBounceLoop(ctx context.Context) {
 	}
 	t := time.NewTicker(time.Duration(minutes) * time.Minute)
 	defer t.Stop()
+	// camp_auto_retake_v1: at boot the frozen/orphaned campaigns retake
+	// immediately — the prevention window is measured against bounce notices,
+	// not against process restarts.
+	s.runCampaignAutoRetake(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -382,5 +386,8 @@ func (s *Server) runCampaignBounceLoop(ctx context.Context) {
 			_, _ = s.syncCampaignBounces(ctx, id, 2)
 		}
 		s.runCampaignEmailRetries(ctx)
+		// camp_auto_retake_v1: after the sync, so a fresh notice inside the
+		// window keeps the freeze held for another round.
+		s.runCampaignAutoRetake(ctx)
 	}
 }
