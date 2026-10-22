@@ -116,6 +116,11 @@ type waInbound struct {
 	ChatJIDAlt string
 	// ParticipantJID is the member who wrote inside a group (empty in 1:1).
 	ParticipantJID string
+	// ParticipantRawJID is the raw key.participant of the inbound webhook:
+	// WhatsApp may address the member by its opaque LID (…:59@lid) while
+	// ParticipantJID keeps the phone form the booking tools key on.
+	// Coordination id: wa_bot_group_reaction_lid_v1
+	ParticipantRawJID string
 	// Mentioned reports that the bot was explicitly addressed in a group.
 	// Group messages without a mention are dropped: the group is noisy and
 	// the bot must never answer an unaddressed message.
