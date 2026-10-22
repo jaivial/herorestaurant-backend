@@ -56,6 +56,14 @@ func (g *evolutionGateway) post(ctx context.Context, path string, payload any) e
 		return err
 	}
 	if code < 200 || code >= 300 {
+		// The provider's own words travel with the error: they are the only
+		// thing that tells a definitive failure ("346538444289 has no WhatsApp
+		// devices") from a transient one ("the instance is not connected"),
+		// and the do-not-contact list is built on that difference
+		// (wa_unreachable_suppression_v1).
+		if msg := evolutionErrorMessage(resp); msg != "" {
+			return fmt.Errorf("evolution http %d for %s: %s", code, path, msg)
+		}
 		return fmt.Errorf("evolution http %d for %s", code, path)
 	}
 	// Remember the sent message id so its fromMe webhook echo is not taken for
@@ -150,6 +158,26 @@ func splitMenuTitleAndDescription(text string) (title, description string) {
 func isHTTPURL(v string) bool {
 	parsed, err := url.Parse(v)
 	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
+// evolutionErrorMessage reads the provider's own error text out of a failed
+// response, in the order the providers in use write it: evo-weai answers
+// {"error":"Service Unavailable","message":"346538444289 has no WhatsApp
+// devices"}, Evolution answers {"status":"error","response":"..."} or
+// {"status":"error","error":"..."}.
+//
+// The keys are read one by one instead of walked, so the answer never depends
+// on the map's iteration order (and the evo-weai "error" key, which only
+// carries the status name, never wins over its "message").
+func evolutionErrorMessage(resp map[string]any) string {
+	for _, key := range []string{"message", "response", "error"} {
+		if s, ok := resp[key].(string); ok {
+			if s = strings.TrimSpace(s); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 func (g *evolutionGateway) SendMedia(ctx context.Context, to string, m waMedia) error {
