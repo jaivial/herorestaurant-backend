@@ -460,12 +460,19 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 	// Messages of one conversation are serialized and coalesced into bursts
 	// (wa_bot_burst_coalesce_v1); the semaphore bounds concurrent workers.
 	burstKey := botBurstKey(restaurantID, msg.Sender)
+	// wa_bot_inbound_queue_v1: persist BEFORE accepting. The webhook answers
+	// 200 to the provider either way; this row is what survives a deploy or a
+	// crash instead of silently dropping the turn (incident 2026-10-22 14:35).
+	s.botInboundEnqueue(r.Context(), restaurantID, burstKey, msg)
 	if s.botBursts.enqueue(burstKey, msg) {
 		select {
 		case s.botSem <- struct{}{}:
 		default:
 			// At capacity: shed load rather than pile up unbounded goroutines.
+			// The conversation queue is dropped (its rows stay pending and are
+			// replayed at the next boot); this row is explicitly shed.
 			s.botBursts.release(burstKey)
+			s.botInboundFinish(restaurantID, []string{msg.MessageID}, "shed")
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "code": "BUSY"})
 			return
 		}
