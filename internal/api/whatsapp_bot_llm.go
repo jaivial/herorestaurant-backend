@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -223,7 +222,7 @@ func (s *Server) botLLMCallRouted(ctx context.Context, restaurantID int, routing
 		resp, err := s.botCallModelRef(ctx, restaurantID, ref, sessionID, system, messages, tools, 0)
 		if errors.Is(err, errBotThinkingBudget) {
 			budget := s.botThinkingRetryBudget()
-			log.Printf("[bot] checkpoint wa_bot_thinking_budget_v1 restaurant_id=%d model=%s retry_max_tokens=%d", restaurantID, ref, budget)
+			botCheckpoint("wa_bot_thinking_budget_v1", "restaurant_id=%d model=%s retry_max_tokens=%d", restaurantID, ref, budget)
 			resp, err = s.botCallModelRef(ctx, restaurantID, ref, sessionID, system, messages, tools, budget)
 		}
 		if err == nil {
@@ -231,11 +230,11 @@ func (s *Server) botLLMCallRouted(ctx context.Context, restaurantID int, routing
 			s.recordAIUsage(ctx, restaurantID, aiFeatureWhatsAppBot, provider, model,
 				helperAnthropicUsage(resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens), i > 0)
 			if i > 0 {
-				log.Printf("[bot] checkpoint wa_bot_llm_fallback_used restaurant_id=%d model=%s", restaurantID, ref)
+				botCheckpoint("wa_bot_llm_fallback_used", "restaurant_id=%d model=%s", restaurantID, ref)
 			}
 			return resp, ref, nil
 		}
-		log.Printf("[bot] checkpoint wa_bot_llm_call_failed restaurant_id=%d model=%s err=%v", restaurantID, ref, err)
+		botCheckpoint("wa_bot_llm_call_failed", "restaurant_id=%d model=%s err=%v", restaurantID, ref, err)
 		lastErr = err
 	}
 	return botLLMResponse{}, "", lastErr

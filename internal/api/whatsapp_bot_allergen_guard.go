@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"log"
 	"regexp"
 	"strings"
 )
@@ -59,5 +58,5 @@ func (s *Server) botSendAllergenNotice(ctx context.Context, restaurantID int, ms
 		prefix += " Si lo desea, también puedo anotar la alergia o intolerancia en los comentarios de su reserva."
 	}
 	s.botForwardToManagement(ctx, restaurantID, msg, tenant, "allergens", "", prefix, msg.Language, s.botIsDuplicateRequest(msg))
-	log.Printf("[bot] checkpoint wa_bot_allergen_handoff_v1 restaurant_id=%d sender=%s", restaurantID, msg.Sender)
+	botCheckpoint("wa_bot_allergen_handoff_v1", "restaurant_id=%d sender=%s", restaurantID, msg.Sender)
 }

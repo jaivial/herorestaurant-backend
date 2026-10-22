@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"time"
 )
@@ -22,7 +21,7 @@ func (g *evolutionGateway) SendTyping(ctx context.Context, to string, on bool) e
 		"number": to, "presence": presence, "delay": botTypingRefresh.Milliseconds() + 5000,
 	})
 	if err == nil && (code < 200 || code >= 300) {
-		log.Printf("[bot] checkpoint wa_bot_typing_v1 instance=%s presence=%s http=%d", g.instanceName, presence, code)
+		botCheckpoint("wa_bot_typing_v1", "instance=%s presence=%s http=%d", g.instanceName, presence, code)
 	}
 	return err
 }

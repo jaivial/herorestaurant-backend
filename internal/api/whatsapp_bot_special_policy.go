@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"net/url"
 	"strings"
 	"time"
@@ -56,7 +55,7 @@ func (s *Server) botLoadSpecialDatePolicy(ctx context.Context, restaurantID int,
 		&p.ID, &p.Date, &p.Title, &desc, &pre, &startsOn, &endsOn, &adel, &allowMod, &maxEnabled, &maxPer, &mobility)
 	if err != nil {
 		if err != sql.ErrNoRows && !isSQLSchemaError(err) {
-			log.Printf("[bot] checkpoint wa_bot_special_date_policy_v1 restaurant_id=%d date=%s load_error=%v", restaurantID, dateISO, err)
+			botCheckpoint("wa_bot_special_date_policy_v1", "restaurant_id=%d date=%s load_error=%v", restaurantID, dateISO, err)
 		}
 		return nil
 	}
@@ -197,7 +196,7 @@ func (s *Server) botManagementHandoff(ctx context.Context, restaurantID int, msg
 		prefix = text
 	}
 	sent := s.botForwardToManagement(ctx, restaurantID, msg, tenant, reason, botOperationLabel(operation), prefix, msg.Language, s.botIsDuplicateRequest(msg))
-	log.Printf("[bot] checkpoint wa_bot_special_date_policy_v1 restaurant_id=%d sender=%s reason=%s operation=%s forwarded=%t", restaurantID, msg.Sender, reason, operation, sent)
+	botCheckpoint("wa_bot_special_date_policy_v1", "restaurant_id=%d sender=%s reason=%s operation=%s forwarded=%t", restaurantID, msg.Sender, reason, operation, sent)
 	return botJSON(map[string]any{
 		"blocked": true, "reason": reason, "operation": operation, "forwarded": sent,
 		"instruction": "La operación NO se ha realizado. La solicitud ya se ha enviado al equipo de gestión y el cliente ha sido avisado. No envíes ningún mensaje adicional.",
@@ -228,7 +227,7 @@ func (s *Server) botSendPrereservaLink(ctx context.Context, restaurantID int, ms
 	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
 		sent = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, b.String(), "special_date_prereserva_link") == nil
 	}
-	log.Printf("[bot] checkpoint wa_bot_special_date_policy_v1 restaurant_id=%d sender=%s reason=prereserva_web operation=%s date=%s sent=%t", restaurantID, msg.Sender, operation, p.Date, sent)
+	botCheckpoint("wa_bot_special_date_policy_v1", "restaurant_id=%d sender=%s reason=prereserva_web operation=%s date=%s sent=%t", restaurantID, msg.Sender, operation, p.Date, sent)
 	return botJSON(map[string]any{
 		"blocked": true, "reason": "special_date_web_only", "date": p.Date, "title": p.Title, "booking_url": p.BookingURL, "notice_sent": sent,
 		"instruction": "NO se ha creado ninguna reserva: el cliente ya ha recibido el enlace de la web para esa fecha especial. No envíes otro mensaje salvo que tenga otra pregunta.",

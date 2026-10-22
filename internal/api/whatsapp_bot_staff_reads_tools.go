@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 )
 
@@ -65,12 +64,12 @@ func (s *Server) botToolStaffDomainRead(ctx context.Context, restaurantID int, m
 		return botJSON(map[string]any{"error": "tool inválido: " + in.Tool}), nil
 	}
 	if _, _, ok := s.botPrivilegedControlAuthorize(ctx, restaurantID, msg); !ok {
-		log.Printf("[bot] checkpoint wa_bot_staff_reads_v2 restaurant_id=%d denied=actor", restaurantID)
+		botCheckpoint("wa_bot_staff_reads_v2", "restaurant_id=%d denied=actor", restaurantID)
 		return botJSON(map[string]any{"error": "no autorizado para esta consulta desde este chat"}), nil
 	}
 	if len(in.Input) == 0 {
 		in.Input = json.RawMessage(`{}`)
 	}
-	log.Printf("[bot] checkpoint wa_bot_staff_reads_v2 restaurant_id=%d tool=%s", restaurantID, in.Tool)
+	botCheckpoint("wa_bot_staff_reads_v2", "restaurant_id=%d tool=%s", restaurantID, in.Tool)
 	return s.assistantExecuteTool(s.botPrivilegedForkyContext(ctx, restaurantID), restaurantID, in.Tool, in.Input)
 }

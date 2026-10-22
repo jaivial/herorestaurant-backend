@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 	"time"
 )
@@ -47,7 +46,7 @@ func (s *Server) botInboundEnqueue(ctx context.Context, restaurantID int, chatKe
 		INSERT IGNORE INTO bot_inbound_queue (restaurant_id, chat_key, message_id, payload_json)
 		VALUES (?, ?, ?, ?)
 	`, restaurantID, chatKey, msg.MessageID, string(payload)); err != nil {
-		log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 restaurant_id=%d enqueue_error err=%v", restaurantID, err)
+		botCheckpoint("wa_bot_inbound_queue_v1", "restaurant_id=%d enqueue_error err=%v", restaurantID, err)
 	}
 }
 
@@ -71,7 +70,7 @@ func (s *Server) botInboundFinish(restaurantID int, messageIDs []string, state s
 		UPDATE bot_inbound_queue SET state = ?
 		WHERE message_id IN (`+ph+`) AND restaurant_id = ? AND state <> 'done'
 	`, args...); err != nil {
-		log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 restaurant_id=%d finish_error state=%s err=%v", restaurantID, state, err)
+		botCheckpoint("wa_bot_inbound_queue_v1", "restaurant_id=%d finish_error state=%s err=%v", restaurantID, state, err)
 	}
 }
 
@@ -93,7 +92,7 @@ func (s *Server) botInboundClaim(restaurantID int, messageIDs []string) {
 		UPDATE bot_inbound_queue SET state = 'running', started_at = NOW()
 		WHERE message_id IN (`+ph+`) AND restaurant_id = ? AND state = 'pending'
 	`, args...); err != nil {
-		log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 restaurant_id=%d claim_error err=%v", restaurantID, err)
+		botCheckpoint("wa_bot_inbound_queue_v1", "restaurant_id=%d claim_error err=%v", restaurantID, err)
 	}
 }
 
@@ -129,7 +128,7 @@ func (s *Server) botInboundRecover() {
 		if err == nil {
 			break
 		}
-		log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 recover_error attempt=%d err=%v", attempt, err)
+		botCheckpoint("wa_bot_inbound_queue_v1", "recover_error attempt=%d err=%v", attempt, err)
 		if attempt < 3 {
 			time.Sleep(2 * time.Second)
 		}
@@ -137,7 +136,7 @@ func (s *Server) botInboundRecover() {
 	if len(found) == 0 {
 		return
 	}
-	log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 recover_rows=%d", len(found))
+	botCheckpoint("wa_bot_inbound_queue_v1", "recover_rows=%d", len(found))
 	replayed := map[string]bool{}
 	for _, r := range found {
 		var msg botWebhookMessage
@@ -155,12 +154,12 @@ func (s *Server) botInboundRecover() {
 				case s.botSem <- struct{}{}:
 					go func(rid int, key string, sender string) {
 						defer func() { <-s.botSem }()
-						log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 replay_start restaurant_id=%d chat=%s", rid, key)
+						botCheckpoint("wa_bot_inbound_queue_v1", "replay_start restaurant_id=%d chat=%s", rid, key)
 						s.botRunConversationWorker(rid, sender)
 					}(r.rid, r.key, msg.Sender)
 				default:
 					s.botBursts.release(r.key)
-					log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 recover_busy chat=%s", r.key)
+					botCheckpoint("wa_bot_inbound_queue_v1", "recover_busy chat=%s", r.key)
 				}
 				continue
 			}
@@ -186,7 +185,7 @@ func (s *Server) botInboundRecoverScan(ctx context.Context) ([]struct {
 		WHERE state IN ('pending','running') AND created_at < (NOW() - INTERVAL 6 HOUR)
 	`); err == nil {
 		if n, _ := res.RowsAffected(); n > 0 {
-			log.Printf("[bot] checkpoint wa_bot_inbound_queue_v1 expired=%d", n)
+			botCheckpoint("wa_bot_inbound_queue_v1", "expired=%d", n)
 		}
 	}
 	rows, err := s.db.QueryContext(ctx, `

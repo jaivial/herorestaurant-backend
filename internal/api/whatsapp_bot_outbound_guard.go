@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log"
 	"regexp"
 	"strings"
 )
@@ -54,7 +53,7 @@ func botOutboundStripJargon(text string) string {
 	}
 	out := strings.TrimSpace(strings.Join(kept, "\n"))
 	if removed > 0 && out != strings.TrimSpace(text) {
-		log.Printf("[bot] checkpoint wa_bot_outbound_guard_v1 jargon_lines_removed=%d chars_in=%d", removed, len(text))
+		botCheckpoint("wa_bot_outbound_guard_v1", "jargon_lines_removed=%d chars_in=%d", removed, len(text))
 	}
 	return out
 }

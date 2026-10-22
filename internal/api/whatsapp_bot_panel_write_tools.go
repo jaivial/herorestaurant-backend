@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -248,7 +247,7 @@ func (s *Server) botToolPanelChange(ctx context.Context, restaurantID int, msg b
 	}
 	actor, origin, ok := s.botPrivilegedControlAuthorize(ctx, restaurantID, msg)
 	if !ok {
-		log.Printf("[bot] checkpoint wa_bot_panel_write_v1 restaurant_id=%d denied=actor", restaurantID)
+		botCheckpoint("wa_bot_panel_write_v1", "restaurant_id=%d denied=actor", restaurantID)
 		return botJSON(map[string]any{"error": "no autorizado para proponer cambios del panel desde este chat"}), nil
 	}
 	if _, direct := botPanelDirectOps[a.Operation]; !direct {
@@ -283,7 +282,7 @@ func (s *Server) botToolPanelChange(ctx context.Context, restaurantID int, msg b
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo guardar la propuesta"}), nil
 	}
-	log.Printf("[bot] checkpoint wa_bot_panel_write_v1 restaurant_id=%d proposed op=%s", restaurantID, a.Operation)
+	botCheckpoint("wa_bot_panel_write_v1", "restaurant_id=%d proposed op=%s", restaurantID, a.Operation)
 	return out, nil
 }
 
@@ -332,7 +331,7 @@ func (s *Server) botPanelRunOp(ctx context.Context, rid int, a botPanelArgs) (st
 // botPanelApplyNow performs the panel write itself, without the OK flow: only
 // for tenants with privileged direct writes enabled.
 func (s *Server) botPanelApplyNow(ctx context.Context, rid int, a botPanelArgs) (string, error) {
-	log.Printf("[bot] checkpoint wa_bot_privileged_direct_writes_v1 restaurant_id=%d op=%s", rid, a.Operation)
+	botCheckpoint("wa_bot_privileged_direct_writes_v1", "restaurant_id=%d op=%s", rid, a.Operation)
 	if run, direct := botPanelDirectOps[a.Operation]; direct {
 		res, err := run(s, ctx, rid, a.Params)
 		if err != nil {
@@ -369,7 +368,7 @@ func (s *Server) botPanelExecute(ctx context.Context, tx *sql.Tx, rid int, p bot
 	if err := tx.Commit(); err != nil {
 		return "", errors.New("error interno")
 	}
-	log.Printf("[bot] checkpoint wa_bot_panel_write_v1 restaurant_id=%d applied op=%s", rid, a.Operation)
+	botCheckpoint("wa_bot_panel_write_v1", "restaurant_id=%d applied op=%s", rid, a.Operation)
 	return summary, nil
 }
 

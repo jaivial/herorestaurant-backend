@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"log"
 	"strings"
 	"time"
 )
@@ -38,7 +37,7 @@ func (s *Server) botQuickAck(restaurantID int, msg botWebhookMessage) {
 			return
 		}
 		if s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "quick_ack") == nil {
-			log.Printf("[bot] checkpoint wa_bot_quick_ack_v1 restaurant_id=%d sender=%s chars=%d", restaurantID, msg.Sender, len(text))
+			botCheckpoint("wa_bot_quick_ack_v1", "restaurant_id=%d sender=%s chars=%d", restaurantID, msg.Sender, len(text))
 		}
 	}()
 }

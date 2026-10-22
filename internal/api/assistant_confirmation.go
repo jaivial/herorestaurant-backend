@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 )
@@ -116,7 +115,7 @@ func (s *confirmationStore) rejectReason(hash, restaurant, tool, argsHash, sessi
 	case rowArgs != argsHash:
 		reason, hint = "args_mismatch", "los argumentos no coinciden con los de la vista previa: repite la llamada con EXACTAMENTE los mismos name, path_params, query y body, solo añadiendo confirmed=true y el token, o pide otra vista previa"
 	}
-	log.Printf("[bot] checkpoint wa_confirm_reject_v1 tool=%s reason=%s", tool, reason)
+	botCheckpoint("wa_confirm_reject_v1", "tool=%s reason=%s", tool, reason)
 	if hint == "" {
 		return fmt.Errorf(base)
 	}

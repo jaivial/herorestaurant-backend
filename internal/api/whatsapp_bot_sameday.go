@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -184,7 +183,7 @@ func (s *Server) botOwnedBookingDate(ctx context.Context, restaurantID int, book
 // contact card) and returns the JSON tool result. The requested mutation is
 // never performed.
 func (s *Server) botBlockSameDay(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, operation string) string {
-	log.Printf("[bot] checkpoint booking_same_day_blocked restaurant_id=%d operation=%s sender=%s date=%s", restaurantID, operation, msg.Sender, botTodayISO())
+	botCheckpoint("booking_same_day_blocked", "restaurant_id=%d operation=%s sender=%s date=%s", restaurantID, operation, msg.Sender, botTodayISO())
 	sent := s.botForwardToManagement(ctx, restaurantID, msg, tenant, "same_day", botOperationLabel(operation), botManagementPrefixFor("same_day", msg.Language), msg.Language, s.botIsDuplicateRequest(msg))
 	return botJSON(map[string]any{
 		"blocked":     true,
@@ -498,7 +497,7 @@ func (s *Server) botSameDayIntentApplies(ctx context.Context, restaurantID int, 
 // botBlockSameDayIntent logs the coordination checkpoint and delivers the
 // shared same-day notice + contact card.
 func (s *Server) botBlockSameDayIntent(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, intent string) bool {
-	log.Printf("[bot] checkpoint booking_same_day_intent_blocked restaurant_id=%d sender=%s intent=%s date=%s", restaurantID, msg.Sender, intent, botTodayISO())
+	botCheckpoint("booking_same_day_intent_blocked", "restaurant_id=%d sender=%s intent=%s date=%s", restaurantID, msg.Sender, intent, botTodayISO())
 	s.botBlockSameDay(ctx, restaurantID, msg, tenant, intent)
 	return true
 }

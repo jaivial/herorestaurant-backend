@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"hash/fnv"
-	"log"
 	"strings"
 	"time"
 )
@@ -123,7 +122,7 @@ func (s *Server) botHandoffReplyText(ctx context.Context, restaurantID int, msg 
 	for attempt := 1; attempt <= 2; attempt++ {
 		resp, used, err := s.botLLMCallRouted(reqCtx, restaurantID, routing, botSessionID(restaurantID, msg.Sender), sys.String(), user, nil)
 		if err != nil {
-			log.Printf("[bot] checkpoint wa_bot_varied_handoff_reply_v1 restaurant_id=%d attempt=%d llm_error=%v", restaurantID, attempt, err)
+			botCheckpoint("wa_bot_varied_handoff_reply_v1", "restaurant_id=%d attempt=%d llm_error=%v", restaurantID, attempt, err)
 			continue
 		}
 		text := ""
@@ -134,12 +133,12 @@ func (s *Server) botHandoffReplyText(ctx context.Context, restaurantID int, msg 
 		}
 		text = botCleanHandoffReply(text)
 		if botHandoffReplyValid(text) {
-			log.Printf("[bot] checkpoint wa_bot_varied_handoff_reply_v1 restaurant_id=%d model=%s duplicate=%t attempt=%d chars=%d", restaurantID, used, duplicate, attempt, len(text))
+			botCheckpoint("wa_bot_varied_handoff_reply_v1", "restaurant_id=%d model=%s duplicate=%t attempt=%d chars=%d", restaurantID, used, duplicate, attempt, len(text))
 			return text
 		}
-		log.Printf("[bot] checkpoint wa_bot_varied_handoff_reply_v1 restaurant_id=%d attempt=%d invalid_llm_reply", restaurantID, attempt)
+		botCheckpoint("wa_bot_varied_handoff_reply_v1", "restaurant_id=%d attempt=%d invalid_llm_reply", restaurantID, attempt)
 	}
-	log.Printf("[bot] checkpoint wa_bot_varied_handoff_reply_v1 restaurant_id=%d fallback_variant=true", restaurantID)
+	botCheckpoint("wa_bot_varied_handoff_reply_v1", "restaurant_id=%d fallback_variant=true", restaurantID)
 	return fallback
 }
 

@@ -6,8 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
+	"net/http"
 	"strings"
+	"time"
 )
 
 // botToolExecutor executes a named tool with JSON input and returns a JSON
@@ -94,6 +95,40 @@ func botResultFailed(out string) bool {
 	return strings.Contains(out, `"error"`)
 }
 
+// botToolTerminal (wa_bot_terminal_tool_v1) reports whether a FAILED tool
+// result is TERMINAL: retrying the same call can never succeed, so the model
+// must not be sent back to retry it and the round must not count as a failed
+// round for the loop guard. A terminal result is:
+//   - an explicit refusal marked "terminal": true by the server (write
+//     denials, tool-grant denials, panel-only queries), or
+//   - a panel replay answer with a 4xx status (admin_call answered; the same
+//     call will answer the same way), or
+//   - an "operación desconocida" error (the named operation does not exist).
+//
+// Everything else (DB errors, timeouts, 5xx, 408/429) stays transient.
+func botToolTerminal(out string) bool {
+	if strings.Contains(out, "operación desconocida") {
+		return true
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		return false
+	}
+	if raw, ok := m["terminal"]; ok && strings.TrimSpace(string(raw)) == "true" {
+		return true
+	}
+	// Panel replay shape (admin_call / admin replay): {"tool":..., "status":<http code>, "ok":bool}.
+	if _, hasTool := m["tool"]; hasTool {
+		if raw, ok := m["status"]; ok {
+			var code int
+			if json.Unmarshal(raw, &code) == nil && code >= 400 && code < 500 && code != http.StatusRequestTimeout && code != http.StatusTooManyRequests {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func newBotLoopGuard() *botLoopGuard { return &botLoopGuard{} }
 
 func (g *botLoopGuard) observe(name string, input json.RawMessage, out string) {
@@ -148,7 +183,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 
 	for i := 0; ; i++ {
 		if err := ctx.Err(); err != nil {
-			return botInterrupted(&result, msgs, "context_done", err)
+			return botInterrupted(ctx, &result, msgs, "context_done", err)
 		}
 		result.Iterations = i + 1
 
@@ -161,7 +196,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		}
 		resp, used, err := call(ctx, callSystem, msgs, tools)
 		if err != nil {
-			return botInterrupted(&result, msgs, "model_call_failed", err)
+			return botInterrupted(ctx, &result, msgs, "model_call_failed", err)
 		}
 		result.ModelUsed = used
 
@@ -169,6 +204,8 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		assistant := botMessage{Role: "assistant", Content: resp.Content}
 		toolResults := make([]botBlock, 0, 2)
 		roundFailed := 0
+		terminalTool := ""
+		roundDelivered := false
 		if last {
 			wantsTool := false
 			for _, block := range resp.Content {
@@ -179,7 +216,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			if wantsTool {
 				// Budget spent and the model still wants a tool: execute nothing
 				// more (no hidden extra mutation) and answer with the known facts.
-				log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 exhausted reason=%s iterations=%d ran=%d failed=%d tools=%s", guard.reason, i+1, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
+				botCheckpointCtx(ctx, "wa_bot_iter_cap_v1", "exhausted reason=%s iterations=%d ran=%d failed=%d tools=%s", guard.reason, i+1, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
 				result.Exhausted = true
 				msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botBudgetExhaustedText}}})
 				result.Messages = msgs
@@ -191,16 +228,35 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 				continue
 			}
 			result.ToolCalls = append(result.ToolCalls, block.Name)
+			started := time.Now()
 			out, err := exec(ctx, block.Name, block.Input)
 			if err != nil {
 				out = `{"error":` + jsonQuote(err.Error()) + `}`
 			}
 			result.Ran++
 			failed := err != nil || botResultFailed(out)
+			// wa_bot_terminal_tool_v1: a refusal the server knows is final must
+			// not be retried by the model (see botToolTerminal).
+			terminal := failed && botToolTerminal(out)
+			if terminal && terminalTool == "" {
+				terminalTool = block.Name
+			}
 			if failed {
 				result.Failed++
 				roundFailed++
+			} else if botDeliveryTools[block.Name] {
+				roundDelivered = true
 			}
+			// Coordination id: wa_bot_tool_result_v1 - one event per tool call:
+			// name, ok/fail, error class (terminal vs transient), duration and a
+			// bounded input preview. With the turn correlation id from ctx this
+			// reconstructs call by call a turn like the 33-tool-call incident.
+			// err.Error() is deliberately NOT recorded (provider errors can carry
+			// URLs/tokens): only its fixed class, plus the tool's own domain
+			// error text when the tool result reported one.
+			botCheckpointCtx(ctx, "wa_bot_tool_result_v1", "iter=%d tool=%s ok=%t err_class=%s terminal=%t ms=%d input=%s result_error=%s",
+				i+1, block.Name, !failed, botErrClass(err), botErrTerminal(err), time.Since(started).Milliseconds(),
+				botDiagPreview(string(block.Input), 300), botResultErrorPreview(out, err))
 			guard.observe(block.Name, block.Input, out)
 			toolResults = append(toolResults, botBlock{
 				Type:      "tool_result",
@@ -216,7 +272,10 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			return result, nil
 		}
 
-		guard.endRound(roundFailed == len(toolResults))
+		// wa_bot_terminal_tool_v1: a round with a terminal refusal never counts
+		// as a failed guard round — the refusal is not the model's fault and the
+		// loop is closed below instead of striking rounds.
+		guard.endRound(roundFailed == len(toolResults) && terminalTool == "")
 		msgs = append(msgs, assistant, botMessage{Role: "user", Content: toolResults})
 
 		// Coordination id: wa_bot_early_stop_v1 - when every tool of this
@@ -224,6 +283,21 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		// send_contact...), the reply is out: skip the extra model call that
 		// only produces end_turn (2-5 s per turn) and cannot double-send.
 		if botAllDelivered(resp.Content, toolResults) {
+			result.Messages = msgs
+			return result, nil
+		}
+
+		if terminalTool != "" {
+			// wa_bot_terminal_tool_v1: close the turn NOW with the fixed honest
+			// reply (botBudgetExhaustedText) instead of letting the model burn
+			// iterations retrying a refusal. Unless a delivery tool of this same
+			// round already answered the customer (roundDelivered), the fixed
+			// text is what reaches the customer.
+			botCheckpointCtx(ctx, "wa_bot_terminal_tool_v1", "tool=%s iterations=%d ran=%d failed=%d", terminalTool, i+1, result.Ran, result.Failed)
+			result.Exhausted = true
+			if !roundDelivered {
+				msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botBudgetExhaustedText}}})
+			}
 			result.Messages = msgs
 			return result, nil
 		}
@@ -258,14 +332,50 @@ func botErrClass(err error) string {
 	return "provider_error"
 }
 
-func botInterrupted(result *botLoopResult, msgs []botMessage, reason string, err error) (botLoopResult, error) {
+// botErrTerminal reports whether an error class means the turn cannot be
+// retried as-is (terminal) rather than a transient hiccup a retry could fix.
+func botErrTerminal(err error) bool {
+	switch botErrClass(err) {
+	case "canceled", "context_length":
+		return true
+	}
+	return false
+}
+
+// botDiagPreview bounds and flattens a value so it fits one diagnostic line.
+func botDiagPreview(v string, max int) string {
+	v = strings.Join(strings.Fields(v), " ")
+	if len(v) > max {
+		return v[:max] + "…"
+	}
+	return v
+}
+
+// botResultErrorPreview extracts the bounded error message of a failed tool
+// result (the top-level {"error": ...} the executor produces). Empty unless
+// the tool itself reported a domain error; provider transport errors stay
+// class-only.
+func botResultErrorPreview(out string, execErr error) string {
+	if execErr != nil {
+		return ""
+	}
+	var m struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(out), &m) != nil || m.Error == "" {
+		return ""
+	}
+	return botDiagPreview(m.Error, 200)
+}
+
+func botInterrupted(ctx context.Context, result *botLoopResult, msgs []botMessage, reason string, err error) (botLoopResult, error) {
 	result.Messages = msgs
 	if result.Ran == 0 {
 		return *result, err
 	}
 	// err.Error() is never logged: provider errors can carry URLs, query
 	// strings, tokens or customer content. Only a fixed class is recorded.
-	log.Printf("[bot] checkpoint wa_bot_iter_cap_v1 interrupted reason=%s class=%s iterations=%d ran=%d failed=%d tools=%s", reason, botErrClass(err), result.Iterations, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
+	botCheckpointCtx(ctx, "wa_bot_iter_cap_v1", "interrupted reason=%s class=%s terminal=%t iterations=%d ran=%d failed=%d tools=%s", reason, botErrClass(err), botErrTerminal(err), result.Iterations, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
 	result.Interrupted = true
 	result.Messages = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botInterruptedText}}})
 	return *result, nil

@@ -2864,6 +2864,55 @@ it. Body: the `config` object. Response: same shape as GET (config,
 promptPreview, defaultRules, restaurant). Used by the IA tab for the live
 prompt preview while editing.
 
+### GET /api/admin/bot/diag
+
+Root-only (role importance 100). Coordination id: `wa_bot_diag_endpoint_v1`.
+Read-only dump of the in-memory diagnostic ring buffer (`internal/diag`,
+`wa_diag_pkg_v1`): the last N events (default 2000) emitted by every bot
+checkpoint, each carrying the correlation id of its turn (`correlation_id=`,
+the bot session id `wa-<restaurant>-<phone>`, shared with the pipeline log
+and the stored decision trace). Lets an operator reconstruct a whole turn
+(tool calls, failures, close reason, reply) in prod without touching the
+container.
+
+Query parameters (all optional):
+
+- `coordination=<id>` — exact correlation id (e.g. `wa-5-34600000000`):
+  returns only that unit of work, oldest first.
+- `q=<substring>` — free grep over the rendered line (e.g.
+  `wa_bot_tool_result_v1`).
+- `limit=<n>` — max events returned (default 500, newest slice).
+- `capacity=<n>` — runtime resize of the ring (persists until restart).
+- `format=text` — plain text lines instead of JSON.
+
+```json
+{
+  "success": true,
+  "endpoint": "wa_bot_diag_endpoint_v1",
+  "capacity": 2000,
+  "buffered": 512,
+  "returned": 40,
+  "coordination": "wa-5-34600000000",
+  "events": [
+    {
+      "time": "2026-10-22T14:35:01.123+02:00",
+      "coordination_id": "wa-5-34600000000",
+      "checkpoint": "wa_bot_tool_result_v1",
+      "component": "bot",
+      "message": "iter=12 tool=get_booking_details ok=false err_class=none terminal=false ms=4 input={\"booking_id\":\"123\"} result_error=no encontré esa reserva"
+    }
+  ]
+}
+```
+
+The same events are written to stdout as single greppable lines
+(`docker logs` in prod), preserving the historical format operators and
+scripts already filter:
+
+```
+[bot] checkpoint wa_bot_tool_result_v1 correlation_id=wa-5-34600000000 iter=12 tool=... ok=false ...
+```
+
 
 #### Bot tools note
 

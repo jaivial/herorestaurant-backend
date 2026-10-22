@@ -142,7 +142,7 @@ func (s *Server) botRunConversationWorker(restaurantID int, sender string) {
 		if len(kept) > 0 {
 			msg := botMergeBurst(kept)
 			if msg.Burst > 1 {
-				log.Printf("[bot] checkpoint wa_bot_burst_coalesce_v1 restaurant_id=%d sender=%s messages=%d", restaurantID, sender, msg.Burst)
+				botCheckpoint("wa_bot_burst_coalesce_v1", "restaurant_id=%d sender=%s messages=%d", restaurantID, sender, msg.Burst)
 			}
 			func() {
 				ok := false

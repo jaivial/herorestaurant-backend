@@ -92,7 +92,7 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 			if pj := botSpecialAdminDMPhoneJID(in.ChatJID, in.ChatJIDAlt); pj != "" && s.botGroupSenderIsMember(r.Context(), restaurantID, scope, pj) {
 				actorPhoneJID = pj
 				isPrivileged = true
-				log.Printf("[bot] checkpoint wa_bot_special_admin_v2 restaurant_id=%d decision=dm_member_privileged", restaurantID)
+				botCheckpoint("wa_bot_special_admin_v2", "restaurant_id=%d decision=dm_member_privileged", restaurantID)
 			}
 		}
 	}
@@ -131,13 +131,13 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		// its current behaviour (the forwarded request is the point there).
 		if isPrivileged && botPrivilegedConversationIsGroup(tenant, in.ChatJID) &&
 			!s.botGroupSenderIsMember(r.Context(), restaurantID, in.ChatJID, in.ParticipantJID) {
-			log.Printf("[bot] checkpoint wa_bot_group_membership_v1 restaurant_id=%d group=%s participant=%s decision=skipped_not_group_member", restaurantID, in.ChatJID, in.ParticipantJID)
+			botCheckpoint("wa_bot_group_membership_v1", "restaurant_id=%d group=%s participant=%s decision=skipped_not_group_member", restaurantID, in.ChatJID, in.ParticipantJID)
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "skipped_not_group_member")
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_group_member"})
 			return
 		}
 		if isPrivileged {
-			log.Printf("[bot] checkpoint wa_bot_privileged_group_v1 restaurant_id=%d group=%s participant=%s decision=accepted_privileged", restaurantID, in.ChatJID, in.ParticipantJID)
+			botCheckpoint("wa_bot_privileged_group_v1", "restaurant_id=%d group=%s participant=%s decision=accepted_privileged", restaurantID, in.ChatJID, in.ParticipantJID)
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted_privileged")
 		} else {
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted")
@@ -147,12 +147,12 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		// conversation itself was selected in the backoffice, so there is no
 		// membership to check and no mention to demand: it is that person
 		// writing to the bot.
-		log.Printf("[bot] checkpoint wa_bot_privileged_contacts_v1 restaurant_id=%d chat=%s decision=accepted_privileged_contact", restaurantID, in.ChatJID)
+		botCheckpoint("wa_bot_privileged_contacts_v1", "restaurant_id=%d chat=%s decision=accepted_privileged_contact", restaurantID, in.ChatJID)
 		botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, "accepted_privileged_contact")
 	}
 
 	if in.Ignored {
-		log.Printf("[bot] checkpoint wa_bot_ignore_non_conversational_v1 restaurant_id=%d sender=%s", restaurantID, in.Sender)
+		botCheckpoint("wa_bot_ignore_non_conversational_v1", "restaurant_id=%d sender=%s", restaurantID, in.Sender)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "ignored": true})
 		return
 	}

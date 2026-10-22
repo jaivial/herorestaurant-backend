@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"regexp"
 	"strings"
 	"sync"
@@ -145,7 +144,7 @@ func newBotKnowledgeIndex(db *sql.DB) *botKnowledgeIndex {
 	if _, err := db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS bot_knowledge_fts USING fts5(
 		restaurant_id UNINDEXED, chunk_id UNINDEXED, tags, title, body,
 		tokenize = 'unicode61 remove_diacritics 2')`); err != nil {
-		log.Printf("[bot] checkpoint wa_bot_rag_fts_v1 init_error=%v", err)
+		botCheckpoint("wa_bot_rag_fts_v1", "init_error=%v", err)
 		idx.db = nil
 	}
 	return idx
@@ -269,10 +268,10 @@ func (s *Server) botRetrieveKnowledge(ctx context.Context, restaurantID int, rou
 			if got, err := s.botKnowledge.retrieve(ctx, restaurantID, routes, text, 6); err == nil {
 				return got
 			} else {
-				log.Printf("[bot] checkpoint wa_bot_rag_fts_v1 restaurant_id=%d retrieve_error=%v", restaurantID, err)
+				botCheckpoint("wa_bot_rag_fts_v1", "restaurant_id=%d retrieve_error=%v", restaurantID, err)
 			}
 		} else {
-			log.Printf("[bot] checkpoint wa_bot_rag_fts_v1 restaurant_id=%d index_error=%v", restaurantID, err)
+			botCheckpoint("wa_bot_rag_fts_v1", "restaurant_id=%d index_error=%v", restaurantID, err)
 		}
 	}
 	want := map[string]bool{"always": true}

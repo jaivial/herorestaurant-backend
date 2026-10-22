@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -182,7 +181,7 @@ func (s *Server) botToolCreateSpecialBooking(ctx context.Context, restaurantID i
 		SpecialTouched:          true,
 	})
 	if err != nil {
-		log.Printf("[bot] checkpoint wa_bot_special_crud_v1 restaurant_id=%d tool=create_special_booking date=%s rejected=%v", restaurantID, dateISO, err)
+		botCheckpoint("wa_bot_special_crud_v1", "restaurant_id=%d tool=create_special_booking date=%s rejected=%v", restaurantID, dateISO, err)
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
 	id, err := s.boInsertBooking(ctx, restaurantID, booking)
@@ -192,7 +191,7 @@ func (s *Server) botToolCreateSpecialBooking(ctx context.Context, restaurantID i
 	// Same notifications as every other booking (WhatsApp + email), plus the
 	// special summary / QR the festive flow expects.
 	s.botNotifySpecialBooking(ctx, restaurantID, int64(id), booking)
-	log.Printf("[bot] checkpoint wa_bot_special_crud_v1 restaurant_id=%d tool=create_special_booking booking_id=%d date=%s people=%d", restaurantID, id, dateISO, in.People)
+	botCheckpoint("wa_bot_special_crud_v1", "restaurant_id=%d tool=create_special_booking booking_id=%d date=%s people=%d", restaurantID, id, dateISO, in.People)
 	return botJSON(map[string]any{
 		"created":            true,
 		"booking_id":         id,
@@ -240,7 +239,7 @@ func (s *Server) botNotifySpecialBooking(ctx context.Context, restaurantID int, 
 	data := boBookingToNotificationData(booking, int(bookingID))
 	row, err := s.boFetchBookingByID(ctx, restaurantID, int(bookingID))
 	if err != nil {
-		log.Printf("[bot] checkpoint wa_bot_special_crud_v1 restaurant_id=%d booking_id=%d notify_fetch_failed=%v", restaurantID, bookingID, err)
+		botCheckpoint("wa_bot_special_crud_v1", "restaurant_id=%d booking_id=%d notify_fetch_failed=%v", restaurantID, bookingID, err)
 		return
 	}
 	if toBool(row["is_special_booking"]) {
@@ -252,7 +251,7 @@ func (s *Server) botNotifySpecialBooking(ctx context.Context, restaurantID int, 
 		}
 	}
 	if err := sendBookingWhatsAppToCustomer(ctx, s, restaurantID, data, bookingID); err != nil {
-		log.Printf("[bot] checkpoint wa_bot_special_crud_v1 restaurant_id=%d booking_id=%d notify_whatsapp_failed=%v", restaurantID, bookingID, err)
+		botCheckpoint("wa_bot_special_crud_v1", "restaurant_id=%d booking_id=%d notify_whatsapp_failed=%v", restaurantID, bookingID, err)
 	}
 	s.broadcastBookingChanged(restaurantID, bookingID, "booking_created")
 }
@@ -346,7 +345,7 @@ func (s *Server) botToolModifySpecialBooking(ctx context.Context, restaurantID i
 	if perr != nil {
 		return botJSON(map[string]any{"error": "modificación aplicada"}), nil
 	}
-	log.Printf("[bot] checkpoint wa_bot_special_crud_v1 restaurant_id=%d tool=modify_special_booking booking_id=%d fields=%d", restaurantID, in.BookingID, len(body))
+	botCheckpoint("wa_bot_special_crud_v1", "restaurant_id=%d tool=modify_special_booking booking_id=%d fields=%d", restaurantID, in.BookingID, len(body))
 	return out, nil
 }
 
@@ -400,7 +399,7 @@ func (s *Server) botToolCancelSpecialBooking(ctx context.Context, restaurantID i
 	if perr != nil {
 		return botJSON(map[string]any{"error": "reserva cancelada", "booking_id": in.BookingID}), nil
 	}
-	log.Printf("[bot] checkpoint wa_bot_special_crud_v1 restaurant_id=%d tool=cancel_special_booking booking_id=%d", restaurantID, in.BookingID)
+	botCheckpoint("wa_bot_special_crud_v1", "restaurant_id=%d tool=cancel_special_booking booking_id=%d", restaurantID, in.BookingID)
 	return out, nil
 }
 

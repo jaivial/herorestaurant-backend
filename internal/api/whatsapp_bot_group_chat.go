@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"regexp"
 	"sort"
 	"strings"
@@ -186,7 +185,7 @@ func (s *Server) botGroupIsManagementGroup(ctx context.Context, restaurantID int
 	if e, ok := botGroupDecisionCache.byKey[key]; ok && time.Since(e.at) < botGroupDecisionTTL {
 		botGroupDecisionCache.Unlock()
 		if !e.allowed {
-			log.Printf("[bot] checkpoint wa_bot_group_mention_v1 restaurant_id=%d group_not_ours jid=%s", restaurantID, jid)
+			botCheckpoint("wa_bot_group_mention_v1", "restaurant_id=%d group_not_ours jid=%s", restaurantID, jid)
 		}
 		return e.allowed
 	}
@@ -198,7 +197,7 @@ func (s *Server) botGroupIsManagementGroup(ctx context.Context, restaurantID int
 	botGroupDecisionCache.byKey[key] = botGroupDecisionEntry{allowed: allowed, at: time.Now()}
 	botGroupDecisionCache.Unlock()
 	if !allowed {
-		log.Printf("[bot] checkpoint wa_bot_group_mention_v1 restaurant_id=%d group_not_configured jid=%s", restaurantID, jid)
+		botCheckpoint("wa_bot_group_mention_v1", "restaurant_id=%d group_not_configured jid=%s", restaurantID, jid)
 	}
 	return allowed
 }
@@ -206,7 +205,7 @@ func (s *Server) botGroupIsManagementGroup(ctx context.Context, restaurantID int
 // botGroupMessageAudit is the single observability record for every group
 // event, so a silent bot in a group is diagnosable from the logs alone.
 func botGroupMessageAudit(restaurantID int, groupJID, participant, reason string) {
-	log.Printf("[bot] checkpoint wa_bot_group_mention_v1 restaurant_id=%d group=%s participant=%s decision=%s",
+	botCheckpoint("wa_bot_group_mention_v1", "restaurant_id=%d group=%s participant=%s decision=%s",
 		restaurantID, groupJID, participant, reason)
 }
 
@@ -310,7 +309,7 @@ func botOwnJIDsRememberDegraded(restaurantID int, own []string, reason, fp strin
 			merged = append(merged, v)
 		}
 	}
-	log.Printf("[bot] checkpoint wa_bot_own_jids_v1 restaurant_id=%d degraded=true reason=%s own=%d verified_reused=%t",
+	botCheckpoint("wa_bot_own_jids_v1", "restaurant_id=%d degraded=true reason=%s own=%d verified_reused=%t",
 		restaurantID, reason, len(merged), reuse)
 	if len(merged) > 0 {
 		botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: merged, at: time.Now(), degraded: true, good: prev.good, goodAt: prev.goodAt, goodFP: prev.goodFP}
@@ -535,7 +534,7 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 		// other unmentioned message is still dropped here.
 		if _, shaped := botSpecialNormalizeOK(in.Text); !shaped {
 			botGroupMessageAudit(0, groupJID, participant, "skipped_not_mentioned")
-			log.Printf("[bot] checkpoint wa_bot_group_mention_v1 detail own_jids=%d mentions=%d quoted=%d",
+			botCheckpoint("wa_bot_group_mention_v1", "detail own_jids=%d mentions=%d quoted=%d",
 				len(in.OwnJIDs), len(mentions), len(quotedFrom))
 			return waInbound{}, false
 		}
