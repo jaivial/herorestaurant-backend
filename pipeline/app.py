@@ -1064,7 +1064,8 @@ def decide(req: TurnRequest) -> dict[str, Any]:
 # whenever this engine yields nothing (and STT_DEFAULT_ENGINE=whisper turns it
 # off). Engines: "bark" (transformers, CPU) and "whisper" (faster-whisper).
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "small")
-BARK_MODEL_NAME = os.environ.get("BARK_MODEL", "ConwayResearch/Underdog-Bark-3.0-Clean")
+BARK_REPO = os.environ.get("BARK_REPO", "ConwayResearch/Underdog-Bark-3.0-Clean")
+BARK_MODEL_FILE = os.environ.get("BARK_MODEL_FILE", "model.bark")
 STT_DEFAULT_ENGINE = os.environ.get("STT_DEFAULT_ENGINE", "bark")
 _whisper = None
 _whisper_lock = threading.Lock()
@@ -1081,12 +1082,26 @@ def whisper_model():
         return _whisper
 
 
-def bark_model():
+def bark_bundle():
+    """(loader_module, model) for Bark 3.0 (Underdog, CC-BY 4.0).
+
+    The checkpoint ships its OWN loader (bark_loader.py + model.bark: an
+    entropy-coded ParakeetForTDT state dict), so the repo loader is fetched
+    from the Hub and used verbatim. A bare AutoModel/pipeline load cannot see
+    the .bark format (its config.json carries no model_type): the loader is
+    the supported path and decodes the weights exactly."""
     global _bark
     with _bark_lock:
         if _bark is None:
-            from transformers import pipeline
-            _bark = pipeline("automatic-speech-recognition", model=BARK_MODEL_NAME, device="cpu")
+            import importlib.util
+            from huggingface_hub import hf_hub_download
+
+            loader_path = hf_hub_download(BARK_REPO, "bark_loader.py")
+            model_path = hf_hub_download(BARK_REPO, BARK_MODEL_FILE)
+            spec = importlib.util.spec_from_file_location("bark_loader", loader_path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _bark = (mod, mod.load_model(model_path, device="cpu"))
         return _bark
 
 
@@ -1114,8 +1129,11 @@ def transcribe_bark(data: bytes) -> dict[str, Any]:
     samples = decode_audio_pcm(data)
     if samples.size == 0:
         raise ValueError("no audio samples")
-    out = bark_model()({"raw": samples, "sampling_rate": 16000}, chunk_length_s=30, stride_length_s=5)
-    return {"text": str(out.get("text", "")).strip(), "language": "en"}
+    mod, model = bark_bundle()
+    # pad_s=0.5 is the evaluated setting of the model card; wave is already
+    # mono float32 at 16 kHz (decode_audio_pcm).
+    text = mod.transcribe(model, samples, 16000, pad_s=0.5)
+    return {"text": str(text).strip(), "language": "en"}
 
 
 def transcribe_whisper(data: bytes, language: str = "") -> dict[str, Any]:
