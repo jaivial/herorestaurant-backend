@@ -10,7 +10,7 @@ package api
 //     forky/<restaurantID>/<uuid><ext> and returns its pull URL. Serves both
 //     the voice-note clips and the document/image attachments.
 //
-//   POST /api/admin/assistant/transcribe ({ audio_b64 })
+//   POST /api/admin/assistant/transcribe ({ audio_b64, engine })
 //     Forwards the clip to the bot pipeline sidecar's /transcribe
 //     (faster-whisper, the same STT path the WhatsApp voice notes use,
 //     coord wa_bot_audio_transcription_v1) and returns the transcript.
@@ -163,7 +163,12 @@ func (s *Server) handleBOAssistantTranscribe(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	body, _ := json.Marshal(map[string]any{"audio_b64": in.AudioB64})
+	// Pin the engine instead of letting the sidecar pick its own default:
+	// the local faster-whisper model is warm from sidecar startup, speaks
+	// Spanish, and returns in ~4 s; the Bark default is English-only and pays
+	// a cold model download on its first call (51 s, lang=en — the timeout the
+	// prompt bar used to hit). BOT_STT_ENGINE overrides for ops.
+	body, _ := json.Marshal(map[string]any{"audio_b64": in.AudioB64, "engine": botSTTEngine()})
 	reqCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, s.botPipelineURL()+"/transcribe", bytes.NewReader(body))
@@ -184,13 +189,14 @@ func (s *Server) handleBOAssistantTranscribe(w http.ResponseWriter, r *http.Requ
 	var out struct {
 		Text     string `json:"text"`
 		Language string `json:"language"`
+		Engine   string `json:"engine"`
 	}
 	if resp.StatusCode != http.StatusOK || json.Unmarshal(raw, &out) != nil {
 		log.Printf("[forky-media] transcribe pipeline status=%d", resp.StatusCode)
 		writeMediaError(w, http.StatusBadGateway, "Transcription failed")
 		return
 	}
-	log.Printf("[forky-media] transcribe ok lang=%s chars=%d ms=%d", out.Language, len(strings.TrimSpace(out.Text)), time.Since(started).Milliseconds())
+	log.Printf("[forky-media] transcribe ok engine=%s lang=%s chars=%d ms=%d", out.Engine, out.Language, len(strings.TrimSpace(out.Text)), time.Since(started).Milliseconds())
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
 		"text":     strings.TrimSpace(out.Text),

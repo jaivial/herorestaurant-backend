@@ -87,8 +87,9 @@ func (s *Server) handlePublicAssistantWS(w http.ResponseWriter, r *http.Request)
 
 // handleAssistantWS is the shared WebSocket chat handler. Protocol (JSON text
 // frames): hello(session_id|null[, session_token]) -> hello(session_id,
-// history[last N]); message(content) -> status thinking -> delta* -> done;
-// ping -> pong; errors as {type:error}. All chat state lives in MySQL.
+// history[last N]); message(content[, attachments][, audio]) -> status thinking
+// -> delta* -> done; ping -> pong; errors as {type:error}. All chat state lives
+// in MySQL.
 func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requireAuth bool) {
 	a, ok := boAuthFromContext(r.Context())
 	if requireAuth && !ok {
@@ -161,6 +162,7 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 			SessionID    *int64                   `json:"session_id"`
 			SessionToken string                   `json:"session_token"`
 			Attachments  []assistantAttachmentRef `json:"attachments"`
+			Audio        *assistantVoiceAudio     `json:"audio"`
 		}
 		if err := json.Unmarshal(raw, &frame); err != nil {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "invalid frame"})
@@ -171,7 +173,7 @@ func (s *Server) handleAssistantWS(w http.ResponseWriter, r *http.Request, requi
 			c.handleHello(wsCtx, frame.SessionID, frame.SessionToken)
 		case "message":
 			if c.tryStart() {
-				go c.handleMessage(wsCtx, frame.Content, frame.Attachments)
+				go c.handleMessage(wsCtx, frame.Content, frame.Attachments, frame.Audio)
 			} else {
 				_ = c.writeJSON(map[string]any{"type": "error", "message": "busy: espera a que termine la respuesta anterior"})
 			}
@@ -241,8 +243,8 @@ func (c *assistantClient) historyLimit() int {
 
 func (c *assistantClient) loadHistory(ctx context.Context, sessionID int64) ([]assistantChatMessage, error) {
 	rows, err := c.s.db.QueryContext(ctx,
-		`SELECT role, content FROM (
-			SELECT id, role, content FROM assistant_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?
+		`SELECT role, content, COALESCE(audio_url, ''), COALESCE(audio_duration_ms, 0) FROM (
+			SELECT id, role, content, audio_url, audio_duration_ms FROM assistant_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?
 		) t ORDER BY id ASC`, sessionID, c.historyLimit())
 	if err != nil {
 		return nil, err
@@ -254,11 +256,12 @@ func (c *assistantClient) loadHistory(ctx context.Context, sessionID int64) ([]a
 		// yields []byte, and the hello frame's JSON marshal would emit it as
 		// base64 (assistant replies were rescued by the client-side decoder,
 		// but user messages rendered as raw base64 blobs).
-		var role, content string
-		if err := rows.Scan(&role, &content); err != nil {
+		var role, content, audioURL string
+		var audioDurationMS int64
+		if err := rows.Scan(&role, &content, &audioURL, &audioDurationMS); err != nil {
 			return nil, err
 		}
-		out = append(out, assistantChatMessage{Role: role, Content: content})
+		out = append(out, assistantChatMessage{Role: role, Content: content, AudioURL: audioURL, AudioDurationMS: audioDurationMS})
 	}
 	// Contaminated rows already in the database keep poisoning their session on
 	// every replay, so filter them out of the context we send to the model.
@@ -319,12 +322,18 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 	}
 	histOut := make([]map[string]any, 0, len(hist))
 	for _, m := range hist {
-		histOut = append(histOut, map[string]any{"role": m.Role, "content": m.Content})
+		entry := map[string]any{"role": m.Role, "content": m.Content}
+		// Only voice turns carry the clip: plain text rows keep the frame lean.
+		if m.AudioURL != "" {
+			entry["audio_url"] = m.AudioURL
+			entry["audio_duration_ms"] = m.AudioDurationMS
+		}
+		histOut = append(histOut, entry)
 	}
 	_ = c.writeJSON(map[string]any{"type": "hello", "session_id": sid, "history": histOut})
 }
 
-func (c *assistantClient) handleMessage(ctx context.Context, content string, attachments []assistantAttachmentRef) {
+func (c *assistantClient) handleMessage(ctx context.Context, content string, attachments []assistantAttachmentRef, audio *assistantVoiceAudio) {
 	defer c.finishGeneration()
 	if strings.TrimSpace(content) == "" && len(attachments) == 0 {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "empty message"})
@@ -336,6 +345,15 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 	// Bunny downloads happen after the rate-limit and session gates below.
 	if err := validateAssistantAttachmentRefs(c.restaurantID, attachments); err != nil {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "adjunto rechazado: " + err.Error()})
+		return
+	}
+
+	// The voice note's Bunny URL is validated with the same fail-fast rule and
+	// the same tenant boundary as an attachment ref: the row must never point
+	// its player at another restaurant's object (forky_media_transcribe_v1).
+	audioURL, audioDurationMS, err := c.s.validateAssistantVoiceAudio(ctx, c.restaurantID, audio)
+	if err != nil {
+		_ = c.writeJSON(map[string]any{"type": "error", "message": err.Error()})
 		return
 	}
 
@@ -378,7 +396,11 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 	}
 	userContentBlocks, userContentPersisted := assistantAttachmentsToUserBlocks(content, attachmentBlocks)
 
-	if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'user', ?)`, sid, userContentPersisted); err != nil {
+	// The clip's Bunny URL rides the row so a reload replays it at this exact
+	// message; NULLIF keeps a plain text turn at NULL instead of ''.
+	if _, err := c.s.db.ExecContext(ctx,
+		`INSERT INTO assistant_messages (session_id, role, content, audio_url, audio_duration_ms) VALUES (?, 'user', ?, NULLIF(?, ''), ?)`,
+		sid, userContentPersisted, audioURL, audioDurationMS); err != nil {
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist message"})
 		return
 	}
