@@ -12,5 +12,6 @@ av==14.2.0
 # (wa_bot_stt_bark_v1). transformers+torch run it on CPU; when absent, the
 # endpoint transparently falls back to faster-whisper.
 transformers>=4.45
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.2
 numpy>=1.26
