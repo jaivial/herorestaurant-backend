@@ -341,6 +341,9 @@ func botToolDefsSpecialCRUD() []botToolDef {
 			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"}},"required":["date"]}`),
 		},
 		{
+			// Coordination id: wa_bot_special_sections_prompt_v1 - the sections
+			// breakdown is described explicitly in the schema so the model
+			// sends it on the first call.
 			Name:        "create_special_booking",
 			Description: "Crea una reserva de MENÚ ESPECIAL (Navidad, Nochevieja, evento…) en una fecha que sea fecha especial activa. Úsala primero get_special_date_menu. La suma de los menús debe coincidir EXACTAMENTE con las personas. Requiere confirmed=true. Envía el número de teléfono del cliente en `phone` (si falta se usa el del mensaje).",
 			InputSchema: botSchema(`{"type":"object","properties":{
@@ -356,10 +359,10 @@ func botToolDefsSpecialCRUD() []botToolDef {
 						"count":{"type":"integer","description":"Cuántas unidades"},
 						"adelanto_payment_method":{"type":"string","description":"Método de pago del adelanto (opcional)"},
 						"items":{"type":"array","items":{"type":"integer"},"description":"Principales elegidos (opcional)"},
-						"sections":{"type":"array","description":"Reserva por secciones de un menú especial","items":{"type":"object","properties":{
-							"section_id":{"type":"integer"},
-							"count":{"type":"integer"},
-							"items":{"type":"array","items":{"type":"integer"}}
+						"sections":{"type":"array","description":"OBLIGATORIO si el menú se reserva por secciones (get_special_date_menu lo indica): una entrada por sección con los comensales de cada una, y la suma de los count debe ser igual a los comensales del menú. Ejemplo: [{\"section_id\":3,\"count\":4}]","items":{"type":"object","properties":{
+							"section_id":{"type":"integer","description":"Id de la sección (según get_special_date_menu)"},
+							"count":{"type":"integer","description":"Comensales de esta sección"},
+							"items":{"type":"array","items":{"type":"integer"},"description":"Principales elegidos en esta sección (opcional)"}
 						},"required":["section_id","count"]}}
 					},"required":["special_date_menu_id","count"]}},
 					"payment_method":{"type":"string","description":"Método de pago del adelanto (opcional)"}

@@ -153,10 +153,8 @@ func (s *Server) specialMenuSectionSnapshotLines(
 	unifiedAdelanto *float64,
 	onlineOnly bool,
 ) ([]specialBookingSnapshotMenu, int, error) {
-	if len(m.Sections) == 0 {
-		return nil, 0, fmt.Errorf("Indica los comensales de cada sección del menú %s", strings.TrimSpace(rec.MenuTitle))
-	}
 	menuID := rec.MenuID.Int64
+	bookable := make([]specialDateMenuSection, 0)
 	byID := map[int64]specialDateMenuSection{}
 	for _, sec := range s.loadSpecialDateMenuSections(ctx, restaurantID, rec.ID, menuID, true) {
 		// Coordination id: special_date_section_online_v1 - online bookings
@@ -164,7 +162,22 @@ func (s *Server) specialMenuSectionSnapshotLines(
 		if onlineOnly && !sec.OnlineEnabled {
 			continue
 		}
+		bookable = append(bookable, sec)
 		byID[sec.ID] = sec
+	}
+	if len(m.Sections) == 0 {
+		// Coordination id: wa_bot_special_sections_prompt_v1 - make the
+		// validation error actionable: name the bookable sections and the
+		// exact sections format the validator expects, so the model can
+		// succeed on the next call.
+		if len(bookable) > 0 {
+			names := make([]string, 0, len(bookable))
+			for _, sec := range bookable {
+				names = append(names, fmt.Sprintf("%s (section_id=%d)", strings.TrimSpace(sec.Title), sec.ID))
+			}
+			return nil, 0, fmt.Errorf("El menú %s se reserva por secciones: falta el desglose. Añade al menú su campo sections con una entrada por sección: sections=[{\"section_id\":<id>,\"count\":<comensales de esa sección>}] (y la suma de los count debe ser igual a los comensales del menú). Secciones válidas: %s", strings.TrimSpace(rec.MenuTitle), strings.Join(names, ", "))
+		}
+		return nil, 0, fmt.Errorf("Indica los comensales de cada sección del menú %s", strings.TrimSpace(rec.MenuTitle))
 	}
 
 	var method *string

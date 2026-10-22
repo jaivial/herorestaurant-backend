@@ -176,10 +176,11 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		AudioB64:      in.AudioB64,
 		// Group routing (wa_bot_group_mention_v1): Sender is the group JID,
 		// so every tool, the transcript and the reply target the group.
-		IsGroup:        botGroupIsGroupJID(in.ChatJID),
-		ChatJID:        in.ChatJID,
-		ParticipantJID: in.ParticipantJID,
-		Mentioned:      in.Mentioned,
+		IsGroup:           botGroupIsGroupJID(in.ChatJID),
+		ChatJID:           in.ChatJID,
+		ParticipantJID:    in.ParticipantJID,
+		ParticipantRawJID: in.ParticipantRawJID, // wa_bot_group_reaction_lid_v1
+		Mentioned:         in.Mentioned,
 		// Privileged group (wa_bot_privileged_group_v1): full forky registry.
 		// It reuses the value computed at the gate: computing it twice would
 		// let the gate and the turn disagree if the config changed in between.
