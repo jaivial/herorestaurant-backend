@@ -1053,7 +1053,15 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 			}
 		}
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE campaigns SET status = 'sent', sent_at = NOW() WHERE id = ?`, campaignID)
+	// A bounce cut leaves paused e-mail rows: the campaign stays resumable (draft),
+	// it is not reported as sent.
+	var cutRows int
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = ? AND status = 'paused' AND error = 'corte por rebotes'`, campaignID).Scan(&cutRows)
+	if cutRows > 0 {
+		_, _ = s.db.ExecContext(ctx, `UPDATE campaigns SET status = 'draft' WHERE id = ?`, campaignID)
+	} else {
+		_, _ = s.db.ExecContext(ctx, `UPDATE campaigns SET status = 'sent', sent_at = NOW() WHERE id = ?`, campaignID)
+	}
 	st, _ := s.campaignStats(ctx, campaignID)
 	slog.Default().Info("campaign.send.finished", "coord_id", c.CoordID, "campaign_id", campaignID, "sent", st.Sent, "failed", st.Failed)
 }

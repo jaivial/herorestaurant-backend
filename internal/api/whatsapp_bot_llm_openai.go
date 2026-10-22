@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"preactvillacarmen/internal/config"
 )
 
 // Coordination id: wa_bot_ai_providers_v1 - OpenAI-compatible wire adapter.
@@ -73,10 +75,14 @@ func botToOpenAITools(tools []botToolDef) []map[string]any {
 }
 
 // botOpenAICall runs one chat/completions request and maps it to botLLMResponse.
-func (s *Server) botOpenAICall(ctx context.Context, p botAIProvider, apiKey, model, sessionID, system string, messages []botMessage, tools []botToolDef) (botLLMResponse, error) {
+// maxTokensOverride replaces the configured output budget when it is > 0.
+func (s *Server) botOpenAICall(ctx context.Context, p botAIProvider, apiKey, model, sessionID, system string, messages []botMessage, tools []botToolDef, maxTokensOverride int) (botLLMResponse, error) {
 	maxTokens := s.cfg.BotMaxTokens
+	if maxTokensOverride > 0 {
+		maxTokens = maxTokensOverride
+	}
 	if maxTokens <= 0 {
-		maxTokens = 1024
+		maxTokens = config.BotDefaultMaxTokens
 	}
 	body := map[string]any{"model": model, "max_tokens": maxTokens, "messages": botToOpenAIMessages(system, messages)}
 	if len(tools) > 0 {
@@ -156,7 +162,7 @@ func (s *Server) botOpenAICall(ctx context.Context, p botAIProvider, apiKey, mod
 		out.Content = append(out.Content, botBlock{Type: "tool_use", ID: c.ID, Name: c.Function.Name, Input: json.RawMessage(args)})
 	}
 	if ch.FinishReason == "length" && len(out.Content) == 0 {
-		return botLLMResponse{}, fmt.Errorf("%s: token limit reached", p.ID)
+		return botLLMResponse{}, fmt.Errorf("%s: token limit reached: %w", p.ID, errBotThinkingBudget)
 	}
 	return out, nil
 }

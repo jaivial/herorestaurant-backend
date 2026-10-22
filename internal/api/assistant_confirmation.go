@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -75,7 +76,7 @@ func (s *confirmationStore) Consume(tok, user, restaurant, tool, args, session s
 			return err
 		}
 		if n != 1 {
-			return fmt.Errorf("confirmation token expired or invalid")
+			return s.rejectReason(k, restaurant, tool, sha256Hex(args), session)
 		}
 		return nil
 	}
@@ -92,6 +93,34 @@ func (s *confirmationStore) Consume(tok, user, restaurant, tool, args, session s
 	s.entries[k] = e
 	delete(s.entries, k)
 	return nil
+}
+
+// rejectReason explains, without consuming or revealing anything, why a token did
+// not match. The text goes back to the model (so it can act on it instead of
+// retrying blind) and the reason class alone is logged: never args or the token.
+func (s *confirmationStore) rejectReason(hash, restaurant, tool, argsHash, session string) error {
+	const base = "confirmation token expired or invalid"
+	var rowTool, rowArgs, rowRest, rowSess string
+	var live bool
+	err := s.db.QueryRow(`SELECT tool, args_hash, restaurant_id, session_key, expires_at > NOW() FROM forky_confirmation_tokens WHERE token_hash = ?`, hash).Scan(&rowTool, &rowArgs, &rowRest, &rowSess, &live)
+	reason, hint := "unknown", ""
+	switch {
+	case err == sql.ErrNoRows:
+		reason, hint = "no_token", "el token no existe, ya se usó o caducó. Si ya lo habías usado, la operación PUEDE estar aplicada: NO la repitas, comprueba el estado con una lectura. Si no, pide una vista previa nueva con confirmed=false"
+	case err != nil:
+		reason = "lookup_error"
+	case !live:
+		reason, hint = "expired", "el token caducó: pide una vista previa nueva con confirmed=false"
+	case rowTool != tool || rowRest != restaurant || rowSess != session:
+		reason, hint = "other_operation", "el token es de otra operación: pide una vista previa nueva para esta"
+	case rowArgs != argsHash:
+		reason, hint = "args_mismatch", "los argumentos no coinciden con los de la vista previa: repite la llamada con EXACTAMENTE los mismos name, path_params, query y body, solo añadiendo confirmed=true y el token, o pide otra vista previa"
+	}
+	log.Printf("[bot] checkpoint wa_confirm_reject_v1 tool=%s reason=%s", tool, reason)
+	if hint == "" {
+		return fmt.Errorf(base)
+	}
+	return fmt.Errorf("%s: %s", base, hint)
 }
 
 // confirmationArguments canonicalizes model input while excluding the mutable

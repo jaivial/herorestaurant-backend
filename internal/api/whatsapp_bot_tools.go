@@ -52,6 +52,12 @@ type botTenantConfig struct {
 	// Every other conversation keeps the regular limits.
 	// Coordination id: wa_bot_privileged_contacts_v1
 	PrivilegedContacts []botPrivilegedContact `json:"privileged_contacts"`
+	// ToolGrants control WHICH custom tools each allowed conversation may
+	// call: Tools ["*"] = full catalog, concrete names = only those, and no
+	// grant for the chat = unchanged behavior. They only ever RESTRICT, never
+	// grant beyond the catalog the chat already gets. Coordination id:
+	// wa_bot_tool_grants_v1
+	ToolGrants []botToolGrant `json:"tool_grants,omitempty"`
 	// DisableSpecialCRUD turns OFF the special-menu CRUD tools, so a restaurant
 	// that wants the website-only flow for festive dates keeps it even though
 	// the bot runs inside the management group. Coordination id:

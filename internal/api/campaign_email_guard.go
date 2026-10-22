@@ -126,7 +126,7 @@ func campaignEmailLooksDeliverable(addr string) (bool, string) {
 // ---- bounce breaker ---------------------------------------------------------
 
 const (
-	campaignBounceTripAfter = 1                // any new bounce pauses the e-mail part (Titan margin can be a single bounce)
+	campaignBounceTripAfter = 3                // 3 new bounces in one run pause the e-mail part; a single hard bounce only marks that address invalid and the run continues
 	campaignBouncePoll      = 45 * time.Second // IMAP poll spacing
 )
 
@@ -298,10 +298,21 @@ func (s *Server) campaignEmailBreakerTripped(ctx context.Context, restaurantID i
 	if newTotal > 0 {
 		slog.Default().Warn("campaign.bounce.new", "coord_id", coordID, "campaign_id", campaignID, "events", newTotal, "hard", res.FreshHard, "soft", res.FreshSoft)
 	}
-	if newTotal >= campaignBounceTripAfter {
+	// An isolated bad address (one hard or one generic permanent reply) is marked
+	// by the sync and the run continues. The send stops on a series of notices or
+	// on any sign of a policy / auth / rate / reputation problem, which would hurt
+	// the sending account.
+	// A full recipient mailbox (4.2.2) concerns only that address, not the sending
+	// account, so it is not a systemic signal (it still counts in a series of notices).
+	systemic := 0
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaign_bounce_events WHERE restaurant_id = ? AND id > ? AND (
+		status_code LIKE '4.%' OR status_code LIKE '5.3.%' OR status_code LIKE '5.4.%' OR status_code LIKE '5.7.%'
+		OR diagnostic REGEXP 'rate limit|throttl|too many|spam|block|reputation|policy|authenticat|denied|quota|try again|temporar')
+		AND NOT (status_code = '4.2.2' AND diagnostic REGEXP 'recipient.s (inbox|mailbox)|mailbox (is )?full|out of storage space')`, restaurantID, st.baseID).Scan(&systemic)
+	if systemic > 0 || newTotal >= campaignBounceTripAfter {
 		st.tripped = true
 		_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'paused', error = 'corte por rebotes' WHERE campaign_id = ? AND channel = 'email' AND status = 'pending'`, campaignID)
-		slog.Default().Error("campaign.bounce.tripped", "coord_id", coordID, "campaign_id", campaignID, "new_bounces", newTotal)
+		slog.Default().Error("campaign.bounce.tripped", "coord_id", coordID, "campaign_id", campaignID, "new_bounces", newTotal, "systemic", systemic)
 		return true
 	}
 	return false

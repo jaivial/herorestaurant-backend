@@ -130,6 +130,7 @@ func (s *Server) handleBOBotConfigPut(w http.ResponseWriter, r *http.Request) {
 	if a.Role != "root" {
 		cfg.PrivilegedGroupJIDs = s.botStoredPrivilegedGroupJIDs(r.Context(), a.ActiveRestaurantID)
 		cfg.PrivilegedContacts = s.botStoredPrivilegedContacts(r.Context(), a.ActiveRestaurantID)
+		cfg.ToolGrants = s.botStoredTenantConfig(r.Context(), a.ActiveRestaurantID).ToolGrants
 	} else {
 		// A root write may CHANGE the privileged lists, but it may not DROP
 		// them by accident. This route is a general settings form: a body that
@@ -145,6 +146,10 @@ func (s *Server) handleBOBotConfigPut(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, ok := sent["privileged_contacts"]; !ok {
 			cfg.PrivilegedContacts = s.botStoredPrivilegedContacts(r.Context(), a.ActiveRestaurantID)
+		}
+		// wa_bot_tool_grants_v1: same rule for the per-chat tool grants.
+		if _, ok := sent["tool_grants"]; !ok {
+			cfg.ToolGrants = s.botStoredTenantConfig(r.Context(), a.ActiveRestaurantID).ToolGrants
 		}
 	}
 
@@ -291,6 +296,20 @@ func (s *Server) handleBOBotSettingsPut(w http.ResponseWriter, r *http.Request) 
 	// improvements to botDefaultRules reach this tenant automatically.
 	if strings.TrimSpace(cfg.Rules) == strings.TrimSpace(botDefaultRules) {
 		cfg.Rules = ""
+	}
+	// Coordination ids: wa_bot_privileged_contacts_v1 / wa_bot_tool_grants_v1.
+	// An omitted list means "leave it as it was" (same rule as
+	// handleBOBotConfigPut): a settings write must never revoke who is
+	// authorised nor their per-chat tool grants.
+	stored := s.botStoredTenantConfig(r.Context(), rid)
+	if len(cfg.PrivilegedGroupJIDs) == 0 {
+		cfg.PrivilegedGroupJIDs = stored.PrivilegedGroupJIDs
+	}
+	if len(cfg.PrivilegedContacts) == 0 {
+		cfg.PrivilegedContacts = stored.PrivilegedContacts
+	}
+	if len(cfg.ToolGrants) == 0 {
+		cfg.ToolGrants = stored.ToolGrants
 	}
 
 	raw, _ := json.Marshal(cfg)
