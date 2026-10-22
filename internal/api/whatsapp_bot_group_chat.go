@@ -463,8 +463,13 @@ type evoGroupInput struct {
 	// QuotedParticipant is the author of the quoted message, when the
 	// message replies to another one. Empty otherwise.
 	QuotedParticipant string
-	AudioB64          string
-	IsAudio           bool
+	// RawParticipant is the raw key.participant of the webhook: the identity
+	// WhatsApp itself used for the sender (possibly an opaque LID). It is kept
+	// verbatim so reactions can be keyed the same way WhatsApp keys the
+	// message. Coordination id: wa_bot_group_reaction_lid_v1
+	RawParticipant string
+	AudioB64       string
+	IsAudio        bool
 	// DocumentB64/DocumentName: inline document payload, wa_bot_privileged_group_v1.
 	DocumentB64  string
 	DocumentName string
@@ -546,25 +551,26 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 	}
 	return waInbound{
 		// Replies and the transcript both address the GROUP, never the member.
-		Sender:         groupJID,
-		ChatJID:        groupJID,
-		ParticipantJID: participantJID,
-		Text:           text,
-		PushName:       sanitizeBotPushName(pushName),
-		MessageID:      in.MessageID,
-		FromMe:         in.FromMe,
-		SessionRef:     in.Instance,
-		IsAudio:        in.IsAudio,
-		Ignored:        in.Ignored,
-		MediaKind:      botMediaKindLabel(in.MessageType),
-		AudioB64:       in.AudioB64,
-		DocumentB64:    in.DocumentB64,
-		DocumentName:   in.DocumentName,
-		ImageB64:       in.ImageB64,
-		ImageMime:      in.ImageMime,
-		Mentioned:      mentioned,
-		MentionJIDs:    mentions,
-		OwnJIDs:        in.OwnJIDs,
+		Sender:            groupJID,
+		ChatJID:           groupJID,
+		ParticipantJID:    participantJID,
+		ParticipantRawJID: in.RawParticipant, // wa_bot_group_reaction_lid_v1
+		Text:              text,
+		PushName:          sanitizeBotPushName(pushName),
+		MessageID:         in.MessageID,
+		FromMe:            in.FromMe,
+		SessionRef:        in.Instance,
+		IsAudio:           in.IsAudio,
+		Ignored:           in.Ignored,
+		MediaKind:         botMediaKindLabel(in.MessageType),
+		AudioB64:          in.AudioB64,
+		DocumentB64:       in.DocumentB64,
+		DocumentName:      in.DocumentName,
+		ImageB64:          in.ImageB64,
+		ImageMime:         in.ImageMime,
+		Mentioned:         mentioned,
+		MentionJIDs:       mentions,
+		OwnJIDs:           in.OwnJIDs,
 	}, true
 }
 

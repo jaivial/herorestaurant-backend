@@ -47,7 +47,13 @@ func (s *Server) botReactToMessage(restaurantID int, msg botWebhookMessage, emoj
 			return
 		}
 		key := map[string]any{"remoteJid": jid, "fromMe": false, "id": msg.MessageID}
-		if msg.IsGroup && msg.ParticipantJID != "" {
+		// wa_bot_group_reaction_lid_v1: WhatsApp keys the group message by the
+		// raw participant (which may be an opaque LID, …:59@lid), so the reaction
+		// must use that same value — a phone-form JID is silently dropped.
+		// Coordination id: wa_bot_group_reaction_lid_v1
+		if msg.ParticipantRawJID != "" {
+			key["participant"] = msg.ParticipantRawJID
+		} else if msg.IsGroup && msg.ParticipantJID != "" {
 			key["participant"] = msg.ParticipantJID
 		}
 		_, code, err := evo.request(ctx, http.MethodPost, evo.msgPath("sendReaction"), map[string]any{"key": key, "reaction": emoji})
