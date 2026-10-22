@@ -52,42 +52,22 @@ func (s *Server) botSettingsRestaurantIDForSession(r *http.Request) (int, bool) 
 	return rid, true
 }
 
-// handleBOBotPrivilegedContactsGet lists the conversations of the connected
-// WhatsApp account so the operator can pick the privileged ones.
-func (s *Server) handleBOBotPrivilegedContactsGet(w http.ResponseWriter, r *http.Request) {
-	rid, ok := s.botSettingsRestaurantIDForSession(r)
-	if !ok {
-		httpx.WriteError(w, http.StatusBadRequest, "restaurantId inválido")
-		return
+// botChatsFromContacts labels the stored selection as conversations, the same
+// shape the provider list uses.
+//
+// Coordination id: wa_bot_privileged_contacts_v2
+func botChatsFromContacts(contacts []botPrivilegedContact) []waChat {
+	out := make([]waChat, 0, len(contacts))
+	for _, c := range contacts {
+		out = append(out, waChat{JID: c.JID, Name: c.Name, Kind: chatKindOf(c), IsGroup: c.IsGroup})
 	}
-	ctx := r.Context()
-	tenant := s.loadBotTenantConfig(ctx, rid)
+	return out
+}
 
-	chats, err := s.botProviderChats(ctx, rid)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"success":  false,
-			"message":  "No se pudo leer el WhatsApp conectado",
-			"chats":    []waChat{},
-			"selected": botPrivilegedContactsFromConfig(tenant),
-		})
-		return
-	}
-
-	// The selected conversations that the provider no longer lists are kept, so
-	// the operator does not lose the selection by accident.
-	listed := map[string]struct{}{}
-	for _, c := range chats {
-		listed[c.JID] = struct{}{}
-	}
-	for _, c := range botPrivilegedContactsFromConfig(tenant) {
-		if _, ok := listed[c.JID]; !ok {
-			chats = append(chats, waChat{JID: c.JID, Name: c.Name, Kind: chatKindOf(c), IsGroup: c.IsGroup})
-		}
-	}
-
-	// wa_bot_privileged_contacts_v2: search + server-side pagination over the
-	// provider conversation list. Without count the whole list comes back.
+// botChatsPage applies the wa_bot_privileged_contacts_v2 search and pagination
+// to a conversation list. Without count the whole list comes back (legacy v1
+// shape); the returns are (page slice, total, page, count, has_more).
+func botChatsPage(chats []waChat, r *http.Request) ([]waChat, int, int, int, bool) {
 	chats = botChatsSearch(chats, r.URL.Query().Get("q"))
 	total := len(chats)
 	page := stockQueryInt(r, "page", 1, 1, 1_000_000)
@@ -105,6 +85,54 @@ func (s *Server) handleBOBotPrivilegedContactsGet(w http.ResponseWriter, r *http
 	} else {
 		page, count = 1, total
 	}
+	return chats, total, page, count, page*count < total
+}
+
+// handleBOBotPrivilegedContactsGet lists the conversations of the connected
+// WhatsApp account so the operator can pick the privileged ones.
+func (s *Server) handleBOBotPrivilegedContactsGet(w http.ResponseWriter, r *http.Request) {
+	rid, ok := s.botSettingsRestaurantIDForSession(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "restaurantId inválido")
+		return
+	}
+	ctx := r.Context()
+	tenant := s.loadBotTenantConfig(ctx, rid)
+
+	chats, err := s.botProviderChats(ctx, rid)
+	if err != nil {
+		// A provider outage must not hide what the operator already selected:
+		// the stored selection IS the list here (it includes the manually
+		// added phones), so it stays visible and manageable while the
+		// WhatsApp connection is down.
+		selected := botPrivilegedContactsFromConfig(tenant)
+		fallback, total, page, count, hasMore := botChatsPage(botChatsFromContacts(selected), r)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success":  false,
+			"message":  "No se pudo leer el WhatsApp conectado",
+			"chats":    fallback,
+			"selected": selected,
+			"total":    total,
+			"page":     page,
+			"count":    count,
+			"has_more": hasMore,
+		})
+		return
+	}
+
+	// The selected conversations that the provider no longer lists are kept, so
+	// the operator does not lose the selection by accident.
+	listed := map[string]struct{}{}
+	for _, c := range chats {
+		listed[c.JID] = struct{}{}
+	}
+	for _, c := range botPrivilegedContactsFromConfig(tenant) {
+		if _, ok := listed[c.JID]; !ok {
+			chats = append(chats, waChat{JID: c.JID, Name: c.Name, Kind: chatKindOf(c), IsGroup: c.IsGroup})
+		}
+	}
+
+	chats, total, page, count, hasMore := botChatsPage(chats, r)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
@@ -113,7 +141,7 @@ func (s *Server) handleBOBotPrivilegedContactsGet(w http.ResponseWriter, r *http
 		"total":    total,
 		"page":     page,
 		"count":    count,
-		"has_more": page*count < total,
+		"has_more": hasMore,
 	})
 }
 
