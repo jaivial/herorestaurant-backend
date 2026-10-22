@@ -49,6 +49,9 @@ type botWebhookMessage struct {
 	ChatJID        string
 	ParticipantJID string
 	Mentioned      bool
+	// wa_bot_group_reaction_lid_v1: the reaction key needs the participant
+	// exactly as WhatsApp keyed the message (possibly an opaque LID).
+	ParticipantRawJID string
 	// Coordination id: wa_bot_privileged_group_v1 - the group JID is listed in
 	// config.BotPrivilegedGroupJIDs: the turn runs with the full forky
 	// assistant tool registry and the preventive guards are skipped.

@@ -606,11 +606,14 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 			// Keep every participant field: the phone JID may be in any of
 			// them when Baileys addresses the member by opaque LID.
 			Participants: []string{d.Key.Participant, d.Key.ParticipantJidA, d.Key.ParticipantAlt},
-			PushName:     pushName,
-			MessageType:  d.MessageType,
-			Text:         text,
-			MentionText:  d.Message.MentionText,
-			MentionedJID: ctxInfo.MentionedJIDs,
+			// wa_bot_group_reaction_lid_v1: keep the raw key.participant so a
+			// reaction can be keyed exactly as WhatsApp keyed the message.
+			RawParticipant: d.Key.Participant,
+			PushName:       pushName,
+			MessageType:    d.MessageType,
+			Text:           text,
+			MentionText:    d.Message.MentionText,
+			MentionedJID:   ctxInfo.MentionedJIDs,
 			// The author of the quoted message: a reply to the bot is the
 			// other way of addressing it when the mention chip is not
 			// rendered (wa_bot_group_mention_v1).
