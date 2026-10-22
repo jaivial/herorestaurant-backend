@@ -43,7 +43,9 @@ func TestBotToolDefs_CoreToolsPresent(t *testing.T) {
 func TestBotToolDefs_AttachmentGating(t *testing.T) {
 	cfg := botTenantConfig{DisableAttachments: true}
 	for _, d := range botToolDefs(cfg) {
-		if strings.HasPrefix(d.Name, "send_") && d.Name != "send_message" && d.Name != "send_menu_buttons" {
+		// send_poll is an interaction, not an attachment: it stays available
+		// with attachments disabled (same as the executor does).
+		if strings.HasPrefix(d.Name, "send_") && d.Name != "send_message" && d.Name != "send_menu_buttons" && d.Name != "send_poll" {
 			t.Errorf("attachment tool %q should be gated out", d.Name)
 		}
 	}
