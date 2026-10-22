@@ -91,6 +91,33 @@ func (s *Server) botGroupIsPrivileged(jid string, tenant botTenantConfig) bool {
 	return false
 }
 
+// botForkyExcludedFromWA lists forky tools that must NOT reach the WhatsApp
+// bot, neither in the catalog (botForkyToolDefs) nor via the execution router
+// (wa_bot_forky_excluded_v1). They exist only for authenticated panel/MCP
+// sessions: their data goes through dedicated WA staff tools with the fresh
+// member gate (botSpecialAdminAuthorize), and the synthetic root context of
+// the privileged path must not become a bypass for that gate.
+var botForkyExcludedFromWA = map[string]struct{}{
+	"cancelled_bookings_list":  {},
+	"special_dates_list":       {},
+	"tables_list":              {},
+	"campaigns_list":           {},
+	"whatsapp_connection_get":  {},
+	"menu_visibility_list":     {},
+	"legal_pages_list":         {},
+	"site_builder_drafts_list": {},
+	"pos_read":                 {},
+	"stock_read":               {},
+	"members_read":             {},
+	"fichaje_read":             {},
+	"sheets_read":              {},
+	"menus_read":               {},
+	"reservas_read":            {},
+	"website_read":             {},
+	"campaigns_read":           {},
+	"invoices_read":            {},
+}
+
 // botForkyToolDefs converts the full assistant (forky) tool registry into the
 // bot's tool-list shape. Original names are kept: the privileged executor
 // router distinguishes forky tools by assistantToolLookup(name), which is
@@ -99,6 +126,9 @@ func botForkyToolDefs() []botToolDef {
 	defs := assistantToolDefs()
 	out := make([]botToolDef, 0, len(defs))
 	for _, d := range defs {
+		if _, excluded := botForkyExcludedFromWA[d.Name]; excluded {
+			continue
+		}
 		out = append(out, botToolDef{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema})
 	}
 	return out
@@ -117,8 +147,18 @@ func botForkyToolDefs() []botToolDef {
 // is a real bo_sessions row owned by the deployment's superadmin, bound to
 // the restaurant, so the replay is authorized by the same code that
 // authorizes a human. See whatsapp_bot_service_session.go.
+// botPrivilegedTurnKey marks a context that belongs to a WhatsApp bot turn (a
+// model acting on a chat message, not a human in the panel).
+type botPrivilegedTurnKey struct{}
+
+func isBotPrivilegedTurn(ctx context.Context) bool {
+	v, _ := ctx.Value(botPrivilegedTurnKey{}).(bool)
+	return v
+}
+
 func (s *Server) botPrivilegedForkyContext(ctx context.Context, restaurantID int) context.Context {
 	ctx = withBOAuth(ctx, boAuth{Role: "root", User: boUser{Role: "root"}})
+	ctx = context.WithValue(ctx, botPrivilegedTurnKey{}, true)
 	if token, err := s.botServiceSession(ctx, restaurantID); err == nil && token != "" {
 		ctx = botServiceSessionTokenForContext(ctx, token)
 	}

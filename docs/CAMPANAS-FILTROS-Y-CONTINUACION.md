@@ -40,10 +40,13 @@ entrega**: quien se da de baja durante un envío largo nunca recibe el mensaje.
    coord_id `camp-<uuid>`): deja rastro auditable de la decisión del
    operador. No toca `sent`/`failed`/`skipped`. No ha sido invocado.
 2. **Estado final que mentía**: al terminar el runner la campaña pasaba a
-   `sent` aunque hubiera filas pausadas. → **Corregido**: si al salir quedan
-   `paused` o `pending`, la campaña se queda en `sending` (semántica
-   "reanudable" ya existente) y se loguea `campaign.send.interrupted`;
-   solo pasa a `sent` cuando no queda nada por enviar.
+   `sent` aunque hubiera filas pausadas. → **Corregido** (combinado con la
+   semántica ya revisada en `dev` PR #539): si al salir quedan `paused` o
+   `pending`, la campaña **nunca** pasa a `sent`; un corte por rebotes la
+   devuelve a `draft` (reanudable) y cualquier otro residual la deja en
+   `sending` (reanudable); la lectura de stats es guard: si falla no se
+   escribe ningún estado (log `campaign.send.stats_failed`) y cualquier
+   interrupción se loguea con `campaign.send.interrupted`.
 3. **La previsualización de audiencia no distinguía ya-enviados**: el
    operador veía el total del audiencia, no el trabajo real restante. →
    **Corregido SIN romper consumidores**: los campos históricos conservan su

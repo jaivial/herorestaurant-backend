@@ -84,6 +84,10 @@ type waInbound struct {
 	// AudioB64 is the inline voice-note payload (Evolution webhookBase64) used
 	// for transcription. Coordination id: wa_bot_audio_transcription_v1
 	AudioB64 string
+	// ImageB64/ImageMime carry an inline imageMessage payload, OCR-read into
+	// the turn. Coordination id: wa_bot_attachment_read_v1
+	ImageB64  string
+	ImageMime string
 	// Ignored marks non-conversational events (reactions, edits, deletes, poll
 	// votes) that must never reach the bot pipeline nor trigger a fallback.
 	// Coordination id: wa_bot_ignore_non_conversational_v1

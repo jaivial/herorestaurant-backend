@@ -22,6 +22,7 @@ It also exposes /transcribe (faster-whisper) for WhatsApp voice notes
 from __future__ import annotations
 
 import base64
+import io
 import json
 import re
 import logging
@@ -42,7 +43,10 @@ logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
 OPENCODE_GO_BASE = "https://opencode.ai/zen/go/v1"
-MINIMAX_ANTHROPIC_BASE = "https://api.minimax.io/anthropic"
+# The Anthropic-compatible Messages endpoint of MiniMax. The base must carry
+# the /v1 segment: with the bare /anthropic the request lands on a path that
+# does not exist and the disambiguation dies with a 404 (wa_bot_dspy_pipeline_v1).
+MINIMAX_ANTHROPIC_BASE = "https://api.minimax.io/anthropic/v1"
 
 # Thresholds (one place, easy to tune from real traffic in the graph tab).
 CONFIDENCE_MIN = 0.55
@@ -538,7 +542,9 @@ class TurnRequest(BaseModel):
 
 
 def build_lm(spec: LMSpec, session_id: str) -> dspy.LM | None:
-    if not spec.api_key:
+    # A spec without a model has no model id: building the LM raises and the
+    # whole /decide answers 500, so the turn loses its decision.
+    if not spec.api_key or not spec.model:
         return None
     if spec.provider == "opencode-go":
         # ChainOfThought already reasons in the visible "reasoning" field, so the
@@ -548,7 +554,9 @@ def build_lm(spec: LMSpec, session_id: str) -> dspy.LM | None:
                        extra_headers={"x-opencode-session": session_id}, cache=False, num_retries=0, timeout=8,
                        reasoning_effort="none")
     if spec.provider == "minimax":
-        return dspy.LM("anthropic/" + spec.model, api_base=MINIMAX_ANTHROPIC_BASE, api_key=spec.api_key, max_tokens=1000,
+        # The model reasons before answering, so the budget must leave room for
+        # the thinking block: with a tight one the answer never arrives.
+        return dspy.LM("anthropic/" + spec.model, api_base=MINIMAX_ANTHROPIC_BASE, api_key=spec.api_key, max_tokens=2048,
                        cache=False, num_retries=0, timeout=8)
     return None
 
@@ -1048,9 +1056,20 @@ def decide(req: TurnRequest) -> dict[str, Any]:
 
 
 # --------------------------------------------------------- transcription ----
+# Coordination id: wa_bot_stt_bark_v1
+#
+# Bark 3.0 (Underdog, CC-BY 4.0, https://underdog.ai/bark) is the DEFAULT
+# engine: a 163 MB local model, no API, 57x smaller than Whisper. It is
+# English-only, so the Go caller falls back to faster-whisper automatically
+# whenever this engine yields nothing (and STT_DEFAULT_ENGINE=whisper turns it
+# off). Engines: "bark" (transformers, CPU) and "whisper" (faster-whisper).
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "small")
+BARK_MODEL_NAME = os.environ.get("BARK_MODEL", "ConwayResearch/Underdog-Bark-3.0-Clean")
+STT_DEFAULT_ENGINE = os.environ.get("STT_DEFAULT_ENGINE", "bark")
 _whisper = None
 _whisper_lock = threading.Lock()
+_bark = None
+_bark_lock = threading.Lock()
 
 
 def whisper_model():
@@ -1062,9 +1081,59 @@ def whisper_model():
         return _whisper
 
 
+def bark_model():
+    global _bark
+    with _bark_lock:
+        if _bark is None:
+            from transformers import pipeline
+            _bark = pipeline("automatic-speech-recognition", model=BARK_MODEL_NAME, device="cpu")
+        return _bark
+
+
+def decode_audio_pcm(data: bytes):
+    """Decode any container (ogg/opus voice notes included) to mono float32
+    PCM at 16 kHz via PyAV (already a faster-whisper dependency)."""
+    import av
+    import numpy as np
+
+    with av.open(io.BytesIO(data)) as container:
+        stream = container.streams.audio[0]
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        chunks = []
+        for frame in container.decode(stream):
+            for out in resampler.resample(frame):
+                chunks.append(out.to_ndarray().reshape(-1))
+        for out in resampler.resample(None):
+            chunks.append(out.to_ndarray().reshape(-1))
+    if not chunks:
+        return np.zeros(0, dtype="float32")
+    return np.concatenate(chunks).astype("float32") / 32768.0
+
+
+def transcribe_bark(data: bytes) -> dict[str, Any]:
+    samples = decode_audio_pcm(data)
+    if samples.size == 0:
+        raise ValueError("no audio samples")
+    out = bark_model()({"raw": samples, "sampling_rate": 16000}, chunk_length_s=30, stride_length_s=5)
+    return {"text": str(out.get("text", "")).strip(), "language": "en"}
+
+
+def transcribe_whisper(data: bytes, language: str = "") -> dict[str, Any]:
+    with tempfile.NamedTemporaryFile(suffix=".ogg") as f:
+        f.write(data)
+        f.flush()
+        segments, info = whisper_model().transcribe(
+            f.name, beam_size=1, vad_filter=True, language=language or None,
+            initial_prompt="Conversación con un restaurante: reserva, arroz, menú, personas, hora.")
+        text = " ".join(s.text.strip() for s in segments).strip()
+    return {"text": text, "language": info.language, "duration_s": round(info.duration, 1)}
+
+
 class TranscribeRequest(BaseModel):
     audio_b64: str
     restaurant_id: int = 0
+    engine: str = ""
+    language: str = ""
 
 
 @app.post("/transcribe")
@@ -1077,14 +1146,24 @@ def transcribe(req: TranscribeRequest) -> dict[str, Any]:
         raise HTTPException(400, "invalid base64") from exc
     if not data or len(data) > 8 << 20:
         raise HTTPException(400, "empty or too large")
-    with tempfile.NamedTemporaryFile(suffix=".ogg") as f:
-        f.write(data)
-        f.flush()
-        segments, info = whisper_model().transcribe(f.name, beam_size=1, vad_filter=True, initial_prompt="Conversación con un restaurante: reserva, arroz, menú, personas, hora.")
-        text = " ".join(s.text.strip() for s in segments).strip()
+    engine = (req.engine or STT_DEFAULT_ENGINE).lower()
+    out: dict[str, Any]
+    if engine == "bark":
+        try:
+            out = transcribe_bark(data)
+            out["engine"] = "bark"
+        except Exception as exc:  # noqa: BLE001 - English-only model or missing deps
+            log.info("checkpoint wa_bot_stt_bark_v1 restaurant_id=%s bark_failed err=%s", req.restaurant_id, exc)
+            out = transcribe_whisper(data, req.language)
+            out["engine"] = "whisper"
+    else:
+        out = transcribe_whisper(data, req.language)
+        out["engine"] = "whisper"
     ms = int((time.time() - started) * 1000)
-    log.info("checkpoint wa_bot_audio_transcription_v1 restaurant_id=%s lang=%s chars=%s ms=%s", req.restaurant_id, info.language, len(text), ms)
-    return {"text": text, "language": info.language, "duration_s": round(info.duration, 1), "elapsed_ms": ms}
+    out["elapsed_ms"] = ms
+    log.info("checkpoint wa_bot_audio_transcription_v1 restaurant_id=%s engine=%s lang=%s chars=%s ms=%s",
+             req.restaurant_id, out["engine"], out.get("language", ""), len(out.get("text", "")), ms)
+    return out
 
 
 @app.on_event("startup")

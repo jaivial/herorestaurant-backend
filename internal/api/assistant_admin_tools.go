@@ -148,10 +148,65 @@ func forkyFold(v string) string {
 	return r.Replace(strings.ToLower(v))
 }
 
+// forkyAdminAliasGroups: Spanish/English synonym groups for catalog discovery.
+// The ops index mixes English names (admin_get_pos_cash_days_current) with
+// Spanish descriptions, so a bare substring match is nearly blind in one of
+// the two languages ("caja" found 0 of the 13 cash ops). Query-side expansion
+// only: the generated ops map is not touched, and a word matches when ANY of
+// its aliases appears in the op haystack. Keep groups small and domain-real:
+// an over-broad alias turns discovery into noise.
+var forkyAdminAliasGroups = [][]string{
+	{"caja", "cash"},
+	{"caduc", "expir", "vencim", "shelf"},
+	{"almacen", "warehouse"},
+	{"turno", "shift"},
+	{"miembro", "member", "staff", "equipo", "personal", "team"},
+	{"cierre", "closure", "close"},
+	{"articulo", "item"},
+	{"reserva", "booking"},
+	{"factura", "invoice"},
+	{"campana", "campaign"},
+	{"anuncio", "ads"},
+	{"carta", "menu"},
+	{"horario", "schedule"},
+	{"fichaje", "clock"},
+	{"mesa", "table"},
+	{"pedido", "order"},
+	{"cocina", "kitchen"},
+	{"precio", "price"},
+	{"cliente", "customer"},
+	{"usuario", "user"},
+	{"informe", "report"},
+}
+
+var forkyAdminAliases = func() map[string][]string {
+	m := map[string][]string{}
+	for _, g := range forkyAdminAliasGroups {
+		for _, w := range g {
+			m[w] = g
+		}
+	}
+	return m
+}()
+
 func forkyAdminMatch(op forkyAdminOp, q string) bool {
 	hay := forkyFold(op.Name + " " + op.Path + " " + op.Description + " " + op.Section + " " + strings.Join(op.Screens, " "))
 	for _, w := range strings.Fields(forkyFold(q)) {
-		if len(w) >= 3 && !strings.Contains(hay, w) {
+		if len(w) < 3 {
+			continue
+		}
+		candidates := forkyAdminAliases[w]
+		if candidates == nil {
+			candidates = []string{w}
+		}
+		ok := false
+		for _, c := range candidates {
+			if strings.Contains(hay, c) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
 			return false
 		}
 	}
@@ -341,6 +396,14 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	if op.Name == "" {
 		return "", fmt.Errorf("operación desconocida para este usuario: %s (usa admin_catalog)", in.Name)
 	}
+	// A bot turn is a model acting on a chat message: it may read through the
+	// catalogue, but a generic panel write is refused here, in the server. The
+	// confirmation token is issued to and redeemed by the same model, so it is
+	// not a human decision; the dedicated bot tools carry their own checks.
+	if op.Write && isBotPrivilegedTurn(ctx) {
+		log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d", rid)
+		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. Usa panel_change para PROPONER el cambio: se aplica solo cuando el usuario responde 'OK <código>' en el chat. No busques otra vía."}), nil
+	}
 	if op.Write {
 		if !in.Confirmed {
 			return s.assistantRequireConfirmation(rid, "admin_call", input)
@@ -354,6 +417,16 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	if !ok {
 		return "", fmt.Errorf("sesión del panel no disponible")
 	}
+	if err := forkyAdminCheckOp(rid, op, in.PathParams); err != nil {
+		return "", err
+	}
+	return s.forkyAdminRunOp(rid, token, op, in.PathParams, in.Query, in.Body)
+}
+
+// forkyAdminCheckOp is the safety net every panel replay shares (admin_call
+// and the approved-write path panel_change, wa_bot_panel_write_v1): tenant
+// scope, no session rebinding, no session-scoped ops, no account management.
+func forkyAdminCheckOp(rid int, op forkyAdminOp, pathParams map[string]any) error {
 	// Tenant scope: a path that addresses a restaurant must address THIS
 	// restaurant. Without this the model could put another tenant's id in the
 	// path and the replay would read or write that tenant's data with the
@@ -363,12 +436,12 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// never a legitimate call: it is either a mistake or an attempt to reach
 	// another tenant.
 	if rid > 0 && forkyPathHasParam(op.Path, "restaurantId") {
-		got := strings.TrimSpace(fmt.Sprint(in.PathParams["restaurantId"]))
+		got := strings.TrimSpace(fmt.Sprint(pathParams["restaurantId"]))
 		if got == "" {
-			got = strings.TrimSpace(fmt.Sprint(in.PathParams["restaurant_id"]))
+			got = strings.TrimSpace(fmt.Sprint(pathParams["restaurant_id"]))
 		}
 		if got != "" && got != strconv.Itoa(rid) {
-			return "", fmt.Errorf("operación fuera del restaurante del bot: la ruta apunta a %s y este bot opera en %d", got, rid)
+			return fmt.Errorf("operación fuera del restaurante del bot: la ruta apunta a %s y este bot opera en %d", got, rid)
 		}
 	}
 	// The same scope applies to the operation that REBINDS the session to
@@ -380,7 +453,7 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// The bot has exactly one restaurant, so the operation has no meaning
 	// for it: the restaurant is already the right one.
 	if rid > 0 && forkyPathIsActiveRestaurant(op.Path) {
-		return "", fmt.Errorf("el bot no puede cambiar de restaurante: ya opera en el %d", rid)
+		return fmt.Errorf("el bot no puede cambiar de restaurante: ya opera en el %d", rid)
 	}
 	// The operations that act on the SESSION ITSELF are refused for the same
 	// reason, and with a sharper edge: the service session belongs to a real
@@ -389,7 +462,7 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// identity of its own to change, and it must never be able to touch the
 	// credentials of the account it borrows.
 	if forkyPathIsSessionScoped(op.Path) {
-		return "", fmt.Errorf("el bot no puede ejecutar %s: son operaciones sobre la cuenta de la sesion, no sobre el restaurante", op.Path)
+		return fmt.Errorf("el bot no puede ejecutar %s: son operaciones sobre la cuenta de la sesion, no sobre el restaurante", op.Path)
 	}
 	// The ACCOUNT MANAGEMENT operations are refused too. The service session
 	// is a superadmin, so the catalog exposes operations that create panel
@@ -402,14 +475,21 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// (reservations, menus, members, tables, stock, POS). The people behind
 	// the panel are not.
 	if forkyPathIsAccountManagement(op.Path) {
-		return "", fmt.Errorf("el bot no puede ejecutar %s: es una operacion de gestion de cuentas del panel, no de datos del restaurante", op.Path)
+		return fmt.Errorf("el bot no puede ejecutar %s: es una operacion de gestion de cuentas del panel, no de datos del restaurante", op.Path)
 	}
-	path, err := forkyRenderPath(op.Path, in.PathParams)
+	return nil
+}
+
+// forkyAdminRunOp replays ONE already-checked operation through the real
+// router with the panel session identity. It is the shared replay core of
+// admin_call (reads) and panel_change (approved writes).
+func (s *Server) forkyAdminRunOp(rid int, token string, op forkyAdminOp, pathParams, query map[string]any, body json.RawMessage) (string, error) {
+	path, err := forkyRenderPath(op.Path, pathParams)
 	if err != nil {
 		return "", err
 	}
 	q := url.Values{}
-	for k, v := range in.Query {
+	for k, v := range query {
 		q.Set(k, fmt.Sprint(v))
 	}
 	// The admin subrouter is mounted at /admin, and the /api prefix rewrite runs
@@ -420,11 +500,11 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	if len(q) > 0 {
 		target += "?" + q.Encode()
 	}
-	var body *strings.Reader
-	if op.Write && len(in.Body) > 0 && string(in.Body) != "null" {
-		body = strings.NewReader(string(in.Body))
+	var bodyReader *strings.Reader
+	if op.Write && len(body) > 0 && string(body) != "null" {
+		bodyReader = strings.NewReader(string(body))
 	} else {
-		body = strings.NewReader("")
+		bodyReader = strings.NewReader("")
 	}
 	// The replay must not inherit the caller's request context: it carries the
 	// inbound connection's routing state and cancellation, which make the router
@@ -432,7 +512,7 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// through the cookie, and the deadline keeps the call bounded.
 	callCtx, cancel := context.WithTimeout(context.Background(), assistantToolTimeout("admin_call"))
 	defer cancel()
-	req := httptest.NewRequest(op.Method, target, body).WithContext(callCtx)
+	req := httptest.NewRequest(op.Method, target, bodyReader).WithContext(callCtx)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.AddCookie(&http.Cookie{Name: boSessionCookieName, Value: token})

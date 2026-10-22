@@ -103,7 +103,9 @@ fi
 echo "== 2) construir =="
 # El returncode es lo que decide, no la salida: los errores de docker build
 # van a stderr.
-if ! sudo -n docker build -t "$IMAGE" -f "$STAGE/backend/Dockerfile.prod" "$STAGE" >/tmp/nvc-build.log 2>&1; then
+# --no-cache: la cache del builder legacy sirvio una vez un binario viejo con
+# un stage correcto (2026-10-20); el coste de rebuild es menor que el riesgo.
+if ! sudo -n docker build --no-cache -t "$IMAGE" -f "$STAGE/backend/Dockerfile.prod" "$STAGE" >/tmp/nvc-build.log 2>&1; then
   echo "!! el build fallo:"
   tail -20 /tmp/nvc-build.log | sed 's/^/   /'
   exit 1

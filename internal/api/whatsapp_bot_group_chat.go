@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -219,31 +222,100 @@ var botOwnJIDsCache = struct {
 	byRID map[int]botOwnJIDsEntry
 }{byRID: map[int]botOwnJIDsEntry{}}
 
+// botOwnJIDsDegradedTTL bounds how long a degraded answer (the provider could
+// not be read, so only the database phone is known) is reused. The phone alone
+// never matches a mention by LID, which is the form every Baileys group uses,
+// so a degraded answer cached for the full botOwnJIDsTTL silenced the bot in
+// its groups for up to 30 minutes after one provider blip. A short TTL turns
+// that into one retry shortly after, not one per message.
+const botOwnJIDsDegradedTTL = 45 * time.Second
+
 type botOwnJIDsEntry struct {
-	jids []string
-	at   time.Time
+	jids     []string
+	at       time.Time
+	degraded bool
+	// good is the last set that included a provider-verified identity (the LID
+	// of the bot's own participant). It is the bot's own identities only and
+	// is reused when a later read of the provider fails.
+	good []string
+	// goodAt is when good was verified by the provider. A degraded refresh
+	// never renews it; good is reusable only for botOwnJIDsTTL after goodAt.
+	goodAt time.Time
+	// goodFP binds good to the instance and stored phone it was verified for.
+	goodFP string
+}
+
+// botOwnJIDsFingerprint identifies the instance and stored bot phone an
+// identity set belongs to, without putting either in logs.
+func botOwnJIDsFingerprint(baseURL, instance string, own []string) string {
+	digits := make([]string, 0, len(own))
+	for _, v := range own {
+		if d := botWhatsappIDDigits(v); d != "" {
+			digits = append(digits, d)
+		}
+	}
+	sort.Strings(digits)
+	sum := sha256.Sum256([]byte(baseURL + "|" + instance + "|" + strings.Join(digits, ",")))
+	return hex.EncodeToString(sum[:6])
 }
 
 // botOwnJIDsCached returns the previously learned identities for the restaurant
-// when they are still fresh.
+// when they are still fresh. A degraded entry is fresh only for
+// botOwnJIDsDegradedTTL.
 func botOwnJIDsCached(restaurantID int) []string {
 	botOwnJIDsCache.Lock()
 	defer botOwnJIDsCache.Unlock()
 	e, ok := botOwnJIDsCache.byRID[restaurantID]
-	if !ok || time.Since(e.at) >= botOwnJIDsTTL {
+	if !ok {
+		return nil
+	}
+	ttl := botOwnJIDsTTL
+	if e.degraded {
+		ttl = botOwnJIDsDegradedTTL
+	}
+	if time.Since(e.at) >= ttl {
 		return nil
 	}
 	return e.jids
 }
 
-// botOwnJIDsRemember stores the learned identities for the restaurant.
-func botOwnJIDsRemember(restaurantID int, jids []string) {
+// botOwnJIDsRemember stores the identities learned from the provider.
+func botOwnJIDsRemember(restaurantID int, jids []string, fp string) {
 	if len(jids) == 0 {
 		return
 	}
 	botOwnJIDsCache.Lock()
-	botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: jids, at: time.Now()}
+	botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: jids, at: time.Now(), good: jids, goodAt: time.Now(), goodFP: fp}
 	botOwnJIDsCache.Unlock()
+}
+
+// botOwnJIDsRememberDegraded stores an answer built without the provider. The
+// last provider-verified set (if any) is merged in, so a transient outage does
+// not drop the LID the bot is mentioned by. Only the bot's own identities are
+// ever in either set.
+func botOwnJIDsRememberDegraded(restaurantID int, own []string, reason, fp string) []string {
+	botOwnJIDsCache.Lock()
+	defer botOwnJIDsCache.Unlock()
+	prev := botOwnJIDsCache.byRID[restaurantID]
+	merged := own
+	reuse := fp != "" && prev.goodFP == fp && len(prev.good) > 0 && time.Since(prev.goodAt) < botOwnJIDsTTL
+	if reuse {
+		seen := map[string]struct{}{}
+		merged = make([]string, 0, len(prev.good)+len(own))
+		for _, v := range append(append([]string{}, prev.good...), own...) {
+			if _, dup := seen[v]; dup {
+				continue
+			}
+			seen[v] = struct{}{}
+			merged = append(merged, v)
+		}
+	}
+	log.Printf("[bot] checkpoint wa_bot_own_jids_v1 restaurant_id=%d degraded=true reason=%s own=%d verified_reused=%t",
+		restaurantID, reason, len(merged), reuse)
+	if len(merged) > 0 {
+		botOwnJIDsCache.byRID[restaurantID] = botOwnJIDsEntry{jids: merged, at: time.Now(), degraded: true, good: prev.good, goodAt: prev.goodAt, goodFP: prev.goodFP}
+	}
+	return merged
 }
 
 // botGroupFetchOwnJIDs returns every identifier the bot answers to, so a
@@ -272,15 +344,12 @@ func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []s
 	own := s.botGroupOwnJIDs(ctx, restaurantID)
 	gw, ok := s.botGatewayFor(ctx, restaurantID)
 	if !ok {
-		// Cache the database-only answer too, so a missing gateway does not
-		// re-attempt the lookup on every inbound message.
-		botOwnJIDsRemember(restaurantID, own)
-		return own
+		// Short-lived: a missing gateway must not pin the phone-only set.
+		return botOwnJIDsRememberDegraded(restaurantID, own, "no_gateway", "")
 	}
 	evo, ok := gw.(*evolutionGateway)
 	if !ok {
-		botOwnJIDsRemember(restaurantID, own)
-		return own
+		return botOwnJIDsRememberDegraded(restaurantID, own, "not_evolution", "")
 	}
 	// The number the instance really uses, asked from the instance itself.
 	phone := botProviderInstanceOwnerPhone(ctx, evo.baseURL, evo.apiKey, evo.instanceName)
@@ -294,19 +363,17 @@ func (s *Server) botGroupFetchOwnJIDs(ctx context.Context, restaurantID int) []s
 			}
 		}
 	}
+	fp := botOwnJIDsFingerprint(evo.baseURL, evo.instanceName, own)
 	raw := botProviderFetchAllGroups(ctx, evo.baseURL, evo.apiKey, evo.instanceName)
 	if len(raw) == 0 {
-		// Provider down: fall back to the phone and cache it, so a transient
-		// outage costs one attempt per TTL instead of one per message.
-		if len(own) > 0 {
-			botOwnJIDsRemember(restaurantID, own)
-		}
-		return own
+		// Provider down: the phone plus the last verified set, cached only
+		// briefly so the next webhook retries the provider.
+		return botOwnJIDsRememberDegraded(restaurantID, own, "provider_empty", fp)
 	}
 	// The LID is the form a mention actually uses, so it goes first, then the
 	// phone forms as a fallback.
 	merged := append(botGroupOwnJIDsFromGroups(raw, phone), own...)
-	botOwnJIDsRemember(restaurantID, merged)
+	botOwnJIDsRemember(restaurantID, merged, fp)
 	return merged
 }
 
@@ -401,8 +468,11 @@ type evoGroupInput struct {
 	// DocumentB64/DocumentName: inline document payload, wa_bot_privileged_group_v1.
 	DocumentB64  string
 	DocumentName string
-	Ignored      bool
-	OwnJIDs      []string
+	// ImageB64/ImageMime: inline image payload, wa_bot_attachment_read_v1.
+	ImageB64  string
+	ImageMime string
+	Ignored   bool
+	OwnJIDs   []string
 }
 
 // parseEvolutionGroupMessage applies the group mention gate and returns the
@@ -452,9 +522,19 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 	if v := strings.TrimSpace(in.QuotedParticipant); v != "" {
 		quotedFrom = []string{v}
 	}
+	mentioned := true
 	if !botGroupMentionsBot(mentions, quotedFrom, in.Text, in.OwnJIDs) {
-		botGroupMessageAudit(0, groupJID, participant, "skipped_not_mentioned")
-		return waInbound{}, false
+		// wa_bot_special_admin_v2: an exact "OK <code>" approval is not a
+		// request to the model, so it needs no mention. It is passed on with
+		// Mentioned=false and the webhook decides (scope, actor, code); any
+		// other unmentioned message is still dropped here.
+		if _, shaped := botSpecialNormalizeOK(in.Text); !shaped {
+			botGroupMessageAudit(0, groupJID, participant, "skipped_not_mentioned")
+			log.Printf("[bot] checkpoint wa_bot_group_mention_v1 detail own_jids=%d mentions=%d quoted=%d",
+				len(in.OwnJIDs), len(mentions), len(quotedFrom))
+			return waInbound{}, false
+		}
+		mentioned = false
 	}
 
 	// The LLM must read the request, not the mention chip: strip it.
@@ -480,7 +560,9 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 		AudioB64:       in.AudioB64,
 		DocumentB64:    in.DocumentB64,
 		DocumentName:   in.DocumentName,
-		Mentioned:      true,
+		ImageB64:       in.ImageB64,
+		ImageMime:      in.ImageMime,
+		Mentioned:      mentioned,
 		MentionJIDs:    mentions,
 		OwnJIDs:        in.OwnJIDs,
 	}, true

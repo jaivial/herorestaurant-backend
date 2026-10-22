@@ -75,6 +75,10 @@ func (s *Server) handleBOPOSKitchenStationsList(w http.ResponseWriter, r *http.R
 		}
 		items = append(items, map[string]any{"id": id, "name": name, "sortOrder": order, "isActive": active != 0})
 	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading kitchen stations")
+		return
+	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
 }
 
@@ -137,6 +141,10 @@ func (s *Server) handleBOPOSKitchenRoutesList(w http.ResponseWriter, r *http.Req
 			return
 		}
 		items = append(items, map[string]any{"id": id, "stationId": station, "stationName": stationName, "productId": stockNullableDBInt(product), "categoryId": stockNullableDBInt(category), "productName": productName, "categoryName": categoryName, "priority": priority, "isActive": active != 0})
+	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading kitchen routes")
+		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
 }
@@ -249,6 +257,11 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		}
 		lines = append(lines, line)
 	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		httpx.WriteError(w, 500, "Error reading kitchen lines")
+		return
+	}
 	rows.Close()
 	if len(lines) == 0 {
 		httpx.WriteError(w, 409, "Ticket has no kitchen lines")
@@ -270,6 +283,11 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 			}
 			stations[stationID] = append(stations[stationID], line)
 		}
+		if qErr = routeRows.Err(); qErr != nil {
+			routeRows.Close()
+			httpx.WriteError(w, 500, "Error reading kitchen route")
+			return
+		}
 		routeRows.Close()
 	}
 	priorStations, priorErr := tx.QueryContext(r.Context(), `SELECT DISTINCT d.station_id FROM pos_kitchen_dispatches d JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=d.restaurant_id AND dl.dispatch_id=d.id JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id WHERE d.restaurant_id=? AND (d.ticket_id=? OR l.ticket_id=?) UNION SELECT kt.station_id FROM pos_kitchen_line_transfers kt JOIN pos_ticket_lines l ON l.restaurant_id=kt.restaurant_id AND l.id=kt.to_line_id WHERE kt.restaurant_id=? AND l.ticket_id=?`, a.ActiveRestaurantID, ticketID, ticketID, a.ActiveRestaurantID, ticketID)
@@ -287,6 +305,11 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		if _, ok := stations[stationID]; !ok {
 			stations[stationID] = nil
 		}
+	}
+	if priorErr = priorStations.Err(); priorErr != nil {
+		priorStations.Close()
+		httpx.WriteError(w, 500, "Error reading dispatch history")
+		return
 	}
 	priorStations.Close()
 	if len(stations) == 0 {
@@ -341,6 +364,11 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 				return
 			}
 			sent[id] = qty
+		}
+		if qErr = sentRows.Err(); qErr != nil {
+			sentRows.Close()
+			httpx.WriteError(w, 500, "Error reading dispatch history")
+			return
 		}
 		sentRows.Close()
 		deltas := calculatePOSKitchenDeltas(current, sent)
@@ -439,7 +467,15 @@ func (s *Server) handleBOPOSKitchenQueue(w http.ResponseWriter, r *http.Request)
 			lines = append(lines, map[string]any{"id": lineID, "productName": name, "quantity": quantity, "action": action, "notes": notes})
 		}
 		lineRows.Close()
+		if qErr = lineRows.Err(); qErr != nil {
+			httpx.WriteError(w, 500, "Error reading kitchen dispatch lines")
+			return
+		}
 		items = append(items, map[string]any{"id": id, "stationId": station, "stationName": stationName, "ticketId": ticket, "ticketNumber": number, "tableName": table, "status": status, "createdAt": created, "lines": lines})
+	}
+	if err = rows.Err(); err != nil {
+		httpx.WriteError(w, 500, "Error reading kitchen queue")
+		return
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "items": items})
 }
