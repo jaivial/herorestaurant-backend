@@ -64,6 +64,11 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Coordination id: wa_bot_inbound_reaction_key_v1 - Evolution reactions
+	// (group and 1:1) are dropped as non-conversational, so the target key the
+	// phone sent is logged here, once, before any gate returns.
+	botLogInboundReactionKey(restaurantID, body)
+
 	// Group gate: the bot answers inside the management group and, when the
 	// feature is enabled (wa_bot_privileged_group_v1), inside any configured
 	// privileged group. Both require an explicit mention — the only relaxation

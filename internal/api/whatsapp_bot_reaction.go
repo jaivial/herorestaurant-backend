@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -50,11 +52,18 @@ func (s *Server) botReactToMessage(restaurantID int, msg botWebhookMessage, emoj
 		// raw participant (which may be an opaque LID, …:59@lid), so the reaction
 		// must use that same value — a phone-form JID is silently dropped.
 		// Coordination id: wa_bot_group_reaction_lid_v1
+		participant, variant := "", "none"
 		if msg.IsGroup && msg.ParticipantRawJID != "" {
 			key["participant"] = msg.ParticipantRawJID
+			participant, variant = msg.ParticipantRawJID, "raw_lid"
 		} else if msg.IsGroup && msg.ParticipantJID != "" {
 			key["participant"] = msg.ParticipantJID
+			participant, variant = msg.ParticipantJID, "phone_fallback"
 		}
+		// Coordination id: wa_bot_reaction_send_key_v1 - the key about to be
+		// sent is logged verbatim so a SERVER_ACK without a visible reaction
+		// can be compared against the inbound key of the same message.
+		log.Printf("[bot] checkpoint wa_bot_reaction_send_key_v1 restaurant_id=%d remote_jid=%s from_me=false id=%s participant_variant=%s participant=%q emoji=%s", restaurantID, jid, msg.MessageID, variant, participant, emoji)
 		_, code, err := evo.request(ctx, http.MethodPost, evo.msgPath("sendReaction"), map[string]any{"key": key, "reaction": emoji})
 		if err != nil || code < 200 || code >= 300 {
 			botCheckpoint("wa_bot_audio_reaction_v1", "restaurant_id=%d emoji=%s failed code=%d err=%v", restaurantID, emoji, code, err)
@@ -112,4 +121,34 @@ func botContentEmoji(msg botWebhookMessage) string {
 		return "😟"
 	}
 	return "👍"
+}
+
+// Coordination id: wa_bot_inbound_reaction_key_v1
+//
+// botLogInboundReactionKey logs the reaction target key exactly as the
+// provider's phone sent it, for reactions the backend discards as
+// non-conversational (the SERVER_ACK arrives but no reaction is ever
+// rendered). It fires only when the webhook body actually carries a
+// reactionMessage with a key, so it is safe to call at a choke point that
+// every message passes. restaurant_id=0 is logged when the tenant is not
+// resolved yet, matching the existing checkpoint style.
+type botReactionKeyLog struct {
+	Key struct {
+		RemoteJid   string `json:"remoteJid"`
+		FromMe      bool   `json:"fromMe"`
+		ID          string `json:"id"`
+		Participant string `json:"participant"`
+	} `json:"key"`
+	Text string `json:"text"`
+}
+
+func botLogInboundReactionKey(restaurantID int, body []byte) {
+	var env struct {
+		Message botReactionKeyLog `json:"message"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil || env.Message.Key.ID == "" {
+		return
+	}
+	log.Printf("[bot] checkpoint wa_bot_inbound_reaction_key_v1 restaurant_id=%d remote_jid=%s from_me=%t id=%s participant=%q emoji=%q",
+		restaurantID, env.Message.Key.RemoteJid, env.Message.Key.FromMe, env.Message.Key.ID, env.Message.Key.Participant, env.Message.Text)
 }
