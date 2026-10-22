@@ -120,7 +120,11 @@ func (s *Server) botSpecialCreateValidate(ctx context.Context, q interface {
 		return out, errors.New("allow_duplicate_of inválido")
 	}
 	var closed int
-	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM closed_days WHERE restaurant_id = ? AND date = ?", rid, date).Scan(&closed); err != nil || closed > 0 {
+	// Coordination id: wa_bot_restaurant_days_fix_v1 - the canonical open/close
+	// table is restaurant_days (is_open = 0 means closed); the legacy
+	// closed_days table no longer exists and the old query errored into
+	// "day closed", blocking every special-date creation from the chat.
+	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM restaurant_days WHERE restaurant_id = ? AND date = ? AND is_open = 0", rid, date).Scan(&closed); err != nil || closed > 0 {
 		return out, errors.New("el día " + date + " está cerrado (o no se pudo comprobar): no se crea desde aquí")
 	}
 	st, _, serr := s.loadSpecialDateSettings(ctx, rid, date)

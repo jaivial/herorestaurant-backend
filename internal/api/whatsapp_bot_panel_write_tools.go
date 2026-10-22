@@ -7,19 +7,20 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 )
 
-// Coordination id: wa_bot_panel_write_v1
+// Coordination ids: wa_bot_panel_write_v1 (approved writes) and
+// wa_bot_restaurant_days_fix_v1 (UX pass after the first manual test: the
+// chat must read like a person, never like JSON).
 //
 // The missing WRITE half of the backoffice surface for this bot version: ONE
 // parameterised tool (panel_change) that can propose ANY panel operation the
 // backoffice can perform, so the allowed (privileged) contacts and groups get
 // full backoffice+backend control with the one approval mechanism bound to an
 // exact preview: the shared propose+OK machinery (wa_bot_special_admin_v2).
-// This is exactly the "approval bound to the exact preview" the containment
-// wa_bot_admin_write_denied_v1 was waiting for.
 //
 // Two operation families, one tool (minimum common multiple):
 //   - op-map operations (forky_admin_ops.json, the generated panel route
@@ -31,7 +32,8 @@ import (
 //     domain function its WS handler calls.
 //
 // Reads keep using admin_call / staff_domain_read. Nothing here executes
-// without the requester writing "OK <code>" in the same chat.
+// without the requester writing "OK <code>" in the same chat, unless the
+// tenant enables privileged direct writes (wa_bot_privileged_direct_writes_v1).
 
 // botPanelArgs is THE parameterised payload of panel_change: one shape for
 // every panel mutation, op-map or direct.
@@ -106,18 +108,26 @@ var botPanelDirectOps = map[string]botPanelDirectOp{
 	},
 }
 
+// botPanelDirectOpDesc gives every direct op a human description for the chat
+// previews. Ops registered by other files add their own in init().
+var botPanelDirectOpDesc = map[string]string{
+	"beverage_set":            "guardar la selección de bebida de un menú",
+	"beverage_create":         "crear una opción de bebida en la carta",
+	"beverage_delete":         "eliminar una opción de bebida de la carta",
+	"weekday_set":             "cambiar la disponibilidad de un menú en un día de la semana",
+	"booking_document_delete": "eliminar un documento de una reserva",
+	"assistant_tool":          "ejecutar una operación del asistente del panel",
+}
+
 // botPanelChangeToolDefs is the catalog of the approved-write surface.
 func botPanelChangeToolDefs() []botToolDef {
 	return []botToolDef{
 		{
 			Name: "panel_change",
 			Description: "PROPONE un cambio del panel de administración (una operación del backoffice) para aplicarlo desde el chat. NO lo aplica: guarda la propuesta exacta y envía la vista previa con un código; solo se aplica cuando la persona que lo pidió escribe 'OK <código>' en este chat. " +
-				"operation: nombre de la operación tal cual aparece en admin_catalog, o una operación directa para lo que no tiene ruta REST: " +
-				"beverage_set {menu_id, option_id, selected} | beverage_create {name} | beverage_delete {option_id} | weekday_set {menu_id, weekday, available} | " +
-				"booking_document_delete {id} | editor_preview_set {menu_id, user_id, open} | table_position_set {id, floor_number, x_pos, y_pos, date?, scope?} | ad_schedule_check {ad_id, starts_at, ends_at} | " +
-				"media_upload {kind: booking_document|special_section|vino|ads, data_base64, filename, mime_type, ...ids} | media_ai {kind: vino|vino_cutout|comida|section_dish|menu_preview|slider|ads_enhance|ads_generate, target_id..., data_base64?, prompt?} | " +
-				"site_builder_call {type: sites.*|pages.*|components.list|publish.*|domains.*, payload} | assistant_tool {name, input}. " +
+				"operation: nombre de la operación tal cual aparece en admin_catalog, o una operación directa (beverage_set, beverage_create, beverage_delete, weekday_set, booking_document_delete, media_upload, media_ai, editor_preview_set, table_position_set, ad_schedule_check, site_builder_call, assistant_tool). " +
 				"path_params, query y body: los mismos argumentos que indica admin_describe; params: solo para operaciones directas. " +
+				"IMPORTANTE: propón UN cambio cada vez. Si el cambio depende de otro (por ejemplo, abrir un día y luego crear la reserva), espera a que el primero se aplique con OK y solo entonces propón el siguiente. " +
 				"Las lecturas NO van por aquí: usa admin_call o staff_domain_read.",
 			InputSchema: botSchema(`{"type":"object","properties":{
 				"operation":{"type":"string","description":"Nombre de la operación del panel (admin_catalog) o directa"},
@@ -145,7 +155,88 @@ func (s *Server) botPanelVisibleOp(ctx context.Context, rid int, name string) (f
 	return forkyAdminOp{}, fmt.Errorf("operación desconocida para este usuario: %s (usa admin_catalog)", name)
 }
 
-// botToolPanelChange executes panel_change: validation now, proposal always.
+// botPanelDesc is the human description of what one proposal will do: the
+// op's own Spanish description, or the direct-op description, or the
+// assistant tool's description for assistant_tool.
+func (s *Server) botPanelDesc(ctx context.Context, rid int, a botPanelArgs) string {
+	switch {
+	case a.Operation == "assistant_tool":
+		if def, ok := assistantToolLookup(botPanelString(a.Params, "name")); ok && strings.TrimSpace(def.Description) != "" {
+			return strings.TrimSpace(def.Description)
+		}
+		return botPanelDirectOpDesc["assistant_tool"]
+	default:
+		if _, direct := botPanelDirectOps[a.Operation]; direct {
+			if d := strings.TrimSpace(botPanelDirectOpDesc[a.Operation]); d != "" {
+				return d
+			}
+		} else if op, err := s.botPanelVisibleOp(ctx, rid, a.Operation); err == nil && strings.TrimSpace(op.Description) != "" {
+			return strings.TrimSpace(op.Description)
+		}
+		return a.Operation
+	}
+}
+
+// botPanelData is the compact, human rendering of the proposal payload: the
+// change itself, never raw JSON (the chat message must read like a person).
+func (s *Server) botPanelData(a botPanelArgs) string {
+	if a.Operation == "assistant_tool" {
+		return botHumanArgs(a.Params["input"])
+	}
+	if data := botHumanArgs(a.Body); data != "" {
+		return data
+	}
+	return botHumanArgs(a.Params)
+}
+
+// botHumanArgs renders tool arguments as compact "campo: valor" pairs.
+func botHumanArgs(v any) string {
+	var m map[string]any
+	switch t := v.(type) {
+	case json.RawMessage:
+		if len(t) == 0 || string(t) == "null" {
+			return ""
+		}
+		if err := json.Unmarshal(t, &m); err != nil {
+			return ""
+		}
+	case map[string]any:
+		m = t
+	default:
+		return ""
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		val := ""
+		switch t := m[k].(type) {
+		case string:
+			val = t
+		default:
+			if raw, err := json.Marshal(t); err == nil {
+				val = string(raw)
+			}
+		}
+		if strings.TrimSpace(val) == "" {
+			continue
+		}
+		if len([]rune(val)) > 70 {
+			val = string([]rune(val)[:70]) + "…"
+		}
+		parts = append(parts, k+": "+val)
+	}
+	if len(parts) > 8 {
+		parts = append(parts[:8], "…")
+	}
+	return strings.Join(parts, ", ")
+}
+
+// botToolPanelChange executes panel_change: validation now; proposal always,
+// unless the tenant enables privileged direct writes (wa_bot_privileged_direct_writes_v1).
 func (s *Server) botToolPanelChange(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
 	var a botPanelArgs
 	if err := json.Unmarshal(input, &a); err != nil {
@@ -174,6 +265,15 @@ func (s *Server) botToolPanelChange(ctx context.Context, restaurantID int, msg b
 			return botJSON(map[string]any{"error": err.Error()}), nil
 		}
 	}
+	// wa_bot_privileged_direct_writes_v1: the owner group can execute without
+	// the OK flow, exactly like an admin on /app/reservas.
+	if s.botStoredTenantConfig(ctx, restaurantID).PrivilegedDirectWrites {
+		summary, err := s.botPanelApplyNow(ctx, restaurantID, a)
+		if err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+		return botJSON(map[string]any{"ok": true, "status": summary}), nil
+	}
 	preview := s.botPanelPreview(ctx, restaurantID, a)
 	code, err := botSpecialNewCode()
 	if err != nil {
@@ -187,22 +287,60 @@ func (s *Server) botToolPanelChange(ctx context.Context, restaurantID int, msg b
 	return out, nil
 }
 
-// botPanelPreview is the exact change summary the requester confirms.
+// botPanelPreview is the exact change summary the requester confirms: the
+// operation's own description plus the compact data, never raw JSON.
 func (s *Server) botPanelPreview(ctx context.Context, rid int, a botPanelArgs) string {
-	if _, direct := botPanelDirectOps[a.Operation]; direct {
-		return fmt.Sprintf("Propuesta de cambio del panel (%s, operación directa): params=%s. Nada está aplicado todavía.",
-			a.Operation, botJSON(a.Params))
+	desc := s.botPanelDesc(ctx, rid, a)
+	data := s.botPanelData(a)
+	msg := "Propuesta: " + desc
+	if data != "" {
+		msg += " — datos: " + data
 	}
-	method, path := "", a.Operation
-	if op, err := s.botPanelVisibleOp(ctx, rid, a.Operation); err == nil {
-		method, path = op.Method, op.Path
+	return msg + ". Nada está aplicado todavía."
+}
+
+// botPanelRunOp replays one op-map operation through the real router (the
+// shared core of the approved and the direct-write paths).
+func (s *Server) botPanelRunOp(ctx context.Context, rid int, a botPanelArgs) (string, error) {
+	op, err := s.botPanelVisibleOp(ctx, rid, a.Operation)
+	if err != nil {
+		return "", err
 	}
-	body := strings.TrimSpace(string(a.Body))
-	if body == "" {
-		body = "{}"
+	if err := forkyAdminCheckOp(rid, op, a.PathParams); err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("Propuesta de cambio del panel (%s): %s %s body=%s. Nada está aplicado todavía.",
-		a.Operation, method, path, body)
+	token, err := s.botServiceSession(ctx, rid)
+	if err != nil || token == "" {
+		return "", errors.New("sesión del panel no disponible")
+	}
+	out, err := s.forkyAdminRunOp(rid, token, op, a.PathParams, a.Query, a.Body)
+	if err != nil {
+		return "", err
+	}
+	var res struct {
+		Status   int    `json:"status"`
+		OK       bool   `json:"ok"`
+		DataText string `json:"data_text"`
+	}
+	_ = json.Unmarshal([]byte(out), &res)
+	if !res.OK {
+		return "", fmt.Errorf("el panel no aplicó el cambio (status %d): %s", res.Status, res.DataText)
+	}
+	return fmt.Sprintf("%s — aplicado por el panel (estado %d).", s.botPanelDesc(ctx, rid, a), res.Status), nil
+}
+
+// botPanelApplyNow performs the panel write itself, without the OK flow: only
+// for tenants with privileged direct writes enabled.
+func (s *Server) botPanelApplyNow(ctx context.Context, rid int, a botPanelArgs) (string, error) {
+	log.Printf("[bot] checkpoint wa_bot_privileged_direct_writes_v1 restaurant_id=%d op=%s", rid, a.Operation)
+	if run, direct := botPanelDirectOps[a.Operation]; direct {
+		res, err := run(s, ctx, rid, a.Params)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s — aplicado. Resultado: %s", s.botPanelDesc(ctx, rid, a), botJSON(res)), nil
+	}
+	return s.botPanelRunOp(ctx, rid, a)
 }
 
 // botPanelExecute applies an approved panel proposal: dispatches a direct op
@@ -220,33 +358,13 @@ func (s *Server) botPanelExecute(ctx context.Context, tx *sql.Tx, rid int, p bot
 		if err != nil {
 			return "", err
 		}
-		summary = "Aplicado (" + a.Operation + "): " + botJSON(res)
+		summary = fmt.Sprintf("Aplicado (%s): %s", s.botPanelDesc(ctx, rid, a), botJSON(res))
 	} else {
-		op, err := s.botPanelVisibleOp(ctx, rid, a.Operation)
+		msg, err := s.botPanelRunOp(ctx, rid, a)
 		if err != nil {
 			return "", err
 		}
-		if err := forkyAdminCheckOp(rid, op, a.PathParams); err != nil {
-			return "", err
-		}
-		token, err := s.botServiceSession(ctx, rid)
-		if err != nil || token == "" {
-			return "", errors.New("sesión del panel no disponible")
-		}
-		out, err := s.forkyAdminRunOp(rid, token, op, a.PathParams, a.Query, a.Body)
-		if err != nil {
-			return "", err
-		}
-		var res struct {
-			Status   int    `json:"status"`
-			OK       bool   `json:"ok"`
-			DataText string `json:"data_text"`
-		}
-		_ = json.Unmarshal([]byte(out), &res)
-		if !res.OK {
-			return "", fmt.Errorf("el panel no aplicó el cambio (status %d): %s", res.Status, res.DataText)
-		}
-		summary = "Aplicado (" + a.Operation + "): " + out
+		summary = "Aplicado: " + msg
 	}
 	if err := tx.Commit(); err != nil {
 		return "", errors.New("error interno")

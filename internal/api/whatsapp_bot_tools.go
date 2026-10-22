@@ -63,6 +63,12 @@ type botTenantConfig struct {
 	// the bot runs inside the management group. Coordination id:
 	// wa_bot_special_crud_v1
 	DisableSpecialCRUD bool `json:"disable_special_crud"`
+	// PrivilegedDirectWrites lets an ALLOWED conversation execute writes
+	// (bot-owned, forky and panel ops) directly, like an admin working on
+	// /app/reservas: no propose+OK approval. Off by default: the propose+OK
+	// flow is the human approval bound to the exact preview.
+	// Coordination id: wa_bot_privileged_direct_writes_v1
+	PrivilegedDirectWrites bool `json:"privileged_direct_writes"`
 }
 
 func parseBotTenantConfig(raw string) botTenantConfig {

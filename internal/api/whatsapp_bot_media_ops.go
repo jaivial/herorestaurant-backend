@@ -63,6 +63,8 @@ var botMediaAIOps = map[string]botMediaOpFunc{
 func init() {
 	botPanelDirectOps["media_upload"] = botMediaUploadOp
 	botPanelDirectOps["media_ai"] = botMediaAIOp
+	botPanelDirectOpDesc["media_upload"] = "subir un archivo (documento o imagen) al panel"
+	botPanelDirectOpDesc["media_ai"] = "generar o editar una imagen con IA"
 }
 
 // botMediaUploadOp stores uploaded bytes: params {kind, data_base64,
