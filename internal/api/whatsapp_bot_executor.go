@@ -253,6 +253,9 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolUnsubscribeMarketing(ctx, restaurantID, msg, input)
 	case "send_menu_buttons":
 		return s.botToolSendButtons(ctx, restaurantID, msg, input)
+	// Coordination id: wa_bot_poll_v1 - polls as the way to ASK for a choice.
+	case "send_poll":
+		return s.botToolSendPoll(ctx, restaurantID, msg, input)
 	case "send_image", "send_document":
 		if tenant.DisableAttachments {
 			return botJSON(map[string]any{"error": "los adjuntos están desactivados para este restaurante"}), nil
@@ -286,10 +289,16 @@ func (s *Server) botToolSendMessage(ctx context.Context, restaurantID int, msg b
 	if !ok {
 		return botJSON(map[string]any{"error": "whatsapp no configurado"}), nil
 	}
-	if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, in.Message, "agent"); err != nil {
-		return botJSON(map[string]any{"error": err.Error()}), nil
+	parts := botOutboundText(in.Message)
+	if len(parts) == 0 {
+		return botJSON(map[string]any{"error": "el mensaje quedó vacío"}), nil
 	}
-	return botJSON(map[string]any{"sent": true}), nil
+	for _, part := range parts {
+		if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, part, "agent"); err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+	}
+	return botJSON(map[string]any{"sent": true, "parts": len(parts)}), nil
 }
 
 func (s *Server) botToolSendButtons(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {

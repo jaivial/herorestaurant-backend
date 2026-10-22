@@ -43,6 +43,9 @@ func init() {
 	// Coordination id: wa_bot_panel_wsops_v1
 	for name, run := range botPanelWSOps {
 		botPanelDirectOps[name] = run
+		if d := botPanelWSOpDesc[name]; d != "" {
+			botPanelDirectOpDesc[name] = d
+		}
 	}
 }
 
@@ -54,6 +57,15 @@ var botPanelWSOps = map[string]botPanelDirectOp{
 	"ad_schedule_check":  botWSAdScheduleCheck,
 	"site_builder_call":  botWSSiteBuilderCall,
 	"assistant_tool":     botWSAssistantTool,
+}
+
+// botPanelWSOpDesc is the human description of each direct op for the chat
+// previews (wa_bot_restaurant_days_fix_v1).
+var botPanelWSOpDesc = map[string]string{
+	"editor_preview_set": "cambiar la preferencia de previsualización del editor",
+	"table_position_set": "mover la posición de una mesa en el plano",
+	"ad_schedule_check":  "comprobar si un horario de anuncio entra en conflicto",
+	"site_builder_call":  "ejecutar una operación del constructor de la web",
 }
 
 // botWSEditorPreviewSet is the editor_preview_set command of the

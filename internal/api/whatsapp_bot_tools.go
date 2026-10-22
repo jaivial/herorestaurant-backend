@@ -63,6 +63,12 @@ type botTenantConfig struct {
 	// the bot runs inside the management group. Coordination id:
 	// wa_bot_special_crud_v1
 	DisableSpecialCRUD bool `json:"disable_special_crud"`
+	// PrivilegedDirectWrites lets an ALLOWED conversation execute writes
+	// (bot-owned, forky and panel ops) directly, like an admin working on
+	// /app/reservas: no propose+OK approval. Off by default: the propose+OK
+	// flow is the human approval bound to the exact preview.
+	// Coordination id: wa_bot_privileged_direct_writes_v1
+	PrivilegedDirectWrites bool `json:"privileged_direct_writes"`
 }
 
 func parseBotTenantConfig(raw string) botTenantConfig {
@@ -244,6 +250,11 @@ func botToolDefsForChat(cfg botTenantConfig, inGroup bool) []botToolDef {
 			Name:        "send_menu_buttons",
 			Description: "Envía un mensaje con botones de respuesta rápida al cliente (máximo 3 opciones).",
 			InputSchema: botSchema(`{"type":"object","properties":{"text":{"type":"string","description":"Texto del mensaje"},"choices":{"type":"array","items":{"type":"string"},"description":"Opciones de los botones"}},"required":["text","choices"]}`),
+		},
+		{
+			Name:        "send_poll",
+			Description: "Envía una ENCUESTA (poll) de WhatsApp para que el cliente o el grupo elija entre opciones (por ejemplo, qué principal quiere cada comensal o qué horario prefieren). Úsala SIEMPRE que necesites una elección entre varias opciones en vez de preguntar en texto. Las respuestas de la encuesta llegan como mensajes del sistema que puedes leer en el siguiente turno.",
+			InputSchema: botSchema(`{"type":"object","properties":{"question":{"type":"string","description":"La pregunta"},"options":{"type":"array","items":{"type":"string"},"description":"Entre 2 y 10 opciones"},"max_choices":{"type":"integer","description":"Cuántas opciones puede marcar cada persona (por defecto 1)"}},"required":["question","options"]}`),
 		},
 	}
 

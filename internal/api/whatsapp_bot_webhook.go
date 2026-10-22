@@ -460,12 +460,19 @@ func (s *Server) processInboundBotMessage(w http.ResponseWriter, r *http.Request
 	// Messages of one conversation are serialized and coalesced into bursts
 	// (wa_bot_burst_coalesce_v1); the semaphore bounds concurrent workers.
 	burstKey := botBurstKey(restaurantID, msg.Sender)
+	// wa_bot_inbound_queue_v1: persist BEFORE accepting. The webhook answers
+	// 200 to the provider either way; this row is what survives a deploy or a
+	// crash instead of silently dropping the turn (incident 2026-10-22 14:35).
+	s.botInboundEnqueue(r.Context(), restaurantID, burstKey, msg)
 	if s.botBursts.enqueue(burstKey, msg) {
 		select {
 		case s.botSem <- struct{}{}:
 		default:
 			// At capacity: shed load rather than pile up unbounded goroutines.
+			// The conversation queue is dropped (its rows stay pending and are
+			// replayed at the next boot); this row is explicitly shed.
 			s.botBursts.release(burstKey)
+			s.botInboundFinish(restaurantID, []string{msg.MessageID}, "shed")
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "code": "BUSY"})
 			return
 		}
@@ -638,6 +645,9 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// Coordination id: wa_bot_privileged_group_v1 - privileged group prompt block.
 	promptData.PrivilegedGroup = msg.PrivilegedGroup
 	promptData.SpecialAdminTools = botSpecialAdminToolsAllowed(restaurantID, msg)
+	// wa_bot_privileged_direct_writes_v1: the prompt tells the model whether
+	// writes apply directly or go through the OK flow.
+	promptData.DirectWrites = tenant.PrivilegedDirectWrites
 	// Document understanding is privileged-only: the inline document is
 	// extracted BEFORE the loop and appended to the last user message so the
 	// model reads the file content as part of the request. On any failure the
@@ -704,7 +714,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// which is not a human approval. Refused in the server for privileged
 			// groups until an approval bound to the exact preview exists. Reads,
 			// messaging and add_booking_note are unchanged.
-			if botPrivilegedDeniedWrites[name] {
+			if botPrivilegedDeniedWrites[name] && !tenant.PrivilegedDirectWrites {
 				log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
 				return botJSON(map[string]any{"error": "esta operación directa está desactivada para el bot (no se ejecuta). No la reintentes: usa la herramienta de PROPUESTA equivalente (booking_propose_create/edit/cancel, special_booking_propose_create, booking_propose_restore...), que se aplica con 'OK <código>'."}), nil
 			}
@@ -723,7 +733,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 					// mutation whose confirmation token the model redeems itself:
 					// refused in the server (wa_bot_admin_write_denied_v1). Reads and
 					// the bot's own tools are unchanged.
-					if def, _ := assistantToolLookup(name); def.Write {
+					if def, _ := assistantToolLookup(name); def.Write && !tenant.PrivilegedDirectWrites {
 						log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d tool=%s", restaurantID, name)
 						return botJSON(map[string]any{"error": "el bot no puede ejecutar esta escritura genérica del panel directamente. Si lo pedido tiene una herramienta dedicada del bot, úsala; si no, PROPON el cambio equivalente con panel_change (se aplica cuando el usuario responde 'OK <código>'). No busques otra vía."}), nil
 					}
@@ -773,7 +783,13 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			_, _ = s.botToolSendContact(sendCtx, restaurantID, msg, tenant, nil)
 		} else if text != "" {
 			log.Printf("[bot] checkpoint wa_bot_plain_text_fallback restaurant_id=%d sender=%s", restaurantID, msg.Sender)
-			if gw, ok := s.botGatewayFor(sendCtx, restaurantID); ok && s.sendWhatsAppTextTracked(sendCtx, restaurantID, gw, msg.Sender, text, "agent_plain_text") == nil {
+			if gw, ok := s.botGatewayFor(sendCtx, restaurantID); ok {
+				// wa_bot_outbound_guard_v1: no jargon, no walls of text.
+				for _, part := range botOutboundText(text) {
+					if s.sendWhatsAppTextTracked(sendCtx, restaurantID, gw, msg.Sender, part, "agent_plain_text") != nil {
+						break
+					}
+				}
 			}
 		} else {
 			s.botSendFallback(sendCtx, restaurantID, msg.Sender)
@@ -796,6 +812,7 @@ func botPlainTextLeaksInternal(text string) bool {
 var botDeliveryTools = map[string]bool{
 	"send_message": true, "send_menu_buttons": true, "send_image": true,
 	"send_document": true, "send_location": true, "send_contact": true,
+	"send_poll": true,
 }
 
 func botDeliveredReply(toolCalls []string) bool {
