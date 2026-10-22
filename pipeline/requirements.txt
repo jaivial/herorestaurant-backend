@@ -8,3 +8,17 @@ faster-whisper==1.2.1
 # the image), so pin 14.2.0 — the last 14.x with x86_64 wheels.
 
 av==14.2.0
+# Bark 3.0 (Underdog, CC-BY 4.0): local STT engine for /transcribe
+# (wa_bot_stt_bark_v1). It ships its own loader (bark_loader.py) over a
+# transformers ParakeetForTDT state dict (needs transformers>=5.19) plus
+# constriction for the entropy-coded weights. CPU torch via the PyTorch CPU
+# index. When anything is missing the endpoint transparently falls back to
+# faster-whisper.
+--extra-index-url https://download.pytorch.org/whl/cpu
+transformers>=5.19
+torch>=2.2
+constriction>=0.4
+numpy>=1.26
+soundfile>=0.12
+soxr>=0.5
+librosa>=0.10

@@ -463,7 +463,8 @@ type evoUpsertData struct {
 		// image caption. Only the document fields reach waInbound today.
 		DocumentMessage *evoDocumentMessage `json:"documentMessage"`
 		ImageMessage    struct {
-			Caption string `json:"caption"`
+			Caption  string `json:"caption"`
+			Mimetype string `json:"mimetype"`
 		} `json:"imageMessage"`
 		PtvMessage      json.RawMessage `json:"ptvMessage"`
 		ReactionMessage json.RawMessage `json:"reactionMessage"`
@@ -567,6 +568,9 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	// webhook is registered with webhookBase64=true) is kept only when bounded
 	// (~11 MB), the same cap as the audio payload.
 	documentB64, documentName := botDocumentPayload(d.Message.DocumentMessage, d.Message.Base64)
+	// Coordination id: wa_bot_attachment_read_v1 - the inline image payload is
+	// kept under the same bounded cap as the other media.
+	imageB64, imageMime := botImagePayload(strings.Contains(strings.ToLower(d.MessageType), "image"), d.Message.ImageMessage.Mimetype, d.Message.Base64)
 
 	// Coordination id: wa_bot_group_mention_v1 - a group message is a
 	// management turn, not a customer one. It is only served when the bot is
@@ -596,6 +600,8 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 			IsAudio:           isAudio,
 			DocumentB64:       documentB64,
 			DocumentName:      documentName,
+			ImageB64:          imageB64,
+			ImageMime:         imageMime,
 			Ignored:           ignored,
 			OwnJIDs:           g.ownJIDs,
 		})
@@ -640,6 +646,8 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		// for privileged group turns).
 		DocumentB64:  documentB64,
 		DocumentName: documentName,
+		ImageB64:     imageB64,
+		ImageMime:    imageMime,
 		ChatJID:      jid,
 		ChatJIDAlt:   chatJIDAlt,
 	}, true
@@ -668,6 +676,15 @@ func botAudioBase64(isAudio bool, b64 string) string {
 		return ""
 	}
 	return strings.TrimSpace(b64)
+}
+
+// botImagePayload keeps the inline media only for images (bounded ~11 MB).
+// Coordination id: wa_bot_attachment_read_v1
+func botImagePayload(isImage bool, mime, b64 string) (string, string) {
+	if !isImage || b64 == "" || len(b64) > 11<<20 {
+		return "", ""
+	}
+	return strings.TrimSpace(b64), strings.TrimSpace(mime)
 }
 
 func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool) {

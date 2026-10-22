@@ -918,9 +918,10 @@ type botSpecialProposalRow struct {
 // turn. It returns true when the message was an approval attempt and has been
 // fully handled (the model must not see it).
 func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg botWebhookMessage) bool {
-	// wa_bot_special_admin_v2 (the scope flow) OR wa_bot_privileged_boundary_v1
-	// (the operations of the backoffice surface and the control plane of the
-	// bot). Everything else keeps ignoring "OK <code>" messages.
+	// wa_bot_special_admin_v2 (the scope flow), wa_bot_privileged_boundary_v1
+	// (the operations of the desktop backoffice surface and control plane) and
+	// wa_bot_privileged_control_v1 (an allowed contact/group of the dev control
+	// plane). Everything else keeps ignoring "OK <code>" messages.
 	if !botSpecialAdminToolsAllowed(rid, msg) && !msg.PrivilegedGroup {
 		return false
 	}
@@ -933,7 +934,8 @@ func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg bot
 	origin := strings.TrimSpace(msg.ChatJID)
 	// Coordination id: wa_bot_privileged_boundary_v1: the actor is the
 	// VERIFIED phone of the sender, in the group path as well. A LID is never
-	// an actor (deviation B3).
+	// an actor (deviation B3, deliberate desktop deviation from the dev
+	// participant-JID variant).
 	actor := strings.TrimSpace(msg.ActorPhoneJID)
 	reply := func(t string) {
 		if gw, ok := s.botGatewayFor(ctx, rid); ok {
@@ -942,8 +944,8 @@ func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg bot
 	}
 	// Proof of the actor: a CURRENT member of an authorized group, with a
 	// FRESH provider fetch. A private chat without that proof is refused
-	// (deviation B2). The proposal can only be approved by the very actor
-	// that made it (match.Actor below).
+	// (deviation B2, desktop boundary). The proposal can only be approved by
+	// the very actor that made it (match.Actor below).
 	if actor == "" || !s.botPrivilegedActorVerified(ctx, rid, actor) {
 		s.botSpecialAdminEvent(ctx, s.db, rid, 0, "approve_rejected_actor", actor, origin, nil)
 		return true
@@ -1074,10 +1076,15 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 		}
 		return s.botMenuWSExecute(ctx, rid, msg, p)
 	}
-	// Coordination id: wa_bot_privileged_control_v1: the control plane writes
-	// the tenant config, so the claim and the write commit together.
 	if p.Op == "access" {
+		// Coordination id: wa_bot_privileged_control_v1 - the claim above and
+		// this write commit together, exactly like the booking ops.
 		return s.botAccessExecute(ctx, tx, rid, p)
+	}
+	if p.Op == "panel" {
+		// Coordination id: wa_bot_panel_write_v1 - the claim above commits
+		// together with the successful panel write.
+		return s.botPanelExecute(ctx, tx, rid, p)
 	}
 	if p.Op == "edit" {
 		return s.botEditExecute(ctx, tx, rid, msg, p)

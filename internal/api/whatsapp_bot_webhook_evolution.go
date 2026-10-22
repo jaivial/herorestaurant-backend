@@ -194,6 +194,8 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		ActorPhoneJID:   actorPhoneJID,
 		DocumentB64:     in.DocumentB64,
 		DocumentName:    in.DocumentName,
+		ImageB64:        in.ImageB64,
+		ImageMime:       in.ImageMime,
 	}
 	// wa_bot_special_admin_v2: an exact "OK <code>" from the verified requester
 	// is handled here, before any model turn, and never reaches the model.

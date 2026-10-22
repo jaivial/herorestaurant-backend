@@ -22,6 +22,7 @@ It also exposes /transcribe (faster-whisper) for WhatsApp voice notes
 from __future__ import annotations
 
 import base64
+import io
 import json
 import re
 import logging
@@ -1055,9 +1056,21 @@ def decide(req: TurnRequest) -> dict[str, Any]:
 
 
 # --------------------------------------------------------- transcription ----
+# Coordination id: wa_bot_stt_bark_v1
+#
+# Bark 3.0 (Underdog, CC-BY 4.0, https://underdog.ai/bark) is the DEFAULT
+# engine: a 163 MB local model, no API, 57x smaller than Whisper. It is
+# English-only, so the Go caller falls back to faster-whisper automatically
+# whenever this engine yields nothing (and STT_DEFAULT_ENGINE=whisper turns it
+# off). Engines: "bark" (transformers, CPU) and "whisper" (faster-whisper).
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "small")
+BARK_REPO = os.environ.get("BARK_REPO", "ConwayResearch/Underdog-Bark-3.0-Clean")
+BARK_MODEL_FILE = os.environ.get("BARK_MODEL_FILE", "model.bark")
+STT_DEFAULT_ENGINE = os.environ.get("STT_DEFAULT_ENGINE", "bark")
 _whisper = None
 _whisper_lock = threading.Lock()
+_bark = None
+_bark_lock = threading.Lock()
 
 
 def whisper_model():
@@ -1069,9 +1082,76 @@ def whisper_model():
         return _whisper
 
 
+def bark_bundle():
+    """(loader_module, model) for Bark 3.0 (Underdog, CC-BY 4.0).
+
+    The checkpoint ships its OWN loader (bark_loader.py + model.bark: an
+    entropy-coded ParakeetForTDT state dict), so the repo loader is fetched
+    from the Hub and used verbatim. A bare AutoModel/pipeline load cannot see
+    the .bark format (its config.json carries no model_type): the loader is
+    the supported path and decodes the weights exactly."""
+    global _bark
+    with _bark_lock:
+        if _bark is None:
+            import importlib.util
+            from huggingface_hub import hf_hub_download
+
+            loader_path = hf_hub_download(BARK_REPO, "bark_loader.py")
+            model_path = hf_hub_download(BARK_REPO, BARK_MODEL_FILE)
+            spec = importlib.util.spec_from_file_location("bark_loader", loader_path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _bark = (mod, mod.load_model(model_path, device="cpu"))
+        return _bark
+
+
+def decode_audio_pcm(data: bytes):
+    """Decode any container (ogg/opus voice notes included) to mono float32
+    PCM at 16 kHz via PyAV (already a faster-whisper dependency)."""
+    import av
+    import numpy as np
+
+    with av.open(io.BytesIO(data)) as container:
+        stream = container.streams.audio[0]
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        chunks = []
+        for frame in container.decode(stream):
+            for out in resampler.resample(frame):
+                chunks.append(out.to_ndarray().reshape(-1))
+        for out in resampler.resample(None):
+            chunks.append(out.to_ndarray().reshape(-1))
+    if not chunks:
+        return np.zeros(0, dtype="float32")
+    return np.concatenate(chunks).astype("float32") / 32768.0
+
+
+def transcribe_bark(data: bytes) -> dict[str, Any]:
+    samples = decode_audio_pcm(data)
+    if samples.size == 0:
+        raise ValueError("no audio samples")
+    mod, model = bark_bundle()
+    # pad_s=0.5 is the evaluated setting of the model card; wave is already
+    # mono float32 at 16 kHz (decode_audio_pcm).
+    text = mod.transcribe(model, samples, 16000, pad_s=0.5)
+    return {"text": str(text).strip(), "language": "en"}
+
+
+def transcribe_whisper(data: bytes, language: str = "") -> dict[str, Any]:
+    with tempfile.NamedTemporaryFile(suffix=".ogg") as f:
+        f.write(data)
+        f.flush()
+        segments, info = whisper_model().transcribe(
+            f.name, beam_size=1, vad_filter=True, language=language or None,
+            initial_prompt="Conversación con un restaurante: reserva, arroz, menú, personas, hora.")
+        text = " ".join(s.text.strip() for s in segments).strip()
+    return {"text": text, "language": info.language, "duration_s": round(info.duration, 1)}
+
+
 class TranscribeRequest(BaseModel):
     audio_b64: str
     restaurant_id: int = 0
+    engine: str = ""
+    language: str = ""
 
 
 @app.post("/transcribe")
@@ -1084,14 +1164,24 @@ def transcribe(req: TranscribeRequest) -> dict[str, Any]:
         raise HTTPException(400, "invalid base64") from exc
     if not data or len(data) > 8 << 20:
         raise HTTPException(400, "empty or too large")
-    with tempfile.NamedTemporaryFile(suffix=".ogg") as f:
-        f.write(data)
-        f.flush()
-        segments, info = whisper_model().transcribe(f.name, beam_size=1, vad_filter=True, initial_prompt="Conversación con un restaurante: reserva, arroz, menú, personas, hora.")
-        text = " ".join(s.text.strip() for s in segments).strip()
+    engine = (req.engine or STT_DEFAULT_ENGINE).lower()
+    out: dict[str, Any]
+    if engine == "bark":
+        try:
+            out = transcribe_bark(data)
+            out["engine"] = "bark"
+        except Exception as exc:  # noqa: BLE001 - English-only model or missing deps
+            log.info("checkpoint wa_bot_stt_bark_v1 restaurant_id=%s bark_failed err=%s", req.restaurant_id, exc)
+            out = transcribe_whisper(data, req.language)
+            out["engine"] = "whisper"
+    else:
+        out = transcribe_whisper(data, req.language)
+        out["engine"] = "whisper"
     ms = int((time.time() - started) * 1000)
-    log.info("checkpoint wa_bot_audio_transcription_v1 restaurant_id=%s lang=%s chars=%s ms=%s", req.restaurant_id, info.language, len(text), ms)
-    return {"text": text, "language": info.language, "duration_s": round(info.duration, 1), "elapsed_ms": ms}
+    out["elapsed_ms"] = ms
+    log.info("checkpoint wa_bot_audio_transcription_v1 restaurant_id=%s engine=%s lang=%s chars=%s ms=%s",
+             req.restaurant_id, out["engine"], out.get("language", ""), len(out.get("text", "")), ms)
+    return out
 
 
 @app.on_event("startup")

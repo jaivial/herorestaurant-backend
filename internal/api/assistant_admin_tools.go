@@ -458,7 +458,7 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// not a human decision; the dedicated bot tools carry their own checks.
 	if op.Write && isBotPrivilegedTurn(ctx) {
 		log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d", rid)
-		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call). Si lo pedido tiene una herramienta dedicada, úsala; si no, di al grupo que esa operación no está soportada y que debe hacerse en el panel. No busques otra vía."}), nil
+		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. Usa panel_change para PROPONER el cambio: se aplica solo cuando el usuario responde 'OK <código>' en el chat. No busques otra vía."}), nil
 	}
 	if op.Write {
 		if !in.Confirmed {
@@ -472,12 +472,13 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	return s.assistantAdminReplay(ctx, rid, op, in.PathParams, in.Query, in.Body)
 }
 
-// assistantAdminOpGuards are the refusals that apply to EVERY replay of a
-// catalogued operation, whoever asks for it: the tenant it belongs to and the
-// surfaces the bot may never touch.
-//
-// Coordination id: wa_backoffice_ops_v1
-func assistantAdminOpGuards(op forkyAdminOp, rid int, pathParams map[string]any) error {
+// forkyAdminCheckOp is the safety net every panel replay shares (admin_call
+// and the approved-write path panel_change, wa_bot_panel_write_v1): tenant
+// scope, no session rebinding, no session-scoped ops, no account management.
+// Integration: the desktop guard (assistantAdminOpGuards, wa_backoffice_ops_v1)
+// folded into this one, so admin_call, panel_change, the WS ops and the
+// desktop backoffice tools all share the exact same refusals.
+func forkyAdminCheckOp(rid int, op forkyAdminOp, pathParams map[string]any) error {
 	// Tenant scope: a path that addresses a restaurant must address THIS
 	// restaurant. Without this the model could put another tenant's id in the
 	// path and the replay would read or write that tenant's data with the
@@ -539,13 +540,20 @@ func assistantAdminOpGuards(op forkyAdminOp, rid int, pathParams map[string]any)
 // plugin) and by the WhatsApp approval of manage_backoffice, so the two
 // surfaces can never diverge on what an operation does.
 func (s *Server) assistantAdminReplay(ctx context.Context, rid int, op forkyAdminOp, pathParams map[string]any, query map[string]any, rawBody json.RawMessage) (string, error) {
-	if err := assistantAdminOpGuards(op, rid, pathParams); err != nil {
+	if err := forkyAdminCheckOp(rid, op, pathParams); err != nil {
 		return "", err
 	}
 	token, ok := boSessionTokenFromContext(ctx)
 	if !ok {
 		return "", fmt.Errorf("sesión del panel no disponible")
 	}
+	return s.forkyAdminRunOp(rid, token, op, pathParams, query, rawBody)
+}
+
+// forkyAdminRunOp replays ONE already-checked operation through the real
+// router with the panel session identity. It is the shared replay core of
+// admin_call (reads) and panel_change (approved writes).
+func (s *Server) forkyAdminRunOp(rid int, token string, op forkyAdminOp, pathParams, query map[string]any, body json.RawMessage) (string, error) {
 	path, err := forkyRenderPath(op.Path, pathParams)
 	if err != nil {
 		return "", err
@@ -562,11 +570,11 @@ func (s *Server) assistantAdminReplay(ctx context.Context, rid int, op forkyAdmi
 	if len(q) > 0 {
 		target += "?" + q.Encode()
 	}
-	var body *strings.Reader
-	if op.Write && len(rawBody) > 0 && string(rawBody) != "null" {
-		body = strings.NewReader(string(rawBody))
+	var bodyReader *strings.Reader
+	if op.Write && len(body) > 0 && string(body) != "null" {
+		bodyReader = strings.NewReader(string(body))
 	} else {
-		body = strings.NewReader("")
+		bodyReader = strings.NewReader("")
 	}
 	// The replay must not inherit the caller's request context: it carries the
 	// inbound connection's routing state and cancellation, which make the router
@@ -574,7 +582,7 @@ func (s *Server) assistantAdminReplay(ctx context.Context, rid int, op forkyAdmi
 	// through the cookie, and the deadline keeps the call bounded.
 	callCtx, cancel := context.WithTimeout(context.Background(), assistantToolTimeout("admin_call"))
 	defer cancel()
-	req := httptest.NewRequest(op.Method, target, body).WithContext(callCtx)
+	req := httptest.NewRequest(op.Method, target, bodyReader).WithContext(callCtx)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.AddCookie(&http.Cookie{Name: boSessionCookieName, Value: token})

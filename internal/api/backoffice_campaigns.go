@@ -1178,14 +1178,21 @@ run:
 	st, stErr := s.campaignStats(ctx, campaignID)
 	if stErr != nil {
 		// Without trustworthy stats the end state cannot be decided: leave the
-		// campaign 'sending' (resumable) instead of possibly lying with 'sent'.
+		// campaign resumable instead of possibly lying with 'sent'.
 		slog.Default().Warn("campaign.send.stats_failed", "coord_id", c.CoordID, "campaign_id", campaignID, "err", stErr.Error())
 		return
 	}
 	if st.Pending > 0 || st.Paused > 0 {
-		// Interrupted, not finished: 'sending' with no runner is the existing
-		// "resumable" semantic (the send/resume endpoints restart the drain).
-		slog.Default().Warn("campaign.send.interrupted", "coord_id", c.CoordID, "campaign_id", campaignID, "sent", st.Sent, "failed", st.Failed, "paused", st.Paused, "pending", st.Pending)
+		// Interrupted, not finished. A bounce cut leaves paused e-mail rows:
+		// the campaign goes back to draft (resumable, PR #539 semantics), it
+		// is never reported as sent. Any other residual pending keeps the
+		// 'sending' resumable semantic of a dead/interrupted runner.
+		var cutRows int
+		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = ? AND status = 'paused' AND error = 'corte por rebotes'`, campaignID).Scan(&cutRows)
+		if cutRows > 0 {
+			_, _ = s.db.ExecContext(ctx, `UPDATE campaigns SET status = 'draft' WHERE id = ?`, campaignID)
+		}
+		slog.Default().Warn("campaign.send.interrupted", "coord_id", c.CoordID, "campaign_id", campaignID, "sent", st.Sent, "failed", st.Failed, "paused", st.Paused, "pending", st.Pending, "bounce_cut", cutRows > 0)
 		return
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE campaigns SET status = 'sent', sent_at = NOW() WHERE id = ?`, campaignID)
