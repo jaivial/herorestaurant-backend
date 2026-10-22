@@ -1058,15 +1058,17 @@ def decide(req: TurnRequest) -> dict[str, Any]:
 # --------------------------------------------------------- transcription ----
 # Coordination id: wa_bot_stt_bark_v1
 #
-# Bark 3.0 (Underdog, CC-BY 4.0, https://underdog.ai/bark) is the DEFAULT
-# engine: a 163 MB local model, no API, 57x smaller than Whisper. It is
-# English-only, so the Go caller falls back to faster-whisper automatically
-# whenever this engine yields nothing (and STT_DEFAULT_ENGINE=whisper turns it
-# off). Engines: "bark" (transformers, CPU) and "whisper" (faster-whisper).
+# faster-whisper (local, warmed at startup) is the DEFAULT engine: it speaks
+# Spanish, ships in the image cache, and answers a 6 s clip in ~3.6 s. Bark 3.0
+# (Underdog, https://underdog.ai/bark) stays selectable through the `engine`
+# field (or STT_DEFAULT_ENGINE=bark), but it is English-only and pays a cold
+# model download on its first call — measured 51 s returning lang=en for
+# Spanish audio. Engines: "whisper" (faster-whisper) and "bark" (transformers,
+# CPU).
 WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "small")
 BARK_REPO = os.environ.get("BARK_REPO", "ConwayResearch/Underdog-Bark-3.0-Clean")
 BARK_MODEL_FILE = os.environ.get("BARK_MODEL_FILE", "model.bark")
-STT_DEFAULT_ENGINE = os.environ.get("STT_DEFAULT_ENGINE", "bark")
+STT_DEFAULT_ENGINE = os.environ.get("STT_DEFAULT_ENGINE", "whisper")
 _whisper = None
 _whisper_lock = threading.Lock()
 _bark = None
