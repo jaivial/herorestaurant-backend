@@ -783,6 +783,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/{campaignId}/audience", s.handleBOCampaignAudience)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/{campaignId}/test", s.handleBOCampaignTest)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/{campaignId}/send", s.handleBOCampaignSend)
+		r.With(s.requireBOSession, reservasGate, campaignsGate).Post("/campanas/{campaignId}/resume", s.handleBOCampaignResume)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/{campaignId}/status", s.handleBOCampaignStatus)
 		r.With(s.requireBOSession, reservasGate, campaignsGate).Get("/campanas/{campaignId}/recipients", s.handleBOCampaignRecipients)
 
