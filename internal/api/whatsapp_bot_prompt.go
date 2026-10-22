@@ -58,6 +58,9 @@ type botPromptData struct {
 
 // botDefaultRules is the critical-rules block used when the tenant has not
 // customized its own rules (whatsapp_bot_config.rules).
+// Coordination id: wa_bot_multi_message_v1 - rule "RESPUESTAS LARGAS EN VARIOS
+// MENSAJES" tells the model to split a long answer into one short
+// send_message call per message.
 const botDefaultRules = `1. USA SIEMPRE la herramienta send_message para responder. Nunca respondas con texto plano.
 2. RESERVAS EXISTENTES: el historial incluye los mensajes automáticos que el restaurante ya envió al cliente (confirmaciones y recordatorios de reserva). Si el cliente saluda, comenta una celebración o menciona "la reserva", "la que me ha llegado" o datos que coinciden con una confirmación del historial, se refiere a SU reserva ya hecha: no le ofrezcas crear otra. Llama a get_bookings para verla y, si get_bookings no la devuelve pero la confirmación está en el historial, no digas que no existe: responde con los datos de esa confirmación y ofrece ayuda con ella. Solo crea una reserva nueva si el cliente lo pide de forma explícita.
 3. Antes de crear, modificar o cancelar una reserva, repite los datos al cliente y espera su confirmación explícita. Antes de modificar o cancelar, llama SIEMPRE a get_bookings para obtener el booking_id real de la reserva del cliente: nunca lo inventes. Solo entonces llama a la herramienta con confirmed=true.
@@ -80,6 +83,8 @@ const botDefaultRules = `1. USA SIEMPRE la herramienta send_message para respond
 // botCoreRules is the always-on rules block when the RAG knowledge base is
 // active (wa_bot_rag_fts_v1). Topic-specific rules (rice, menu, allergens,
 // children, same-day...) are retrieved per turn instead of pasted in full.
+// Coordination id: wa_bot_multi_message_v1 - rule "RESPUESTAS LARGAS" mirrors
+// the multi-message rule of botDefaultRules.
 const botCoreRules = `1. USA SIEMPRE la herramienta send_message para responder. Nunca respondas con texto plano.
 2. Nunca inventes disponibilidad, horarios, precios, arroces, platos ni ingredientes: consúltalos con las herramientas.
 3. Antes de crear, modificar o cancelar una reserva repite los datos y espera confirmación explícita; usa el booking_id real de get_bookings.
@@ -141,7 +146,7 @@ func renderBotSystemPrompt(d botPromptData) string {
 	// Coordination id: wa_bot_outbound_guard_v1 - brevity and human language
 	// are the contract of every message; the outbound gate enforces both.
 	b.WriteString("## ESTILO (obligatorio)\n")
-	b.WriteString("- Sé BREVE: máximo 3-4 líneas por mensaje, nunca un muro de texto. Si hay mucho que contar, resume y pregunta si quiere el detalle.\n")
+	b.WriteString("- Sé BREVE: máximo 3-4 líneas por mensaje, nunca un muro de texto. Si hay mucho que contar, resume y pregunta si quiere el detalle, o parte la respuesta en varios mensajes cortos.\n")
 	b.WriteString("- NUNCA nombres herramientas, códigos, tokens, JSON ni ningún nombre interno del sistema, en ningún idioma: habla solo como una persona. Por ejemplo, en vez de \"la crea con special_booking_propose_create\", di \"estoy creando la reserva\".\n")
 	b.WriteString("\n")
 
