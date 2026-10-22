@@ -1159,6 +1159,16 @@ run:
 						s.campaignSuppressBounce(ctx, restaurantID, campaignBounceEvent{Address: strings.ToLower(strings.TrimSpace(p.t.Target)), Status: "5.1.1", Class: "hard"})
 					}
 				}
+				if p.t.Channel == "whatsapp" {
+					// A number the provider says has no WhatsApp devices can
+					// never be written to, so it goes to the do-not-contact
+					// list and the next campaign skips it (the same treatment
+					// a hard SMTP rejection gets on the e-mail side).
+					// wa_unreachable_suppression_v1.
+					if whatsappRecipientUnreachable(sendErr) {
+						s.suppressUnreachableWhatsappTarget(ctx, restaurantID, p.t.Target, p.t.BookingID, "no esta en WhatsApp: "+truncate(sendErr.Error(), 200))
+					}
+				}
 				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, truncate(sendErr.Error(), 500), p.id)
 				if p.t.Channel == "email" {
 					s.scheduleCampaignEmailRetry(ctx, p.id, sendErr.Error())
