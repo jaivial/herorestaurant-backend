@@ -156,6 +156,17 @@ func campaignBounceFor(campaignID int64) *campaignBounceState {
 	return st
 }
 
+// reset clears the tripped breaker so an operator who resolved the cause
+// (bounce investigated, bad rows suppressed) can resume the paused e-mail
+// rows: the next poll re-baselines and only NEW notices trip it again.
+func (st *campaignBounceState) reset() {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.tripped = false
+	st.started = false
+	st.lastPoll = time.Time{}
+}
+
 var campaignBounceAddrRe = regexp.MustCompile(`(?i)(?:final-recipient: rfc822;|original-recipient: rfc822;|<)\s*([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})`)
 
 // campaignReadBounces lists the recipients of MAILER-DAEMON messages received
