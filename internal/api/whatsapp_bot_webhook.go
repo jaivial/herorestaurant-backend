@@ -638,6 +638,9 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// Coordination id: wa_bot_privileged_group_v1 - privileged group prompt block.
 	promptData.PrivilegedGroup = msg.PrivilegedGroup
 	promptData.SpecialAdminTools = botSpecialAdminToolsAllowed(restaurantID, msg)
+	// wa_bot_privileged_direct_writes_v1: the prompt tells the model whether
+	// writes apply directly or go through the OK flow.
+	promptData.DirectWrites = tenant.PrivilegedDirectWrites
 	// Document understanding is privileged-only: the inline document is
 	// extracted BEFORE the loop and appended to the last user message so the
 	// model reads the file content as part of the request. On any failure the
@@ -796,6 +799,7 @@ func botPlainTextLeaksInternal(text string) bool {
 var botDeliveryTools = map[string]bool{
 	"send_message": true, "send_menu_buttons": true, "send_image": true,
 	"send_document": true, "send_location": true, "send_contact": true,
+	"send_poll": true,
 }
 
 func botDeliveredReply(toolCalls []string) bool {

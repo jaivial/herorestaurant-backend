@@ -251,6 +251,11 @@ func botToolDefsForChat(cfg botTenantConfig, inGroup bool) []botToolDef {
 			Description: "Envía un mensaje con botones de respuesta rápida al cliente (máximo 3 opciones).",
 			InputSchema: botSchema(`{"type":"object","properties":{"text":{"type":"string","description":"Texto del mensaje"},"choices":{"type":"array","items":{"type":"string"},"description":"Opciones de los botones"}},"required":["text","choices"]}`),
 		},
+		{
+			Name:        "send_poll",
+			Description: "Envía una ENCUESTA (poll) de WhatsApp para que el cliente o el grupo elija entre opciones (por ejemplo, qué principal quiere cada comensal o qué horario prefieren). Úsala SIEMPRE que necesites una elección entre varias opciones en vez de preguntar en texto. Las respuestas de la encuesta llegan como mensajes del sistema que puedes leer en el siguiente turno.",
+			InputSchema: botSchema(`{"type":"object","properties":{"question":{"type":"string","description":"La pregunta"},"options":{"type":"array","items":{"type":"string"},"description":"Entre 2 y 10 opciones"},"max_choices":{"type":"integer","description":"Cuántas opciones puede marcar cada persona (por defecto 1)"}},"required":["question","options"]}`),
+		},
 	}
 
 	if !cfg.DisableAttachments {

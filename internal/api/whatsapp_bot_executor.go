@@ -253,6 +253,9 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolUnsubscribeMarketing(ctx, restaurantID, msg, input)
 	case "send_menu_buttons":
 		return s.botToolSendButtons(ctx, restaurantID, msg, input)
+	// Coordination id: wa_bot_poll_v1 - polls as the way to ASK for a choice.
+	case "send_poll":
+		return s.botToolSendPoll(ctx, restaurantID, msg, input)
 	case "send_image", "send_document":
 		if tenant.DisableAttachments {
 			return botJSON(map[string]any{"error": "los adjuntos están desactivados para este restaurante"}), nil
