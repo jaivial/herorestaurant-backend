@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -153,7 +152,7 @@ func botToolGrantsFilter(defs []botToolDef, tenant botTenantConfig, chatJID stri
 			out = append(out, d)
 		}
 	}
-	log.Printf("[bot] checkpoint wa_bot_tool_grants_v1 chat=%s tools=%d/%d", chatJID, len(out), len(defs))
+	botCheckpoint("wa_bot_tool_grants_v1", "chat=%s tools=%d/%d", chatJID, len(out), len(defs))
 	return out
 }
 
@@ -338,7 +337,7 @@ func (s *Server) botAccessApplyNow(ctx context.Context, restaurantID int, a botA
 		return "", errors.New("error interno")
 	}
 	botServiceSessionReset(restaurantID)
-	log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d applied-direct resource=%s action=%s", restaurantID, a.Resource, a.Action)
+	botCheckpoint("wa_bot_privileged_control_v1", "restaurant_id=%d applied-direct resource=%s action=%s", restaurantID, a.Resource, a.Action)
 	return summary, nil
 }
 
@@ -417,7 +416,7 @@ func (s *Server) botToolManageAccess(ctx context.Context, restaurantID int, msg 
 	}
 	if a.Action == "list" {
 		tenant := s.botStoredTenantConfig(ctx, restaurantID)
-		log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d action=list", restaurantID)
+		botCheckpoint("wa_bot_privileged_control_v1", "restaurant_id=%d action=list", restaurantID)
 		return botJSON(map[string]any{
 			"allowed_chats":            botPrivilegedContactsFromConfig(tenant),
 			"tool_grants":              tenant.ToolGrants,
@@ -427,7 +426,7 @@ func (s *Server) botToolManageAccess(ctx context.Context, restaurantID int, msg 
 	}
 	actor, origin, ok := s.botPrivilegedControlAuthorize(ctx, restaurantID, msg)
 	if !ok {
-		log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d denied=actor", restaurantID)
+		botCheckpoint("wa_bot_privileged_control_v1", "restaurant_id=%d denied=actor", restaurantID)
 		return botJSON(map[string]any{"error": "no autorizado para gestionar el acceso desde este chat"}), nil
 	}
 	// Coordination id: wa_bot_privileged_direct_writes_v1: the owner group
@@ -454,7 +453,7 @@ func (s *Server) botToolManageAccess(ctx context.Context, restaurantID int, msg 
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo guardar la propuesta"}), nil
 	}
-	log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d proposed resource=%s action=%s", restaurantID, a.Resource, a.Action)
+	botCheckpoint("wa_bot_privileged_control_v1", "restaurant_id=%d proposed resource=%s action=%s", restaurantID, a.Resource, a.Action)
 	return out, nil
 }
 
@@ -491,7 +490,7 @@ func (s *Server) botAccessExecute(ctx context.Context, tx *sql.Tx, rid int, p bo
 	if err := tx.Commit(); err != nil {
 		return "", errors.New("error interno")
 	}
-	log.Printf("[bot] checkpoint wa_bot_privileged_control_v1 restaurant_id=%d applied resource=%s action=%s", rid, a.Resource, a.Action)
+	botCheckpoint("wa_bot_privileged_control_v1", "restaurant_id=%d applied resource=%s action=%s", rid, a.Resource, a.Action)
 	// A changed selection or grant set makes the old panel service session
 	// unnecessary (same rule as botSavePrivilegedContacts).
 	botServiceSessionReset(rid)

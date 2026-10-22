@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log"
 	"strings"
 )
 
@@ -90,6 +89,6 @@ func (s *Server) botToolDishAllergens(ctx context.Context, restaurantID int, inp
 			"contributors": contributors,
 		})
 	}
-	log.Printf("[bot] checkpoint wa_bot_dish_allergens_v1 restaurant_id=%d sheets=%d", restaurantID, len(out))
+	botCheckpoint("wa_bot_dish_allergens_v1", "restaurant_id=%d sheets=%d", restaurantID, len(out))
 	return botJSON(map[string]any{"recipes": out, "catalogue": canonicalAllergens}), nil
 }

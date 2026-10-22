@@ -856,11 +856,11 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 					Before: beforeHash, After: afterHash, Actor: actor,
 				})
 				if err != nil {
-					log.Printf("[bot] checkpoint wa_bot_privileged_direct_writes_v1 restaurant_id=%d op=%s error=%v", rid, op, err)
+					botCheckpoint("wa_bot_privileged_direct_writes_v1", "restaurant_id=%d op=%s error=%v", rid, op, err)
 					_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE id=? AND active=1`, pid)
 					return botJSON(map[string]any{"ok": false, "error": "no se pudo aplicar: " + err.Error()}), nil
 				}
-				log.Printf("[bot] checkpoint wa_bot_privileged_direct_writes_v1 restaurant_id=%d op=%s applied", rid, op)
+				botCheckpoint("wa_bot_privileged_direct_writes_v1", "restaurant_id=%d op=%s applied", rid, op)
 				return botJSON(map[string]any{"ok": true, "status": out, "direct": true}), nil
 			}
 		}

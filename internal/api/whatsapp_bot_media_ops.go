@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -79,7 +78,7 @@ func botMediaUploadOp(s *Server, ctx context.Context, rid int, p map[string]any)
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("[bot] checkpoint wa_bot_panel_media_v1 restaurant_id=%d op=media_upload kind=%s bytes=%d", rid, kind, len(payload))
+	botCheckpoint("wa_bot_panel_media_v1", "restaurant_id=%d op=media_upload kind=%s bytes=%d", rid, kind, len(payload))
 	return run(s, ctx, rid, p, payload)
 }
 
@@ -95,7 +94,7 @@ func botMediaAIOp(s *Server, ctx context.Context, rid int, p map[string]any) (an
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("[bot] checkpoint wa_bot_panel_media_v1 restaurant_id=%d op=media_ai kind=%s bytes=%d", rid, kind, len(payload))
+	botCheckpoint("wa_bot_panel_media_v1", "restaurant_id=%d op=media_ai kind=%s bytes=%d", rid, kind, len(payload))
 	return run(s, ctx, rid, p, payload)
 }
 
@@ -151,7 +150,7 @@ func (s *Server) botMediaAsync(rid int, label string, timeout time.Duration, run
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		if err := run(ctx); err != nil {
-			log.Printf("[bot] checkpoint wa_bot_panel_media_v1 restaurant_id=%d %s failed err=%v", rid, label, err)
+			botCheckpoint("wa_bot_panel_media_v1", "restaurant_id=%d %s failed err=%v", rid, label, err)
 		}
 	}()
 }

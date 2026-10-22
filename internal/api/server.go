@@ -888,6 +888,11 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, rootOnlyGate).Put("/bot/ai/{restaurantId}/privileged-contacts", s.handleBOBotPrivilegedContactsPut)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/bot/ai/{restaurantId}/privileged-contacts", s.handleBOBotPrivilegedContactsPost)
 		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/pipeline/{restaurantId}", s.handleBOBotPipelineGet)
+		// Coordination id: wa_bot_diag_endpoint_v1 - read-only dump of the
+		// in-memory diagnostic ring (wa_diag_pkg_v1): reconstruct a whole bot
+		// turn by its correlation id. Root-only like the rest of the bot IA
+		// tab: the buffer can contain bounded customer-content fragments.
+		r.With(s.requireBOSession, rootOnlyGate).Get("/bot/diag", s.handleBOBotDiagGet)
 		// Booking WhatsApp notifications (confirmation / reconfirmation) — bkg-wa-notif.
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Get("/booking-notifications", s.handleBOBookingNotificationsGet)
 		r.With(s.requireBOSession, miembrosGate, rolesAdminGate).Put("/booking-notifications", s.handleBOBookingNotificationsPut)

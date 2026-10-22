@@ -401,8 +401,10 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 	// confirmation token is issued to and redeemed by the same model, so it is
 	// not a human decision; the dedicated bot tools carry their own checks.
 	if op.Write && isBotPrivilegedTurn(ctx) {
-		log.Printf("[bot] checkpoint wa_bot_admin_write_denied_v1 restaurant_id=%d", rid)
-		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. Usa panel_change para PROPONER el cambio: se aplica solo cuando el usuario responde 'OK <código>' en el chat. No busques otra vía."}), nil
+		botCheckpoint("wa_bot_admin_write_denied_v1", "restaurant_id=%d", rid)
+		// wa_bot_terminal_tool_v1: final refusal for this turn (the model wrote
+		// the "confirmation" itself; a retry can never change the answer).
+		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. Usa panel_change para PROPONER el cambio: se aplica solo cuando el usuario responde 'OK <código>' en el chat. No busques otra vía.", "terminal": true}), nil
 	}
 	if op.Write {
 		if !in.Confirmed {

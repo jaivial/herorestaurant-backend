@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 )
 
@@ -49,9 +48,9 @@ func (s *Server) botToolSendPoll(ctx context.Context, restaurantID int, msg botW
 		return botJSON(map[string]any{"error": "conexión de WhatsApp no disponible"}), nil
 	}
 	if err := gw.SendPoll(ctx, msg.Sender, in.Question, opts, in.MaxChoices); err != nil {
-		log.Printf("[bot] checkpoint wa_bot_poll_v1 restaurant_id=%d error=%v", restaurantID, err)
+		botCheckpoint("wa_bot_poll_v1", "restaurant_id=%d error=%v", restaurantID, err)
 		return botJSON(map[string]any{"error": "no se pudo enviar la encuesta: " + err.Error()}), nil
 	}
-	log.Printf("[bot] checkpoint wa_bot_poll_v1 restaurant_id=%d options=%d", restaurantID, len(opts))
+	botCheckpoint("wa_bot_poll_v1", "restaurant_id=%d options=%d", restaurantID, len(opts))
 	return botJSON(map[string]any{"sent": true}), nil
 }

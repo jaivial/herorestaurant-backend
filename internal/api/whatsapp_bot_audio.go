@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -53,7 +52,7 @@ func (s *Server) botTranscribeAudio(ctx context.Context, restaurantID int, msg b
 		return text
 	}
 	if engine != "whisper" {
-		log.Printf("[bot] checkpoint wa_bot_stt_bark_v1 restaurant_id=%d sender=%s fallback=whisper", restaurantID, msg.Sender)
+		botCheckpoint("wa_bot_stt_bark_v1", "restaurant_id=%d sender=%s fallback=whisper", restaurantID, msg.Sender)
 		return s.botTranscribeOnce(ctx, restaurantID, msg, audio, "whisper")
 	}
 	return ""
@@ -76,7 +75,7 @@ func (s *Server) botTranscribeOnce(ctx context.Context, restaurantID int, msg bo
 	started := time.Now()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("[bot] checkpoint wa_bot_audio_transcription_v1 restaurant_id=%d sender=%s engine=%s error=%v", restaurantID, msg.Sender, engine, err)
+		botCheckpoint("wa_bot_audio_transcription_v1", "restaurant_id=%d sender=%s engine=%s error=%v", restaurantID, msg.Sender, engine, err)
 		return ""
 	}
 	defer resp.Body.Close()
@@ -87,11 +86,11 @@ func (s *Server) botTranscribeOnce(ctx context.Context, restaurantID int, msg bo
 		Engine   string `json:"engine"`
 	}
 	if resp.StatusCode != http.StatusOK || json.Unmarshal(raw, &out) != nil {
-		log.Printf("[bot] checkpoint wa_bot_audio_transcription_v1 restaurant_id=%d sender=%s engine=%s status=%d", restaurantID, msg.Sender, engine, resp.StatusCode)
+		botCheckpoint("wa_bot_audio_transcription_v1", "restaurant_id=%d sender=%s engine=%s status=%d", restaurantID, msg.Sender, engine, resp.StatusCode)
 		return ""
 	}
 	text := strings.TrimSpace(out.Text)
-	log.Printf("[bot] checkpoint wa_bot_audio_transcription_v1 restaurant_id=%d sender=%s engine=%s lang=%s chars=%d ms=%d",
+	botCheckpoint("wa_bot_audio_transcription_v1", "restaurant_id=%d sender=%s engine=%s lang=%s chars=%d ms=%d",
 		restaurantID, msg.Sender, out.Engine, out.Language, len(text), time.Since(started).Milliseconds())
 	return text
 }
@@ -116,7 +115,7 @@ func (s *Server) botFetchMediaBase64(ctx context.Context, restaurantID int, mess
 		"message": map[string]any{"key": map[string]any{"id": messageID}}, "convertToMp4": false,
 	})
 	if err != nil || code < 200 || code >= 300 {
-		log.Printf("[bot] checkpoint wa_bot_audio_transcription_v1 restaurant_id=%d fetch_failed code=%d err=%v", restaurantID, code, err)
+		botCheckpoint("wa_bot_audio_transcription_v1", "restaurant_id=%d fetch_failed code=%d err=%v", restaurantID, code, err)
 		return ""
 	}
 	b64, _ := resp["base64"].(string)

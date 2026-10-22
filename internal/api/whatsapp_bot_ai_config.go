@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
@@ -102,9 +101,9 @@ func (s *Server) botProviderKey(ctx context.Context, restaurantID int, provider 
 		if derr == nil && strings.TrimSpace(plain) != "" {
 			return strings.TrimSpace(plain)
 		}
-		log.Printf("[bot] checkpoint wa_bot_ai_providers_v1 restaurant_id=%d provider=%s decrypt_failed", restaurantID, provider)
+		botCheckpoint("wa_bot_ai_providers_v1", "restaurant_id=%d provider=%s decrypt_failed", restaurantID, provider)
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) && !isSQLSchemaError(err) {
-		log.Printf("[bot] checkpoint wa_bot_ai_providers_v1 restaurant_id=%d provider=%s load_error=%v", restaurantID, provider, err)
+		botCheckpoint("wa_bot_ai_providers_v1", "restaurant_id=%d provider=%s load_error=%v", restaurantID, provider, err)
 	}
 	if provider == botProviderMiniMax {
 		return s.resolveMiniMaxKey(ctx, restaurantID)
@@ -222,7 +221,7 @@ func (s *Server) handleBOBotAIPut(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error guardando la clave"})
 			return
 		}
-		log.Printf("[bot] checkpoint wa_bot_ai_providers_v1 restaurant_id=%d provider=%s key_saved", rid, provider)
+		botCheckpoint("wa_bot_ai_providers_v1", "restaurant_id=%d provider=%s key_saved", rid, provider)
 	}
 	knowledge := botCleanKnowledge(req.Knowledge)
 	rawKnowledge, _ := json.Marshal(knowledge)

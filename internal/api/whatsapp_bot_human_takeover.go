@@ -87,7 +87,7 @@ func (s *Server) botHandleManualStaffMessage(ctx context.Context, restaurantID i
 	`, restaurantID, sender, minutes, minutes); err != nil && !isSQLSchemaError(err) {
 		log.Printf("[bot] restaurant=%d pause session: %v", restaurantID, err)
 	}
-	log.Printf("[bot] checkpoint wa_bot_human_takeover_started restaurant_id=%d sender=%s minutes=%d", restaurantID, sender, minutes)
+	botCheckpoint("wa_bot_human_takeover_started", "restaurant_id=%d sender=%s minutes=%d", restaurantID, sender, minutes)
 	return true
 }
 
