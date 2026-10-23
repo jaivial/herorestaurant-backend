@@ -317,7 +317,7 @@ func invoiceFallbackPDF(d invoiceRenderData) ([]byte, error) {
 	pdf.SetFont("Helvetica", "", 8.5)
 	pdf.SetTextColor(mutR, mutG, mutB)
 	for _, l := range []string{
-		nonEmpty("DNI/CIF: ", d.Customer.DniCif),
+		nonEmpty(d.Customer.DniCifLabel+": ", d.Customer.DniCif),
 		d.Customer.Address,
 		d.Customer.Email,
 		nonEmpty("Tel: ", d.Customer.Phone),
