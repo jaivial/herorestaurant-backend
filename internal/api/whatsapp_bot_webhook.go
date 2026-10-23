@@ -723,11 +723,19 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			botTools = append(botTools, botToolDefsAdminReads()...)
 			// wa_bot_catalog_v2: drop customer phone-scoped tools (see botStaffPhoneScopedTools).
 			botTools = botWithoutTools(botTools, botStaffPhoneScopedTools)
+			// wa_bot_intent_catalog_v1: drop tool groups unrelated to this message.
+			if drop := botIntentPrunedTools(msg.Text); len(drop) > 0 {
+				botTools = botWithoutTools(botTools, drop)
+			}
 		}
 		// Coordination id: wa_bot_privileged_control_v1 - the control plane of
 		// this bot version (allowed chats + per-chat tool grants + allergen
 		// data) exists ONLY in allowed (privileged) contacts and groups.
-		botTools = append(botTools, botToolDefsPrivilegedControl()...)
+		control := botToolDefsPrivilegedControl()
+		if botSpecialAdminToolsAllowed(restaurantID, msg) {
+			control = botWithoutTools(control, botIntentPrunedTools(msg.Text))
+		}
+		botTools = append(botTools, control...)
 		tools = botMergeToolDefs(botTools, botForkyToolDefs())
 		normalExec := exec
 		// A name the bot defines belongs to the bot, even when forky also has
@@ -738,8 +746,11 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		// The check is against the BOT list, not against the merged one: the
 		// merged list carries every name, so asking it would send every
 		// forky tool to the bot executor, which does not know them.
+		// Ownership comes from the UNPRUNED bot catalogs (wa_bot_catalog_v2 /
+		// wa_bot_intent_catalog_v1 only hide names from the model): a pruned bot
+		// name must still route to the bot executor, never to the forky path.
 		botOwned := map[string]struct{}{}
-		for _, d := range botTools {
+		for _, d := range botMergeToolDefs(botToolDefsForChat(tenant, true), botSpecialAdminToolDefs(), botToolDefsAdminReads(), botToolDefsPrivilegedControl()) {
 			botOwned[d.Name] = struct{}{}
 		}
 		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
