@@ -62,6 +62,9 @@ func botToolDefsAdminReads() []botToolDef {
 			Description: "Qué cartas y menús están visibles para los clientes en la web y cuáles ocultos, con el último cambio registrado. ÚSALO cuando el grupo pregunte si un menú o carta está visible o activo.",
 			InputSchema: botSchema(`{"type":"object","properties":{}}`),
 		},
+		// wa_bot_staff_bookings_overview_v1: one call for a whole day's full
+		// bookings (or one booking's detail), replacing the N+1 admin_call loop.
+		botToolStaffBookingsOverview(),
 	}
 }
 
