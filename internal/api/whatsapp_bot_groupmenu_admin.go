@@ -55,12 +55,13 @@ type botGMenuArgs struct {
 	Principales       []botGMenuPrincipal `json:"principales,omitempty"`
 	Note              *string             `json:"note,omitempty"`
 	ReplaceCommentary bool                `json:"replace_commentary,omitempty"`
+	PartySize         int                 `json:"party_size,omitempty"`
 }
 
 // botGMenuColumns is the closed set of columns this op may write.
 var botGMenuColumns = map[string]bool{
 	"special_menu": true, "menu_de_grupo_id": true, "menu_de_grupo_assigned": true,
-	"arroz_type": true, "arroz_servings": true, "principales_json": true, "commentary": true,
+	"arroz_type": true, "arroz_servings": true, "principales_json": true, "commentary": true, "party_size": true,
 }
 
 type botGMenuCurrent struct {
@@ -367,11 +368,20 @@ func (s *Server) botGMenuPropose(ctx context.Context, rid int, msg botWebhookMes
 	if cerr != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
 	}
+	if in.MenuDeGrupoID <= 0 && cur.GroupMenu && cur.MenuID > 0 {
+		in.MenuDeGrupoID = cur.MenuID
+	}
+	if in.PartySize < 0 || in.PartySize > 500 {
+		return botJSON(map[string]any{"error": "party_size inválido (1-500)"}), nil
+	}
+	origParty := cur.Party
+	cur = botGMenuWithParty(cur, in.PartySize)
 	r, rerr := s.botGMenuResolve(ctx, s.db, rid, cur, in)
 	if rerr != nil {
 		return botJSON(map[string]any{"error": rerr.Error()}), nil
 	}
 	changes := botGMenuChanges(cur, in.MenuDeGrupoID, r)
+	changes = botGMenuAddParty(changes, origParty, in.PartySize)
 	if len(changes) == 0 {
 		return botJSON(map[string]any{"error": "ningún campo cambiaría: la reserva ya tiene ese menú"}), nil
 	}
@@ -385,6 +395,9 @@ func (s *Server) botGMenuPropose(ctx context.Context, rid int, msg botWebhookMes
 	}
 	preview := fmt.Sprintf("Propuesta: MENÚ DE GRUPO en la reserva #%d (%s %s, %d comensales): %s. No cambian fecha, hora, comensales, salón ni ocupación. No se avisa al cliente.",
 		bookingID, row.Date, row.Time, row.Party, botGMenuChangeText(bookingID, cur, in.MenuDeGrupoID, r))
+	if pt := botGMenuPartyText(origParty, in.PartySize); pt != "" {
+		preview = strings.Replace(preview, "No cambian fecha, hora, comensales,", "No cambian fecha, hora,", 1) + pt
+	}
 	after := botGMenuAfterKey(bookingID, in.MenuDeGrupoID, r.Price, changes)
 	return s.botProposalPersist(ctx, rid, msg, "set_group_menu", bookingID, in, "", actor, origin, beforeHash, after, preview, code)
 }
@@ -423,11 +436,14 @@ func (s *Server) botGMenuExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 	if cerr != nil {
 		return "", errors.New("error interno")
 	}
+	origParty := cur.Party
+	cur = botGMenuWithParty(cur, in.PartySize)
 	r, rerr := s.botGMenuResolve(ctx, tx, rid, cur, in)
 	if rerr != nil {
 		return stale("la validación ya no pasa: " + rerr.Error())
 	}
 	changes := botGMenuChanges(cur, in.MenuDeGrupoID, r)
+	changes = botGMenuAddParty(changes, origParty, in.PartySize)
 	if len(changes) == 0 {
 		return stale("la reserva ya tiene ese menú; pide una propuesta nueva")
 	}
@@ -476,7 +492,13 @@ func (s *Server) botGMenuExecute(ctx context.Context, tx *sql.Tx, rid int, msg b
 			return "", errors.New("no se pudo registrar el historial; no se aplicó nada")
 		}
 	}
+	if in.PartySize > 0 && in.PartySize != origParty {
+		if err := s.botGMenuApplyPartyDelta(ctx, tx, rid, p.BookingID, row.Date, origParty, in.PartySize, cur.Name, cur.Phone); err != nil {
+			return "", err
+		}
+	}
 	notice := fmt.Sprintf("Reserva #%d: %s. No se ha avisado al cliente.", p.BookingID, botGMenuChangeText(p.BookingID, cur, in.MenuDeGrupoID, r))
+	notice += botGMenuPartyText(origParty, in.PartySize)
 	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
 	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
