@@ -129,6 +129,19 @@ func botToolTerminal(out string) bool {
 	return false
 }
 
+// botSteerTool (wa_bot_terminal_steer_v1) extracts the machine-readable steer
+// of a refusal: the tool that CAN still perform the operation. Empty when the
+// refusal offers no alternative (the turn keeps the old terminal behaviour).
+func botSteerTool(out string) string {
+	var m struct {
+		RetryWith string `json:"retry_with"`
+	}
+	if json.Unmarshal([]byte(out), &m) != nil {
+		return ""
+	}
+	return strings.TrimSpace(m.RetryWith)
+}
+
 func newBotLoopGuard() *botLoopGuard { return &botLoopGuard{} }
 
 func (g *botLoopGuard) observe(name string, input json.RawMessage, out string) {
@@ -197,6 +210,10 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		maxIter = 0
 	}
 	guard := newBotLoopGuard()
+	// wa_bot_terminal_steer_v1: tools that already got a steered terminal
+	// refusal (retry_with) this turn. A second terminal refusal of the same
+	// tool closes the turn, as before.
+	steered := map[string]bool{}
 
 	result := botLoopResult{}
 	msgs := append([]botMessage{}, messages...)
@@ -261,7 +278,17 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			// not be retried by the model (see botToolTerminal).
 			terminal := failed && botToolTerminal(out)
 			if terminal && terminalTool == "" {
-				terminalTool = block.Name
+				if steer := botSteerTool(out); steer != "" && !steered[block.Name] {
+					// wa_bot_terminal_steer_v1: the refusal is final for this
+					// CALL but names the tool that can still perform the
+					// operation (retry_with). Feed it back once and let the
+					// model continue; a second terminal refusal of the same
+					// tool closes the turn as before.
+					steered[block.Name] = true
+					botCheckpointCtx(ctx, "wa_bot_terminal_steer_v1", "tool=%s steer=%s iter=%d", block.Name, botDiagPreview(steer, 40), i+1)
+				} else {
+					terminalTool = block.Name
+				}
 			}
 			if failed {
 				result.Failed++

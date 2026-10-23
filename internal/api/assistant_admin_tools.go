@@ -404,7 +404,7 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 		botCheckpoint("wa_bot_admin_write_denied_v1", "restaurant_id=%d", rid)
 		// wa_bot_terminal_tool_v1: final refusal for this turn (the model wrote
 		// the "confirmation" itself; a retry can never change the answer).
-		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. Usa panel_change para PROPONER el cambio: se aplica solo cuando el usuario responde 'OK <código>' en el chat. No busques otra vía.", "terminal": true}), nil
+		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. Usa panel_change para PROPONER el cambio: se aplica solo cuando el usuario responde 'OK <código>' en el chat. No busques otra vía.", "terminal": true, "retry_with": "panel_change"}), nil
 	}
 	if op.Write {
 		if !in.Confirmed {
