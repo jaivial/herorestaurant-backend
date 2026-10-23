@@ -191,7 +191,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 
 	for i := 0; ; i++ {
 		if err := ctx.Err(); err != nil {
-			return botInterrupted(ctx, &result, msgs, "context_done", err)
+			return s.botInterrupted(ctx, call, system, &result, msgs, "context_done", err)
 		}
 		result.Iterations = i + 1
 
@@ -204,7 +204,7 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		}
 		resp, used, err := call(ctx, callSystem, msgs, tools)
 		if err != nil {
-			return botInterrupted(ctx, &result, msgs, "model_call_failed", err)
+			return s.botInterrupted(ctx, call, system, &result, msgs, "model_call_failed", err)
 		}
 		result.ModelUsed = used
 
@@ -468,7 +468,7 @@ func botResultErrorPreview(out string, execErr error) string {
 	return botDiagPreview(m.Error, 200)
 }
 
-func botInterrupted(ctx context.Context, result *botLoopResult, msgs []botMessage, reason string, err error) (botLoopResult, error) {
+func (s *Server) botInterrupted(ctx context.Context, call botModelCaller, system string, result *botLoopResult, msgs []botMessage, reason string, err error) (botLoopResult, error) {
 	result.Messages = msgs
 	if result.Ran == 0 {
 		return *result, err
@@ -477,7 +477,18 @@ func botInterrupted(ctx context.Context, result *botLoopResult, msgs []botMessag
 	// strings, tokens or customer content. Only a fixed class is recorded.
 	botCheckpointCtx(ctx, "wa_bot_iter_cap_v1", "interrupted reason=%s class=%s terminal=%t iterations=%d ran=%d failed=%d tools=%s", reason, botErrClass(err), botErrTerminal(err), result.Iterations, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
 	result.Interrupted = true
-	result.Messages = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botInterruptedText}}})
+	// wa_bot_interrupted_grounded_v1: a deadline-exhausted turn already holds
+	// the facts in its tool_results. Answer with the grounded no-tools wrap-up
+	// (wa_bot_grounded_wrapup_v1) instead of the fixed interrupted text; fall
+	// back to that text only when the wrap-up cannot run or returns nothing.
+	// Prod 2026-10-23 17:12: a 27-iter turn hit the 3-min deadline after
+	// gathering the booking + menu data and answered botInterruptedText even
+	// though a grounded summary was possible.
+	text := s.botGroundedWrapUp(ctx, call, system, msgs)
+	if text == "" {
+		text = botInterruptedText
+	}
+	result.Messages = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: text}}})
 	return *result, nil
 }
 
