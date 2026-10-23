@@ -309,15 +309,30 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		}
 
 		if terminalTool != "" {
-			// wa_bot_terminal_tool_v1: close the turn NOW with the fixed honest
-			// reply (botBudgetExhaustedText) instead of letting the model burn
-			// iterations retrying a refusal. Unless a delivery tool of this same
-			// round already answered the customer (roundDelivered), the fixed
-			// text is what reaches the customer.
+			// wa_bot_terminal_tool_v1: close the turn NOW instead of letting the
+			// model burn iterations retrying a refusal. A terminal result is any
+			// tool result with terminal:true OR an admin_call replay that returned
+			// an HTTP 4xx (botToolTerminal). That second class usually fires while
+			// OTHER tools in the same round DID succeed — prod 2026-10-23 16:47:
+			// an 18-iter turn had already gathered the bookings + menu facts but
+			// answered botBudgetExhaustedText because the close jumped straight to
+			// the fixed text, discarding the sibling answers and skipping the
+			// grounded wrap-up the normal exhausted path uses.
+			//
+			// Close terminally (no more tool calls) but answer honestly: try the
+			// grounded no-tools wrap-up (wa_bot_grounded_wrapup_v1) so the customer
+			// gets the facts already in the transcript; fall back to the fixed text
+			// only when the wrap-up is not possible. When a delivery tool of this
+			// same round already answered the customer (roundDelivered), send
+			// nothing extra.
 			botCheckpointCtx(ctx, "wa_bot_terminal_tool_v1", "tool=%s iterations=%d ran=%d failed=%d", terminalTool, i+1, result.Ran, result.Failed)
 			result.Exhausted = true
 			if !roundDelivered {
-				msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botBudgetExhaustedText}}})
+				text := s.botGroundedWrapUp(ctx, call, callSystem, msgs)
+				if text == "" {
+					text = botBudgetExhaustedText
+				}
+				msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: text}}})
 			}
 			result.Messages = msgs
 			return result, nil
