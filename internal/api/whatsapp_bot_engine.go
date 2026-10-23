@@ -157,6 +157,26 @@ func (g *botLoopGuard) endRound(allFailed bool) {
 	}
 }
 
+// wa_bot_deadline_reserve_v1: the turn runs under a hard context deadline (the
+// conversation worker's 3-minute budget, shared with burst preparation and
+// transcription). A tool round started with less than this reserve left dies
+// mid-flight on its closing model call (context deadline exceeded) and the
+// customer then gets botInterruptedText even when every fact was already
+// gathered: the 17-iteration / 38-tool turn of 2026-10-23 14:46 in the Bot
+// Alquería group. With the reserve left, the current call becomes the wrap-up
+// call instead: it answers with what the tools already confirmed.
+const botTurnAnswerReserve = 30 * time.Second
+
+// botDeadlineWrapUp reports whether the turn's remaining budget is at or below
+// the closing reserve. Contexts without a deadline never trigger it.
+func botDeadlineWrapUp(ctx context.Context) bool {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return false
+	}
+	return time.Until(deadline) <= botTurnAnswerReserve
+}
+
 // botBudgetOperatorNote is appended to the SYSTEM prompt (a trusted channel,
 // never to tool results) for the last model call of a turn, so that call
 // answers instead of asking for another tool.
@@ -187,9 +207,11 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		}
 		result.Iterations = i + 1
 
-		// Wrap-up call: only when the loop guard saw no progress, or when an
-		// operator-set cap is reached. Never because of a call count by default.
-		last := guard.stalled || (maxIter > 0 && i == maxIter-1)
+		// Wrap-up call: only when the loop guard saw no progress, when an
+		// operator-set cap is reached, or when the turn deadline is so close
+		// that another tool round could not afford its own closing model
+		// call. Never because of a call count by default.
+		last := guard.stalled || (maxIter > 0 && i == maxIter-1) || botDeadlineWrapUp(ctx)
 		callSystem := system
 		if last {
 			callSystem = system + botBudgetOperatorNote

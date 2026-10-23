@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeLLM returns a handler that pops scripted responses one per call.
@@ -149,5 +151,81 @@ func TestBotRunAgentLoop_ToolError_FeedsErrorBack(t *testing.T) {
 	}
 	if len(*calls) != 2 {
 		t.Fatalf("llm calls = %d", len(*calls))
+	}
+}
+
+func TestBotRunAgentLoop_DeadlineReserveForcesWrapUp(t *testing.T) {
+	// wa_bot_deadline_reserve_v1: with less than the closing reserve left on
+	// the turn deadline, the current call is the wrap-up call: the tool the
+	// model asks for must NOT run and the turn closes with the budget notice
+	// instead of dying mid-flight with botInterruptedText.
+	llm, calls := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	execCount := 0
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		execCount++
+		return `{"rices":[]}`, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), botTurnAnswerReserve/3)
+	defer cancel()
+	result, err := s.botRunAgentLoop(ctx, 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if execCount != 0 {
+		t.Errorf("execCount = %d, want 0 (no tool round inside the closing reserve)", execCount)
+	}
+	if !result.Exhausted {
+		t.Errorf("Exhausted = false, want true (wrap-up notice path)")
+	}
+	if result.Iterations != 1 {
+		t.Errorf("iterations = %d, want 1", result.Iterations)
+	}
+	if !strings.Contains(string((*calls)[0]), "último paso de este turno") {
+		t.Errorf("wrap-up call does not carry the operator note: %s", (*calls)[0])
+	}
+}
+
+func TestBotRunAgentLoop_DeadlineFar_NoWrapUp(t *testing.T) {
+	// A deadline far away must not change behaviour: the tool round runs.
+	llm, _ := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{"stop_reason": "end_turn", "content": []map[string]any{
+			{"type": "text", "text": "Hay 3 arroces."},
+		}},
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	execCount := 0
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		execCount++
+		return `{"rices":[]}`, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	result, err := s.botRunAgentLoop(ctx, 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if execCount != 1 {
+		t.Errorf("execCount = %d, want 1", execCount)
+	}
+	if result.Iterations != 2 {
+		t.Errorf("iterations = %d, want 2", result.Iterations)
 	}
 }
