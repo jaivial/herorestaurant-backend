@@ -208,6 +208,12 @@ func (s *Server) ensureInvoiceNumberSettingsRow(ctx context.Context, tx *sql.Tx,
 	if err != nil {
 		return base, err
 	}
+	// The invoices created before the numbering existed are numbered now, so
+	// the list and the PDF always identify the invoice. It runs before the
+	// counter is read, so the next number continues the backfilled series.
+	if err := s.backfillInvoiceNumbers(ctx, tx, restaurantID, base.Format); err != nil {
+		return base, err
+	}
 	maxSeq, err := maxIssuedInvoiceSequence(ctx, tx, restaurantID, year, invoiceNumberFormatHasYear(base.Format))
 	if err != nil {
 		return base, err
@@ -249,6 +255,106 @@ func (s *Server) loadLatestInvoiceNumberSettings(ctx context.Context, tx *sql.Tx
 		return defaultInvoiceNumberSettings(), nil
 	}
 	return settings, err
+}
+
+// backfillInvoiceNumbers numbers the invoices that were created before the
+// numbering existed, continuing the series of their own year, so no invoice
+// is left without the number that identifies it. It only touches the
+// invoices without a number, so it is idempotent.
+func (s *Server) backfillInvoiceNumbers(ctx context.Context, tx *sql.Tx, restaurantID int, format invoiceNumberFormat) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, YEAR(invoice_date), invoice_number
+		FROM invoices
+		WHERE restaurant_id = ?
+		ORDER BY id
+	`, restaurantID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	currentYear := time.Now().Year()
+	pendingByYear := map[int][]int64{}
+	maxByYear := map[int]int{}
+	for rows.Next() {
+		var (
+			id     int64
+			year   sql.NullInt64
+			number sql.NullString
+		)
+		if err := rows.Scan(&id, &year, &number); err != nil {
+			return err
+		}
+		y := int(year.Int64)
+		if !year.Valid || y == 0 {
+			// An invoice without a date joins the current year's series.
+			y = currentYear
+		}
+		if issued := strings.TrimSpace(number.String); issued != "" {
+			if seq := invoiceNumberSequence(issued); seq > maxByYear[y] {
+				maxByYear[y] = seq
+			}
+			continue
+		}
+		pendingByYear[y] = append(pendingByYear[y], id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for y, ids := range pendingByYear {
+		seq := maxByYear[y]
+		for _, id := range ids {
+			seq++
+			number := formatInvoiceNumber(format, seq, y)
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE invoices SET invoice_number = ? WHERE id = ? AND restaurant_id = ?
+			`, number, id, restaurantID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// backfillInvoiceNumbersTx numbers the invoices that predate the numbering,
+// in its own transaction.
+func (s *Server) backfillInvoiceNumbersTx(ctx context.Context, restaurantID int, format invoiceNumberFormat) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.backfillInvoiceNumbers(ctx, tx, restaurantID, format); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ensureInvoiceNumbersReady makes sure the restaurant has its numbering
+// series for the given year and that the invoices created before the
+// numbering existed carry a number. It only does work when the series does
+// not exist yet, so it is cheap enough to call on every read.
+func (s *Server) ensureInvoiceNumbersReady(ctx context.Context, restaurantID, year int) error {
+	var exists int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT 1 FROM restaurant_invoice_settings WHERE restaurant_id = ? AND year = ? LIMIT 1
+	`, restaurantID, year).Scan(&exists)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := s.ensureInvoiceNumberSettingsRow(ctx, tx, restaurantID, year); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // scanInvoiceNumberSettings reads one restaurant_invoice_settings row.
@@ -348,6 +454,11 @@ func (s *Server) saveInvoiceNumberSettings(ctx context.Context, restaurantID, ye
 		settings.Format.Prefix, settings.Format.Suffix, settings.Format.Format,
 		settings.Format.StartingNumber, settings.Format.PaddingZeros, settings.NextNumber,
 		settings.DefaultPdfTemplate, settings.DefaultPaymentTerms); err != nil {
+		return settings, err
+	}
+	// The invoices created before the numbering existed are numbered with the
+	// format the operator just configured.
+	if err := s.backfillInvoiceNumbersTx(ctx, restaurantID, settings.Format); err != nil {
 		return settings, err
 	}
 	return settings, nil
