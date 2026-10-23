@@ -169,6 +169,13 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 
 	restaurantID := a.ActiveRestaurantID
 
+	// The invoices created before the numbering existed are numbered the first
+	// time the restaurant's series is used, so the list always identifies
+	// them (invoice_numbering_v1).
+	if err := s.ensureInvoiceNumbersReady(r.Context(), restaurantID, time.Now().Year()); err != nil {
+		log.Printf("[invoice-numbering] restaurant %d: no se pudo preparar la serie: %v", restaurantID, err)
+	}
+
 	// Parse query params
 	params := InvoiceListParams{
 		Search:   strings.TrimSpace(r.URL.Query().Get("search")),
