@@ -129,6 +129,19 @@ func botToolTerminal(out string) bool {
 	return false
 }
 
+// botSteerTool (wa_bot_terminal_steer_v1) extracts the machine-readable steer
+// of a refusal: the tool that CAN still perform the operation. Empty when the
+// refusal offers no alternative (the turn keeps the old terminal behaviour).
+func botSteerTool(out string) string {
+	var m struct {
+		RetryWith string `json:"retry_with"`
+	}
+	if json.Unmarshal([]byte(out), &m) != nil {
+		return ""
+	}
+	return strings.TrimSpace(m.RetryWith)
+}
+
 func newBotLoopGuard() *botLoopGuard { return &botLoopGuard{} }
 
 func (g *botLoopGuard) observe(name string, input json.RawMessage, out string) {
@@ -157,6 +170,26 @@ func (g *botLoopGuard) endRound(allFailed bool) {
 	}
 }
 
+// wa_bot_deadline_reserve_v1: the turn runs under a hard context deadline (the
+// conversation worker's 3-minute budget, shared with burst preparation and
+// transcription). A tool round started with less than this reserve left dies
+// mid-flight on its closing model call (context deadline exceeded) and the
+// customer then gets botInterruptedText even when every fact was already
+// gathered: the 17-iteration / 38-tool turn of 2026-10-23 14:46 in the Bot
+// Alquería group. With the reserve left, the current call becomes the wrap-up
+// call instead: it answers with what the tools already confirmed.
+const botTurnAnswerReserve = 30 * time.Second
+
+// botDeadlineWrapUp reports whether the turn's remaining budget is at or below
+// the closing reserve. Contexts without a deadline never trigger it.
+func botDeadlineWrapUp(ctx context.Context) bool {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return false
+	}
+	return time.Until(deadline) <= botTurnAnswerReserve
+}
+
 // botBudgetOperatorNote is appended to the SYSTEM prompt (a trusted channel,
 // never to tool results) for the last model call of a turn, so that call
 // answers instead of asking for another tool.
@@ -177,6 +210,10 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		maxIter = 0
 	}
 	guard := newBotLoopGuard()
+	// wa_bot_terminal_steer_v1: tools that already got a steered terminal
+	// refusal (retry_with) this turn. A second terminal refusal of the same
+	// tool closes the turn, as before.
+	steered := map[string]bool{}
 
 	result := botLoopResult{}
 	msgs := append([]botMessage{}, messages...)
@@ -187,9 +224,11 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		}
 		result.Iterations = i + 1
 
-		// Wrap-up call: only when the loop guard saw no progress, or when an
-		// operator-set cap is reached. Never because of a call count by default.
-		last := guard.stalled || (maxIter > 0 && i == maxIter-1)
+		// Wrap-up call: only when the loop guard saw no progress, when an
+		// operator-set cap is reached, or when the turn deadline is so close
+		// that another tool round could not afford its own closing model
+		// call. Never because of a call count by default.
+		last := guard.stalled || (maxIter > 0 && i == maxIter-1) || botDeadlineWrapUp(ctx)
 		callSystem := system
 		if last {
 			callSystem = system + botBudgetOperatorNote
@@ -239,7 +278,17 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			// not be retried by the model (see botToolTerminal).
 			terminal := failed && botToolTerminal(out)
 			if terminal && terminalTool == "" {
-				terminalTool = block.Name
+				if steer := botSteerTool(out); steer != "" && !steered[block.Name] {
+					// wa_bot_terminal_steer_v1: the refusal is final for this
+					// CALL but names the tool that can still perform the
+					// operation (retry_with). Feed it back once and let the
+					// model continue; a second terminal refusal of the same
+					// tool closes the turn as before.
+					steered[block.Name] = true
+					botCheckpointCtx(ctx, "wa_bot_terminal_steer_v1", "tool=%s steer=%s iter=%d", block.Name, botDiagPreview(steer, 40), i+1)
+				} else {
+					terminalTool = block.Name
+				}
 			}
 			if failed {
 				result.Failed++
