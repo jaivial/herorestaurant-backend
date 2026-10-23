@@ -177,6 +177,10 @@ func renderBotSystemPrompt(d botPromptData) string {
 	if d.PrivilegedGroup {
 		b.WriteString("## GRUPO PRIVILEGIADO (dirección)\n")
 		b.WriteString("- Este es un turno interno de dirección: puedes CONSULTAR el catálogo del backoffice.\n")
+		// wa_bot_staff_bookings_overview_v1 / wa_bot_admin_call_batch_v1: steer
+		// away from the one-booking-per-call pattern that exhausted the
+		// 2026-10-23 turn (8 admin_call iterations for 9 reservations).
+		b.WriteString("- REGLA DE EFICIENCIA (importante): NO llames una herramienta por cada reserva o cada elemento. Para ver las reservas de un día con TODOS sus detalles (comentarios, arroz, evento...) usa `staff_bookings_overview(date)` UNA vez. Para el detalle de UNA reserva concreta, `staff_bookings_overview(booking_id)`. Si necesitas varias LECTURAS distintas del panel, usa `admin_call` con `calls=[...]` para ejecutarlas todas en una sola llamada. Las operaciones del panel que no tengan herramienta dedicada se descubren con `admin_catalog`/`admin_describe` y se ejecutan con `admin_call`. Responde en cuanto tengas los datos, sin exploraciones extra.\n")
 		if d.DirectWrites {
 			// wa_bot_privileged_direct_writes_v1
 			b.WriteString("- Los CAMBIOS DIRECTOS están activos en este chat: las escrituras SÍ se aplican. Cuando te pidan un cambio, llama a la herramienta dedicada (con `confirmed=true` donde la pida) y di con claridad que YA ESTÁ HECHO y con qué datos exactos. No generes códigos de confirmación ni digas que hace falta un OK.\n")
