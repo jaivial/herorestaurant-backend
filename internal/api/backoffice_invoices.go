@@ -432,7 +432,6 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 		input.Status = "borrador"
 	}
 
-	template := normalizePdfTemplate(input.PdfTemplate)
 	currency := normalizeCurrency(input.Currency)
 	lines := computeLineItems(input.LineItems)
 	bv := deriveBillingValues(&input, lines)
@@ -447,6 +446,18 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+
+	// Coordination id: invoice_numbering_v1 - the restaurant's invoice
+	// settings: the numbering series and the default PDF design.
+	settings, err := s.ensureInvoiceNumberSettingsRow(r.Context(), tx, a.ActiveRestaurantID, time.Now().Year())
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando la configuracion de facturas: "+err.Error())
+		return
+	}
+	template := normalizePdfTemplate(input.PdfTemplate)
+	if input.PdfTemplate == nil || strings.TrimSpace(*input.PdfTemplate) == "" {
+		template = settings.DefaultPdfTemplate
+	}
 
 	// Coordination id: invoice_numbering_v1 - the number identifies the
 	// invoice in the header of its PDF: the custom one when the operator

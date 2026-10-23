@@ -190,13 +190,17 @@ func (s *Server) ensureInvoiceNumberSettingsRow(ctx context.Context, tx *sql.Tx,
 		return settings, err
 	}
 
-	// First use of the series: continue after the numbers already issued.
-	def := defaultInvoiceNumberSettings()
-	maxSeq, err := maxIssuedInvoiceSequence(ctx, tx, restaurantID, year, invoiceNumberFormatHasYear(def.Format))
+	// First use of the series for this year: inherit the format the operator
+	// configured and continue after the numbers already issued.
+	base, err := s.loadLatestInvoiceNumberSettings(ctx, tx, restaurantID)
 	if err != nil {
-		return def, err
+		return base, err
 	}
-	next := def.Format.StartingNumber
+	maxSeq, err := maxIssuedInvoiceSequence(ctx, tx, restaurantID, year, invoiceNumberFormatHasYear(base.Format))
+	if err != nil {
+		return base, err
+	}
+	next := base.Format.StartingNumber
 	if maxSeq+1 > next {
 		next = maxSeq + 1
 	}
@@ -205,10 +209,10 @@ func (s *Server) ensureInvoiceNumberSettingsRow(ctx context.Context, tx *sql.Tx,
 			(restaurant_id, year, prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE next_number = GREATEST(next_number, ?)
-	`, restaurantID, year, def.Format.Prefix, def.Format.Suffix, def.Format.Format,
-		def.Format.StartingNumber, def.Format.PaddingZeros, next, def.DefaultPdfTemplate, def.DefaultPaymentTerms,
+	`, restaurantID, year, base.Format.Prefix, base.Format.Suffix, base.Format.Format,
+		base.Format.StartingNumber, base.Format.PaddingZeros, next, base.DefaultPdfTemplate, base.DefaultPaymentTerms,
 		next); err != nil {
-		return def, err
+		return base, err
 	}
 	return scanInvoiceNumberSettings(tx.QueryRowContext(ctx, `
 		SELECT prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms
@@ -216,6 +220,23 @@ func (s *Server) ensureInvoiceNumberSettingsRow(ctx context.Context, tx *sql.Tx,
 		WHERE restaurant_id = ? AND year = ?
 		FOR UPDATE
 	`, restaurantID, year))
+}
+
+// loadLatestInvoiceNumberSettings returns the settings of the most recent
+// series of the restaurant, so a new year inherits the format the operator
+// configured instead of falling back to the defaults.
+func (s *Server) loadLatestInvoiceNumberSettings(ctx context.Context, tx *sql.Tx, restaurantID int) (invoiceNumberSettings, error) {
+	settings, err := scanInvoiceNumberSettings(tx.QueryRowContext(ctx, `
+		SELECT prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms
+		FROM restaurant_invoice_settings
+		WHERE restaurant_id = ?
+		ORDER BY year DESC
+		LIMIT 1
+	`, restaurantID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return defaultInvoiceNumberSettings(), nil
+	}
+	return settings, err
 }
 
 // scanInvoiceNumberSettings reads one restaurant_invoice_settings row.
