@@ -373,6 +373,49 @@ func TestBotRunAgentLoop_Interrupted_GroundedWrapUp(t *testing.T) {
 	}
 }
 
+func TestBotRunAgentLoop_NonTerminalRefusal_TurnStaysOpen(t *testing.T) {
+	// The admin_call write refusal points the model at panel_change, so it must
+	// NOT be terminal: the loop has to make the NEXT model call where the model
+	// follows that advice. Regression 2026-10-23 17:30: terminal:true closed
+	// the turn before panel_change ran and the customer got a summary instead
+	// of the proposal.
+	// Script: call 1 -> tool_use admin_call (returns the non-terminal refusal);
+	// call 2 -> end_turn with the proposal text.
+	llm, calls := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "admin_call", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "Voy a proponer el cambio a 11 personas con OK y código."},
+			},
+		},
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		return `{"error":"el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. No lo reintentes por admin_call: llama ahora a panel_change para PROPONER el cambio (se aplica cuando el usuario responde 'OK <código>' en el chat)."}`, nil
+	}
+	result, err := s.botRunAgentLoop(context.Background(), 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if result.Exhausted {
+		t.Errorf("result.Exhausted = true: the refusal must not close the turn")
+	}
+	if got := botFinalAssistantText(result.Messages); got != "Voy a proponer el cambio a 11 personas con OK y código." {
+		t.Errorf("final text = %q, want the model's proposal (2nd call must have run)", got)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("llm calls = %d, want 2 (turn must stay open after the refusal)", len(*calls))
+	}
+}
+
 func TestBotRunAgentLoop_ToolError_FeedsErrorBack(t *testing.T) {
 	llm, calls := fakeLLM(t, []map[string]any{
 		{
