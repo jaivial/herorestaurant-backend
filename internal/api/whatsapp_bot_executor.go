@@ -175,6 +175,9 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolGetBotStatus(ctx, restaurantID, msg, input)
 	case "list_menu_visibility":
 		return s.botToolListMenuVisibility(ctx, restaurantID, msg, input)
+	// wa_bot_staff_bookings_overview_v1: one call for a day's full bookings.
+	case "staff_bookings_overview":
+		return s.botToolStaffBookingsOverview(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_special_crud_v1 - full special-menu CRUD. Each
 	// one re-validates through the same server core the backoffice uses.
 	case "special_booking_get":
@@ -638,11 +641,16 @@ func (s *Server) botToolAvailabilityForParty(ctx context.Context, restaurantID i
 // --- booking tools ---------------------------------------------------------
 
 type botBookingRow struct {
-	ID            int64  `json:"booking_id"`
-	Date          string `json:"date"`
-	Time          string `json:"time"`
-	People        int    `json:"people"`
-	Name          string `json:"name"`
+	ID     int64  `json:"booking_id"`
+	Date   string `json:"date"`
+	Time   string `json:"time"`
+	People int    `json:"people"`
+	Name   string `json:"name"`
+	// ContactPhone and Status are staff-only fields: the customer-facing path
+	// (botFindBookings) leaves them empty; the staff read
+	// (wa_bot_staff_bookings_overview_v1) fills them for the group.
+	ContactPhone  string `json:"contact_phone,omitempty"`
+	Status        string `json:"status,omitempty"`
 	RiceType      string `json:"rice_type,omitempty"`
 	RiceServings  string `json:"rice_servings,omitempty"`
 	HighChairs    int    `json:"high_chairs,omitempty"`
