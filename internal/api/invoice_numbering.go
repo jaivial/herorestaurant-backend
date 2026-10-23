@@ -144,6 +144,18 @@ func invoiceNumberFormatHasYear(f invoiceNumberFormat) bool {
 	return strings.Contains(f.Format, "{YYYY}") || strings.Contains(f.Format, "{YY}")
 }
 
+// invoiceNumberFormatHasSequence reports whether the format prints the
+// sequence number. Without it every invoice of the series would share the
+// same number, so a format like that is rejected when it is saved.
+func invoiceNumberFormatHasSequence(f invoiceNumberFormat) bool {
+	for _, token := range []string{"{0001}", "{000}", "{00}", "{0}", "{N}"} {
+		if strings.Contains(f.Format, token) {
+			return true
+		}
+	}
+	return false
+}
+
 // maxIssuedInvoiceSequence returns the highest sequence already used by the
 // restaurant, so a new series never repeats a number that was issued before.
 func maxIssuedInvoiceSequence(ctx context.Context, tx *sql.Tx, restaurantID, year int, byYear bool) (int, error) {
@@ -322,8 +334,7 @@ func (s *Server) loadInvoiceNumberSettings(ctx context.Context, restaurantID, ye
 
 // saveInvoiceNumberSettings stores the numbering settings of the restaurant
 // for the given year.
-func (s *Server) saveInvoiceNumberSettings(ctx context.Context, restaurantID, year int, input invoiceNumberSettings) (invoiceNumberSettings, error) {
-	settings := normalizeInvoiceNumberSettings(input)
+func (s *Server) saveInvoiceNumberSettings(ctx context.Context, restaurantID, year int, settings invoiceNumberSettings) (invoiceNumberSettings, error) {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO restaurant_invoice_settings
 			(restaurant_id, year, prefix, suffix, format, starting_number, padding_zeros, next_number, default_pdf_template, default_payment_terms)
@@ -374,13 +385,18 @@ func (s *Server) handleBOInvoiceSettingsPost(w http.ResponseWriter, r *http.Requ
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	settings, err := s.saveInvoiceNumberSettings(r.Context(), a.ActiveRestaurantID, time.Now().Year(), input)
+	settings := normalizeInvoiceNumberSettings(input)
+	if !invoiceNumberFormatHasSequence(settings.Format) {
+		httpx.WriteError(w, http.StatusBadRequest, "El formato del numero de factura debe incluir un token de secuencia ({0001}, {000}, {00}, {0} o {N})")
+		return
+	}
+	saved, err := s.saveInvoiceNumberSettings(r.Context(), a.ActiveRestaurantID, time.Now().Year(), settings)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando la numeracion de facturas: "+err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":  true,
-		"settings": settings,
+		"settings": saved,
 	})
 }
