@@ -163,9 +163,17 @@ func (g *botLoopGuard) endRound(allFailed bool) {
 const botBudgetOperatorNote = "\n\n[Instrucción del operador: es el último paso de este turno. No llames a más herramientas. Responde al usuario solo con lo que las herramientas ya confirmaron y di explícitamente qué falta por hacer. No afirmes ningún cambio que no haya confirmado una herramienta.]"
 
 // botBudgetExhaustedText is the fixed reply when the model still asks for a
-// tool on its last allowed call. It claims nothing about outcomes: counters and
-// tool names stay in the logs only.
+// tool on its last allowed call AND the grounded no-tools wrap-up also came
+// back asking for a tool (or failed). It claims nothing about outcomes:
+// counters and tool names stay in the logs only.
 const botBudgetExhaustedText = "No he podido completar tu petición. He detenido el proceso antes de ejecutar más acciones. Algunas acciones anteriores podrían haberse aplicado; no puedo confirmar que todo haya quedado terminado."
+
+// botGroundedAnswerNote drives the no-tools wrap-up call
+// (wa_bot_grounded_wrapup_v1). It is sent as an extra user message (never
+// appended to a tool_result) so it is the freshest instruction the model
+// sees. The call runs with NO tools, so the model cannot ask for another
+// tool: it must answer in text with what the tools already confirmed.
+const botGroundedAnswerNote = "Es el último paso de este turno y ya no puedes llamar a más herramientas. Resume al usuario, en texto claro, SOLO lo que las herramientas ya confirmaron, y di explícitamente qué parte de la petición quedó sin hacer. No afirmes ningún cambio que una herramienta no haya confirmado."
 
 // botRunAgentLoopWith is the provider-agnostic loop used by every caller.
 func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, system string, messages []botMessage, tools []botToolDef, exec botToolExecutor) (botLoopResult, error) {
@@ -215,10 +223,23 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			}
 			if wantsTool {
 				// Budget spent and the model still wants a tool: execute nothing
-				// more (no hidden extra mutation) and answer with the known facts.
+				// more (no hidden extra mutation). Before giving up with the
+				// fixed text, try a grounded no-tools wrap-up: one extra call
+				// with an EMPTY tool list, so the model cannot ask for a tool
+				// and must answer in text with the facts already gathered.
+				// wa_bot_grounded_wrapup_v1: prod 2026-10-23 (Bot Alquería,
+				// 18 iter / 37 tools / 169s) ended reason=exhausted with the
+				// fixed text even though every fact was already in the
+				// transcript — the wrap-up model call simply asked for one
+				// more tool. The grounded retry turns that dead end into a
+				// real, honest answer.
 				botCheckpointCtx(ctx, "wa_bot_iter_cap_v1", "exhausted reason=%s iterations=%d ran=%d failed=%d tools=%s", guard.reason, i+1, result.Ran, result.Failed, strings.Join(result.ToolCalls, ","))
 				result.Exhausted = true
-				msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botBudgetExhaustedText}}})
+				if text := s.botGroundedWrapUp(ctx, call, callSystem, msgs); text != "" {
+					msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: text}}})
+				} else {
+					msgs = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: botBudgetExhaustedText}}})
+				}
 				result.Messages = msgs
 				return result, nil
 			}
@@ -302,6 +323,70 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			return result, nil
 		}
 	}
+}
+
+// botGroundedWrapUp (wa_bot_grounded_wrapup_v1) makes ONE final model call
+// with an EMPTY tool catalog so the model cannot ask for another tool and
+// must answer in plain text with the facts already in the transcript. It
+// returns the answer text, or "" when the call failed, the model still
+// returned no text, or the turn context has no budget left for another call.
+//
+// The turn runs under a hard deadline (the conversation worker's 3-minute
+// budget). The wrap-up is only attempted when enough time remains for one
+// more model call; otherwise the caller falls back to the fixed text. The
+// call uses context.WithoutCancel so an already-expired turn deadline does
+// not kill it, but it gets its own short timeout so it cannot hang.
+func (s *Server) botGroundedWrapUp(ctx context.Context, call botModelCaller, system string, msgs []botMessage) string {
+	// Only spend the extra call when the transcript actually has tool
+	// results to summarize; otherwise the fixed text is just as honest.
+	if !botTranscriptHasToolResult(msgs) {
+		return ""
+	}
+	// Respect the turn budget: if the deadline is too close for one more
+	// model call, do not start it (it would die mid-flight and waste the
+	// reserve the honest reply is meant to protect).
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= botGroundedWrapUpReserve {
+		botCheckpointCtx(ctx, "wa_bot_grounded_wrapup_v1", "skipped reason=no_budget")
+		return ""
+	}
+	// Fresh context that keeps the turn's values (tenant, tracing) but is
+	// not cancelled with the turn, bounded by its own timeout.
+	wrapCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), botGroundedWrapUpTimeout)
+	defer cancel()
+	wrapMsgs := append(append([]botMessage{}, msgs...), botUserText(botGroundedAnswerNote))
+	resp, _, err := call(wrapCtx, system+botBudgetOperatorNote, wrapMsgs, nil)
+	if err != nil {
+		botCheckpointCtx(ctx, "wa_bot_grounded_wrapup_v1", "failed class=%s", botErrClass(err))
+		return ""
+	}
+	text := botFinalAssistantText([]botMessage{{Role: "assistant", Content: resp.Content}})
+	if strings.TrimSpace(text) == "" {
+		botCheckpointCtx(ctx, "wa_bot_grounded_wrapup_v1", "empty")
+		return ""
+	}
+	botCheckpointCtx(ctx, "wa_bot_grounded_wrapup_v1", "answered chars=%d", len(text))
+	return text
+}
+
+// botGroundedWrapUpReserve is the minimum turn budget left for the grounded
+// no-tools wrap-up call to be worth starting.
+const botGroundedWrapUpReserve = 20 * time.Second
+
+// botGroundedWrapUpTimeout bounds the grounded wrap-up call itself, so it can
+// never hang a turn whose own deadline already passed.
+const botGroundedWrapUpTimeout = 25 * time.Second
+
+// botTranscriptHasToolResult reports whether the transcript already contains
+// at least one tool_result worth summarizing.
+func botTranscriptHasToolResult(msgs []botMessage) bool {
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.Type == "tool_result" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // botInterruptedText is the fixed reply when the turn cannot continue (model

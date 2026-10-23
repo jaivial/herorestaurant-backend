@@ -120,10 +120,107 @@ func TestBotRunAgentLoop_MaxIterations(t *testing.T) {
 	}
 	// wa_bot_noncap_v1: with the budget spent, the tool call of the LAST
 	// response is deliberately NOT executed (no hidden extra mutation): rounds
-	// 1-2 run the tool, round 3 hits the cap and the loop answers with the
-	// exhausted notice (botBudgetExhaustedText).
+	// 1-2 run the tool, round 3 hits the cap and the loop tries the grounded
+	// no-tools wrap-up (wa_bot_grounded_wrapup_v1) before the fixed notice.
 	if execCount != 2 {
 		t.Errorf("execCount = %d, want 2", execCount)
+	}
+	if !result.Exhausted {
+		t.Errorf("result.Exhausted = false, want true")
+	}
+}
+
+func TestBotRunAgentLoop_GroundedWrapUp_AnswersInsteadOfFixedText(t *testing.T) {
+	// wa_bot_grounded_wrapup_v1: when the model still asks for a tool on the
+	// capped call, the loop makes ONE extra no-tools call. If that call
+	// returns text, the customer gets the grounded answer, not the fixed
+	// botBudgetExhaustedText.
+	// Script: call 1 -> tool_use (runs); call 2 (capped) -> tool_use again;
+	// call 3 (grounded, no tools) -> plain text answer.
+	llm, calls := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_2", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "He confirmado el menú de arroces; falta aplicar el cambio de precio."},
+			},
+		},
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	s.cfg.BotMaxIterations = 2 // call 2 is the capped (last) one
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		return `{"rices":["marisco"]}`, nil
+	}
+	result, err := s.botRunAgentLoop(context.Background(), 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if !result.Exhausted {
+		t.Errorf("result.Exhausted = false, want true")
+	}
+	got := botFinalAssistantText(result.Messages)
+	want := "He confirmado el menú de arroces; falta aplicar el cambio de precio."
+	if got != want {
+		t.Errorf("final text = %q, want grounded answer %q", got, want)
+	}
+	if len(*calls) != 3 {
+		t.Fatalf("llm calls = %d, want 3 (loop x2 + grounded wrap-up)", len(*calls))
+	}
+	// The grounded wrap-up call must send NO tools.
+	var grounded struct {
+		Tools []any `json:"tools"`
+	}
+	_ = json.Unmarshal((*calls)[2], &grounded)
+	if len(grounded.Tools) != 0 {
+		t.Errorf("grounded wrap-up tools = %d, want 0", len(grounded.Tools))
+	}
+}
+
+func TestBotRunAgentLoop_GroundedWrapUp_FallsBackWhenNoText(t *testing.T) {
+	// wa_bot_grounded_wrapup_v1: when the grounded no-tools call returns no
+	// text (reasoning model burned its budget), the loop falls back to the
+	// fixed botBudgetExhaustedText.
+	llm, _ := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_2", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{"stop_reason": "max_tokens", "content": []map[string]any{}}, // grounded call: no text
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	s.cfg.BotMaxIterations = 2
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		return `{"rices":[]}`, nil
+	}
+	result, err := s.botRunAgentLoop(context.Background(), 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if got := botFinalAssistantText(result.Messages); got != botBudgetExhaustedText {
+		t.Errorf("final text = %q, want fixed exhausted text", got)
 	}
 }
 
