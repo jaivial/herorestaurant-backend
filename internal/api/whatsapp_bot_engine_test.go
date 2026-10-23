@@ -32,6 +32,34 @@ func fakeLLM(t *testing.T, responses []map[string]any) (*httptest.Server, *[][]b
 	return srv, &calls
 }
 
+// fakeLLMFailAt is fakeLLM but the (failAt)th call (0-indexed) answers HTTP
+// 500 so the model call returns an error (the interrupted path).
+func fakeLLMFailAt(t *testing.T, responses []map[string]any, failAt int) (*httptest.Server, *[][]byte) {
+	t.Helper()
+	var mu sync.Mutex
+	var calls [][]byte
+	idx := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		raw, _ := io.ReadAll(r.Body)
+		calls = append(calls, raw)
+		if idx >= len(responses) {
+			t.Error("LLM called more times than scripted")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if idx == failAt {
+			idx++
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(responses[idx])
+		idx++
+	}))
+	return srv, &calls
+}
+
 func TestBotRunAgentLoop_EarlyStopAfterDelivery(t *testing.T) {
 	// wa_bot_early_stop_v1: when every tool of the response was a successful
 	// customer delivery (send_message), the reply is out and the loop stops
@@ -286,6 +314,62 @@ func TestBotRunAgentLoop_TerminalTool_GroundedWrapUp(t *testing.T) {
 	_ = json.Unmarshal((*calls)[1], &grounded)
 	if len(grounded.Tools) != 0 {
 		t.Errorf("grounded wrap-up tools = %d, want 0", len(grounded.Tools))
+	}
+}
+
+func TestBotRunAgentLoop_Interrupted_GroundedWrapUp(t *testing.T) {
+	// wa_bot_interrupted_grounded_v1: when the model call fails after tools ran
+	// (e.g. the 3-min turn deadline passes), the customer must get the grounded
+	// answer from the gathered tool_results, not the fixed interrupted text.
+	// Regression: prod 2026-10-23 17:12, a 27-iter deadline-exhausted turn
+	// answered botInterruptedText even though the data was in the transcript.
+	// Script: call 1 -> tool_use (runs); call 2 -> HTTP 500 (model call fails);
+	// call 3 (grounded, no tools, on a detached ctx) -> plain text answer.
+	llm, calls := fakeLLMFailAt(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			// idx=1 is replaced by the HTTP 500 failure (failAt=1); this entry is
+			// the grounded wrap-up answer the loop makes after the interrupt.
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "El menu de arroces tiene marisco y pollo; no pude terminar de listar los postres."},
+			},
+		},
+		{
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "El menu de arroces tiene marisco y pollo; no pude terminar de listar los postres."},
+			},
+		},
+	}, 1)
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		return `{"rices":["marisco","pollo"]}`, nil
+	}
+	result, err := s.botRunAgentLoop(context.Background(), 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if !result.Interrupted {
+		t.Errorf("result.Interrupted = false, want true")
+	}
+	got := botFinalAssistantText(result.Messages)
+	want := "El menu de arroces tiene marisco y pollo; no pude terminar de listar los postres."
+	if got != want {
+		t.Errorf("final text = %q, want grounded answer %q", got, want)
+	}
+	if got == botInterruptedText {
+		t.Errorf("interrupted turn must not answer the fixed interrupted text when a grounded answer is available")
+	}
+	if len(*calls) != 3 {
+		t.Fatalf("llm calls = %d, want 3 (loop + failed + grounded wrap-up)", len(*calls))
 	}
 }
 
