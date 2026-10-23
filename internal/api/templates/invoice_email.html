@@ -10,7 +10,7 @@
     <td style="padding:16px 22px 4px 22px;">
       <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:{{.Accent}};margin-bottom:4px;">Cliente</div>
       <div style="font-size:14px;color:#111827;font-weight:600;">{{.Customer.Name}}</div>
-      {{if .Customer.DniCif}}<div style="font-size:12px;color:#6b7280;">DNI/CIF: {{.Customer.DniCif}}</div>{{end}}
+      {{if .Customer.DniCif}}<div style="font-size:12px;color:#6b7280;">{{.Customer.DniCifLabel}}: {{.Customer.DniCif}}</div>{{end}}
       {{if .Customer.Address}}<div style="font-size:12px;color:#6b7280;">{{.Customer.Address}}</div>{{end}}
     </td>
   </tr>
