@@ -195,6 +195,24 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 		}
 		result.Iterations = i + 1
 
+		// wa_bot_deadline_wrapup_v1: close the turn while the deadline still
+		// leaves room for the grounded wrap-up. Waiting until the deadline
+		// passes is too late: botGroundedWrapUp then skips (no_budget) and the
+		// customer gets the fixed text. Prod 2026-10-23 18:18: 23 iter / 180s
+		// ended with botInterruptedText and wrap-up skipped reason=no_budget.
+		if result.Ran > 0 {
+			if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= botDeadlineWrapUpAt {
+				botCheckpointCtx(ctx, "wa_bot_deadline_wrapup_v1", "remaining_ms=%d iterations=%d ran=%d failed=%d", time.Until(deadline).Milliseconds(), i, result.Ran, result.Failed)
+				result.Exhausted = true
+				text := s.botGroundedWrapUp(ctx, call, system, msgs)
+				if text == "" {
+					text = botBudgetExhaustedText
+				}
+				result.Messages = append(msgs, botMessage{Role: "assistant", Content: []botBlock{{Type: "text", Text: text}}})
+				return result, nil
+			}
+		}
+
 		// Wrap-up call: only when the loop guard saw no progress, or when an
 		// operator-set cap is reached. Never because of a call count by default.
 		last := guard.stalled || (maxIter > 0 && i == maxIter-1)
@@ -390,6 +408,12 @@ const botGroundedWrapUpReserve = 20 * time.Second
 // botGroundedWrapUpTimeout bounds the grounded wrap-up call itself, so it can
 // never hang a turn whose own deadline already passed.
 const botGroundedWrapUpTimeout = 25 * time.Second
+
+// botDeadlineWrapUpAt is the remaining turn budget at which the loop stops
+// calling tools and answers with the grounded wrap-up (one model call needs
+// well under this; botGroundedWrapUp itself requires > botGroundedWrapUpReserve).
+// A var so tests can raise it.
+var botDeadlineWrapUpAt = 50 * time.Second
 
 // botTranscriptHasToolResult reports whether the transcript already contains
 // at least one tool_result worth summarizing.
