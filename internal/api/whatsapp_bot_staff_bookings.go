@@ -69,6 +69,23 @@ func (s *Server) adminBookingDetail(ctx context.Context, restaurantID int, booki
 		return botJSON(map[string]any{"error": "reserva no encontrada", "terminal": true}), nil
 	}
 	out := map[string]any{"booking": b, "commentary_signals": botCommentarySignals(b.Commentary)}
+	// wa_bot_catalog_v2: a change request needs the group menu and its picked
+	// principales; without them the model explored the panel catalog for ~10
+	// iterations (prod 2026-10-23 18:15).
+	var menuID int64
+	var principales, extras string
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(menu_de_grupo_id,0), COALESCE(principales_json,''), COALESCE(extras_json,'') FROM bookings WHERE restaurant_id = ? AND id = ?`, restaurantID, bookingID).Scan(&menuID, &principales, &extras); err == nil {
+		if menuID > 0 {
+			out["menu_de_grupo_id"] = menuID
+			out["menu_hint"] = "Platos y principales elegibles: get_menu_details(menu_id). Cambiar principales: booking_propose_set_group_menu."
+		}
+		if p := strings.TrimSpace(principales); p != "" && json.Valid([]byte(p)) {
+			out["principales"] = json.RawMessage(p)
+		}
+		if e := strings.TrimSpace(extras); e != "" && json.Valid([]byte(e)) {
+			out["extras"] = json.RawMessage(e)
+		}
+	}
 	if b.IsEvent {
 		out["instruction"] = "Reserva de EVENTO: se muy prudente, no negocies ni prometas nada; la gestion la realiza el restaurante."
 	} else if b.IsSpecialBooking || b.SpecialDateTitle != "" {

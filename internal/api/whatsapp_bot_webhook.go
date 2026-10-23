@@ -721,6 +721,8 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			// wa_bot_admin_reads_v1: read-only staff reads share the exact
 			// admin scope gate (scope group + privileged turn + fresh member).
 			botTools = append(botTools, botToolDefsAdminReads()...)
+			// wa_bot_catalog_v2: drop customer phone-scoped tools (see botStaffPhoneScopedTools).
+			botTools = botWithoutTools(botTools, botStaffPhoneScopedTools)
 		}
 		// Coordination id: wa_bot_privileged_control_v1 - the control plane of
 		// this bot version (allowed chats + per-chat tool grants + allergen
