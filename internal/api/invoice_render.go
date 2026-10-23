@@ -32,11 +32,38 @@ type invoiceRenderIssuer struct {
 }
 
 type invoiceRenderParty struct {
-	Name    string
-	DniCif  string
-	Email   string
-	Phone   string
-	Address string
+	Name        string
+	DniCif      string
+	DniCifLabel string
+	Email       string
+	Phone       string
+	Address     string
+}
+
+// dniCifLabel returns the label of the customer's fiscal identifier: "NIF" for
+// a person (DNI/NIE) and "CIF" for a company, following the option chosen in
+// the invoice form. The invoices created before that choice kept no type and
+// fall back to the shape of the value.
+func dniCifLabel(storedType, value string) string {
+	switch strings.ToLower(strings.TrimSpace(storedType)) {
+	case "dni":
+		return "NIF"
+	case "cif":
+		return "CIF"
+	}
+	v := strings.ToUpper(strings.TrimSpace(value))
+	if v == "" {
+		return ""
+	}
+	r := []rune(v)
+	if r[0] >= '0' && r[0] <= '9' {
+		return "NIF"
+	}
+	// A NIE (foreign resident) starts with X, Y or Z followed by digits.
+	if len(r) > 1 && (r[0] == 'X' || r[0] == 'Y' || r[0] == 'Z') && r[1] >= '0' && r[1] <= '9' {
+		return "NIF"
+	}
+	return "CIF"
 }
 
 type invoiceRenderLine struct {
@@ -288,11 +315,12 @@ func buildInvoiceRenderData(inv *Invoice, info boRestaurantInfo, branding restau
 			LogoURL: branding.LogoURL,
 		},
 		Customer: invoiceRenderParty{
-			Name:    customerName,
-			DniCif:  deref(inv.CustomerDniCif),
-			Email:   inv.CustomerEmail,
-			Phone:   deref(inv.CustomerPhone),
-			Address: customerAddress,
+			Name:        customerName,
+			DniCif:      deref(inv.CustomerDniCif),
+			DniCifLabel: dniCifLabel(deref(inv.CustomerDniCifType), deref(inv.CustomerDniCif)),
+			Email:       inv.CustomerEmail,
+			Phone:       deref(inv.CustomerPhone),
+			Address:     customerAddress,
 		},
 		Number:        number,
 		InvoiceDate:   formatInvoiceDate(inv.InvoiceDate),
