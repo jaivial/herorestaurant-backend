@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeLLM returns a handler that pops scripted responses one per call.
@@ -413,6 +414,59 @@ func TestBotRunAgentLoop_NonTerminalRefusal_TurnStaysOpen(t *testing.T) {
 	}
 	if len(*calls) != 2 {
 		t.Fatalf("llm calls = %d, want 2 (turn must stay open after the refusal)", len(*calls))
+	}
+}
+
+func TestBotRunAgentLoop_DeadlineWrapUp_AnswersBeforeDeadline(t *testing.T) {
+	// wa_bot_deadline_wrapup_v1: when the remaining turn budget drops to
+	// botDeadlineWrapUpAt after tools ran, the loop stops calling tools and
+	// answers with the grounded wrap-up instead of running into the deadline
+	// (where the wrap-up is skipped for no_budget and the fixed text is sent).
+	prev := botDeadlineWrapUpAt
+	botDeadlineWrapUpAt = 59 * time.Second // turn below has 60s: trips after round 1
+	defer func() { botDeadlineWrapUpAt = prev }()
+	llm, calls := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "Reserva localizada; propongo el cambio en el siguiente mensaje."},
+			},
+		},
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		time.Sleep(1100 * time.Millisecond)
+		return `{"rices":["marisco"]}`, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	result, err := s.botRunAgentLoop(ctx, 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if !result.Exhausted || result.Interrupted {
+		t.Errorf("Exhausted=%t Interrupted=%t, want exhausted (deadline wrap-up), not interrupted", result.Exhausted, result.Interrupted)
+	}
+	if got := botFinalAssistantText(result.Messages); got != "Reserva localizada; propongo el cambio en el siguiente mensaje." {
+		t.Errorf("final text = %q, want grounded answer", got)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("llm calls = %d, want 2 (loop + grounded wrap-up)", len(*calls))
+	}
+	var grounded struct {
+		Tools []any `json:"tools"`
+	}
+	_ = json.Unmarshal((*calls)[1], &grounded)
+	if len(grounded.Tools) != 0 {
+		t.Errorf("grounded wrap-up tools = %d, want 0", len(grounded.Tools))
 	}
 }
 
