@@ -60,7 +60,7 @@
       <div class="card">
         <div class="label">Cliente</div>
         <div><strong>{{.Customer.Name}}</strong></div>
-        {{if .Customer.DniCif}}<div class="muted">DNI/CIF: {{.Customer.DniCif}}</div>{{end}}
+        {{if .Customer.DniCif}}<div class="muted">{{.Customer.DniCifLabel}}: {{.Customer.DniCif}}</div>{{end}}
         {{if .Customer.Address}}<div class="muted">{{.Customer.Address}}</div>{{end}}
         {{if .Customer.Email}}<div class="muted">{{.Customer.Email}}</div>{{end}}
         {{if .Customer.Phone}}<div class="muted">Tel: {{.Customer.Phone}}</div>{{end}}

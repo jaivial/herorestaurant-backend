@@ -225,7 +225,7 @@ func (s *Server) resolveInvoiceLogoURL(ctx context.Context, restaurantID int, br
 func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID int) (*Invoice, error) {
 	var inv Invoice
 	var (
-		invoiceNumber, customerSurname, customerDniCif, customerPhone                                 sql.NullString
+		invoiceNumber, customerSurname, customerDniCif, customerDniCifType, customerPhone             sql.NullString
 		addrStreet, addrNumber, addrPostal, addrCity, addrProvince, addrCountry                       sql.NullString
 		paymentMethod, accountImageURL, paymentDate, reservationDate, reservationCustomerName, pdfURL sql.NullString
 		reservationID, reservationPartySize                                                           sql.NullInt64
@@ -234,7 +234,7 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
-			id, restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_phone,
+			id, restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
 			amount, payment_method, account_image_url, invoice_date, payment_date,
@@ -246,7 +246,7 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 		FROM invoices
 		WHERE id = ? AND restaurant_id = ?
 	`, invoiceID, restaurantID).Scan(
-		&inv.ID, &inv.RestaurantID, &invoiceNumber, &inv.CustomerName, &customerSurname, &inv.CustomerEmail, &customerDniCif, &customerPhone,
+		&inv.ID, &inv.RestaurantID, &invoiceNumber, &inv.CustomerName, &customerSurname, &inv.CustomerEmail, &customerDniCif, &customerDniCifType, &customerPhone,
 		&addrStreet, &addrNumber, &addrPostal, &addrCity, &addrProvince, &addrCountry,
 		&inv.Amount, &paymentMethod, &accountImageURL, &inv.InvoiceDate, &paymentDate,
 		&inv.Status, &inv.IsReservation, &reservationID, &reservationDate, &reservationCustomerName, &reservationPartySize,
@@ -265,6 +265,7 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 	inv.InvoiceNumber = nullS(invoiceNumber)
 	inv.CustomerSurname = nullS(customerSurname)
 	inv.CustomerDniCif = nullS(customerDniCif)
+	inv.CustomerDniCifType = nullS(customerDniCifType)
 	inv.CustomerPhone = nullS(customerPhone)
 	inv.CustomerAddressStreet = nullS(addrStreet)
 	inv.CustomerAddressNumber = nullS(addrNumber)
