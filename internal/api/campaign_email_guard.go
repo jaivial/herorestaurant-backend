@@ -313,13 +313,14 @@ func (s *Server) campaignEmailBreakerTripped(ctx context.Context, restaurantID i
 	// by the sync and the run continues. The send stops on a series of notices or
 	// on any sign of a policy / auth / rate / reputation problem, which would hurt
 	// the sending account.
-	// A full recipient mailbox (4.2.2) concerns only that address, not the sending
+	// A full recipient mailbox (4.2.2 temporary or 5.2.2 permanent, e.g. Exchange
+	// STOREDRV QuotaExceededException) concerns only that address, not the sending
 	// account, so it is not a systemic signal (it still counts in a series of notices).
 	systemic := 0
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaign_bounce_events WHERE restaurant_id = ? AND id > ? AND (
 		status_code LIKE '4.%' OR status_code LIKE '5.3.%' OR status_code LIKE '5.4.%' OR status_code LIKE '5.7.%'
 		OR diagnostic REGEXP 'rate limit|throttl|too many|spam|block|reputation|policy|authenticat|denied|quota|try again|temporar')
-		AND NOT (status_code = '4.2.2' AND diagnostic REGEXP 'recipient.s (inbox|mailbox)|mailbox (is )?full|out of storage space')`, restaurantID, st.baseID).Scan(&systemic)
+		AND NOT (status_code IN ('4.2.2', '5.2.2') AND diagnostic REGEXP 'recipient.s (inbox|mailbox)|mailbox (is )?full|out of storage space')`, restaurantID, st.baseID).Scan(&systemic)
 	if systemic > 0 || newTotal >= campaignBounceTripAfter {
 		st.tripped = true
 		_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'paused', error = 'corte por rebotes' WHERE campaign_id = ? AND channel = 'email' AND status = 'pending'`, campaignID)
