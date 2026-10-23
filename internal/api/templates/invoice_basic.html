@@ -43,8 +43,7 @@
     <div>
       <div class="doc-title">FACTURA</div>
       <div class="meta">
-        {{if .Number}}<div><strong>Nº</strong> {{.Number}}</div>{{end}}
-        {{if .Number}}<div><span class="muted">Referencia:</span> {{.Number}}</div>{{end}}
+        <div><strong>Nº de factura:</strong> {{.Number}}</div>
         {{if .InvoiceDate}}<div><span class="muted">Fecha:</span> {{.InvoiceDate}}</div>{{end}}
         {{if .DueDate}}<div><span class="muted">Vencimiento:</span> {{.DueDate}}</div>{{end}}
         <div class="muted">{{.StatusLabel}}</div>
