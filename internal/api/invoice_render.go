@@ -244,10 +244,16 @@ func buildInvoiceRenderData(inv *Invoice, info boRestaurantInfo, branding restau
 		customerName += " " + s
 	}
 
-	// Only show an explicit invoice number; never expose the internal bill id.
+	// The number identifies the invoice in the header of its PDF: the custom
+	// one or the automatic one of the restaurant's series. An invoice created
+	// before the numbering existed has none, so the internal id identifies it
+	// (the same fallback the BackOffice shows).
 	number := ""
 	if inv.InvoiceNumber != nil && strings.TrimSpace(*inv.InvoiceNumber) != "" {
 		number = strings.TrimSpace(*inv.InvoiceNumber)
+	}
+	if number == "" {
+		number = fmt.Sprintf("#%d", inv.ID)
 	}
 
 	lines := make([]invoiceRenderLine, 0, len(inv.LineItems))
