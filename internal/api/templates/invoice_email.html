@@ -2,9 +2,8 @@
   <tr>
     <td style="padding:20px 22px;border-bottom:3px solid {{.Accent}};">
       <div style="font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:{{.Accent}};">Factura</div>
-      {{if .Number}}<div style="font-size:19px;font-weight:800;color:#111827;margin-top:2px;">{{.Number}}</div>{{end}}
-      {{if .Number}}<div style="font-size:12px;color:#6b7280;margin-top:2px;">Referencia: {{.Number}}</div>{{end}}
-      {{if .InvoiceDate}}<div style="font-size:12px;color:#6b7280;margin-top:{{if .Number}}4px{{else}}2px{{end}};">Fecha: {{.InvoiceDate}}</div>{{end}}
+      <div style="font-size:19px;font-weight:800;color:#111827;margin-top:2px;">Nº de factura {{.Number}}</div>
+      {{if .InvoiceDate}}<div style="font-size:12px;color:#6b7280;margin-top:4px;">Fecha: {{.InvoiceDate}}</div>{{end}}
     </td>
   </tr>
   <tr>

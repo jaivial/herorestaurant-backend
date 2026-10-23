@@ -1033,6 +1033,9 @@ func (s *Server) Routes() http.Handler {
 
 		// Invoices management
 		r.With(s.requireBOSession, facturasGate).Get("/invoices", s.handleBOInvoicesList)
+		// Numbering series of the invoices (Settings > Numeracion de facturas).
+		r.With(s.requireBOSession, ajustesGate).Get("/invoices/settings", s.handleBOInvoiceSettingsGet)
+		r.With(s.requireBOSession, ajustesGate).Post("/invoices/settings", s.handleBOInvoiceSettingsPost)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}", s.handleBOInvoiceGet)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices", s.handleBOInvoiceCreate)
 		r.With(s.requireBOSession, facturasGate).Put("/invoices/{id}", s.handleBOInvoiceUpdate)

@@ -262,10 +262,7 @@ func invoiceFallbackPDF(d invoiceRenderData) ([]byte, error) {
 	cardW := right - cardX
 	cardY := headerY + 13
 	metaRows := [][2]string{}
-	if d.Number != "" {
-		metaRows = append(metaRows, [2]string{"Nº de factura", d.Number})
-		metaRows = append(metaRows, [2]string{"Referencia", d.Number})
-	}
+	metaRows = append(metaRows, [2]string{"Nº de factura", d.Number})
 	if d.InvoiceDate != "" {
 		metaRows = append(metaRows, [2]string{"Fecha", d.InvoiceDate})
 	}

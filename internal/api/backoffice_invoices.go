@@ -131,6 +131,7 @@ type InvoiceLineItemInput struct {
 
 type InvoiceListParams struct {
 	Search        string `json:"search"`
+	SearchBy      string `json:"search_by"`
 	Status        string `json:"status"`
 	DateType      string `json:"date_type"`
 	DateFrom      string `json:"date_from"`
@@ -171,6 +172,7 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 	// Parse query params
 	params := InvoiceListParams{
 		Search:   strings.TrimSpace(r.URL.Query().Get("search")),
+		SearchBy: strings.TrimSpace(r.URL.Query().Get("search_by")),
 		Status:   strings.TrimSpace(r.URL.Query().Get("status")),
 		DateType: strings.TrimSpace(r.URL.Query().Get("date_type")),
 		DateFrom: strings.TrimSpace(r.URL.Query().Get("date_from")),
@@ -204,8 +206,20 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 
 	if params.Search != "" {
 		prefix := params.Search + "%"
-		baseWhere += " AND (customer_name LIKE ? OR customer_email LIKE ?)"
-		args = append(args, prefix, prefix)
+		switch strings.ToLower(params.SearchBy) {
+		case "invoice_number":
+			baseWhere += " AND invoice_number LIKE ?"
+			args = append(args, prefix)
+		case "email":
+			baseWhere += " AND customer_email LIKE ?"
+			args = append(args, prefix)
+		case "name":
+			baseWhere += " AND customer_name LIKE ?"
+			args = append(args, prefix)
+		default:
+			baseWhere += " AND (customer_name LIKE ? OR customer_email LIKE ?)"
+			args = append(args, prefix, prefix)
+		}
 	}
 
 	if params.Status != "" {
@@ -254,7 +268,7 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 	offset := (params.Page - 1) * params.Limit
 	query := `
 		SELECT 
-			id, restaurant_id,
+			id, restaurant_id, invoice_number,
 			customer_name, customer_surname, customer_email, customer_dni_cif, customer_phone,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
@@ -278,8 +292,9 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var inv Invoice
 		var subtotal, ivaRate, ivaAmount, totalF sql.NullFloat64
+		var invoiceNumber sql.NullString
 		err := rows.Scan(
-			&inv.ID, &inv.RestaurantID,
+			&inv.ID, &inv.RestaurantID, &invoiceNumber,
 			&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &inv.CustomerPhone,
 			&inv.CustomerAddressStreet, &inv.CustomerAddressNumber, &inv.CustomerAddressPostalCode,
 			&inv.CustomerAddressCity, &inv.CustomerAddressProvince, &inv.CustomerAddressCountry,
@@ -300,6 +315,7 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 		inv.IVARate = nullF(ivaRate)
 		inv.IVAAmount = nullF(ivaAmount)
 		inv.Total = nullF(totalF)
+		inv.InvoiceNumber = nullS(invoiceNumber)
 		invoices = append(invoices, inv)
 	}
 
@@ -334,9 +350,10 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 
 	var inv Invoice
 	var getSubtotal, getIvaRate, getIvaAmount, getTotal sql.NullFloat64
+	var invoiceNumber sql.NullString
 	err = s.db.QueryRowContext(r.Context(), `
 		SELECT 
-			id, restaurant_id,
+			id, restaurant_id, invoice_number,
 			customer_name, customer_surname, customer_email, customer_dni_cif, customer_phone,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
@@ -348,7 +365,7 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 		FROM invoices
 		WHERE id = ? AND restaurant_id = ?
 	`, invoiceID, a.ActiveRestaurantID).Scan(
-		&inv.ID, &inv.RestaurantID,
+		&inv.ID, &inv.RestaurantID, &invoiceNumber,
 		&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &inv.CustomerPhone,
 		&inv.CustomerAddressStreet, &inv.CustomerAddressNumber, &inv.CustomerAddressPostalCode,
 		&inv.CustomerAddressCity, &inv.CustomerAddressProvince, &inv.CustomerAddressCountry,
@@ -373,6 +390,7 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 	inv.IVARate = nullF(getIvaRate)
 	inv.IVAAmount = nullF(getIvaAmount)
 	inv.Total = nullF(getTotal)
+	inv.InvoiceNumber = nullS(invoiceNumber)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -430,6 +448,15 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	// Coordination id: invoice_numbering_v1 - the number identifies the
+	// invoice in the header of its PDF: the custom one when the operator
+	// typed it, the automatic one of the restaurant's series otherwise.
+	number, err := s.resolveInvoiceNumber(r.Context(), tx, a.ActiveRestaurantID, input.InvoiceNumber, "")
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error asignando el numero de factura: "+err.Error())
+		return
+	}
+
 	result, err := tx.ExecContext(r.Context(), `
 		INSERT INTO invoices (
 			restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_phone,
@@ -442,7 +469,7 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 			discount_type, discount_value, discount_amount, discount_reason,
 			due_date, internal_notes, category, tags, deposit_type, deposit_amount
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, a.ActiveRestaurantID, input.InvoiceNumber,
+	`, a.ActiveRestaurantID, number,
 		input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerPhone,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
@@ -525,6 +552,23 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	// Coordination id: invoice_numbering_v1 - a save never wipes the number:
+	// the custom one the operator typed wins, the stored one is kept when the
+	// payload does not mention it, and an invoice without a number gets the
+	// automatic one of the restaurant's series.
+	var storedNumber sql.NullString
+	if err := tx.QueryRowContext(r.Context(), `
+		SELECT invoice_number FROM invoices WHERE id = ? AND restaurant_id = ?
+	`, invoiceID, a.ActiveRestaurantID).Scan(&storedNumber); err != nil && err != sql.ErrNoRows {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error reading invoice: "+err.Error())
+		return
+	}
+	number, err := s.resolveInvoiceNumber(r.Context(), tx, a.ActiveRestaurantID, input.InvoiceNumber, storedNumber.String)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error asignando el numero de factura: "+err.Error())
+		return
+	}
+
 	res, err := tx.ExecContext(r.Context(), `
 		UPDATE invoices SET
 			invoice_number = ?, customer_name = ?, customer_surname = ?, customer_email = ?, customer_dni_cif = ?, customer_phone = ?,
@@ -537,7 +581,7 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 			discount_type = ?, discount_value = ?, discount_amount = ?, discount_reason = ?,
 			due_date = ?, internal_notes = ?, category = ?, tags = ?, deposit_type = ?, deposit_amount = ?
 		WHERE id = ? AND restaurant_id = ?
-	`, input.InvoiceNumber, input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerPhone,
+	`, number, input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerPhone,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
 		input.Amount, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
