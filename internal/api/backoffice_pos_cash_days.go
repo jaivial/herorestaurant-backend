@@ -274,7 +274,22 @@ func (s *Server) handleBOPOSCashDayCurrent(w http.ResponseWriter, r *http.Reques
 			httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day totals")
 			return
 		}
-		payload["cashDay"] = withPOSCashDayTotals(day.asMap(), totals[date])
+		dayMap := withPOSCashDayTotals(day.asMap(), totals[date])
+		// The cash the drawer should hold right now (float + cash sales + ins −
+		// outs − cash refunds), so the till can show it before the close and
+		// the operator counts against a known figure instead of guessing.
+		// Coordination id: pos_cash_day_expected_cash_v1
+		summary := posCashSummary{TerminalKey: "day-" + date, Status: day.Status, OpenedAt: day.OpenedAt, OpeningCash: day.OpeningCash}
+		if summary, sumErr := s.loadPOSCashSummaryScoped(r.Context(), s.db, a.ActiveRestaurantID, posCashDayScope(day.ID, date), summary); sumErr == nil {
+			dayMap["expectedCashCents"] = summary.ExpectedCash
+			dayMap["cashSalesCents"] = summary.CashSales
+			dayMap["cashInCents"] = summary.CashIn
+			dayMap["cashOutCents"] = summary.CashOut
+			dayMap["cashRefundsCents"] = summary.CashRefunds
+			dayMap["openVisitCount"] = summary.OpenVisitCount
+			dayMap["openTicketCount"] = summary.OpenTicketCount
+		}
+		payload["cashDay"] = dayMap
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day")
 		return
