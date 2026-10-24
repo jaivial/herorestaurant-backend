@@ -242,7 +242,14 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		courseFilter = " AND COALESCE(NULLIF(l.course,''),'1')=?"
 		args = append(args, in.Course)
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT l.id,l.pos_product_id,p.category_id,l.product_name_snapshot,l.quantity,COALESCE(l.notes,'') FROM pos_ticket_lines l JOIN pos_products p ON p.restaurant_id=l.restaurant_id AND p.id=l.pos_product_id WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'`+courseFilter+` ORDER BY l.id`, args...)
+	// Modifiers ("al punto", "sin cebolla", "extra queso") travel with the dish:
+	// the cook reads them from the dispatch, so they are folded into the notes
+	// snapshot ahead of the waiter's free text. Coordination id: pos_kitchen_modifiers_v1
+	rows, err := tx.QueryContext(r.Context(), `SELECT l.id,l.pos_product_id,p.category_id,l.product_name_snapshot,l.quantity,
+		TRIM(BOTH ' · ' FROM CONCAT_WS(' · ',
+			(SELECT GROUP_CONCAT(CASE WHEN m.quantity>1 THEN CONCAT(m.name_snapshot,' ×',m.quantity) ELSE m.name_snapshot END ORDER BY m.id SEPARATOR ', ') FROM pos_ticket_line_modifiers m WHERE m.restaurant_id=l.restaurant_id AND m.ticket_line_id=l.id),
+			NULLIF(l.notes,'')))
+		FROM pos_ticket_lines l JOIN pos_products p ON p.restaurant_id=l.restaurant_id AND p.id=l.pos_product_id WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'`+courseFilter+` ORDER BY l.id`, args...)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading kitchen lines")
 		return
@@ -268,13 +275,19 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		return
 	}
 	stations := map[int64][]posKitchenLineSnapshot{}
+	// Dishes with no route reach no station. They used to vanish silently: the
+	// waiter saw "sent" while the kitchen never got the plate. They are named in
+	// the response so the till can warn. Coordination id: pos_kitchen_unrouted_v1
+	unrouted := []map[string]any{}
 	for _, line := range lines {
 		routeRows, qErr := tx.QueryContext(r.Context(), `SELECT DISTINCT station_id FROM pos_kitchen_routes WHERE restaurant_id=? AND is_active=1 AND (pos_product_id=? OR (pos_product_id IS NULL AND category_id=?)) ORDER BY priority,id`, a.ActiveRestaurantID, line.ProductID, line.CategoryID)
 		if qErr != nil {
 			httpx.WriteError(w, 500, "Error routing kitchen lines")
 			return
 		}
+		routed := false
 		for routeRows.Next() {
+			routed = true
 			var stationID int64
 			if qErr = routeRows.Scan(&stationID); qErr != nil {
 				routeRows.Close()
@@ -289,6 +302,9 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 			return
 		}
 		routeRows.Close()
+		if !routed {
+			unrouted = append(unrouted, map[string]any{"lineId": line.LineID, "productName": line.Name, "quantity": line.Quantity})
+		}
 	}
 	priorStations, priorErr := tx.QueryContext(r.Context(), `SELECT DISTINCT d.station_id FROM pos_kitchen_dispatches d JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=d.restaurant_id AND dl.dispatch_id=d.id JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id WHERE d.restaurant_id=? AND (d.ticket_id=? OR l.ticket_id=?) UNION SELECT kt.station_id FROM pos_kitchen_line_transfers kt JOIN pos_ticket_lines l ON l.restaurant_id=kt.restaurant_id AND l.id=kt.to_line_id WHERE kt.restaurant_id=? AND l.ticket_id=?`, a.ActiveRestaurantID, ticketID, ticketID, a.ActiveRestaurantID, ticketID)
 	if priorErr != nil {
@@ -313,7 +329,7 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 	}
 	priorStations.Close()
 	if len(stations) == 0 {
-		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "No kitchen routes configured", "code": "KITCHEN_ROUTES_MISSING"})
+		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "No kitchen routes configured", "code": "KITCHEN_ROUTES_MISSING", "unroutedLines": unrouted})
 		return
 	}
 	created := []int64{}
@@ -415,14 +431,14 @@ func (s *Server) handleBOPOSKitchenDispatchCreate(w http.ResponseWriter, r *http
 		created = append(created, dispatchID)
 	}
 	if len(created) == 0 {
-		httpx.WriteJSON(w, 200, map[string]any{"success": true, "duplicate": true, "dispatchIds": created})
+		httpx.WriteJSON(w, 200, map[string]any{"success": true, "duplicate": true, "dispatchIds": created, "unroutedLines": unrouted})
 		return
 	}
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, 500, "Error creating kitchen dispatch")
 		return
 	}
-	httpx.WriteJSON(w, 201, map[string]any{"success": true, "dispatchIds": created})
+	httpx.WriteJSON(w, 201, map[string]any{"success": true, "dispatchIds": created, "unroutedLines": unrouted})
 }
 
 func (s *Server) handleBOPOSKitchenQueue(w http.ResponseWriter, r *http.Request) {
