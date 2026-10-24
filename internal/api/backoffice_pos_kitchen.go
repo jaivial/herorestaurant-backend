@@ -445,12 +445,20 @@ func (s *Server) handleBOPOSKitchenQueue(w http.ResponseWriter, r *http.Request)
 	a, _ := boAuthFromContext(r.Context())
 	stationID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("stationId")), 10, 64)
 	args := []any{a.ActiveRestaurantID}
-	where := "d.restaurant_id=? AND d.status IN ('PENDING','ACKNOWLEDGED','PREPARING','FAILED')"
+	// A paid or voided ticket is no longer being cooked; dispatches of a ticket
+	// that was settled without the cook ever pressing "Lista" used to stay on
+	// the screen for weeks. They are dropped here, never deleted.
+	// Coordination id: pos_kds_context_v1
+	where := "d.restaurant_id=? AND d.status IN ('PENDING','ACKNOWLEDGED','PREPARING','FAILED') AND t.status='OPEN' AND d.created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"
 	if stationID > 0 {
 		where += " AND d.station_id=?"
 		args = append(args, stationID)
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT d.id,d.station_id,s.name,d.ticket_id,t.ticket_number,COALESCE(rt.name,''),d.status,d.created_at FROM pos_kitchen_dispatches d JOIN pos_kitchen_stations s ON s.restaurant_id=d.restaurant_id AND s.id=d.station_id JOIN pos_tickets t ON t.restaurant_id=d.restaurant_id AND t.id=d.ticket_id JOIN pos_visits v ON v.restaurant_id=d.restaurant_id AND v.id=d.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE `+where+` ORDER BY d.created_at,d.id`, args...)
+	// Covers, channel, the course of the lines and the ticket note travel with
+	// the dispatch: a cook plates for N people and reads "sin gluten" off the
+	// screen, not off a paper ticket. Coordination id: pos_kds_context_v1
+	rows, err := s.db.QueryContext(r.Context(), `SELECT d.id,d.station_id,s.name,d.ticket_id,t.ticket_number,COALESCE(rt.name,''),d.status,d.created_at,v.covers,v.channel,COALESCE(t.note,''),
+		COALESCE((SELECT COALESCE(NULLIF(l.course,''),'1') FROM pos_kitchen_dispatch_lines dl JOIN pos_ticket_lines l ON l.restaurant_id=dl.restaurant_id AND l.id=dl.ticket_line_id WHERE dl.restaurant_id=d.restaurant_id AND dl.dispatch_id=d.id ORDER BY dl.id LIMIT 1),'1') FROM pos_kitchen_dispatches d JOIN pos_kitchen_stations s ON s.restaurant_id=d.restaurant_id AND s.id=d.station_id JOIN pos_tickets t ON t.restaurant_id=d.restaurant_id AND t.id=d.ticket_id JOIN pos_visits v ON v.restaurant_id=d.restaurant_id AND v.id=d.visit_id LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id WHERE `+where+` ORDER BY d.created_at,d.id`, args...)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading kitchen queue")
 		return
@@ -458,10 +466,10 @@ func (s *Server) handleBOPOSKitchenQueue(w http.ResponseWriter, r *http.Request)
 	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
-		var id, station, ticket int64
-		var stationName, number, table, status string
+		var id, station, ticket, covers int64
+		var stationName, number, table, status, channel, ticketNote, course string
 		var created any
-		if err = rows.Scan(&id, &station, &stationName, &ticket, &number, &table, &status, &created); err != nil {
+		if err = rows.Scan(&id, &station, &stationName, &ticket, &number, &table, &status, &created, &covers, &channel, &ticketNote, &course); err != nil {
 			httpx.WriteError(w, 500, "Error reading kitchen queue")
 			return
 		}
@@ -487,7 +495,7 @@ func (s *Server) handleBOPOSKitchenQueue(w http.ResponseWriter, r *http.Request)
 			httpx.WriteError(w, 500, "Error reading kitchen dispatch lines")
 			return
 		}
-		items = append(items, map[string]any{"id": id, "stationId": station, "stationName": stationName, "ticketId": ticket, "ticketNumber": number, "tableName": table, "status": status, "createdAt": created, "lines": lines})
+		items = append(items, map[string]any{"id": id, "stationId": station, "stationName": stationName, "ticketId": ticket, "ticketNumber": number, "tableName": table, "status": status, "createdAt": created, "lines": lines, "covers": covers, "channel": channel, "ticketNote": ticketNote, "course": course})
 	}
 	if err = rows.Err(); err != nil {
 		httpx.WriteError(w, 500, "Error reading kitchen queue")
