@@ -1360,6 +1360,19 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Ticket changed", "code": "STALE_TICKET"})
 		return
 	}
+	// A discount larger than what the guest owes is not a discount: it used to
+	// be clamped to zero silently, hiding a typo (50 instead of 5). A comp has
+	// its own path. Coordination id: pos_discount_bounds_v1
+	var subtotal, surcharge int64
+	if err = tx.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(line_total_gross_cents),0) FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE'`, a.ActiveRestaurantID, ticketID).Scan(&subtotal); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error reading ticket lines")
+		return
+	}
+	_ = tx.QueryRowContext(r.Context(), `SELECT COALESCE(surcharge_cents,0) FROM pos_tickets WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, ticketID).Scan(&surcharge)
+	if in.AmountCents > subtotal+surcharge {
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Discount exceeds ticket total", "code": "DISCOUNT_EXCEEDS_TOTAL", "maxDiscountCents": subtotal + surcharge})
+		return
+	}
 	// Only a discount that GROWS needs approval: taking one off makes the guest
 	// pay more, which nobody has to authorise.
 	approvedBy := ""
