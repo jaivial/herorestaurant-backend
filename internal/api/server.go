@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -1795,37 +1796,145 @@ func parseAlergenos(raw sql.NullString) []string {
 	return cleaned
 }
 
+type seoRoutesManifest struct {
+	Redirects map[string]string `json:"redirects"`
+	GonePaths []string          `json:"gonePaths"`
+	MenuPaths map[string]string `json:"menuPaths"`
+	AppPaths  []string          `json:"appPaths"`
+}
+
+func readSEORoutesManifest(fsys fs.FS) *seoRoutesManifest {
+	data, err := fs.ReadFile(fsys, "seo-routes.json")
+	if err != nil {
+		return nil
+	}
+	var manifest seoRoutesManifest
+	if json.Unmarshal(data, &manifest) != nil {
+		return nil
+	}
+	return &manifest
+}
+
+func seoRedirect(w http.ResponseWriter, r *http.Request, target string) {
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+func seoMenuTarget(manifest *seoRoutesManifest, requestPath string) (string, bool) {
+	if manifest == nil {
+		return "", false
+	}
+	prefix := ""
+	path := strings.TrimSuffix(requestPath, "/")
+	if path == "/en" || strings.HasPrefix(path, "/en/") {
+		prefix = "/en"
+		path = strings.TrimPrefix(path, "/en")
+	}
+	if !strings.HasPrefix(path, "/menu/") {
+		return "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(path, "/menu/"), "/")
+	if len(parts) < 1 || len(parts) > 2 || parts[0] == "" {
+		return "", false
+	}
+	target, ok := manifest.MenuPaths[parts[0]]
+	if !ok || path == target {
+		return "", false
+	}
+	return prefix + target, true
+}
+
+func isSPAApplicationPath(requestPath string, appPaths map[string]bool) bool {
+	path := strings.TrimSuffix(requestPath, "/")
+	if path == "/en" {
+		path = "/"
+	} else if strings.HasPrefix(path, "/en/") {
+		path = strings.TrimPrefix(path, "/en")
+	}
+	if path == "" {
+		path = "/"
+	}
+	return appPaths[path] || strings.HasPrefix(path, "/backoffice/")
+}
+
+func serveSPAStatus(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string, status int) {
+	data, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(status)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(data)
+	}
+}
+
 func SPAHandler(staticDir string) http.Handler {
 	fsys := os.DirFS(staticDir)
+	manifest := readSEORoutesManifest(fsys)
+	gonePaths := map[string]bool{}
+	appPaths := map[string]bool{}
+	if manifest != nil {
+		for _, path := range manifest.GonePaths {
+			gonePaths[path] = true
+		}
+		for _, path := range manifest.AppPaths {
+			appPaths[path] = true
+		}
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		if manifest != nil {
+			if target, ok := manifest.Redirects[r.URL.Path]; ok {
+				seoRedirect(w, r, target)
+				return
+			}
+			if gonePaths[r.URL.Path] {
+				serveSPAStatus(w, r, fsys, "gone.html", http.StatusGone)
+				return
+			}
+			if target, ok := seoMenuTarget(manifest, r.URL.Path); ok {
+				seoRedirect(w, r, target)
+				return
+			}
+		}
 
-		path := strings.TrimPrefix(r.URL.Path, "/")
+		path := strings.Trim(r.URL.Path, "/")
 		if path == "" {
 			path = "index.html"
 		}
-
-		// Cache hashed Vite assets aggressively.
 		if strings.HasPrefix(path, "assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 
-		f, err := fsys.Open(path)
-		if err == nil {
-			defer f.Close()
-			http.FileServer(http.FS(fsys)).ServeHTTP(w, r)
-			return
+		if info, err := fs.Stat(fsys, path); err == nil {
+			if !info.IsDir() {
+				http.ServeFileFS(w, r, fsys, path)
+				return
+			}
+			indexPath := strings.TrimSuffix(path, "/") + "/index.html"
+			if _, err := fs.Stat(fsys, indexPath); err == nil {
+				http.ServeFileFS(w, r, fsys, indexPath)
+				return
+			}
 		}
 
-		// Fallback to the SPA entrypoint for client-side routes. ServeFileFS,
-		// not FileServer: FileServer answers a request whose path is
-		// /index.html with a 301 to ./, which would bounce every deep link
-		// back to the homepage.
-		http.ServeFileFS(w, r, fsys, "index.html")
+		// The manifest distinguishes client-side application routes from unknown
+		// URLs. Older distributions without it retain the original SPA fallback.
+		if manifest == nil || isSPAApplicationPath(r.URL.Path, appPaths) {
+			http.ServeFileFS(w, r, fsys, "index.html")
+			return
+		}
+		serveSPAStatus(w, r, fsys, "404.html", http.StatusNotFound)
 	})
 }
 
@@ -1847,11 +1956,12 @@ func (s *Server) spaNavigationSplit(next http.Handler) http.Handler {
 	if strings.TrimSpace(s.cfg.StaticDir) == "" {
 		return next
 	}
+	handler := SPAHandler(s.cfg.StaticDir)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
 			spaPagePaths[r.URL.Path] &&
 			strings.Contains(r.Header.Get("Accept"), "text/html") {
-			SPAHandler(s.cfg.StaticDir).ServeHTTP(w, r)
+			handler.ServeHTTP(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
