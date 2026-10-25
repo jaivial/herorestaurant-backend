@@ -1894,8 +1894,14 @@ func SPAHandler(staticDir string) http.Handler {
 			return
 		}
 		if manifest != nil {
-			if target, ok := manifest.Redirects[r.URL.Path]; ok {
-				seoRedirect(w, r, target)
+			redirectPath := r.URL.Path
+			localePrefix := ""
+			if redirectPath == "/en" || strings.HasPrefix(redirectPath, "/en/") {
+				localePrefix = "/en"
+				redirectPath = strings.TrimPrefix(redirectPath, "/en")
+			}
+			if target, ok := manifest.Redirects[redirectPath]; ok {
+				seoRedirect(w, r, localePrefix+target)
 				return
 			}
 			if gonePaths[r.URL.Path] {
