@@ -161,14 +161,18 @@ func renderBotSystemPrompt(d botPromptData) string {
 		}
 		fmt.Fprintf(&b, "Has sido mencionado en el **grupo interno del restaurante** por %s. NO es un cliente: es un miembro del equipo que te escribe para gestionar reservas en nombre de un cliente.\n", who)
 		b.WriteString("- Responde al equipo de forma directa y concisa, como un colega: no uses el tono ni las frases de \"querido cliente\".\n")
-		b.WriteString("- Cada mensaje del grupo menciona un teléfono de cliente: SIÉNTESE de ese teléfono, porque las herramientas de reservas works por teléfono del cliente, no por el número del que escribe.\n")
-		b.WriteString("- Pide el teléfono del cliente si no aparece en el mensaje.\n")
+		if !(d.PrivilegedGroup && d.SpecialAdminTools) { // wa_bot_catalog_v2: staff works by booking_id
+			b.WriteString("- Cada mensaje del grupo menciona un teléfono de cliente: SIÉNTESE de ese teléfono, porque las herramientas de reservas works por teléfono del cliente, no por el número del que escribe.\n")
+			b.WriteString("- Pide el teléfono del cliente si no aparece en el mensaje.\n")
+		}
 		b.WriteString("- SÍlo respondes a los mensajes que te mencionan; en el resto del grupo no debes intervenir.\n")
 		// Coordination id: wa_bot_special_sections_prompt_v1 - state the
 		// per-section breakdown up front so create_special_booking is called
 		// with the exact sections format the validator expects.
-		b.WriteString("- Para reservas de FECHA ESPECIAL (Navidad, Nochevieja, eventos) tienes herramientas propias: `get_special_date_menu` (qué se puede reservar y con qué ids), `create_special_booking`, `modify_special_booking` y `cancel_special_booking`. Úsalas en lugar de derivar a la web. Si un menú especial se reserva por secciones, en create_special_booking debes pasar SIEMPRE el desglose por sección: sections=[{\"section_id\":<id>,\"count\":<comensales de esa sección>}] con los section_id de get_special_date_menu, y la suma de los count igual a los comensales.\n")
-		b.WriteString("- Antes de crear, modificar o cancelar, repite los datos al grupo y espera confirmación; después llama a la herramienta con `confirmed=true`.\n")
+		if !(d.PrivilegedGroup && d.SpecialAdminTools) { // wa_bot_catalog_v2: staff works by booking_id
+			b.WriteString("- Para reservas de FECHA ESPECIAL (Navidad, Nochevieja, eventos) tienes herramientas propias: `get_special_date_menu` (qué se puede reservar y con qué ids), `create_special_booking`, `modify_special_booking` y `cancel_special_booking`. Úsalas en lugar de derivar a la web. Si un menú especial se reserva por secciones, en create_special_booking debes pasar SIEMPRE el desglose por sección: sections=[{\"section_id\":<id>,\"count\":<comensales de esa sección>}] con los section_id de get_special_date_menu, y la suma de los count igual a los comensales.\n")
+			b.WriteString("- Antes de crear, modificar o cancelar, repite los datos al grupo y espera confirmación; después llama a la herramienta con `confirmed=true`.\n")
+		}
 		b.WriteString("\n")
 	}
 
@@ -177,6 +181,16 @@ func renderBotSystemPrompt(d botPromptData) string {
 	if d.PrivilegedGroup {
 		b.WriteString("## GRUPO PRIVILEGIADO (dirección)\n")
 		b.WriteString("- Este es un turno interno de dirección: puedes CONSULTAR el catálogo del backoffice.\n")
+		// wa_bot_staff_bookings_overview_v1 / wa_bot_admin_call_batch_v1: steer
+		// away from the one-booking-per-call pattern that exhausted the
+		// 2026-10-23 turn (8 admin_call iterations for 9 reservations).
+		b.WriteString("- REGLA DE EFICIENCIA (importante): NO llames una herramienta por cada reserva o cada elemento. Para ver las reservas de un día con TODOS sus detalles (comentarios, arroz, evento...) usa `staff_bookings_overview(date)` UNA vez. Para el detalle de UNA reserva concreta, `staff_bookings_overview(booking_id)`. Si necesitas varias LECTURAS distintas del panel, usa `admin_call` con `calls=[...]` para ejecutarlas todas en una sola llamada. Las operaciones del panel que no tengan herramienta dedicada se descubren con `admin_catalog`/`admin_describe` y se ejecutan con `admin_call`. Responde en cuanto tengas los datos, sin exploraciones extra.\n")
+		b.WriteString("- ANTI-EXPLORACION: NO uses admin_catalog/admin_describe para tareas que ya tienen herramienta dedicada. Buscar reserva por nombre o fecha: `staff_bookings_overview`. Detalle o menu de una reserva: `staff_bookings_overview(booking_id)`. Menu del dia o de fecha especial: `get_special_date_menu` / `get_menu_details`. SOLO recurre a admin_catalog/admin_describe/admin_call para una operacion del panel que NO tenga herramienta dedicada en este chat, y cuando la tengas clara llamala directo con admin_call.\n")
+		b.WriteString("- `staff_domain_read` cubre SOLO lecturas de personal/almacen (pos_read, stock_read, members_read, fichaje_read, campaigns_read, invoices_read). NO lo uses para reservas, menus, platos ni alergenos: para eso estan staff_bookings_overview, get_menu_details y get_dish_allergens. Si staff_domain_read responde 'recurso no permitido', NO lo reintentes con otro recurso: usa la herramienta dedicada correspondiente.\n")
+		// wa_bot_change_routing_v1: prod 2026-10-23 18:18 the model spent 23
+		// iterations exploring and never proposed the change.
+		b.WriteString("- PETICIONES DE CAMBIO: cuando te pidan modificar algo, localiza la reserva (staff_bookings_overview) y PROPÓN el cambio en cuanto tengas los datos; no sigas explorando. En una reserva con menú de grupo, comensales + principales + alergias/notas van JUNTOS en UNA sola `booking_propose_set_group_menu` (party_size, principales con los nombres exactos de get_menu_details, note) y se aplican con un único OK. Para un cambio sin herramienta dedicada usa `panel_change`. Si aun así hay cambios que no caben en una propuesta, propón el primero y di cuáles quedan pendientes tras su OK.\n")
+		b.WriteString("- En este grupo las reservas se identifican por booking_id o por nombre/fecha con `staff_bookings_overview`, NUNCA por el teléfono de quien escribe. `staff_bookings_overview(booking_id)` devuelve también el menú de grupo asignado, los principales y los extras de la reserva.\n")
 		if d.DirectWrites {
 			// wa_bot_privileged_direct_writes_v1
 			b.WriteString("- Los CAMBIOS DIRECTOS están activos en este chat: las escrituras SÍ se aplican. Cuando te pidan un cambio, llama a la herramienta dedicada (con `confirmed=true` donde la pida) y di con claridad que YA ESTÁ HECHO y con qué datos exactos. No generes códigos de confirmación ni digas que hace falta un OK.\n")
@@ -262,7 +276,9 @@ func renderBotSystemPrompt(d botPromptData) string {
 	b.WriteString("- Arroces disponibles de una fecha: usa `get_rice_menu` pasando la fecha de la reserva. Devuelve el menú aplicable y SOLO los arroces activos de ese menú (con tipo, suplemento y si requiere encargo anticipado). Nunca inventes ni confirmes un arroz que no esté en esa lista.\n")
 	b.WriteString("- CATEGORÍA DE MENÚ: los menús llegan con `category` como código numérico (1=menú cerrado convencional, 2=menú cerrado de grupo, 3=a la carta convencional, 4=a la carta de grupo, 5=a la carta por tiempo, 6=menú especial) y con `category_label`, que ya viene traducida. Habla al cliente SIEMPRE con `category_label`; nunca le digas el número ni el nombre técnico `category_name`, y no deduzcas el tipo a partir del número.\n")
 	b.WriteString("- Menús reservables y su categoría (menú cerrado convencional/grupo, a la carta convencional/grupo, menú especial): usa `list_menus`. Para el detalle de un menú (platos por sección, precio, bebida, tamaño mínimo de grupo, máximo de principales, café incluido, comentarios y días de la semana en que se sirve): usa `get_menu_details` con el menu_id.\n")
-	b.WriteString("- Menú de una reserva concreta del cliente: usa `get_booking_menu` con el booking_id de `get_bookings`. Si la reserva tiene menú de grupo asignado devuelve ese menú completo; si no, devuelve los menús cerrado convencional disponibles por defecto ese día de la semana. No inventes el menú de una reserva: consúltalo siempre.\n")
+	if !(d.PrivilegedGroup && d.SpecialAdminTools) { // wa_bot_catalog_v2: staff uses staff_bookings_overview
+		b.WriteString("- Menú de una reserva concreta del cliente: usa `get_booking_menu` con el booking_id de `get_bookings`. Si la reserva tiene menú de grupo asignado devuelve ese menú completo; si no, devuelve los menús cerrado convencional disponibles por defecto ese día de la semana. No inventes el menú de una reserva: consúltalo siempre.\n")
+	}
 	b.WriteString("- Cartas de cafés, bebidas y vinos: usa `get_coffee_menu`, `get_drinks_menu` y `get_wines_menu`.\n")
 	b.WriteString("- Extras de la reserva (añadidos como café incluido o bebida ilimitada): aparecen en `get_bookings` dentro del campo `extras` de cada reserva y solo aplican a reservas SIN menú de grupo. Puedes usar `list_booking_extras` para INFORMAR de los disponibles, pero NO puedes añadir, quitar ni modificar extras: es una gestión del restaurante. Si el cliente lo pide, el sistema ya traslada automáticamente la solicitud al equipo de gestión y avisa al cliente; no dupliques ese mensaje ni prometas añadir el extra.\n")
 	b.WriteString("- BAJA DE CAMPAÑAS: si el cliente dice claramente que no quiere recibir más mensajes, publicidad o campañas (o responde \"baja\", \"stop\", \"no me escribáis más\" a un mensaje promocional), llama a `unsubscribe_marketing` con confirmed=true y luego confírmale con send_message, breve y amable, que ya no recibirá más campañas (los avisos de sus reservas se mantienen). No ofrezcas reservas ni insistas. No es una cancelación de reserva.\n")

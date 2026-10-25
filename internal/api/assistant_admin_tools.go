@@ -371,18 +371,77 @@ func forkyPathParams(path string) []string {
 	return out
 }
 
+// adminCallInput is one admin_call request: the operation name plus its
+// path/query/body arguments and the write confirmation fields.
+type adminCallInput struct {
+	Name              string          `json:"name"`
+	PathParams        map[string]any  `json:"path_params"`
+	Query             map[string]any  `json:"query"`
+	Body              json.RawMessage `json:"body"`
+	Confirmed         bool            `json:"confirmed"`
+	ConfirmationToken string          `json:"confirmation_token"`
+}
+
+// adminCallMaxBatch caps the number of READ operations one batched admin_call
+// may carry (wa_bot_admin_call_batch_v1).
+const adminCallMaxBatch = 20
+
 func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.RawMessage) (string, error) {
-	var in struct {
-		Name              string          `json:"name"`
-		PathParams        map[string]any  `json:"path_params"`
-		Query             map[string]any  `json:"query"`
-		Body              json.RawMessage `json:"body"`
-		Confirmed         bool            `json:"confirmed"`
-		ConfirmationToken string          `json:"confirmation_token"`
-	}
+	var in adminCallInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", fmt.Errorf("argumentos inválidos")
 	}
+
+	// wa_bot_admin_call_batch_v1: an optional "calls" array runs several READ
+	// operations in ONE model call and returns one result per item. The Bot
+	// Alquería incident of 2026-10-23 (18 iter / 37 tools) spent ~8 iterations
+	// calling admin_get_bookings_id once per reservation; batching collapses
+	// them into a single iteration. READS only: a batched write is refused
+	// (writes keep their dedicated confirmation path, one operation at a time).
+	var probe struct {
+		Calls []adminCallInput `json:"calls"`
+	}
+	if json.Unmarshal(input, &probe) == nil && len(probe.Calls) > 0 {
+		return s.assistantAdminCallBatch(ctx, rid, probe.Calls)
+	}
+	return s.assistantAdminCallSingle(ctx, rid, in, input)
+}
+
+// assistantAdminCallBatch runs each READ operation of a batch and returns one
+// result per item, in order. An item that fails (unknown op, write, scope,
+// replay error) yields its error text in that slot and does NOT stop the rest.
+func (s *Server) assistantAdminCallBatch(ctx context.Context, rid int, calls []adminCallInput) (string, error) {
+	if len(calls) > adminCallMaxBatch {
+		return "", fmt.Errorf("demasiadas operaciones en batch: %d (máximo %d)", len(calls), adminCallMaxBatch)
+	}
+	type item struct {
+		Index int    `json:"index"`
+		Name  string `json:"name"`
+		OK    bool   `json:"ok"`
+		Data  string `json:"data,omitempty"`
+		Error string `json:"error,omitempty"`
+	}
+	out := make([]item, 0, len(calls))
+	for i, c := range calls {
+		// Writes are refused item-by-item: the batch is read-only by design.
+		rawItem, _ := json.Marshal(c)
+		raw, err := s.assistantAdminCallSingle(ctx, rid, c, rawItem)
+		it := item{Index: i, Name: c.Name}
+		if err != nil {
+			it.Error = err.Error()
+		} else {
+			it.OK = true
+			it.Data = raw
+		}
+		out = append(out, it)
+	}
+	return botJSON(map[string]any{"tool": "admin_call_batch", "count": len(out), "results": out}), nil
+}
+
+// assistantAdminCallSingle resolves and executes ONE admin_call operation
+// (read or write), applying the bot-turn write denial and the write
+// confirmation token. It is the shared core of single calls and batch items.
+func (s *Server) assistantAdminCallSingle(ctx context.Context, rid int, in adminCallInput, rawInput json.RawMessage) (string, error) {
 	ops, _, err := s.forkyAdminVisibleOps(ctx)
 	if err != nil {
 		return "", err
@@ -404,14 +463,19 @@ func (s *Server) assistantAdminCall(ctx context.Context, rid int, input json.Raw
 		botCheckpoint("wa_bot_admin_write_denied_v1", "restaurant_id=%d", rid)
 		// wa_bot_terminal_tool_v1: final refusal for this turn (the model wrote
 		// the "confirmation" itself; a retry can never change the answer).
-		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. Usa panel_change para PROPONER el cambio: se aplica solo cuando el usuario responde 'OK <código>' en el chat. No busques otra vía.", "terminal": true}), nil
+		// NOT terminal (wa_bot_terminal_tool_v1 regression 2026-10-23 17:30):
+		// this refusal points the model at panel_change, so the turn must stay
+		// open for that call. With terminal:true the loop closed before the
+		// model could follow the advice and the customer got a summary instead
+		// of the proposal.
+		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. No lo reintentes por admin_call: llama ahora a panel_change para PROPONER el cambio (se aplica cuando el usuario responde 'OK <código>' en el chat)."}), nil
 	}
 	if op.Write {
 		if !in.Confirmed {
-			return s.assistantRequireConfirmation(rid, "admin_call", input)
+			return s.assistantRequireConfirmation(rid, "admin_call", rawInput)
 		}
 		// The token is bound to (restaurant, tool, canonical arguments) by confirmationArguments.
-		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, "admin_call", input); err != nil {
+		if err := s.assistantConsumeConfirmation(in.ConfirmationToken, rid, "admin_call", rawInput); err != nil {
 			return "", err
 		}
 	}
@@ -600,8 +664,9 @@ var assistantAdminTools = []assistantTool{
 	},
 	{
 		Name: "admin_call", Section: assistantSessionSection, BackofficeOnly: true,
-		Description: "Ejecuta UNA operación de admin_catalog por su name, como el usuario (mismos permisos que en el panel). path_params para los {ids} de la ruta, query para filtros, body (JSON) para escrituras. Las escrituras requieren confirmed=true y el confirmation_token que devuelve la primera llamada con confirmed=false; pide confirmación al usuario antes.",
-		Schema:      json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["name"]}`),
+		Description: "Ejecuta UNA operación de admin_catalog por su name, como el usuario (mismos permisos que en el panel). path_params para los {ids} de la ruta, query para filtros, body (JSON) para escrituras. Las escrituras requieren confirmed=true y el confirmation_token que devuelve la primera llamada con confirmed=false; pide confirmación al usuario antes. " +
+			"Para varias LECTURAS distintas usa 'calls' (array de {name, path_params, query}): las ejecuta todas en UNA llamada y devuelve un resultado por cada una, evitando una iteración por operación (máximo 20, solo lectura).",
+		Schema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"},"calls":{"type":"array","description":"Varias lecturas en una sola llamada (máx 20)","items":{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"}},"required":["name"]}}}}`),
 		Handler: func(s *Server, ctx context.Context, rid int, in json.RawMessage) (string, error) {
 			return s.assistantAdminCall(ctx, rid, in)
 		},

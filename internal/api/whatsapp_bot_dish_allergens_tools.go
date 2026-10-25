@@ -68,7 +68,16 @@ func (s *Server) botToolDishAllergens(ctx context.Context, restaurantID int, inp
 		return botJSON(map[string]any{"error": "indica sheet_id o query"}), nil
 	}
 	if len(found) == 0 {
-		return botJSON(map[string]any{"error": "no hay fichas técnicas que coincidan", "catalogue": canonicalAllergens}), nil
+		// No ficha means the restaurant never recorded allergens for that dish.
+		// NOT terminal: this tool is often called in PARALLEL with reads that DO
+		// succeed (get_date_overview, get_bookings...). Marking it terminal made
+		// wa_bot_terminal_tool_v1 close the whole turn with the fixed text,
+		// discarding the successful sibling answers (prod 2026-10-23 16:38: a
+		// 2-iteration turn answered "No he podido completar tu petición" even
+		// though it already had the availability data). The clear message steers
+		// the model to tell the group there is no data; the loop guard stops a
+		// real retry loop if it ever insists.
+		return botJSON(map[string]any{"error": "no hay fichas técnicas que coincidan (no hay alérgenos registrados para ese plato; dilo al usuario, no lo busques por otra vía)", "catalogue": canonicalAllergens}), nil
 	}
 
 	out := make([]map[string]any, 0, len(found))

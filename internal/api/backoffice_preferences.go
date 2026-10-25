@@ -49,7 +49,7 @@ var reservasColumnIDs = []string{
 	// special_booking_qr_v1 - must mirror ReservasColumnId in the backoffice or
 	// toggles on these columns are silently dropped.
 	"adelantoEstado", "adelantoTotal", "adelantoDesglose", "adelantoMetodos",
-	"menusEspeciales", "movilidad", "movilidadPax", "pendiente", "qrPdf",
+	"menusEspeciales", "principalesDesglose", "movilidad", "movilidadPax", "pendiente", "documentos", "qrPdf",
 }
 
 // facturasColumnIDs is the canonical order of the invoices table data columns
