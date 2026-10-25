@@ -360,7 +360,7 @@ func (s *Server) ensureInvoiceNumbersReady(ctx context.Context, restaurantID, ye
 // scanInvoiceNumberSettings reads one restaurant_invoice_settings row.
 func scanInvoiceNumberSettings(row *sql.Row) (invoiceNumberSettings, error) {
 	var (
-		prefix, suffix, format, pdfTemplate            sql.NullString
+		prefix, suffix, format, pdfTemplate             sql.NullString
 		startingNumber, paddingZeros, nextNumber, terms sql.NullInt64
 	)
 	if err := row.Scan(&prefix, &suffix, &format, &startingNumber, &paddingZeros, &nextNumber, &pdfTemplate, &terms); err != nil {

@@ -118,15 +118,39 @@ var botForkyExcludedFromWA = map[string]struct{}{
 	"invoices_read":            {},
 }
 
-// botForkyToolDefs converts the full assistant (forky) tool registry into the
-// bot's tool-list shape. Original names are kept: the privileged executor
-// router distinguishes forky tools by assistantToolLookup(name), which is
-// unambiguous because no bot tool shares a registry name.
+// botForkyMetaTools are the forky names still advertised in the WhatsApp
+// staff catalog: the meta-catalogue trio that discovers and executes every
+// panel operation. All other forky tools are reachable THROUGH admin_call
+// (or staff_domain_read for the gated reads), so advertising their raw defs
+// was pure token cost.
+var botForkyMetaTools = map[string]bool{
+	"admin_catalog":  true,
+	"admin_describe": true,
+	"admin_call":     true,
+}
+
+// botForkyToolDefs converts the assistant (forky) registry into the bot's
+// tool-list shape.
+//
+// wa_bot_catalog_diet_v1: the WhatsApp staff group used to receive ~85 raw
+// forky defs ON TOP of the bot/admin tools (~18k tokens in EVERY model call,
+// which slowed every call and pushed the 2026-10-23 incident turn into its
+// 3-minute budget). The log shows the model already discovers panel
+// operations through the meta-catalogue (admin_catalog -> admin_describe ->
+// admin_call). So the WA staff catalog now carries ONLY that meta trio: every
+// other panel read/write stays reachable through admin_call, and the gated
+// reads through staff_domain_read. Same capability, a fraction of the prompt.
+//
+// The executor keeps accepting every forky name (assistantToolLookup), so a
+// name the model already knows keeps working; only the advertised list shrinks.
 func botForkyToolDefs() []botToolDef {
 	defs := assistantToolDefs()
 	out := make([]botToolDef, 0, len(defs))
 	for _, d := range defs {
 		if _, excluded := botForkyExcludedFromWA[d.Name]; excluded {
+			continue
+		}
+		if !botForkyMetaTools[d.Name] {
 			continue
 		}
 		out = append(out, botToolDef{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema})

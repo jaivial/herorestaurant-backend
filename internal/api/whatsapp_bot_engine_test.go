@@ -34,6 +34,34 @@ func fakeLLM(t *testing.T, responses []map[string]any) (*httptest.Server, *[][]b
 	return srv, &calls
 }
 
+// fakeLLMFailAt is fakeLLM but the (failAt)th call (0-indexed) answers HTTP
+// 500 so the model call returns an error (the interrupted path).
+func fakeLLMFailAt(t *testing.T, responses []map[string]any, failAt int) (*httptest.Server, *[][]byte) {
+	t.Helper()
+	var mu sync.Mutex
+	var calls [][]byte
+	idx := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		raw, _ := io.ReadAll(r.Body)
+		calls = append(calls, raw)
+		if idx >= len(responses) {
+			t.Error("LLM called more times than scripted")
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if idx == failAt {
+			idx++
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(responses[idx])
+		idx++
+	}))
+	return srv, &calls
+}
+
 func TestBotRunAgentLoop_EarlyStopAfterDelivery(t *testing.T) {
 	// wa_bot_early_stop_v1: when every tool of the response was a successful
 	// customer delivery (send_message), the reply is out and the loop stops
@@ -122,10 +150,324 @@ func TestBotRunAgentLoop_MaxIterations(t *testing.T) {
 	}
 	// wa_bot_noncap_v1: with the budget spent, the tool call of the LAST
 	// response is deliberately NOT executed (no hidden extra mutation): rounds
-	// 1-2 run the tool, round 3 hits the cap and the loop answers with the
-	// exhausted notice (botBudgetExhaustedText).
+	// 1-2 run the tool, round 3 hits the cap and the loop tries the grounded
+	// no-tools wrap-up (wa_bot_grounded_wrapup_v1) before the fixed notice.
 	if execCount != 2 {
 		t.Errorf("execCount = %d, want 2", execCount)
+	}
+	if !result.Exhausted {
+		t.Errorf("result.Exhausted = false, want true")
+	}
+}
+
+func TestBotRunAgentLoop_GroundedWrapUp_AnswersInsteadOfFixedText(t *testing.T) {
+	// wa_bot_grounded_wrapup_v1: when the model still asks for a tool on the
+	// capped call, the loop makes ONE extra no-tools call. If that call
+	// returns text, the customer gets the grounded answer, not the fixed
+	// botBudgetExhaustedText.
+	// Script: call 1 -> tool_use (runs); call 2 (capped) -> tool_use again;
+	// call 3 (grounded, no tools) -> plain text answer.
+	llm, calls := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_2", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "He confirmado el menú de arroces; falta aplicar el cambio de precio."},
+			},
+		},
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	s.cfg.BotMaxIterations = 2 // call 2 is the capped (last) one
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		return `{"rices":["marisco"]}`, nil
+	}
+	result, err := s.botRunAgentLoop(context.Background(), 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if !result.Exhausted {
+		t.Errorf("result.Exhausted = false, want true")
+	}
+	got := botFinalAssistantText(result.Messages)
+	want := "He confirmado el menú de arroces; falta aplicar el cambio de precio."
+	if got != want {
+		t.Errorf("final text = %q, want grounded answer %q", got, want)
+	}
+	if len(*calls) != 3 {
+		t.Fatalf("llm calls = %d, want 3 (loop x2 + grounded wrap-up)", len(*calls))
+	}
+	// The grounded wrap-up call must send NO tools.
+	var grounded struct {
+		Tools []any `json:"tools"`
+	}
+	_ = json.Unmarshal((*calls)[2], &grounded)
+	if len(grounded.Tools) != 0 {
+		t.Errorf("grounded wrap-up tools = %d, want 0", len(grounded.Tools))
+	}
+}
+
+func TestBotRunAgentLoop_GroundedWrapUp_FallsBackWhenNoText(t *testing.T) {
+	// wa_bot_grounded_wrapup_v1: when the grounded no-tools call returns no
+	// text (reasoning model burned its budget), the loop falls back to the
+	// fixed botBudgetExhaustedText.
+	llm, _ := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_2", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{"stop_reason": "max_tokens", "content": []map[string]any{}}, // grounded call: no text
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	s.cfg.BotMaxIterations = 2
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		return `{"rices":[]}`, nil
+	}
+	result, err := s.botRunAgentLoop(context.Background(), 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if got := botFinalAssistantText(result.Messages); got != botBudgetExhaustedText {
+		t.Errorf("final text = %q, want fixed exhausted text", got)
+	}
+}
+
+func TestBotRunAgentLoop_TerminalTool_GroundedWrapUp(t *testing.T) {
+	// wa_bot_terminal_tool_v1 + wa_bot_grounded_wrapup_v1: a terminal refusal
+	// (admin_call 4xx) closes the turn, but the customer must get the grounded
+	// answer from the tools that DID succeed, not the fixed exhausted text.
+	// Regression: prod 2026-10-23 16:47, an 18-iter turn answered the fixed
+	// text even though the booking + menu facts were already in the transcript.
+	// Script: call 1 -> parallel tool_use (admin_call 4xx terminal + a read
+	// that succeeded); call 2 (grounded, no tools) -> plain text answer.
+	llm, calls := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "admin_call", "input": map[string]any{}},
+				{"type": "tool_use", "id": "tu_2", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "Hay 3 reservas el 31/12 y el men\u00fa 50 est\u00e1 disponible; no pude leer los platos elegidos."},
+			},
+		},
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		switch name {
+		case "admin_call":
+			// Panel replay shape with a 4xx status -> botToolTerminal = true.
+			return `{"tool":"admin_get_booking_dishes","status":404,"ok":false,"error":"no encontrada"}`, nil
+		case "get_rice_menu":
+			return `{"rices":["marisco","pollo"]}`, nil
+		}
+		t.Errorf("unexpected tool %q", name)
+		return `{"error":"unknown"}`, nil
+	}
+	result, err := s.botRunAgentLoop(context.Background(), 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if !result.Exhausted {
+		t.Errorf("result.Exhausted = false, want true (terminal close)")
+	}
+	got := botFinalAssistantText(result.Messages)
+	want := "Hay 3 reservas el 31/12 y el men\u00fa 50 est\u00e1 disponible; no pude leer los platos elegidos."
+	if got != want {
+		t.Errorf("final text = %q, want grounded answer %q", got, want)
+	}
+	if got == botBudgetExhaustedText {
+		t.Errorf("terminal close must not answer the fixed exhausted text when a grounded answer is available")
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("llm calls = %d, want 2 (loop + grounded wrap-up)", len(*calls))
+	}
+	// The grounded wrap-up call must send NO tools.
+	var grounded struct {
+		Tools []any `json:"tools"`
+	}
+	_ = json.Unmarshal((*calls)[1], &grounded)
+	if len(grounded.Tools) != 0 {
+		t.Errorf("grounded wrap-up tools = %d, want 0", len(grounded.Tools))
+	}
+}
+
+func TestBotRunAgentLoop_Interrupted_GroundedWrapUp(t *testing.T) {
+	// wa_bot_interrupted_grounded_v1: when the model call fails after tools ran
+	// (e.g. the 3-min turn deadline passes), the customer must get the grounded
+	// answer from the gathered tool_results, not the fixed interrupted text.
+	// Regression: prod 2026-10-23 17:12, a 27-iter deadline-exhausted turn
+	// answered botInterruptedText even though the data was in the transcript.
+	// Script: call 1 -> tool_use (runs); call 2 -> HTTP 500 (model call fails);
+	// call 3 (grounded, no tools, on a detached ctx) -> plain text answer.
+	llm, calls := fakeLLMFailAt(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			// idx=1 is replaced by the HTTP 500 failure (failAt=1); this entry is
+			// the grounded wrap-up answer the loop makes after the interrupt.
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "El menu de arroces tiene marisco y pollo; no pude terminar de listar los postres."},
+			},
+		},
+		{
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "El menu de arroces tiene marisco y pollo; no pude terminar de listar los postres."},
+			},
+		},
+	}, 1)
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		return `{"rices":["marisco","pollo"]}`, nil
+	}
+	result, err := s.botRunAgentLoop(context.Background(), 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if !result.Interrupted {
+		t.Errorf("result.Interrupted = false, want true")
+	}
+	got := botFinalAssistantText(result.Messages)
+	want := "El menu de arroces tiene marisco y pollo; no pude terminar de listar los postres."
+	if got != want {
+		t.Errorf("final text = %q, want grounded answer %q", got, want)
+	}
+	if got == botInterruptedText {
+		t.Errorf("interrupted turn must not answer the fixed interrupted text when a grounded answer is available")
+	}
+	if len(*calls) != 3 {
+		t.Fatalf("llm calls = %d, want 3 (loop + failed + grounded wrap-up)", len(*calls))
+	}
+}
+
+func TestBotRunAgentLoop_NonTerminalRefusal_TurnStaysOpen(t *testing.T) {
+	// The admin_call write refusal points the model at panel_change, so it must
+	// NOT be terminal: the loop has to make the NEXT model call where the model
+	// follows that advice. Regression 2026-10-23 17:30: terminal:true closed
+	// the turn before panel_change ran and the customer got a summary instead
+	// of the proposal.
+	// Script: call 1 -> tool_use admin_call (returns the non-terminal refusal);
+	// call 2 -> end_turn with the proposal text.
+	llm, calls := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "admin_call", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "Voy a proponer el cambio a 11 personas con OK y código."},
+			},
+		},
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		return `{"error":"el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. No lo reintentes por admin_call: llama ahora a panel_change para PROPONER el cambio (se aplica cuando el usuario responde 'OK <código>' en el chat)."}`, nil
+	}
+	result, err := s.botRunAgentLoop(context.Background(), 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if result.Exhausted {
+		t.Errorf("result.Exhausted = true: the refusal must not close the turn")
+	}
+	if got := botFinalAssistantText(result.Messages); got != "Voy a proponer el cambio a 11 personas con OK y código." {
+		t.Errorf("final text = %q, want the model's proposal (2nd call must have run)", got)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("llm calls = %d, want 2 (turn must stay open after the refusal)", len(*calls))
+	}
+}
+
+func TestBotRunAgentLoop_DeadlineWrapUp_AnswersBeforeDeadline(t *testing.T) {
+	// wa_bot_deadline_wrapup_v1: when the remaining turn budget drops to
+	// botDeadlineWrapUpAt after tools ran, the loop stops calling tools and
+	// answers with the grounded wrap-up instead of running into the deadline
+	// (where the wrap-up is skipped for no_budget and the fixed text is sent).
+	prev := botDeadlineWrapUpAt
+	botDeadlineWrapUpAt = 59 * time.Second // turn below has 60s: trips after round 1
+	defer func() { botDeadlineWrapUpAt = prev }()
+	llm, calls := fakeLLM(t, []map[string]any{
+		{
+			"stop_reason": "tool_use",
+			"content": []map[string]any{
+				{"type": "tool_use", "id": "tu_1", "name": "get_rice_menu", "input": map[string]any{}},
+			},
+		},
+		{
+			"stop_reason": "end_turn",
+			"content": []map[string]any{
+				{"type": "text", "text": "Reserva localizada; propongo el cambio en el siguiente mensaje."},
+			},
+		},
+	})
+	defer llm.Close()
+
+	s := newBotTestServer(llm.URL)
+	exec := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		time.Sleep(1100 * time.Millisecond)
+		return `{"rices":["marisco"]}`, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	result, err := s.botRunAgentLoop(ctx, 0, "", "SYS", []botMessage{botUserText("hola")}, nil, exec)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	if !result.Exhausted || result.Interrupted {
+		t.Errorf("Exhausted=%t Interrupted=%t, want exhausted (deadline wrap-up), not interrupted", result.Exhausted, result.Interrupted)
+	}
+	if got := botFinalAssistantText(result.Messages); got != "Reserva localizada; propongo el cambio en el siguiente mensaje." {
+		t.Errorf("final text = %q, want grounded answer", got)
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("llm calls = %d, want 2 (loop + grounded wrap-up)", len(*calls))
+	}
+	var grounded struct {
+		Tools []any `json:"tools"`
+	}
+	_ = json.Unmarshal((*calls)[1], &grounded)
+	if len(grounded.Tools) != 0 {
+		t.Errorf("grounded wrap-up tools = %d, want 0", len(grounded.Tools))
 	}
 }
 

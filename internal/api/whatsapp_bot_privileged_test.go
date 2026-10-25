@@ -58,22 +58,21 @@ func TestBotForkyToolDefs(t *testing.T) {
 		t.Fatal("botForkyToolDefs() returned an empty list")
 	}
 	registry := assistantToolDefs()
-	// The conversion drops EXACTLY the documented exclusions
-	// (botForkyExcludedFromWA, §11.3 de docs/wa-customtools-matrix.md): every
-	// other registry tool reaches the bot list, and no excluded one leaks.
-	want := 0
-	for _, d := range registry {
-		if _, excluded := botForkyExcludedFromWA[d.Name]; !excluded {
-			want++
-		}
-	}
-	if len(defs) != want {
-		t.Errorf("converted %d defs, want %d (registry has %d)", len(defs), want, len(registry))
+	// wa_bot_catalog_diet_v1: the WA staff catalog no longer carries the raw
+	// forky defs (~85 tools, ~18k tokens per call). It advertises ONLY the
+	// meta-catalogue trio; every other panel operation is reached through
+	// admin_call, and the gated reads through staff_domain_read. Excluded
+	// tools must never leak either way.
+	if len(defs) != len(botForkyMetaTools) {
+		t.Errorf("converted %d defs, want exactly the %d meta tools", len(defs), len(botForkyMetaTools))
 	}
 	seen := map[string]bool{}
 	for _, d := range defs {
 		if d.Name == "" {
 			t.Error("converted def with empty name")
+		}
+		if !botForkyMetaTools[d.Name] {
+			t.Errorf("non-meta tool %q advertised in the WA staff catalog", d.Name)
 		}
 		if _, excluded := botForkyExcludedFromWA[d.Name]; excluded {
 			t.Errorf("excluded tool %q reached the bot defs", d.Name)
@@ -92,9 +91,19 @@ func TestBotForkyToolDefs(t *testing.T) {
 			t.Errorf("tool %q: empty description", d.Name)
 		}
 	}
-	// At least one known registry tool must be present with its original name.
-	if _, ok := seen["booking_limits_get"]; !ok {
-		t.Errorf("expected booking_limits_get in the forky conversion, got %d tools", len(defs))
+	// The meta trio must all be present; a raw data tool must NOT.
+	for _, m := range []string{"admin_catalog", "admin_describe", "admin_call"} {
+		if !seen[m] {
+			t.Errorf("meta tool %q missing from the WA staff catalog", m)
+		}
+	}
+	if seen["booking_limits_get"] {
+		t.Errorf("raw forky data tool booking_limits_get must not be advertised (reached via admin_call)")
+	}
+	// The registry still holds the full set: capability is unchanged, only the
+	// advertised catalog shrank.
+	if len(registry) <= len(botForkyMetaTools) {
+		t.Errorf("registry shrank unexpectedly: %d tools", len(registry))
 	}
 }
 
@@ -355,5 +364,60 @@ func TestEvoParseInboundMessage_DocumentPayload(t *testing.T) {
 	}
 	if in1.DocumentB64 != "" || in1.DocumentName != "" {
 		t.Errorf("oversized document must be dropped: name=%q", in1.DocumentName)
+	}
+}
+
+// --- catalog diet + consolidation -----------------------------------------
+
+func TestBotStaffBookingsOverviewRegistered(t *testing.T) {
+	// wa_bot_staff_bookings_overview_v1: the staff anti-N+1 read must be in the
+	// admin-reads catalog with a valid schema, gated like the rest.
+	var found *botToolDef
+	for _, d := range botToolDefsAdminReads() {
+		if d.Name == "staff_bookings_overview" {
+			cp := d
+			found = &cp
+		}
+	}
+	if found == nil {
+		t.Fatal("staff_bookings_overview not in botToolDefsAdminReads")
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(found.InputSchema, &schema); err != nil {
+		t.Fatalf("schema not valid JSON: %v", err)
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if _, ok := props["booking_id"]; !ok {
+		t.Error("staff_bookings_overview schema must accept booking_id")
+	}
+	if _, ok := props["date"]; !ok {
+		t.Error("staff_bookings_overview schema must accept date")
+	}
+}
+
+func TestAdminCallBatchReadOnlyAndCapped(t *testing.T) {
+	// wa_bot_admin_call_batch_v1: the schema documents the calls array, and the
+	// cap constant bounds it. The write refusal is covered by the single-call
+	// path (assistantAdminCallSingle), shared by every batch item.
+	var adminCall *botToolDef
+	for _, d := range botForkyToolDefs() {
+		if d.Name == "admin_call" {
+			cp := d
+			adminCall = &cp
+		}
+	}
+	if adminCall == nil {
+		t.Fatal("admin_call not advertised in the staff meta catalog")
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(adminCall.InputSchema, &schema); err != nil {
+		t.Fatalf("admin_call schema not valid JSON: %v", err)
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if _, ok := props["calls"]; !ok {
+		t.Error("admin_call schema must document the batch 'calls' array")
+	}
+	if adminCallMaxBatch < 2 || adminCallMaxBatch > 100 {
+		t.Errorf("adminCallMaxBatch out of sane range: %d", adminCallMaxBatch)
 	}
 }
