@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -435,6 +436,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 	toolMsgs := append([]assistantChatMessage{}, hist...)
 	var final strings.Builder
 	var lastRoundHadError bool
+	var lastStopReason string
 	exhausted := true
 	for turn := 0; turn < 6; turn++ {
 		result, callErr := c.s.assistantCall(ctx, restaurantID, prompt, toolMsgs, toolDefs, nil)
@@ -442,6 +444,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 			_ = c.writeJSON(map[string]any{"type": "error", "message": callErr.Error()})
 			return
 		}
+		lastStopReason = result.StopReason
 		// MiniMax occasionally wraps the whole reply in base64 (an encoding quirk
 		// that persists to the DB). Recover the readable text before streaming it to
 		// the client and before persisting, so the chat never shows a raw blob.
@@ -464,7 +467,17 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 		for _, use := range result.ToolUses {
 			blocks = append(blocks, map[string]any{"type": "tool_use", "id": use.ID, "name": use.Name, "input": json.RawMessage(use.Input)})
 		}
-		toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: blocks})
+		// (thinking blocks included) replay the assistant turn verbatim when the
+		// transport kept them (assistantCall raw path): MiniMax M3.1 needs the
+		// reasoning chain in the next tool turn. Thinking never reaches the UI,
+		// logs or the DB (deltas/persist use turnText only). json.Marshal may
+		// compact/HTML-escape RawMessage, so fidelity is semantic, not
+		// byte-for-byte; a map round-trip would lose numbers/encoding.
+		if len(result.RawBlocks) > 0 {
+			toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: append([]json.RawMessage(nil), result.RawBlocks...)})
+		} else {
+			toolMsgs = append(toolMsgs, assistantChatMessage{Role: "assistant", Content: blocks})
+		}
 		results := make([]map[string]any, 0, len(result.ToolUses))
 		lastRoundHadError = false
 		for _, use := range result.ToolUses {
@@ -512,6 +525,14 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 			final.WriteString("\n\n" + msg)
 			_ = c.writeJSON(map[string]any{"type": "delta", "text": "\n\n" + msg})
 		}
+	}
+	// A non-exhausted turn that produced no text at all (e.g. a thinking-only
+	// model response) gets an honest error plus a metadata-only log line
+	// (stop_reason + block types; content is never logged).
+	if strings.TrimSpace(final.String()) == "" {
+		log.Printf("[forky] empty assistant reply session=%d restaurant=%d exhausted=%v stop_reason=%q", sid, restaurantID, exhausted, lastStopReason)
+		_ = c.writeJSON(map[string]any{"type": "error", "message": "empty_reply"})
+		return
 	}
 	// Never persist an unusable reply: it would come back as history on the next
 	// turn and prime the model to produce more of the same. Dropping it keeps

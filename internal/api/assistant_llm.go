@@ -13,9 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
-
 	"preactvillacarmen/internal/aiusage"
 )
 
@@ -54,6 +51,10 @@ type assistantLLMResult struct {
 	ToolUses   []assistantToolUse
 	StopReason string
 	Usage      aiusage.Tokens
+	// RawBlocks preserves the model content blocks semantically (thinking
+	// included): MiniMax M3.1 requires the full assistant response replayed in
+	// tool turns to keep the reasoning chain. Never surfaced to UI/logs/DB.
+	RawBlocks []json.RawMessage
 }
 
 // assistantStream calls the Messages API through the official Anthropic SDK.
@@ -62,9 +63,15 @@ func (s *Server) assistantStream(ctx context.Context, restaurantID int, system s
 	return err
 }
 
-// assistantCall uses the SDK for request construction, authentication,
-// streaming, tool blocks, and response decoding. The configured MiniMax
-// endpoint is Anthropic-compatible, so it is supplied as the SDK base URL.
+// assistantCall talks to the Anthropic-compatible MiniMax endpoint over raw
+// HTTP in both modes. The SDK round-trip through anthropic.MessageParam/
+// MessageNewParams dropped unknown block fields (MiniMax M3.1 emits `thinking`
+// blocks, which the round-trip lost before the tool turn could replay them),
+// and the SDK stream decoder rejects the MiniMax SSE dialect. Request/response
+// blocks keep their exact wire shape so thinking blocks survive tool-turn
+// replay with their order, types and values intact (json.Marshal may
+// compact/HTML-escape RawMessage, so fidelity is semantic - order and values -
+// not byte-for-byte).
 func (s *Server) assistantCall(ctx context.Context, restaurantID int, system string, msgs []assistantChatMessage, tools []assistantToolDef, emit func(string) error) (result assistantLLMResult, err error) {
 	apiKey := s.resolveMiniMaxKey(ctx, restaurantID)
 	if apiKey == "" {
@@ -82,61 +89,92 @@ func (s *Server) assistantCall(ctx context.Context, restaurantID int, system str
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Marshal the existing persisted block representation into SDK params. This
-	// preserves text, tool_use and tool_result blocks without lossy conversions.
+	// Verbatim block representation: text, tool_use, tool_result and thinking
+	// blocks ride to the wire unchanged (reasoning-chain continuity, MiniMax
+	// docs). The assistant/history blocks are already in Anthropic wire shape,
+	// so no SDK round-trip is needed to build the request.
 	messageContent := make([]map[string]any, 0, len(msgs))
-	messageParams := make([]anthropic.MessageParam, 0, len(msgs))
 	for _, m := range msgs {
 		itemContent := m.Content
 		if text, ok := itemContent.(string); ok {
 			itemContent = []map[string]any{{"type": "text", "text": text}}
 		}
 		messageContent = append(messageContent, map[string]any{"role": m.Role, "content": itemContent})
-		blocks, marshalErr := json.Marshal(map[string]any{"role": m.Role, "content": itemContent})
+	}
+	if emit == nil {
+		// Non-stream tool turns: raw POST (same transport as the SSE path below).
+		callBody := map[string]any{"model": model, "max_tokens": maxTokens, "system": []map[string]string{{"type": "text", "text": system}}, "messages": messageContent}
+		if len(tools) > 0 {
+			callBody["tools"] = tools
+			callBody["tool_choice"] = map[string]any{"type": "auto"}
+		}
+		callRaw, marshalErr := json.Marshal(callBody)
 		if marshalErr != nil {
 			return result, marshalErr
 		}
-		var message anthropic.MessageParam
-		if unmarshalErr := json.Unmarshal(blocks, &message); unmarshalErr != nil {
-			return result, unmarshalErr
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/v1/messages", bytes.NewReader(callRaw))
+		if reqErr != nil {
+			return result, reqErr
 		}
-		messageParams = append(messageParams, message)
-	}
-	body := map[string]any{"model": model, "max_tokens": maxTokens, "system": []map[string]string{{"type": "text", "text": system}}, "messages": messageParams}
-	if len(tools) > 0 {
-		body["tools"] = tools
-		body["tool_choice"] = map[string]any{"type": "auto"}
-	}
-	raw, marshalErr := json.Marshal(body)
-	if marshalErr != nil {
-		return result, marshalErr
-	}
-	var params anthropic.MessageNewParams
-	if unmarshalErr := json.Unmarshal(raw, &params); unmarshalErr != nil {
-		return result, unmarshalErr
-	}
-	client := anthropic.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/"))
-	if emit == nil {
-		message, callErr := client.Messages.New(ctx, params)
-		if callErr != nil {
-			return result, callErr
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		resp, reqErr := http.DefaultClient.Do(req)
+		if reqErr != nil {
+			return result, reqErr
 		}
-		result.StopReason = string(message.StopReason)
-		result.Usage = helperAnthropicUsage(message.Usage.InputTokens, message.Usage.OutputTokens, message.Usage.CacheReadInputTokens, message.Usage.CacheCreationInputTokens)
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return result, fmt.Errorf("minimax http %d", resp.StatusCode)
+		}
+		var out struct {
+			StopReason string            `json:"stop_reason"`
+			Content    []json.RawMessage `json:"content"`
+			Usage      struct {
+				InputTokens              int64 `json:"input_tokens"`
+				OutputTokens             int64 `json:"output_tokens"`
+				CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+			} `json:"usage"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if decErr := json.NewDecoder(resp.Body).Decode(&out); decErr != nil {
+			return result, decErr
+		}
+		if out.Error != nil && out.Error.Message != "" {
+			return result, errors.New("minimax api error: " + out.Error.Message)
+		}
+		result.StopReason = out.StopReason
+		result.Usage = helperAnthropicUsage(out.Usage.InputTokens, out.Usage.OutputTokens, out.Usage.CacheReadInputTokens, out.Usage.CacheCreationInputTokens)
 		s.recordAIUsage(ctx, restaurantID, aiFeatureForky, botProviderMiniMax, model, result.Usage, false)
-		for _, block := range message.Content {
-			if block.Type == "text" {
-				result.Text += block.Text
+		// Blocks kept verbatim (semantic fidelity) for the tool-loop replay; only
+		// text and tool_use are interpreted for behavior. Thinking is never
+		// surfaced, only replayed.
+		result.RawBlocks = out.Content
+		for _, rawBlock := range out.Content {
+			var head struct {
+				Type  string          `json:"type"`
+				ID    string          `json:"id"`
+				Name  string          `json:"name"`
+				Text  string          `json:"text"`
+				Input json.RawMessage `json:"input"`
 			}
-			if block.Type == "tool_use" {
-				result.ToolUses = append(result.ToolUses, assistantToolUse{ID: block.ID, Name: block.Name, Input: block.Input})
+			if json.Unmarshal(rawBlock, &head) != nil {
+				continue
+			}
+			if head.Type == "text" {
+				result.Text += head.Text
+			}
+			if head.Type == "tool_use" {
+				result.ToolUses = append(result.ToolUses, assistantToolUse{ID: head.ID, Name: head.Name, Input: head.Input})
 			}
 		}
 		return result, nil
 	}
 	// MiniMax's deployed SSE dialect omits `event:` lines and is not accepted by
-	// the SDK stream decoder. Keep the official SDK for non-streaming tool turns,
-	// but use the compatible raw SSE transport for streamed UI text.
+	// the SDK stream decoder, so streamed UI text also rides the compatible raw
+	// SSE transport used for tool turns above.
 	streamBody := map[string]any{"model": model, "max_tokens": maxTokens, "system": system, "messages": messageContent, "stream": true}
 	if len(tools) > 0 {
 		streamBody["tools"] = tools
@@ -675,6 +713,7 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		"PERMISOS: si una herramienta devuelve «permiso insuficiente» o un error de autenticación, el usuario NO tiene acceso a esa acción: dilo tal cual y termina. Nunca simules que la ejecutaste, nunca inventes el dato que devolvería y no lo sustituyas por datos de memoria." +
 		"Cuando una herramienta devuelva un campo de foto (foto, foto_url o foto_path) y el usuario pida ver imágenes, muestra cada foto como imagen Markdown `![nombre](url)` usando ese campo. " +
 		"Para pedir el detalle de las reservas (listado/tabla por cliente, fecha, hora y personas), usa SIEMPRE la herramienta bookings_list; bookings_summary y analytics_report solo dan totales agregados y NO sirven para una tabla de reservas individuales." +
+		"CIERRE TRAS LECTURA: un total 0 o una lista vacía es un DATO válido cuando los filtros aplicados son los correctos para la pregunta (fecha, restaurante, estado), no una señal para repetir la misma búsqueda. Cuando ya tienes TODO lo solicitado con datos suficientes y completos, responde y termina sin llamadas redundantes. Sí puedes hacer las llamadas necesarias para otras partes de la pregunta, para corregir parámetros propios erróneos (p. ej. una fecha mal calculada) y para pedir la página siguiente si un resultado llega truncado; nunca presentes una página parcial como el total, ni un error o un permiso insuficiente como si fuera un cero." +
 		assistantOutputContract
 	if s.db == nil || restaurantID <= 0 {
 		return base
