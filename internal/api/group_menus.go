@@ -577,7 +577,7 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 	logCheckpoint(r, "group_menus_list_request_received")
 
 	query := `
-		SELECT id, menu_title
+		SELECT id, menu_title, COALESCE(seo_slug, '')
 		FROM menus
 		WHERE restaurant_id = ? AND active = 1
 		  AND COALESCE(menu_type, 1) IN (2,4)
@@ -611,10 +611,11 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 	menus := []map[string]any{}
 	for rows.Next() {
 		var (
-			id    int
-			title string
+			id      int
+			title   string
+			seoSlug string
 		)
-		if err := rows.Scan(&id, &title); err != nil {
+		if err := rows.Scan(&id, &title, &seoSlug); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
 				"message": "Server error",
@@ -624,6 +625,7 @@ func (s *Server) handleActiveGroupMenusForDisplay(w http.ResponseWriter, r *http
 		menus = append(menus, map[string]any{
 			"id":         id,
 			"menu_title": title,
+			"seo_slug":   seoSlug,
 		})
 	}
 	if err := rows.Err(); err != nil {

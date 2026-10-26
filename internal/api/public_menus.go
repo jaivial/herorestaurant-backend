@@ -131,6 +131,7 @@ type publicMenuSettings struct {
 }
 
 type publicMenuItem struct {
+	publicMenuSEO
 	ID        int64  `json:"id"`
 	Slug      string `json:"slug"`
 	MenuTitle string `json:"menu_title"`
@@ -180,6 +181,7 @@ type publicMenuItem struct {
 
 // publicMenuItemHome is a lightweight version for the home page
 type publicMenuItemHome struct {
+	publicMenuSEO
 	ID                   int64    `json:"id"`
 	Slug                 string   `json:"slug"`
 	MenuTitle            string   `json:"menu_title"`
@@ -204,6 +206,7 @@ type publicMenuItemHome struct {
 
 // publicMenuItemSpecial is a minimal response for special menus
 type publicMenuItemSpecial struct {
+	publicMenuSEO
 	ID                  int64    `json:"id"`
 	MenuTitle           string   `json:"menu_title"`
 	MenuSubtitle        []string `json:"menu_subtitle"`
@@ -754,6 +757,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 
 	// Handle home page case (lightweight response)
 	if isHomePage {
+		seoByMenuID := s.loadPublicMenuSEOMap(r.Context(), restaurantID)
 		menus := make([]publicMenuItemHome, 0, 24)
 		homeMenuIDs := make([]int64, 0, 24)
 		for rows.Next() {
@@ -796,6 +800,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 			}
 
 			menus = append(menus, publicMenuItemHome{
+				publicMenuSEO:        seoByMenuID[menuID],
 				ID:                   menuID,
 				Slug:                 buildPublicMenuSlug(menuTitle, menuID),
 				MenuTitle:            menuTitle,
@@ -831,6 +836,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Full response (non-home page)
+	seoByMenuID := s.loadPublicMenuSEOMap(r.Context(), restaurantID)
 	menus := make([]publicMenuItem, 0, 24)
 	menuIndexByID := make(map[int64]int, 24)
 	menuIDs := make([]int64, 0, 24)
@@ -935,13 +941,14 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		item := publicMenuItem{
-			ID:           menuID,
-			Slug:         buildPublicMenuSlug(menuTitle, menuID),
-			MenuTitle:    menuTitle,
-			MenuType:     menuType,
-			MenuTypeName: MenuTypeName(menuType),
-			Price:        price,
-			Active:       activeInt != 0,
+			publicMenuSEO: seoByMenuID[menuID],
+			ID:            menuID,
+			Slug:          buildPublicMenuSlug(menuTitle, menuID),
+			MenuTitle:     menuTitle,
+			MenuType:      menuType,
+			MenuTypeName:  MenuTypeName(menuType),
+			Price:         price,
+			Active:        activeInt != 0,
 			MenuSubtitle: anySliceToStringList(
 				decodeJSONOrFallback(menuSubtitleRaw.String, []any{}),
 			),
@@ -1273,6 +1280,7 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": true,
 			"menu": publicMenuItemSpecial{
+				publicMenuSEO:       s.loadPublicMenuSEO(r.Context(), restaurantID, menuID),
 				ID:                  menuID,
 				MenuTitle:           menuTitle,
 				MenuSubtitle:        anySliceToStringList(decodeJSONOrFallback(menuSubtitleRaw.String, []any{})),
@@ -1422,13 +1430,14 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	}
 
 	item := publicMenuItem{
-		ID:           menuID,
-		Slug:         buildPublicMenuSlug(menuTitle, menuID),
-		MenuTitle:    menuTitle,
-		MenuType:     menuType,
-		MenuTypeName: MenuTypeName(menuType),
-		Price:        price,
-		Active:       activeInt != 0,
+		publicMenuSEO: s.loadPublicMenuSEO(r.Context(), int(restaurantID), menuID),
+		ID:            menuID,
+		Slug:          buildPublicMenuSlug(menuTitle, menuID),
+		MenuTitle:     menuTitle,
+		MenuType:      menuType,
+		MenuTypeName:  MenuTypeName(menuType),
+		Price:         price,
+		Active:        activeInt != 0,
 		MenuSubtitle: anySliceToStringList(
 			decodeJSONOrFallback(menuSubtitleRaw.String, []any{}),
 		),
@@ -1651,6 +1660,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 
 // publicMenuSidebarItem is a minimal representation for the burger nav sidebar.
 type publicMenuSidebarItem struct {
+	publicMenuSEO
 	ID        int64  `json:"id"`
 	Slug      string `json:"slug"`
 	MenuTitle string `json:"menu_title"`
@@ -1720,6 +1730,7 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	seoByMenuID := s.loadPublicMenuSEOMap(r.Context(), restaurantID)
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, COALESCE(menu_type, 1), COALESCE(legacy_source_table, ''),
 		       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1),
@@ -1771,6 +1782,7 @@ func (s *Server) handlePublicMenusSidebar(w http.ResponseWriter, r *http.Request
 		}
 
 		menus = append(menus, publicMenuSidebarItem{
+			publicMenuSEO:     seoByMenuID[menuID],
 			ID:                menuID,
 			Slug:              buildPublicMenuSlug(menuTitle, menuID),
 			MenuTitle:         menuTitle,
@@ -1819,6 +1831,7 @@ type publicSidebarSection struct {
 // loadPublicVisibleSections returns sections flagged public_page_active that
 // belong to an active, publicly visible menu.
 func (s *Server) loadPublicVisibleSections(r *http.Request, restaurantID int) ([]publicSidebarSection, error) {
+	seoByMenuID := s.loadPublicMenuSEOMap(r.Context(), restaurantID)
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT sec.id, sec.menu_id, sec.title, sec.section_kind,
 		       COALESCE(sec.web_placement, 'inside_menus'), m.menu_title
@@ -1842,7 +1855,11 @@ func (s *Server) loadPublicVisibleSections(r *http.Request, restaurantID int) ([
 		}
 		sec.Kind = normalizeV2SectionKind(sec.Kind)
 		sec.WebPlacement = normalizeV2SectionWebPlacement(sec.WebPlacement)
-		sec.Href = fmt.Sprintf("/menu/%d/%s#seccion-%d", sec.MenuID, buildPublicMenuSlug(menuTitle, sec.MenuID), sec.ID)
+		if slug := seoByMenuID[sec.MenuID].SEOSlug; slug != "" {
+			sec.Href = fmt.Sprintf("/menu/%s#seccion-%d", slug, sec.ID)
+		} else {
+			sec.Href = fmt.Sprintf("/menu/%d/%s#seccion-%d", sec.MenuID, buildPublicMenuSlug(menuTitle, sec.MenuID), sec.ID)
+		}
 		out = append(out, sec)
 	}
 	return out, rows.Err()
@@ -1860,6 +1877,7 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logCheckpoint(r, "home_menus_db_query_started", "restaurant_id", strconv.Itoa(restaurantID))
+	seoByMenuID := s.loadPublicMenuSEOMap(r.Context(), restaurantID)
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, menu_title, menu_type, active, menu_subtitle,
 		       show_menu_preview_image, menu_preview_image_path, COALESCE(completo, 0)
@@ -1912,6 +1930,7 @@ func (s *Server) handlePublicMenusHome(w http.ResponseWriter, r *http.Request) {
 		}
 
 		menus = append(menus, publicMenuItemHome{
+			publicMenuSEO:        seoByMenuID[menuID],
 			ID:                   menuID,
 			Slug:                 buildPublicMenuSlug(menuTitle, menuID),
 			MenuTitle:            menuTitle,
