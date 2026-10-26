@@ -26,6 +26,9 @@ services:
       STATIC_DIR: /app/static
       BOT_CONTEXT_SQLITE_PATH: /var/lib/herorestaurant/whatsapp-bot-context.sqlite
       BOT_PIPELINE_URL: http://127.0.0.1:18195
+      # campaign_tools_v1: design engine + email compiler of the backoffice
+      # server (host network, backoffice PORT 3011).
+      BACKOFFICE_INTERNAL_URL: http://127.0.0.1:3011
     volumes:
       - whatsapp-bot-context:/var/lib/herorestaurant
     # Public frontend dist is baked into the image (no bind mounts in prod).

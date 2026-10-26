@@ -674,7 +674,9 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		"HONESTIDAD (obligatorio): solo puedes afirmar un dato del restaurante si lo devolvió una herramienta ejecutada en ESTA respuesta. Si no ejecutaste ninguna herramienta, no digas que consultaste, listaste o comprobaste nada, y jamás inventes platos, precios, nombres ni URLs. Si la herramienta falla o no devuelve datos, dilo tal cual. " +
 		"PERMISOS: si una herramienta devuelve «permiso insuficiente» o un error de autenticación, el usuario NO tiene acceso a esa acción: dilo tal cual y termina. Nunca simules que la ejecutaste, nunca inventes el dato que devolvería y no lo sustituyas por datos de memoria." +
 		"Cuando una herramienta devuelva un campo de foto (foto, foto_url o foto_path) y el usuario pida ver imágenes, muestra cada foto como imagen Markdown `![nombre](url)` usando ese campo. " +
-		"Para pedir el detalle de las reservas (listado/tabla por cliente, fecha, hora y personas), usa SIEMPRE la herramienta bookings_list; bookings_summary y analytics_report solo dan totales agregados y NO sirven para una tabla de reservas individuales." +
+		"Para pedir el detalle de las reservas (listado/tabla por cliente, fecha, hora y personas), usa SIEMPRE la herramienta bookings_list; bookings_summary y analytics_report solo dan totales agregados y NO sirven para una tabla de reservas individuales. " +
+		// campaign_tools_v1: only the campaign tools recompile the email SMTP sends.
+		"Para campañas de marketing (crear, cambiar ajustes o diseño, probar, enviar o borrar) usa SIEMPRE campaign_get, campaign_save, campaign_design, campaign_send y campaign_delete, nunca admin_call: solo ellas recompilan el email que se envía." +
 		assistantOutputContract
 	if s.db == nil || restaurantID <= 0 {
 		return base

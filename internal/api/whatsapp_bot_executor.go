@@ -157,6 +157,9 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolStaffDomainRead(ctx, restaurantID, msg, input)
 	case "panel_change":
 		return s.botToolPanelChange(ctx, restaurantID, msg, input)
+	// Coordination id: campaign_tools_v1 - the campaign editor of /app/campanas.
+	case "manage_campaign":
+		return s.botToolManageCampaign(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_admin_reads_v1 - read-only staff group tools;
 	// each handler re-authorizes through botSpecialAdminAuthorize (fail closed).
 	case "list_cancelled_bookings":

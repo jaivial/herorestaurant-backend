@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -165,30 +166,36 @@ func splitCampaignAIReply(text string) (reply, html string) {
 	return reply, html
 }
 
-// POST /api/admin/campanas/ai/chat
-func (s *Server) handleBOCampaignAIChat(w http.ResponseWriter, r *http.Request) {
-	a, ok := boAuthFromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
-	var in campaignAIChatRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2*campaignAIMaxHTMLBytes)).Decode(&in); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Petición no válida"})
-		return
-	}
+// campaignAIError is a refusal of the design AI with the HTTP status the
+// builder endpoint answers with (the tools only read the message).
+type campaignAIError struct {
+	status int
+	msg    string
+}
+
+func (e campaignAIError) Error() string { return e.msg }
+
+// campaignAIResult is one answer of the design AI: the explanation, the
+// rewritten design ("" when the model only answered) and the model used.
+type campaignAIResult struct {
+	Reply string
+	HTML  string
+	Model string
+}
+
+// campaignAIRun asks the restaurant's model to rewrite a design. ONE core for
+// the builder chat and the campaign tools of Forky and the WhatsApp bot
+// (campaign_tools_v1): same prompt, model choice, limits and usage record.
+func (s *Server) campaignAIRun(ctx context.Context, restaurantID int, in campaignAIChatRequest) (campaignAIResult, error) {
 	in.HTML = strings.TrimSpace(in.HTML)
 	if len(in.HTML) > campaignAIMaxHTMLBytes || len(in.SelectedHTML) > campaignAIMaxHTMLBytes {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "El diseño es demasiado grande para el asistente"})
-		return
+		return campaignAIResult{}, campaignAIError{http.StatusBadRequest, "El diseño es demasiado grande para el asistente"}
 	}
 	msgs := campaignAIConversation(in)
 	if len(msgs) == 0 || msgs[len(msgs)-1].Role != "user" {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Escribe un mensaje"})
-		return
+		return campaignAIResult{}, campaignAIError{http.StatusBadRequest, "Escribe un mensaje"}
 	}
-	ctx := r.Context()
-	models, def := s.campaignAIModels(ctx, a.ActiveRestaurantID)
+	models, def := s.campaignAIModels(ctx, restaurantID)
 	ref := def
 	for _, m := range models {
 		if m.ID == strings.TrimSpace(in.Model) {
@@ -196,23 +203,21 @@ func (s *Server) handleBOCampaignAIChat(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if ref == "" {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No hay ningún modelo de IA configurado (Configuración → IA)"})
-		return
+		return campaignAIResult{}, campaignAIError{http.StatusOK, "No hay ningún modelo de IA configurado (Configuración → IA)"}
 	}
-	branding, _ := s.loadRestaurantBranding(ctx, a.ActiveRestaurantID)
-	siteURL := firstNonEmpty(strings.TrimSpace(branding.Website), s.campaignRestaurantBaseURL(ctx, a.ActiveRestaurantID))
+	branding, _ := s.loadRestaurantBranding(ctx, restaurantID)
+	siteURL := firstNonEmpty(strings.TrimSpace(branding.Website), s.campaignRestaurantBaseURL(ctx, restaurantID))
 	coordID := firstNonEmpty(strings.TrimSpace(in.CoordID), "camp-new")
 	started := time.Now()
-	slog.Default().Info("campaign.ai.chat.start", "coord_id", coordID, "restaurant_id", a.ActiveRestaurantID, "model", ref, "turns", len(msgs), "html_bytes", len(in.HTML))
-	resp, err := s.botCallModelRef(withBotCallTimeout(ctx, campaignAITimeout), a.ActiveRestaurantID, ref, coordID,
+	slog.Default().Info("campaign.ai.chat.start", "coord_id", coordID, "restaurant_id", restaurantID, "model", ref, "turns", len(msgs), "html_bytes", len(in.HTML))
+	resp, err := s.botCallModelRef(withBotCallTimeout(ctx, campaignAITimeout), restaurantID, ref, coordID,
 		campaignAISystemPrompt(branding, siteURL), msgs, nil, campaignAIMaxTokens)
 	if err != nil {
 		slog.Default().Warn("campaign.ai.chat.failed", "coord_id", coordID, "model", ref, "ms", time.Since(started).Milliseconds(), "err", err.Error())
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "El asistente no ha podido responder. Inténtalo de nuevo."})
-		return
+		return campaignAIResult{}, campaignAIError{http.StatusOK, "El asistente no ha podido responder. Inténtalo de nuevo."}
 	}
 	provider, model := botSplitModelRef(ref)
-	s.recordAIUsage(ctx, a.ActiveRestaurantID, aiFeatureCampaignBuilder, provider, model,
+	s.recordAIUsage(ctx, restaurantID, aiFeatureCampaignBuilder, provider, model,
 		helperAnthropicUsage(resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens), false)
 	text := ""
 	for _, b := range resp.Content {
@@ -225,5 +230,30 @@ func (s *Server) handleBOCampaignAIChat(w http.ResponseWriter, r *http.Request) 
 		reply = "Listo, he actualizado el diseño."
 	}
 	slog.Default().Info("campaign.ai.chat.done", "coord_id", coordID, "model", ref, "ms", time.Since(started).Milliseconds(), "html_changed", html != "", "html_bytes", len(html))
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "reply": reply, "html": html, "model": ref, "coord_id": coordID})
+	return campaignAIResult{Reply: reply, HTML: html, Model: ref}, nil
+}
+
+// POST /api/admin/campanas/ai/chat
+func (s *Server) handleBOCampaignAIChat(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	var in campaignAIChatRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2*campaignAIMaxHTMLBytes)).Decode(&in); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Petición no válida"})
+		return
+	}
+	res, err := s.campaignAIRun(r.Context(), a.ActiveRestaurantID, in)
+	if err != nil {
+		var refusal campaignAIError
+		if errors.As(err, &refusal) {
+			httpx.WriteJSON(w, refusal.status, map[string]any{"success": false, "message": refusal.msg})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "El asistente no ha podido responder. Inténtalo de nuevo."})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "reply": res.Reply, "html": res.HTML, "model": res.Model, "coord_id": firstNonEmpty(strings.TrimSpace(in.CoordID), "camp-new")})
 }
