@@ -283,8 +283,23 @@ func (s *Server) campaignToolRead(ctx context.Context, rid int, a campaignToolAr
 	out["campaign"] = campaignToolView(c)
 	design := map[string]any{"has_design": c.BodyHTML != "", "version": campaignDesignVersion(c.BodyHTML)}
 	blocks := 0
-	if c.BodyHTML != "" {
-		res, err := s.campaignDesignCall(ctx, campaignDesignRequest{Action: "inspect", HTML: c.BodyHTML, CoordID: c.CoordID})
+	// A campaign without a design yet is edited on the design the editor would
+	// create on open (template or legacy message in the frame): the read shows
+	// THAT design, so the ids of the first design_edit are readable too (the
+	// creation is deterministic and the version is "sin-diseno" on both sides).
+	current := c.BodyHTML
+	if current == "" && (has("layers") || has("html")) {
+		base, err := s.campaignToolBaseDesign(ctx, rid, c)
+		if err != nil {
+			design["error"] = err.Error()
+		}
+		current = base
+	}
+	if has("html") {
+		design["html"] = current
+	}
+	if current != "" {
+		res, err := s.campaignDesignCall(ctx, campaignDesignRequest{Action: "inspect", HTML: current, CoordID: c.CoordID})
 		if err != nil {
 			design["error"] = err.Error()
 		} else {
@@ -299,11 +314,9 @@ func (s *Server) campaignToolRead(ctx context.Context, rid int, a campaignToolAr
 				design["layers_note"] = "Ids por orden de documento: valen hasta el próximo cambio del diseño; cada edición devuelve las capas renumeradas."
 			}
 		}
-	} else {
-		design["note"] = "Campaña anterior al editor: la primera edición del diseño crea uno con su mensaje dentro del marco de marca."
 	}
-	if has("html") {
-		design["html"] = c.BodyHTML
+	if c.BodyHTML == "" {
+		design["note"] = "Campaña anterior al editor: todavía no tiene diseño guardado. La primera edición crea el diseño mostrado aquí (su mensaje dentro del marco de marca), con estos mismos ids."
 	}
 	out["design"] = design
 	out["flow"] = campaignToolFlow(c, blocks)

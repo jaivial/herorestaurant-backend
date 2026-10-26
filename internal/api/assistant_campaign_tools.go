@@ -81,9 +81,11 @@ type campaignPendingConfirm struct {
 	expires time.Time
 }
 
-// campaignPending: "restaurant|session|tool|action" -> the latest preview of
-// that action in that chat (process memory: a restart only asks for a fresh
-// preview, it never lets anything through).
+// campaignPending: "restaurant|session|tool|action" -> the previews of that
+// action in that chat. Process memory on purpose: prod runs ONE backend
+// container and a restart only asks for a fresh preview, it never lets
+// anything through. Several replicas would need a shared store (the
+// forky_confirmation_tokens table already is one).
 var campaignPending sync.Map
 
 func campaignPendingKey(rid int, session int64, tool, action string) string {
