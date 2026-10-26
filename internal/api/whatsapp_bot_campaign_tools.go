@@ -97,6 +97,15 @@ func (s *Server) botToolManageCampaign(ctx context.Context, restaurantID int, ms
 		if err != nil {
 			return botJSON(map[string]any{"error": err.Error()}), nil
 		}
+		if placement != "none" {
+			// Validate where the image goes BEFORE converting and uploading it:
+			// a wrong element must not leave an orphan object in the CDN.
+			probe := a
+			probe.ImageURL, probe.ImageName = campaignImagePreviewURL, "imagen de WhatsApp"
+			if _, _, err := s.campaignToolPreview(ctx, restaurantID, probe); err != nil {
+				return botJSON(map[string]any{"error": err.Error()}), nil
+			}
+		}
 		img, err := s.botChatImageSource(ctx, restaurantID, msg, a.ImageRef)
 		if err != nil {
 			return botJSON(map[string]any{"error": err.Error()}), nil
