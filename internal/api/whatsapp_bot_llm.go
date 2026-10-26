@@ -148,10 +148,7 @@ func (s *Server) botAnthropicCall(ctx context.Context, baseURL, apiKey, model, s
 	}
 
 	url := baseURL + "/v1/messages"
-	timeout := s.cfg.BotTimeout
-	if timeout <= 0 {
-		timeout = 45 * time.Second
-	}
+	timeout := s.botCallTimeout(ctx)
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -269,4 +266,24 @@ func (s *Server) botCallModelRef(ctx context.Context, restaurantID int, ref, ses
 		return s.botOpenAICall(ctx, p, key, model, sessionID, system, messages, tools, maxTokensOverride)
 	}
 	return s.botAnthropicCall(ctx, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/"), key, model, system, messages, tools, maxTokensOverride)
+}
+
+// botCallTimeoutKey carries a per-call timeout for the bot LLM transports. A
+// caller that legitimately needs longer than the WhatsApp turn budget (the
+// campaign HTML builder rewriting a whole email) opts in with
+// withBotCallTimeout; every other caller keeps BOT_MINIMAX_TIMEOUT_SECONDS.
+type botCallTimeoutKey struct{}
+
+func withBotCallTimeout(ctx context.Context, d time.Duration) context.Context {
+	return context.WithValue(ctx, botCallTimeoutKey{}, d)
+}
+
+func (s *Server) botCallTimeout(ctx context.Context) time.Duration {
+	if d, ok := ctx.Value(botCallTimeoutKey{}).(time.Duration); ok && d > 0 {
+		return d
+	}
+	if s.cfg.BotTimeout > 0 {
+		return s.cfg.BotTimeout
+	}
+	return 45 * time.Second
 }

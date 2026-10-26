@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"preactvillacarmen/internal/config"
 )
@@ -89,10 +88,7 @@ func (s *Server) botOpenAICall(ctx context.Context, p botAIProvider, apiKey, mod
 		body["tools"] = botToOpenAITools(tools)
 	}
 	raw, _ := json.Marshal(body)
-	timeout := s.cfg.BotTimeout
-	if timeout <= 0 {
-		timeout = 45 * time.Second
-	}
+	timeout := s.botCallTimeout(ctx)
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, strings.TrimRight(p.BaseURL, "/")+"/chat/completions", bytes.NewReader(raw))
