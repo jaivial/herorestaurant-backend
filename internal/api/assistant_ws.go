@@ -397,6 +397,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 		attachmentBlocks = append(attachmentBlocks, block)
 	}
 	userContentBlocks, userContentPersisted := assistantAttachmentsToUserBlocks(content, attachmentBlocks)
+	if note := assistantAttachmentRefsNote(attachmentBlocks); note != "" {
+		userContentBlocks = append(userContentBlocks, map[string]any{"type": "text", "text": note})
+	}
 
 	// The clip's Bunny URL rides the row so a reload replays it at this exact
 	// message; NULLIF keeps a plain text turn at NULL instead of ''.

@@ -119,7 +119,31 @@ func (s *Server) buildAssistantAttachmentBlock(ctx context.Context, restaurantID
 		log.Printf("[forky-attachments] download failed restaurant_id=%d path=%q: %v", restaurantID, ref.Path, err)
 		return assistantAttachmentBlock{}, fmt.Errorf("no se pudo leer «%s»: inténtalo de nuevo", ref.Name)
 	}
-	return buildAssistantAttachmentBlockFromBytes(ref.Name, mediaType, payload)
+	block, err := buildAssistantAttachmentBlockFromBytes(ref.Name, mediaType, payload)
+	if err == nil && block.block["type"] == "image" {
+		// campaign_tools_v1: an image is also a resource the tools can use
+		// (campaign_image uploads it to the restaurant CDN). The model only
+		// sees the pixels, so its storage ref rides the manifest, which is
+		// what the persisted history keeps for later turns.
+		block.manifest = strings.TrimSuffix(block.manifest, "]") + " · ref " + strings.TrimSpace(ref.Path) + "]"
+	}
+	return block, err
+}
+
+// assistantAttachmentRefsNote lists the storage refs of the images of this
+// message for the model (campaign_tools_v1): the current turn carries the
+// pixels, not the manifest, so without it a tool could not address them.
+func assistantAttachmentRefsNote(blocks []assistantAttachmentBlock) string {
+	lines := []string{}
+	for _, b := range blocks {
+		if b.block["type"] == "image" && strings.Contains(b.manifest, " · ref ") {
+			lines = append(lines, b.manifest)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "Imágenes adjuntas a este mensaje (la ref sirve para usarlas en herramientas, p. ej. campaign_image):\n" + strings.Join(lines, "\n")
 }
 
 // buildAssistantAttachmentBlockFromBytes turns already-downloaded attachment

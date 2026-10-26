@@ -35,10 +35,12 @@ func botToolDefsCampaign() []botToolDef {
 			"Escrituras (NO se aplican: se envía al chat una propuesta con código y quien la pidió confirma con 'OK <código>'): " +
 			"'create' (name obligatorio; arranca con el diseño de la plantilla de marca o con design_html), 'update' (name, subject, channels email/whatsapp, audience bookings|manual, audience_days, manual_recipients, email_per_minute 1-5, whatsapp_per_minute 1), " +
 			"'design_edit' (ops en orden sobre los ids de la última lectura, con version: add_block {block,target?,position?}, insert_html {html,target?,position?}, set_text {id,text}, set_html {id,html}, set_attrs {id,href?,src?,alt?}, set_style {id,scope all|md,styles{fontSize,fontWeight,textAlign,textColor,bgColor,lineHeight,paddingX,paddingY,marginTop,marginBottom,radius,maxWidth,width}}, set_classes {id,classes|add|remove}, set_visibility {id,all|mobile|desktop}, move {id,direction up|down}, duplicate {id}, remove {id}, replace_element {id,html}, replace_html {html}; HTML con clases de Tailwind v3 y el enlace {{unsubscribe_url}} en el pie), " +
-			"'design_ai' (instruction para el asistente de diseño con IA; element_id y model opcionales), 'design_undo' (deshace el último cambio de diseño hecho desde un chat), 'test' (prueba a target: email o teléfono), 'send' (envío real a toda la audiencia; no se puede deshacer), 'resume' (reanuda envíos pausados; ack obligatorio) y 'delete'. " +
+			"'design_ai' (instruction para el asistente de diseño con IA; element_id y model opcionales), 'design_undo' (deshace el último cambio de diseño hecho desde un chat), " +
+			"'image' (usa en el email una IMAGEN ENVIADA a este chat: la sube al CDN del restaurante en formato apto para email; image_ref = la de la nota de la imagen o vacío para la más reciente; element_id = la imagen <img> que sustituye, o se añade un bloque de imagen después de insert_after; placement=none solo la sube y devuelve la URL al momento; alt opcional), " +
+			"'test' (prueba a target: email o teléfono), 'send' (envío real a toda la audiencia; no se puede deshacer), 'resume' (reanuda envíos pausados; ack obligatorio) y 'delete'. " +
 			"Propón UN cambio cada vez y espera al OK antes del siguiente. Para campañas usa SIEMPRE esta herramienta, nunca panel_change ni admin_call: solo ella recompila el email que se envía.",
 		InputSchema: botSchema(`{"type":"object","properties":{
-			"action":{"type":"string","enum":["list","get","create","update","design_edit","design_ai","design_undo","test","send","resume","delete"]},
+			"action":{"type":"string","enum":["list","get","create","update","design_edit","design_ai","design_undo","image","test","send","resume","delete"]},
 			"campaign_id":{"type":"integer","description":"ID de la campaña (todas menos list y create)"},
 			"include":{"type":"array","items":{"type":"string","enum":["layers","html","whatsapp_text","audience","deliveries","ai_models","blocks"]}},
 			"name":{"type":"string"},"subject":{"type":"string"},
@@ -51,6 +53,8 @@ func botToolDefsCampaign() []botToolDef {
 			"version":{"type":"string","description":"version del diseño leída con get"},
 			"instruction":{"type":"string","description":"Solo design_ai"},
 			"element_id":{"type":"string"},"model":{"type":"string"},
+			"image_ref":{"type":"string","description":"Solo image: id de la imagen del chat (vacío = la más reciente)"},
+			"insert_after":{"type":"string"},"placement":{"type":"string","enum":["replace","insert","none"]},"alt":{"type":"string"},
 			"channel":{"type":"string","enum":["email","whatsapp"]},"target":{"type":"string"},"ack":{"type":"string"}
 		},"required":["action"]}`),
 	}}
@@ -80,11 +84,47 @@ func (s *Server) botToolManageCampaign(ctx context.Context, restaurantID int, ms
 		out["tool"] = "manage_campaign"
 		return botJSON(out), nil
 	}
+	if a.Action == "image" {
+		// The bytes of a chat image only live in this turn (or the provider):
+		// upload now, so the proposal carries the CDN URL and the "OK" never
+		// depends on them. The upload alone changes nothing visible.
+		a.Attachment, a.ImageURL, a.ImageName = "", "", ""
+		c, err := s.campaignToolLoad(ctx, restaurantID, a.CampaignID)
+		if err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+		placement, err := campaignImagePlacement(a)
+		if err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+		if placement != "none" {
+			// Validate where the image goes BEFORE converting and uploading it:
+			// a wrong element must not leave an orphan object in the CDN.
+			probe := a
+			probe.ImageURL, probe.ImageName = campaignImagePreviewURL, "imagen de WhatsApp"
+			if _, _, err := s.campaignToolPreview(ctx, restaurantID, probe); err != nil {
+				return botJSON(map[string]any{"error": err.Error()}), nil
+			}
+		}
+		img, err := s.botChatImageSource(ctx, restaurantID, msg, a.ImageRef)
+		if err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+		url, err := s.campaignToolUploadImage(ctx, restaurantID, c.ID, img)
+		if err != nil {
+			return botJSON(map[string]any{"error": err.Error()}), nil
+		}
+		a.ImageURL, a.ImageName = url, "imagen de WhatsApp"
+		botCheckpoint("campaign_tools_v1", "restaurant_id=%d chat_image_uploaded campaign_id=%d placement=%s", restaurantID, c.ID, placement)
+		if placement == "none" {
+			return botJSON(map[string]any{"ok": true, "tool": "manage_campaign", "url": url, "status": "Imagen subida al CDN del restaurante; el diseño no ha cambiado."}), nil
+		}
+	}
 	_, text, err := s.campaignToolPreview(ctx, restaurantID, a)
 	if err != nil {
 		return botJSON(map[string]any{"error": err.Error()}), nil
 	}
-	if a.Action == "design_edit" && a.Version == "" {
+	if (a.Action == "design_edit" || a.Action == "image") && a.Version == "" {
 		// The ops address the ids of the design as it is NOW: bind the
 		// proposal to this version so an OK given after another change is
 		// refused instead of editing the wrong element.

@@ -191,6 +191,19 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		ImageB64:        in.ImageB64,
 		ImageMime:       in.ImageMime,
 	}
+	if isPrivileged {
+		// campaign_tools_v1: in an allowed chat the caption of a photo is the
+		// request itself ("ponla en la portada de la campaña 33"); without it
+		// a captioned photo had no text and never produced a turn. Customer
+		// chats keep their behaviour.
+		if strings.TrimSpace(msg.Text) == "" && in.Caption != "" {
+			msg.Text = in.Caption
+		}
+		// The image is remembered at accept time: the burst worker drops
+		// text-less messages and merges bursts into the last message, so the
+		// turn alone could lose it ("foto" now, "úsala en la campaña" later).
+		botRememberChatImage(restaurantID, msg)
+	}
 	// wa_bot_special_admin_v2: an exact "OK <code>" from the verified requester
 	// is handled here, before any model turn, and never reaches the model.
 	if isPrivileged && s.botSpecialAdminTryApprove(r.Context(), restaurantID, msg) {

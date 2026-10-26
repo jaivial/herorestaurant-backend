@@ -676,7 +676,7 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		"Cuando una herramienta devuelva un campo de foto (foto, foto_url o foto_path) y el usuario pida ver imágenes, muestra cada foto como imagen Markdown `![nombre](url)` usando ese campo. " +
 		"Para pedir el detalle de las reservas (listado/tabla por cliente, fecha, hora y personas), usa SIEMPRE la herramienta bookings_list; bookings_summary y analytics_report solo dan totales agregados y NO sirven para una tabla de reservas individuales. " +
 		// campaign_tools_v1: only the campaign tools recompile the email SMTP sends.
-		"Para campañas de marketing (crear, cambiar ajustes o diseño, probar, enviar o borrar) usa SIEMPRE campaign_get, campaign_save, campaign_design, campaign_send y campaign_delete, nunca admin_call: solo ellas recompilan el email que se envía." +
+		"Para campañas de marketing (crear, cambiar ajustes o diseño, probar, enviar o borrar) usa SIEMPRE campaign_get, campaign_save, campaign_design, campaign_image, campaign_send y campaign_delete, nunca admin_call: solo ellas recompilan el email que se envía. Una imagen adjunta en el chat se usa en el email con campaign_image (la sube al CDN del restaurante)." +
 		assistantOutputContract
 	if s.db == nil || restaurantID <= 0 {
 		return base
