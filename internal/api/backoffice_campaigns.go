@@ -495,6 +495,40 @@ func (s *Server) handleBOCampaignImageUpload(w http.ResponseWriter, r *http.Requ
 // email design seeds every campaign preview.
 const campaignTemplateReferenceRestaurant = 1
 
+// campaignBrand is the brand every campaign design starts from: the template
+// endpoint, the builder blocks and the campaign tools (campaign_tools_v1).
+type campaignBrand struct {
+	BrandName      string
+	LogoURL        string
+	WebsiteURL     string
+	UnsubscribeURL string
+}
+
+// campaignTemplateBrand is the active restaurant's brand over the reference
+// restaurant's look.
+func (s *Server) campaignTemplateBrand(ctx context.Context, restaurantID int) campaignBrand {
+	reference, _ := s.loadRestaurantBranding(ctx, campaignTemplateReferenceRestaurant)
+	branding := reference
+	if restaurantID != campaignTemplateReferenceRestaurant {
+		if own, err := s.loadRestaurantBranding(ctx, restaurantID); err == nil {
+			branding = own
+		}
+	}
+	// The restaurant own public site is the last-resort website: even without a
+	// website saved in ConfigContacto the CTA and the opt-out button render.
+	baseURL := s.campaignRestaurantBaseURL(ctx, restaurantID)
+	websiteURL := firstNonEmpty(strings.TrimSpace(branding.Website), strings.TrimSpace(reference.Website), baseURL)
+	return campaignBrand{
+		BrandName:  firstNonEmpty(branding.BrandName, reference.BrandName, "Restaurante"),
+		LogoURL:    firstNonEmpty(branding.LogoURL, reference.LogoURL),
+		WebsiteURL: websiteURL,
+		// The previews must show the opt-out button the recipient gets, so the
+		// shell is built with a placeholder link (an unknown booking id inserts
+		// nothing).
+		UnsubscribeURL: campaignUnsubscribePreviewURL(campaignAbsoluteBase(websiteURL)),
+	}
+}
+
 // handleBOCampaignTemplate returns the default email template: the reference
 // restaurant's look plus the active restaurant's brand and logo.
 func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request) {
@@ -503,13 +537,7 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, 401, "Unauthorized")
 		return
 	}
-	reference, _ := s.loadRestaurantBranding(r.Context(), campaignTemplateReferenceRestaurant)
-	branding := reference
-	if a.ActiveRestaurantID != campaignTemplateReferenceRestaurant {
-		if own, err := s.loadRestaurantBranding(r.Context(), a.ActiveRestaurantID); err == nil {
-			branding = own
-		}
-	}
+	brand := s.campaignTemplateBrand(r.Context(), a.ActiveRestaurantID)
 	// Optional theme overrides let the editor refresh the shell when the user
 	// tweaks colors, without ever building the markup on the client.
 	q := r.URL.Query()
@@ -523,15 +551,7 @@ func (s *Server) handleBOCampaignTemplate(w http.ResponseWriter, r *http.Request
 		MaxWidth:   width,
 		Align:      q.Get("align"),
 	})
-	brandName := firstNonEmpty(branding.BrandName, reference.BrandName, "Restaurante")
-	logoURL := firstNonEmpty(branding.LogoURL, reference.LogoURL)
-	// The restaurant own public site is the last-resort website: even without a
-	// website saved in ConfigContacto the CTA and the opt-out button render.
-	baseURL := s.campaignRestaurantBaseURL(r.Context(), a.ActiveRestaurantID)
-	websiteURL := firstNonEmpty(strings.TrimSpace(branding.Website), strings.TrimSpace(reference.Website), baseURL)
-	// The previews must show the opt-out button the recipient gets, so the shell
-	// is built with a placeholder link (an unknown booking id inserts nothing).
-	unsubscribeURL := campaignUnsubscribePreviewURL(campaignAbsoluteBase(websiteURL))
+	brandName, logoURL, websiteURL, unsubscribeURL := brand.BrandName, brand.LogoURL, brand.WebsiteURL, brand.UnsubscribeURL
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success":         true,
 		"theme":           theme,

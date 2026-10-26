@@ -116,6 +116,14 @@ var botForkyExcludedFromWA = map[string]struct{}{
 	"website_read":             {},
 	"campaigns_read":           {},
 	"invoices_read":            {},
+	// campaign_tools_v1: the bot has its own manage_campaign, whose writes go
+	// through the propose+OK flow; the forky twins (confirmation tokens under
+	// the synthetic root auth) must not become a way around it.
+	"campaign_get":    {},
+	"campaign_save":   {},
+	"campaign_design": {},
+	"campaign_send":   {},
+	"campaign_delete": {},
 }
 
 // botForkyMetaTools are the forky names still advertised in the WhatsApp
