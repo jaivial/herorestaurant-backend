@@ -354,11 +354,11 @@ func (s *Server) listLegacyComidaCategories(r *http.Request, restaurantID int, f
 
 	switch foodType {
 	case "platos":
-		if err := s.ensureBasePlatoCategories(r, restaurantID); err != nil {
+		if err := ensureBasePlatoCategories(r, s.db, restaurantID); err != nil {
 			return nil, err
 		}
 	case "bebidas":
-		if err := s.ensureBaseBebidaCategories(r, restaurantID); err != nil {
+		if err := ensureBaseBebidaCategories(r, s.db, restaurantID); err != nil {
 			return nil, err
 		}
 	}
@@ -511,7 +511,7 @@ func comidaCategoryBaseSlugs(foodType string) []string {
 	return nil
 }
 
-// lockComidaCategoryNamespace serializes unified-category writes for one restaurant.
+// lockComidaCategoryNamespace serializes category-namespace writes for one restaurant.
 // The restaurants row is a guaranteed sentinel; locking it closes the cross-scope gap
 // left by the (restaurant_id, food_type, slug) UNIQUE index without a schema change.
 func lockComidaCategoryNamespace(r *http.Request, tx *sql.Tx, restaurantID int) error {
