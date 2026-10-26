@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -13,6 +14,13 @@ import (
 
 	"preactvillacarmen/internal/httpx"
 )
+
+// comidaCategoryDB lets legacy category helpers join a product-write transaction.
+// Both *sql.DB and *sql.Tx implement it.
+type comidaCategoryDB interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
 
 type comidaTipo string
 
@@ -313,9 +321,9 @@ func slugifyCategoryName(s string) string {
 	return slug
 }
 
-func (s *Server) ensureBasePlatoCategories(r *http.Request, restaurantID int) error {
+func ensureBasePlatoCategories(r *http.Request, q comidaCategoryDB, restaurantID int) error {
 	for _, cat := range basePlatoCategories {
-		_, err := s.db.ExecContext(r.Context(), `
+		_, err := q.ExecContext(r.Context(), `
 			INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
 			VALUES (?, ?, ?, 'base', 1)
 			ON DUPLICATE KEY UPDATE
@@ -330,9 +338,9 @@ func (s *Server) ensureBasePlatoCategories(r *http.Request, restaurantID int) er
 	return nil
 }
 
-func (s *Server) ensureBaseBebidaCategories(r *http.Request, restaurantID int) error {
+func ensureBaseBebidaCategories(r *http.Request, q comidaCategoryDB, restaurantID int) error {
 	for _, cat := range baseBebidaCategories {
-		_, err := s.db.ExecContext(r.Context(), `
+		_, err := q.ExecContext(r.Context(), `
 			INSERT INTO comida_bebida_categories (restaurant_id, name, slug, source, active)
 			VALUES (?, ?, ?, 'base', 1)
 			ON DUPLICATE KEY UPDATE
@@ -347,10 +355,10 @@ func (s *Server) ensureBaseBebidaCategories(r *http.Request, restaurantID int) e
 	return nil
 }
 
-func (s *Server) getCategoryByID(r *http.Request, restaurantID, categoryID int) (comidaCategoryResponse, bool, error) {
+func getCategoryByID(r *http.Request, q comidaCategoryDB, restaurantID, categoryID int) (comidaCategoryResponse, bool, error) {
 	var c comidaCategoryResponse
 	var activeInt int
-	err := s.db.QueryRowContext(r.Context(), `
+	err := q.QueryRowContext(r.Context(), `
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
 		FROM comida_plato_categories
 		WHERE restaurant_id = ? AND id = ?
@@ -366,7 +374,7 @@ func (s *Server) getCategoryByID(r *http.Request, restaurantID, categoryID int) 
 	return c, true, nil
 }
 
-func (s *Server) getCategoryBySlugOrName(r *http.Request, restaurantID int, raw string) (comidaCategoryResponse, bool, error) {
+func getCategoryBySlugOrName(r *http.Request, q comidaCategoryDB, restaurantID int, raw string) (comidaCategoryResponse, bool, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return comidaCategoryResponse{}, false, nil
@@ -374,7 +382,7 @@ func (s *Server) getCategoryBySlugOrName(r *http.Request, restaurantID int, raw 
 	slug := slugifyCategoryName(raw)
 	var c comidaCategoryResponse
 	var activeInt int
-	err := s.db.QueryRowContext(r.Context(), `
+	err := q.QueryRowContext(r.Context(), `
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
 		FROM comida_plato_categories
 		WHERE restaurant_id = ? AND (slug = ? OR LOWER(name) = LOWER(?))
@@ -390,13 +398,13 @@ func (s *Server) getCategoryBySlugOrName(r *http.Request, restaurantID int, raw 
 	return c, true, nil
 }
 
-func (s *Server) createCustomCategory(r *http.Request, restaurantID int, name string) (comidaCategoryResponse, error) {
+func createCustomCategory(r *http.Request, q comidaCategoryDB, restaurantID int, name string) (comidaCategoryResponse, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return comidaCategoryResponse{}, sql.ErrNoRows
 	}
 	slug := slugifyCategoryName(name)
-	res, err := s.db.ExecContext(r.Context(), `
+	res, err := q.ExecContext(r.Context(), `
 		INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
 		VALUES (?, ?, ?, 'custom', 1)
 		ON DUPLICATE KEY UPDATE
@@ -416,12 +424,12 @@ func (s *Server) createCustomCategory(r *http.Request, restaurantID int, name st
 			Active: true,
 		}, nil
 	}
-	c, _, err := s.getCategoryBySlugOrName(r, restaurantID, name)
+	c, _, err := getCategoryBySlugOrName(r, q, restaurantID, name)
 	return c, err
 }
 
-func (s *Server) resolvePlatoCategory(r *http.Request, restaurantID int, req comidaUpsertRequest, allowCreate bool) (sql.NullString, sql.NullInt64, error) {
-	if err := s.ensureBasePlatoCategories(r, restaurantID); err != nil {
+func resolvePlatoCategory(r *http.Request, q comidaCategoryDB, restaurantID int, req comidaUpsertRequest, allowCreate bool) (sql.NullString, sql.NullInt64, error) {
+	if err := ensureBasePlatoCategories(r, q, restaurantID); err != nil {
 		return sql.NullString{}, sql.NullInt64{}, err
 	}
 
@@ -429,7 +437,7 @@ func (s *Server) resolvePlatoCategory(r *http.Request, restaurantID int, req com
 		if *req.CategoryID <= 0 {
 			return sql.NullString{}, sql.NullInt64{}, nil
 		}
-		cat, ok, err := s.getCategoryByID(r, restaurantID, *req.CategoryID)
+		cat, ok, err := getCategoryByID(r, q, restaurantID, *req.CategoryID)
 		if err != nil {
 			return sql.NullString{}, sql.NullInt64{}, err
 		}
@@ -443,7 +451,7 @@ func (s *Server) resolvePlatoCategory(r *http.Request, restaurantID int, req com
 	if raw == "" {
 		return sql.NullString{}, sql.NullInt64{}, nil
 	}
-	cat, ok, err := s.getCategoryBySlugOrName(r, restaurantID, raw)
+	cat, ok, err := getCategoryBySlugOrName(r, q, restaurantID, raw)
 	if err != nil {
 		return sql.NullString{}, sql.NullInt64{}, err
 	}
@@ -453,7 +461,7 @@ func (s *Server) resolvePlatoCategory(r *http.Request, restaurantID int, req com
 	if !allowCreate {
 		return sql.NullString{String: raw, Valid: true}, sql.NullInt64{}, nil
 	}
-	custom, err := s.createCustomCategory(r, restaurantID, raw)
+	custom, err := createCustomCategory(r, q, restaurantID, raw)
 	if err != nil {
 		return sql.NullString{}, sql.NullInt64{}, err
 	}
@@ -560,7 +568,7 @@ func (s *Server) handleComidaPlatoCategoriesList(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if err := s.ensureBasePlatoCategories(r, restaurantID); err != nil {
+	if err := ensureBasePlatoCategories(r, s.db, restaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando categorias")
 		return
 	}
@@ -632,12 +640,23 @@ func (s *Server) handleComidaPlatoCategoriesCreate(w http.ResponseWriter, r *htt
 		slug = slugifyCategoryName(name)
 	}
 
-	if err := s.ensureBasePlatoCategories(r, restaurantID); err != nil {
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockComidaCategoryNamespace(r, tx, restaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	if err := ensureBasePlatoCategories(r, tx, restaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+
+	res, err := tx.ExecContext(r.Context(), `
 		INSERT INTO comida_plato_categories (restaurant_id, name, slug, source, active)
 		VALUES (?, ?, ?, 'custom', 1)
 		ON DUPLICATE KEY UPDATE
@@ -659,7 +678,7 @@ func (s *Server) handleComidaPlatoCategoriesCreate(w http.ResponseWriter, r *htt
 	if id64 > 0 {
 		category.ID = int(id64)
 	} else {
-		c, found, err := s.getCategoryBySlugOrName(r, restaurantID, slug)
+		c, found, err := getCategoryBySlugOrName(r, tx, restaurantID, slug)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 			return
@@ -667,6 +686,11 @@ func (s *Server) handleComidaPlatoCategoriesCreate(w http.ResponseWriter, r *htt
 		if found {
 			category = c
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -1389,8 +1413,23 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 		categoryID sql.NullInt64
 		err        error
 	)
+	q := comidaCategoryDB(s.db)
+	var tx *sql.Tx
 	if t == comidaTipoPlatos {
-		categoria, categoryID, err = s.resolvePlatoCategory(r, restaurantID, req, true)
+		// Take the sentinel before legacy category locks and keep the product write
+		// in the same transaction, so FK waits cannot reverse that lock order.
+		tx, err = s.db.BeginTx(r.Context(), nil)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error resolviendo categoria")
+			return
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err = lockComidaCategoryNamespace(r, tx, restaurantID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error resolviendo categoria")
+			return
+		}
+		q = tx
+		categoria, categoryID, err = resolvePlatoCategory(r, q, restaurantID, req, true)
 		if err == sql.ErrNoRows {
 			writeComidaValidationError(w, "Categoria invalida")
 			return
@@ -1431,7 +1470,7 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	res, err := q.ExecContext(r.Context(), `
 		INSERT INTO comida_items
 			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, alergenos_json, active, foto_path, foto, ai_generating, ui_data_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULLIF(?, ''))
@@ -1454,6 +1493,12 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando comida")
 		return
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error creando comida")
+			return
+		}
 	}
 	newID, _ := res.LastInsertId()
 	item, _, err := s.getCatalogItemByID(r, restaurantID, t, int(newID))
@@ -1677,9 +1722,23 @@ func (s *Server) patchCatalogItem(w http.ResponseWriter, r *http.Request, restau
 		}
 	}
 
+	q := comidaCategoryDB(s.db)
+	var tx *sql.Tx
+	var err error
 	if req.CategoryID != nil || req.Categoria != nil || req.Category != nil {
 		if t == comidaTipoPlatos {
-			categoria, categoryID, err := s.resolvePlatoCategory(r, restaurantID, req, true)
+			tx, err = s.db.BeginTx(r.Context(), nil)
+			if err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error resolviendo categoria")
+				return
+			}
+			defer func() { _ = tx.Rollback() }()
+			if err = lockComidaCategoryNamespace(r, tx, restaurantID); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "Error resolviendo categoria")
+				return
+			}
+			q = tx
+			categoria, categoryID, err := resolvePlatoCategory(r, q, restaurantID, req, true)
 			if err == sql.ErrNoRows {
 				writeComidaValidationError(w, "Categoria invalida")
 				return
@@ -1709,8 +1768,8 @@ func (s *Server) patchCatalogItem(w http.ResponseWriter, r *http.Request, restau
 	}
 
 	args = append(args, id, restaurantID, string(t))
-	q := "UPDATE comida_items SET " + strings.Join(sets, ", ") + " WHERE id = ? AND restaurant_id = ? AND source_type = ?"
-	res, err := s.db.ExecContext(r.Context(), q, args...)
+	updateQuery := "UPDATE comida_items SET " + strings.Join(sets, ", ") + " WHERE id = ? AND restaurant_id = ? AND source_type = ?"
+	res, err := q.ExecContext(r.Context(), updateQuery, args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando comida")
 		return
@@ -1719,6 +1778,13 @@ func (s *Server) patchCatalogItem(w http.ResponseWriter, r *http.Request, restau
 	if affected == 0 {
 		writeComidaValidationError(w, "Elemento no encontrado")
 		return
+	}
+
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando comida")
+			return
+		}
 	}
 
 	item, _, err := s.getCatalogItemByID(r, restaurantID, t, id)
@@ -2065,7 +2131,7 @@ func (s *Server) handleBOComidaBebidaCategoriesList(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if err := s.ensureBaseBebidaCategories(r, restaurantID); err != nil {
+	if err := ensureBaseBebidaCategories(r, s.db, restaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando categorias")
 		return
 	}
@@ -2125,12 +2191,23 @@ func (s *Server) handleBOComidaBebidaCategoriesCreate(w http.ResponseWriter, r *
 		slug = slugifyCategoryName(name)
 	}
 
-	if err := s.ensureBaseBebidaCategories(r, restaurantID); err != nil {
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockComidaCategoryNamespace(r, tx, restaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	if err := ensureBaseBebidaCategories(r, tx, restaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+
+	res, err := tx.ExecContext(r.Context(), `
 		INSERT INTO comida_bebida_categories (restaurant_id, name, slug, source, active)
 		VALUES (?, ?, ?, 'custom', 1)
 		ON DUPLICATE KEY UPDATE
@@ -2152,7 +2229,7 @@ func (s *Server) handleBOComidaBebidaCategoriesCreate(w http.ResponseWriter, r *
 	if id64 > 0 {
 		category.ID = int(id64)
 	} else {
-		c, found, err2 := s.getBebidaCategoryBySlugOrName(r, restaurantID, slug)
+		c, found, err2 := getBebidaCategoryBySlugOrName(r, tx, restaurantID, slug)
 		if err2 != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 			return
@@ -2160,6 +2237,11 @@ func (s *Server) handleBOComidaBebidaCategoriesCreate(w http.ResponseWriter, r *
 		if found {
 			category = c
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -2211,7 +2293,7 @@ func (s *Server) handleBOComidaBebidaCategoriesCheck(w http.ResponseWriter, r *h
 	})
 }
 
-func (s *Server) getBebidaCategoryBySlugOrName(r *http.Request, restaurantID int, raw string) (comidaCategoryResponse, bool, error) {
+func getBebidaCategoryBySlugOrName(r *http.Request, q comidaCategoryDB, restaurantID int, raw string) (comidaCategoryResponse, bool, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return comidaCategoryResponse{}, false, nil
@@ -2219,7 +2301,7 @@ func (s *Server) getBebidaCategoryBySlugOrName(r *http.Request, restaurantID int
 	slug := slugifyCategoryName(raw)
 	var c comidaCategoryResponse
 	var activeInt int
-	err := s.db.QueryRowContext(r.Context(), `
+	err := q.QueryRowContext(r.Context(), `
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
 		FROM comida_bebida_categories
 		WHERE restaurant_id = ? AND (slug = ? OR LOWER(name) = LOWER(?))
