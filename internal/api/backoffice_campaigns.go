@@ -27,6 +27,9 @@ import (
 
 const (
 	campaignMaxImageBytes = 400 * 1024
+	// Ceiling of each builder column (design and compiled email): far above any
+	// real email, low enough to keep a broken client from filling MEDIUMTEXT.
+	campaignMaxHTMLBytes  = 1 << 20
 	campaignMaxRecipients = 5000
 	// Operator-facing pacing bounds, expressed in messages per minute. The
 	// ceilings are the limits the legacy scripts ran with in production:
@@ -112,6 +115,8 @@ type boCampaign struct {
 	Name             string        `json:"name"`
 	Subject          string        `json:"subject"`
 	BodyMarkdown     string        `json:"body_markdown"`
+	BodyHTML         string        `json:"body_html"`
+	EmailHTML        string        `json:"email_html"`
 	Theme            campaignTheme `json:"theme"`
 	Channels         []string      `json:"channels"`
 	Audience         string        `json:"audience"`
@@ -139,6 +144,8 @@ type boCampaignInput struct {
 	Name             string        `json:"name"`
 	Subject          string        `json:"subject"`
 	BodyMarkdown     string        `json:"body_markdown"`
+	BodyHTML         string        `json:"body_html"`
+	EmailHTML        string        `json:"email_html"`
 	Theme            campaignTheme `json:"theme"`
 	Channels         []string      `json:"channels"`
 	Audience         string        `json:"audience"`
@@ -206,6 +213,11 @@ func normalizeCampaignInput(in boCampaignInput) (boCampaignInput, error) {
 	if len(in.Subject) > 200 {
 		in.Subject = in.Subject[:200]
 	}
+	in.BodyHTML = strings.TrimSpace(in.BodyHTML)
+	in.EmailHTML = strings.TrimSpace(in.EmailHTML)
+	if len(in.BodyHTML) > campaignMaxHTMLBytes || len(in.EmailHTML) > campaignMaxHTMLBytes {
+		return in, errors.New("El diseño del email es demasiado grande")
+	}
 	in.Channels = normalizeCampaignChannels(in.Channels)
 	in.Theme = normalizeCampaignTheme(in.Theme)
 	in.Audience = strings.ToLower(strings.TrimSpace(in.Audience))
@@ -231,6 +243,8 @@ func normalizeCampaignInput(in boCampaignInput) (boCampaignInput, error) {
 func scanBOCampaign(scan func(dest ...any) error) (boCampaign, error) {
 	var (
 		c         boCampaign
+		bodyHTML  sql.NullString
+		emailHTML sql.NullString
 		themeRaw  sql.NullString
 		channels  string
 		manualRaw sql.NullString
@@ -238,9 +252,10 @@ func scanBOCampaign(scan func(dest ...any) error) (boCampaign, error) {
 		createdAt sql.NullString
 		updatedAt sql.NullString
 	)
-	if err := scan(&c.ID, &c.CoordID, &c.Name, &c.Subject, &c.BodyMarkdown, &themeRaw, &channels, &c.Audience, &c.AudienceDays, &manualRaw, &c.EmailPerMinute, &c.WhatsAppPerMin, &c.Status, &sentAt, &createdAt, &updatedAt); err != nil {
+	if err := scan(&c.ID, &c.CoordID, &c.Name, &c.Subject, &c.BodyMarkdown, &bodyHTML, &emailHTML, &themeRaw, &channels, &c.Audience, &c.AudienceDays, &manualRaw, &c.EmailPerMinute, &c.WhatsAppPerMin, &c.Status, &sentAt, &createdAt, &updatedAt); err != nil {
 		return boCampaign{}, err
 	}
+	c.BodyHTML, c.EmailHTML = bodyHTML.String, emailHTML.String
 	_ = json.Unmarshal([]byte(themeRaw.String), &c.Theme)
 	c.Theme = normalizeCampaignTheme(c.Theme)
 	c.Channels = normalizeCampaignChannels(strings.Split(channels, ","))
@@ -255,7 +270,7 @@ func scanBOCampaign(scan func(dest ...any) error) (boCampaign, error) {
 	return c, nil
 }
 
-const boCampaignColumns = `id, coord_id, name, subject, body_markdown, theme_json, channels, audience, audience_days, manual_recipients, email_per_minute, whatsapp_per_minute, status,
+const boCampaignColumns = `id, coord_id, name, subject, body_markdown, body_html, email_html, theme_json, channels, audience, audience_days, manual_recipients, email_per_minute, whatsapp_per_minute, status,
 	DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i'), DATE_FORMAT(created_at, '%Y-%m-%d %H:%i'), DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i')`
 
 func (s *Server) loadBOCampaign(ctx context.Context, restaurantID int, id int64) (boCampaign, error) {
@@ -301,6 +316,8 @@ func (s *Server) handleBOCampaignsList(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		c.Stats, _ = s.campaignStats(r.Context(), c.ID)
+		// The list cards never render the design: keep the payload small.
+		c.BodyHTML, c.EmailHTML = "", ""
 		out = append(out, c)
 	}
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "campaigns": out})
@@ -345,9 +362,9 @@ func (s *Server) handleBOCampaignCreate(w http.ResponseWriter, r *http.Request) 
 	manual, _ := json.Marshal(in.ManualRecipients)
 	coordID := "camp-" + uuid.NewString()
 	res, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO campaigns (restaurant_id, coord_id, name, subject, body_markdown, theme_json, channels, audience, audience_days, manual_recipients, email_per_minute, whatsapp_per_minute, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
-	`, a.ActiveRestaurantID, coordID, in.Name, in.Subject, in.BodyMarkdown, string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin)
+		INSERT INTO campaigns (restaurant_id, coord_id, name, subject, body_markdown, body_html, email_html, theme_json, channels, audience, audience_days, manual_recipients, email_per_minute, whatsapp_per_minute, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
+	`, a.ActiveRestaurantID, coordID, in.Name, in.Subject, in.BodyMarkdown, nullIfEmpty(in.BodyHTML), nullIfEmpty(in.EmailHTML), string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin)
 	if err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error creando campaña"})
 		return
@@ -386,10 +403,10 @@ func (s *Server) handleBOCampaignUpdate(w http.ResponseWriter, r *http.Request) 
 	theme, _ := json.Marshal(in.Theme)
 	manual, _ := json.Marshal(in.ManualRecipients)
 	if _, err := s.db.ExecContext(r.Context(), `
-		UPDATE campaigns SET name = ?, subject = ?, body_markdown = ?, theme_json = ?, channels = ?, audience = ?, audience_days = ?, manual_recipients = ?,
+		UPDATE campaigns SET name = ?, subject = ?, body_markdown = ?, body_html = ?, email_html = ?, theme_json = ?, channels = ?, audience = ?, audience_days = ?, manual_recipients = ?,
 			email_per_minute = ?, whatsapp_per_minute = ?
 		WHERE restaurant_id = ? AND id = ?
-	`, in.Name, in.Subject, in.BodyMarkdown, string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin, a.ActiveRestaurantID, id); err != nil {
+	`, in.Name, in.Subject, in.BodyMarkdown, nullIfEmpty(in.BodyHTML), nullIfEmpty(in.EmailHTML), string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin, a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error guardando campaña"})
 		return
 	}
@@ -546,9 +563,13 @@ func (s *Server) handleBOCampaignPreview(w http.ResponseWriter, r *http.Request)
 	// last-resort website, and the opt-out link always rides on that base.
 	siteURL := firstNonEmpty(strings.TrimSpace(branding.Website), s.campaignRestaurantBaseURL(r.Context(), a.ActiveRestaurantID))
 	unsubscribeURL := campaignUnsubscribePreviewURL(siteURL)
+	emailHTML := renderCampaignEmailHTMLWithUnsubscribe(in.BodyMarkdown, in.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL)
+	if strings.TrimSpace(in.EmailHTML) != "" {
+		emailHTML = renderCampaignBuilderEmail(in.EmailHTML, unsubscribeURL, normalizeCampaignTheme(in.Theme))
+	}
 	httpx.WriteJSON(w, 200, map[string]any{
 		"success":  true,
-		"html":     renderCampaignEmailHTMLWithUnsubscribe(in.BodyMarkdown, in.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL),
+		"html":     emailHTML,
 		"whatsapp": renderCampaignWhatsAppTextWithUnsubscribe(in.BodyMarkdown, branding.BrandName, siteURL, unsubscribeURL),
 	})
 }
@@ -1014,7 +1035,15 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	fromName := firstNonEmpty(branding.EmailFromName, branding.BrandName, "Restaurante")
 	fromAddr := resolveEmailFromAddr(branding, cfg)
 	subject := firstNonEmpty(c.Subject, c.Name)
-	html := renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL)
+	var html string
+	if strings.TrimSpace(c.EmailHTML) != "" {
+		// Designed in the HTML builder: the compiled email is sent as-is, only
+		// the per-recipient opt-out link is filled in (campaign_html_builder_v1).
+		html = renderCampaignBuilderEmail(c.EmailHTML, unsubscribeURL, c.Theme)
+	} else {
+		html = renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL)
+	}
+	slog.Default().Info("campaign.delivery.email", "coord_id", c.CoordID, "booking_id", target.BookingID, "builder_html", strings.TrimSpace(c.EmailHTML) != "", "bytes", len(html))
 	return sendViaConfig(ctx, cfg, fromName, fromAddr, target.Target, subject, html)
 }
 
