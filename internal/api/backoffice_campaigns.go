@@ -437,6 +437,79 @@ func (s *Server) handleBOCampaignDelete(w http.ResponseWriter, r *http.Request) 
 	httpx.WriteJSON(w, 200, map[string]any{"success": true})
 }
 
+// campaignImageError is a refusal of campaignStoreImage with the HTTP status
+// the editor endpoint answers with.
+type campaignImageError struct {
+	status int
+	msg    string
+}
+
+func (e campaignImageError) Error() string { return e.msg }
+
+// Campaign image storage modes:
+//   - campaignImageWebP (editor default): normalized WebP within the budget;
+//   - campaignImageKeep ("keep=1"): PNG/JPEG stored as sent, within the budget;
+//   - campaignImageEmail (campaign tools, campaign_tools_v1): what every email
+//     client renders. PNG/JPEG/GIF inside the budget are kept as sent,
+//     anything else (a phone photo, a WebP) becomes a JPEG within it.
+const (
+	campaignImageWebP  = "webp"
+	campaignImageKeep  = "keep"
+	campaignImageEmail = "email"
+)
+
+// campaignStoreImage stores one campaign image in the restaurant's BunnyCDN
+// and returns its pull URL. Shared by the editor upload and the campaign tools
+// of Forky and the WhatsApp bot.
+func (s *Server) campaignStoreImage(ctx context.Context, restaurantID int, campaignID int64, raw []byte, filename, ct, mode string) (string, error) {
+	if !s.bunnyConfigured(ctx, restaurantID) {
+		return "", campaignImageError{http.StatusBadRequest, "Almacenamiento de imagenes no configurado"}
+	}
+	storeExt, storeCT := ".webp", "image/webp"
+	var normalized []byte
+	detected := http.DetectContentType(raw)
+	switch mode {
+	case campaignImageKeep:
+		// PNG/JPEG stored as sent. Email clients such as Outlook desktop do
+		// not render WebP, so icons and photos for the email body use this path.
+		if (detected != "image/png" && detected != "image/jpeg") || len(raw) > campaignMaxImageBytes {
+			return "", campaignImageError{http.StatusBadRequest, "Solo PNG o JPG dentro del limite"}
+		}
+		normalized, storeCT = raw, detected
+	case campaignImageEmail:
+		if (detected == "image/png" || detected == "image/jpeg" || detected == "image/gif") && len(raw) <= campaignMaxImageBytes {
+			normalized, storeCT = raw, detected
+			break
+		}
+		jpg, err := specialmenuimage.NormalizeToJPEGWithLimit(ctx, raw, filename, ct, campaignMaxImageBytes)
+		if err != nil {
+			return "", campaignImageError{http.StatusBadRequest, "No se pudo procesar la imagen"}
+		}
+		normalized, storeCT = jpg, "image/jpeg"
+	default:
+		webp, err := specialmenuimage.NormalizeToWebPWithLimit(ctx, raw, filename, ct, campaignMaxImageBytes)
+		if err != nil {
+			return "", campaignImageError{http.StatusBadRequest, "No se pudo procesar la imagen"}
+		}
+		normalized = webp
+	}
+	switch storeCT {
+	case "image/png":
+		storeExt = ".png"
+	case "image/jpeg":
+		storeExt = ".jpg"
+	case "image/gif":
+		storeExt = ".gif"
+	}
+	objectPath := path.Join(strconv.Itoa(restaurantID), "pictures", "campaigns", strconv.FormatInt(campaignID, 10), fmt.Sprintf("md-%d%s", time.Now().UTC().UnixMilli(), storeExt))
+	if err := s.bunnyPut(ctx, restaurantID, objectPath, normalized, storeCT); err != nil {
+		return "", campaignImageError{http.StatusInternalServerError, "No se pudo subir la imagen"}
+	}
+	url := s.bunnyPullURL(ctx, restaurantID, objectPath)
+	slog.Default().Info("campaign.image.uploaded", "campaign_id", campaignID, "restaurant_id", restaurantID, "url", url, "mode", firstNonEmpty(mode, campaignImageWebP), "bytes", len(normalized))
+	return url, nil
+}
+
 // handleBOCampaignImageUpload stores an editor image in BunnyCDN and returns
 // the pull URL so the markdown never carries blobs or base64.
 func (s *Server) handleBOCampaignImageUpload(w http.ResponseWriter, r *http.Request) {
@@ -459,35 +532,20 @@ func (s *Server) handleBOCampaignImageUpload(w http.ResponseWriter, r *http.Requ
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Imagen invalida"})
 		return
 	}
-	// keep=1: PNG/JPEG stored as sent. Email clients such as Outlook desktop do
-	// not render WebP, so icons and photos for the email body use this path.
-	storeExt, storeCT := ".webp", "image/webp"
-	var normalized []byte
+	mode := campaignImageWebP
 	if r.FormValue("keep") == "1" {
-		detected := http.DetectContentType(raw)
-		if (detected != "image/png" && detected != "image/jpeg") || len(raw) > campaignMaxImageBytes {
-			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Solo PNG o JPG dentro del limite"})
-			return
-		}
-		normalized, storeCT = raw, detected
-		storeExt = ".png"
-		if detected == "image/jpeg" {
-			storeExt = ".jpg"
-		}
-	} else {
-		normalized, err = specialmenuimage.NormalizeToWebPWithLimit(r.Context(), raw, filename, ct, campaignMaxImageBytes)
-		if err != nil {
-			httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "No se pudo procesar la imagen"})
-			return
-		}
+		mode = campaignImageKeep
 	}
-	objectPath := path.Join(strconv.Itoa(a.ActiveRestaurantID), "pictures", "campaigns", strconv.FormatInt(id, 10), fmt.Sprintf("md-%d%s", time.Now().UTC().UnixMilli(), storeExt))
-	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalized, storeCT); err != nil {
+	url, err := s.campaignStoreImage(r.Context(), a.ActiveRestaurantID, id, raw, filename, ct, mode)
+	if err != nil {
+		var refusal campaignImageError
+		if errors.As(err, &refusal) {
+			httpx.WriteJSON(w, refusal.status, map[string]any{"success": false, "message": refusal.msg})
+			return
+		}
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo subir la imagen"})
 		return
 	}
-	url := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath)
-	slog.Default().Info("campaign.image.uploaded", "campaign_id", id, "restaurant_id", a.ActiveRestaurantID, "url", url)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "url": url})
 }
 

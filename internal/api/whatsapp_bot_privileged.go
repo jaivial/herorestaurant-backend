@@ -122,6 +122,7 @@ var botForkyExcludedFromWA = map[string]struct{}{
 	"campaign_get":    {},
 	"campaign_save":   {},
 	"campaign_design": {},
+	"campaign_image":  {},
 	"campaign_send":   {},
 	"campaign_delete": {},
 }

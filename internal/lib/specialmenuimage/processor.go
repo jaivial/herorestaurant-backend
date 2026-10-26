@@ -205,6 +205,17 @@ func encodeWebPWithLimit(ctx context.Context, sourcePath string, tmpDir string) 
 }
 
 func encodeWebPWithLimitBytes(ctx context.Context, sourcePath string, tmpDir string, maxOutputBytes int) ([]byte, error) {
+	return encodeWithLimitBytes(ctx, sourcePath, filepath.Join(tmpDir, "normalized.webp"), []string{"-define", "webp:method=6"}, maxOutputBytes, "webp")
+}
+
+// jpegEmailArgs flatten any transparency on white (JPEG has no alpha) and use
+// the baseline-friendly settings every email client decodes.
+var jpegEmailArgs = []string{"-background", "white", "-alpha", "remove", "-alpha", "off", "-sampling-factor", "4:2:0", "-interlace", "JPEG"}
+
+// encodeWithLimitBytes walks the dimension x quality ladder until the encoded
+// image fits maxOutputBytes. formatArgs carry the format-specific options; the
+// output path's extension selects the format.
+func encodeWithLimitBytes(ctx context.Context, sourcePath string, outputPath string, formatArgs []string, maxOutputBytes int, label string) ([]byte, error) {
 	magickPath, magickArgs, err := pickImageMagickCommand(sourcePath)
 	if err != nil {
 		return nil, err
@@ -212,21 +223,14 @@ func encodeWebPWithLimitBytes(ctx context.Context, sourcePath string, tmpDir str
 
 	dimensions := []int{1700, 1500, 1300, 1150, 1000, 900, 820, 740, 660, 580, 520, 460}
 	qualities := []int{88, 82, 76, 70, 64, 58, 52, 46, 40, 34, 28}
-	outputPath := filepath.Join(tmpDir, "normalized.webp")
 
 	best := []byte(nil)
 	for _, dim := range dimensions {
 		for _, quality := range qualities {
 			args := append([]string{}, magickArgs...)
-			args = append(
-				args,
-				"-auto-orient",
-				"-strip",
-				"-thumbnail", fmt.Sprintf("%dx%d>", dim, dim),
-				"-define", "webp:method=6",
-				"-quality", strconv.Itoa(quality),
-				outputPath,
-			)
+			args = append(args, "-auto-orient", "-strip", "-thumbnail", fmt.Sprintf("%dx%d>", dim, dim))
+			args = append(args, formatArgs...)
+			args = append(args, "-quality", strconv.Itoa(quality), outputPath)
 
 			if err := runCommand(ctx, magickPath, args...); err != nil {
 				return nil, err
@@ -250,9 +254,39 @@ func encodeWebPWithLimitBytes(ctx context.Context, sourcePath string, tmpDir str
 	}
 
 	if len(best) == 0 {
-		return nil, errors.New("failed to produce webp image")
+		return nil, fmt.Errorf("failed to produce %s image", label)
 	}
 	return nil, fmt.Errorf("no se pudo reducir la imagen por debajo de %dKB (resultado minimo: %dKB)", maxOutputBytes/1024, (len(best)+1023)/1024)
+}
+
+// NormalizeToJPEGWithLimit re-encodes an IMAGE as a JPEG within
+// maxOutputBytes: the format every email client renders (Outlook desktop
+// ignores WebP). Transparency is flattened on white. Only images are
+// accepted (no PDF/office rendering here). Coordination id: campaign_tools_v1.
+func NormalizeToJPEGWithLimit(ctx context.Context, input []byte, fileName string, declaredContentType string, maxOutputBytes int) ([]byte, error) {
+	if len(input) == 0 {
+		return nil, errors.New("empty file")
+	}
+	if len(input) > MaxInputBytes {
+		return nil, fmt.Errorf("file too large (max %dMB)", MaxInputBytes/(1024*1024))
+	}
+	kind, ext, err := detectSourceKind(input, fileName, declaredContentType)
+	if err != nil {
+		return nil, err
+	}
+	if kind != sourceImage {
+		return nil, errors.New("unsupported source file")
+	}
+	tmpDir, err := os.MkdirTemp("", "bo-email-image-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+	inputPath := filepath.Join(tmpDir, "input"+ext)
+	if err := os.WriteFile(inputPath, input, 0o600); err != nil {
+		return nil, err
+	}
+	return encodeWithLimitBytes(ctx, inputPath, filepath.Join(tmpDir, "normalized.jpg"), jpegEmailArgs, maxOutputBytes, "jpeg")
 }
 
 func NormalizeToWebPWithLimit(ctx context.Context, input []byte, fileName string, declaredContentType string, maxOutputBytes int) ([]byte, error) {

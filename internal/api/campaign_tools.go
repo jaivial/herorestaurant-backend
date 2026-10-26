@@ -10,11 +10,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"preactvillacarmen/internal/lib/specialmenuimage"
 )
 
 // Coordination id: campaign_tools_v1
@@ -63,11 +66,20 @@ type campaignToolArgs struct {
 	Channel           string          `json:"channel,omitempty"`
 	Target            string          `json:"target,omitempty"`
 	Ack               string          `json:"ack,omitempty"`
+	// action "image": an image the user attached in the chat, uploaded to the
+	// restaurant's BunnyCDN and used in the design.
+	Attachment  string  `json:"attachment,omitempty"`   // Forky: storage ref of the attachment (forky/<rid>/...)
+	ImageRef    string  `json:"image_ref,omitempty"`    // WhatsApp: message id of the image in this chat
+	ImageURL    string  `json:"image_url,omitempty"`    // set by the server once uploaded (never by the model)
+	ImageName   string  `json:"image_name,omitempty"`   // set by the server: file name for the previews
+	Alt         *string `json:"alt,omitempty"`          // alternative text of the image
+	Placement   string  `json:"placement,omitempty"`    // replace | insert | none
+	InsertAfter string  `json:"insert_after,omitempty"` // insert: element the new image block goes after
 }
 
 // campaignToolWriteActions are the mutations (confirmation required).
 var campaignToolWriteActions = map[string]bool{
-	"create": true, "update": true, "design_edit": true, "design_ai": true, "design_undo": true,
+	"create": true, "update": true, "design_edit": true, "design_ai": true, "design_undo": true, "image": true,
 	"test": true, "send": true, "resume": true, "delete": true,
 }
 
@@ -90,6 +102,10 @@ func normalizeCampaignToolArgs(a *campaignToolArgs) {
 	a.Channel = strings.ToLower(strings.TrimSpace(a.Channel))
 	a.Target = strings.TrimSpace(a.Target)
 	a.Ack = strings.TrimSpace(a.Ack)
+	a.Attachment = strings.TrimSpace(a.Attachment)
+	a.ImageRef = strings.TrimSpace(a.ImageRef)
+	a.Placement = strings.ToLower(strings.TrimSpace(a.Placement))
+	a.InsertAfter = strings.TrimSpace(a.InsertAfter)
 }
 
 // campaignToolCtx binds a backoffice auth to the restaurant so the campaign
@@ -957,6 +973,161 @@ func (s *Server) campaignToolDesignUndo(ctx context.Context, rid int, a campaign
 	}, fmt.Sprintf("Deshecho en «%s»: %s (%s).", c.Name, firstNonEmpty(rev.Summary, "último cambio"), rev.CreatedAt), nil
 }
 
+// ── Images from the chat ───────────────────────────────────────────────────
+
+// campaignImagePreviewURL stands in for the CDN URL while a preview validates
+// the placement (the upload only happens when the change is applied).
+const campaignImagePreviewURL = "https://cdn.invalid/imagen-adjunta.jpg"
+
+// campaignImagePlacement resolves where the image goes: replace an <img>
+// (element_id), insert an image block (after insert_after, or at the end of
+// the content) or none (only upload and return the URL).
+func campaignImagePlacement(a campaignToolArgs) (string, error) {
+	switch a.Placement {
+	case "":
+		if a.ElementID != "" {
+			return "replace", nil
+		}
+		return "insert", nil
+	case "replace":
+		if a.ElementID == "" {
+			return "", errors.New("placement=replace necesita element_id: la imagen (<img>) que se sustituye (capas de get con include layers)")
+		}
+		return "replace", nil
+	case "insert", "none":
+		return a.Placement, nil
+	}
+	return "", fmt.Errorf("placement desconocido: %s (replace, insert o none)", a.Placement)
+}
+
+// campaignImageOps are the builder ops that place an uploaded image.
+func campaignImageOps(a campaignToolArgs, placement, url string) []map[string]any {
+	if placement == "replace" {
+		op := map[string]any{"op": "set_attrs", "id": a.ElementID, "src": url}
+		if a.Alt != nil {
+			op["alt"] = *a.Alt
+		}
+		return []map[string]any{op}
+	}
+	op := map[string]any{"op": "add_block", "block": "image", "src": url}
+	if a.InsertAfter != "" {
+		op["target"], op["position"] = a.InsertAfter, "after"
+	}
+	if a.Alt != nil {
+		op["alt"] = *a.Alt
+	}
+	return []map[string]any{op}
+}
+
+func campaignOpsFromMaps(ops []map[string]any) []campaignToolOp {
+	raw, _ := json.Marshal(ops)
+	var out []campaignToolOp
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+// campaignAttachmentPath validates a Forky attachment ref: it must live in the
+// restaurant's own Forky folder (the same tenant rule the chat applies when it
+// reads attachments, validateAssistantAttachmentRefs).
+func campaignAttachmentPath(rid int, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", errors.New("falta attachment: la ref de la imagen adjunta (aparece como «ref …» en la línea [Adjunto: …] del mensaje)")
+	}
+	if i := strings.Index(ref, "/forky/"); strings.HasPrefix(ref, "http") && i >= 0 {
+		ref = ref[i+1:] // a pull URL of the same object is accepted as its ref
+	}
+	clean := path.Clean("/" + ref)
+	if !strings.HasPrefix(clean, "/forky/"+strconv.Itoa(rid)+"/") || strings.HasSuffix(clean, "/") {
+		return "", errors.New("attachment no es un adjunto de este chat (usa la ref que aparece en la línea [Adjunto: …])")
+	}
+	return strings.TrimPrefix(clean, "/"), nil
+}
+
+// campaignImageSource is an image ready to be stored.
+type campaignImageSource struct {
+	Name        string
+	Data        []byte
+	ContentType string
+}
+
+// campaignAttachmentImage reads a Forky chat attachment back from Bunny.
+func (s *Server) campaignAttachmentImage(ctx context.Context, rid int, ref string) (campaignImageSource, error) {
+	p, err := campaignAttachmentPath(rid, ref)
+	if err != nil {
+		return campaignImageSource{}, err
+	}
+	data, ct, err := s.bunnyGet(ctx, rid, p)
+	if err != nil {
+		return campaignImageSource{}, errors.New("no se pudo leer la imagen adjunta: vuelve a adjuntarla")
+	}
+	return campaignCheckImage(path.Base(p), data, ct)
+}
+
+func campaignCheckImage(name string, data []byte, ct string) (campaignImageSource, error) {
+	if len(data) == 0 || len(data) > specialmenuimage.MaxInputBytes {
+		return campaignImageSource{}, fmt.Errorf("la imagen debe ocupar entre 1 byte y %d MB", specialmenuimage.MaxInputBytes>>20)
+	}
+	sniffed := http.DetectContentType(data)
+	if !strings.HasPrefix(sniffed, "image/") {
+		return campaignImageSource{}, errors.New("el adjunto no es una imagen")
+	}
+	return campaignImageSource{Name: name, Data: data, ContentType: firstNonEmpty(sniffed, ct)}, nil
+}
+
+// campaignToolUploadImage stores an image for a campaign in the email format
+// and returns its CDN URL.
+func (s *Server) campaignToolUploadImage(ctx context.Context, rid int, campaignID int64, img campaignImageSource) (string, error) {
+	url, err := s.campaignStoreImage(ctx, rid, campaignID, img.Data, img.Name, img.ContentType, campaignImageEmail)
+	if err != nil {
+		var refusal campaignImageError
+		if errors.As(err, &refusal) {
+			return "", errors.New(strings.ToLower(refusal.msg[:1]) + refusal.msg[1:])
+		}
+		return "", err
+	}
+	return url, nil
+}
+
+// campaignToolImage is action "image": the image is uploaded to the CDN (unless
+// the WhatsApp proposal already did it) and placed in the design like any
+// other builder change (revision, recompiled email, derived WhatsApp text).
+func (s *Server) campaignToolImage(ctx context.Context, rid int, a campaignToolArgs, source string) (map[string]any, string, error) {
+	c, err := s.campaignToolLoad(ctx, rid, a.CampaignID)
+	if err != nil {
+		return nil, "", err
+	}
+	placement, err := campaignImagePlacement(a)
+	if err != nil {
+		return nil, "", err
+	}
+	url := a.ImageURL
+	if url == "" {
+		img, err := s.campaignAttachmentImage(ctx, rid, a.Attachment)
+		if err != nil {
+			return nil, "", err
+		}
+		if url, err = s.campaignToolUploadImage(ctx, rid, c.ID, img); err != nil {
+			return nil, "", err
+		}
+		a.ImageName = img.Name
+	}
+	slog.Default().Info("campaign.tools.image", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", rid, "source", source, "placement", placement)
+	if placement == "none" {
+		return map[string]any{"ok": true, "campaign_id": c.ID, "url": url, "note": "Imagen subida al CDN; el diseño no ha cambiado. Úsala con design_edit (set_attrs src) o pídesela a la IA de diseño con esta URL."},
+			fmt.Sprintf("Imagen subida al CDN para «%s»: %s", c.Name, url), nil
+	}
+	edit := a
+	edit.Action = "design_edit"
+	edit.Ops, _ = json.Marshal(campaignImageOps(a, placement, url))
+	out, summary, err := s.campaignToolDesignEdit(ctx, rid, edit, source)
+	if err != nil {
+		return nil, "", fmt.Errorf("la imagen se subió al CDN (%s) pero no se pudo poner en el diseño: %w", url, err)
+	}
+	out["url"] = url
+	return out, fmt.Sprintf("Imagen «%s» subida al CDN (%s). %s", firstNonEmpty(a.ImageName, "adjunta"), url, summary), nil
+}
+
 // ── Delivery ───────────────────────────────────────────────────────────────
 
 func (s *Server) campaignToolTest(ctx context.Context, rid int, a campaignToolArgs) (map[string]any, string, error) {
@@ -1076,6 +1247,8 @@ func (s *Server) campaignToolRun(ctx context.Context, rid int, a campaignToolArg
 		return s.campaignToolDesignAI(ctx, rid, a, source)
 	case "design_undo":
 		return s.campaignToolDesignUndo(ctx, rid, a)
+	case "image":
+		return s.campaignToolImage(ctx, rid, a, source)
 	case "test":
 		return s.campaignToolTest(ctx, rid, a)
 	case "send":
@@ -1159,6 +1332,33 @@ func (s *Server) campaignToolPreview(ctx context.Context, rid int, a campaignToo
 		}
 		base["instruction"], base["model"] = a.Instruction, model
 		return base, fmt.Sprintf("pedir a la IA (%s) que cambie el diseño de la campaña %s: «%s»", model, label, truncateRunes(a.Instruction, 300)), nil
+	case "image":
+		placement, err := campaignImagePlacement(a)
+		if err != nil {
+			return nil, "", err
+		}
+		if a.ImageURL == "" {
+			if _, err := campaignAttachmentPath(rid, a.Attachment); err != nil {
+				return nil, "", err
+			}
+		}
+		name := firstNonEmpty(a.ImageName, path.Base(a.Attachment), "la imagen adjunta")
+		what := fmt.Sprintf("subir «%s» al CDN del restaurante (formato apto para email)", name)
+		if a.ImageURL != "" {
+			what = fmt.Sprintf("usar la imagen «%s» ya subida al CDN (%s)", name, a.ImageURL)
+		}
+		if placement == "none" {
+			base["placement"] = placement
+			return base, what + fmt.Sprintf(" para la campaña %s, sin cambiar el diseño", label), nil
+		}
+		ops := campaignImageOps(a, placement, firstNonEmpty(a.ImageURL, campaignImagePreviewURL))
+		raw, _ := json.Marshal(ops)
+		summary, err := s.campaignToolDryRun(ctx, rid, c, raw, campaignOpsFromMaps(ops))
+		if err != nil {
+			return nil, "", err
+		}
+		base["placement"], base["changes"] = placement, summary
+		return base, fmt.Sprintf("%s y, en la campaña %s, %s", what, label, strings.ReplaceAll(summary, campaignImagePreviewURL, "la imagen subida")), nil
 	case "design_undo":
 		rev, err := s.campaignLatestRevision(ctx, rid, c.ID)
 		if err != nil {

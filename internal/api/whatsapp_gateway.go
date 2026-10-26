@@ -75,8 +75,11 @@ type waProvision struct {
 
 // waInbound is a normalized inbound chat message.
 type waInbound struct {
-	Sender     string
-	Text       string
+	Sender string
+	Text   string
+	// Caption of a photo or document (campaign_tools_v1): in an allowed
+	// (privileged) chat it is the text of the message ("ponla en la portada").
+	Caption    string
 	PushName   string
 	MessageID  string
 	FromMe     bool

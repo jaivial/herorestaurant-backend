@@ -441,6 +441,14 @@ var assistantToolRegistry = []assistantTool{
 		},
 	},
 	{
+		Name: "campaign_image", Description: "Usa en el email de una campaña una IMAGEN ADJUNTA en este chat: la sube al CDN (BunnyCDN) del restaurante en un formato que ven todos los clientes de correo y la coloca en el diseño. attachment = la ref de la línea [Adjunto: … · ref …] del mensaje. element_id = la imagen (<img>) que sustituye (capas de campaign_get); sin element_id añade un bloque de imagen después de insert_after (o al final del contenido); placement=none solo la sube y devuelve la URL (por ejemplo para usarla con la IA de diseño). alt opcional. Requiere confirmed=true y el confirmation_token.", Write: true, Confirm: true,
+		Schema:         json.RawMessage(`{"type":"object","properties":{"campaign_id":{"type":"integer"},"attachment":{"type":"string","description":"ref del adjunto (forky/…)"},"element_id":{"type":"string","description":"<img> que se sustituye"},"insert_after":{"type":"string"},"placement":{"type":"string","enum":["replace","insert","none"]},"alt":{"type":"string"},"version":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","attachment","confirmed"]}`),
+		BackofficeOnly: true, Section: "campanas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantCampaignImage(ctx, rid, input)
+		},
+	},
+	{
 		Name: "campaign_send", Description: "Envíos de una campaña: action=test manda una prueba a target (email o teléfono; channel opcional); action=send lanza el envío a toda la audiencia (la vista previa dice a cuántos; no se puede deshacer); action=resume reanuda los envíos pausados con ack (motivo resuelto, queda registrado) y channel opcional. Llega a personas: primero confirmed=false (vista previa con el destino exacto), enséñasela al usuario y espera su respuesta; cuando diga que sí en su siguiente mensaje, repite con confirmed=true (en el chat el servidor recuerda lo que vio el usuario).", Write: true, Confirm: true,
 		Schema:         json.RawMessage(`{"type":"object","properties":{"campaign_id":{"type":"integer"},"action":{"type":"string","enum":["test","send","resume"]},"channel":{"type":"string","enum":["email","whatsapp"]},"target":{"type":"string"},"ack":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","action","confirmed"]}`),
 		BackofficeOnly: true, Section: "campanas",

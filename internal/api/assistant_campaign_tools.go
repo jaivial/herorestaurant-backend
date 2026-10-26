@@ -29,6 +29,7 @@ var campaignAssistantToolTimeouts = map[string]time.Duration{
 	"campaign_get":    90 * time.Second,
 	"campaign_save":   90 * time.Second,
 	"campaign_design": campaignAITimeout + time.Minute,
+	"campaign_image":  90 * time.Second,
 	"campaign_send":   90 * time.Second,
 	"campaign_delete": 30 * time.Second,
 }
@@ -302,6 +303,21 @@ func (s *Server) assistantCampaignDesign(ctx context.Context, rid int, input jso
 			a.Action = "design_undo"
 		default:
 			return errors.New("action debe ser edit, ai o undo")
+		}
+		return nil
+	})
+}
+
+// assistantCampaignImage is campaign_image: an image attached in this chat,
+// uploaded to the restaurant's CDN and placed in the design.
+func (s *Server) assistantCampaignImage(ctx context.Context, rid int, input json.RawMessage) (string, error) {
+	return s.assistantCampaignWrite(ctx, rid, "campaign_image", input, func(a *campaignToolArgs) error {
+		a.Action = "image"
+		// The CDN URL and the WhatsApp ref are server-side: a Forky image
+		// always comes from an attachment of the restaurant's own chat.
+		a.ImageURL, a.ImageName, a.ImageRef = "", "", ""
+		if strings.TrimSpace(a.Attachment) == "" {
+			return errors.New("falta attachment: la ref de la imagen adjunta (aparece como «ref …» en la línea [Adjunto: …])")
 		}
 		return nil
 	})

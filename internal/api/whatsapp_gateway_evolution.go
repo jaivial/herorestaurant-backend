@@ -707,9 +707,14 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	if jid == "" || !strings.HasSuffix(jid, "@s.whatsapp.net") { // drop status / unresolved LIDs
 		return waInbound{}, false
 	}
+	caption := strings.TrimSpace(d.Message.ImageMessage.Caption)
+	if caption == "" && d.Message.DocumentMessage != nil {
+		caption = strings.TrimSpace(d.Message.DocumentMessage.Caption)
+	}
 	return waInbound{
 		Sender:     strings.TrimSuffix(jid, "@s.whatsapp.net"),
 		Text:       strings.TrimSpace(text),
+		Caption:    caption,
 		PushName:   sanitizeBotPushName(pushName),
 		MessageID:  d.Key.ID,
 		FromMe:     d.Key.FromMe,

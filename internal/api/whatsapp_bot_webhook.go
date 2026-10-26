@@ -695,7 +695,14 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// model reads the content as part of the request. On any failure the note
 	// says so verbatim — content is never invented.
 	if msg.PrivilegedGroup && botHasReadableAttachment(msg) {
+		// campaign_tools_v1: the image is also a resource the tools can use
+		// (manage_campaign action "image" uploads it to the restaurant CDN);
+		// the webhook already remembered it, the model only needs its ref.
+		imageRef := botChatImageRef(msg)
 		note, extracted := s.botAttachmentTurnNote(ctx, restaurantID, msg)
+		if imageRef != "" {
+			note += "\n[Imagen disponible para herramientas: image_ref=" + imageRef + " (también vale sin image_ref: se usa la imagen más reciente de este chat)]"
+		}
 		messages = botAppendTextToLastUserMessage(messages, note)
 		botCheckpoint("wa_bot_attachment_read_v1", "restaurant_id=%d sender=%s media=%s extracted=%t", restaurantID, msg.Sender, msg.MediaKind, extracted)
 	}
