@@ -417,6 +417,13 @@ func (s *Server) handleBOComidaCategoryCreate(w http.ResponseWriter, r *http.Req
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// The cross-scope check and insert must be one namespace-wide critical section.
+	// Taking it before the first read also makes that read see a competitor's commit.
+	if err := lockComidaCategoryNamespace(r, tx, restaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
+		return
+	}
+
 	// The UNIQUE index only covers this exact scope, so it would let a global "Tapas"
 	// sit next to a platos "Tapas". Both scopes are checked, including the legacy
 	// tables, because the picker shows them together and products reference the name.
@@ -502,6 +509,16 @@ func comidaCategoryBaseSlugs(foodType string) []string {
 		return out
 	}
 	return nil
+}
+
+// lockComidaCategoryNamespace serializes unified-category writes for one restaurant.
+// The restaurants row is a guaranteed sentinel; locking it closes the cross-scope gap
+// left by the (restaurant_id, food_type, slug) UNIQUE index without a schema change.
+func lockComidaCategoryNamespace(r *http.Request, tx *sql.Tx, restaurantID int) error {
+	var id int
+	return tx.QueryRowContext(r.Context(), `
+		SELECT id FROM restaurants WHERE id = ? FOR UPDATE
+	`, restaurantID).Scan(&id)
 }
 
 // comidaCategorySlugTaken reports whether the slug is already used by a category the
@@ -624,6 +641,13 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	// Use the same lock as create, before reading the row: an UPDATE otherwise starts
+	// by locking its own row while a competing create is inserting into the namespace.
+	if err := lockComidaCategoryNamespace(r, tx, restaurantID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando categoria")
+		return
+	}
 
 	// Locked for update: the read-modify-write below would otherwise lose a concurrent
 	// rename, and the cascade needs the old name to still be the one on disk.
@@ -1032,6 +1056,12 @@ func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaur
 		if !ok {
 			continue
 		}
+		// An inactive legacy row still occupies the (restaurant_id, slug) UNIQUE key.
+		// Reconcile it with the active twin before the rename instead of returning an
+		// operator-unresolvable duplicate-key error for a row no listing can show.
+		if err := s.reconcileComidaCategoryLegacyTwin(r, tx, restaurantID, table, scope, where, whereArgs, newSlug); err != nil {
+			return err
+		}
 		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
 		if _, err := tx.ExecContext(r.Context(), `
 			UPDATE `+table+` SET name = ?, slug = ? WHERE `+where, args...); err != nil {
@@ -1040,4 +1070,64 @@ func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaur
 	}
 
 	return nil
+}
+
+// reconcileComidaCategoryLegacyTwin makes room for the active twin's new slug when
+// an inactive row owns it. Both rows are locked in the same statement so the active
+// row cannot disappear between reading its id and repointing comida_items to it.
+func (s *Server) reconcileComidaCategoryLegacyTwin(r *http.Request, tx *sql.Tx, restaurantID int, table, scope, twinWhere string, twinArgs []any, newSlug string) error {
+	queryArgs := append([]any{}, twinArgs...)
+	queryArgs = append(queryArgs, restaurantID, newSlug)
+	// #nosec G202 -- table and twinWhere are internal, parameterized query fragments.
+	rows, err := tx.QueryContext(r.Context(), `
+		SELECT id, active FROM `+table+`
+		WHERE (`+twinWhere+`) OR (restaurant_id = ? AND slug = ? AND active = 0)
+		ORDER BY active DESC, id FOR UPDATE
+	`, queryArgs...)
+	if err != nil {
+		return err
+	}
+	var twinID, inactiveID int64
+	for rows.Next() {
+		var id int64
+		var active bool
+		if err := rows.Scan(&id, &active); err != nil {
+			rows.Close()
+			return err
+		}
+		if active && twinID == 0 {
+			twinID = id
+		} else if !active && inactiveID == 0 {
+			inactiveID = id
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if twinID == 0 || inactiveID == 0 || twinID == inactiveID {
+		return nil
+	}
+
+	// category_id only references the platos table. Keeping this guard explicit
+	// prevents a future legacy-table addition from silently creating a wrong FK.
+	if table == "comida_plato_categories" {
+		if _, err := tx.ExecContext(r.Context(), `
+			UPDATE comida_items SET category_id = ?
+			WHERE restaurant_id = ? AND category_id = ?
+		`, twinID, restaurantID, inactiveID); err != nil {
+			return err
+		}
+	}
+	// The inactive row is superseded by the renamed active twin; its id-specific
+	// margin target must not survive to be inherited by an unrelated reused id.
+	if err := s.deleteComidaCategoryMarginScope(r, tx, restaurantID, scope, inactiveID); err != nil {
+		return err
+	}
+	// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
+	_, err = tx.ExecContext(r.Context(), `
+		DELETE FROM `+table+` WHERE restaurant_id = ? AND id = ? AND active = 0
+	`, restaurantID, inactiveID)
+	return err
 }
