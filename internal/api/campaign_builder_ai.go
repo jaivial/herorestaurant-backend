@@ -50,8 +50,9 @@ type campaignAIChatRequest struct {
 	CoordID      string                  `json:"coord_id"`
 }
 
-// campaignAIHTMLBlockRe captures the fenced ```html block the model answers with.
-var campaignAIHTMLBlockRe = regexp.MustCompile("(?s)```html\\s*\\n(.*?)```")
+// campaignAIHTMLBlockRe captures the fenced ```html block the model answers with
+// (any case: some models write ```HTML).
+var campaignAIHTMLBlockRe = regexp.MustCompile("(?is)```html\\s*\\n(.*?)```")
 
 // campaignAIModels lists every model of the catalog whose provider has an API
 // key for the restaurant, plus the default: the restaurant primary model when

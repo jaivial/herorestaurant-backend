@@ -20,6 +20,8 @@ var campaignBuilderBodyCloseRe = regexp.MustCompile(`(?i)</body\s*>`)
 // builder document. When the design dropped the placeholder, the standard
 // opt-out footer is appended so no campaign ever leaves without a way out.
 func renderCampaignBuilderEmail(emailHTML, unsubscribeURL string, theme campaignTheme) string {
+	// An empty URL only happens when the restaurant has no public base URL at
+	// all (no website, no domain): there is no opt-out page to point to then.
 	if strings.Contains(emailHTML, campaignBuilderUnsubscribePlaceholder) {
 		return strings.ReplaceAll(emailHTML, campaignBuilderUnsubscribePlaceholder, htmlEscape(strings.TrimSpace(unsubscribeURL)))
 	}

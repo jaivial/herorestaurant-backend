@@ -1035,11 +1035,13 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	fromName := firstNonEmpty(branding.EmailFromName, branding.BrandName, "Restaurante")
 	fromAddr := resolveEmailFromAddr(branding, cfg)
 	subject := firstNonEmpty(c.Subject, c.Name)
-	html := renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL)
+	var html string
 	if strings.TrimSpace(c.EmailHTML) != "" {
 		// Designed in the HTML builder: the compiled email is sent as-is, only
 		// the per-recipient opt-out link is filled in (campaign_html_builder_v1).
 		html = renderCampaignBuilderEmail(c.EmailHTML, unsubscribeURL, c.Theme)
+	} else {
+		html = renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL)
 	}
 	slog.Default().Info("campaign.delivery.email", "coord_id", c.CoordID, "booking_id", target.BookingID, "builder_html", strings.TrimSpace(c.EmailHTML) != "", "bytes", len(html))
 	return sendViaConfig(ctx, cfg, fromName, fromAddr, target.Target, subject, html)
