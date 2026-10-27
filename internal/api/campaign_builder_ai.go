@@ -104,6 +104,7 @@ Reglas del HTML que devuelves:
 - Imágenes con class "block max-w-full h-auto" y alt descriptivo. No inventes URLs de imágenes: reutiliza las del diseño o usa https://placehold.co/600x300?text=Imagen como marcador.
 - Botones: enlaces <a> con padding, fondo de color, texto blanco, rounded y no-underline.
 - Conserva SIEMPRE en el pie el enlace de baja con href="{{unsubscribe_url}}": es obligatorio por ley.
+- Conserva los atributos data-eb-* de los bloques (data-eb-name, data-eb-role, data-eb-channel). data-eb-channel="whatsapp" marca un bloque que solo va en el mensaje de WhatsApp y data-eb-channel="email" uno que solo va en el email: respeta esa separación y no la quites salvo que el usuario lo pida.
 - Logo del restaurante: %s. Web del restaurante: %s. Los botones de reservar o de visitar la web enlazan EXACTAMENTE a esa web.
 - Textos en español de España, tono cercano y profesional, sin faltas. TODO el texto visible va en español (salvo que el usuario pida expresamente otro idioma): nunca mezcles palabras de otro idioma (inglés, portugués…) aunque sean parecidas ("ensure", "enjoy", "venha", "você"). Antes de responder, relee cada frase y corrige cualquier palabra que no sea española.
 

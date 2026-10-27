@@ -164,6 +164,12 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": manual, "manual": true})
 		return
 	}
+	// campaign_whatsapp_reply_buttons_v1: a tapped campaign button (link or
+	// "Darme de baja") is answered here, before the bot ever sees it.
+	if in.ButtonID != "" && !botGroupIsGroupJID(in.ChatJID) && s.campaignHandleReplyButton(r.Context(), restaurantID, in) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": true, "campaign_button": true})
+		return
+	}
 
 	msg := botWebhookMessage{
 		Sender:        in.Sender,

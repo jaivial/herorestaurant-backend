@@ -720,6 +720,7 @@ type campaignToolOp struct {
 	Styles     map[string]any `json:"styles"`
 	Scope      string         `json:"scope"`
 	Visibility string         `json:"visibility"`
+	Channel    string         `json:"channel"` // campaign_block_channel_v1: all|email|whatsapp
 	Direction  string         `json:"direction"`
 }
 
@@ -822,7 +823,14 @@ func campaignOpsSummary(ops []campaignToolOp, layers map[string]campaignLayerRef
 				label += " (tablet y escritorio)"
 			}
 		case "set_visibility":
-			label += " " + campaignElementWords(op.ID, layers) + " → " + map[string]string{"all": "todos los tamaños", "mobile": "solo móvil", "desktop": "solo tablet y escritorio"}[op.Visibility]
+			var parts []string
+			if v := map[string]string{"all": "todos los tamaños", "mobile": "solo móvil", "desktop": "solo tablet y escritorio"}[op.Visibility]; v != "" {
+				parts = append(parts, v)
+			}
+			if ch := map[string]string{"all": "email y WhatsApp", "email": "solo email", "whatsapp": "solo WhatsApp"}[op.Channel]; ch != "" {
+				parts = append(parts, ch)
+			}
+			label += " " + campaignElementWords(op.ID, layers) + " → " + strings.Join(parts, ", ")
 		case "move":
 			label += " " + campaignElementWords(op.ID, layers)
 			if op.Direction != "" {

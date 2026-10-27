@@ -77,6 +77,10 @@ type waProvision struct {
 type waInbound struct {
 	Sender string
 	Text   string
+	// ButtonID is the id of the reply button the customer tapped (its label
+	// is in Text). Campaign buttons carry campaignReplyButtonPrefix ids and are
+	// answered before the bot. Coordination id: campaign_whatsapp_reply_buttons_v1
+	ButtonID string
 	// Caption of a photo or document (campaign_tools_v1): in an allowed
 	// (privileged) chat it is the text of the message ("ponla en la portada").
 	Caption    string
