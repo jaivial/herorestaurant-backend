@@ -1111,6 +1111,7 @@ func (s *Server) Routes() http.Handler {
 	r.Post("/public/booking/confirm", s.handlePublicBookingConfirm)
 	r.Post("/public/booking/cancel", s.handlePublicBookingCancel)
 	r.Post("/public/booking/rice", s.handlePublicBookingRice)
+	r.Post("/public/event-inquiries", s.handlePublicEventInquiry)
 	r.Get("/public/booking-policies", s.handlePublicBookingPolicies)
 	r.Get("/public/legal-page", s.handlePublicLegalPageGet)
 	r.Get("/public/ads", s.handlePublicAdsList)
