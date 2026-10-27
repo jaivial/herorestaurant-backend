@@ -265,7 +265,10 @@ func renderAdDesignHTML(page boAdDesignPage, adID int64, step, src, title, nonce
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
 	b.WriteString("<base target=\"_top\"><title>")
 	b.WriteString(html.EscapeString(firstNonEmpty(strings.TrimSpace(title), "Anuncio")))
-	b.WriteString("</title><style>html,body{margin:0;padding:0;background:transparent}[data-ad-step]{cursor:pointer}")
+	// The page never scrolls: the embedding page sizes the iframe to the
+	// height posted below. A scrollbar would narrow the page, its images would
+	// shrink with it and the reported height would keep the scrollbar forever.
+	b.WriteString("</title><style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}[data-ad-step]{cursor:pointer}")
 	// The stored CSS comes from the engine (Tailwind output): it never holds
 	// a closing style tag, but the page must not be breakable through it.
 	b.WriteString(strings.ReplaceAll(page.CSS, "</", "<\\/"))
