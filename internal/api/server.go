@@ -1840,6 +1840,16 @@ func canonicalPublicHost(manifest *seoRoutesManifest) func(http.Handler) http.Ha
 			forwardedProto := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]))
 			https := r.TLS != nil || forwardedProto == "https"
 			canonicalHost := "www.alqueriavillacarmen.com"
+			indexTarget := ""
+			if r.URL.Path == "/index.html" {
+				indexTarget = "/"
+			} else if r.URL.Path == "/en/index.html" {
+				indexTarget = "/en"
+			}
+			if indexTarget != "" {
+				seoRedirect(w, r, "https://www.alqueriavillacarmen.com"+indexTarget)
+				return
+			}
 			if (host != "alqueriavillacarmen.com" && host != canonicalHost) || (host == canonicalHost && https) {
 				next.ServeHTTP(w, r)
 				return
