@@ -80,6 +80,7 @@ func TestAssistantToolRegistrySectionsValid(t *testing.T) {
 		"ajustes": true, "miembros": true, "fichaje": true, "horarios": true,
 		"facturas": true, "reportes": true, "estadisticas": true,
 		"campanas":      true, // boSectionCampanas (backoffice_rbac.go): campaigns_list/campaigns_read
+		"anuncios":      true, // boSectionAnuncios (backoffice_rbac.go): ad_get/ad_save/ad_design/ad_image/ad_delete
 		"estado_cuenta": true, "website": true, "site-builder": true, "plataforma": true,
 		assistantSessionSection: true, // admin trio: ACL per operation [FORKY-ADMIN-TOOLS-S01]
 	}
