@@ -969,15 +969,23 @@ func (s *Server) handleBOGroupMenusV2Get(w http.ResponseWriter, r *http.Request)
 		editorPreviewOpen = v != "0"
 	}
 
+	menuSEO := s.loadPublicMenuSEO(r.Context(), a.ActiveRestaurantID, menuID)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"menu": map[string]any{
-			"id":                  menuID,
-			"editor_preview_open": editorPreviewOpen,
-			"menu_title":          title,
-			"price":               price,
-			"active":              activeInt != 0,
-			"is_draft":            draftInt != 0,
+			"id":                      menuID,
+			"seo_slug":                menuSEO.SEOSlug,
+			"seo_title":               menuSEO.SEOTitle,
+			"seo_title_english":       menuSEO.SEOTitleEnglish,
+			"seo_description":         menuSEO.SEODescription,
+			"seo_description_english": menuSEO.SEODescriptionEnglish,
+			"seo_h1":                  menuSEO.SEOH1,
+			"seo_h1_english":          menuSEO.SEOH1English,
+			"editor_preview_open":     editorPreviewOpen,
+			"menu_title":              title,
+			"price":                   price,
+			"active":                  activeInt != 0,
+			"is_draft":                draftInt != 0,
 			// Coordination id: menu_type_numeric_v1
 			"menu_type":               MenuTypeFromAny(menuType),
 			"menu_type_name":          MenuTypeName(MenuTypeFromAny(menuType)),

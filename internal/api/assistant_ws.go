@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -333,6 +335,14 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 	_ = c.writeJSON(map[string]any{"type": "hello", "session_id": sid, "history": histOut})
 }
 
+// assistantMaxToolRounds bounds the model <-> tools rounds of one user
+// message. 6 was too few for a real multi-step request: "create the campaign
+// and design it with AI" needs preview + confirm for each write plus the reads
+// the model makes to avoid inventing content (menus, carta), and the turn
+// ended half done (2026-10-27, campaign_tools_v1). Each round is one model
+// call; 10 covers those flows and still stops a model that loops.
+const assistantMaxToolRounds = 10
+
 func (c *assistantClient) handleMessage(ctx context.Context, content string, attachments []assistantAttachmentRef, audio *assistantVoiceAudio) {
 	defer c.finishGeneration()
 	if strings.TrimSpace(content) == "" && len(attachments) == 0 {
@@ -395,6 +405,9 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 		attachmentBlocks = append(attachmentBlocks, block)
 	}
 	userContentBlocks, userContentPersisted := assistantAttachmentsToUserBlocks(content, attachmentBlocks)
+	if note := assistantAttachmentRefsNote(attachmentBlocks); note != "" {
+		userContentBlocks = append(userContentBlocks, map[string]any{"type": "text", "text": note})
+	}
 
 	// The clip's Bunny URL rides the row so a reload replays it at this exact
 	// message; NULLIF keeps a plain text turn at NULL instead of ''.
@@ -433,10 +446,15 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 	_ = c.writeJSON(map[string]any{"type": "status", "state": "thinking"})
 	toolDefs := assistantToolDefs()
 	toolMsgs := append([]assistantChatMessage{}, hist...)
+	// campaign_tools_v1: one id per user message, so a tool can require that a
+	// confirmation arrives in a LATER message (a human reply), not in the same
+	// model turn that produced the preview.
+	turnID := uuid.NewString()
+	ranTools := map[string]bool{}
 	var final strings.Builder
 	var lastRoundHadError bool
 	exhausted := true
-	for turn := 0; turn < 6; turn++ {
+	for turn := 0; turn < assistantMaxToolRounds; turn++ {
 		result, callErr := c.s.assistantCall(ctx, restaurantID, prompt, toolMsgs, toolDefs, nil)
 		if callErr != nil {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": callErr.Error()})
@@ -473,9 +491,10 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 			_ = c.writeJSON(map[string]any{"type": "status", "state": "tool", "tool": use.Name})
 			// Bound every tool independently so a slow catalog/analytics query cannot
 			// consume the whole conversation or hold the websocket indefinitely.
-			toolCtx, cancelTool := context.WithTimeout(ctx, assistantToolTimeout(use.Name))
+			toolCtx, cancelTool := context.WithTimeout(withAssistantTurn(ctx, sid, turnID), assistantToolTimeout(use.Name))
 			out, toolErr := c.s.assistantExecuteTool(toolCtx, restaurantID, use.Name, use.Input)
 			cancelTool()
+			ranTools[use.Name] = true
 			if toolErr != nil {
 				out = botJSON(map[string]any{"error": toolErr.Error()})
 			}
@@ -512,6 +531,14 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 			final.WriteString("\n\n" + msg)
 			_ = c.writeJSON(map[string]any{"type": "delta", "text": "\n\n" + msg})
 		}
+	}
+	// campaign_tools_v1: a campaign action claimed in a turn where no tool ran
+	// at all is flagged to the user (and in history, so it does not prime the
+	// next turn as if it had happened).
+	if campaignUnbackedClaim(content, final.String(), ranTools) {
+		final.WriteString(campaignUnbackedClaimNotice)
+		_ = c.writeJSON(map[string]any{"type": "delta", "text": campaignUnbackedClaimNotice})
+		slog.Default().Warn("campaign.tools.unbacked_claim", "restaurant_id", restaurantID, "session_id", sid)
 	}
 	// Never persist an unusable reply: it would come back as history on the next
 	// turn and prime the model to produce more of the same. Dropping it keeps

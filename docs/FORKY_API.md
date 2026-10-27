@@ -17,6 +17,14 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `restaurant_info` | reservas | read | no | `{"type":"object","properties":{}}` |
 | `bookings_summary` | reservas | read | no | `{"type":"object","properties":{"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"}}}` |
 | `bookings_list` | reservas | read | no | `{"type":"object","properties":{"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"limit":{"type":"integer"}}}` |
+| `cancelled_bookings_list` | reservas | read | no | `{"type":"object","properties":{"date":{"type":"string","description":"Fecha YYYY-MM-DD o dd/MM/yyyy (opcional, por defecto hoy)"}}}` |
+| `special_dates_list` | reservas | read | no | `{"type":"object","properties":{}}` |
+| `campaigns_list` | campanas | read | no | `{"type":"object","properties":{"campaign_id":{"type":"integer","description":"ID de campaña concreto (opcional)"}}}` |
+| `whatsapp_connection_get` | plataforma | read | no | `{"type":"object","properties":{}}` |
+| `menu_visibility_list` | menus | read | no | `{"type":"object","properties":{}}` |
+| `legal_pages_list` | website | read | no | `{"type":"object","properties":{"slug":{"type":"string","description":"aviso-legal, booking-policies, proteccion-datos o special-booking-politics (opcional)"}}}` |
+| `site_builder_drafts_list` | website | read | no | `{"type":"object","properties":{}}` |
+| `tables_list` | reservas | read | no | `{"type":"object","properties":{}}` |
 | `restaurant_query` | reservas | read | no | `{"type":"object","properties":{"resource":{"type":"string","enum":["bookings","menus","wines"]},"date_from":{"type":"string"},"date_to":{"type":"string"}},"required":["resource"]}` |
 | `create_booking` | reservas | write | sí | `{"type":"object","properties":{"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","time","people","name","confirmed"]}` |
 | `update_booking` | reservas | write | sí | `{"type":"object","properties":{"booking_id":{"type":"integer"},"date":{"type":"string"},"time":{"type":"string"},"people":{"type":"integer"},"name":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["booking_id","confirmed"]}` |
@@ -51,6 +59,21 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `stock_warehouses_list` | stock | read | no | `{"type":"object","properties":{}}` |
 | `stock_categories_list` | stock | read | no | `{"type":"object","properties":{}}` |
 | `stock_items_list` | stock | read | no | `{"type":"object","properties":{"search":{"type":"string"},"kind":{"type":"string"},"category_id":{"type":"integer"},"warehouse_id":{"type":"integer"},"page":{"type":"integer"},"page_size":{"type":"integer"},"sort":{"type":"string"}}}` |
+| `stock_read` | stock | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"q":{"type":"string"},"days":{"type":"string"},"scenario":{"type":"string"},"category_id":{"type":"string"},"food_type":{"type":"string"},"scope_key":{"type":"string"},"scope_kind":{"type":"string"}}}` |
+| `members_read` | miembros | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"year":{"type":"string"},"view":{"type":"string"}}}` |
+| `fichaje_read` | fichaje | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"}}}` |
+| `sheets_read` | comida | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"category_id":{"type":"string"},"q":{"type":"string"},"status":{"type":"string"}}}` |
+| `menus_read` | menus | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"section_id":{"type":"string"},"date":{"type":"string"},"status":{"type":"string"},"include_drafts":{"type":"string"}}}` |
+| `reservas_read` | reservas | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date":{"type":"string"}}}` |
+| `website_read` | website | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"}}}` |
+| `campaigns_read` | campanas | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"}}}` |
+| `campaign_get` | campanas | read | no | `{"type":"object","properties":{"campaign_id":{"type":"integer","description":"ID de la campaña (sin él: lista)"},"include":{"type":"array","items":{"type":"string","enum":["layers","html","whatsapp_text","audience","deliveries","ai_models","blocks"]}}}}` |
+| `campaign_save` | campanas | write | sí | `{"type":"object","properties":{"campaign_id":{"type":"integer"},"name":{"type":"string"},"subject":{"type":"string"},"channels":{"type":"array","items":{"type":"string","enum":["email","whatsapp"]}},"audience":{"type":"string","enum":["bookings","manual"]},"audience_days":{"type":"integer"},"manual_recipients":{"type":"array","items":{"type":"string"}},"email_per_minute":{"type":"integer"},"whatsapp_per_minute":{"type":"integer"},"design_html":{"type":"string","description":"Solo al crear: diseño inicial (HTML con clases de Tailwind)"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["confirmed"]}` |
+| `campaign_design` | campanas | write | sí | `{"type":"object","properties":{"campaign_id":{"type":"integer"},"action":{"type":"string","enum":["edit","ai","undo"]},"ops":{"type":"array","items":{"type":"object"}},"version":{"type":"string"},"instruction":{"type":"string"},"element_id":{"type":"string"},"model":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","action","confirmed"]}` |
+| `campaign_image` | campanas | write | sí | `{"type":"object","properties":{"campaign_id":{"type":"integer"},"attachment":{"type":"string","description":"ref del adjunto (forky/…)"},"element_id":{"type":"string","description":"<img> que se sustituye"},"insert_after":{"type":"string"},"placement":{"type":"string","enum":["replace","insert","none"]},"alt":{"type":"string"},"version":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","attachment","confirmed"]}` |
+| `campaign_send` | campanas | write | sí | `{"type":"object","properties":{"campaign_id":{"type":"integer"},"action":{"type":"string","enum":["test","send","resume"]},"channel":{"type":"string","enum":["email","whatsapp"]},"target":{"type":"string"},"ack":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","action","confirmed"]}` |
+| `campaign_delete` | campanas | write | sí | `{"type":"object","properties":{"campaign_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","confirmed"]}` |
+| `invoices_read` | facturas | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"name":{"type":"string"},"party_size":{"type":"string"},"phone":{"type":"string"},"time":{"type":"string"}}}` |
 | `stock_item_movements_list` | stock | read | no | `{"type":"object","properties":{"id":{"type":"integer"},"page":{"type":"integer"},"page_size":{"type":"integer"}},"required":["id"]}` |
 | `stock_summary` | stock | read | no | `{"type":"object","properties":{}}` |
 | `stock_movement_create` | stock | write | sí | `{"type":"object","properties":{"item_id":{"type":"integer"},"warehouse_id":{"type":"integer"},"quantity":{"type":"number"},"unit_id":{"type":"integer"},"type":{"type":"string"},"direction":{"type":"string"},"waste_reason":{"type":"string"},"note":{"type":"string"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["item_id","warehouse_id","quantity","unit_id","type","idempotency_key","confirmed"]}` |
@@ -60,6 +83,7 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `waste_costs_list` | stock | read | no | `{"type":"object","properties":{"limit":{"type":"integer"}}}` |
 | `pos_visits_list` | pos | read | no | `{"type":"object","properties":{"status":{"type":"string"}}}` |
 | `pos_tickets_list` | pos | read | no | `{"type":"object","properties":{"status":{"type":"string"}}}` |
+| `pos_read` | pos | read | no | `{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"id":{"type":"string"},"date":{"type":"string","description":"YYYY-MM-DD"},"date_from":{"type":"string"},"date_to":{"type":"string"},"shift_id":{"type":"string"},"station_id":{"type":"string"}}}` |
 | `pos_cash_closures_list` | pos | read | no | `{"type":"object","properties":{"shift_id":{"type":"integer"}}}` |
 | `pos_cash_summary` | pos | read | no | `{"type":"object","properties":{"shift_id":{"type":"integer"}}}` |
 | `pos_cash_closure_create` | pos | write | sí | `{"type":"object","properties":{"shift_id":{"type":"integer"},"terminal_key":{"type":"string"},"closure_type":{"type":"string","enum":["X","Y","Z"]},"counted_cash_cents":{"type":"integer"},"note":{"type":"string"},"discrepancy_reason":{"type":"string"},"idempotency_key":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["closure_type","idempotency_key","confirmed"]}` |
@@ -83,8 +107,27 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `site_publish` | website | write | sí | `{"type":"object","properties":{"site_id":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["site_id","confirmed"]}` |
 | `admin_catalog` | session | read | no | `{"type":"object","properties":{"q":{"type":"string"},"section":{"type":"string"},"writes_only":{"type":"boolean"},"limit":{"type":"integer"},"offset":{"type":"integer"}}}` |
 | `admin_describe` | session | read | no | `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"name":{"type":"string"}}}` |
-| `admin_call` | session | read | no | `{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["name"]}` |
+| `admin_call` | session | read | no | `{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"},"calls":{"type":"array","description":"Varias lecturas en una sola llamada (máx 20)","items":{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"}},"required":["name"]}}}}` |
 
+
+## Campañas (`campaign_tools_v1`)
+
+Todo lo que se hace en `/app/campanas/nueva` y `/app/campanas/{id}` como herramientas:
+
+| Tool | Qué cubre del editor |
+|---|---|
+| `campaign_get` | Listado, cabecera, Ajustes, Flujo y resumen del diseño; `include`: `layers` (ids `e1`, `e2`… por orden de documento), `html`, `whatsapp_text`, `audience` (solo recuentos), `deliveries` (registro agregado), `ai_models`, `blocks`. |
+| `campaign_save` | Crear (con la plantilla de marca o `design_html`) y cambiar nombre, asunto, canales, audiencia, lista manual y ritmo. |
+| `campaign_design` | `edit`: las operaciones del creador visual (bloques de la paleta, textos, enlaces, imágenes, estilos del inspector por tamaño, visibilidad, clases, mover, duplicar, borrar, HTML); `ai`: el asistente de diseño con IA; `undo`: deshace el último cambio hecho desde un chat (`campaign_design_revisions`). |
+| `campaign_image` | Una imagen ADJUNTA en el chat (ref de la línea `[Adjunto: … · ref …]`) subida al BunnyCDN del restaurante en formato apto para email (PNG/JPEG/GIF ≤400 KB tal cual; si no, JPEG) y colocada en el diseño: sustituye un `<img>` (`element_id`), añade un bloque de imagen (`insert_after`) o solo devuelve la URL (`placement=none`). |
+| `campaign_send` | `test` (prueba a un email o teléfono), `send` (envío real) y `resume` (reanudar pausados con `ack`). |
+| `campaign_delete` | Borrar la campaña y su registro de envíos. |
+
+- Núcleo compartido en `internal/api/campaign_tools.go`; ajustes, envíos, pruebas, audiencia y borrado reutilizan los handlers del backoffice.
+- El diseño y el email se calculan con el código del propio editor en el servidor del backoffice (`POST /bo-tools/campaign-design` y `/bo-tools/campaign-email-compile`, autenticados con `VAULT_KEY`/`BEARER_TOKEN_KEY`; URL en `BACKOFFICE_INTERNAL_URL`), así el email guardado es idéntico al que guardaría el editor.
+- Nunca devuelven datos de destinatarios (audiencia y registro solo como recuentos).
+- El bot de WhatsApp tiene su gemela `manage_campaign` (contactos y grupos privilegiados): lecturas inmediatas y escrituras por propuesta + `OK <código>` (op `campaign`).
+- Imágenes del chat: en Forky la ref del adjunto viaja en el manifiesto del mensaje; en WhatsApp las imágenes recientes de cada chat privilegiado quedan registradas por id de mensaje (`image_ref`, o la más reciente) y se suben al CDN al crear la propuesta, así el `OK` no depende del proveedor.
 
 ## Trío admin (todas las operaciones del backoffice) [FORKY-ADMIN-TOOLS-S01]
 

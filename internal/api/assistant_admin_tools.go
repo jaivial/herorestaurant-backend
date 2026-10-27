@@ -45,6 +45,10 @@ func assistantToolTimeout(name string) time.Duration {
 	if name == "admin_call" {
 		return 20 * time.Second
 	}
+	// campaign_tools_v1: design compiles and the design AI need far longer.
+	if d, ok := campaignAssistantToolTimeouts[name]; ok {
+		return d
+	}
 	return 5 * time.Second
 }
 

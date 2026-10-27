@@ -413,6 +413,57 @@ var assistantToolRegistry = []assistantTool{
 			return s.assistantDomainRead(ctx, "campaigns_read", campaignsReadResources, input)
 		},
 	},
+	// Coordination id: campaign_tools_v1 - the whole campaign editor
+	// (/app/campanas/nueva and /app/campanas/{id}) as tools: settings, the
+	// HTML builder, its AI assistant, tests, sends and deletes. Shared core in
+	// campaign_tools.go; no recipient data ever reaches the model.
+	{
+		Name: "campaign_get", Description: "Lee las campañas de marketing (email/WhatsApp) del restaurante activo como las ve el editor /app/campanas. Sin campaign_id: lista de campañas. Con campaign_id: ajustes, estado, flujo y resumen del diseño (con su version). include añade: layers (capas del diseño con ids e1, e2… para editarlas con campaign_design), html (diseño completo), whatsapp_text, audience (recuento de destinatarios, sin datos personales), deliveries (registro de envíos agregado), ai_models (modelos del asistente de diseño) y blocks (catálogo de bloques y grupos de estilo).",
+		Schema: json.RawMessage(`{"type":"object","properties":{"campaign_id":{"type":"integer","description":"ID de la campaña (sin él: lista)"},"include":{"type":"array","items":{"type":"string","enum":["layers","html","whatsapp_text","audience","deliveries","ai_models","blocks"]}}}}`), BackofficeOnly: true, Section: "campanas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantCampaignGet(ctx, rid, input)
+		},
+	},
+	{
+		Name: "campaign_save", Description: "Crea una campaña (sin campaign_id) o cambia sus ajustes (con campaign_id), como la cabecera y la pestaña Ajustes del editor: name, subject, channels (email y/o whatsapp), audience (bookings = clientes con reserva en los últimos audience_days días; manual = manual_recipients, emails o teléfonos), email_per_minute (1-5) y whatsapp_per_minute (1). Una campaña nueva arranca con el diseño de la plantilla de marca o con design_html. Primero confirmed=false (vista previa); después confirmed=true con la misma action y campaign_id (en el chat el servidor recuerda la vista previa; fuera del chat, con el confirmation_token).", Write: true, Confirm: true,
+		Schema:         json.RawMessage(`{"type":"object","properties":{"campaign_id":{"type":"integer"},"name":{"type":"string"},"subject":{"type":"string"},"channels":{"type":"array","items":{"type":"string","enum":["email","whatsapp"]}},"audience":{"type":"string","enum":["bookings","manual"]},"audience_days":{"type":"integer"},"manual_recipients":{"type":"array","items":{"type":"string"}},"email_per_minute":{"type":"integer"},"whatsapp_per_minute":{"type":"integer"},"design_html":{"type":"string","description":"Solo al crear: diseño inicial (HTML con clases de Tailwind)"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["confirmed"]}`),
+		BackofficeOnly: true, Section: "campanas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantCampaignSave(ctx, rid, input)
+		},
+	},
+	{
+		Name: "campaign_design", Description: "Edita el diseño del email de una campaña como el editor visual; cada cambio se guarda y recompila el email. action=edit aplica ops en orden sobre los ids de campaign_get include layers (pasa version): add_block {block, target?, position?}, insert_html {html, target?, position?}, set_text {id, text}, set_html {id, html}, set_attrs {id, href?, src?, alt?}, set_style {id, scope: all|md, styles: {fontSize, fontWeight, textAlign, textColor, bgColor, lineHeight, paddingX, paddingY, marginTop, marginBottom, radius, maxWidth, width} con clases de Tailwind o colores #hex}, set_classes {id, classes|add|remove}, set_visibility {id, visibility: all|mobile|desktop}, move {id, direction: up|down o target+position}, duplicate {id}, remove {id}, replace_element {id, html}, replace_html {html}; position: before|after|inside. HTML apto para email con clases de Tailwind v3 y el enlace {{unsubscribe_url}} en el pie. action=ai encarga el cambio al asistente de diseño con IA del restaurante (instruction, element_id opcional, model opcional). action=undo deshace el último cambio hecho desde un chat. Primero confirmed=false (vista previa); después confirmed=true con la misma action y campaign_id (en el chat el servidor recuerda la vista previa; fuera del chat, con el confirmation_token).", Write: true, Confirm: true,
+		Schema:         json.RawMessage(`{"type":"object","properties":{"campaign_id":{"type":"integer"},"action":{"type":"string","enum":["edit","ai","undo"]},"ops":{"type":"array","items":{"type":"object"}},"version":{"type":"string"},"instruction":{"type":"string"},"element_id":{"type":"string"},"model":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","action","confirmed"]}`),
+		BackofficeOnly: true, Section: "campanas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantCampaignDesign(ctx, rid, input)
+		},
+	},
+	{
+		Name: "campaign_image", Description: "Usa en el email de una campaña una IMAGEN ADJUNTA en este chat: la sube al CDN (BunnyCDN) del restaurante en un formato que ven todos los clientes de correo y la coloca en el diseño. attachment = la ref de la línea [Adjunto: … · ref …] del mensaje. element_id = la imagen (<img>) que sustituye (capas de campaign_get); sin element_id añade un bloque de imagen después de insert_after (o al final del contenido); placement=none solo la sube y devuelve la URL (por ejemplo para usarla con la IA de diseño). alt opcional. Primero confirmed=false (vista previa); después confirmed=true con la misma action y campaign_id (en el chat el servidor recuerda la vista previa; fuera del chat, con el confirmation_token).", Write: true, Confirm: true,
+		Schema:         json.RawMessage(`{"type":"object","properties":{"campaign_id":{"type":"integer"},"attachment":{"type":"string","description":"ref del adjunto (forky/…)"},"element_id":{"type":"string","description":"<img> que se sustituye"},"insert_after":{"type":"string"},"placement":{"type":"string","enum":["replace","insert","none"]},"alt":{"type":"string"},"version":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","attachment","confirmed"]}`),
+		BackofficeOnly: true, Section: "campanas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantCampaignImage(ctx, rid, input)
+		},
+	},
+	{
+		Name: "campaign_send", Description: "Envíos de una campaña: action=test manda una prueba a target (email o teléfono; channel opcional); action=send lanza el envío a toda la audiencia (la vista previa dice a cuántos; no se puede deshacer); action=resume reanuda los envíos pausados con ack (motivo resuelto, queda registrado) y channel opcional. Llega a personas: primero confirmed=false (vista previa con el destino exacto), enséñasela al usuario y espera su respuesta; cuando diga que sí en su siguiente mensaje, repite con confirmed=true (en el chat el servidor recuerda lo que vio el usuario).", Write: true, Confirm: true,
+		Schema:         json.RawMessage(`{"type":"object","properties":{"campaign_id":{"type":"integer"},"action":{"type":"string","enum":["test","send","resume"]},"channel":{"type":"string","enum":["email","whatsapp"]},"target":{"type":"string"},"ack":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","action","confirmed"]}`),
+		BackofficeOnly: true, Section: "campanas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantCampaignSend(ctx, rid, input)
+		},
+	},
+	{
+		Name: "campaign_delete", Description: "Elimina una campaña del restaurante activo y su registro de envíos. No se puede deshacer: primero confirmed=false (vista previa), espera la respuesta del usuario y, cuando diga que sí en su siguiente mensaje, repite con confirmed=true.", Write: true, Confirm: true,
+		Schema:         json.RawMessage(`{"type":"object","properties":{"campaign_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["campaign_id","confirmed"]}`),
+		BackofficeOnly: true, Section: "campanas",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantCampaignDelete(ctx, rid, input)
+		},
+	},
 	{
 		Name: "invoices_read", Description: "Lecturas de facturación del restaurante activo: search_reservation (date_from/date_to/name/party_size/phone/time) para localizar la reserva de una factura.",
 		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"name":{"type":"string"},"party_size":{"type":"string"},"phone":{"type":"string"},"time":{"type":"string"}}}`), BackofficeOnly: true, Section: "facturas",

@@ -16,6 +16,8 @@ const (
 	aiFeatureTranslation = "translation"
 	aiFeatureStock       = "stock_ai"
 	aiFeatureStockOCR    = "stock_ocr"
+	// Campaign HTML builder assistant (campaign_html_builder_ai_v1).
+	aiFeatureCampaignBuilder = "campaign_builder"
 )
 
 // recordAIUsage persists one LLM request and fans the event out on the global

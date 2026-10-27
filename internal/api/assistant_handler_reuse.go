@@ -90,11 +90,18 @@ func ridFromCtxOrAuth(ctx context.Context, auth boAuth) int {
 }
 
 // botHandlerResponse wraps a handler JSON body with the tool name and returns
-// it as the tool_result string.
+// it as the tool_result string. An object keeps its shape; any other JSON
+// value (null, an array, a scalar) travels under "data". A handler answering
+// `null` used to leave the map nil and the assignment below panicked, which
+// killed the whole backend from a Forky chat (menus_read, 2026-10-27).
 func botHandlerResponse(tool string, body []byte) (string, error) {
-	var v map[string]any
-	if err := json.Unmarshal(body, &v); err != nil {
+	var raw any
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return "", err
+	}
+	v, ok := raw.(map[string]any)
+	if !ok {
+		v = map[string]any{"data": raw}
 	}
 	v["tool"] = tool
 	return botJSON(v), nil

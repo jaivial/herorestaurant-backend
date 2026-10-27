@@ -1076,6 +1076,10 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 		// together with the successful panel write.
 		return s.botPanelExecute(ctx, tx, rid, p)
 	}
+	if p.Op == "campaign" {
+		// Coordination id: campaign_tools_v1 - same claim+commit contract.
+		return s.botCampaignExecute(ctx, tx, rid, p)
+	}
 	if p.Op == "edit" {
 		return s.botEditExecute(ctx, tx, rid, msg, p)
 	}

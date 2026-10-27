@@ -108,6 +108,10 @@ type Config struct {
 	BotDailyTurnsCap       int
 	// BotPipelineURL is the DSPy decision pipeline sidecar (wa_bot_dspy_pipeline_v1).
 	BotPipelineURL string
+	// BackofficeInternalURL is the backoffice server the backend calls for the
+	// campaign design engine and email compiler (campaign_tools_v1). In prod
+	// both run on the host network, so loopback + the backoffice PORT.
+	BackofficeInternalURL string
 	// BotPrivilegedGroupJIDs lists the WhatsApp group JIDs (@g.us) that run
 	// bot turns with the full forky assistant tool registry (coordination id:
 	// wa_bot_privileged_group_v1). Empty disables the feature entirely.
@@ -193,6 +197,7 @@ func Load() Config {
 		BotMaxIterations:            getenvInt("BOT_MAX_ITERATIONS", 0, 0, 1000),
 		BotContextSQLitePath:        strings.TrimSpace(getenv("BOT_CONTEXT_SQLITE_PATH", "./data/whatsapp-bot-context.sqlite")),
 		BotPipelineURL:              strings.TrimSpace(getenv("BOT_PIPELINE_URL", "http://127.0.0.1:18195")),
+		BackofficeInternalURL:       strings.TrimRight(strings.TrimSpace(getenv("BACKOFFICE_INTERNAL_URL", "http://127.0.0.1:3011")), "/"),
 		BotDailyTurnsCap:            getenvInt("BOT_DAILY_TURNS_CAP", 2000, 1, 1000000),
 		// wa_bot_privileged_group_v1: comma and/or space separated @g.us JIDs.
 		BotPrivilegedGroupJIDs:   botPrivilegedGroupJIDsFromEnv(getenv("BOT_PRIVILEGED_GROUP_JIDS", "")),

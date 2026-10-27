@@ -90,6 +90,9 @@ func botToolDefsPrivilegedControl() []botToolDef {
 	// approved panel writes (the missing halves of the backoffice coverage).
 	defs = append(defs, botToolDefsStaffReads()...)
 	defs = append(defs, botPanelChangeToolDefs()...)
+	// Coordination id: campaign_tools_v1 - the campaign editor (/app/campanas)
+	// as one parameterised tool with the same propose+OK writes.
+	defs = append(defs, botToolDefsCampaign()...)
 	return defs
 }
 
