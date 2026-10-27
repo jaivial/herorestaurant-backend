@@ -34,11 +34,29 @@ func (s *Server) botToolUnsubscribeMarketing(ctx context.Context, restaurantID i
 	}
 	// Product rule: a manual baja silences the whole contact (WhatsApp and
 	// e-mail), whatever the model passed as channel.
-	channel := "all"
-	phone := normalizeWhatsAppNumber(msg.Sender)
-	if phone == "" {
+	if normalizeWhatsAppNumber(msg.Sender) == "" {
 		return botJSON(map[string]any{"error": "no se pudo identificar el teléfono del cliente"}), nil
 	}
+	stored := s.suppressMarketingContact(ctx, restaurantID, msg.Sender, "whatsapp_bot")
+	if stored == 0 {
+		return botJSON(map[string]any{"error": "no se pudo registrar la baja; avisa al cliente de que lo gestionará el equipo y usa send_contact"}), nil
+	}
+	return botJSON(map[string]any{"success": true, "unsubscribed": true, "channel": "all",
+		"note": "Baja registrada. Confirma al cliente con send_message; las confirmaciones y recordatorios de sus reservas se siguen enviando."}), nil
+}
+
+// suppressMarketingContact puts the WhatsApp contact that is writing on the
+// campaign do-not-contact list: its phone plus the emails of its bookings
+// (product rule: a manual baja silences the whole contact). Shared by the
+// bot's unsubscribe_marketing tool and the campaign "Darme de baja" button
+// (campaign_whatsapp_reply_buttons_v1). Returns how many rows were stored.
+func (s *Server) suppressMarketingContact(ctx context.Context, restaurantID int, sender, reason string) int {
+	channel := "all"
+	phone := normalizeWhatsAppNumber(sender)
+	if phone == "" {
+		return 0
+	}
+	msg := botWebhookMessage{Sender: sender}
 
 	// Newest booking of this phone: traceability anchor and source of the
 	// email(s) to suppress. Same phone matching as get_bookings.
@@ -85,8 +103,8 @@ func (s *Server) botToolUnsubscribeMarketing(ctx context.Context, restaurantID i
 	for _, p := range pairs {
 		if _, err := s.db.ExecContext(ctx, `
 			INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
-			VALUES (?, ?, ?, NULLIF(?, 0), 'whatsapp_bot', 'unsubscribe')
-		`, restaurantID, p.channel, p.target, bookingID); err != nil {
+			VALUES (?, ?, ?, NULLIF(?, 0), ?, 'unsubscribe')
+		`, restaurantID, p.channel, p.target, bookingID, reason); err != nil {
 			slog.Default().Warn("wa_bot.unsubscribe.insert_failed", "coord_id", "wa_bot_unsubscribe_v1",
 				"restaurant_id", restaurantID, "channel", p.channel, "err", err.Error())
 			continue
@@ -94,10 +112,6 @@ func (s *Server) botToolUnsubscribeMarketing(ctx context.Context, restaurantID i
 		stored++
 	}
 	slog.Default().Info("wa_bot.unsubscribe.done", "coord_id", "wa_bot_unsubscribe_v1",
-		"restaurant_id", restaurantID, "channel", channel, "booking_id", bookingID, "stored", stored)
-	if stored == 0 {
-		return botJSON(map[string]any{"error": "no se pudo registrar la baja; avisa al cliente de que lo gestionará el equipo y usa send_contact"}), nil
-	}
-	return botJSON(map[string]any{"success": true, "unsubscribed": true, "channel": channel,
-		"note": "Baja registrada. Confirma al cliente con send_message; las confirmaciones y recordatorios de sus reservas se siguen enviando."}), nil
+		"restaurant_id", restaurantID, "channel", channel, "booking_id", bookingID, "stored", stored, "reason", reason)
+	return stored
 }
