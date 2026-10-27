@@ -60,6 +60,42 @@ func TestBotKeepGroupImageAsContext_NoImage(t *testing.T) {
 	}
 }
 
+// An unmentioned photo of a group reaches the gate of the webhook as the
+// context of the request that follows: it is not a turn (Mentioned=false),
+// but its bytes are there for the privileged group to keep.
+func TestEvoParseInbound_GroupPhotoWithoutMentionReachesTheGate(t *testing.T) {
+	b64 := base64.StdEncoding.EncodeToString([]byte("bytes-of-the-bill"))
+	body := []byte(`{"event":"messages.upsert","instance":"nv_1","data":{
+		"key":{"remoteJid":"120363430262328476@g.us","id":"IMG-1","participant":"34692747052@s.whatsapp.net"},
+		"messageType":"imageMessage",
+		"message":{"base64":"` + b64 + `","imageMessage":{"mimetype":"image/jpeg","caption":"la cuenta"}}}}`)
+	in, ok := (&evolutionGateway{ownJIDs: []string{"34960255536"}}).ParseInboundMessage(body)
+	if !ok {
+		t.Fatal("an unmentioned group photo must reach the gate as context")
+	}
+	if in.Mentioned {
+		t.Error("an unmentioned group photo must not be marked as mentioned")
+	}
+	if in.ImageB64 != b64 {
+		t.Errorf("the photo must reach the gate with its bytes: len=%d", len(in.ImageB64))
+	}
+	if in.Text != "la cuenta" {
+		t.Errorf("the caption must be the text of the photo: %q", in.Text)
+	}
+}
+
+// An unmentioned TEXT of a group is still rejected at the parse stage: the
+// noisy case must not reach the webhook.
+func TestEvoParseInbound_GroupTextWithoutMentionIsStillDropped(t *testing.T) {
+	body := []byte(`{"event":"messages.upsert","instance":"nv_1","data":{
+		"key":{"remoteJid":"120363430262328476@g.us","id":"TXT-1","participant":"34692747052@s.whatsapp.net"},
+		"messageType":"extendedTextMessage",
+		"message":{"extendedTextMessage":{"text":"hola"}}}}`)
+	if in, ok := (&evolutionGateway{ownJIDs: []string{"34960255536"}}).ParseInboundMessage(body); ok {
+		t.Fatalf("an unmentioned group text must be dropped, got %+v", in)
+	}
+}
+
 // The recent images of a chat are the ones registered after `since`, newest
 // first, and the cap holds.
 func TestBotChatImages_RecentSelection(t *testing.T) {
