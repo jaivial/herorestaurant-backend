@@ -117,6 +117,22 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 			if isPrivileged {
 				reason = "skipped_not_mentioned_privileged"
 			}
+			// wa_bot_group_media_context_v1: a photo sent to the privileged
+			// group WITHOUT the mention is still the data of the request that
+			// travels with it. The mention rides on the caption ("crea una
+			// factura con estos datos"), not on every photo, so the photo that
+			// carries the data was dropped here and the model never saw it
+			// (prod 2026-10-27: the bill of the restaurant was discarded and
+			// the invoice was created from the booking instead).
+			//
+			// The photo is registered in the chat registry so the turn that
+			// follows can read it. It does NOT start a turn: the photo alone
+			// is not a request.
+			if isPrivileged && !in.FromMe {
+				if ref := botKeepGroupImageAsContext(restaurantID, in); ref != "" {
+					botCheckpoint("wa_bot_group_media_context_v1", "restaurant_id=%d chat=%s ref=%s decision=image_kept_as_context", restaurantID, in.ChatJID, ref)
+				}
+			}
 			botGroupMessageAudit(restaurantID, in.ChatJID, in.ParticipantJID, reason)
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"processed": false, "group": true, "reason": "not_mentioned"})
 			return
@@ -180,6 +196,10 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		InstanceToken: in.SessionRef,
 		IsAudio:       in.IsAudio,
 		AudioB64:      in.AudioB64,
+		// MediaKind is the human label of a non-text message ("una imagen").
+		// The turn reads it to know what it has to read
+		// (wa_bot_attachment_read_v1), and the logs say what arrived.
+		MediaKind: in.MediaKind,
 		// Group routing (wa_bot_group_mention_v1): Sender is the group JID,
 		// so every tool, the transcript and the reply target the group.
 		IsGroup:           botGroupIsGroupJID(in.ChatJID),
@@ -217,6 +237,33 @@ func (s *Server) handleBotWebhookEvolution(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.processInboundBotMessage(w, r, restaurantID, msg)
+}
+
+// botKeepGroupImageAsContext registers the image of an unmentioned message of
+// a privileged group in the chat registry and returns its ref.
+//
+// Coordination id: wa_bot_group_media_context_v1
+//
+// The mention rides on the caption, not on every photo: a request like "crea
+// una factura con estos datos" travels with the photo of the bill, and the
+// mention is on the message that carries the caption. The photo without the
+// mention was dropped by the gate, so the model never saw the data the
+// request refers to (prod 2026-10-27: the invoice was created from the
+// booking instead of from the bill).
+//
+// Registering the photo does NOT start a turn: the photo alone is not a
+// request. The turn that the caption starts reads it (wa_bot_attachment_read_v1).
+func botKeepGroupImageAsContext(restaurantID int, in waInbound) string {
+	if strings.TrimSpace(in.ImageB64) == "" || strings.TrimSpace(in.ChatJID) == "" {
+		return ""
+	}
+	return botRememberChatImage(restaurantID, botWebhookMessage{
+		MessageID: in.MessageID,
+		ImageB64:  in.ImageB64,
+		ImageMime: in.ImageMime,
+		ChatJID:   in.ChatJID,
+		MediaKind: in.MediaKind,
+	})
 }
 
 // resolveBotRestaurantByProviderInstance maps an Evolution instance name to a
