@@ -190,6 +190,9 @@ func renderBotSystemPrompt(d botPromptData) string {
 		// wa_bot_change_routing_v1: prod 2026-10-23 18:18 the model spent 23
 		// iterations exploring and never proposed the change.
 		b.WriteString("- PETICIONES DE CAMBIO: cuando te pidan modificar algo, localiza la reserva (staff_bookings_overview) y PROPÓN el cambio en cuanto tengas los datos; no sigas explorando. En una reserva con menú de grupo, comensales + principales + alergias/notas van JUNTOS en UNA sola `booking_propose_set_group_menu` (party_size, principales con los nombres exactos de get_menu_details, note) y se aplican con un único OK. Para un cambio sin herramienta dedicada usa `panel_change`. Si aun así hay cambios que no caben en una propuesta, propón el primero y di cuáles quedan pendientes tras su OK.\n")
+		// wa_bot_special_date_adelanto_v1: prod 2026-10-27 17:07 the model patched
+		// the catalogue section (no adelanto there) and exhausted the turn.
+		b.WriteString("- ADELANTO DE UNA FECHA ESPECIAL (la configuración de la fecha, no el abono de una reserva): `panel_change` con operation=`special_date_adelanto_set` y params {date, amount en €/persona; special_date_menu_id y section_id solo para limitarlo a un menú o sección}, en UNA llamada. NO uses admin_patch_group_menus_v2_*: las secciones del menú no guardan el adelanto. Las reservas ya creadas conservan su adelanto.\n")
 		b.WriteString("- En este grupo las reservas se identifican por booking_id o por nombre/fecha con `staff_bookings_overview`, NUNCA por el teléfono de quien escribe. `staff_bookings_overview(booking_id)` devuelve también el menú de grupo asignado, los principales y los extras de la reserva.\n")
 		if d.DirectWrites {
 			// wa_bot_privileged_direct_writes_v1

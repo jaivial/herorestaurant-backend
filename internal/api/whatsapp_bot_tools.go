@@ -337,7 +337,7 @@ func botToolDefsSpecialCRUD() []botToolDef {
 	return []botToolDef{
 		{
 			Name:        "get_special_date_menu",
-			Description: "Devuelve QUÉ se puede reservar en una fecha especial: los menús con su special_date_menu_id, precio, adelanto y, si el menú es por secciones, sus secciones con los principales de cada una. Úsala SIEMPRE antes de crear o modificar una reserva de menú especial para obtener los ids correctos.",
+			Description: "Devuelve QUÉ se puede reservar en una fecha especial: los menús con su special_date_menu_id, precio, adelanto y, si el menú es por secciones, sus secciones con los principales de cada una. Úsala SIEMPRE antes de crear o modificar una reserva de menú especial para obtener los ids correctos. Para CAMBIAR el adelanto configurado de la fecha: panel_change con operation=special_date_adelanto_set.",
 			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"}},"required":["date"]}`),
 		},
 		{
