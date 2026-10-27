@@ -113,6 +113,7 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `admin_catalog` | session | read | no | `{"type":"object","properties":{"q":{"type":"string"},"section":{"type":"string"},"writes_only":{"type":"boolean"},"limit":{"type":"integer"},"offset":{"type":"integer"}}}` |
 | `admin_describe` | session | read | no | `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"name":{"type":"string"}}}` |
 | `admin_call` | session | read | no | `{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"},"calls":{"type":"array","description":"Varias lecturas en una sola llamada (máx 20)","items":{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"}},"required":["name"]}}}}` |
+| `special_media_upload` | menus | write | sí | `{"type":"object","properties":{"kind":{"type":"string","enum":["special_menu","special_section","special_date_menu"]},"menu_id":{"type":"integer"},"section_id":{"type":"integer"},"attachment":{"type":"string","description":"ref del adjunto (forky/…)"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["kind","attachment","confirmed"]}` |
 
 
 ## Campañas (`campaign_tools_v1`)
