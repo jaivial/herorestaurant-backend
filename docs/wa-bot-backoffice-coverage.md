@@ -75,6 +75,21 @@ herramientas propias + registro forky + `admin_catalog/admin_describe/admin_call
    `admin_call`/`panel_change` alcanza el 100% de las rutas request/response
    del panel.
 
+## Menús especiales y fechas especiales al 100% (`forky_bot_special_full_v1`)
+
+Forky (`admin_call` + `special_media_upload`) y el bot (`panel_change`) cubren
+todo lo que hacen `/app/comida/menus` (menú especial) y `/app/reservas/especial`
+(fechas festivas):
+
+| Necesidad | Antes | Ahora |
+|---|---|---|
+| Saber el body de una escritura | `admin_describe` solo decía `{"json": true}`: el modelo adivinaba (2026-10-27: mandó `adelanto_amount` al PATCH de la sección del catálogo) | campo `body` en el mapa (`bodiesEs` del generador): contrato exacto de las 24 operaciones del dominio + reservas con bloque `special` |
+| Cambiar UN campo de una fecha especial | solo `POST /config/special-dates` (reemplazo total) | `PATCH /config/special-dates` (fusión: GET + campos enviados + mismo guardado) |
+| Reenviar una fecha tal cual la devuelve el GET | `sections[].id` no era `section_id`: rechazo | `id` aceptado como `section_id` |
+| SEO del menú | ruta fuera del mapa (mapa desfasado) | mapa regenerado: 646 operaciones |
+| Imagen principal del menú especial / imagen de menú personalizado de una fecha | multipart, inalcanzable | `media_upload` kinds `special_menu` y `special_date_menu` (mismas funciones de dominio que las rutas) |
+| Usar la imagen que mandan al chat | `media_upload` exigía `data_base64` (un modelo no puede escribir una imagen) | bot: `image_ref` del chat (`chat_jid` fijado por el servidor, imagen anclada al proponer); Forky: `attachment` del chat con `special_media_upload` |
+
 ## Fuera de alcance (por diseño, documentado)
 
 - Auth/sesión (`/login`, `/logout`, `/me/*`, `/active-restaurant`), gestión de

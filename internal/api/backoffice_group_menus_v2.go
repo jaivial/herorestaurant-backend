@@ -2874,20 +2874,6 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Check menu exists and belongs to restaurant
-	var menuType sql.NullInt64
-	err = s.db.QueryRowContext(r.Context(), `SELECT menu_type FROM menus WHERE id = ? AND restaurant_id = ?`, menuID, a.ActiveRestaurantID).Scan(&menuType)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu not found"})
-		return
-	}
-
-	// Verify it's a special menu
-	if MenuTypeFromAny(menuType) != MenuTypeSpecial {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Menu is not a special menu"})
-		return
-	}
-
 	// Parse multipart form
 	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB max
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error parsing form"})
@@ -2908,15 +2894,31 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	normalizedWebP, err := specialmenuimage.NormalizeToWebP(
-		r.Context(),
-		imgData,
-		header.Filename,
-		header.Header.Get("Content-Type"),
-	)
+	imageURL, err := s.saveSpecialMenuImage(r.Context(), a.ActiveRestaurantID, menuID, imgData, header.Filename, header.Header.Get("Content-Type"))
 	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error processing file: " + err.Error()})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": err.Error()})
 		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "imageUrl": imageURL, "filename": header.Filename})
+}
+
+// saveSpecialMenuImage stores the main image of a special-type menu and points
+// the menu at it. Shared by the upload route and the media ops of the bot and
+// Forky (forky_bot_special_full_v1).
+func (s *Server) saveSpecialMenuImage(ctx context.Context, rid int, menuID int64, imgData []byte, filename, contentType string) (string, error) {
+	// Check menu exists, belongs to restaurant and is a special menu.
+	var menuType sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT menu_type FROM menus WHERE id = ? AND restaurant_id = ?`, menuID, rid).Scan(&menuType); err != nil {
+		return "", errors.New("Menu not found")
+	}
+	if MenuTypeFromAny(menuType) != MenuTypeSpecial {
+		return "", errors.New("Menu is not a special menu")
+	}
+
+	normalizedWebP, err := specialmenuimage.NormalizeToWebP(ctx, imgData, filename, contentType)
+	if err != nil {
+		return "", errors.New("Error processing file: " + err.Error())
 	}
 
 	// Generate object path: {restaurant_id}/pictures/menus_especiales/{menu_id}-{millis}.webp
@@ -2924,27 +2926,23 @@ func (s *Server) handleBOSpecialMenuImageUpload(w http.ResponseWriter, r *http.R
 	// fixed path would keep serving the previously cached image (the same image
 	// URL reused by another data override).
 	objectPath := path.Join(
-		strconv.Itoa(a.ActiveRestaurantID),
+		strconv.Itoa(rid),
 		"pictures",
 		"menus_especiales",
 		fmt.Sprintf("%d-%d.webp", menuID, time.Now().UnixMilli()),
 	)
 
 	// Upload normalized WEBP to BunnyCDN.
-	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalizedWebP, "image/webp"); err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error uploading file: " + err.Error()})
-		return
+	if err := s.bunnyPut(ctx, rid, objectPath, normalizedWebP, "image/webp"); err != nil {
+		return "", errors.New("Error uploading file: " + err.Error())
 	}
 
 	// Update menu record with image URL
-	imageURL := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath)
-	_, err = s.db.ExecContext(r.Context(), `UPDATE menus SET special_menu_image_url = ? WHERE id = ?`, imageURL, menuID)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error saving image URL"})
-		return
+	imageURL := s.bunnyPullURL(ctx, rid, objectPath)
+	if _, err := s.db.ExecContext(ctx, `UPDATE menus SET special_menu_image_url = ? WHERE id = ? AND restaurant_id = ?`, imageURL, menuID, rid); err != nil {
+		return "", errors.New("Error saving image URL")
 	}
-
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "imageUrl": imageURL, "filename": header.Filename})
+	return imageURL, nil
 }
 
 type boV2MenuSliderImage struct {
