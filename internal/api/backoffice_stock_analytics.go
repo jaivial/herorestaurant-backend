@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"preactvillacarmen/internal/aiusage"
 	"preactvillacarmen/internal/httpx"
 )
 
@@ -810,34 +811,8 @@ func (s *Server) minimaxJSON(ctx context.Context, restaurantID int, system, user
 }
 
 func (s *Server) minimaxJSONContent(ctx context.Context, restaurantID int, system string, content any, target any) error {
-	apiKey := s.resolveMiniMaxKey(ctx, restaurantID)
-	if apiKey == "" {
-		return fmt.Errorf("minimax not configured")
-	}
-	model := s.resolveMiniMaxModel(ctx, restaurantID, "")
-	raw, _ := json.Marshal(map[string]any{"model": model, "max_tokens": 4096, "system": system, "messages": []map[string]any{{"role": "user", "content": content}}})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/v1/messages", bytes.NewReader(raw))
+	reply, err := s.minimaxMessagesText(ctx, restaurantID, system, content, 4096, 60*time.Second)
 	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	res, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 2<<20))
-	if err != nil {
-		return err
-	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("minimax http %d", res.StatusCode)
-	}
-	var envelope minimaxMessagesResponse
-	if err = json.Unmarshal(body, &envelope); err != nil {
 		return err
 	}
 	if a, ok := boAuthFromContext(ctx); ok {
@@ -845,18 +820,72 @@ func (s *Server) minimaxJSONContent(ctx context.Context, restaurantID int, syste
 		if feature == "" {
 			feature = "stock"
 		}
-		_, _ = s.db.ExecContext(ctx, `INSERT INTO stock_ai_usage (restaurant_id,feature,model,input_tokens,output_tokens) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, feature, model, envelope.Usage.InputTokens, envelope.Usage.OutputTokens)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO stock_ai_usage (restaurant_id,feature,model,input_tokens,output_tokens) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, feature, reply.Model, reply.Usage.Input, reply.Usage.Output)
 	}
-	s.recordAIUsage(ctx, restaurantID, aiFeatureStock, botProviderMiniMax, model,
-		helperAnthropicUsage(int64(envelope.Usage.InputTokens), int64(envelope.Usage.OutputTokens), int64(envelope.Usage.CacheReadInputTokens), int64(envelope.Usage.CacheCreationInputTokens)), false)
-	text := ""
+	s.recordAIUsage(ctx, restaurantID, aiFeatureStock, botProviderMiniMax, reply.Model, reply.Usage, false)
+	text := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(reply.Text), "```json"), "```"))
+	return json.Unmarshal([]byte(text), target)
+}
+
+// minimaxTextReply is the text of one MiniMax Messages reply plus what the
+// caller needs to account for it.
+type minimaxTextReply struct {
+	Text       string
+	Model      string
+	StopReason string
+	Usage      aiusage.Tokens
+}
+
+// minimaxMessagesText performs one MiniMax Messages request (Anthropic
+// dialect) with arbitrary content blocks (text, image, document) and returns
+// the text of the reply. Usage is returned, not recorded: each caller records
+// it under its own feature.
+func (s *Server) minimaxMessagesText(ctx context.Context, restaurantID int, system string, content any, maxTokens int, timeout time.Duration) (minimaxTextReply, error) {
+	apiKey := s.resolveMiniMaxKey(ctx, restaurantID)
+	if apiKey == "" {
+		return minimaxTextReply{}, fmt.Errorf("minimax not configured")
+	}
+	model := s.resolveMiniMaxModel(ctx, restaurantID, "")
+	payload := map[string]any{"model": model, "max_tokens": maxTokens, "messages": []map[string]any{{"role": "user", "content": content}}}
+	if strings.TrimSpace(system) != "" {
+		payload["system"] = system
+	}
+	raw, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/v1/messages", bytes.NewReader(raw))
+	if err != nil {
+		return minimaxTextReply{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	res, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		return minimaxTextReply{}, err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, 2<<20))
+	if err != nil {
+		return minimaxTextReply{}, err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return minimaxTextReply{}, fmt.Errorf("minimax http %d", res.StatusCode)
+	}
+	var envelope minimaxMessagesResponse
+	if err = json.Unmarshal(body, &envelope); err != nil {
+		return minimaxTextReply{}, err
+	}
+	out := minimaxTextReply{
+		Model:      model,
+		StopReason: envelope.StopReason,
+		Usage:      helperAnthropicUsage(int64(envelope.Usage.InputTokens), int64(envelope.Usage.OutputTokens), int64(envelope.Usage.CacheReadInputTokens), int64(envelope.Usage.CacheCreationInputTokens)),
+	}
 	for _, block := range envelope.Content {
 		if block.Type == "text" {
-			text += block.Text
+			out.Text += block.Text
 		}
 	}
-	text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(text), "```json"), "```"))
-	return json.Unmarshal([]byte(text), target)
+	return out, nil
 }
 
 func (s *Server) handleBOStockDocumentTextExtract(w http.ResponseWriter, r *http.Request) {

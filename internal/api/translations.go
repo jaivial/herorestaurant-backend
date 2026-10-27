@@ -46,7 +46,8 @@ type minimaxMessagesResponse struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
-	Usage struct {
+	StopReason string `json:"stop_reason"`
+	Usage      struct {
 		InputTokens              int `json:"input_tokens"`
 		OutputTokens             int `json:"output_tokens"`
 		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
