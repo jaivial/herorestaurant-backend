@@ -250,10 +250,20 @@ func (s *Server) assistantCampaignChatWrite(ctx context.Context, rid int, tool s
 	if err := s.assistantConsumeConfirmation(pending.token, rid, tool, pending.input); err != nil {
 		return "", err
 	}
-	if !campaignSameArgs(pending.input, input) {
-		slog.Default().Info("campaign.tools.confirm_previewed", "restaurant_id", rid, "tool", tool, "action", a.Action, "campaign_id", a.CampaignID)
+	out, err := s.assistantCampaignExecute(ctx, rid, tool, pending.args)
+	if err != nil || campaignSameArgs(pending.input, input) {
+		return out, err
 	}
-	return s.assistantCampaignExecute(ctx, rid, tool, pending.args)
+	// The model confirmed with other arguments: say plainly what ran, so it
+	// never believes a correction it made at confirm time was applied.
+	slog.Default().Info("campaign.tools.confirm_previewed", "restaurant_id", rid, "tool", tool, "action", a.Action, "campaign_id", a.CampaignID)
+	var result map[string]any
+	if json.Unmarshal([]byte(out), &result) != nil {
+		return out, nil
+	}
+	result["executed_preview"] = "Se ha ejecutado la vista previa: " + pending.text + "."
+	result["note"] = "Los argumentos de tu confirmación no coincidían con la vista previa y NO se han usado: se ha ejecutado exactamente lo previsualizado. Si querías otro cambio, pide una vista previa nueva (confirmed=false) con los argumentos correctos."
+	return botJSON(result), nil
 }
 
 // campaignSameArgs compares two tool inputs without the confirmation fields.
