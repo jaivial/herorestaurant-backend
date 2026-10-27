@@ -1067,7 +1067,7 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		// button per link, then the website / opt-out buttons.
 		if sections, hasButtons := splitCampaignWASections(c.BodyMarkdown); hasButtons && gwOK {
 			_ = sections
-			return s.deliverCampaignWhatsAppUnified(ctx, restaurantID, gw, c.CoordID, num, branding.BrandName, c.BodyMarkdown, campaignUnsubscribeChoice(unsubscribeURL))
+			return s.deliverCampaignWhatsAppUnified(ctx, restaurantID, gw, c.CoordID, c.ID, num, branding.BrandName, c.BodyMarkdown, campaignUnsubscribeChoice(unsubscribeURL))
 		}
 		// A markdown image becomes a real WhatsApp media message with the rest
 		// of the body as caption; extra images stay as URLs inside the text.

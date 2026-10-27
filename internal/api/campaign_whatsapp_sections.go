@@ -32,13 +32,17 @@ func splitCampaignWASections(markdown string) (sections []campaignWASection, ok 
 		var text []string
 		for _, raw := range cur {
 			line := strings.TrimSpace(mdIconRe.ReplaceAllString(raw, ""))
+			// Images first: an image line ("![alt](https://...)") also fits
+			// campaignButtonLineRe ("!" is an allowed prefix), so it was read as
+			// a button and dropped, and the message lost its image
+			// (campaign_whatsapp_reply_buttons_v1).
+			if im := mdImageRe.FindStringSubmatch(line); im != nil && strings.HasPrefix(im[2], "https://") && strings.TrimSpace(mdImageRe.ReplaceAllString(line, "")) == "" {
+				sec.Images = append(sec.Images, im[2])
+				continue
+			}
 			if m := campaignButtonLineRe.FindStringSubmatch(line); m != nil {
 				sec.Buttons = append(sec.Buttons, strings.TrimSpace(m[1])+"|"+m[2])
 				ok = true
-				continue
-			}
-			if im := mdImageRe.FindStringSubmatch(line); im != nil && strings.HasPrefix(im[2], "https://") && strings.TrimSpace(mdImageRe.ReplaceAllString(line, "")) == "" {
-				sec.Images = append(sec.Images, im[2])
 				continue
 			}
 			text = append(text, raw)
@@ -211,11 +215,16 @@ func campaignPickCTAs(buttons []string) (cta, rest []string) {
 }
 
 // deliverCampaignWhatsAppUnified sends ONE interactive message holding the whole
-// campaign: header image, text, up to 2 CTA buttons and the remaining links as
-// lines (the opt-out link included).
-func (s *Server) deliverCampaignWhatsAppUnified(ctx context.Context, restaurantID int, gw WhatsAppGateway, coordID, num, brandName, markdown string, extraChoices []string) error {
+// campaign: header image, text and its buttons. On Evolution the buttons are
+// reply buttons (the two main links + "Darme de baja", nothing left as a link
+// in the text: campaign_whatsapp_reply_buttons_v1); otherwise, or when that
+// send fails, up to 2 CTA URL buttons with the opt-out link as a line.
+func (s *Server) deliverCampaignWhatsAppUnified(ctx context.Context, restaurantID int, gw WhatsAppGateway, coordID string, campaignID int64, num, brandName, markdown string, extraChoices []string) error {
 	text, image, buttons := campaignUnifiedWhatsApp(markdown, brandName)
 	cta, rest := campaignPickCTAs(buttons)
+	if s.campaignSendReplyButtons(ctx, gw, coordID, campaignID, num, text, image, cta) {
+		return nil
+	}
 	// Only the opt-out link stays as a line in the text; the other links that
 	// do not fit the 2 buttons are left out of the WhatsApp message on purpose.
 	_ = rest
