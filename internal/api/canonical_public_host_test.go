@@ -14,8 +14,15 @@ func TestCanonicalPublicHostRedirectsOnceToFinalURL(t *testing.T) {
 			"/menusdegrupos.php": "/menusdegrupos",
 		},
 		MenuPaths: map[string]string{"42": "/menu/menu-fin-de-semana"},
+		GonePaths: []string{"/confpostres.php"},
 	}
-	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/confpostres.php" {
+			w.WriteHeader(http.StatusGone)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	handler := canonicalPublicHost(manifest)(next)
 
 	for _, test := range []struct {
@@ -26,6 +33,8 @@ func TestCanonicalPublicHostRedirectsOnceToFinalURL(t *testing.T) {
 		{name: "case and port", host: "ALQUERIAVILLACARMEN.COM:443", proto: "https", path: "/en/menuNavidad.php", wantLocation: "https://www.alqueriavillacarmen.com/en/menu/50/menu-navidad-50", wantStatus: http.StatusMovedPermanently},
 		{name: "HTTP www legacy path", host: "www.alqueriavillacarmen.com", proto: "http", path: "/menusdegrupos.php", wantLocation: "https://www.alqueriavillacarmen.com/menusdegrupos", wantStatus: http.StatusMovedPermanently},
 		{name: "bare host menu slug", host: "alqueriavillacarmen.com", proto: "https", path: "/menu/42/slug-antiguo", wantLocation: "https://www.alqueriavillacarmen.com/menu/menu-fin-de-semana", wantStatus: http.StatusMovedPermanently},
+		{name: "bare HTTPS retired page reaches SPA", host: "alqueriavillacarmen.com", proto: "https", path: "/confpostres.php", wantStatus: http.StatusGone},
+		{name: "HTTP www retired page reaches SPA", host: "www.alqueriavillacarmen.com", proto: "http", path: "/confpostres.php", wantStatus: http.StatusGone},
 		{name: "unknown path and query preserved", host: "alqueriavillacarmen.com", proto: "https", path: "/bodas?a=1", wantLocation: "https://www.alqueriavillacarmen.com/bodas?a=1", wantStatus: http.StatusMovedPermanently},
 		{name: "canonical HTTPS host passes", host: "www.alqueriavillacarmen.com", proto: "https", path: "/menudeldia.php", wantStatus: http.StatusNoContent},
 		{name: "other host passes", host: "backoffice.alqueriavillacarmen.com", proto: "http", path: "/", wantStatus: http.StatusNoContent},

@@ -1847,6 +1847,12 @@ func canonicalPublicHost(manifest *seoRoutesManifest) func(http.Handler) http.Ha
 				target = "/"
 			}
 			if manifest != nil {
+				for _, gonePath := range manifest.GonePaths {
+					if r.URL.Path == gonePath {
+						next.ServeHTTP(w, r)
+						return
+					}
+				}
 				path := r.URL.Path
 				localePrefix := ""
 				if path == "/en" || strings.HasPrefix(path, "/en/") {
