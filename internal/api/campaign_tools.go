@@ -910,11 +910,17 @@ func (s *Server) campaignToolDesignAI(ctx context.Context, rid int, a campaignTo
 		return nil, "", err
 	}
 	slog.Default().Info("campaign.tools.design_ai", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", rid, "source", source, "model", ai.Model)
+	warnings := campaignDesignWarnings(next, res.Design)
+	summary := fmt.Sprintf("Diseño de «%s» actualizado por la IA (%s) según lo pedido: «%s». Revísalo en %s.", c.Name, ai.Model, truncateRunes(a.Instruction, 200), campaignEditorURL(c.ID, "diseno"))
+	if warning := campaignLanguageWarning(ai.LanguageWarnings); warning != "" {
+		warnings = append(warnings, warning)
+		summary += " " + warning
+	}
 	return map[string]any{
 		"ok": true, "changed": true, "reply": ai.Reply, "model": ai.Model, "campaign_id": c.ID,
-		"version": campaignDesignVersion(next.BodyHTML), "design": res.Design, "warnings": campaignDesignWarnings(next, res.Design),
+		"version": campaignDesignVersion(next.BodyHTML), "design": res.Design, "warnings": warnings,
 		"editor_url": campaignEditorURL(c.ID, "diseno"),
-	}, fmt.Sprintf("Diseño de «%s» actualizado por la IA (%s) según lo pedido: «%s». Revísalo en %s.", c.Name, ai.Model, truncateRunes(a.Instruction, 200), campaignEditorURL(c.ID, "diseno")), nil
+	}, summary, nil
 }
 
 type campaignRevision struct {

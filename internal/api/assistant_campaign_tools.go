@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -160,6 +161,9 @@ func (s *Server) assistantCampaignWrite(ctx context.Context, rid int, tool strin
 	if campaignHumanConfirmActions[a.Action] && inChat {
 		return s.assistantCampaignHumanWrite(ctx, rid, tool, input, a, confirm.Confirmed, turn)
 	}
+	if inChat {
+		return s.assistantCampaignChatWrite(ctx, rid, tool, input, a, confirm.Confirmed, confirm.Token, turn)
+	}
 	if !confirm.Confirmed {
 		preview, text, err := s.campaignToolPreview(ctx, rid, a)
 		if err != nil {
@@ -181,6 +185,90 @@ func (s *Server) assistantCampaignWrite(ctx context.Context, rid int, tool strin
 		return "", err
 	}
 	return s.assistantCampaignExecute(ctx, rid, tool, a)
+}
+
+// assistantCampaignChatWrite is the chat flow of the reversible writes
+// (create/update, design changes, images). The preview still comes first and
+// its token works as always, but a model that rewrites the arguments when it
+// confirms (it was seen paraphrasing a long AI instruction, which voided the
+// token and burned the turn) no longer fails: confirmed=true with the same
+// action and campaign runs the LATEST preview of that action in this chat,
+// which is exactly what was validated and described.
+func (s *Server) assistantCampaignChatWrite(ctx context.Context, rid int, tool string, input json.RawMessage, a campaignToolArgs, confirmed bool, token string, turn assistantTurn) (string, error) {
+	key := campaignPendingKey(rid, turn.Session, tool, a.Action)
+	if !confirmed {
+		preview, text, err := s.campaignToolPreview(ctx, rid, a)
+		if err != nil {
+			return "", err
+		}
+		if s.confirmationStore == nil {
+			s.confirmationStore = newConfirmationStore(nil)
+		}
+		tok, err := s.confirmationStore.Issue("", strconv.Itoa(rid), tool, confirmationArguments(input), "", campaignHumanConfirmTTL)
+		if err != nil {
+			return "", err
+		}
+		var set campaignPendingSet
+		if v, ok := campaignPending.Load(key); ok {
+			set = v.(campaignPendingSet)
+		}
+		if set.cur != nil && set.cur.turn != turn.ID {
+			set.shown = set.cur
+		}
+		set.cur = &campaignPendingConfirm{token: tok, input: input, args: a, turn: turn.ID, text: text, expires: time.Now().Add(campaignHumanConfirmTTL)}
+		campaignPending.Store(key, set)
+		return botJSON(map[string]any{
+			"tool": tool, "requires_confirmation": true, "confirmation_token": tok, "expires_in_seconds": int(campaignHumanConfirmTTL.Seconds()),
+			"preview": preview, "preview_text": "Se va a " + text + ".",
+			"instruction": "Si el usuario ya pidió este cambio, confírmalo llamando a esta herramienta con la misma action y campaign_id y confirmed=true (el servidor recuerda esta vista previa y ejecuta exactamente lo que describe; el token es opcional). Si tienes dudas de lo que quiere, enséñale preview_text y pregúntale.",
+		}), nil
+	}
+	// Exact confirmation (same arguments as a preview + its token).
+	if strings.TrimSpace(token) != "" {
+		if err := s.assistantConsumeConfirmation(token, rid, tool, input); err == nil {
+			campaignPending.Delete(key)
+			return s.assistantCampaignExecute(ctx, rid, tool, a)
+		}
+	}
+	// Otherwise: the latest preview of this action in this chat.
+	var set campaignPendingSet
+	if v, ok := campaignPending.Load(key); ok {
+		set = v.(campaignPendingSet)
+	}
+	pending := set.cur
+	if pending == nil || time.Now().After(pending.expires) {
+		pending = set.shown
+	}
+	if pending == nil || time.Now().After(pending.expires) {
+		campaignPending.Delete(key)
+		return "", errors.New("no hay ninguna vista previa pendiente de esta acción en este chat (o caducó): llama primero con confirmed=false")
+	}
+	if pending.args.CampaignID != a.CampaignID {
+		return "", fmt.Errorf("la vista previa pendiente es de la campaña #%d, no de la #%d: pide una vista previa nueva", pending.args.CampaignID, a.CampaignID)
+	}
+	campaignPending.Delete(key)
+	if err := s.assistantConsumeConfirmation(pending.token, rid, tool, pending.input); err != nil {
+		return "", err
+	}
+	out, err := s.assistantCampaignExecute(ctx, rid, tool, pending.args)
+	if err != nil || campaignSameArgs(pending.input, input) {
+		return out, err
+	}
+	// The model confirmed with other arguments: say plainly what ran, so it
+	// never believes a correction it made at confirm time was applied.
+	slog.Default().Info("campaign.tools.confirm_previewed", "restaurant_id", rid, "tool", tool, "action", a.Action, "campaign_id", a.CampaignID)
+	var result map[string]any
+	if json.Unmarshal([]byte(out), &result) != nil {
+		return out, nil
+	}
+	result["executed_preview"] = "Se ha ejecutado la vista previa: " + pending.text + "."
+	result["note"] = "Los argumentos de tu confirmación no coincidían con la vista previa y NO se han usado: se ha ejecutado exactamente lo previsualizado. Si querías otro cambio, pide una vista previa nueva (confirmed=false) con los argumentos correctos."
+	return botJSON(result), nil
+}
+
+// campaignSameArgs compares two tool inputs without the confirmation fields.
+func campaignSameArgs(a, b json.RawMessage) bool {
+	return confirmationArguments(a) == confirmationArguments(b)
 }
 
 // campaignPendingSet is the preview state of one action in one chat: the

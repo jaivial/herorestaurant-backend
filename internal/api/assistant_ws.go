@@ -335,6 +335,14 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 	_ = c.writeJSON(map[string]any{"type": "hello", "session_id": sid, "history": histOut})
 }
 
+// assistantMaxToolRounds bounds the model <-> tools rounds of one user
+// message. 6 was too few for a real multi-step request: "create the campaign
+// and design it with AI" needs preview + confirm for each write plus the reads
+// the model makes to avoid inventing content (menus, carta), and the turn
+// ended half done (2026-10-27, campaign_tools_v1). Each round is one model
+// call; 10 covers those flows and still stops a model that loops.
+const assistantMaxToolRounds = 10
+
 func (c *assistantClient) handleMessage(ctx context.Context, content string, attachments []assistantAttachmentRef, audio *assistantVoiceAudio) {
 	defer c.finishGeneration()
 	if strings.TrimSpace(content) == "" && len(attachments) == 0 {
@@ -446,7 +454,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 	var final strings.Builder
 	var lastRoundHadError bool
 	exhausted := true
-	for turn := 0; turn < 6; turn++ {
+	for turn := 0; turn < assistantMaxToolRounds; turn++ {
 		result, callErr := c.s.assistantCall(ctx, restaurantID, prompt, toolMsgs, toolDefs, nil)
 		if callErr != nil {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": callErr.Error()})
