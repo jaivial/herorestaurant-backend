@@ -455,7 +455,11 @@ type evoGroupInput struct {
 	PushName     string
 	MessageType  string
 	Text         string
-	MentionText  []string
+	// Caption is the text of a photo or of a document: the provider keeps
+	// it in the wrapper, not in the body. Coordination id:
+	// wa_bot_attachment_read_v1
+	Caption     string
+	MentionText []string
 	// MentionedJID holds the mentioned members, in any of the forms the
 	// provider writes them.
 	MentionedJID []string
@@ -555,21 +559,25 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 		ParticipantJID:    participantJID,
 		ParticipantRawJID: in.RawParticipant, // wa_bot_group_reaction_lid_v1
 		Text:              text,
-		PushName:          sanitizeBotPushName(pushName),
-		MessageID:         in.MessageID,
-		FromMe:            in.FromMe,
-		SessionRef:        in.Instance,
-		IsAudio:           in.IsAudio,
-		Ignored:           in.Ignored,
-		MediaKind:         botMediaKindLabel(in.MessageType),
-		AudioB64:          in.AudioB64,
-		DocumentB64:       in.DocumentB64,
-		DocumentName:      in.DocumentName,
-		ImageB64:          in.ImageB64,
-		ImageMime:         in.ImageMime,
-		Mentioned:         mentioned,
-		MentionJIDs:       mentions,
-		OwnJIDs:           in.OwnJIDs,
+		// The caption of a photo or of a document: in a privileged group it
+		// is the request itself ("ponla en la portada"). Coordination id:
+		// wa_bot_attachment_read_v1
+		Caption:      in.Caption,
+		PushName:     sanitizeBotPushName(pushName),
+		MessageID:    in.MessageID,
+		FromMe:       in.FromMe,
+		SessionRef:   in.Instance,
+		IsAudio:      in.IsAudio,
+		Ignored:      in.Ignored,
+		MediaKind:    botMediaKindLabel(in.MessageType),
+		AudioB64:     in.AudioB64,
+		DocumentB64:  in.DocumentB64,
+		DocumentName: in.DocumentName,
+		ImageB64:     in.ImageB64,
+		ImageMime:    in.ImageMime,
+		Mentioned:    mentioned,
+		MentionJIDs:  mentions,
+		OwnJIDs:      in.OwnJIDs,
 	}, true
 }
 
