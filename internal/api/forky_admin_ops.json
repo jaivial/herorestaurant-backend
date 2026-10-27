@@ -4180,6 +4180,23 @@
    ]
   },
   {
+   "name": "admin_get_invoices_whatsapp_status",
+   "method": "GET",
+   "path": "/invoices/whatsapp-status",
+   "handler": "handleBOInvoicesWhatsAppStatus",
+   "gates": [
+    "s.requireBOSession",
+    "facturasGate"
+   ],
+   "section": "facturas",
+   "write": false,
+   "risk": "low",
+   "description": "invoice_whatsapp_autosend_v1: is the restaurant's WhatsApp connected (facturas send flows).",
+   "screens": [
+    "/app/facturas"
+   ]
+  },
+  {
    "name": "admin_delete_invoices_id_comments_commentid",
    "method": "DELETE",
    "path": "/invoices/{id}/comments/{commentId}",

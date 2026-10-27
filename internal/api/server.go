@@ -1063,6 +1063,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/pdf", s.handleBOInvoicePdf)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/upload-image", s.handleBOInvoiceUploadImage)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/search-reservation", s.handleBOInvoicesSearchReservation)
+		// invoice_whatsapp_autosend_v1: is the restaurant's WhatsApp connected (facturas send flows).
+		r.With(s.requireBOSession, facturasGate).Get("/invoices/whatsapp-status", s.handleBOInvoicesWhatsAppStatus)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/comments", s.handleBOInvoiceCommentsList)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/comments", s.handleBOInvoiceCommentCreate)
 		r.With(s.requireBOSession, facturasGate).Put("/invoices/{id}/comments/{commentId}", s.handleBOInvoiceCommentUpdate)

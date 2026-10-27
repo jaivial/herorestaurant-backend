@@ -319,7 +319,7 @@ func buildInvoiceRenderData(inv *Invoice, info boRestaurantInfo, branding restau
 			DniCif:      deref(inv.CustomerDniCif),
 			DniCifLabel: dniCifLabel(deref(inv.CustomerDniCifType), deref(inv.CustomerDniCif)),
 			Email:       inv.CustomerEmail,
-			Phone:       deref(inv.CustomerPhone),
+			Phone:       invoicePhoneDisplay(inv),
 			Address:     customerAddress,
 		},
 		Number:        number,
