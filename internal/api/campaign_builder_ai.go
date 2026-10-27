@@ -104,8 +104,8 @@ Reglas del HTML que devuelves:
 - Imágenes con class "block max-w-full h-auto" y alt descriptivo. No inventes URLs de imágenes: reutiliza las del diseño o usa https://placehold.co/600x300?text=Imagen como marcador.
 - Botones: enlaces <a> con padding, fondo de color, texto blanco, rounded y no-underline.
 - Conserva SIEMPRE en el pie el enlace de baja con href="{{unsubscribe_url}}": es obligatorio por ley.
-- Logo del restaurante: %s. Web del restaurante: %s.
-- Textos en español de España, tono cercano y profesional, sin faltas.
+- Logo del restaurante: %s. Web del restaurante: %s. Los botones de reservar o de visitar la web enlazan EXACTAMENTE a esa web.
+- Textos en español de España, tono cercano y profesional, sin faltas. TODO el texto visible va en español (salvo que el usuario pida expresamente otro idioma): nunca mezcles palabras de otro idioma (inglés, portugués…) aunque sean parecidas ("ensure", "enjoy", "venha", "você"). Antes de responder, relee cada frase y corrige cualquier palabra que no sea española.
 
 Formato de tu respuesta:
 1. Primero, en 1-3 frases, qué has cambiado (sin repetir el código).
@@ -181,6 +181,9 @@ type campaignAIResult struct {
 	Reply string
 	HTML  string
 	Model string
+	// LanguageWarnings are non-Spanish words still in the design after the
+	// automatic correction (campaign_ai_language_v1). Empty when clean.
+	LanguageWarnings []string
 }
 
 // campaignAIRun asks the restaurant's model to rewrite a design. ONE core for
@@ -230,7 +233,13 @@ func (s *Server) campaignAIRun(ctx context.Context, restaurantID int, in campaig
 		reply = "Listo, he actualizado el diseño."
 	}
 	slog.Default().Info("campaign.ai.chat.done", "coord_id", coordID, "model", ref, "ms", time.Since(started).Milliseconds(), "html_changed", html != "", "html_bytes", len(html))
-	return campaignAIResult{Reply: reply, HTML: html, Model: ref}, nil
+	// campaign_ai_language_v1: the copy must be Spanish; mixed-language texts
+	// are corrected in place by one short call to the same model.
+	var warnings []string
+	if html != "" && !campaignAIAsksOtherLanguage(in.Messages) {
+		html, warnings = s.campaignAIFixLanguage(ctx, restaurantID, ref, coordID, html, branding.BrandName)
+	}
+	return campaignAIResult{Reply: reply, HTML: html, Model: ref, LanguageWarnings: warnings}, nil
 }
 
 // POST /api/admin/campanas/ai/chat
@@ -255,5 +264,9 @@ func (s *Server) handleBOCampaignAIChat(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "El asistente no ha podido responder. Inténtalo de nuevo."})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "reply": res.Reply, "html": res.HTML, "model": res.Model, "coord_id": firstNonEmpty(strings.TrimSpace(in.CoordID), "camp-new")})
+	reply := res.Reply
+	if warning := campaignLanguageWarning(res.LanguageWarnings); warning != "" {
+		reply += "\n\n" + warning
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "reply": reply, "html": res.HTML, "model": res.Model, "coord_id": firstNonEmpty(strings.TrimSpace(in.CoordID), "camp-new")})
 }

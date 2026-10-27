@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -80,7 +82,16 @@ func (s *Server) assistantAuditToolDenial(ctx context.Context, restaurantID int,
 	}
 }
 
-func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID int, name string, input json.RawMessage) (string, error) {
+func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID int, name string, input json.RawMessage) (out string, err error) {
+	// A bug inside one tool must never take the backend down: the tool runs
+	// inside the chat goroutine, where an unrecovered panic kills the process
+	// (seen 2026-10-27). It becomes the error of that call, with its stack logged.
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Default().Error("assistant.tool.panic", "tool", name, "restaurant_id", restaurantID, "panic", fmt.Sprint(rec), "stack", string(debug.Stack()))
+			out, err = "", fmt.Errorf("error interno en la herramienta %s", name)
+		}
+	}()
 	if restaurantID <= 0 {
 		return "", fmt.Errorf("restaurante activo no disponible")
 	}
