@@ -53,7 +53,7 @@ sudo -n docker stop "$NAME" >/dev/null; sudo -n docker rename "$NAME" "$OLD"
 sudo -n docker run -d --name "$NAME" --network host --restart unless-stopped --env-file "$ENVFILE" -v "$VOLUME:/var/lib/herorestaurant" "$NEW_IMG" >/dev/null
 rollback(){ echo "!! rollback"; sudo -n docker rm -f "$NAME" >/dev/null 2>&1||true; sudo -n docker rename "$OLD" "$NAME"; sudo -n docker start "$NAME" >/dev/null; exit 1; }
 for v in DB_NAME DB_HOST DB_PORT PORT; do sudo -n docker inspect "$NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -q "^$v=" || rollback; done
-ok=0; for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/api/health >/dev/null 2>&1 && { ok=1; echo "   health OK ${i}s"; break; }; sleep 1; done
+ok=0; for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 && { ok=1; echo "   health OK ${i}s"; break; }; sleep 1; done
 [ "$ok" = 1 ] || rollback
 IDXSRC=$(curl -fsS http://127.0.0.1:8080/ | grep -oE '/assets/[^"]+' | head -5)
 for a in $IDXSRC; do c=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080$a); [ "$c" = 200 ] || { echo "!! asset $a -> $c"; rollback; }; done
