@@ -19,7 +19,7 @@ herramientas propias + registro forky + `admin_catalog/admin_describe/admin_call
 | POS / TPV | 128 | 0 | forky + `staff_domain_read` (`pos_read`) | `panel_change` |
 | Miembros / roles / WhatsApp | 35 | 1 | forky + `staff_domain_read` (`members_read`) | `panel_change` |
 | Fichaje / horarios | 19 | 1 | forky + `staff_domain_read` (`fichaje_read`) | `panel_change` (+ comandos exactos `start/stop`) |
-| Facturas | 13 | 0 | forky + `staff_domain_read` (`invoices_read`) | `panel_change` |
+| Facturas | 13 | 0 | `manage_invoice` (`get`, `send_pdf`) + forky + `staff_domain_read` (`invoices_read`) | `manage_invoice` (`wa_bot_invoice_v1`): `create_draft` (borrador desde la cuenta de una foto + PDF al chat), `update_draft`, `send_to_client` (email/WhatsApp con el sistema de envío del panel); propose+OK, directo con `privileged_direct_writes` |
 | Campañas | 16 | 0 | `list_campaigns` + `staff_domain_read` (`campaigns_read`) | `panel_change` |
 | Anuncios (ads) | 7 | 0 | `staff_domain_read` (`website_read`) | `panel_change` (gemelo REST de `ad_save`) |
 | Analíticas | 6 | 0 | `analytics_report`, `ai_usage_report`, `whatsapp_messages_list` | — (solo lectura) |
