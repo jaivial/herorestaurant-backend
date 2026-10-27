@@ -25,10 +25,13 @@ import (
 const adDesignImagePromptMax = 600
 
 // adDesignImagePrompt wraps what the person asked for with the house style.
+// It describes a real photograph only: naming where the image will be used
+// ("a website popup") made the model draw a website mockup with text on a
+// tablet instead of the scene.
 func adDesignImagePrompt(description string) string {
-	return "Create a premium editorial restaurant advertising photograph for a website popup. " +
-		"Elegant, photographic, inviting, natural light. Never render any text, letters, numbers, logos or watermarks inside the image. " +
-		"Subject: " + description
+	return "Professional food and hospitality photograph of a real scene, editorial style, realistic, warm natural light, shallow depth of field. " +
+		"Not a screenshot, not a mockup, no screens, devices, frames, posters or signs; no text, letters, numbers, logos or watermarks anywhere. " +
+		"Scene: " + description
 }
 
 func (s *Server) serveBOAdDesignImageEnhance(w http.ResponseWriter, r *http.Request, restaurantID int, adID int64, provider resolvedAIImageProvider) {
