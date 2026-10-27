@@ -542,8 +542,11 @@ func renderCampaignWhatsAppBody(markdown, brandName, unsubscribeURL string, with
 		if strings.HasPrefix(line, "* ") {
 			line = "- " + strings.TrimPrefix(line, "* ")
 		}
-		line = mdBoldRe.ReplaceAllString(line, "*$1*")
+		// Italic first: done after the bold, it turned the "*x*" the bold
+		// rule had just produced into "_x_", so **bold** reached WhatsApp in
+		// italics. The italic rule never touches "**x**".
 		line = mdItalicRe.ReplaceAllString(line, "${1}_${2}_")
+		line = mdBoldRe.ReplaceAllString(line, "*$1*")
 		line = mdCodeRe.ReplaceAllString(line, "```${1}```")
 		for _, prefix := range []string{"### ", "## ", "# "} {
 			if strings.HasPrefix(line, prefix) {

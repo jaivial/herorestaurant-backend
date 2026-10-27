@@ -109,7 +109,7 @@ func (g *evolutionGateway) SendMenu(ctx context.Context, to, text string, choice
 		if label == "" {
 			label = strings.TrimSpace(c)
 		}
-		buttons = append(buttons, map[string]any{"type": "reply", "displayText": label, "id": fmt.Sprintf("opt_%d", i)})
+		buttons = append(buttons, map[string]any{"type": "reply", "displayText": label, "id": evoReplyButtonID(target, i)})
 	}
 	title, description := splitMenuTitleAndDescription(text)
 	return g.post(ctx, g.msgPath("sendButtons"), map[string]any{
@@ -502,6 +502,27 @@ type evoUpsertData struct {
 				SelectedRowID string `json:"selectedRowId"`
 			} `json:"singleSelectReply"`
 		} `json:"listResponseMessage"`
+		// Taps on reply buttons (campaign_whatsapp_reply_buttons_v1). WhatsApp
+		// reports them in one of three shapes depending on the client: the
+		// classic buttons reply, the template reply and the native-flow reply
+		// that sendButtons produces (its id travels inside paramsJson).
+		ButtonsResponseMsg struct {
+			SelectedButtonID    string `json:"selectedButtonId"`
+			SelectedDisplayText string `json:"selectedDisplayText"`
+		} `json:"buttonsResponseMessage"`
+		TemplateButtonReplyMsg struct {
+			SelectedID          string `json:"selectedId"`
+			SelectedDisplayText string `json:"selectedDisplayText"`
+		} `json:"templateButtonReplyMessage"`
+		InteractiveResponseMsg struct {
+			Body struct {
+				Text string `json:"text"`
+			} `json:"body"`
+			NativeFlowResponseMessage struct {
+				Name       string `json:"name"`
+				ParamsJSON string `json:"paramsJson"`
+			} `json:"nativeFlowResponseMessage"`
+		} `json:"interactiveResponseMessage"`
 		AudioMessage json.RawMessage `json:"audioMessage"`
 		// Base64 of the media, present because the webhook is registered
 		// with webhookBase64=true (wa_bot_audio_transcription_v1).
@@ -602,6 +623,13 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 		if text == "" {
 			text = d.Message.ListResponseMsg.SingleSelectReply.SelectedRowID
 		}
+	}
+	buttonID, buttonText := evoButtonReply(d.Message.ButtonsResponseMsg.SelectedButtonID, d.Message.ButtonsResponseMsg.SelectedDisplayText,
+		d.Message.TemplateButtonReplyMsg.SelectedID, d.Message.TemplateButtonReplyMsg.SelectedDisplayText,
+		d.Message.InteractiveResponseMsg.NativeFlowResponseMessage.ParamsJSON, d.Message.InteractiveResponseMsg.Body.Text)
+	if text == "" {
+		// A tapped reply button reads as its label, like a typed message.
+		text = buttonText
 	}
 	pushName := strings.TrimSpace(d.PushName)
 	if pushName == "" {
@@ -714,6 +742,7 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	return waInbound{
 		Sender:     strings.TrimSuffix(jid, "@s.whatsapp.net"),
 		Text:       strings.TrimSpace(text),
+		ButtonID:   buttonID,
 		Caption:    caption,
 		PushName:   sanitizeBotPushName(pushName),
 		MessageID:  d.Key.ID,
@@ -825,6 +854,37 @@ func (g *evolutionGateway) ParseConnectionEvent(body []byte) (waConnEvent, bool)
 	return out, true
 }
 
+// evoReplyButtonID is the id of a reply button: the value after "|" when the
+// choice carries one ("Darme de baja|vcc:5:baja", the UAZAPI "text|id"
+// convention), the positional opt_N otherwise. The id comes back in the
+// webhook when the button is tapped (campaign_whatsapp_reply_buttons_v1).
+func evoReplyButtonID(target string, i int) string {
+	if id := strings.TrimSpace(target); id != "" && len(id) <= 200 {
+		return id
+	}
+	return fmt.Sprintf("opt_%d", i)
+}
+
+// evoButtonReply reads a tapped reply button from whichever shape the client
+// used: the classic buttons reply, the template reply or the native-flow reply
+// (paramsJson {"id": ...}). Returns the button id and its label.
+func evoButtonReply(buttonsID, buttonsText, templateID, templateText, nativeParams, nativeBody string) (id, label string) {
+	id = firstNonEmpty(strings.TrimSpace(buttonsID), strings.TrimSpace(templateID))
+	label = firstNonEmpty(strings.TrimSpace(buttonsText), strings.TrimSpace(templateText))
+	if p := strings.TrimSpace(nativeParams); p != "" {
+		var params struct {
+			ID          string `json:"id"`
+			DisplayText string `json:"display_text"`
+		}
+		if json.Unmarshal([]byte(p), &params) == nil {
+			id = firstNonEmpty(id, strings.TrimSpace(params.ID))
+			label = firstNonEmpty(label, strings.TrimSpace(params.DisplayText))
+		}
+	}
+	label = firstNonEmpty(label, strings.TrimSpace(nativeBody))
+	return id, label
+}
+
 // SendMenuImage is SendMenu with a header image (Evolution thumbnailUrl), so the
 // image, text and buttons arrive as a single message.
 func (g *evolutionGateway) SendMenuImage(ctx context.Context, to, text, imageURL string, choices []string) error {
@@ -837,7 +897,7 @@ func (g *evolutionGateway) SendMenuImage(ctx context.Context, to, text, imageURL
 			buttons = append(buttons, map[string]any{"type": "url", "displayText": label, "url": target})
 			continue
 		}
-		buttons = append(buttons, map[string]any{"type": "reply", "displayText": firstNonEmpty(label, strings.TrimSpace(c)), "id": fmt.Sprintf("opt_%d", i)})
+		buttons = append(buttons, map[string]any{"type": "reply", "displayText": firstNonEmpty(label, strings.TrimSpace(c)), "id": evoReplyButtonID(target, i)})
 	}
 	title, description := splitMenuTitleAndDescription(text)
 	return g.post(ctx, g.msgPath("sendButtons"), map[string]any{
