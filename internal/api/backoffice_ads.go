@@ -1003,6 +1003,12 @@ func (s *Server) handleBOAdImageEnhance(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Image storage not configured"})
 		return
 	}
+	// ads_html_editor_v1: an image for the HTML design only goes to the CDN;
+	// the editor places it, so the legacy content and status stay untouched.
+	if r.URL.Query().Get("target") == "design" {
+		s.serveBOAdDesignImageEnhance(w, r, a.ActiveRestaurantID, adID, provider)
+		return
+	}
 	s.setBOAdImageGenerationStatus(r.Context(), a.ActiveRestaurantID, adID, boAdImageGenerationPending, true)
 	raw, filename, ct, err := readBOAdMultipartImage(r, specialmenuimage.MaxInputBytes)
 	if err != nil {
@@ -1118,6 +1124,10 @@ func (s *Server) handleBOAdImageGenerate(w http.ResponseWriter, r *http.Request)
 	}
 	if !s.bunnyConfigured(r.Context(), a.ActiveRestaurantID) {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Image storage not configured"})
+		return
+	}
+	if r.URL.Query().Get("target") == "design" {
+		s.serveBOAdDesignImageGenerate(w, r, a.ActiveRestaurantID, adID, provider)
 		return
 	}
 	prompt := boAdTextToImagePrompt(ad.Content)
