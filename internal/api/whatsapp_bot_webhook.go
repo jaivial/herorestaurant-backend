@@ -555,6 +555,12 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// every diag event of this turn (tool results, guards, reply) reconstructs
 	// it end to end without inventing a new identifier.
 	ctx = diag.WithCoordination(ctx, botSessionID(restaurantID, msg.Sender))
+	// wa_bot_privileged_turn_budget_v1: a privileged turn is a staff job, not
+	// a chat: its model calls may use the turn's remaining budget instead of
+	// the fixed per-call cap.
+	if msg.PrivilegedGroup {
+		ctx = withBotTurnBudget(ctx)
+	}
 	tenant := s.loadBotTenantConfig(ctx, restaurantID)
 	if len(parts) == 0 {
 		parts = []botWebhookMessage{msg}
