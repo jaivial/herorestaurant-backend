@@ -143,7 +143,7 @@ func assistantAttachmentRefsNote(blocks []assistantAttachmentBlock) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "Imágenes adjuntas a este mensaje (la ref sirve para usarlas en herramientas, p. ej. campaign_image):\n" + strings.Join(lines, "\n")
+	return "Imágenes adjuntas a este mensaje (la ref sirve para usarlas en herramientas, p. ej. campaign_image o ad_image):\n" + strings.Join(lines, "\n")
 }
 
 // buildAssistantAttachmentBlockFromBytes turns already-downloaded attachment

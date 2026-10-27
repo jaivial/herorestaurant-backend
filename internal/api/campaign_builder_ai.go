@@ -49,6 +49,9 @@ type campaignAIChatRequest struct {
 	HTML         string                  `json:"html"`
 	SelectedHTML string                  `json:"selected_html"`
 	CoordID      string                  `json:"coord_id"`
+	// Profile picks the system prompt: "" = campaign email, "ad" = web ad
+	// (ads_html_editor_v1). Set by the handler, never by the client.
+	Profile string `json:"-"`
 }
 
 // campaignAIHTMLBlockRe captures the fenced ```html block the model answers with
@@ -215,7 +218,7 @@ func (s *Server) campaignAIRun(ctx context.Context, restaurantID int, in campaig
 	started := time.Now()
 	slog.Default().Info("campaign.ai.chat.start", "coord_id", coordID, "restaurant_id", restaurantID, "model", ref, "turns", len(msgs), "html_bytes", len(in.HTML))
 	resp, err := s.botCallModelRef(withBotCallTimeout(ctx, campaignAITimeout), restaurantID, ref, coordID,
-		campaignAISystemPrompt(branding, siteURL), msgs, nil, campaignAIMaxTokens)
+		campaignAIPromptFor(in.Profile, branding, siteURL), msgs, nil, campaignAIMaxTokens)
 	if err != nil {
 		slog.Default().Warn("campaign.ai.chat.failed", "coord_id", coordID, "model", ref, "ms", time.Since(started).Milliseconds(), "err", err.Error())
 		return campaignAIResult{}, campaignAIError{http.StatusOK, "El asistente no ha podido responder. Inténtalo de nuevo."}
@@ -245,6 +248,11 @@ func (s *Server) campaignAIRun(ctx context.Context, restaurantID int, in campaig
 
 // POST /api/admin/campanas/ai/chat
 func (s *Server) handleBOCampaignAIChat(w http.ResponseWriter, r *http.Request) {
+	s.serveCampaignAIChat(w, r, "")
+}
+
+// serveCampaignAIChat is the builder AI chat of a profile ("" campaign, "ad").
+func (s *Server) serveCampaignAIChat(w http.ResponseWriter, r *http.Request, profile string) {
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
@@ -255,6 +263,7 @@ func (s *Server) handleBOCampaignAIChat(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Petición no válida"})
 		return
 	}
+	in.Profile = profile
 	res, err := s.campaignAIRun(r.Context(), a.ActiveRestaurantID, in)
 	if err != nil {
 		var refusal campaignAIError
@@ -270,4 +279,69 @@ func (s *Server) handleBOCampaignAIChat(w http.ResponseWriter, r *http.Request) 
 		reply += "\n\n" + warning
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "reply": reply, "html": res.HTML, "model": res.Model, "coord_id": firstNonEmpty(strings.TrimSpace(in.CoordID), "camp-new")})
+}
+
+// campaignAIPromptFor returns the system prompt of a builder profile.
+func campaignAIPromptFor(profile string, brand restaurantBrandingCfg, websiteURL string) string {
+	if profile == "ad" {
+		return adAISystemPrompt(brand, websiteURL)
+	}
+	return campaignAISystemPrompt(brand, websiteURL)
+}
+
+// adAISystemPrompt is the design AI of the ad editor (ads_html_editor_v1):
+// same builder and answer format as the campaign one, for a popup shown over
+// the restaurant website instead of an email.
+func adAISystemPrompt(brand restaurantBrandingCfg, websiteURL string) string {
+	return fmt.Sprintf(`Eres el diseñador de anuncios de la web del restaurante %q. Trabajas dentro de un editor visual y editas en tiempo real el anuncio que el usuario tiene abierto: un aviso emergente (popover) que aparece sobre la web del restaurante, en ordenador, tablet y móvil.
+
+El diseño es un fragmento HTML (un único div raíz, sin <html>, <head> ni <body>) maquetado SOLO con clases de Tailwind CSS v3. El editor compila esas clases; el anuncio se muestra dentro de una ventana de ancho limitado.
+
+Reglas del HTML que devuelves:
+- Solo clases de Tailwind CSS v3. Se permiten valores arbitrarios: bg-[#097969], text-[15px]. Nunca uses atributos style, <style>, <script>, JavaScript, formularios, iframes, vídeo ni SVG.
+- Responsive y mobile-first: los estilos base son para móvil y los prefijos sm: y md: mejoran tablet y escritorio. Ocupa todo el ancho de la ventana (w-full), sin márgenes exteriores; columnas con sm:grid-cols-2 que en móvil se apilan.
+- Etiquetas: div, h1, h2, h3, p, a, img, ul, ol, li, hr, strong, em, span, br.
+- Breve y directo: un anuncio se lee en segundos. Un titular claro, uno o dos textos cortos y una llamada a la acción visible.
+- Imágenes con class "block w-full h-auto" y alt descriptivo. No inventes URLs de imágenes: reutiliza las del diseño o usa https://placehold.co/800x450?text=Imagen como marcador.
+- Botones: enlaces <a> con padding, fondo de color, texto blanco, rounded y no-underline. Web del restaurante: %s. Los botones de reservar enlazan a esa web + /reservas y los de ver un menú a la página del menú que ya tenga el diseño.
+- Conserva los atributos data-eb-* de los bloques. En la página de tarjetas de un anuncio múltiple, cada elemento con data-ad-step="..." es una tarjeta que abre la página de detalle de esa propuesta: conserva su valor exacto. Para añadir una propuesta crea otra tarjeta con un data-ad-step nuevo y único (solo minúsculas y números); el editor le crea su página de detalle. Quitar una tarjeta quita su paso.
+- Si estás editando una página de detalle (un paso), el botón «Volver» y el cierre los pone la web: no los añadas.
+- Logo del restaurante: %s.
+- Textos en español de España, tono cercano y profesional, sin faltas. TODO el texto visible va en español (salvo que el usuario pida expresamente otro idioma).
+
+Formato de tu respuesta:
+1. Primero, en 1-3 frases, qué has cambiado (sin repetir el código).
+2. Después, el diseño COMPLETO actualizado dentro de un único bloque `+"```html ... ```"+`.
+3. Si el usuario solo pregunta algo y no hay que cambiar el diseño, responde sin bloque de código.`, firstNonEmpty(strings.TrimSpace(brand.BrandName), "Restaurante"), firstNonEmpty(strings.TrimSpace(websiteURL), "(sin web configurada)"), firstNonEmpty(strings.TrimSpace(brand.LogoURL), "(sin logo)"))
+}
+
+// GET /api/admin/anuncios/context (ads_html_editor_v1): the brand the ad
+// blocks and the AI start from, and the website the editor draws behind the
+// ad. Same brand resolution as the campaign template, behind the ads gate.
+func (s *Server) handleBOAdContext(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	brand := s.campaignTemplateBrand(r.Context(), a.ActiveRestaurantID)
+	own, _ := s.loadRestaurantBranding(r.Context(), a.ActiveRestaurantID)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"brand_name": brand.BrandName,
+		"logo_url":   brand.LogoURL,
+		"website":    brand.WebsiteURL,
+		"accent":     firstNonEmpty(hexColorOrEmpty(own.PrimaryColor), hexColorOrEmpty(own.AccentColor), "#1e4636"),
+	})
+}
+
+// GET /api/admin/anuncios/ai/models (ads_html_editor_v1): same models as the
+// campaign builder, behind the ads section gate.
+func (s *Server) handleBOAdAIModels(w http.ResponseWriter, r *http.Request) {
+	s.handleBOCampaignAIModels(w, r)
+}
+
+// POST /api/admin/anuncios/ai/chat (ads_html_editor_v1).
+func (s *Server) handleBOAdAIChat(w http.ResponseWriter, r *http.Request) {
+	s.serveCampaignAIChat(w, r, "ad")
 }

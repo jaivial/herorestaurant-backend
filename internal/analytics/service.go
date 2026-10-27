@@ -456,7 +456,9 @@ func (s *Service) refreshInvoices(ctx context.Context, tx *sql.Tx, tenantID int,
 	rows, err := tx.QueryContext(ctx, `
 		SELECT i.id,i.invoice_date,COALESCE(i.status,''),COALESCE(i.currency,'EUR'),
 		       COALESCE(i.total,i.amount),COALESCE(i.customer_name,''),COALESCE(i.customer_surname,''),
-		       COALESCE(i.customer_email,''),COALESCE(i.customer_phone,''),COALESCE(i.customer_dni_cif,'')
+		       COALESCE(i.customer_email,''),
+		       CONCAT(IF(COALESCE(i.customer_phone_country_code,'')='' OR COALESCE(i.customer_phone,'')='','',CONCAT('+',i.customer_phone_country_code,' ')),COALESCE(i.customer_phone,'')),
+		       COALESCE(i.customer_dni_cif,'')
 		FROM invoices i
 		WHERE i.restaurant_id=? AND i.invoice_date BETWEEN ? AND ? AND i.status <> 'borrador'
 		ORDER BY i.id

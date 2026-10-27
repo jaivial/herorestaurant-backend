@@ -61,6 +61,26 @@ func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "Ad not found")
 		return
 	}
+	src := strings.TrimSpace(r.URL.Query().Get("src"))
+	if len(src) > 64 {
+		src = src[:64]
+	}
+	// ads_html_editor_v1: an HTML ad renders its page (main or a step).
+	if ad.Design != nil {
+		step := strings.TrimSpace(r.URL.Query().Get("step"))
+		page, ok := adDesignPage(ad.Design, step)
+		if !ok {
+			httpx.WriteError(w, http.StatusNotFound, "Ad step not found")
+			return
+		}
+		nonce := adRenderNonce()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", adDesignCSP(nonce))
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		fmt.Fprint(w, renderAdDesignHTML(page, ad.ID, step, src, firstNonEmpty(page.Title, ad.Name), nonce))
+		return
+	}
 	canvas := ad.Canvas
 	if stepID := strings.TrimSpace(r.URL.Query().Get("step")); stepID != "" {
 		canvas = nil
@@ -81,10 +101,6 @@ func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	src := strings.TrimSpace(r.URL.Query().Get("src"))
-	if len(src) > 64 {
-		src = src[:64]
-	}
 	variant := strings.TrimSpace(r.URL.Query().Get("variant"))
 	if variant == "" {
 		if rawVW := strings.TrimSpace(r.URL.Query().Get("vw")); rawVW != "" {

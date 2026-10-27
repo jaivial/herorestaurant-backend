@@ -125,6 +125,12 @@ var botForkyExcludedFromWA = map[string]struct{}{
 	"campaign_image":  {},
 	"campaign_send":   {},
 	"campaign_delete": {},
+	// ads_html_editor_v1: same for the ad tools (the bot has manage_ad).
+	"ad_get":    {},
+	"ad_save":   {},
+	"ad_design": {},
+	"ad_image":  {},
+	"ad_delete": {},
 }
 
 // botForkyMetaTools are the forky names still advertised in the WhatsApp

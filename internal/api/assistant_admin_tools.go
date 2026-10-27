@@ -49,6 +49,10 @@ func assistantToolTimeout(name string) time.Duration {
 	if d, ok := campaignAssistantToolTimeouts[name]; ok {
 		return d
 	}
+	// ads_html_editor_v1: same engine and design AI for the ad tools.
+	if d, ok := adAssistantToolTimeouts[name]; ok {
+		return d
+	}
 	return 5 * time.Second
 }
 
