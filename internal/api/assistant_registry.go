@@ -464,6 +464,48 @@ var assistantToolRegistry = []assistantTool{
 			return s.assistantCampaignDelete(ctx, rid, input)
 		},
 	},
+	// Coordination id: ads_html_editor_v1 - the web ads editor
+	// (/app/anuncios) as tools: settings, publishing, the HTML design and its
+	// AI assistant, images and deletes. Shared core in ad_tools.go.
+	{
+		Name: "ad_get", Description: "Lee los anuncios (avisos emergentes de la web) del restaurante activo como los ve el editor /app/anuncios. Sin ad_id: lista (nombre, activo, fechas, tipo individual o múltiple, formato). Con ad_id: el anuncio y sus páginas (main = el anuncio, o la página de tarjetas de un anuncio múltiple; y una página de detalle por tarjeta, con su page y title) con el resumen de bloques y su version. include añade layers (capas con ids e1, e2… por página, p. ej. para elegir la imagen que sustituye ad_image) y html (HTML de cada página).",
+		Schema: json.RawMessage(`{"type":"object","properties":{"ad_id":{"type":"integer","description":"ID del anuncio (sin él: lista)"},"include":{"type":"array","items":{"type":"string","enum":["layers","html"]}}}}`), BackofficeOnly: true, Section: "anuncios",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantAdGet(ctx, rid, input)
+		},
+	},
+	{
+		Name: "ad_save", Description: "Crea o ajusta un anuncio de la web como la cabecera y la pestaña Ajustes del editor. action=create (name obligatorio; kind single = individual o multiple = varias propuestas en tarjetas que abren cada una su página de detalle; nace inactivo con la plantilla de inicio). action=update (ad_id; name, starts_at+ends_at YYYY-MM-DD o always=true para quitar fechas, kind para cambiar de tipo conservando el diseño, max_width 280-1200, radius 0-48, background y overlay = color del fondo oscurecido de la web). action=convert (ad_id: pasa al nuevo editor un anuncio hecho con el editor anterior). action=publish (ad_id, active true lo publica en la web y false lo retira: llega a los clientes, así que enséñale la vista previa al usuario y espera a que diga que sí en su siguiente mensaje). Un anuncio activo se ve al momento en la web: cualquier cambio de diseño también. Primero confirmed=false (vista previa); después confirmed=true con la misma action y ad_id (en el chat el servidor recuerda la vista previa; fuera del chat, con el confirmation_token).",
+		Schema: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string","enum":["create","update","convert","publish"]},"ad_id":{"type":"integer"},"name":{"type":"string"},"kind":{"type":"string","enum":["single","multiple"]},"starts_at":{"type":"string"},"ends_at":{"type":"string"},"always":{"type":"boolean"},"max_width":{"type":"integer"},"radius":{"type":"integer"},"background":{"type":"string"},"overlay":{"type":"string"},"active":{"type":"boolean","description":"Solo publish"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["action","confirmed"]}`),
+		Write:  true, Confirm: true, BackofficeOnly: true, Section: "anuncios",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantAdSave(ctx, rid, input)
+		},
+	},
+	{
+		Name: "ad_design", Description: "Cambia el diseño de una página de un anuncio con el asistente de diseño con IA del editor (HTML con clases de Tailwind, adaptable a móvil, tablet y escritorio). action=ai: instruction (lo que quiere el usuario, con los datos reales que tengas: platos, precios, fechas), page (main por defecto = el anuncio o la página de tarjetas; o el page/título de un paso para su página de detalle), element_id opcional (capas de ad_get) y model opcional. En la página de tarjetas, pedir una tarjeta nueva crea también su página de detalle. action=undo deshace el último cambio de diseño hecho desde un chat. Primero confirmed=false (vista previa); después confirmed=true con la misma action y ad_id (en el chat el servidor recuerda la vista previa; fuera del chat, con el confirmation_token).",
+		Schema: json.RawMessage(`{"type":"object","properties":{"ad_id":{"type":"integer"},"action":{"type":"string","enum":["ai","undo"]},"instruction":{"type":"string"},"page":{"type":"string"},"element_id":{"type":"string"},"model":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ad_id","action","confirmed"]}`),
+		Write:  true, Confirm: true, BackofficeOnly: true, Section: "anuncios",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantAdDesign(ctx, rid, input)
+		},
+	},
+	{
+		Name: "ad_image", Description: "Usa en un anuncio una IMAGEN ADJUNTA en este chat: la sube al CDN (BunnyCDN) del restaurante y la coloca en una página. attachment = la ref de la línea [Adjunto: … · ref …] del mensaje. page = la página (main por defecto o el page/título de un paso). placement=replace (por defecto) sustituye la imagen element_id (capas de ad_get) o, sin él, la primera imagen de la página; placement=insert la añade al final de la página; placement=none solo la sube y devuelve la URL (por ejemplo para pasársela a ad_design). alt opcional. Primero confirmed=false (vista previa); después confirmed=true con la misma action y ad_id (en el chat el servidor recuerda la vista previa; fuera del chat, con el confirmation_token).",
+		Schema: json.RawMessage(`{"type":"object","properties":{"ad_id":{"type":"integer"},"attachment":{"type":"string","description":"ref del adjunto (forky/…)"},"page":{"type":"string"},"element_id":{"type":"string"},"placement":{"type":"string","enum":["replace","insert","none"]},"alt":{"type":"string"},"version":{"type":"string"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ad_id","attachment","confirmed"]}`),
+		Write:  true, Confirm: true, BackofficeOnly: true, Section: "anuncios",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantAdImage(ctx, rid, input)
+		},
+	},
+	{
+		Name: "ad_delete", Description: "Elimina un anuncio de la web y del backoffice. No se puede deshacer: primero confirmed=false (vista previa), espera la respuesta del usuario y, cuando diga que sí en su siguiente mensaje, repite con confirmed=true.",
+		Schema: json.RawMessage(`{"type":"object","properties":{"ad_id":{"type":"integer"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["ad_id","confirmed"]}`),
+		Write:  true, Confirm: true, BackofficeOnly: true, Section: "anuncios",
+		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
+			return s.assistantAdDelete(ctx, rid, input)
+		},
+	},
 	{
 		Name: "invoices_read", Description: "Lecturas de facturación del restaurante activo: search_reservation (date_from/date_to/name/party_size/phone/time) para localizar la reserva de una factura.",
 		Schema: json.RawMessage(`{"type":"object","required":["resource"],"properties":{"resource":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"name":{"type":"string"},"party_size":{"type":"string"},"phone":{"type":"string"},"time":{"type":"string"}}}`), BackofficeOnly: true, Section: "facturas",

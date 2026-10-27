@@ -45,7 +45,7 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 		date = time.Now().Format("2006-01-02")
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND (canvas_json IS NOT NULL OR layout_json IS NOT NULL) ORDER BY updated_at DESC, id DESC`, restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND (canvas_json IS NOT NULL OR layout_json IS NOT NULL OR design_json IS NOT NULL) ORDER BY updated_at DESC, id DESC`, restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ads")
 		return
@@ -76,17 +76,26 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 		// so the plugin can pick a variant by viewport like the home popover does.
 		Variants  map[string]embedVariant `json:"variants,omitempty"`
 		Container *boAdCanvasContainer    `json:"container,omitempty"`
+		// ads_html_editor_v1: "html" ads carry their kind, chrome and steps;
+		// the plugin sizes the iframe from the height the page reports.
+		Format string      `json:"format,omitempty"`
+		Design *boAdDesign `json:"design,omitempty"`
 	}
 	ads := []embedAd{}
 	for _, id := range ids {
 		ad, err := s.readBOAd(r.Context(), restaurantID, id)
-		if err != nil || (ad.Canvas == nil && (ad.Layout == nil || ad.Layout.Mode != "multiple")) {
+		if err != nil || (ad.Design == nil && ad.Canvas == nil && (ad.Layout == nil || ad.Layout.Mode != "multiple")) {
 			continue
 		}
 		if !publicAdVisibleOnDate(ad, date) {
 			continue
 		}
 		item := embedAd{ID: ad.ID, Name: ad.Name, RenderURL: fmt.Sprintf("/api/public/ads/%d/render?restaurant_id=%d&src=plugin", ad.ID, restaurantID)}
+		if ad.Design != nil {
+			item.Format, item.Design = "html", publicAdDesign(ad.Design)
+			ads = append(ads, item)
+			continue
+		}
 		if ad.Layout != nil && ad.Layout.Mode == "multiple" {
 			for _, step := range ad.Layout.Steps {
 				item.Steps = append(item.Steps, step)
@@ -158,7 +167,45 @@ const adsPluginJS = `(function () {
     try { var u = new URL(raw); if (["https:","http:","mailto:","tel:"].indexOf(u.protocol) >= 0) return raw; } catch(e) {}
     return null;
   }
+  // ads_html_editor_v1 - HTML ads: one iframe per page, sized by the height
+  // the page posts; a card (data-ad-step) swaps it to its step, "Volver" back.
+  function injectHTML(ad, container, back) {
+    var frame = document.createElement("iframe");
+    frame.setAttribute("title", ad.name || "Anuncio");
+    frame.style.cssText = "border:0;width:100%;display:block;height:240px;background:transparent;";
+    var current = "";
+    function show(step) {
+      current = step || "";
+      frame.src = base + ad.render_url + (current ? "&step=" + encodeURIComponent(current) : "");
+      if (back) back.style.display = current ? "block" : "none";
+    }
+    window.addEventListener("message", function (e) {
+      if (e.source !== frame.contentWindow) return;
+      var m = e.data;
+      if (!m || m.type !== "vc-ad" || m.ad !== ad.id) return;
+      if (m.event === "height" && (m.step || "") === current && m.height > 0) frame.style.height = m.height + "px";
+      if (m.event === "step" && m.target) show(String(m.target));
+    });
+    if (back) back.addEventListener("click", function () { show(""); });
+    // The page may report its height before this listener sees it: ask again
+    // once it has loaded.
+    frame.addEventListener("load", function () {
+      try { frame.contentWindow.postMessage({ type: "vc-ad-measure" }, "*"); } catch (e) {}
+    });
+    container.appendChild(frame);
+    show("");
+  }
   function inject(ad, container) {
+    if (ad.format === "html") {
+      // Inline: "Volver" sits above the ad while a step is open.
+      var back = document.createElement("button");
+      back.type = "button";
+      back.textContent = "\u2039 Volver";
+      back.style.cssText = "display:none;margin:0 0 8px;padding:8px 14px;border:0;border-radius:999px;background:#24342b;color:#fff;font:600 14px/1.2 system-ui,sans-serif;cursor:pointer;";
+      container.appendChild(back);
+      injectHTML(ad, container, back);
+      return;
+    }
     if (ad.steps && ad.steps.length) { injectWizard(ad, container); return; }
     var iframe = document.createElement("iframe");
     iframe.src = base + ad.render_url + "&variant=" + variantForWidth(window.innerWidth);
@@ -216,6 +263,7 @@ const adsPluginJS = `(function () {
       var seen = parseInt(localStorage.getItem(seenKey) || "0", 10);
       if (seen && Date.now() - seen < 24 * 3600 * 1000) return;
     } catch (e) {}
+    if (ad.format === "html") { showHTMLOverlay(ad, seenKey); return; }
     var dims = pickDims(ad);
     var container = Object.assign({}, ad.container || {}, dims.container || {});
     var maxWidth = container.maxWidth || dims.width;
@@ -238,6 +286,38 @@ const adsPluginJS = `(function () {
     document.body.appendChild(overlay);
   }
 
+  function showHTMLOverlay(ad, seenKey) {
+    var chrome = (ad.design && ad.design.container) || {};
+    var overlay = document.createElement("div");
+    // Same window as the website popover: 20px margin, 80vh tall at most,
+    // light chips; the page scrolls inside while the chips stay put.
+    overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:" + (chrome.overlay || "rgba(20,24,21,.58)") + ";display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;";
+    var box = document.createElement("div");
+    box.style.cssText = "position:relative;width:100%;max-width:" + (chrome.max_width || 560) + "px;overflow:hidden;border-radius:" + (chrome.radius === undefined ? 24 : chrome.radius) + "px;box-shadow:0 24px 80px rgba(0,0,0,.28);background:" + (chrome.background || "#fff") + ";";
+    var scroller = document.createElement("div");
+    scroller.style.cssText = "max-height:80vh;overflow:auto;overscroll-behavior:contain;";
+    var chip = "position:absolute;top:12px;z-index:4;border:0;border-radius:999px;background:rgba(255,253,248,.92);color:#24342b;box-shadow:0 1px 4px rgba(0,0,0,.25);cursor:pointer;";
+    var close = document.createElement("button");
+    close.setAttribute("aria-label", "Cerrar anuncio");
+    close.textContent = "\u00d7";
+    close.style.cssText = chip + "right:14px;width:36px;height:36px;font-size:26px;line-height:1;";
+    var back = document.createElement("button");
+    back.type = "button";
+    back.textContent = "Volver";
+    back.style.cssText = chip + "display:none;left:14px;padding:8px 14px;font:600 16px/1.2 system-ui,sans-serif;";
+    close.addEventListener("click", function () {
+      try { localStorage.setItem(seenKey, String(Date.now())); } catch (e) {}
+      overlay.remove();
+    });
+    overlay.addEventListener("click", function (ev) { if (ev.target === overlay) close.click(); });
+    box.appendChild(close);
+    box.appendChild(back);
+    box.appendChild(scroller);
+    injectHTML(ad, scroller, back);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+  }
+
   fetch(base + "/api/public/ads/embed?restaurant_id=" + encodeURIComponent(restaurant))
     .then(function (r) { return r.json(); })
     .then(function (data) {
@@ -245,6 +325,12 @@ const adsPluginJS = `(function () {
       var ad = data.ads[0];
       if (mode === "inline") {
         var holder = document.createElement("div");
+        if (ad.format === "html") {
+          holder.style.cssText = "width:100%;max-width:" + (((ad.design && ad.design.container) || {}).max_width || 560) + "px;";
+          script.parentNode.insertBefore(holder, script.nextSibling);
+          inject(ad, holder);
+          return;
+        }
         var dimsInline = pickDims(ad);
         holder.style.cssText = "width:100%;max-width:" + dimsInline.width + "px;aspect-ratio:" + dimsInline.width + "/" + dimsInline.height + ";";
         script.parentNode.insertBefore(holder, script.nextSibling);

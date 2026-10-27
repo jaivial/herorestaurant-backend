@@ -93,6 +93,8 @@ func botToolDefsPrivilegedControl() []botToolDef {
 	// Coordination id: campaign_tools_v1 - the campaign editor (/app/campanas)
 	// as one parameterised tool with the same propose+OK writes.
 	defs = append(defs, botToolDefsCampaign()...)
+	// Coordination id: ads_html_editor_v1 - the web ads editor (/app/anuncios).
+	defs = append(defs, botToolDefsAd()...)
 	return defs
 }
 

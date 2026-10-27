@@ -78,6 +78,9 @@ func (s *Server) handlePublicAdsList(w http.ResponseWriter, r *http.Request) {
 		}
 		if date == "" || publicAdVisibleOnDate(ad, date) {
 			ad.BlockedRanges = nil
+			// ads_html_editor_v1: kind, chrome and steps only; each page
+			// is rendered on its own URL.
+			ad.Design = publicAdDesign(ad.Design)
 			ads = append(ads, ad)
 		}
 	}
