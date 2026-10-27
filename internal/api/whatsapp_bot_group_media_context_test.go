@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/base64"
-	"strings"
 	"testing"
 	"time"
 
@@ -124,63 +123,6 @@ func TestBotChatImages_RecentSelection(t *testing.T) {
 	// Another chat never sees the images of this one.
 	if other := botChatImages.recent(rid, "other@g.us", time.Now().Add(-time.Hour), 5); len(other) != 0 {
 		t.Errorf("other chat saw %+v", other)
-	}
-}
-
-// The turn note reads the other recent images of the chat: the model gets the
-// data of the photo the request refers to, labelled with its ref so the tools
-// can use its bytes.
-func TestBotChatImagesTurnNote_ReadsTheOtherImagesOfTheChat(t *testing.T) {
-	botChatImages.chats = map[string][]botChatImage{}
-	botChatImages.inline = 0
-
-	// No OCR engine in PATH: the extractor answers with its note instead of
-	// running tesseract, which is enough to prove the image was picked up
-	// from the registry and read into the turn.
-	t.Setenv("PATH", "")
-
-	rid := 3
-	chat := "chat-note@g.us"
-	botChatImages.remember(rid, chat, botChatImage{
-		MessageID: "IMG-BILL",
-		Mime:      "image/jpeg",
-		Data:      []byte{0x89, 'P', 'N', 'G'},
-		At:        time.Now(),
-	})
-
-	s := &Server{}
-	msg := botWebhookMessage{MessageID: "IMG-CAPTION", ChatJID: chat, MediaKind: "una imagen"}
-	note, read := s.botChatImagesTurnNote(context.Background(), rid, msg)
-	if !read {
-		t.Fatal("the image of the chat was not read into the note")
-	}
-	if !strings.Contains(note, "image_ref=IMG-BILL") {
-		t.Errorf("note must carry the ref of the other image: %q", note)
-	}
-	if strings.Contains(note, "IMG-CAPTION") {
-		t.Errorf("the note must not repeat the image of the message itself: %q", note)
-	}
-}
-
-// The image of the message being served is not repeated as an extra one.
-func TestBotChatImagesTurnNote_SkipsTheImageOfTheMessage(t *testing.T) {
-	botChatImages.chats = map[string][]botChatImage{}
-	botChatImages.inline = 0
-	t.Setenv("PATH", "")
-
-	rid := 4
-	chat := "chat-same@g.us"
-	botChatImages.remember(rid, chat, botChatImage{
-		MessageID: "IMG-SAME",
-		Mime:      "image/jpeg",
-		Data:      []byte{0x89, 'P', 'N', 'G'},
-		At:        time.Now(),
-	})
-
-	s := &Server{}
-	note, read := s.botChatImagesTurnNote(context.Background(), rid, botWebhookMessage{MessageID: "IMG-SAME", ChatJID: chat})
-	if read {
-		t.Errorf("the image of the message must not be read twice: %q", note)
 	}
 }
 

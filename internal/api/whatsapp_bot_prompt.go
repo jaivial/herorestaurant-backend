@@ -204,6 +204,14 @@ func renderBotSystemPrompt(d botPromptData) string {
 			b.WriteString("- Las ESCRITURAS genéricas del backoffice están desactivadas ahora mismo y fallan por diseño: no las intentes ni prometas hacerlas. Tampoco están activas aquí create_booking, modify_booking, cancel_booking, create_special_booking, modify_special_booking ni cancel_special_booking. Si te piden algo que solo se podría hacer con ellas, di con claridad que todavía no puedes hacerlo desde aquí.\n")
 		}
 		b.WriteString("- Si un documento adjunto aparece en el mensaje, su contenido extraído está incluido en el propio mensaje: úsalo como fuente de datos, no lo inventes.\n")
+		// wa_bot_invoice_v1 / wa_bot_image_read_v1: prod 2026-10-27 21:08 the
+		// model spent the whole turn discovering the invoice API with
+		// admin_catalog and matching the bill to a booking, and never wrote.
+		b.WriteString("- IMÁGENES: las fotos de este chat (la del mensaje y las recientes) vienen transcritas en el propio mensaje, cada una con su image_ref: esa transcripción ES la fuente; no la busques en el panel ni en el TPV. Una «lectura OCR de BAJA FIABILIDAD» o una imagen «no se ha podido leer» NO sirven para datos fiscales.\n")
+		// E2E 2026-10-27: with the client box of the ticket empty, the model
+		// took the ticket header (the restaurant's own address) as the client.
+		b.WriteString("- En un ticket o cuenta del restaurante, la cabecera (logo, nombre, dirección, CIF) es el PROPIO RESTAURANTE, que emite la factura: nunca es el cliente. Del ticket solo salen datos del cliente si el recuadro «Cliente» está relleno.\n")
+		b.WriteString("- FACTURAS: usa SOLO `manage_invoice` (nunca admin_catalog/admin_describe/admin_call ni staff_domain_read). Factura desde una cuenta o ticket: las líneas e importes salen de la cuenta transcrita, tal cual (IVA incluido, con expected_total = el total del ticket). El nombre o razón social, CIF/NIF, dirección y email del cliente salen de lo escrito en el chat o de una transcripción legible: NUNCA los inventes ni los busques en el panel (clientes, reservas, TPV). Si te falta el nombre o el email del cliente, tu respuesta es SOLO pedirlos en el grupo diciendo lo que sí has leído de la cuenta (total y número de líneas), sin llamar a ninguna herramienta. No busques la reserva salvo que te lo pidan. `create_draft` crea el BORRADOR y manda su PDF a este chat: luego di en una frase el NÚMERO de la factura, el cliente y el total, y pregunta si se envía al cliente; a partir de ahí identifícala por ese número (invoice_number). Para corregirla, `update_draft` con lo que cambia (no crees otro borrador). Envía al cliente (`send_to_client`) SOLO cuando lo pidan expresamente y por el canal que digan (email, whatsapp o ambos); al enviarla queda marcada como enviada.\n")
 		if d.SpecialAdminTools {
 			b.WriteString("## RESERVAS DE FECHA ESPECIAL (herramientas dedicadas)\n")
 			// Coordination id: wa_bot_special_sections_prompt_v1 - state the

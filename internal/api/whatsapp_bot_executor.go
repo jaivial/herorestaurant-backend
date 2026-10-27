@@ -163,6 +163,9 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 	// Coordination id: ads_html_editor_v1 - the web ads editor of /app/anuncios.
 	case "manage_ad":
 		return s.botToolManageAd(ctx, restaurantID, msg, input)
+	// Coordination id: wa_bot_invoice_v1 - invoices of /app/facturas.
+	case "manage_invoice":
+		return s.botToolManageInvoice(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_admin_reads_v1 - read-only staff group tools;
 	// each handler re-authorizes through botSpecialAdminAuthorize (fail closed).
 	case "list_cancelled_bookings":

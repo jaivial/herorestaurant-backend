@@ -37,6 +37,10 @@ type botChatImage struct {
 	Mime      string
 	Data      []byte // nil when not kept inline (fetch by MessageID)
 	At        time.Time
+	// Reading is what was read from the image, once: a later turn that still
+	// refers to it ("con los datos de la cuenta de antes") reuses it instead
+	// of paying the vision call again. Coordination id: wa_bot_image_read_v1
+	Reading *botImageReading
 }
 
 type botChatImageRegistry struct {
@@ -89,6 +93,16 @@ func (r *botChatImageRegistry) remember(rid int, chatJID string, img botChatImag
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := botChatImageKey(rid, chatJID)
+	// The same message registered twice (a provider retry of the webhook)
+	// stays one image: the second copy would push a real one out of the
+	// per-chat bound and be read twice.
+	if img.MessageID != "" {
+		for _, old := range r.chats[key] {
+			if old.MessageID == img.MessageID {
+				return
+			}
+		}
+	}
 	list := append(r.chats[key], img)
 	if len(list) > botChatImagesPerChat {
 		for _, old := range list[:len(list)-botChatImagesPerChat] {
@@ -142,6 +156,22 @@ func (r *botChatImageRegistry) recent(rid int, chatJID string, since time.Time, 
 		out = append(out, list[i])
 	}
 	return out
+}
+
+// storeReading keeps what was read from an image of the chat, so the turns
+// that follow reuse it. A no-op when the image is no longer registered.
+// Coordination id: wa_bot_image_read_v1
+func (r *botChatImageRegistry) storeReading(rid int, chatJID, ref string, rd botImageReading) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.chats[botChatImageKey(rid, chatJID)]
+	for i := range list {
+		if list[i].MessageID == ref {
+			cp := rd
+			list[i].Reading = &cp
+			return
+		}
+	}
 }
 
 // botChatImageRef is the ref of the image a message carries ("" when none).
