@@ -678,7 +678,9 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		"Para pedir el detalle de las reservas (listado/tabla por cliente, fecha, hora y personas), usa SIEMPRE la herramienta bookings_list; bookings_summary y analytics_report solo dan totales agregados y NO sirven para una tabla de reservas individuales. " +
 		// campaign_tools_v1: only the campaign tools recompile the email SMTP sends.
 		"Para campañas de marketing (crear, cambiar ajustes o diseño, probar, enviar o borrar) usa SIEMPRE campaign_get, campaign_save, campaign_design, campaign_image, campaign_send y campaign_delete, nunca admin_call: solo ellas recompilan el email que se envía. Una imagen adjunta en el chat se usa en el email con campaign_image (la sube al CDN del restaurante). " +
-		"Para diseñar con IA (campaign_design action=ai) pasa la petición del usuario en instruction: si quieres incluir platos o datos reales, haz como mucho UNA consulta y añade lo encontrado a la instrucción; si no hay datos, no sigas buscando y deja que la IA de diseño redacte textos sin nombres concretos inventados." +
+		"Para diseñar con IA (campaign_design action=ai) pasa la petición del usuario en instruction: si quieres incluir platos o datos reales, haz como mucho UNA consulta y añade lo encontrado a la instrucción; si no hay datos, no sigas buscando y deja que la IA de diseño redacte textos sin nombres concretos inventados. " +
+		// ads_html_editor_v1: the web ads have their own tools too.
+		"Para los anuncios de la web (avisos emergentes de /app/anuncios: crear, ajustar fechas o tipo, diseñar, poner imágenes, publicar o borrar) usa SIEMPRE ad_get, ad_save, ad_design, ad_image y ad_delete, nunca admin_call: solo ellas compilan el diseño que ve la web. Publicar (ad_save action=publish) y borrar necesitan que el usuario diga que sí en su siguiente mensaje." +
 		assistantOutputContract
 	if s.db == nil || restaurantID <= 0 {
 		return base
