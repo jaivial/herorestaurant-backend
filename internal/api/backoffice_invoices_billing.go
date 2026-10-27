@@ -65,12 +65,10 @@ func normalizeInvoiceDates(input *InvoiceInput) {
 }
 
 // normalizeInvoicePhone stores the customer phone as the national number
-// plus its country calling code (invoice_phone_country_code_v1). With a code
-// the pair is validated and split by normalizePhoneParts, so a number typed
-// with its own prefix is not double-prefixed; false means the pair cannot
-// form a valid E.164 number. Without a code (CSV import, legacy clients) the
-// number is kept as typed and the code stays NULL. An empty phone clears
-// both.
+// plus its country calling code (invoice_phone_country_code_v1); false means
+// the pair cannot form a valid E.164 number (splitInvoicePhone). Without a
+// code (CSV import, legacy clients) the number is kept as typed and the code
+// stays NULL. An empty phone clears both.
 func normalizeInvoicePhone(input *InvoiceInput) bool {
 	phone := strings.TrimSpace(deref(input.CustomerPhone))
 	if phone == "" {
@@ -78,16 +76,47 @@ func normalizeInvoicePhone(input *InvoiceInput) bool {
 		return true
 	}
 	input.CustomerPhone = &phone
-	if onlyDigits(deref(input.CustomerPhoneCountryCode)) == "" {
+	cc := onlyDigits(deref(input.CustomerPhoneCountryCode))
+	if cc == "" {
 		input.CustomerPhoneCountryCode = nil
 		return true
 	}
-	cc, national, _, ok := normalizePhoneParts(deref(input.CustomerPhoneCountryCode), phone)
+	national, ok := splitInvoicePhone(cc, phone)
 	if !ok {
 		return false
 	}
 	input.CustomerPhone, input.CustomerPhoneCountryCode = &national, &cc
 	return true
+}
+
+// splitInvoicePhone returns the national digits of phone for the chosen
+// country code. A number typed in international form ("+"/"00") must carry
+// that same code, which is removed; a Spanish number typed as 34 + 9 digits
+// loses its 34. Any other number is already national and is never stripped
+// of digits that merely look like the code (Italian mobiles start with 39).
+// E.164 bounds: 6+ national digits, 15 digits in total.
+func splitInvoicePhone(cc, phone string) (string, bool) {
+	if len(cc) < 1 || len(cc) > 4 {
+		return "", false
+	}
+	digits := onlyDigits(phone)
+	lead := strings.TrimLeft(phone, " (")
+	switch {
+	case strings.HasPrefix(lead, "+") || strings.HasPrefix(lead, "00"):
+		if !strings.HasPrefix(lead, "+") {
+			digits = strings.TrimPrefix(digits, "00")
+		}
+		if !strings.HasPrefix(digits, cc) {
+			return "", false
+		}
+		digits = digits[len(cc):]
+	case cc == "34" && len(digits) == 11 && strings.HasPrefix(digits, "34"):
+		digits = digits[2:]
+	}
+	if len(digits) < 6 || len(cc)+len(digits) > 15 {
+		return "", false
+	}
+	return digits, true
 }
 
 // invoicePhoneDisplay is the customer phone as printed on the PDF and the
@@ -105,15 +134,17 @@ func invoicePhoneDisplay(inv *Invoice) string {
 // WhatsApp goes to (invoice_send_whatsapp_v1). trusted=false means the
 // operator must confirm the destination before sending.
 //   - Stored country code (invoice_phone_country_code_v1): the operator chose
-//     it in the form, so code + national number is trusted.
+//     it in the form and the stored number is already national
+//     (splitInvoicePhone), so code + number is used as-is and trusted.
 //   - Legacy rows without a code: an explicit international form ("+"/"00")
 //     is already E.164 and trusted as-is; ES digits (34 + 9) are trusted;
 //     anything else gets the default code 34 and needs confirmation.
 func invoiceWhatsAppDestination(inv *Invoice) (digits string, trusted bool, ok bool) {
 	phone := strings.TrimSpace(deref(inv.CustomerPhone))
 	if cc := deref(inv.CustomerPhoneCountryCode); cc != "" {
-		_, _, e164, valid := normalizePhoneParts(cc, phone)
-		return e164, true, valid && e164 != ""
+		national := onlyDigits(phone)
+		e164 := cc + national
+		return e164, true, len(national) >= 6 && len(e164) <= 15
 	}
 	if strings.HasPrefix(phone, "+") || strings.HasPrefix(phone, "00") {
 		e164 := strings.TrimPrefix(onlyDigits(phone), "00")
