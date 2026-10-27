@@ -159,7 +159,7 @@ func botSpecialAdminToolDefs() []botToolDef {
 		},
 		{
 			Name:        "special_booking_propose_menus",
-			Description: "PROPONE cambiar los menús de una reserva de fecha especial conservando los abonos y el resto. NO lo aplica: envía al grupo una vista previa con el cambio y un código; se aplica cuando la misma persona escribe 'OK <código>'. No ves el código ni digas que está hecho. menus: lista de {special_date_menu_id, count, sections?:[{section_id,count}]} (ids de get_special_date_menu).",
+			Description: "PROPONE cambiar los menús de una reserva de fecha especial conservando los abonos y el resto. NO lo aplica: envía al grupo una vista previa con el cambio y un código; se aplica cuando la misma persona escribe 'OK <código>'. No ves el código ni digas que está hecho. menus: lista de {special_date_menu_id, count, sections?:[{section_id,count}]} (ids de get_special_date_menu). También RECALCULA precio y adelanto requerido con la configuración ACTUAL de la fecha (por ejemplo tras cambiar el adelanto con special_date_adelanto_set): reenvía sus MISMOS menús (los de special_booking_get). No uses special_booking_propose_adelanto para eso: solo anota pagos ya recibidos.",
 			InputSchema: botSchema(`{"type":"object","properties":{"booking_id":{"type":"integer"},"menus":{"type":"array","items":{"type":"object","properties":{"special_date_menu_id":{"type":"integer"},"count":{"type":"integer"},"sections":{"type":"array","items":{"type":"object","properties":{"section_id":{"type":"integer"},"count":{"type":"integer"}},"required":["section_id","count"]}}},"required":["special_date_menu_id","count"]}}},"required":["booking_id","menus"]}`),
 		},
 		{
