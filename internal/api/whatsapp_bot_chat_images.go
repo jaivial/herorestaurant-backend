@@ -116,6 +116,34 @@ func (r *botChatImageRegistry) find(rid int, chatJID, ref string) (botChatImage,
 	return botChatImage{}, false
 }
 
+// recent returns the images of the chat registered after `since`, newest
+// first, capped at `max`.
+//
+// Coordination id: wa_bot_group_media_context_v1
+//
+// The request and its photos travel together ("crea una factura con estos
+// datos" + the photo of the bill), and the mention is on the caption, not on
+// every photo: the photo that carries the data can be a message the mention
+// gate did not accept. The gate registers those photos here, so the turn that
+// follows can read the data the request refers to.
+func (r *botChatImageRegistry) recent(rid int, chatJID string, since time.Time, max int) []botChatImage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.prune(time.Now())
+	if max <= 0 {
+		return nil
+	}
+	list := r.chats[botChatImageKey(rid, chatJID)]
+	out := make([]botChatImage, 0, max)
+	for i := len(list) - 1; i >= 0 && len(out) < max; i-- {
+		if list[i].At.Before(since) {
+			continue
+		}
+		out = append(out, list[i])
+	}
+	return out
+}
+
 // botChatImageRef is the ref of the image a message carries ("" when none).
 func botChatImageRef(msg botWebhookMessage) string {
 	hasImage := strings.TrimSpace(msg.ImageB64) != "" || strings.Contains(strings.ToLower(msg.MediaKind), "imagen")

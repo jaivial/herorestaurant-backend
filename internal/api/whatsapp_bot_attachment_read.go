@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"strings"
+	"time"
 )
 
 // Coordination id: wa_bot_attachment_read_v1
@@ -69,5 +70,70 @@ func (s *Server) botImageTurnNote(ctx context.Context, restaurantID int, msg bot
 	if text == "" {
 		return "\n\n[" + label + ": la imagen no contiene texto legible]", false
 	}
-	return "\n\n[" + label + "]\n" + botCapDocumentText(text), true
+	note := "\n\n[" + label + "]\n" + botCapDocumentText(text)
+	// wa_bot_group_media_context_v1: the photos that came with the request.
+	// The mention is on the caption, not on every photo, so the photo that
+	// carries the data ("una factura con estos datos") can be a message the
+	// mention gate did not accept. The gate registered those photos in the
+	// chat registry, and reading the recent ones here gives the model the
+	// data the request refers to.
+	extra, _ := s.botChatImagesTurnNote(ctx, restaurantID, msg)
+	return note + extra, true
+}
+
+// botChatImagesNoteMax bounds how many other images of the chat are read
+// into one turn: the request travels with its photos, and OCR is not free.
+const botChatImagesNoteMax = 2
+
+// botChatImageRequestWindow bounds how old an image of the chat can be and
+// still be part of the request being served. The request and its photos
+// arrive together, so the photos of the last minutes are the ones it refers
+// to; older ones are left alone.
+const botChatImageRequestWindow = 5 * time.Minute
+
+// botChatImagesTurnNote reads the other recent images of this chat into the
+// turn note, each one labelled with its ref so the tools can use its bytes.
+// Coordination id: wa_bot_group_media_context_v1
+func (s *Server) botChatImagesTurnNote(ctx context.Context, restaurantID int, msg botWebhookMessage) (string, bool) {
+	chatJID := strings.TrimSpace(msg.ChatJID)
+	if chatJID == "" {
+		return "", false
+	}
+	imgs := botChatImages.recent(restaurantID, chatJID, time.Now().Add(-botChatImageRequestWindow), botChatImagesNoteMax)
+	var note strings.Builder
+	read := 0
+	for _, img := range imgs {
+		if img.MessageID == strings.TrimSpace(msg.MessageID) {
+			continue // the image of this message is already in the note
+		}
+		data := img.Data
+		if len(data) == 0 {
+			raw := s.botFetchMediaBase64(ctx, restaurantID, img.MessageID)
+			if strings.TrimSpace(raw) == "" {
+				continue
+			}
+			decoded, err := base64.StdEncoding.DecodeString(raw)
+			if err != nil {
+				continue
+			}
+			data = decoded
+		}
+		text, err := botExtractImageText(data)
+		if err != nil {
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		label := "Otra imagen de este chat"
+		if m := strings.TrimSpace(img.Mime); m != "" {
+			label += " (" + m + ")"
+		}
+		note.WriteString("\n[" + label + " (image_ref=" + img.MessageID + ")]\n")
+		note.WriteString(botCapDocumentText(text))
+		read++
+	}
+	botCheckpoint("wa_bot_group_media_context_v1", "restaurant_id=%d chat=%s candidates=%d read=%d", restaurantID, chatJID, len(imgs), read)
+	return note.String(), read > 0
 }

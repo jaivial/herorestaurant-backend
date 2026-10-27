@@ -278,12 +278,50 @@ func withBotCallTimeout(ctx context.Context, d time.Duration) context.Context {
 	return context.WithValue(ctx, botCallTimeoutKey{}, d)
 }
 
+// botCallTimeout returns the timeout of one model call. It comes from the
+// ctx when a caller sets it (the campaign builder, and any other caller that
+// needs a different budget), and from the configuration otherwise.
+//
+// wa_bot_privileged_turn_budget_v1: a privileged staff turn is a multi-step
+// backoffice job (catalogue -> describe -> write), so one model call can
+// legitimately take longer than the fixed cap. Cutting it at the cap killed
+// such a turn with budget left: prod 2026-10-27, the 4th call of the
+// "create an invoice from this photo" turn was cut at 45s with 134s of the
+// 3-minute turn left, and the invoice was never created. A privileged turn
+// may use its remaining budget; a customer turn keeps the cap, because a
+// customer waits for a chat, not for a job.
 func (s *Server) botCallTimeout(ctx context.Context) time.Duration {
 	if d, ok := ctx.Value(botCallTimeoutKey{}).(time.Duration); ok && d > 0 {
 		return d
 	}
-	if s.cfg.BotTimeout > 0 {
-		return s.cfg.BotTimeout
+	fixed := s.cfg.BotTimeout
+	if fixed <= 0 {
+		fixed = 45 * time.Second
 	}
-	return 45 * time.Second
+	if botTurnUsesRemainingBudget(ctx) {
+		if deadline, ok := ctx.Deadline(); ok {
+			if left := time.Until(deadline) - botGroundedWrapUpReserve; left > fixed {
+				return left
+			}
+		}
+	}
+	return fixed
+}
+
+// botTurnBudgetKey marks a turn whose model calls may use the turn's
+// remaining budget instead of the fixed per-call cap.
+// Coordination id: wa_bot_privileged_turn_budget_v1
+type botTurnBudgetKey struct{}
+
+// withBotTurnBudget marks the context of a turn whose model calls may use
+// the turn's remaining budget.
+func withBotTurnBudget(ctx context.Context) context.Context {
+	return context.WithValue(ctx, botTurnBudgetKey{}, true)
+}
+
+// botTurnUsesRemainingBudget reports whether the turn may spend its whole
+// remaining budget on one model call.
+func botTurnUsesRemainingBudget(ctx context.Context) bool {
+	v, _ := ctx.Value(botTurnBudgetKey{}).(bool)
+	return v
 }
