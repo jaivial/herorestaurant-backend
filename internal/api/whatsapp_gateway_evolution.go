@@ -523,7 +523,13 @@ type evoUpsertData struct {
 				ParamsJSON string `json:"paramsJson"`
 			} `json:"nativeFlowResponseMessage"`
 		} `json:"interactiveResponseMessage"`
-		AudioMessage json.RawMessage `json:"audioMessage"`
+		// The provider nests the message context INSIDE the content wrapper
+		// (evo-weai: crates/wa-client/src/fork.rs), so the mention of a
+		// photo lives in imageMessage.contextInfo. A mention nobody reads is
+		// a mention the bot never sees: the group gate would drop the photo
+		// as "not mentioned" (wa_bot_group_mention_v1). Every wrapper the
+		// bot understands therefore carries its own context.
+		AudioMessage *evoMediaWrapper `json:"audioMessage"`
 		// Base64 of the media, present because the webhook is registered
 		// with webhookBase64=true (wa_bot_audio_transcription_v1).
 		Base64 string `json:"base64"`
@@ -533,10 +539,13 @@ type evoUpsertData struct {
 		ImageMessage    struct {
 			Caption  string `json:"caption"`
 			Mimetype string `json:"mimetype"`
+			// The context of the photo (who was mentioned, what it replies
+			// to) travels inside the wrapper.
+			ContextInfo evoMessageContext `json:"contextInfo"`
 		} `json:"imageMessage"`
-		PtvMessage      json.RawMessage `json:"ptvMessage"`
-		ReactionMessage json.RawMessage `json:"reactionMessage"`
-		ProtocolMessage json.RawMessage `json:"protocolMessage"`
+		PtvMessage      *evoMediaWrapper `json:"ptvMessage"`
+		ReactionMessage json.RawMessage  `json:"reactionMessage"`
+		ProtocolMessage json.RawMessage  `json:"protocolMessage"`
 		// Baileys reports the rendered mentions in mentionText and the JID
 		// that was mentioned in contextInfo.mentionedJid.
 		MentionText []string `json:"mentionText"`
@@ -674,13 +683,26 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	// kept under the same bounded cap as the other media.
 	imageB64, imageMime := botImagePayload(strings.Contains(strings.ToLower(d.MessageType), "image"), d.Message.ImageMessage.Mimetype, d.Message.Base64)
 
+	// The caption of a photo or of a document IS the text of the message
+	// ("mira esta carta"): the provider keeps it in the wrapper, not in the
+	// body. Coordination id: wa_bot_attachment_read_v1
+	caption := strings.TrimSpace(d.Message.ImageMessage.Caption)
+	if caption == "" && d.Message.DocumentMessage != nil {
+		caption = strings.TrimSpace(d.Message.DocumentMessage.Caption)
+	}
+
 	// Coordination id: wa_bot_group_mention_v1 - a group message is a
 	// management turn, not a customer one. It is only served when the bot is
 	// explicitly mentioned; replies go to the group JID and the transcript is
 	// keyed by the group so members share one thread.
 	if botGroupIsGroupJID(jid) {
-		// The context is read from both places the provider can put it.
-		ctxInfo := d.Message.ExtendedTextMsg.ContextInfo.merge(d.Message.ContextInfo)
+		// The context is read from every place the provider can put it.
+		ctxInfo := evoGroupContext(&d)
+		// A photo or a document carries its request in the caption, not in
+		// the body: in a group the caption is the message.
+		if text == "" {
+			text = caption
+		}
 		return parseEvolutionGroupMessage(evoGroupInput{
 			Instance:  strings.TrimSpace(env.Instance),
 			GroupJID:  jid,
@@ -695,6 +717,7 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 			PushName:       pushName,
 			MessageType:    d.MessageType,
 			Text:           text,
+			Caption:        caption,
 			MentionText:    d.Message.MentionText,
 			MentionedJID:   ctxInfo.MentionedJIDs,
 			// The author of the quoted message: a reply to the bot is the
@@ -735,10 +758,6 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 	if jid == "" || !strings.HasSuffix(jid, "@s.whatsapp.net") { // drop status / unresolved LIDs
 		return waInbound{}, false
 	}
-	caption := strings.TrimSpace(d.Message.ImageMessage.Caption)
-	if caption == "" && d.Message.DocumentMessage != nil {
-		caption = strings.TrimSpace(d.Message.DocumentMessage.Caption)
-	}
 	return waInbound{
 		Sender:     strings.TrimSuffix(jid, "@s.whatsapp.net"),
 		Text:       strings.TrimSpace(text),
@@ -765,10 +784,50 @@ func (g *evolutionGateway) ParseInboundMessage(body []byte) (waInbound, bool) {
 }
 
 // evoDocumentMessage is the inline documentMessage payload we care about
-// (wa_bot_privileged_group_v1): the file name and nothing else.
+// (wa_bot_privileged_group_v1): the file name, the caption and the context
+// the provider nests inside the wrapper.
 type evoDocumentMessage struct {
 	FileName string `json:"fileName"`
 	Caption  string `json:"caption"`
+	// ContextInfo holds who was mentioned and what the document replies to.
+	// Coordination id: wa_bot_group_mention_v1
+	ContextInfo evoMessageContext `json:"contextInfo"`
+}
+
+// evoMediaWrapper is a media wrapper whose content the bot does not decode
+// (audio, video note). Only the context is read: the bytes of a media message
+// travel in the top-level base64 field, not in the wrapper.
+type evoMediaWrapper struct {
+	ContextInfo evoMessageContext `json:"contextInfo"`
+}
+
+// evoGroupContext returns the context of a message, whichever wrapper the
+// provider put it in.
+//
+// The provider nests the context INSIDE the content wrapper (evo-weai:
+// crates/wa-client/src/fork.rs): the mention of a photo lives in
+// imageMessage.contextInfo, the mention of a document in
+// documentMessage.contextInfo. Only some provider versions write it next to
+// the content instead (message.contextInfo).
+//
+// The group gate reads the mention from here, so a wrapper nobody reads is a
+// mention the bot never sees: a photo addressed to the bot in a group would
+// be dropped as "not mentioned" (wa_bot_group_mention_v1).
+//
+// The wrappers are read in a fixed order and the first one that carries
+// something wins, so the same payload always yields the same context.
+func evoGroupContext(d *evoUpsertData) evoMessageContext {
+	ctx := d.Message.ExtendedTextMsg.ContextInfo.merge(d.Message.ContextInfo)
+	if d.Message.AudioMessage != nil {
+		ctx = ctx.merge(d.Message.AudioMessage.ContextInfo)
+	}
+	if d.Message.PtvMessage != nil {
+		ctx = ctx.merge(d.Message.PtvMessage.ContextInfo)
+	}
+	if d.Message.DocumentMessage != nil {
+		ctx = ctx.merge(d.Message.DocumentMessage.ContextInfo)
+	}
+	return ctx.merge(d.Message.ImageMessage.ContextInfo)
 }
 
 // botDocumentPayload keeps the inline document base64 and its file name only
