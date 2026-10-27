@@ -95,6 +95,9 @@ func botToolDefsPrivilegedControl() []botToolDef {
 	defs = append(defs, botToolDefsCampaign()...)
 	// Coordination id: ads_html_editor_v1 - the web ads editor (/app/anuncios).
 	defs = append(defs, botToolDefsAd()...)
+	// Coordination id: wa_bot_invoice_v1 - invoices (/app/facturas): draft,
+	// PDF to the chat, send to the client, with the panel's own handlers.
+	defs = append(defs, botToolDefsInvoice()...)
 	return defs
 }
 

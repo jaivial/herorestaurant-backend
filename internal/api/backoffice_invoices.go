@@ -828,9 +828,6 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 		fromName = branding.BrandName
 	}
 
-	baseURL := "https://backoffice-dev.menustudioai.com"
-	invoiceURL := fmt.Sprintf("%s/app/facturas?tab=añadir&id=%d", baseURL, inv.ID)
-
 	// View model shared by the email summary (and the PDF).
 	data := buildInvoiceRenderData(inv, info, branding)
 	invoiceLabel := data.Number
@@ -847,12 +844,6 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 	if req.Message != nil {
 		customMessage = *req.Message
 	}
-	// Email body: app shell + per-template invoice summary (HTML inside email).
-	customHTML := ""
-	if req.MessageHTML != nil {
-		customHTML = sanitizeEmailHTML(*req.MessageHTML)
-	}
-	htmlBody := buildBackofficeInvoiceEmailHTML(data, invoiceURL, customMessage, customHTML)
 
 	// Attachment: full-fidelity PDF of the selected template.
 	var attachments []emailAttachment
@@ -866,6 +857,35 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 			Data:        pdfBytes,
 		})
 	}
+
+	// Best-effort: upload the PDF to the CDN BEFORE the email, so the email's
+	// "Ver factura" button opens the PDF. It used to point to the panel of the
+	// DEV backoffice (hardcoded), a page the customer cannot open.
+	// Coordination id: invoice_email_cta_pdf_v1
+	pdfURL := ""
+	if len(pdfBytes) > 0 && s.bunnyConfigured(r.Context(), inv.RestaurantID) {
+		objectPath := fmt.Sprintf("%d/facturas/pdf/factura_%d.pdf", inv.RestaurantID, inv.ID)
+		if uerr := s.bunnyPut(r.Context(), inv.RestaurantID, objectPath, pdfBytes, "application/pdf"); uerr == nil {
+			pdfURL = s.bunnyPullURL(r.Context(), inv.RestaurantID, objectPath)
+		} else {
+			log.Printf("[invoice-send] PDF upload failed for #%d: %v", inv.ID, uerr)
+		}
+	}
+	invoiceURL := pdfURL
+	if invoiceURL == "" {
+		baseURL := s.backofficePublicBaseURL()
+		if baseURL == "" {
+			baseURL = "https://backoffice-dev.menustudioai.com"
+		}
+		invoiceURL = fmt.Sprintf("%s/app/facturas?tab=añadir&id=%d", baseURL, inv.ID)
+	}
+
+	// Email body: app shell + per-template invoice summary (HTML inside email).
+	customHTML := ""
+	if req.MessageHTML != nil {
+		customHTML = sanitizeEmailHTML(*req.MessageHTML)
+	}
+	htmlBody := buildBackofficeInvoiceEmailHTML(data, invoiceURL, customMessage, customHTML)
 
 	// Determine from address (branding override > provider default > customer).
 	fromAddr := cfg.SMTPFromEmail
@@ -885,17 +905,6 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 			"message": "Error sending email: " + err.Error(),
 		})
 		return
-	}
-
-	// Best-effort: upload the PDF to the CDN and record its URL.
-	pdfURL := ""
-	if len(pdfBytes) > 0 && s.bunnyConfigured(r.Context(), inv.RestaurantID) {
-		objectPath := fmt.Sprintf("%d/facturas/pdf/factura_%d.pdf", inv.RestaurantID, inv.ID)
-		if uerr := s.bunnyPut(r.Context(), inv.RestaurantID, objectPath, pdfBytes, "application/pdf"); uerr == nil {
-			pdfURL = s.bunnyPullURL(r.Context(), inv.RestaurantID, objectPath)
-		} else {
-			log.Printf("[invoice-send] PDF upload failed for #%d: %v", inv.ID, uerr)
-		}
 	}
 
 	if pdfURL != "" {

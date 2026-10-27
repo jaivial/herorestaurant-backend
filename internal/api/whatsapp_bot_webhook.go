@@ -700,7 +700,10 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// extracted BEFORE the loop and appended to the last user message so the
 	// model reads the content as part of the request. On any failure the note
 	// says so verbatim — content is never invented.
-	if msg.PrivilegedGroup && botHasReadableAttachment(msg) {
+	// wa_bot_image_read_v1: a text turn of a privileged chat reads the recent
+	// images of the chat too (cached): "estos son los datos del cliente" typed
+	// after the photo of the bill still needs the bill.
+	if msg.PrivilegedGroup && (botHasReadableAttachment(msg) || botTurnHasRequestImages(restaurantID, msg)) {
 		// campaign_tools_v1: the image is also a resource the tools can use
 		// (manage_campaign action "image" uploads it to the restaurant CDN);
 		// the webhook already remembered it, the model only needs its ref.
