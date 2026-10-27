@@ -64,7 +64,11 @@ REQUIRED_STRINGS=(
   "es una operacion de gestion de cuentas"
 )
 PROBE_CMD="strings /app/backend | grep -q"
-HEALTH_CMD="curl -fsS http://127.0.0.1:8080/api/health"
+# /healthz es la ruta de salud real (hace ping a la BD). /api/health nunca
+# existio: el fallback SPA la contestaba con index.html y 200, y desde que el
+# backend devuelve 404 reales a las rutas desconocidas (#651) ese health
+# fallaba siempre y el script restauraba el contenedor anterior.
+HEALTH_CMD="curl -fsS http://127.0.0.1:8080/healthz"
 # -------------------------------------------------------------------------
 
 REF="${1:-origin/main}"
