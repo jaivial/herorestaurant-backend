@@ -236,7 +236,7 @@ func (s *Server) campaignAIRun(ctx context.Context, restaurantID int, in campaig
 	// campaign_ai_language_v1: the copy must be Spanish; mixed-language texts
 	// are corrected in place by one short call to the same model.
 	var warnings []string
-	if html != "" && !campaignAIAsksOtherLanguage(in.Messages) {
+	if html != "" && campaignAIWantsSpanishCheck(in.Messages, in.HTML, branding.BrandName) {
 		html, warnings = s.campaignAIFixLanguage(ctx, restaurantID, ref, coordID, html, branding.BrandName)
 	}
 	return campaignAIResult{Reply: reply, HTML: html, Model: ref, LanguageWarnings: warnings}, nil

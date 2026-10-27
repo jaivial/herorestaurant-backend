@@ -100,6 +100,10 @@ func campaignLanguageIssues(design, brandName string) ([]string, []string) {
 const (
 	campaignLanguageFixTimeout = 60 * time.Second
 	campaignLanguageFixMaxText = 20
+	// campaignLanguageFixReserve is left to the caller after the correction:
+	// the tools still apply and compile the design inside the same deadline.
+	campaignLanguageFixReserve = 45 * time.Second
+	campaignLanguageFixMinimum = 10 * time.Second
 )
 
 // campaignAIFixLanguage corrects the non-Spanish texts of a design with one
@@ -122,13 +126,29 @@ func (s *Server) campaignAIFixLanguage(ctx context.Context, restaurantID int, re
 	for i, raw := range flagged {
 		items[i] = item{I: i, Texto: strings.TrimSpace(html.UnescapeString(raw))}
 	}
+	// The correction is only an improvement: it must never eat the time the
+	// caller needs to save the design (campaign_design runs the main rewrite
+	// and this call inside one tool deadline).
+	timeout := campaignLanguageFixTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		left := time.Until(deadline) - campaignLanguageFixReserve
+		if left < campaignLanguageFixMinimum {
+			slog.Default().Warn("campaign.ai.language.fix_skipped", "coord_id", coordID, "terms", strings.Join(terms, ","), "reason", "deadline")
+			return design, terms
+		}
+		if left < timeout {
+			timeout = left
+		}
+	}
 	payload, _ := json.Marshal(items)
 	system := "Eres corrector de textos de marketing de un restaurante en España. Te paso textos de un email que mezclan palabras de otro idioma (" + strings.Join(terms, ", ") + "). " +
 		"Reescribe cada texto en español de España natural, con el mismo sentido y una longitud parecida. No cambies nombres propios, marcas, precios, fechas, horas ni códigos (por ejemplo, cupones). " +
 		`Responde SOLO con un array JSON de objetos {"i": número, "texto": "texto corregido"}, sin explicaciones.`
 	msgs := []botMessage{{Role: "user", Content: []botBlock{{Type: "text", Text: string(payload)}}}}
 	started := time.Now()
-	resp, err := s.botCallModelRef(withBotCallTimeout(ctx, campaignLanguageFixTimeout), restaurantID, ref, coordID, system, msgs, nil, 2000)
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	resp, err := s.botCallModelRef(withBotCallTimeout(callCtx, timeout), restaurantID, ref, coordID, system, msgs, nil, 2000)
 	if err != nil {
 		slog.Default().Warn("campaign.ai.language.fix_failed", "coord_id", coordID, "terms", strings.Join(terms, ","), "err", err.Error())
 		return design, terms
@@ -168,20 +188,72 @@ func (s *Server) campaignAIFixLanguage(ctx context.Context, restaurantID int, re
 	return out, remaining
 }
 
-// campaignOtherLanguageRe spots a request for copy in another language ("en
-// inglés", "in English", "tradúcelo", "bilingüe"): then the design is meant
-// to carry those words and the Spanish correction must not run.
-var campaignOtherLanguageRe = regexp.MustCompile(`(?i)ingl[eé]s|english|portugu[eé]s|franc[eé]s|alem[aá]n|italiano|catal[aá]n|valenci[aà]|idioma|biling[uü]e|tradu[cz]`)
+// Language requests in the user's words. A target is "en/al/a/in/to <idioma>"
+// ("hazlo en inglés", "tradúcelo al inglés", "in English"); merely naming a
+// language does not count ("hay palabras en inglés, ponlo en español" asks for
+// Spanish). Bilingual requests keep both languages on purpose. The Valencian
+// forms need the accent ("valencià"): "en Valencia" is the city.
+const campaignOtherLanguages = `ingl[eé]s|english|portugu[eé]s|portuguese|franc[eé]s|french|alem[aá]n|german|italiano|italian|catal[aá]n|valenciano|valenci[àá]|gallego|euskera`
 
-// campaignAIAsksOtherLanguage reports whether the latest user message of the
-// conversation asks for another language.
-func campaignAIAsksOtherLanguage(msgs []campaignAIChatMessage) bool {
+var (
+	campaignOtherTargetRe   = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:en|al|a|in|to)\s+(?:` + campaignOtherLanguages + `)`)
+	campaignSpanishTargetRe = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:en|al|a|in|to)\s+(?:espa[nñ]ol|castellano|spanish)`)
+	campaignBilingualRe     = regexp.MustCompile(`(?i)biling[uü]e|bilingual|(?:dos|ambos|varios)\s+idiomas|(?:espa[nñ]ol|castellano)\s+(?:y|e)\s+(?:en\s+)?(?:` + campaignOtherLanguages + `)|(?:` + campaignOtherLanguages + `)\s+y\s+(?:en\s+)?(?:espa[nñ]ol|castellano)`)
+)
+
+// campaignAILanguageRequest reads the newest user message that asks for a
+// language: "other" (another language or bilingual), "spanish", or "" when
+// no message asks for one.
+func campaignAILanguageRequest(msgs []campaignAIChatMessage) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if strings.EqualFold(strings.TrimSpace(msgs[i].Role), "user") {
-			return campaignOtherLanguageRe.MatchString(msgs[i].Content)
+		if !strings.EqualFold(strings.TrimSpace(msgs[i].Role), "user") {
+			continue
+		}
+		text := msgs[i].Content
+		switch {
+		case campaignBilingualRe.MatchString(text):
+			return "other"
+		case campaignSpanishTargetRe.MatchString(text):
+			return "spanish"
+		case campaignOtherTargetRe.MatchString(text):
+			return "other"
 		}
 	}
-	return false
+	return ""
+}
+
+// campaignDesignMostlyForeign reports whether a design's copy is mostly in
+// another language: then it was made that way on purpose (an English or a
+// bilingual campaign) and an unrelated edit must not translate it.
+func campaignDesignMostlyForeign(design, brandName string) bool {
+	brand := map[string]bool{}
+	for _, w := range campaignWords(brandName) {
+		brand[w] = true
+	}
+	total, foreign := 0, 0
+	for _, m := range campaignTextNodeRe.FindAllStringSubmatch(design, -1) {
+		if len(campaignWords(html.UnescapeString(m[1]))) < 3 {
+			continue
+		}
+		total++
+		if len(campaignForeignTerms(m[1], brand)) > 0 {
+			foreign++
+		}
+	}
+	return foreign >= 2 && foreign*100 >= total*35
+}
+
+// campaignAIWantsSpanishCheck decides whether the Spanish correction runs on
+// a rewrite: an explicit request wins (newest first); without one, a design
+// that already came in mostly in another language is left alone.
+func campaignAIWantsSpanishCheck(msgs []campaignAIChatMessage, inputDesign, brandName string) bool {
+	switch campaignAILanguageRequest(msgs) {
+	case "spanish":
+		return true
+	case "other":
+		return false
+	}
+	return !campaignDesignMostlyForeign(inputDesign, brandName)
 }
 
 // campaignLanguageWarning words the leftovers for the people reading them.
