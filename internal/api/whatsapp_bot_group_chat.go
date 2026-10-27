@@ -536,13 +536,29 @@ func parseEvolutionGroupMessage(in evoGroupInput) (waInbound, bool) {
 		// request to the model, so it needs no mention. It is passed on with
 		// Mentioned=false and the webhook decides (scope, actor, code); any
 		// other unmentioned message is still dropped here.
-		if _, shaped := botSpecialNormalizeOK(in.Text); !shaped {
+		_, shaped := botSpecialNormalizeOK(in.Text)
+		switch {
+		case shaped:
+			mentioned = false
+		case strings.TrimSpace(in.ImageB64) == "" && strings.TrimSpace(in.DocumentB64) == "":
 			botGroupMessageAudit(0, groupJID, participant, "skipped_not_mentioned")
 			botCheckpoint("wa_bot_group_mention_v1", "detail own_jids=%d mentions=%d quoted=%d",
 				len(in.OwnJIDs), len(mentions), len(quotedFrom))
 			return waInbound{}, false
+		default:
+			// wa_bot_group_media_context_v1: a media message without a
+			// mention is not a turn, but it can still be the DATA of the
+			// request that comes with it: the photo of the bill travels with
+			// the caption that mentions the bot, and the mention is on THAT
+			// photo, not on every one.
+			//
+			// It is passed on so the webhook can keep it as the context of a
+			// privileged group (the turn that follows reads it); in any other
+			// group the gate of the webhook drops it as before.
+			botCheckpoint("wa_bot_group_mention_v1", "detail own_jids=%d mentions=%d quoted=%d kept_as_media_context=true",
+				len(in.OwnJIDs), len(mentions), len(quotedFrom))
+			mentioned = false
 		}
-		mentioned = false
 	}
 
 	// The LLM must read the request, not the mention chip: strip it.
