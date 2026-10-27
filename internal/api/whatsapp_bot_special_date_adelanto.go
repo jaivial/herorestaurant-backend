@@ -107,6 +107,6 @@ func botSpecialDateAdelantoSet(s *Server, ctx context.Context, rid int, p map[st
 	return map[string]any{
 		"date": date, "title": title, "adelanto_por_persona": amount, "ambito": scope,
 		"menus": menus, "secciones": sections,
-		"nota": "Solo cambia la configuración de la fecha: las reservas ya creadas conservan el adelanto con el que se hicieron.",
+		"nota": "Solo cambia la configuración de la fecha: las reservas ya creadas conservan el adelanto con el que se hicieron. Para recalcular una reserva ya hecha: special_booking_propose_menus con sus MISMOS menús (los de special_booking_get).",
 	}, nil
 }
