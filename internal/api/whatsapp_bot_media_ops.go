@@ -42,8 +42,11 @@ type botMediaOpFunc func(s *Server, ctx context.Context, rid int, p map[string]a
 var botMediaUploadOps = map[string]botMediaOpFunc{
 	"booking_document": botMediaUploadBookingDocument,
 	"special_section":  botMediaUploadSpecialSection,
-	"vino":             botMediaUploadVino,
-	"ads":              botMediaUploadAd,
+	// Coordination id: forky_bot_special_full_v1
+	"special_menu":      botMediaUploadSpecialMenu,
+	"special_date_menu": botMediaUploadSpecialDateMenu,
+	"vino":              botMediaUploadVino,
+	"ads":               botMediaUploadAd,
 }
 
 var botMediaAIOps = map[string]botMediaOpFunc{
@@ -72,9 +75,9 @@ func botMediaUploadOp(s *Server, ctx context.Context, rid int, p map[string]any)
 	kind := botPanelString(p, "kind")
 	run, ok := botMediaUploadOps[kind]
 	if !ok {
-		return nil, errors.New("kind de media_upload no soportado (usa booking_document, special_section, vino o ads)")
+		return nil, errors.New("kind de media_upload no soportado (usa booking_document, special_section, special_menu, special_date_menu, vino o ads)")
 	}
-	payload, err := botMediaPayload(p, true)
+	payload, err := s.botMediaSource(ctx, rid, p, true)
 	if err != nil {
 		return nil, err
 	}
@@ -90,12 +93,46 @@ func botMediaAIOp(s *Server, ctx context.Context, rid int, p map[string]any) (an
 	if !ok {
 		return nil, errors.New("kind de media_ai no soportado (usa vino, vino_cutout, comida, section_dish, menu_preview, slider, ads_enhance o ads_generate)")
 	}
-	payload, err := botMediaPayload(p, false)
+	payload, err := s.botMediaSource(ctx, rid, p, false)
 	if err != nil {
 		return nil, err
 	}
 	botCheckpoint("wa_bot_panel_media_v1", "restaurant_id=%d op=media_ai kind=%s bytes=%d", rid, kind, len(payload))
 	return run(s, ctx, rid, p, payload)
+}
+
+// botMediaSource resolves the bytes of a media op. A model can not type an
+// image, so besides inline data_base64 it reads the image from where the user
+// sent it: a Forky chat attachment (attachment = its ref) or an image of the
+// WhatsApp chat (image_ref; chat_jid is always set server-side by
+// panel_change, never by the model). Coordination id: forky_bot_special_full_v1
+func (s *Server) botMediaSource(ctx context.Context, rid int, p map[string]any, required bool) ([]byte, error) {
+	if botPanelString(p, "data_base64") != "" {
+		return botMediaPayload(p, required)
+	}
+	_, hasRef := p["image_ref"]
+	var (
+		img campaignImageSource
+		err error
+	)
+	switch {
+	case botPanelString(p, "attachment") != "":
+		img, err = s.campaignAttachmentImage(ctx, rid, botPanelString(p, "attachment"))
+	case botPanelString(p, "chat_jid") != "" && (required || hasRef):
+		img, err = s.botChatImageSource(ctx, rid, botWebhookMessage{ChatJID: botPanelString(p, "chat_jid")}, botPanelString(p, "image_ref"))
+	default:
+		return botMediaPayload(p, required)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if botPanelString(p, "filename") == "" {
+		p["filename"] = img.Name
+	}
+	if botPanelString(p, "mime_type") == "" {
+		p["mime_type"] = img.ContentType
+	}
+	return img.Data, nil
 }
 
 // botMediaPayload decodes data_base64 fail-safe under the size cap; a missing
@@ -219,6 +256,39 @@ func botMediaUploadSpecialSection(s *Server, ctx context.Context, rid int, p map
 		RawImage:     payload,
 	})
 	return map[string]any{"menu_id": menuID, "section_id": sectionID, "image_state": boSpecialSectionImageStateUploading}, nil
+}
+
+// botMediaUploadSpecialMenu stores the main image of a special menu through
+// saveSpecialMenuImage, the domain call of its upload route.
+func botMediaUploadSpecialMenu(s *Server, ctx context.Context, rid int, p map[string]any, payload []byte) (any, error) {
+	menuID := botPanelInt64(p, "menu_id")
+	if menuID <= 0 {
+		return nil, errors.New("menu_id es obligatorio")
+	}
+	contentType, err := botMediaImagePayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	url, err := s.saveSpecialMenuImage(ctx, rid, menuID, payload, botPanelString(p, "filename"), contentType)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"menu_id": menuID, "image_url": url}, nil
+}
+
+// botMediaUploadSpecialDateMenu stores the image of a custom special-date menu
+// through saveSpecialDateMenuImage and returns the URL to save as its
+// custom_image_url.
+func botMediaUploadSpecialDateMenu(s *Server, ctx context.Context, rid int, p map[string]any, payload []byte) (any, error) {
+	contentType, err := botMediaImagePayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	url, err := s.saveSpecialDateMenuImage(ctx, rid, payload, botPanelString(p, "filename"), contentType)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"url": url, "siguiente_paso": "usa esta url como custom_image_url del menú en admin_patch_config_special_dates"}, nil
 }
 
 // botMediaUploadVino stores the photo through UploadWineImageV2 (timestamped

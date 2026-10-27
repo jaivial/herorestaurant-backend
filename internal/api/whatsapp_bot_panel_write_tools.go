@@ -124,7 +124,9 @@ func botPanelChangeToolDefs() []botToolDef {
 		{
 			Name: "panel_change",
 			Description: "PROPONE un cambio del panel de administración (una operación del backoffice) para aplicarlo desde el chat. NO lo aplica: guarda la propuesta exacta y envía la vista previa con un código; solo se aplica cuando la persona que lo pidió escribe 'OK <código>' en este chat. " +
-				"operation: nombre de la operación tal cual aparece en admin_catalog, o una operación directa (beverage_set, beverage_create, beverage_delete, weekday_set, booking_document_delete, media_upload, media_ai, editor_preview_set, table_position_set, ad_schedule_check, site_builder_call, assistant_tool). " +
+				"operation: nombre de la operación tal cual aparece en admin_catalog, o una operación directa (beverage_set, beverage_create, beverage_delete, weekday_set, booking_document_delete, media_upload, media_ai, editor_preview_set, table_position_set, ad_schedule_check, site_builder_call, assistant_tool, special_date_adelanto_set). " +
+				"Para cambiar el ADELANTO por persona de una FECHA ESPECIAL usa operation=special_date_adelanto_set con params {date, amount, special_date_menu_id y section_id opcionales para limitarlo}; no parchees las secciones del menú (ahí no se guarda el adelanto). " +
+				"Imágenes (media_upload / media_ai): la imagen es la que enviaron a ESTE chat (params.image_ref de la nota [Imagen disponible…]; vacío = la más reciente); nunca escribas data_base64. Kinds de menús y fechas especiales: special_menu (imagen principal; menu_id), special_section (menu_id + section_id), special_date_menu (menú personalizado de una fecha: devuelve la url para custom_image_url). " +
 				"path_params, query y body: los mismos argumentos que indica admin_describe; params: solo para operaciones directas. " +
 				"IMPORTANTE: propón UN cambio cada vez. Si el cambio depende de otro (por ejemplo, abrir un día y luego crear la reserva), espera a que el primero se aplique con OK y solo entonces propón el siguiente. " +
 				"Las lecturas NO van por aquí: usa admin_call o staff_domain_read.",
@@ -250,6 +252,9 @@ func (s *Server) botToolPanelChange(ctx context.Context, restaurantID int, msg b
 		botCheckpoint("wa_bot_panel_write_v1", "restaurant_id=%d denied=actor", restaurantID)
 		return botJSON(map[string]any{"error": "no autorizado para proponer cambios del panel desde este chat"}), nil
 	}
+	if a.Operation == "media_upload" || a.Operation == "media_ai" {
+		botPanelBindChatImage(restaurantID, msg, &a)
+	}
 	if _, direct := botPanelDirectOps[a.Operation]; !direct {
 		op, err := s.botPanelVisibleOp(ctx, restaurantID, a.Operation)
 		if err != nil {
@@ -284,6 +289,24 @@ func (s *Server) botToolPanelChange(ctx context.Context, restaurantID int, msg b
 	}
 	botCheckpoint("wa_bot_panel_write_v1", "restaurant_id=%d proposed op=%s", restaurantID, a.Operation)
 	return out, nil
+}
+
+// botPanelBindChatImage makes the images of THIS chat the source of a media
+// op: chat_jid is always the requester's chat (a model value is overwritten)
+// and an empty image_ref is pinned to the newest image now, so the approved
+// proposal applies the image the requester saw, not a later one.
+// Coordination id: forky_bot_special_full_v1
+func botPanelBindChatImage(rid int, msg botWebhookMessage, a *botPanelArgs) {
+	if a.Params == nil {
+		a.Params = map[string]any{}
+	}
+	a.Params["chat_jid"] = strings.TrimSpace(msg.ChatJID)
+	if botPanelString(a.Params, "data_base64") != "" || botPanelString(a.Params, "attachment") != "" || botPanelString(a.Params, "image_ref") != "" {
+		return
+	}
+	if img, ok := botChatImages.find(rid, msg.ChatJID, ""); ok {
+		a.Params["image_ref"] = img.MessageID
+	}
 }
 
 // botPanelPreview is the exact change summary the requester confirms: the

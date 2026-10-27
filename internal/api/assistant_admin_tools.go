@@ -73,7 +73,9 @@ type forkyAdminOp struct {
 	Write       bool     `json:"write"`
 	Risk        string   `json:"risk"`
 	Description string   `json:"description"`
-	Screens     []string `json:"screens"`
+	// Body is the documented request contract (forky_bot_special_full_v1).
+	Body    string   `json:"body,omitempty"`
+	Screens []string `json:"screens"`
 }
 
 var (
@@ -184,6 +186,11 @@ var forkyAdminAliasGroups = [][]string{
 	{"precio", "price"},
 	{"cliente", "customer"},
 	{"usuario", "user"},
+	// forky_bot_special_full_v1: special menus and special (festive) dates.
+	{"especial", "special"},
+	{"fecha", "date"},
+	{"seccion", "section"},
+	{"imagen", "image"},
 	{"informe", "report"},
 }
 
@@ -299,6 +306,10 @@ func (s *Server) assistantAdminDescribe(ctx context.Context, _ int, input json.R
 		d["path_params"] = forkyPathParams(op.Path)
 		d["screens"] = op.Screens
 		d["body"] = map[string]bool{"json": op.Write}
+		if op.Body != "" {
+			// forky_bot_special_full_v1: the exact contract, never guessed.
+			d["body"] = op.Body
+		}
 		out = append(out, d)
 	}
 	log.Printf("forky.admin.describe coord=%s n=%d unknown=%d", forkyAdminCoord, len(out), len(unknown))
@@ -664,7 +675,7 @@ var assistantAdminTools = []assistantTool{
 	},
 	{
 		Name: "admin_describe", Section: assistantSessionSection, BackofficeOnly: true,
-		Description: "Devuelve el detalle de 1..10 operaciones de admin_catalog (método, ruta, parámetros de ruta, si escribe, riesgo y pantallas donde se usa).",
+		Description: "Devuelve el detalle de 1..10 operaciones de admin_catalog (método, ruta, parámetros de ruta, body con sus campos exactos cuando está documentado, si escribe, riesgo y pantallas donde se usa). Lee el body ANTES de escribir: no inventes campos.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"name":{"type":"string"}}}`),
 		Handler: func(s *Server, ctx context.Context, rid int, in json.RawMessage) (string, error) {
 			return s.assistantAdminDescribe(ctx, rid, in)

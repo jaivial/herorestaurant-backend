@@ -150,6 +150,13 @@ func (s *Server) Routes() http.Handler {
 	r.Use(middleware.Compress(5))
 	websiteBuilder := newWebsiteBuilder(s)
 
+	// The public site has one canonical HTTPS host. Resolve legacy routes here
+	// as well as in the SPA fallback so the bare host needs only one 301 even
+	// when the old URL also changes path or a menu later gets an SEO slug.
+	if s.cfg.StaticDir != "" {
+		r.Use(canonicalPublicHost(readSEORoutesManifest(os.DirFS(s.cfg.StaticDir))))
+	}
+
 	// Restaurant website virtual host: `<slug>.<app_base_url>` → instatic.
 	// Runs before path routing so restaurant sites never hit admin/API routes.
 	// Non-restaurant hosts fall through to normal routing.
@@ -805,6 +812,8 @@ func (s *Server) Routes() http.Handler {
 		// Coordination id: special_date_stats_v1
 		r.With(s.requireBOSession, reservasGate).Get("/config/special-dates/stats", s.handleBOSpecialDateStats)
 		r.With(s.requireBOSession, reservasGate).Post("/config/special-dates", s.handleBOSpecialDatesSave)
+		// Coordination id: forky_bot_special_full_v1 - partial (merge) save.
+		r.With(s.requireBOSession, reservasGate).Patch("/config/special-dates", s.handleBOSpecialDatesPatch)
 		r.With(s.requireBOSession, reservasGate).Post("/config/special-dates/menu-image", s.handleBOSpecialDateMenuImageUpload)
 
 		// By-hour client split configuration (toggle + per-hour percentages).
@@ -1822,6 +1831,60 @@ func readSEORoutesManifest(fsys fs.FS) *seoRoutesManifest {
 		return nil
 	}
 	return &manifest
+}
+
+func canonicalPublicHost(manifest *seoRoutesManifest) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				next.ServeHTTP(w, r)
+				return
+			}
+			host := strings.ToLower(stripPort(firstForwardedHost(r)))
+			forwardedProto := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]))
+			https := r.TLS != nil || forwardedProto == "https"
+			canonicalHost := "www.alqueriavillacarmen.com"
+			indexTarget := ""
+			if r.URL.Path == "/index.html" {
+				indexTarget = "/"
+			} else if r.URL.Path == "/en/index.html" {
+				indexTarget = "/en"
+			}
+			if indexTarget != "" {
+				seoRedirect(w, r, "https://www.alqueriavillacarmen.com"+indexTarget)
+				return
+			}
+			if (host != "alqueriavillacarmen.com" && host != canonicalHost) || (host == canonicalHost && https) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			target := r.URL.EscapedPath()
+			if target == "" {
+				target = "/"
+			}
+			if manifest != nil {
+				for _, gonePath := range manifest.GonePaths {
+					if r.URL.Path == gonePath {
+						next.ServeHTTP(w, r)
+						return
+					}
+				}
+				path := r.URL.Path
+				localePrefix := ""
+				if path == "/en" || strings.HasPrefix(path, "/en/") {
+					localePrefix = "/en"
+					path = strings.TrimPrefix(path, "/en")
+				}
+				if legacyTarget, ok := manifest.Redirects[path]; ok {
+					target = localePrefix + legacyTarget
+				} else if menuTarget, ok := seoMenuTarget(manifest, r.URL.Path); ok {
+					target = menuTarget
+				}
+			}
+			seoRedirect(w, r, "https://www.alqueriavillacarmen.com"+target)
+			return
+		})
+	}
 }
 
 func seoRedirect(w http.ResponseWriter, r *http.Request, target string) {

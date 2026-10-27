@@ -185,6 +185,11 @@ const campaignWAMaxCTA = 2
 // pre-booking link first, then menu links, then the rest in order) and the
 // remaining ones, which travel as "label: url" lines in the same message.
 func campaignPickCTAs(buttons []string) (cta, rest []string) {
+	return campaignPickButtons(buttons, campaignWAMaxCTA)
+}
+
+// campaignPickButtons is campaignPickCTAs with the ceiling as a parameter.
+func campaignPickButtons(buttons []string, max int) (cta, rest []string) {
 	rank := func(b string) int {
 		_, u, _ := strings.Cut(b, "|")
 		switch {
@@ -198,9 +203,9 @@ func campaignPickCTAs(buttons []string) (cta, rest []string) {
 		return 3
 	}
 	picked := map[int]bool{}
-	for r := 0; r <= 3 && len(cta) < campaignWAMaxCTA; r++ {
+	for r := 0; r <= 3 && len(cta) < max; r++ {
 		for i, b := range buttons {
-			if len(cta) < campaignWAMaxCTA && !picked[i] && rank(b) == r {
+			if len(cta) < max && !picked[i] && rank(b) == r {
 				cta = append(cta, b)
 				picked[i] = true
 			}
@@ -215,12 +220,16 @@ func campaignPickCTAs(buttons []string) (cta, rest []string) {
 }
 
 // deliverCampaignWhatsAppUnified sends ONE interactive message holding the whole
-// campaign: header image, text and its buttons. On Evolution the buttons are
-// reply buttons (the two main links + "Darme de baja", nothing left as a link
-// in the text: campaign_whatsapp_reply_buttons_v1); otherwise, or when that
-// send fails, up to 2 CTA URL buttons with the opt-out link as a line.
+// campaign: header image, text and its buttons. On evo-weai every button is a
+// URL button (up to 3 links + "Darme de baja": campaign_whatsapp_link_buttons_v1);
+// when the gateway refuses that set, reply buttons (the two main links +
+// "Darme de baja": campaign_whatsapp_reply_buttons_v1); otherwise, or when
+// that send fails, up to 2 CTA URL buttons with the opt-out link as a line.
 func (s *Server) deliverCampaignWhatsAppUnified(ctx context.Context, restaurantID int, gw WhatsAppGateway, coordID string, campaignID int64, num, brandName, markdown string, extraChoices []string) error {
 	text, image, buttons := campaignUnifiedWhatsApp(markdown, brandName)
+	if s.campaignSendLinkButtons(ctx, gw, coordID, campaignID, num, text, image, buttons, extraChoices) {
+		return nil
+	}
 	cta, rest := campaignPickCTAs(buttons)
 	if s.campaignSendReplyButtons(ctx, gw, coordID, campaignID, num, text, image, cta) {
 		return nil
