@@ -38,6 +38,7 @@ type Invoice struct {
 	CustomerDniCif            *string `json:"customer_dni_cif"`
 	CustomerDniCifType        *string `json:"customer_dni_cif_type"`
 	CustomerPhone             *string `json:"customer_phone"`
+	CustomerPhoneCountryCode  *string `json:"customer_phone_country_code"` // invoice_phone_country_code_v1; nil on legacy rows
 	CustomerAddressStreet     *string `json:"customer_address_street"`
 	CustomerAddressNumber     *string `json:"customer_address_number"`
 	CustomerAddressPostalCode *string `json:"customer_address_postal_code"`
@@ -85,6 +86,7 @@ type InvoiceInput struct {
 	CustomerDniCif            *string `json:"customer_dni_cif"`
 	CustomerDniCifType        *string `json:"customer_dni_cif_type"`
 	CustomerPhone             *string `json:"customer_phone"`
+	CustomerPhoneCountryCode  *string `json:"customer_phone_country_code"`
 	CustomerAddressStreet     *string `json:"customer_address_street"`
 	CustomerAddressNumber     *string `json:"customer_address_number"`
 	CustomerAddressPostalCode *string `json:"customer_address_postal_code"`
@@ -145,13 +147,14 @@ type InvoiceListParams struct {
 }
 
 type ReservationSearchResult struct {
-	ID              int    `json:"id"`
-	CustomerName    string `json:"customer_name"`
-	ContactEmail    string `json:"contact_email"`
-	ContactPhone    string `json:"contact_phone"`
-	ReservationDate string `json:"reservation_date"`
-	ReservationTime string `json:"reservation_time"`
-	PartySize       int    `json:"party_size"`
+	ID                      int    `json:"id"`
+	CustomerName            string `json:"customer_name"`
+	ContactEmail            string `json:"contact_email"`
+	ContactPhone            string `json:"contact_phone"`
+	ContactPhoneCountryCode string `json:"contact_phone_country_code"`
+	ReservationDate         string `json:"reservation_date"`
+	ReservationTime         string `json:"reservation_time"`
+	PartySize               int    `json:"party_size"`
 }
 
 type Restaurant struct {
@@ -278,7 +281,7 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 	query := `
 		SELECT 
 			id, restaurant_id, invoice_number,
-			customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone,
+			customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
 			amount, payment_method, account_image_url, invoice_date, payment_date,
@@ -304,7 +307,7 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 		var invoiceNumber, dniCifType sql.NullString
 		err := rows.Scan(
 			&inv.ID, &inv.RestaurantID, &invoiceNumber,
-			&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &dniCifType, &inv.CustomerPhone,
+			&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &dniCifType, &inv.CustomerPhone, &inv.CustomerPhoneCountryCode,
 			&inv.CustomerAddressStreet, &inv.CustomerAddressNumber, &inv.CustomerAddressPostalCode,
 			&inv.CustomerAddressCity, &inv.CustomerAddressProvince, &inv.CustomerAddressCountry,
 			&inv.Amount, &inv.PaymentMethod, &inv.AccountImageURL, &inv.InvoiceDate, &inv.PaymentDate,
@@ -364,7 +367,7 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 	err = s.db.QueryRowContext(r.Context(), `
 		SELECT 
 			id, restaurant_id, invoice_number,
-			customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone,
+			customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
 			amount, payment_method, account_image_url, invoice_date, payment_date,
@@ -376,7 +379,7 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 		WHERE id = ? AND restaurant_id = ?
 	`, invoiceID, a.ActiveRestaurantID).Scan(
 		&inv.ID, &inv.RestaurantID, &invoiceNumber,
-		&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &dniCifType, &inv.CustomerPhone,
+		&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &dniCifType, &inv.CustomerPhone, &inv.CustomerPhoneCountryCode,
 		&inv.CustomerAddressStreet, &inv.CustomerAddressNumber, &inv.CustomerAddressPostalCode,
 		&inv.CustomerAddressCity, &inv.CustomerAddressProvince, &inv.CustomerAddressCountry,
 		&inv.Amount, &inv.PaymentMethod, &inv.AccountImageURL, &inv.InvoiceDate, &inv.PaymentDate,
@@ -435,6 +438,10 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	normalizeInvoiceDates(&input)
+	if !normalizeInvoicePhone(&input) {
+		httpx.WriteError(w, http.StatusBadRequest, "Teléfono del cliente inválido")
+		return
+	}
 
 	// Validate status
 	switch input.Status {
@@ -481,7 +488,7 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 
 	result, err := tx.ExecContext(r.Context(), `
 		INSERT INTO invoices (
-			restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone,
+			restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
 			amount, payment_method, account_image_url, invoice_date, payment_date,
@@ -490,9 +497,9 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 			pdf_template, currency, subtotal, iva_rate, iva_amount, total,
 			discount_type, discount_value, discount_amount, discount_reason,
 			due_date, internal_notes, category, tags, deposit_type, deposit_amount
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, a.ActiveRestaurantID, number,
-		input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerDniCifType, input.CustomerPhone,
+		input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerDniCifType, input.CustomerPhone, input.CustomerPhoneCountryCode,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
 		input.Amount, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
@@ -557,6 +564,10 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	normalizeInvoiceDates(&input)
+	if !normalizeInvoicePhone(&input) {
+		httpx.WriteError(w, http.StatusBadRequest, "Teléfono del cliente inválido")
+		return
+	}
 
 	template := normalizePdfTemplate(input.PdfTemplate)
 	currency := normalizeCurrency(input.Currency)
@@ -593,7 +604,7 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 
 	res, err := tx.ExecContext(r.Context(), `
 		UPDATE invoices SET
-			invoice_number = ?, customer_name = ?, customer_surname = ?, customer_email = ?, customer_dni_cif = ?, customer_dni_cif_type = ?, customer_phone = ?,
+			invoice_number = ?, customer_name = ?, customer_surname = ?, customer_email = ?, customer_dni_cif = ?, customer_dni_cif_type = ?, customer_phone = ?, customer_phone_country_code = ?,
 			customer_address_street = ?, customer_address_number = ?, customer_address_postal_code = ?,
 			customer_address_city = ?, customer_address_province = ?, customer_address_country = ?,
 			amount = ?, payment_method = ?, account_image_url = ?, invoice_date = ?, payment_date = ?,
@@ -603,7 +614,7 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 			discount_type = ?, discount_value = ?, discount_amount = ?, discount_reason = ?,
 			due_date = ?, internal_notes = ?, category = ?, tags = ?, deposit_type = ?, deposit_amount = ?
 		WHERE id = ? AND restaurant_id = ?
-	`, number, input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerDniCifType, input.CustomerPhone,
+	`, number, input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerDniCifType, input.CustomerPhone, input.CustomerPhoneCountryCode,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
 		input.Amount, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
@@ -696,7 +707,7 @@ func (s *Server) handleBOInvoicesSearchReservation(w http.ResponseWriter, r *htt
 
 	// Build query
 	query := `
-		SELECT id, customer_name, contact_email, contact_phone, reservation_date, reservation_time, party_size
+		SELECT id, customer_name, contact_email, contact_phone, contact_phone_country_code, reservation_date, reservation_time, party_size
 		FROM bookings
 		WHERE restaurant_id = ? AND status != 'cancelled'
 	`
@@ -745,7 +756,7 @@ func (s *Server) handleBOInvoicesSearchReservation(w http.ResponseWriter, r *htt
 	for rows.Next() {
 		var res ReservationSearchResult
 		err := rows.Scan(
-			&res.ID, &res.CustomerName, &res.ContactEmail, &res.ContactPhone,
+			&res.ID, &res.CustomerName, &res.ContactEmail, &res.ContactPhone, &res.ContactPhoneCountryCode,
 			&res.ReservationDate, &res.ReservationTime, &res.PartySize,
 		)
 		if err != nil {
@@ -946,12 +957,14 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 //     rejected with code=phone_changed (the old attempt is preserved; the
 //     operator starts a new intent for the new number) so a retry can never
 //     deliver to a different number than the original send.
-//   - Ambiguous phone: the destination is trusted without confirmation only
-//     in explicit international form ("+"/"00" prefix) or when the digits
-//     already carry the ES country code (34 followed by 9 digits). Anything
-//     else is normalised with the default cc 34 but requires
-//     confirm_phone=true; otherwise the response is code=phone_confirm_needed
-//     with phone_normalized so the UI asks the operator to confirm first.
+//   - Ambiguous phone: the destination is trusted without confirmation when
+//     the invoice stores its country code (invoice_phone_country_code_v1),
+//     or for legacy rows in explicit international form ("+"/"00" prefix,
+//     used as-is) or when the digits already carry the ES country code (34
+//     followed by 9 digits). Anything else is normalised with the default cc
+//     34 but requires confirm_phone=true; otherwise the response is
+//     code=phone_confirm_needed with phone_normalized so the UI asks the
+//     operator to confirm first (invoiceWhatsAppDestination).
 //   - Text fidelity: the operator's text goes through the tracked bot path;
 //     if it contains URLs, wa_link_buttons_v1 converts them to interactive
 //     buttons (the delivered format differs from the raw text and the UI
@@ -1009,22 +1022,10 @@ func (s *Server) handleBOInvoiceSendWhatsApp(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Phone analysis: explicit international forms ("+" / "00" / full digits
-	// >9) are trusted as-is; a national-form number gets the default cc 34
-	// but is flagged ambiguous so the operator confirms it first.
-	rawPhone := deref(inv.CustomerPhone)
-	explicitIntl := strings.HasPrefix(rawPhone, "+") || strings.HasPrefix(rawPhone, "00")
-	// Normalise the explicit "00" international prefix to "+" before the
-	// digits-only parse so it is not double-prefixed with the default cc.
-	if strings.HasPrefix(rawPhone, "00") {
-		rawPhone = "+" + strings.TrimPrefix(rawPhone, "00")
-	}
-	digits := onlyDigits(rawPhone)
-	// Trusted without confirmation: explicit "+"/"00" international form, or
-	// digits already carrying the ES country code (34 + 9 digits). A bare
-	// national number (or any other shape) requires operator confirmation.
-	ambiguous := !explicitIntl && !(strings.HasPrefix(digits, "34") && len(digits) == 11)
-	_, _, cleanPhone, ok := normalizePhoneParts("", rawPhone)
+	// Phone analysis (invoiceWhatsAppDestination): a stored country code or an
+	// explicit international form is trusted; a bare national number gets the
+	// default cc 34 but the operator confirms it first.
+	cleanPhone, trusted, ok := invoiceWhatsAppDestination(inv)
 	if !ok || cleanPhone == "" {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -1033,7 +1034,7 @@ func (s *Server) handleBOInvoiceSendWhatsApp(w http.ResponseWriter, r *http.Requ
 		})
 		return
 	}
-	if ambiguous && !req.ConfirmPhone {
+	if !trusted && !req.ConfirmPhone {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success":          false,
 			"code":             "phone_confirm_needed",
@@ -1163,13 +1164,12 @@ func (s *Server) handleBOInvoiceSendWhatsApp(w http.ResponseWriter, r *http.Requ
 		if inv.CustomerSurname != nil && strings.TrimSpace(*inv.CustomerSurname) != "" {
 			customerName = strings.TrimSpace(customerName + " " + *inv.CustomerSurname)
 		}
-		total := inv.Amount
-		if inv.Total != nil {
-			total = *inv.Total
-		}
 		text := strings.TrimSpace(deref(req.Message))
 		if text == "" {
-			text = fmt.Sprintf("Hola %s, le enviamos la factura %s por importe de %.2f €.\n\nQuedamos a su disposición para cualquier consulta.\n\n%s", customerName, invoiceLabel, total, brandName)
+			// Default text (also the automatic send of the form's "Enviar",
+			// invoice_whatsapp_autosend_v1): the total reads exactly as on the
+			// attached PDF (data.Total, invoice_amount_consistency_v1).
+			text = fmt.Sprintf("Hola %s, le enviamos la factura %s por importe de %s.\n\nQuedamos a su disposición para cualquier consulta.\n\n%s", customerName, invoiceLabel, data.Total, brandName)
 		}
 		// The claim already persisted inflight BEFORE this provider call. A
 		// provider error is uncertain (timeout/5xx/network cut may still have
@@ -1274,6 +1274,29 @@ func (s *Server) handleBOInvoiceSendWhatsApp(w http.ResponseWriter, r *http.Requ
 		"text_status":      attempt.TextStatus,
 		"pdf_status":       attempt.PdfStatus,
 		"phone_normalized": "+" + cleanPhone,
+	})
+}
+
+// handleBOInvoicesWhatsAppStatus tells the facturas screen whether the active
+// restaurant's own WhatsApp is connected, so the send flows include the
+// WhatsApp message with the PDF attached only when it is
+// (invoice_whatsapp_autosend_v1). Same definition as Ajustes → WhatsApp
+// (whatsappConnectionSnapshot, live provider refresh) but reachable with
+// facturas access and without the QR/pairing details of the members route.
+func (s *Server) handleBOInvoicesWhatsAppStatus(w http.ResponseWriter, r *http.Request) {
+	a, ok := boAuthFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	snapshot, err := s.whatsappConnectionSnapshot(r.Context(), a.ActiveRestaurantID, true)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error checking WhatsApp connection: "+err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"connected": anyToBool(snapshot["connected"]),
 	})
 }
 

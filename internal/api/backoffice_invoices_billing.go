@@ -64,6 +64,98 @@ func normalizeInvoiceDates(input *InvoiceInput) {
 	input.DueDate = sqlDatePtr(input.DueDate)
 }
 
+// normalizeInvoicePhone stores the customer phone as the national number
+// plus its country calling code (invoice_phone_country_code_v1); false means
+// the pair cannot form a valid E.164 number (splitInvoicePhone). Without a
+// code (CSV import, legacy clients) the number is kept as typed and the code
+// stays NULL. An empty phone clears both.
+func normalizeInvoicePhone(input *InvoiceInput) bool {
+	phone := strings.TrimSpace(deref(input.CustomerPhone))
+	if phone == "" {
+		input.CustomerPhone, input.CustomerPhoneCountryCode = nil, nil
+		return true
+	}
+	input.CustomerPhone = &phone
+	cc := onlyDigits(deref(input.CustomerPhoneCountryCode))
+	if cc == "" {
+		input.CustomerPhoneCountryCode = nil
+		return true
+	}
+	national, ok := splitInvoicePhone(cc, phone)
+	if !ok {
+		return false
+	}
+	input.CustomerPhone, input.CustomerPhoneCountryCode = &national, &cc
+	return true
+}
+
+// splitInvoicePhone returns the national digits of phone for the chosen
+// country code. A number typed in international form ("+"/"00") must carry
+// that same code, which is removed; a Spanish number typed as 34 + 9 digits
+// loses its 34. Any other number is already national and is never stripped
+// of digits that merely look like the code (Italian mobiles start with 39).
+// E.164 bounds: 6+ national digits, 15 digits in total.
+func splitInvoicePhone(cc, phone string) (string, bool) {
+	if len(cc) < 1 || len(cc) > 4 {
+		return "", false
+	}
+	digits := onlyDigits(phone)
+	lead := strings.TrimLeft(phone, " (")
+	switch {
+	case strings.HasPrefix(lead, "+") || strings.HasPrefix(lead, "00"):
+		if !strings.HasPrefix(lead, "+") {
+			digits = strings.TrimPrefix(digits, "00")
+		}
+		if !strings.HasPrefix(digits, cc) {
+			return "", false
+		}
+		digits = digits[len(cc):]
+	case cc == "34" && len(digits) == 11 && strings.HasPrefix(digits, "34"):
+		digits = digits[2:]
+	}
+	if len(digits) < 6 || len(cc)+len(digits) > 15 {
+		return "", false
+	}
+	return digits, true
+}
+
+// invoicePhoneDisplay is the customer phone as printed on the PDF and the
+// email: "+34 600123123" when the country code is stored, the stored text
+// otherwise (invoice_phone_country_code_v1).
+func invoicePhoneDisplay(inv *Invoice) string {
+	phone := strings.TrimSpace(deref(inv.CustomerPhone))
+	if cc := deref(inv.CustomerPhoneCountryCode); cc != "" && phone != "" {
+		return "+" + cc + " " + phone
+	}
+	return phone
+}
+
+// invoiceWhatsAppDestination resolves the E.164 digits (no "+") the invoice
+// WhatsApp goes to (invoice_send_whatsapp_v1). trusted=false means the
+// operator must confirm the destination before sending.
+//   - Stored country code (invoice_phone_country_code_v1): the operator chose
+//     it in the form and the stored number is already national
+//     (splitInvoicePhone), so code + number is used as-is and trusted.
+//   - Legacy rows without a code: an explicit international form ("+"/"00")
+//     is already E.164 and trusted as-is; ES digits (34 + 9) are trusted;
+//     anything else gets the default code 34 and needs confirmation.
+func invoiceWhatsAppDestination(inv *Invoice) (digits string, trusted bool, ok bool) {
+	phone := strings.TrimSpace(deref(inv.CustomerPhone))
+	if cc := deref(inv.CustomerPhoneCountryCode); cc != "" {
+		national := onlyDigits(phone)
+		e164 := cc + national
+		return e164, true, len(national) >= 6 && len(e164) <= 15
+	}
+	if strings.HasPrefix(phone, "+") || strings.HasPrefix(phone, "00") {
+		e164 := strings.TrimPrefix(onlyDigits(phone), "00")
+		return e164, true, len(e164) >= 8 && len(e164) <= 15
+	}
+	digits = onlyDigits(phone)
+	trusted = strings.HasPrefix(digits, "34") && len(digits) == 11
+	_, _, e164, valid := normalizePhoneParts("", phone)
+	return e164, trusted, valid && e164 != ""
+}
+
 // computedLineItem enriches an input line with iva_amount and total.
 type computedLineItem struct {
 	InvoiceLineItemInput
@@ -226,6 +318,7 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 	var inv Invoice
 	var (
 		invoiceNumber, customerSurname, customerDniCif, customerDniCifType, customerPhone             sql.NullString
+		customerPhoneCC                                                                               sql.NullString
 		addrStreet, addrNumber, addrPostal, addrCity, addrProvince, addrCountry                       sql.NullString
 		paymentMethod, accountImageURL, paymentDate, reservationDate, reservationCustomerName, pdfURL sql.NullString
 		reservationID, reservationPartySize                                                           sql.NullInt64
@@ -234,7 +327,7 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
-			id, restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone,
+			id, restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
 			customer_address_street, customer_address_number, customer_address_postal_code,
 			customer_address_city, customer_address_province, customer_address_country,
 			amount, payment_method, account_image_url, invoice_date, payment_date,
@@ -246,7 +339,7 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 		FROM invoices
 		WHERE id = ? AND restaurant_id = ?
 	`, invoiceID, restaurantID).Scan(
-		&inv.ID, &inv.RestaurantID, &invoiceNumber, &inv.CustomerName, &customerSurname, &inv.CustomerEmail, &customerDniCif, &customerDniCifType, &customerPhone,
+		&inv.ID, &inv.RestaurantID, &invoiceNumber, &inv.CustomerName, &customerSurname, &inv.CustomerEmail, &customerDniCif, &customerDniCifType, &customerPhone, &customerPhoneCC,
 		&addrStreet, &addrNumber, &addrPostal, &addrCity, &addrProvince, &addrCountry,
 		&inv.Amount, &paymentMethod, &accountImageURL, &inv.InvoiceDate, &paymentDate,
 		&inv.Status, &inv.IsReservation, &reservationID, &reservationDate, &reservationCustomerName, &reservationPartySize,
@@ -267,6 +360,7 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 	inv.CustomerDniCif = nullS(customerDniCif)
 	inv.CustomerDniCifType = nullS(customerDniCifType)
 	inv.CustomerPhone = nullS(customerPhone)
+	inv.CustomerPhoneCountryCode = nullS(customerPhoneCC)
 	inv.CustomerAddressStreet = nullS(addrStreet)
 	inv.CustomerAddressNumber = nullS(addrNumber)
 	inv.CustomerAddressPostalCode = nullS(addrPostal)
