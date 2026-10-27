@@ -343,13 +343,31 @@ func TestEvoParseInboundMessage_DocumentPayload(t *testing.T) {
 	if !in.Mentioned {
 		t.Error("mentioned group message must carry Mentioned")
 	}
-	// And without a mention the message is rejected, document or not.
+	// Without a mention it is not a turn. A MEDIA message is still passed on
+	// (Mentioned=false) because it can be the data of the request that comes
+	// with it: the webhook keeps it as the context of a privileged group and
+	// drops it everywhere else (wa_bot_group_media_context_v1). A text
+	// message without a mention is still rejected right here.
 	noMention := fmt.Sprintf(`{"event":"messages.upsert","instance":"nv_1","data":{
 		"key":{"remoteJid":"120363040916666666@g.us","id":"m3","participant":"34600111222@s.whatsapp.net"},
 		"messageType":"documentMessage",
 		"message":{"documentMessage":{"fileName":"lista.xlsx"},"base64":"%s"}}}`, b64)
-	if in, ok := (&evolutionGateway{ownJIDs: []string{"346999888777"}}).ParseInboundMessage([]byte(noMention)); ok {
-		t.Errorf("unmentioned group document must be dropped, got %+v", in)
+	in2, ok := (&evolutionGateway{ownJIDs: []string{"346999888777"}}).ParseInboundMessage([]byte(noMention))
+	if !ok {
+		t.Fatal("an unmentioned group document must reach the gate as context")
+	}
+	if in2.Mentioned {
+		t.Error("an unmentioned group document must not be marked as mentioned")
+	}
+	if in2.DocumentB64 != b64 {
+		t.Errorf("the document must be kept as context: b64len=%d", len(in2.DocumentB64))
+	}
+	noMentionText := fmt.Sprintf(`{"event":"messages.upsert","instance":"nv_1","data":{
+		"key":{"remoteJid":"120363040916666666@g.us","id":"m4","participant":"34600111222@s.whatsapp.net"},
+		"messageType":"extendedTextMessage",
+		"message":{"extendedTextMessage":{"text":"hola"}}}}`)
+	if in, ok := (&evolutionGateway{ownJIDs: []string{"346999888777"}}).ParseInboundMessage([]byte(noMentionText)); ok {
+		t.Errorf("unmentioned group text must be dropped, got %+v", in)
 	}
 
 	// Oversized document payload is dropped (11 MB bound).
