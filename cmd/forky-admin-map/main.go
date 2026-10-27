@@ -32,7 +32,10 @@ type op struct {
 	Write       bool     `json:"write"`
 	Risk        string   `json:"risk"`
 	Description string   `json:"description"`
-	Screens     []string `json:"screens"`
+	// Body is the exact request contract (fields, types, rules) when documented
+	// in bodiesEs; admin_describe returns it so writes are not guessed.
+	Body    string   `json:"body,omitempty"`
+	Screens []string `json:"screens"`
 }
 
 var (
@@ -240,7 +243,7 @@ func scanRoutes(lines []string, mount string, taken map[string]bool, sources map
 			}
 			o := op{Method: method, Path: path, Handler: handler, Gates: gates, Section: sectionOf(gates),
 				RolesAdmin: contains(gates, "rolesAdminGate"), Write: method != "GET", Risk: riskOf(method, path),
-				Description: desc, Screens: screensOf(path, sources)}
+				Description: desc, Body: bodiesEs[method+" "+path], Screens: screensOf(path, sources)}
 			if o.Description == "" {
 				o.Description = fmt.Sprintf("%s %s (%s)", method, path, handler)
 			}

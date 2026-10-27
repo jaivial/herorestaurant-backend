@@ -193,6 +193,8 @@ func renderBotSystemPrompt(d botPromptData) string {
 		// wa_bot_special_date_adelanto_v1: prod 2026-10-27 17:07 the model patched
 		// the catalogue section (no adelanto there) and exhausted the turn.
 		b.WriteString("- ADELANTO DE UNA FECHA ESPECIAL (la configuración de la fecha, no el abono de una reserva): `panel_change` con operation=`special_date_adelanto_set` y params {date, amount en €/persona; special_date_menu_id y section_id solo para limitarlo a un menú o sección}, en UNA llamada. NO uses admin_patch_group_menus_v2_*: las secciones del menú no guardan el adelanto. Las reservas ya creadas conservan su adelanto.\n")
+		// forky_bot_special_full_v1: the rest of both editors.
+		b.WriteString("- MENÚS ESPECIALES y FECHAS ESPECIALES (todo lo demás del editor): el body exacto de cada operación sale en `admin_describe` (no inventes campos) y se aplica con `panel_change`. Fecha especial: `admin_patch_config_special_dates` con date y SOLO lo que cambia (nunca el POST, que la reemplaza entera). Menú especial: secciones, principales, CTA, visibilidad, SEO y publicación con sus `admin_*_group_menus_v2_*`. Imágenes enviadas a este chat: `panel_change` media_upload con kind special_menu, special_section o special_date_menu.\n")
 		b.WriteString("- En este grupo las reservas se identifican por booking_id o por nombre/fecha con `staff_bookings_overview`, NUNCA por el teléfono de quien escribe. `staff_bookings_overview(booking_id)` devuelve también el menú de grupo asignado, los principales y los extras de la reserva.\n")
 		if d.DirectWrites {
 			// wa_bot_privileged_direct_writes_v1

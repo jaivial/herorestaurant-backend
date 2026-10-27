@@ -111,7 +111,11 @@ func (s *Server) loadSpecialDateMenuSections(ctx context.Context, restaurantID i
 
 // specialDateSectionAdelanto is the adelanto the backoffice sets for one section.
 type specialDateSectionAdelanto struct {
-	SectionID      int64    `json:"section_id"`
+	SectionID int64 `json:"section_id"`
+	// ID accepts the section exactly as GET /config/special-dates returns it
+	// (sections[].id), so a read can be saved back verbatim
+	// (forky_bot_special_full_v1).
+	ID             int64    `json:"id,omitempty"`
 	AdelantoAmount *float64 `json:"adelanto_amount"`
 	// Coordination id: special_date_section_online_v1 - nil keeps the
 	// section bookable online (default).
@@ -122,6 +126,9 @@ type specialDateSectionAdelanto struct {
 // special_date_menus row, keeping only sections that belong to its menu.
 func saveSpecialDateMenuSections(ctx context.Context, tx *sql.Tx, restaurantID int, specialDateMenuID, menuID int64, sections []specialDateSectionAdelanto) error {
 	for _, sec := range sections {
+		if sec.SectionID <= 0 {
+			sec.SectionID = sec.ID
+		}
 		if sec.SectionID <= 0 {
 			continue
 		}

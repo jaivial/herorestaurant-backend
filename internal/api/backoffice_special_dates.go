@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"path"
@@ -873,23 +874,34 @@ func (s *Server) handleBOSpecialDateMenuImageUpload(w http.ResponseWriter, r *ht
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Imagen invalida"})
 		return
 	}
-	normalized, err := specialmenuimage.NormalizeToWebPWithLimit(r.Context(), raw, filename, ct, specialDateMenuMaxImageBytes)
+	url, err := s.saveSpecialDateMenuImage(r.Context(), a.ActiveRestaurantID, raw, filename, ct)
 	if err != nil {
-		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "No se pudo procesar la imagen"})
+		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
-	objectPath := path.Join(strconv.Itoa(a.ActiveRestaurantID), "pictures", "special-dates", strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)+".webp")
-	if err := s.bunnyPut(r.Context(), a.ActiveRestaurantID, objectPath, normalized, "image/webp"); err != nil {
-		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo subir la imagen"})
-		return
+	httpx.WriteJSON(w, 200, map[string]any{"success": true, "url": url})
+}
+
+// saveSpecialDateMenuImage stores the image of a custom special-date menu and
+// returns its pull URL (the custom_image_url of the menu). Shared by the
+// upload route and the media ops of the bot and Forky
+// (forky_bot_special_full_v1).
+func (s *Server) saveSpecialDateMenuImage(ctx context.Context, rid int, raw []byte, filename, ct string) (string, error) {
+	normalized, err := specialmenuimage.NormalizeToWebPWithLimit(ctx, raw, filename, ct, specialDateMenuMaxImageBytes)
+	if err != nil {
+		return "", errors.New("No se pudo procesar la imagen")
 	}
-	url := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath)
+	objectPath := path.Join(strconv.Itoa(rid), "pictures", "special-dates", strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)+".webp")
+	if err := s.bunnyPut(ctx, rid, objectPath, normalized, "image/webp"); err != nil {
+		return "", errors.New("No se pudo subir la imagen")
+	}
+	url := s.bunnyPullURL(ctx, rid, objectPath)
 	slog.Default().Info("special_date.menu_image.uploaded",
 		"coord_id", "special_dates_v1",
-		"restaurant_id", a.ActiveRestaurantID,
+		"restaurant_id", rid,
 		"url", url,
 	)
-	httpx.WriteJSON(w, 200, map[string]any{"success": true, "url": url})
+	return url, nil
 }
 
 // specialDateMenuMaxImageBytes matches the campaign budget so editors behave

@@ -808,6 +808,8 @@ func (s *Server) Routes() http.Handler {
 		// Coordination id: special_date_stats_v1
 		r.With(s.requireBOSession, reservasGate).Get("/config/special-dates/stats", s.handleBOSpecialDateStats)
 		r.With(s.requireBOSession, reservasGate).Post("/config/special-dates", s.handleBOSpecialDatesSave)
+		// Coordination id: forky_bot_special_full_v1 - partial (merge) save.
+		r.With(s.requireBOSession, reservasGate).Patch("/config/special-dates", s.handleBOSpecialDatesPatch)
 		r.With(s.requireBOSession, reservasGate).Post("/config/special-dates/menu-image", s.handleBOSpecialDateMenuImageUpload)
 
 		// By-hour client split configuration (toggle + per-hour percentages).
