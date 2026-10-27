@@ -58,22 +58,37 @@ type campaignDesignRequest struct {
 		Title string `json:"title"`
 	} `json:"compile,omitempty"`
 	CoordID string `json:"coord_id,omitempty"`
+	// HTML ads (ads_html_editor_v1): ad_compile pages; ad_default/ad_kind
+	// kind; ad_sync/ad_kind design; ad_convert the legacy ad and website.
+	Pages    []campaignDesignPage `json:"pages,omitempty"`
+	Kind     string               `json:"kind,omitempty"`
+	AdDesign *boAdDesign          `json:"design,omitempty"`
+	Ad       *boAd                `json:"ad,omitempty"`
+	Website  string               `json:"website,omitempty"`
+}
+
+// campaignDesignPage is one page of an HTML ad: the design in, the sanitized
+// design and its compiled CSS out (ads_html_editor_v1).
+type campaignDesignPage struct {
+	HTML string `json:"html"`
+	CSS  string `json:"css,omitempty"`
 }
 
 // campaignDesignResult is the engine answer. Layers/design/created/blocks are
 // passed through to the model untouched.
 type campaignDesignResult struct {
-	Success          bool            `json:"success"`
-	Message          string          `json:"message"`
-	HTML             string          `json:"html"`
-	Layers           json.RawMessage `json:"layers"`
-	Design           json.RawMessage `json:"design"`
-	Created          json.RawMessage `json:"created"`
-	EmailHTML        string          `json:"email_html"`
-	WhatsAppMarkdown string          `json:"whatsapp_markdown"`
-	Source           string          `json:"source"`
-	Blocks           json.RawMessage `json:"blocks"`
-	StyleGroups      json.RawMessage `json:"style_groups"`
+	Success          bool                 `json:"success"`
+	Message          string               `json:"message"`
+	HTML             string               `json:"html"`
+	Layers           json.RawMessage      `json:"layers"`
+	Design           json.RawMessage      `json:"design"`
+	Created          json.RawMessage      `json:"created"`
+	EmailHTML        string               `json:"email_html"`
+	WhatsAppMarkdown string               `json:"whatsapp_markdown"`
+	Source           string               `json:"source"`
+	Blocks           json.RawMessage      `json:"blocks"`
+	StyleGroups      json.RawMessage      `json:"style_groups"`
+	Pages            []campaignDesignPage `json:"pages"`
 }
 
 // campaignDesignRefusal is an engine answer the model must read (an invalid

@@ -776,6 +776,10 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, adsGate).Post("/config/ads/{adId}/image/upload", s.handleBOAdImageUpload)
 		r.With(s.requireBOSession, adsGate).Post("/config/ads/{adId}/image/enhance", s.handleBOAdImageEnhance)
 		r.With(s.requireBOSession, adsGate).Post("/config/ads/{adId}/image/generate", s.handleBOAdImageGenerate)
+		// ads_html_editor_v1: design AI of the ad editor.
+		r.With(s.requireBOSession, adsGate).Get("/anuncios/context", s.handleBOAdContext)
+		r.With(s.requireBOSession, adsGate).Get("/anuncios/ai/models", s.handleBOAdAIModels)
+		r.With(s.requireBOSession, adsGate).Post("/anuncios/ai/chat", s.handleBOAdAIChat)
 
 		// Campanas: markdown broadcasts over email + WhatsApp (coord id camp-*).
 		campaignsGate := s.requireBOCapability(boCapabilityCampanas)
@@ -1059,6 +1063,8 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/pdf", s.handleBOInvoicePdf)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/upload-image", s.handleBOInvoiceUploadImage)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/search-reservation", s.handleBOInvoicesSearchReservation)
+		// invoice_whatsapp_autosend_v1: is the restaurant's WhatsApp connected (facturas send flows).
+		r.With(s.requireBOSession, facturasGate).Get("/invoices/whatsapp-status", s.handleBOInvoicesWhatsAppStatus)
 		r.With(s.requireBOSession, facturasGate).Get("/invoices/{id}/comments", s.handleBOInvoiceCommentsList)
 		r.With(s.requireBOSession, facturasGate).Post("/invoices/{id}/comments", s.handleBOInvoiceCommentCreate)
 		r.With(s.requireBOSession, facturasGate).Put("/invoices/{id}/comments/{commentId}", s.handleBOInvoiceCommentUpdate)

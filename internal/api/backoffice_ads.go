@@ -154,13 +154,15 @@ type boAdScheduleRange struct {
 }
 
 type boAd struct {
-	ID                       int64                     `json:"id"`
-	Name                     string                    `json:"name"`
-	Active                   bool                      `json:"active"`
-	Content                  []boAdContentElement      `json:"content"`
-	CTAs                     []boAdCTA                 `json:"ctas"`
-	Layout                   *boAdLayout               `json:"layout,omitempty"`
-	Canvas                   *boAdCanvas               `json:"canvas,omitempty"`
+	ID      int64                `json:"id"`
+	Name    string               `json:"name"`
+	Active  bool                 `json:"active"`
+	Content []boAdContentElement `json:"content"`
+	CTAs    []boAdCTA            `json:"ctas"`
+	Layout  *boAdLayout          `json:"layout,omitempty"`
+	Canvas  *boAdCanvas          `json:"canvas,omitempty"`
+	// HTML design (ads_html_editor_v1); nil for ads still in the legacy format.
+	Design                   *boAdDesign               `json:"design,omitempty"`
 	ImageGenerationStatus    boAdImageGenerationStatus `json:"image_generation_status,omitempty"`
 	ImageGenerationStartedAt string                    `json:"image_generation_started_at,omitempty"`
 	StartsAt                 *string                   `json:"starts_at,omitempty"`
@@ -171,14 +173,17 @@ type boAd struct {
 }
 
 type boAdInput struct {
-	Name     string               `json:"name"`
-	Active   bool                 `json:"active"`
-	Content  []boAdContentElement `json:"content"`
-	CTAs     []boAdCTA            `json:"ctas"`
-	Layout   *boAdLayout          `json:"layout,omitempty"`
-	Canvas   *boAdCanvas          `json:"canvas,omitempty"`
-	StartsAt *string              `json:"starts_at,omitempty"`
-	EndsAt   *string              `json:"ends_at,omitempty"`
+	Name    string               `json:"name"`
+	Active  bool                 `json:"active"`
+	Content []boAdContentElement `json:"content"`
+	CTAs    []boAdCTA            `json:"ctas"`
+	Layout  *boAdLayout          `json:"layout,omitempty"`
+	Canvas  *boAdCanvas          `json:"canvas,omitempty"`
+	// HTML design (ads_html_editor_v1). Absent = keep the stored one: the
+	// legacy writers (WhatsApp tools, panel replays) never send it.
+	Design   *boAdDesign `json:"design,omitempty"`
+	StartsAt *string     `json:"starts_at,omitempty"`
+	EndsAt   *string     `json:"ends_at,omitempty"`
 }
 
 func normalizeBOAdContent(input []boAdContentElement) ([]boAdContentElement, error) {
@@ -499,11 +504,11 @@ func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (bo
 	var ad boAd
 	var active int
 	var startsAt, endsAt sql.NullTime
-	var contentRaw, ctasRaw, layoutRaw, canvasRaw []byte
+	var contentRaw, ctasRaw, layoutRaw, canvasRaw, designRaw []byte
 	var statusRaw sql.NullString
 	var startedAt, createdAt, updatedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
-		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &layoutRaw, &canvasRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json, design_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
+		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &layoutRaw, &canvasRaw, &designRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
 	if err != nil {
 		return ad, err
 	}
@@ -540,6 +545,13 @@ func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (bo
 		}
 		ad.Canvas = &canvas
 	}
+	if len(designRaw) > 0 && string(designRaw) != "null" {
+		var design boAdDesign
+		if err := json.Unmarshal(designRaw, &design); err != nil {
+			return ad, err
+		}
+		ad.Design = &design
+	}
 	if createdAt.Valid {
 		ad.CreatedAt = createdAt.Time.UTC().Format(time.RFC3339)
 	}
@@ -574,6 +586,11 @@ func validateBOAdInput(input boAdInput) (boAdInput, error) {
 	if err := validateBOAdCanvas(input.Canvas); err != nil {
 		return input, err
 	}
+	design, err := normalizeBOAdDesign(input.Design)
+	if err != nil {
+		return input, err
+	}
+	input.Design = design
 	if (input.StartsAt == nil) != (input.EndsAt == nil) {
 		return input, errors.New("start and end dates must be provided together")
 	}
@@ -665,16 +682,41 @@ func (s *Server) updateBOAd(ctx context.Context, restaurantID int, adID int64, i
 	if normalized.Canvas != nil {
 		canvasRaw, _ = json.Marshal(normalized.Canvas)
 	}
+	// ads_html_editor_v1: the HTML of every page is sanitized and its CSS
+	// compiled by the backoffice design engine before it is stored.
+	var designRaw []byte
+	if normalized.Design != nil {
+		if err := s.compileBOAdDesign(ctx, normalized.Design); err != nil {
+			var refusal campaignDesignRefusal
+			if errors.As(err, &refusal) {
+				return boAd{}, &boAdValidationError{err}
+			}
+			return boAd{}, err
+		}
+		designRaw, _ = json.Marshal(normalized.Design)
+	}
 	if adID <= 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw)
+		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json, design_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw, designRaw)
 		if err != nil {
 			return boAd{}, err
 		}
 		id, _ := res.LastInsertId()
 		return s.readBOAd(ctx, restaurantID, id)
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ?, canvas_json = ? WHERE id = ? AND restaurant_id = ?`, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw, adID, restaurantID); err != nil {
+	query := `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ?, canvas_json = ? WHERE id = ? AND restaurant_id = ?`
+	args := []any{normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw, adID, restaurantID}
+	if designRaw != nil {
+		query = `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ?, canvas_json = ?, design_json = ? WHERE id = ? AND restaurant_id = ?`
+		args = []any{normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw, designRaw, adID, restaurantID}
+	}
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
 		return boAd{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := s.readBOAd(ctx, restaurantID, adID); err != nil {
+			return boAd{}, err
+		}
 	}
 	return s.readBOAd(ctx, restaurantID, adID)
 }
@@ -685,7 +727,7 @@ func (s *Server) handleBOAdsCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 401, "Unauthorized")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, adDesignMaxPayload)
 	input := boAdInput{Name: "Nuevo anuncio", Content: []boAdContentElement{}, CTAs: []boAdCTA{}}
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -717,7 +759,7 @@ func (s *Server) handleBOAdsUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid ad id"})
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, adDesignMaxPayload)
 	var input boAdInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid JSON body"})
@@ -915,6 +957,12 @@ func (s *Server) handleBOAdImageUpload(w http.ResponseWriter, r *http.Request) {
 	url, err := s.saveBOAdImage(r.Context(), a.ActiveRestaurantID, adID, raw, filename, ct, "upload")
 	if err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	// ads_html_editor_v1: an image for the HTML design is only stored on the
+	// CDN; the editor places its URL in the design itself.
+	if r.URL.Query().Get("target") == "design" {
+		httpx.WriteJSON(w, 200, map[string]any{"success": true, "url": url})
 		return
 	}
 	if err := s.persistBOAdImageURL(r.Context(), a.ActiveRestaurantID, adID, url); err != nil {

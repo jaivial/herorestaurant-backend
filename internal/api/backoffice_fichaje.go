@@ -2196,7 +2196,7 @@ func (s *Server) handleWSAdSave(a boAuth, reqID string, adID int64, payload json
 		broadcastFailure("validation", "Missing ad payload")
 		return
 	}
-	if len(payload) > 256*1024 {
+	if len(payload) > adDesignMaxPayload {
 		broadcastFailure("validation", "Ad payload too large")
 		return
 	}
