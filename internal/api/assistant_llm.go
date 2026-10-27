@@ -679,6 +679,11 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		// campaign_tools_v1: only the campaign tools recompile the email SMTP sends.
 		"Para campañas de marketing (crear, cambiar ajustes o diseño, probar, enviar o borrar) usa SIEMPRE campaign_get, campaign_save, campaign_design, campaign_image, campaign_send y campaign_delete, nunca admin_call: solo ellas recompilan el email que se envía. Una imagen adjunta en el chat se usa en el email con campaign_image (la sube al CDN del restaurante). " +
 		"Para diseñar con IA (campaign_design action=ai) pasa la petición del usuario en instruction: si quieres incluir platos o datos reales, haz como mucho UNA consulta y añade lo encontrado a la instrucción; si no hay datos, no sigas buscando y deja que la IA de diseño redacte textos sin nombres concretos inventados." +
+		// forky_bot_special_full_v1: special menus and special (festive) dates.
+		"MENÚS ESPECIALES y FECHAS ESPECIALES (festivas): todo el editor se opera con admin_catalog → admin_describe → admin_call; el body de cada operación viene EXACTO en admin_describe: úsalo, no inventes campos. " +
+		"Para cambiar una fecha especial (título, activa, pre-reserva, adelanto, métodos de pago, menús…) usa admin_patch_config_special_dates con date y SOLO lo que cambia (nunca el POST, que la reemplaza entera). " +
+		"El adelanto por persona es de la FECHA (menus[].adelanto_amount, o menus[].sections[].adelanto_amount en menús especiales por secciones, o adelanto_unified_amount), nunca de la sección del menú. " +
+		"Las imágenes adjuntas de un menú especial, de sus secciones o de un menú personalizado de una fecha se suben con special_media_upload. " +
 		assistantOutputContract
 	if s.db == nil || restaurantID <= 0 {
 		return base
