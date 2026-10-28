@@ -28,7 +28,7 @@ func botTestBillLines() []invoiceToolLine {
 
 func botTestCustomer() *invoiceToolCustomer {
 	return &invoiceToolCustomer{
-		Name: "Ricart Recambios S.L.U.", Email: "rrp1967@gmail.com", TaxID: "B98942270",
+		Name: "Ricart Recambios S.L.U.", Email: "rrp1967@gmail.com", TaxID: "B98942279",
 		Street: "Av. Reina Sofía", Number: "4-1-2", PostalCode: "46900", City: "Torrent", Phone: "650 49 33 35",
 	}
 }
@@ -115,14 +115,33 @@ func TestBotInvoiceBuildInput_RefusesLinesThatDoNotAddUpToTheBill(t *testing.T) 
 	}
 }
 
+// A CIF read off a photo can be one digit off: the one of the prod note
+// (B98942270) fails its check digit and is asked for instead of printed. A
+// foreign VAT number is not held to the Spanish formats.
+func TestBotInvoiceBuildInput_RefusesACIFThatFailsItsCheckDigit(t *testing.T) {
+	c := botTestCustomer()
+	c.TaxID = "B 98942270"
+	_, err := botInvoiceBuildInput(invoiceToolArgs{Action: "create_draft", Customer: c, Lines: botTestBillLines()}, nil)
+	if err == nil || !strings.Contains(err.Error(), "B98942270 no es válido") {
+		t.Fatalf("a CIF with a wrong check digit must be refused, got %v", err)
+	}
+	for _, ok := range []struct{ id, country string }{{"ESB98942279", "España"}, {"12345678Z", ""}, {"FR40303265045", "Francia"}} {
+		c = botTestCustomer()
+		c.TaxID, c.Country = ok.id, ok.country
+		if _, err := botInvoiceBuildInput(invoiceToolArgs{Action: "create_draft", Customer: c, Lines: botTestBillLines()}, nil); err != nil {
+			t.Errorf("tax id %s (%q) must be accepted, got %v", ok.id, ok.country, err)
+		}
+	}
+}
+
 // The client's fiscal fields land where the PDF and the send system read them.
 func TestBotInvoiceBuildInput_MapsTheClient(t *testing.T) {
 	in, err := botInvoiceBuildInput(invoiceToolArgs{Action: "create_draft", Customer: botTestCustomer(), Lines: botTestBillLines()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deref(in.CustomerDniCif) != "B98942270" || deref(in.CustomerDniCifType) != "cif" {
-		t.Errorf("tax id=%q type=%q, want B98942270 as CIF", deref(in.CustomerDniCif), deref(in.CustomerDniCifType))
+	if deref(in.CustomerDniCif) != "B98942279" || deref(in.CustomerDniCifType) != "cif" {
+		t.Errorf("tax id=%q type=%q, want B98942279 as CIF", deref(in.CustomerDniCif), deref(in.CustomerDniCifType))
 	}
 	// A national number gets the Spanish code: WhatsApp sends then go out
 	// without the "confirm the number" stop.
@@ -132,7 +151,7 @@ func TestBotInvoiceBuildInput_MapsTheClient(t *testing.T) {
 	if in.Status != "borrador" || in.InvoiceDate == "" {
 		t.Errorf("status=%q date=%q, want a dated draft", in.Status, in.InvoiceDate)
 	}
-	for id, want := range map[string]string{"12345678Z": "dni", "X1234567L": "dni", "B98942270": "cif"} {
+	for id, want := range map[string]string{"12345678Z": "dni", "X1234567L": "dni", "B98942279": "cif"} {
 		if got := botInvoiceTaxIDType(id, ""); got != want {
 			t.Errorf("tax id %s: type %q, want %q", id, got, want)
 		}
@@ -194,7 +213,7 @@ func TestBotInvoiceApply_CreateAndCorrectTheDraft_DB(t *testing.T) {
 		Scan(&id, &number, &status, &stTotal, &cif, &cc); err != nil {
 		t.Fatalf("the draft was not stored: %v", err)
 	}
-	if status != "borrador" || number == "" || math.Abs(stTotal-185) >= 0.005 || cif != "B98942270" || cc != "34" {
+	if status != "borrador" || number == "" || math.Abs(stTotal-185) >= 0.005 || cif != "B98942279" || cc != "34" {
 		t.Fatalf("stored draft: number=%q status=%q total=%.2f cif=%q cc=%q", number, status, stTotal, cif, cc)
 	}
 
