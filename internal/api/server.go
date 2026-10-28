@@ -41,6 +41,8 @@ type Server struct {
 	whatsappConnectionHub *boWhatsAppConnectionHub
 	boCache               *cache.Cache // bo_redis_cache_v1
 	rateMu                sync.Mutex
+	spaOnce               sync.Once
+	spaHandler            http.Handler
 	// fichajeMu serializes check-then-write clock operations. The active-entry
 	// invariant must hold even when two kiosk requests arrive concurrently.
 	fichajeMu sync.Mutex
@@ -1339,7 +1341,7 @@ func (s *Server) Routes() http.Handler {
 	// endpoints) keeps precedence; unmatched paths fall through to static files
 	// with an index.html fallback for client-side routes.
 	if s.cfg.StaticDir != "" {
-		r.NotFound(SPAHandler(s.cfg.StaticDir).ServeHTTP)
+		r.NotFound(s.publicSPAHandler().ServeHTTP)
 	}
 
 	return r
@@ -1953,6 +1955,14 @@ func serveSPAStatus(w http.ResponseWriter, r *http.Request, fsys fs.FS, name str
 	}
 }
 
+func (s *Server) publicSPAHandler() http.Handler {
+	s.spaOnce.Do(func() {
+		fallback := SPAHandler(s.cfg.StaticDir)
+		s.spaHandler = newEditorialRiceSSR(s.cfg.StaticDir, fallback, s.loadEditorialRiceMenus)
+	})
+	return s.spaHandler
+}
+
 func SPAHandler(staticDir string) http.Handler {
 	fsys := os.DirFS(staticDir)
 	manifest := readSEORoutesManifest(fsys)
@@ -2041,7 +2051,7 @@ func (s *Server) spaNavigationSplit(next http.Handler) http.Handler {
 	if strings.TrimSpace(s.cfg.StaticDir) == "" {
 		return next
 	}
-	handler := SPAHandler(s.cfg.StaticDir)
+	handler := s.publicSPAHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
 			spaPagePaths[r.URL.Path] &&
