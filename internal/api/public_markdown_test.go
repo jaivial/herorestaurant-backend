@@ -126,6 +126,13 @@ func TestPublicMarkdownPreservesNewerEditorialDateAndFallsBack(t *testing.T) {
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("private booking workflow returned %d", missing.Code)
 	}
+	for _, path := range []string{"/backoffice/index.md", "/menu/menu-inexistente/index.md"} {
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusNotFound || strings.Contains(recorder.Header().Get("Content-Type"), "text/html") {
+			t.Errorf("%s returned %d with Content-Type %q", path, recorder.Code, recorder.Header().Get("Content-Type"))
+		}
+	}
 }
 
 func TestPublicMarkdownSitemapRefreshesOnlyMenuLastmod(t *testing.T) {
