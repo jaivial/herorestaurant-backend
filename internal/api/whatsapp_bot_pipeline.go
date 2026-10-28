@@ -146,6 +146,10 @@ func (s *Server) botPipelineHandoffFact(ctx context.Context, restaurantID int, s
 }
 
 // botPipelineHistory renders the last turns as short "Rol: texto" lines.
+// Consecutive messages of a role arrive merged into one turn, so a long turn
+// keeps its start and its end: the end is the newest message (e.g. a campaign
+// sent after a booking confirmation, wa_bot_campaign_context_v1), the one the
+// customer is answering.
 func botPipelineHistory(history []botMessage, max int) []string {
 	out := make([]string, 0, max)
 	start := len(history) - max
@@ -160,9 +164,18 @@ func botPipelineHistory(history []botMessage, max int) []string {
 		if m.Role == "assistant" {
 			role = "Restaurante"
 		}
-		out = append(out, role+": "+truncate(strings.TrimSpace(m.Content[0].Text), 400))
+		out = append(out, role+": "+botHeadTail(strings.TrimSpace(m.Content[0].Text), 200))
 	}
 	return out
+}
+
+// botHeadTail shortens s to its first and last n runes.
+func botHeadTail(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= 2*n {
+		return s
+	}
+	return string(r[:n]) + " [\u2026] " + string(r[len(r)-n:])
 }
 
 // botRunPipeline asks the DSPy sidecar for the route. ok=false means the
