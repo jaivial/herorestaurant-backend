@@ -17,6 +17,7 @@ func resetChatImages(t *testing.T) {
 	botChatImages.mu.Lock()
 	botChatImages.chats = map[string][]botChatImage{}
 	botChatImages.inline = 0
+	botChatImages.db = nil
 	botChatImages.mu.Unlock()
 }
 
@@ -116,6 +117,42 @@ func TestBotImagesTurnNote_ReadsEachImageOnce(t *testing.T) {
 	}
 	if first != second {
 		t.Errorf("the reused reading must give the same note:\n%q\n%q", first, second)
+	}
+}
+
+// A restart (a deploy) keeps the photos of the chat and what was read from
+// them: the turn that brings the client's data an hour later still has the
+// bill, without reading it again. prod 2026-10-28: the bill of 06:07 was lost
+// to the 06:47 deploy and no later turn could create the invoice.
+func TestBotChatImages_ARestartKeepsThePhotosAndTheirReading(t *testing.T) {
+	resetChatImages(t)
+	store, err := newBotConversationStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := botChatImages.attach(store.DB()); err != nil {
+		t.Fatal(err)
+	}
+	calls := stubVision(t, map[string]string{"bill": botTestBillText})
+	rid, chat := 1, "chat-restart@g.us"
+	botChatImages.remember(rid, chat, botChatImage{MessageID: "IMG-BILL", Data: []byte("bill"), At: time.Now().Add(-time.Hour)})
+	msg := botWebhookMessage{MessageID: "TXT-1", ChatJID: chat, PrivilegedGroup: true}
+	if _, read := (&Server{}).botImagesTurnNote(context.Background(), rid, msg); !read {
+		t.Fatal("the bill was not read before the restart")
+	}
+
+	// The restart: a fresh process memory over the same SQLite.
+	resetChatImages(t)
+	if err := botChatImages.attach(store.DB()); err != nil {
+		t.Fatal(err)
+	}
+	note, read := (&Server{}).botImagesTurnNote(context.Background(), rid, botWebhookMessage{MessageID: "TXT-2", ChatJID: chat, PrivilegedGroup: true})
+	if !read || !strings.Contains(note, "185,00") || !strings.Contains(note, "image_ref=IMG-BILL") {
+		t.Fatalf("after the restart the turn must still carry the bill, got %q", note)
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Errorf("vision calls=%d, want the bill read once across the restart", got)
 	}
 }
 

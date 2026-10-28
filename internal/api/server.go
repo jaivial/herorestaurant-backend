@@ -81,6 +81,11 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	if err != nil {
 		panic(fmt.Sprintf("initialize WhatsApp bot context SQLite: %v", err))
 	}
+	// wa_bot_image_read_v1: the photos of the privileged chats and their
+	// readings survive a restart (a deploy wiped the bill of a pending invoice).
+	if err := botChatImages.attach(botConversation.DB()); err != nil {
+		log.Printf("[bot] chat_images not durable: %v", err)
+	}
 	aiConcurrency := cfg.OpenAIConcurrency
 	if aiConcurrency <= 0 {
 		aiConcurrency = 1
