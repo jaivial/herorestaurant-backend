@@ -29,30 +29,34 @@ import (
 // is why publishing (active on/off) and deleting wait for the person's yes.
 
 type adToolArgs struct {
-	Action      string   `json:"action"`
-	AdID        int64    `json:"ad_id"`
-	Include     []string `json:"include,omitempty"`
-	Name        *string  `json:"name,omitempty"`
-	Active      *bool    `json:"active,omitempty"`
-	StartsAt    *string  `json:"starts_at,omitempty"`
-	EndsAt      *string  `json:"ends_at,omitempty"`
-	Always      bool     `json:"always,omitempty"`
-	Kind        string   `json:"kind,omitempty"`
-	MaxWidth    int      `json:"max_width,omitempty"`
-	Radius      *int     `json:"radius,omitempty"`
-	Background  string   `json:"background,omitempty"`
-	Overlay     string   `json:"overlay,omitempty"`
-	Page        string   `json:"page,omitempty"`
-	Instruction string   `json:"instruction,omitempty"`
-	Model       string   `json:"model,omitempty"`
-	Attachment  string   `json:"attachment,omitempty"`
-	ImageRef    string   `json:"image_ref,omitempty"`
-	ImageURL    string   `json:"image_url,omitempty"`
-	ImageName   string   `json:"image_name,omitempty"`
-	ElementID   string   `json:"element_id,omitempty"`
-	Placement   string   `json:"placement,omitempty"`
-	Alt         string   `json:"alt,omitempty"`
-	Version     string   `json:"version,omitempty"`
+	Action     string   `json:"action"`
+	AdID       int64    `json:"ad_id"`
+	Include    []string `json:"include,omitempty"`
+	Name       *string  `json:"name,omitempty"`
+	Active     *bool    `json:"active,omitempty"`
+	StartsAt   *string  `json:"starts_at,omitempty"`
+	EndsAt     *string  `json:"ends_at,omitempty"`
+	Always     bool     `json:"always,omitempty"`
+	Kind       string   `json:"kind,omitempty"`
+	MaxWidth   int      `json:"max_width,omitempty"`
+	Radius     *int     `json:"radius,omitempty"`
+	Background string   `json:"background,omitempty"`
+	Overlay    string   `json:"overlay,omitempty"`
+	Page       string   `json:"page,omitempty"`
+	// Dates of one card (the step named by page) of a multiple ad.
+	StepStartsAt *string `json:"step_starts_at,omitempty"`
+	StepEndsAt   *string `json:"step_ends_at,omitempty"`
+	StepAlways   bool    `json:"step_always,omitempty"`
+	Instruction  string  `json:"instruction,omitempty"`
+	Model        string  `json:"model,omitempty"`
+	Attachment   string  `json:"attachment,omitempty"`
+	ImageRef     string  `json:"image_ref,omitempty"`
+	ImageURL     string  `json:"image_url,omitempty"`
+	ImageName    string  `json:"image_name,omitempty"`
+	ElementID    string  `json:"element_id,omitempty"`
+	Placement    string  `json:"placement,omitempty"`
+	Alt          string  `json:"alt,omitempty"`
+	Version      string  `json:"version,omitempty"`
 }
 
 // adToolWriteActions change something (the rest only read).
@@ -116,7 +120,14 @@ func adScheduleText(ad boAd) string {
 	if ad.StartsAt != nil && ad.EndsAt != nil {
 		return fmt.Sprintf("del %s al %s", *ad.StartsAt, *ad.EndsAt)
 	}
-	return "sin fechas"
+	return "sin fechas (no aparece en la web hasta que tenga fechas)"
+}
+
+func adStepScheduleText(st boAdDesignPage) string {
+	if st.StartsAt != nil && st.EndsAt != nil {
+		return fmt.Sprintf("del %s al %s", *st.StartsAt, *st.EndsAt)
+	}
+	return "las mismas fechas que el anuncio"
 }
 
 func adToolView(ad boAd) map[string]any {
@@ -129,9 +140,10 @@ func adToolView(ad boAd) map[string]any {
 		out["note"] = "Hecho con el editor anterior: conviértelo (action convert) para editarlo con estas herramientas."
 		return out
 	}
-	steps := make([]map[string]string, 0, len(ad.Design.Steps))
+	steps := make([]map[string]any, 0, len(ad.Design.Steps))
+	today := adTodayMadrid()
 	for _, st := range ad.Design.Steps {
-		steps = append(steps, map[string]string{"page": st.ID, "title": st.Title})
+		steps = append(steps, map[string]any{"page": st.ID, "title": st.Title, "schedule": adStepScheduleText(st), "shown_today": adStepVisibleOn(st, today)})
 	}
 	if len(steps) > 0 {
 		out["steps"] = steps
@@ -327,6 +339,34 @@ func (s *Server) adToolPatch(ctx context.Context, rid int, in *boAdInput, a adTo
 		}
 		in.StartsAt, in.EndsAt = &start, &end
 		changes = append(changes, fmt.Sprintf("fechas del %s al %s", start, end))
+	}
+	stepDates := a.StepAlways || a.StepStartsAt != nil || a.StepEndsAt != nil
+	if stepDates {
+		if in.Design == nil || in.Design.Kind != "multiple" {
+			return nil, errors.New("las fechas por tarjeta son de los anuncios múltiples (y en el formato nuevo)")
+		}
+		idx, label, err := adPageRef(in.Design, a.Page)
+		if err != nil || idx < 0 {
+			return nil, errors.New("para programar una tarjeta indica en page el page o el título de su paso")
+		}
+		d := *in.Design
+		d.Steps = append([]boAdDesignPage(nil), in.Design.Steps...)
+		st := d.Steps[idx]
+		if a.StepAlways {
+			st.StartsAt, st.EndsAt = nil, nil
+			changes = append(changes, fmt.Sprintf("tarjeta %s con las fechas del anuncio", label))
+		} else {
+			if a.StepStartsAt == nil || a.StepEndsAt == nil {
+				return nil, errors.New("step_starts_at y step_ends_at van juntas (o step_always=true para que la tarjeta siga las fechas del anuncio)")
+			}
+			st.StartsAt, st.EndsAt = a.StepStartsAt, a.StepEndsAt
+			if err := normalizeAdStepSchedule(&st); err != nil {
+				return nil, err
+			}
+			changes = append(changes, fmt.Sprintf("tarjeta %s del %s al %s", label, *st.StartsAt, *st.EndsAt))
+		}
+		d.Steps[idx] = st
+		in.Design = &d
 	}
 	window := a.MaxWidth > 0 || a.Radius != nil || a.Background != "" || a.Overlay != ""
 	if (a.Kind != "" || window) && in.Design == nil {
@@ -751,6 +791,9 @@ func (s *Server) adToolRun(ctx context.Context, rid int, a adToolArgs, source st
 		state := "retirado de la web"
 		if next.Active {
 			state = "publicado en la web (" + adScheduleText(next) + ")"
+			if next.StartsAt == nil || next.EndsAt == nil {
+				state = "activado, pero sin fechas no aparece en la web: ponle fechas (update con starts_at y ends_at)"
+			}
 		}
 		return map[string]any{"ok": true, "ad": adToolView(next)}, fmt.Sprintf("Anuncio «%s» %s.", next.Name, state), nil
 	case "convert":
@@ -827,6 +870,9 @@ func (s *Server) adToolPreview(ctx context.Context, rid int, a adToolArgs) (map[
 			return nil, "", errors.New("conviértelo primero al nuevo formato (action convert) y revísalo antes de publicarlo")
 		}
 		if *a.Active {
+			if ad.StartsAt == nil || ad.EndsAt == nil {
+				return base, fmt.Sprintf("activar el anuncio %s; OJO: no tiene fechas, así que no aparecerá en la web hasta que se le pongan (update con starts_at y ends_at)", label), nil
+			}
 			return base, fmt.Sprintf("PUBLICAR en la web el anuncio %s (%s; lo verán los clientes que entren en la web)", label, adScheduleText(ad)), nil
 		}
 		return base, fmt.Sprintf("retirar de la web el anuncio %s", label), nil

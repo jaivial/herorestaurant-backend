@@ -76,11 +76,13 @@ func (s *Server) handlePublicAdsList(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error reading ads")
 			return
 		}
-		if date == "" || publicAdVisibleOnDate(ad, date) {
+		// ads_html_editor_v1: a multiple ad whose cards are all out of
+		// their own dates that day has nothing to show.
+		if date == "" || (publicAdVisibleOnDate(ad, date) && adDesignShowsOn(ad.Design, date)) {
 			ad.BlockedRanges = nil
-			// ads_html_editor_v1: kind, chrome and steps only; each page
-			// is rendered on its own URL.
-			ad.Design = publicAdDesign(ad.Design)
+			// ads_html_editor_v1: kind, chrome and the steps shown that day;
+			// each page is rendered on its own URL.
+			ad.Design = publicAdDesign(ad.Design, date)
 			ads = append(ads, ad)
 		}
 	}

@@ -92,7 +92,10 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 		}
 		item := embedAd{ID: ad.ID, Name: ad.Name, RenderURL: fmt.Sprintf("/api/public/ads/%d/render?restaurant_id=%d&src=plugin", ad.ID, restaurantID)}
 		if ad.Design != nil {
-			item.Format, item.Design = "html", publicAdDesign(ad.Design)
+			if !adDesignShowsOn(ad.Design, date) {
+				continue
+			}
+			item.Format, item.Design = "html", publicAdDesign(ad.Design, date)
 			ads = append(ads, item)
 			continue
 		}
