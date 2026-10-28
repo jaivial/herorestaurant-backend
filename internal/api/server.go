@@ -1958,7 +1958,8 @@ func serveSPAStatus(w http.ResponseWriter, r *http.Request, fsys fs.FS, name str
 func (s *Server) publicSPAHandler() http.Handler {
 	s.spaOnce.Do(func() {
 		fallback := SPAHandler(s.cfg.StaticDir)
-		s.spaHandler = newEditorialRiceSSR(s.cfg.StaticDir, fallback, s.loadEditorialRiceMenus)
+		withMarkdown := newPublicMarkdownHandler(s.cfg.StaticDir, fallback, s.loadEditorialRiceMenus)
+		s.spaHandler = newEditorialRiceSSR(s.cfg.StaticDir, withMarkdown, s.loadEditorialRiceMenus)
 	})
 	return s.spaHandler
 }
