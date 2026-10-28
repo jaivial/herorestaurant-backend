@@ -811,7 +811,7 @@ func (s *Server) minimaxJSON(ctx context.Context, restaurantID int, system, user
 }
 
 func (s *Server) minimaxJSONContent(ctx context.Context, restaurantID int, system string, content any, target any) error {
-	reply, err := s.minimaxMessagesText(ctx, restaurantID, system, content, 4096, 60*time.Second)
+	reply, err := s.minimaxMessagesText(ctx, restaurantID, system, content, 4096, 60*time.Second, "")
 	if err != nil {
 		return err
 	}
@@ -840,7 +840,11 @@ type minimaxTextReply struct {
 // dialect) with arbitrary content blocks (text, image, document) and returns
 // the text of the reply. Usage is returned, not recorded: each caller records
 // it under its own feature.
-func (s *Server) minimaxMessagesText(ctx context.Context, restaurantID int, system string, content any, maxTokens int, timeout time.Duration) (minimaxTextReply, error) {
+//
+// effort is MiniMax-M3.1-Flash's output_config.effort (low, medium, high,
+// xhigh, max): how deep the always-on reasoning goes. Empty leaves the API
+// default, which is max.
+func (s *Server) minimaxMessagesText(ctx context.Context, restaurantID int, system string, content any, maxTokens int, timeout time.Duration, effort string) (minimaxTextReply, error) {
 	apiKey := s.resolveMiniMaxKey(ctx, restaurantID)
 	if apiKey == "" {
 		return minimaxTextReply{}, fmt.Errorf("minimax not configured")
@@ -849,6 +853,9 @@ func (s *Server) minimaxMessagesText(ctx context.Context, restaurantID int, syst
 	payload := map[string]any{"model": model, "max_tokens": maxTokens, "messages": []map[string]any{{"role": "user", "content": content}}}
 	if strings.TrimSpace(system) != "" {
 		payload["system"] = system
+	}
+	if effort != "" {
+		payload["output_config"] = map[string]any{"effort": effort}
 	}
 	raw, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.cfg.MiniMaxBaseURL, "/")+"/v1/messages", bytes.NewReader(raw))

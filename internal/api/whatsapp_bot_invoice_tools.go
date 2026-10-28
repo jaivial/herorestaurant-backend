@@ -540,6 +540,15 @@ func botInvoiceBuildInput(a invoiceToolArgs, stored *Invoice) (InvoiceInput, err
 		set(&in.CustomerAddressCity, c.City)
 		set(&in.CustomerAddressProvince, c.Province)
 		set(&in.CustomerAddressCountry, c.Country)
+		// A CIF/NIF read off a photo or a handwritten note can be one digit
+		// off (prod note: the best reading, B98942270, fails its check
+		// digit). The panel stores any value, so a wrong one is caught here
+		// and asked for instead of printed on the invoice.
+		if id := in.CustomerDniCif; strings.TrimSpace(c.TaxID) != "" && id != nil && botInvoiceSpanishCustomer(in.CustomerAddressCountry) {
+			if _, ok := normalizeSpanishCustomerTaxID(strings.TrimPrefix(*id, "ES")); !ok {
+				return in, fmt.Errorf("el CIF/NIF %s no es válido (no cuadra su letra o dígito de control): si sale de una foto o de una nota, pídelo por escrito en el grupo", *id)
+			}
+		}
 	}
 	if v := strings.TrimSpace(a.InvoiceDate); v != "" {
 		if _, err := time.Parse("2006-01-02", v); err != nil {
@@ -741,6 +750,20 @@ func botInvoiceTaxIDType(id, given string) string {
 		return "cif"
 	}
 	return "dni"
+}
+
+// botInvoiceSpanishCustomer reports whether the client's tax id has to be a
+// Spanish CIF/NIF/NIE: no country (the restaurant's own clients) or Spain. A
+// foreign VAT number has its own formats and is stored as given.
+func botInvoiceSpanishCustomer(country *string) bool {
+	if country == nil {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(*country)) {
+	case "", "españa", "espana", "spain", "es", "esp":
+		return true
+	}
+	return false
 }
 
 func botInvoiceChannels(channel string) (email, whatsapp bool, err error) {
