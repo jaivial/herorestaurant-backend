@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"preactvillacarmen/internal/httpx"
 )
@@ -73,12 +74,24 @@ func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusNotFound, "Ad step not found")
 			return
 		}
+		// The cards page hides the cards out of their dates that day (Madrid,
+		// or ?date= for a preview of another day).
+		day := adTodayMadrid()
+		if q := strings.TrimSpace(r.URL.Query().Get("date")); q != "" {
+			if t, err := time.Parse("2006-01-02", q); err == nil && t.Format("2006-01-02") == q {
+				day = q
+			}
+		}
+		hidden := ""
+		if step == "" {
+			hidden = adHiddenCardsCSS(ad.Design, day)
+		}
 		nonce := adRenderNonce()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", adDesignCSP(nonce))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		fmt.Fprint(w, renderAdDesignHTML(page, ad.ID, step, src, firstNonEmpty(page.Title, ad.Name), nonce))
+		fmt.Fprint(w, renderAdDesignHTML(page, ad.ID, step, src, firstNonEmpty(page.Title, ad.Name), nonce, hidden))
 		return
 	}
 	canvas := ad.Canvas

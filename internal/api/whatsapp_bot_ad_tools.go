@@ -23,7 +23,7 @@ func botToolDefsAd() []botToolDef {
 			"Lecturas inmediatas: action 'list' (anuncios) y 'get' (un anuncio y sus páginas: main = el anuncio o la página de tarjetas de un anuncio múltiple, y una página de detalle por tarjeta con su page y title; include layers = capas con ids e1, e2…, html). " +
 			"Escrituras (NO se aplican: se envía al chat una propuesta con código y quien la pidió confirma con 'OK <código>'): " +
 			"'create' (name obligatorio; kind single = individual o multiple = propuestas en tarjetas que abren cada una su página de detalle; nace inactivo), " +
-			"'update' (name, starts_at+ends_at YYYY-MM-DD o always=true, kind, max_width 280-1200, radius 0-48, background, overlay), 'convert' (pasa al nuevo editor un anuncio hecho con el editor anterior), " +
+			"'update' (name, starts_at+ends_at YYYY-MM-DD o always=true (sin fechas no aparece en la web), kind, max_width 280-1200, radius 0-48, background, overlay; en un anuncio múltiple page + step_starts_at+step_ends_at programan una tarjeta, o page + step_always=true para que siga las fechas del anuncio), 'convert' (pasa al nuevo editor un anuncio hecho con el editor anterior), " +
 			"'publish' (active true lo publica en la web, false lo retira), 'design_ai' (instruction para el asistente de diseño con IA sobre la página page, main por defecto; element_id y model opcionales; en la página de tarjetas una tarjeta nueva crea su página de detalle), " +
 			"'design_undo' (deshace el último cambio de diseño hecho desde un chat), 'image' (usa una IMAGEN ENVIADA a este chat: image_ref o vacío para la más reciente; page; placement replace = sustituye element_id o la primera imagen de la página, insert = la añade al final, none = solo la sube y devuelve la URL; alt opcional) y 'delete'. " +
 			"Un anuncio activo se ve al momento en la web, también sus cambios de diseño. Propón UN cambio cada vez y espera al OK antes del siguiente. Para anuncios usa SIEMPRE esta herramienta, nunca panel_change ni admin_call.",
@@ -36,6 +36,7 @@ func botToolDefsAd() []botToolDef {
 			"max_width":{"type":"integer"},"radius":{"type":"integer"},"background":{"type":"string"},"overlay":{"type":"string"},
 			"active":{"type":"boolean","description":"Solo publish"},
 			"page":{"type":"string","description":"main o el page/título de un paso"},
+			"step_starts_at":{"type":"string"},"step_ends_at":{"type":"string"},"step_always":{"type":"boolean"},
 			"instruction":{"type":"string","description":"Solo design_ai"},
 			"element_id":{"type":"string"},"model":{"type":"string"},
 			"image_ref":{"type":"string","description":"Solo image: id de la imagen del chat (vacío = la más reciente)"},

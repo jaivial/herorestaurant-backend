@@ -10,6 +10,7 @@ import (
 	"html"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -51,6 +52,11 @@ type boAdDesignPage struct {
 	Title string `json:"title,omitempty"`
 	HTML  string `json:"html"`
 	CSS   string `json:"css,omitempty"`
+	// Schedule of a step (its card), YYYY-MM-DD, both or none: a card with
+	// dates is only shown between them (inside the dates of the ad); without
+	// dates it follows the ad.
+	StartsAt *string `json:"starts_at,omitempty"`
+	EndsAt   *string `json:"ends_at,omitempty"`
 }
 
 // boAdDesignContainer is the popover chrome: its maximum width, the overlay
@@ -115,7 +121,7 @@ func normalizeBOAdDesign(in *boAdDesign) (*boAdDesign, error) {
 	if strings.TrimSpace(d.Main.HTML) == "" {
 		return nil, errors.New("el anuncio no tiene diseño")
 	}
-	d.Main.ID, d.Main.Title = "", ""
+	d.Main.ID, d.Main.Title, d.Main.StartsAt, d.Main.EndsAt = "", "", nil, nil
 	seen := map[string]bool{}
 	steps := make([]boAdDesignPage, 0, len(d.Steps))
 	for _, st := range d.Steps {
@@ -130,6 +136,9 @@ func normalizeBOAdDesign(in *boAdDesign) (*boAdDesign, error) {
 		}
 		if strings.TrimSpace(st.HTML) == "" {
 			return nil, fmt.Errorf("el paso «%s» no tiene diseño", firstNonEmpty(st.Title, st.ID))
+		}
+		if err := normalizeAdStepSchedule(&st); err != nil {
+			return nil, err
 		}
 		steps = append(steps, st)
 	}
@@ -212,15 +221,88 @@ func adDesignPage(d *boAdDesign, step string) (boAdDesignPage, bool) {
 	return boAdDesignPage{}, false
 }
 
+// normalizeAdStepSchedule checks the dates of a step: both or none, valid
+// YYYY-MM-DD, the end not before the start.
+func normalizeAdStepSchedule(st *boAdDesignPage) error {
+	trim := func(v *string) *string {
+		if v == nil || strings.TrimSpace(*v) == "" {
+			return nil
+		}
+		t := strings.TrimSpace(*v)
+		return &t
+	}
+	st.StartsAt, st.EndsAt = trim(st.StartsAt), trim(st.EndsAt)
+	if (st.StartsAt == nil) != (st.EndsAt == nil) {
+		return fmt.Errorf("la tarjeta «%s» necesita fecha de inicio y de fin (o ninguna)", firstNonEmpty(st.Title, st.ID))
+	}
+	if st.StartsAt == nil {
+		return nil
+	}
+	start, err1 := time.Parse("2006-01-02", *st.StartsAt)
+	end, err2 := time.Parse("2006-01-02", *st.EndsAt)
+	if err1 != nil || err2 != nil || end.Before(start) {
+		return fmt.Errorf("fechas no válidas en la tarjeta «%s»", firstNonEmpty(st.Title, st.ID))
+	}
+	return nil
+}
+
+// adStepVisibleOn: a step without dates follows the ad; with dates it is
+// shown only between them. An empty date shows every step (previews).
+func adStepVisibleOn(st boAdDesignPage, isoDate string) bool {
+	if isoDate == "" || st.StartsAt == nil || st.EndsAt == nil {
+		return true
+	}
+	return isoDate >= *st.StartsAt && isoDate <= *st.EndsAt
+}
+
+// adDesignShowsOn reports whether an HTML ad has anything to show that day: a
+// multiple ad whose cards are all out of their dates is not shown at all.
+func adDesignShowsOn(d *boAdDesign, isoDate string) bool {
+	if d == nil || d.Kind != "multiple" {
+		return true
+	}
+	for _, st := range d.Steps {
+		if adStepVisibleOn(st, isoDate) {
+			return true
+		}
+	}
+	return false
+}
+
+// adHiddenCardsCSS hides, on the cards page, the cards whose step is out of
+// its dates that day (the grid closes the gap on its own).
+func adHiddenCardsCSS(d *boAdDesign, isoDate string) string {
+	if d == nil || d.Kind != "multiple" {
+		return ""
+	}
+	var b strings.Builder
+	for _, st := range d.Steps {
+		if !adStepVisibleOn(st, isoDate) {
+			b.WriteString(`[data-ad-step="`)
+			b.WriteString(st.ID) // validated by adDesignStepIDRe: [A-Za-z0-9_-]
+			b.WriteString(`"]{display:none!important}`)
+		}
+	}
+	return b.String()
+}
+
+// adTodayMadrid is the day the website lives in.
+func adTodayMadrid() string {
+	return time.Now().In(boMadridTZ).Format("2006-01-02")
+}
+
 // publicAdDesign is what the public ad list carries: kind, chrome and the
-// steps (id + title), never the pages (each one is rendered on its own URL).
-func publicAdDesign(d *boAdDesign) *boAdDesign {
+// steps shown that day (id + title), never the pages (each one is rendered on
+// its own URL). An empty date keeps every step (previews).
+func publicAdDesign(d *boAdDesign, isoDate string) *boAdDesign {
 	if d == nil {
 		return nil
 	}
 	out := &boAdDesign{Version: d.Version, Kind: d.Kind, Container: d.Container}
 	for _, st := range d.Steps {
-		out.Steps = append(out.Steps, boAdDesignPage{ID: st.ID, Title: st.Title})
+		if adStepVisibleOn(st, isoDate) {
+			out.Steps = append(out.Steps, boAdDesignPage{ID: st.ID, Title: st.Title})
+		}
 	}
 	return out
 }
@@ -255,7 +337,7 @@ if(/^https?:/i.test(href)){try{var u=new URL(href);if(src&&!u.searchParams.has("
 })();`
 
 // renderAdDesignHTML is the public document of one page of an HTML ad.
-func renderAdDesignHTML(page boAdDesignPage, adID int64, step, src, title, nonce string) string {
+func renderAdDesignHTML(page boAdDesignPage, adID int64, step, src, title, nonce, extraCSS string) string {
 	js := func(v any) string {
 		b, _ := json.Marshal(v)
 		return string(b)
@@ -272,6 +354,7 @@ func renderAdDesignHTML(page boAdDesignPage, adID int64, step, src, title, nonce
 	// The stored CSS comes from the engine (Tailwind output): it never holds
 	// a closing style tag, but the page must not be breakable through it.
 	b.WriteString(strings.ReplaceAll(page.CSS, "</", "<\\/"))
+	b.WriteString(extraCSS)
 	b.WriteString("</style></head><body>")
 	b.WriteString(page.HTML)
 	b.WriteString("<script nonce=\"")
