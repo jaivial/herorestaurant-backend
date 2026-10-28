@@ -137,11 +137,13 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 	// Coordination id: wa_bot_context_window_v1 - the full transcript stays in
 	// SQLite, but the model only sees the most recent 40 messages. That bounds
 	// tokens per call; older booking confirmations are recovered with
-	// get_bookings.
+	// get_bookings. Ordered by send time, not id, so a message recorded late
+	// (a backfilled campaign: wa_bot_campaign_context_v1) sits where the
+	// customer saw it.
 	rows, err := s.db.QueryContext(ctx, `SELECT role, content, source, tool_name FROM (
             SELECT id, role, content, source, tool_name, created_at_ms FROM conversation_messages
             WHERE restaurant_id=? AND user_phone=? AND include_in_context=1
-            ORDER BY id DESC LIMIT 40) ORDER BY id ASC`, restaurantID, botConversationKey(userPhone))
+            ORDER BY created_at_ms DESC, id DESC LIMIT 40) ORDER BY created_at_ms ASC, id ASC`, restaurantID, botConversationKey(userPhone))
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +163,8 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 		switch {
 		case source == "manual_whatsapp":
 			content = botStaffMessagePrefix + content
+		case source == botCampaignSource:
+			content = botCampaignMessagePrefix + content
 		case botContextTemplateSources[source] != "":
 			// Fixed server-side texts are shown as events: verbatim they get
 			// parroted as the answer to unrelated questions.
@@ -209,6 +213,15 @@ var botContextTemplateSources = map[string]string{
 
 // botStaffMessagePrefix labels messages typed manually by restaurant staff.
 const botStaffMessagePrefix = "[Mensaje escrito por el personal del restaurante]: "
+
+// botCampaignSource tags a marketing campaign delivered to the customer by
+// WhatsApp; botCampaignMessagePrefix tells the model what it is, so a short
+// reply right after it ("¿es comida o cena?") is read as a question about the
+// campaign, not about an older booking (wa_bot_campaign_context_v1).
+const (
+	botCampaignSource        = "campaign"
+	botCampaignMessagePrefix = "[Campaña promocional enviada por el restaurante a este cliente por WhatsApp; si el cliente pregunta justo después, lo más probable es que se refiera a ella]:\n"
+)
 
 func normalizeBotConversationHistory(raw []botMessage) []botMessage {
 	out := make([]botMessage, 0, len(raw)+1)
