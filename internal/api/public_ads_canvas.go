@@ -91,7 +91,7 @@ func (s *Server) handlePublicAdRender(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", adDesignCSP(nonce))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		fmt.Fprint(w, renderAdDesignHTML(page, ad.ID, step, src, firstNonEmpty(page.Title, ad.Name), nonce, hidden))
+		fmt.Fprint(w, renderAdDesignHTML(page, ad.ID, step, src, firstNonEmpty(page.Title, ad.Name), nonce, hidden, adDeviceParam(r.URL.Query().Get("vp"))))
 		return
 	}
 	canvas := ad.Canvas
