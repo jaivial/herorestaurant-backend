@@ -336,14 +336,41 @@ var a=t.closest("a[href]");if(!a)return;var href=a.getAttribute("href")||"";
 if(/^https?:/i.test(href)){try{var u=new URL(href);if(src&&!u.searchParams.has("utm_source")){u.searchParams.set("utm_source",src);a.setAttribute("href",u.toString())}if(u.host!==location.host){a.setAttribute("target","_blank");a.setAttribute("rel","noopener")}}catch(err){}}});
 })();`
 
+// adDeviceClasses: the device a page is shown on is set on <html> as
+// data-vp (mobile < 768px, tablet < 1024px, desktop) with the named group
+// "group/vp", so a design can lay out per device with
+// group-data-[vp=desktop]/vp: classes. The window of an ad is about as wide
+// on a tablet as on a desktop, so the width of the page alone cannot tell
+// them apart.
+const adDeviceGroupClass = "group/vp"
+
+// adDeviceDetectJS sets data-vp from the screen when the embedding page did
+// not say it (?vp=): the top window when it is the same site, the screen
+// otherwise.
+const adDeviceDetectJS = `(function(){var h=document.documentElement;if(h.getAttribute("data-vp"))return;var w=0;try{w=window.top.innerWidth}catch(e){}if(!w)w=screen.width;h.setAttribute("data-vp",w<768?"mobile":w<1024?"tablet":"desktop")})();`
+
+// adDeviceParam validates the ?vp= of a render request.
+func adDeviceParam(raw string) string {
+	switch v := strings.TrimSpace(raw); v {
+	case "mobile", "tablet", "desktop":
+		return v
+	}
+	return ""
+}
+
 // renderAdDesignHTML is the public document of one page of an HTML ad.
-func renderAdDesignHTML(page boAdDesignPage, adID int64, step, src, title, nonce, extraCSS string) string {
+func renderAdDesignHTML(page boAdDesignPage, adID int64, step, src, title, nonce, extraCSS, device string) string {
 	js := func(v any) string {
 		b, _ := json.Marshal(v)
 		return string(b)
 	}
 	var b strings.Builder
-	b.WriteString("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">")
+	b.WriteString("<!doctype html><html lang=\"es\" class=\"" + adDeviceGroupClass + "\"")
+	if device != "" {
+		b.WriteString(" data-vp=\"" + device + "\"")
+	}
+	b.WriteString("><head><meta charset=\"utf-8\">")
+	b.WriteString("<script nonce=\"" + nonce + "\">" + adDeviceDetectJS + "</script>")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
 	b.WriteString("<base target=\"_top\"><title>")
 	b.WriteString(html.EscapeString(firstNonEmpty(strings.TrimSpace(title), "Anuncio")))

@@ -179,7 +179,7 @@ const adsPluginJS = `(function () {
     var current = "";
     function show(step) {
       current = step || "";
-      frame.src = base + ad.render_url + (current ? "&step=" + encodeURIComponent(current) : "");
+      frame.src = base + ad.render_url + "&vp=" + variantForWidth(window.innerWidth) + (current ? "&step=" + encodeURIComponent(current) : "");
       if (back) back.style.display = current ? "block" : "none";
     }
     window.addEventListener("message", function (e) {
