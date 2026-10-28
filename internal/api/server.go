@@ -2036,10 +2036,10 @@ func SPAHandler(staticDir string) http.Handler {
 
 // spaPagePaths are client-side routes that collide with root-level public API
 // endpoints (the /api prefix is stripped before routing, so /api/vinos and the
-// SPA page /vinos land on the same pattern). Browser navigations
-// (Accept: text/html) must receive the SPA shell; programmatic API calls
-// (fetch/curl send Accept: */* or application/json) keep hitting the JSON
-// handlers.
+// SPA page /vinos land on the same pattern). Public page URLs must not be
+// interpreted as their colliding JSON endpoints
+// merely because a crawler or curl sends Accept: */* (or omits Accept). The
+// original RequestURI preserves the /api prefix stripped by the middleware.
 var spaPagePaths = map[string]bool{
 	"/vinos":   true,
 	"/postres": true,
@@ -2054,9 +2054,10 @@ func (s *Server) spaNavigationSplit(next http.Handler) http.Handler {
 	}
 	handler := s.publicSPAHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accept := r.Header.Get("Accept")
+		publicNavigation := !strings.Contains(accept, "application/json") || strings.Contains(accept, "text/html")
 		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
-			spaPagePaths[r.URL.Path] &&
-			strings.Contains(r.Header.Get("Accept"), "text/html") {
+			spaPagePaths[r.URL.Path] && !strings.HasPrefix(r.RequestURI, "/api/") && publicNavigation {
 			handler.ServeHTTP(w, r)
 			return
 		}
