@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -200,88 +202,169 @@ func editorialMenuPath(menu publicMenuItem) string {
 	return path
 }
 
-func editorialPrice(raw string) string {
-	price, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-	if err != nil || price <= 0 {
+func editorialEuro(value float64) string {
+	value = math.Round(value*100) / 100
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func editorialFold(value string) string {
+	value = strings.ToLower(strings.Join(strings.Fields(value), " "))
+	return strings.NewReplacer("á", "a", "é", "e", "í", "i", "ó", "o", "ú", "u", "ü", "u", "ñ", "n").Replace(value)
+}
+
+func editorialWeekendDishes(menu publicMenuItem) []publicMenuDish {
+	seen := map[string]bool{}
+	var dishes []publicMenuDish
+	for _, section := range menu.Sections {
+		if !editorialRiceSection(section) {
+			continue
+		}
+		for _, dish := range section.Dishes {
+			key := editorialFold(dish.Title)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			dishes = append(dishes, dish)
+		}
+	}
+	return dishes
+}
+
+type editorialAllergen struct{ es, en, file string }
+
+var editorialAllergens = map[string]editorialAllergen{
+	"Gluten": {"Gluten", "Gluten", "gluten.png"}, "Crustaceos": {"Crustáceos", "Crustaceans", "crustaceos.png"},
+	"Huevos": {"Huevos", "Eggs", "huevos.png"}, "Pescado": {"Pescado", "Fish", "pescado.png"},
+	"Cacahuetes": {"Cacahuetes", "Peanuts", "cacahuetes.png"}, "Soja": {"Soja", "Soy", "soja.png"},
+	"Leche": {"Leche", "Milk", "leche.png"}, "Frutos de cascara": {"Frutos de cáscara", "Tree nuts", "frutoscascara.png"},
+	"Apio": {"Apio", "Celery", "apio.png"}, "Mostaza": {"Mostaza", "Mustard", "mostaza.png"},
+	"Sesamo": {"Sésamo", "Sesame", "sesamo.png"}, "Sulfitos": {"Sulfitos", "Sulfites", "sulfitos.png"},
+	"Altramuces": {"Altramuces", "Lupin", "altramuces.png"}, "Moluscos": {"Moluscos", "Molluscs", "moluscos.png"},
+}
+
+func editorialMediaSrc(raw string) string {
+	raw = strings.TrimSpace(raw)
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "blob:") {
+		return raw
+	}
+	if strings.HasPrefix(raw, "//") {
+		return "https:" + raw
+	}
+	parts := strings.Split(strings.TrimLeft(raw, "/"), "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return "https://villacarmenmedia.b-cdn.net/" + strings.Join(parts, "/")
+}
+
+func editorialDishBody(dish publicMenuDish, lang string) string {
+	var b strings.Builder
+	title := editorialLocalized(dish.Title, dish.TitleEnglish, lang)
+	b.WriteString(`<div class="dishDescription">` + html.EscapeString(title) + `</div>`)
+	description := publicMenuDescription(editorialLocalized(dish.Description, dish.DescriptionEnglish, lang), dish.DescriptionEnabled)
+	if description != "" {
+		b.WriteString(`<div class="dishDescriptionExtra">` + html.EscapeString(description) + `</div>`)
+	}
+	if dish.SupplementEnabled && dish.SupplementPrice != nil && *dish.SupplementPrice > 0 && !math.IsNaN(*dish.SupplementPrice) && !math.IsInf(*dish.SupplementPrice, 0) {
+		b.WriteString(`<div class="dishSupplementInfo" data-testid="dish-supplement" data-coordination-id="dish-supplement-` + strconv.FormatInt(dish.ID, 10) + `">` + editorialLocalized("Suplemento", "Supplement", lang) + ` +` + editorialEuro(*dish.SupplementPrice) + `€</div>`)
+	}
+	if dish.Price != nil && !math.IsNaN(*dish.Price) && !math.IsInf(*dish.Price, 0) {
+		b.WriteString(`<div class="dishCardPrice">+` + editorialEuro(*dish.Price) + `€</div>`)
+	}
+	return b.String()
+}
+
+func editorialDishAllergens(dish publicMenuDish, lang string) string {
+	seen := map[string]bool{}
+	var icons strings.Builder
+	for _, raw := range dish.Allergens {
+		key := strings.TrimSpace(raw)
+		allergen, ok := editorialAllergens[key]
+		if !ok || seen[key] {
+			continue
+		}
+		seen[key] = true
+		label := editorialLocalized(allergen.es, allergen.en, lang)
+		icons.WriteString(`<img src="/images/` + allergen.file + `" class="allergenIcon" alt="` + html.EscapeString(label) + `" title="` + html.EscapeString(label) + `" loading="lazy" decoding="async"/>`)
+	}
+	if icons.Len() == 0 {
 		return ""
 	}
-	return strings.TrimSuffix(strconv.FormatFloat(price, 'f', 2, 64), ".00")
+	return `<div class="dishAllergenRow" aria-label="` + editorialLocalized("Alérgenos", "Allergens", lang) + `">` + icons.String() + `</div>`
+}
+
+func renderEditorialDish(dish publicMenuDish, showImage bool, lang string) string {
+	className := "dishCard is-revealed"
+	if showImage {
+		className += " dishCard--withImage"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, `<li class="%s" data-dish-id="%d">`, className, dish.ID)
+	if !showImage {
+		b.WriteString(`<div class="dishCardBody">` + editorialDishBody(dish, lang) + editorialDishAllergens(dish, lang) + `</div></li>`)
+		return b.String()
+	}
+	title := editorialLocalized(dish.Title, dish.TitleEnglish, lang)
+	rawImage := strings.TrimSpace(dish.FotoURL)
+	b.WriteString(`<div class="dishCardMain"><div class="dishCardMedia`)
+	if rawImage == "" {
+		b.WriteString(` is-fallback`)
+	}
+	b.WriteString(`">`)
+	if rawImage != "" {
+		b.WriteString(`<button type="button" class="dishCardMediaBtn" aria-label="Ver imagen de ` + html.EscapeString(title) + `"><img class="dishCardMediaImage" src="` + html.EscapeString(editorialMediaSrc(rawImage)) + `" alt="` + html.EscapeString(title) + `" loading="lazy" decoding="async"/></button>`)
+	} else {
+		b.WriteString(`<div class="dishCardMediaFallback" aria-label="` + editorialLocalized("Sin imagen disponible", "Image not available", lang) + `"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chef-hat-icon lucide-chef-hat" aria-hidden="true"><path d="M17 21a1 1 0 0 0 1-1v-5.35c0-.457.316-.844.727-1.041a4 4 0 0 0-2.134-7.589 5 5 0 0 0-9.186 0 4 4 0 0 0-2.134 7.588c.411.198.727.585.727 1.041V20a1 1 0 0 0 1 1Z"/><path d="M6 17h12"/></svg></div>`)
+	}
+	b.WriteString(`</div><div class="dishCardInfo"><div class="dishCardBody">` + editorialDishBody(dish, lang) + `</div>` + editorialDishAllergens(dish, lang) + `</div></div></li>`)
+	return b.String()
 }
 
 func renderEditorialRiceMenus(menus []publicMenuItem, lang string) []byte {
-	var visible []publicMenuItem
-	for _, menu := range menus {
+	var links []publicMenuItem
+	var weekend *publicMenuItem
+	for i := range menus {
+		menu := &menus[i]
 		if !menu.Active || !menu.MenuPublicActive {
 			continue
 		}
-		for _, section := range menu.Sections {
-			if editorialRiceSection(section) && len(section.Dishes) > 0 {
-				visible = append(visible, menu)
-				break
-			}
+		if menu.ID == 41 || menu.ID == 42 || menu.ID == 1 {
+			links = append(links, *menu)
 		}
+		if menu.ID == 42 {
+			weekend = menu
+		}
+	}
+	var dishes []publicMenuDish
+	if weekend != nil {
+		dishes = editorialWeekendDishes(*weekend)
 	}
 	var b strings.Builder
 	b.WriteString(editorialRiceStart)
-	if len(visible) == 0 {
+	if len(dishes) == 0 && len(links) == 0 {
 		b.WriteString(editorialRiceEnd)
 		return []byte(b.String())
 	}
-	title := editorialLocalized("Arroces de nuestros menús", "Rice dishes from our menus", lang)
-	intro := editorialLocalized("Descubre los arroces disponibles en los menús actualmente activos. La selección y los suplementos se actualizan desde el restaurante.", "Explore the rice dishes available on our currently active menus. The selection and supplements are updated directly by the restaurant.", lang)
-	b.WriteString(`<div class="container editorial-menu-list" data-testid="active-rice-menus"><header class="editorial-menu-heading"><h2>` + html.EscapeString(title) + `</h2><p>` + html.EscapeString(intro) + `</p></header>`)
-	for _, menu := range visible {
-		fmt.Fprintf(&b, `<section class="editorial-menu" data-menu-id="%d" aria-labelledby="rice-menu-%d"><h3 id="rice-menu-%d">%s</h3><p class="editorial-menu-price">`, menu.ID, menu.ID, menu.ID, html.EscapeString(editorialLocalized(menu.MenuTitle, menu.MenuTitleEnglish, lang)))
-		if price := editorialPrice(menu.Price); price != "" {
-			fmt.Fprintf(&b, `<strong>%s € %s</strong>`, price, editorialLocalized("por persona", "per person", lang))
+	b.WriteString(`<div class="container editorial-menu-list" data-testid="active-rice-menus">`)
+	if len(dishes) > 0 {
+		b.WriteString(`<section class="menuSection"><h2 class="menuSectionHeading">` + editorialLocalized("Nuestros arroces", "Our rice dishes", lang) + `</h2><ul class="dishGrid" role="list">`)
+		for _, dish := range dishes {
+			b.WriteString(renderEditorialDish(dish, weekend.ShowDishImages, lang))
 		}
-		if menu.Settings.MinPartySize > 1 {
-			fmt.Fprintf(&b, `<span>%s %d %s</span>`, editorialLocalized("Mínimo", "Minimum", lang), menu.Settings.MinPartySize, editorialLocalized("personas", "people", lang))
+		b.WriteString(`</ul></section>`)
+	}
+	if len(links) > 0 {
+		b.WriteString(`<nav class="editorial-rice-links" aria-label="` + editorialLocalized("Menús con arroces", "Menus with rice dishes", lang) + `">`)
+		for _, menu := range links {
+			path := editorialMenuPath(menu)
+			if lang == "en" {
+				path = "/en" + path
+			}
+			b.WriteString(`<a href="` + html.EscapeString(path) + `" class="editorial-rice-link"><span>` + html.EscapeString(editorialLocalized(menu.MenuTitle, menu.MenuTitleEnglish, lang)) + `</span><span aria-hidden="true">→</span></a>`)
 		}
-		b.WriteString(`</p>`)
-		for _, section := range menu.Sections {
-			if !editorialRiceSection(section) {
-				continue
-			}
-			dishes := section.Dishes
-			if len(dishes) == 0 {
-				continue
-			}
-			sectionTitle := section.DisplayTitle
-			if sectionTitle == "" {
-				sectionTitle = section.Title
-			}
-			sectionEnglish := section.DisplayTitleEnglish
-			if sectionEnglish == "" {
-				sectionEnglish = section.TitleEnglish
-			}
-			fmt.Fprintf(&b, `<div class="editorial-rice-section"><h4>%s</h4><ul class="editorial-dishes">`, html.EscapeString(editorialLocalized(sectionTitle, sectionEnglish, lang)))
-			for _, dish := range dishes {
-				fmt.Fprintf(&b, `<li><h5>%s</h5>`, html.EscapeString(editorialLocalized(dish.Title, dish.TitleEnglish, lang)))
-				description := publicMenuDescription(editorialLocalized(dish.Description, dish.DescriptionEnglish, lang), dish.DescriptionEnabled)
-				if description != "" {
-					b.WriteString(`<p>` + html.EscapeString(description) + `</p>`)
-				}
-				if dish.SupplementEnabled && dish.SupplementPrice != nil && *dish.SupplementPrice != 0 {
-					fmt.Fprintf(&b, `<span class="editorial-dish-supplement">%s +%s €</span>`, editorialLocalized("Suplemento", "Supplement", lang), strconv.FormatFloat(*dish.SupplementPrice, 'f', -1, 64))
-				}
-				b.WriteString(`</li>`)
-			}
-			b.WriteString(`</ul></div>`)
-		}
-		fmt.Fprintf(&b, `<a href="%s" class="btn primary">%s</a>`, html.EscapeString(editorialMenuPath(menu)), editorialLocalized("Ver el menú completo", "View the full menu", lang))
-		conditions := menu.Settings.Comments
-		if lang == "en" && len(menu.Settings.CommentsEnglish) == len(conditions) {
-			conditions = menu.Settings.CommentsEnglish
-		}
-		if len(conditions) > 0 {
-			b.WriteString(`<h4>` + editorialLocalized("Condiciones publicadas", "Published conditions", lang) + `</h4><ul class="editorial-menu-conditions">`)
-			for _, condition := range conditions {
-				b.WriteString(`<li>` + html.EscapeString(condition) + `</li>`)
-			}
-			b.WriteString(`</ul>`)
-		}
-		b.WriteString(`</section>`)
+		b.WriteString(`</nav>`)
 	}
 	b.WriteString(`</div>` + editorialRiceEnd)
 	return []byte(b.String())
