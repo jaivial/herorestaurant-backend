@@ -144,7 +144,7 @@ sudo RECLAIM_RUN_ID="reclaim-deploy-$(date +%Y%m%d-%H%M%S)" /usr/local/bin/docke
 
 ## Contexto persistente del bot WhatsApp
 
-El backend guarda el transcript conversacional del bot en SQLite mediante `BOT_CONTEXT_SQLITE_PATH`. En Docker producción el compose monta el volumen nombrado `whatsapp-bot-context` en `/var/lib/herorestaurant`, por lo que el contexto sobrevive a recreaciones y rebuilds del contenedor. Los mensajes OTP de verificación no se guardan en este transcript.
+El backend guarda el transcript conversacional del bot en SQLite mediante `BOT_CONTEXT_SQLITE_PATH`. En Docker producción el compose monta el volumen nombrado `whatsapp-bot-context` en `/var/lib/herorestaurant`, por lo que el contexto sobrevive a recreaciones y rebuilds del contenedor. Los mensajes OTP de verificación no se guardan en este transcript. Cada campaña de WhatsApp entregada entra en el transcript del destinatario (`source=campaign`, `wa_bot_campaign_context_v1`), para que el bot entienda las respuestas a la campaña.
 
 ## VAULT_KEY — auth del API admin (`vault_key_auth_v1`)
 

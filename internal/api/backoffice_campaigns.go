@@ -1027,8 +1027,21 @@ func (s *Server) sendCampaignWhatsAppText(ctx context.Context, restaurantID int,
 	return nil
 }
 
+// recordCampaignWhatsAppContext adds a delivered campaign to the recipient's
+// bot conversation as the text the recipient read (links as "label: url"
+// lines). Context only: the message ledger is left as it was.
+// Coordination id: wa_bot_campaign_context_v1.
+func (s *Server) recordCampaignWhatsAppContext(ctx context.Context, restaurantID int, c boCampaign, num, brandName string) {
+	text := renderCampaignWhatsAppBody(c.BodyMarkdown, brandName, "", false)
+	if err := s.botConversation.Append(context.WithoutCancel(ctx), restaurantID, num, "assistant", text, "", botCampaignSource); err != nil {
+		slog.Default().Warn("campaign.whatsapp.context_failed", "coord_id", c.CoordID, "campaign_id", c.ID, "err", err.Error())
+		return
+	}
+	slog.Default().Info("campaign.whatsapp.context_recorded", "coord_id", c.CoordID, "campaign_id", c.ID)
+}
+
 // deliverCampaignTo sends the campaign to a single target on its channel.
-func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCampaign, target campaignTarget) error {
+func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCampaign, target campaignTarget) (err error) {
 	// Per-recipient opt-out link: booking id + channel identify the recipient on
 	// the public landing page (/baja-publicidad). The base URL is per restaurant
 	// and memoized.
@@ -1048,6 +1061,15 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 		if num == "" {
 			return errors.New("telefono invalido")
 		}
+		// Every delivery path below talks to the gateway directly, so the
+		// campaign never reached the bot transcript and a reply to it was
+		// answered without it. Once delivered, it enters the context once,
+		// whatever path carried it (wa_bot_campaign_context_v1).
+		defer func() {
+			if err == nil {
+				s.recordCampaignWhatsAppContext(ctx, restaurantID, c, num, branding.BrandName)
+			}
+		}()
 		// The restaurant website travels as a native WhatsApp button
 		// ("label|url" -> call-to-action URL button on Evolution, choices as-is
 		// on UAZAPI) instead of a plain-text line, so the text/caption keeps
