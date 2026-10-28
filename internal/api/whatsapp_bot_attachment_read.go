@@ -208,22 +208,31 @@ type botImageReading struct {
 	Source string
 }
 
-// botVisionReadTimeout bounds one vision read. The model reasons before it
-// answers and how much varies a lot: the same printed bill took 11-35s and
-// 1.7k-5.6k output tokens over 8 runs (measured 2026-10-27). An image it
-// cannot read (hard handwriting) makes it deliberate until the budget runs
-// out, so the read is cut here and the turn goes on. The reads of a turn run
-// in parallel and are cached, so a turn pays this once at most.
-const botVisionReadTimeout = 60 * time.Second
+// botVisionReadTimeout bounds one whole read: the orientation question
+// (1-3s) plus the transcription, which at effort low took 18-54s on the
+// upright prod note and 9-16s on the bill (measured 2026-10-28). An image the
+// model cannot read makes it deliberate until the budget runs out, so the
+// read is cut here and the turn goes on. The reads of a turn run in parallel
+// and are cached, so a turn pays this once at most.
+const botVisionReadTimeout = 75 * time.Second
 
-// botVisionReadMaxTokens is the output budget of one read, reasoning
-// included; below ~6k a bill sometimes came back with no text at all.
+// botVisionReadMaxTokens is the output budget of one transcription,
+// reasoning included.
 const botVisionReadMaxTokens = 10000
 
-// botVisionReadPrompt asks for the text and nothing else. Short on purpose:
-// asking the model to also judge and flag doubtful words made it deliberate
-// past its budget on a plain printed bill (measured 2026-10-27).
-const botVisionReadPrompt = "Transcribe el texto de esta imagen, línea a línea y en el mismo orden (la imagen puede estar girada). Responde solo con el texto, sin comentarios."
+// botVisionReadEffort: MiniMax-M3.1-Flash always reasons and defaults to
+// effort max, where it weighs every doubtful letter of a handwritten note
+// until the budget runs out with no text (upright prod note: 0 of 5 at max).
+// low finished every time, read the bill complete 4 of 4 and the note's CIF
+// as often as medium, in about half the time (medium: 28-90s).
+const botVisionReadEffort = "low"
+
+// botVisionReadPrompt asks for the text and nothing else, and tells the model
+// to commit to the likeliest reading of a doubtful letter: asking it to judge
+// or flag doubtful words made it deliberate past its budget. Doubtful
+// fiscal data is caught later (the CIF/NIF check digit, the draft the group
+// reviews), not here.
+const botVisionReadPrompt = "Transcribe el texto de esta imagen línea a línea, en el mismo orden. Si dudas de una letra o un número, escribe el más probable y sigue adelante sin volver sobre él. Responde solo con el texto, sin comentarios."
 
 // botVisionRead is the vision call; a variable so tests run without network.
 var botVisionRead = func(s *Server, ctx context.Context, restaurantID int, mime string, data []byte) (string, error) {
@@ -251,8 +260,8 @@ func (s *Server) botReadImage(ctx context.Context, restaurantID int, mime string
 }
 
 // botVisionImageText transcribes one image with the tenant's MiniMax model
-// (the bot's own provider and key: the Anthropic-compatible endpoint takes
-// image blocks).
+// (MiniMax-M3.1-Flash, the bot's own provider and key: the
+// Anthropic-compatible endpoint takes image blocks), turned upright first.
 func (s *Server) botVisionImageText(ctx context.Context, restaurantID int, mime string, data []byte) (string, error) {
 	switch mime {
 	case "image/jpeg", "image/png", "image/webp", "image/gif":
@@ -262,7 +271,10 @@ func (s *Server) botVisionImageText(ctx context.Context, restaurantID int, mime 
 			return "", fmt.Errorf("no es una imagen (%s)", mime)
 		}
 	}
-	reply, err := s.minimaxMessagesText(ctx, restaurantID, "", minimaxDocumentContent(mime, data, botVisionReadPrompt), botVisionReadMaxTokens, botVisionReadTimeout)
+	if upright, ok := s.botVisionUpright(ctx, restaurantID, data); ok {
+		data, mime = upright, "image/jpeg"
+	}
+	reply, err := s.minimaxMessagesText(ctx, restaurantID, "", minimaxDocumentContent(mime, data, botVisionReadPrompt), botVisionReadMaxTokens, botVisionReadTimeout, botVisionReadEffort)
 	if err != nil {
 		return "", err
 	}
