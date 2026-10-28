@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -1824,10 +1825,11 @@ func parseAlergenos(raw sql.NullString) []string {
 }
 
 type seoRoutesManifest struct {
-	Redirects map[string]string `json:"redirects"`
-	GonePaths []string          `json:"gonePaths"`
-	MenuPaths map[string]string `json:"menuPaths"`
-	AppPaths  []string          `json:"appPaths"`
+	Redirects      map[string]string `json:"redirects"`
+	GonePaths      []string          `json:"gonePaths"`
+	MenuPaths      map[string]string `json:"menuPaths"`
+	GroupMenuPaths map[string]string `json:"groupMenuPaths"`
+	AppPaths       []string          `json:"appPaths"`
 }
 
 func readSEORoutesManifest(fsys fs.FS) *seoRoutesManifest {
@@ -1853,6 +1855,10 @@ func canonicalPublicHost(manifest *seoRoutesManifest) func(http.Handler) http.Ha
 			forwardedProto := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]))
 			https := r.TLS != nil || forwardedProto == "https"
 			canonicalHost := "www.alqueriavillacarmen.com"
+			if target, ok := seoGroupMenuTarget(manifest, r.URL.Path, r.URL.Query()); ok {
+				http.Redirect(w, r, "https://www.alqueriavillacarmen.com"+target, http.StatusMovedPermanently)
+				return
+			}
 			indexTarget := ""
 			if r.URL.Path == "/index.html" {
 				indexTarget = "/"
@@ -1925,6 +1931,38 @@ func seoMenuTarget(manifest *seoRoutesManifest, requestPath string) (string, boo
 		return "", false
 	}
 	return prefix + target, true
+}
+
+// seoGroupMenuTarget resolves only active group menus from the build manifest.
+// Removing the consumed menu parameter also keeps tracking parameters without
+// creating a second redirect or redirecting an inactive/unknown menu ID.
+func seoGroupMenuTarget(manifest *seoRoutesManifest, requestPath string, query url.Values) (string, bool) {
+	if manifest == nil {
+		return "", false
+	}
+	path := strings.TrimSuffix(requestPath, "/")
+	prefix := ""
+	if path == "/en/menusdegrupos" {
+		prefix = "/en"
+	} else if path != "/menusdegrupos" {
+		return "", false
+	}
+	menuID := query.Get("menu")
+	target, ok := manifest.GroupMenuPaths[menuID]
+	if !ok || target == "" {
+		return "", false
+	}
+	remaining := make(url.Values, len(query))
+	for key, values := range query {
+		if key != "menu" {
+			remaining[key] = append([]string(nil), values...)
+		}
+	}
+	target = prefix + target
+	if encoded := remaining.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	return target, true
 }
 
 func isSPAApplicationPath(requestPath string, appPaths map[string]bool) bool {
