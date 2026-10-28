@@ -57,6 +57,12 @@ func (h *publicMarkdownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("X-Robots-Tag", "noindex, follow")
+	// A non-existent or private Markdown document must not fall through to the
+	// SPA shell and become a misleading HTML 200 with a .md URL.
+	if strings.HasPrefix(path, "/backoffice/") || path == "/backoffice.md" {
+		http.NotFound(w, r)
+		return
+	}
 	body := []byte(nil)
 	state := ""
 	if editorialRicePaths[strings.TrimSuffix(path, "/index.md")] {
@@ -69,7 +75,7 @@ func (h *publicMarkdownHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		var err error
 		body, err = h.staticBody(path)
 		if err != nil {
-			h.next.ServeHTTP(w, r)
+			http.NotFound(w, r)
 			return
 		}
 	}
