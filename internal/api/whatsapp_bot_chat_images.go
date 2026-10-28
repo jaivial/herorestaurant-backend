@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,8 +23,11 @@ import (
 // message id (the bytes can always be fetched again from the provider by it)
 // plus the inline payload while it is small enough to keep.
 //
-// Process memory on purpose: the provider keeps the media, so a restart only
-// costs one provider fetch; nothing here is the source of truth.
+// The id, the time and the READING of each image are also written to the
+// bot's SQLite (chat_images), so a restart keeps them: prod 2026-10-28 the
+// deploy at 06:47 wiped the photo of the bill sent at 06:07, and every later
+// invoice turn hunted for its lines in the till until it ran out of steps.
+// The bytes are not stored: the provider serves them again by message id.
 
 const (
 	botChatImagesPerChat   = 5
@@ -47,12 +52,72 @@ type botChatImageRegistry struct {
 	mu     sync.Mutex
 	chats  map[string][]botChatImage
 	inline int
+	db     *sql.DB // bot context SQLite; nil keeps the registry in memory only
 }
 
 var botChatImages = &botChatImageRegistry{chats: map[string][]botChatImage{}}
 
 func botChatImageKey(rid int, chatJID string) string {
 	return strconv.Itoa(rid) + "|" + strings.TrimSpace(chatJID)
+}
+
+// attach makes the registry durable in db: it creates the table, drops what
+// is past the TTL and loads the rest (with their readings) into memory.
+func (r *botChatImageRegistry) attach(db *sql.DB) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS chat_images (
+            restaurant_id INTEGER NOT NULL,
+            chat_jid TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            mime TEXT NOT NULL DEFAULT '',
+            at_ms INTEGER NOT NULL,
+            reading_source TEXT,
+            reading_text TEXT,
+            PRIMARY KEY (restaurant_id, chat_jid, message_id)
+        )`); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM chat_images WHERE at_ms < ?`, time.Now().Add(-botChatImageTTL).UnixMilli()); err != nil {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT restaurant_id, chat_jid, message_id, mime, at_ms, reading_source, reading_text FROM chat_images ORDER BY at_ms`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.db = db
+	for rows.Next() {
+		var rid int
+		var chat string
+		var img botChatImage
+		var atMS int64
+		var source, text sql.NullString
+		if err := rows.Scan(&rid, &chat, &img.MessageID, &img.Mime, &atMS, &source, &text); err != nil {
+			return err
+		}
+		img.At = time.UnixMilli(atMS)
+		if source.Valid {
+			img.Reading = &botImageReading{Source: source.String, Text: text.String}
+		}
+		r.add(botChatImageKey(rid, chat), img)
+	}
+	return rows.Err()
+}
+
+// persist runs one write on the durable copy. A failure only costs the copy
+// (the image stays in memory and with the provider), so it is logged.
+func (r *botChatImageRegistry) persist(query string, args ...any) {
+	if r.db == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+		log.Printf("[bot] chat_images persist error: %v", err)
+	}
 }
 
 // prune drops expired entries and, over the bounds, the oldest chats.
@@ -92,14 +157,25 @@ func (r *botChatImageRegistry) prune(now time.Time) {
 func (r *botChatImageRegistry) remember(rid int, chatJID string, img botChatImage) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key := botChatImageKey(rid, chatJID)
+	if !r.add(botChatImageKey(rid, chatJID), img) {
+		return
+	}
+	r.prune(img.At)
+	r.persist(`INSERT OR IGNORE INTO chat_images (restaurant_id, chat_jid, message_id, mime, at_ms) VALUES (?,?,?,?,?)`,
+		rid, strings.TrimSpace(chatJID), img.MessageID, img.Mime, img.At.UnixMilli())
+	r.persist(`DELETE FROM chat_images WHERE at_ms < ?`, img.At.Add(-botChatImageTTL).UnixMilli())
+}
+
+// add appends img to the chat under the per-chat bound; false when the chat
+// already has it.
+func (r *botChatImageRegistry) add(key string, img botChatImage) bool {
 	// The same message registered twice (a provider retry of the webhook)
 	// stays one image: the second copy would push a real one out of the
 	// per-chat bound and be read twice.
 	if img.MessageID != "" {
 		for _, old := range r.chats[key] {
 			if old.MessageID == img.MessageID {
-				return
+				return false
 			}
 		}
 	}
@@ -112,7 +188,7 @@ func (r *botChatImageRegistry) remember(rid int, chatJID string, img botChatImag
 	}
 	r.chats[key] = list
 	r.inline += len(img.Data)
-	r.prune(img.At)
+	return true
 }
 
 // find returns the image of ref in the chat, or its newest image when ref is
@@ -169,6 +245,8 @@ func (r *botChatImageRegistry) storeReading(rid int, chatJID, ref string, rd bot
 		if list[i].MessageID == ref {
 			cp := rd
 			list[i].Reading = &cp
+			r.persist(`UPDATE chat_images SET reading_source = ?, reading_text = ? WHERE restaurant_id = ? AND chat_jid = ? AND message_id = ?`,
+				rd.Source, rd.Text, rid, strings.TrimSpace(chatJID), ref)
 			return
 		}
 	}

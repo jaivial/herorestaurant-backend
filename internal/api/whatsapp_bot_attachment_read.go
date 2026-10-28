@@ -63,10 +63,13 @@ func botTurnHasRequestImages(restaurantID int, msg botWebhookMessage) bool {
 const botChatImagesNoteMax = 3
 
 // botChatImageRequestWindow bounds how old an image of the chat can be and
-// still be part of the request being served. A request and its photos arrive
-// together or a few minutes apart (the fiscal data typed after the photo);
-// older ones are left alone.
-const botChatImageRequestWindow = 15 * time.Minute
+// still be part of the request being served: as long as the registry keeps
+// it. The client's data often comes much later than the photo of the bill
+// (prod 2026-10-28: photo at 06:07, the data at 07:10 and 08:16), and with a
+// short window those turns had no bill and searched the till for it. Each
+// image is read once (the reading is kept), so a later turn only pays the
+// tokens of the note; the label says how old each image is.
+const botChatImageRequestWindow = botChatImageTTL
 
 // botRequestImages returns the images the turn has to read: the image of the
 // message first, then the other recent images of the chat, newest first.
