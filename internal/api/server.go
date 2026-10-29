@@ -2049,6 +2049,9 @@ func SPAHandler(staticDir string) http.Handler {
 		if strings.HasPrefix(path, "assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
+		if strings.HasSuffix(path, ".webmanifest") {
+			w.Header().Set("Content-Type", "application/manifest+json")
+		}
 
 		if info, err := fs.Stat(fsys, path); err == nil {
 			if !info.IsDir() {
