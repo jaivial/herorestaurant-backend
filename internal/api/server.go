@@ -147,6 +147,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		go s.runWhatsAppWatchdogLoop(context.Background()) // wa_connection_watchdog_v1
 		go s.runBotPipelineDemoLoop(context.Background())  // wa_bot_dspy_compiled_v4
 		go s.botInboundRecover()                           // wa_bot_inbound_queue_v1
+		go s.runGoogleReviewsLoop(context.Background())    // google_reviews_ai_v1
 	}
 	return s
 }
@@ -858,6 +859,18 @@ func (s *Server) Routes() http.Handler {
 		// MiniMax AI config (api key + model) — root only.
 		r.With(s.requireBOSession, rootOnlyGate).Get("/config/minimax", s.handleBOMiniMaxConfigGet)
 		r.With(s.requireBOSession, rootOnlyGate).Post("/config/minimax", s.handleBOMiniMaxConfigSet)
+
+		// Coordination id: google_reviews_ai_v1 - Google review assistant (root only).
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/google-reviews", s.handleBOGoogleReviewsStatus)
+		r.With(s.requireBOSession, rootOnlyGate).Put("/config/google-reviews", s.handleBOGoogleReviewsSettings)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/google-reviews/oauth/start", s.handleBOGoogleReviewsOAuthStart)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/google-reviews/oauth/callback", s.handleBOGoogleReviewsOAuthCallback)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/google-reviews/locations", s.handleBOGoogleReviewsLocations)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/google-reviews/location", s.handleBOGoogleReviewsSetLocation)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/google-reviews/disconnect", s.handleBOGoogleReviewsDisconnect)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/google-reviews/sync", s.handleBOGoogleReviewsSync)
+		r.With(s.requireBOSession, rootOnlyGate).Get("/config/google-reviews/reviews", s.handleBOGoogleReviewsList)
+		r.With(s.requireBOSession, rootOnlyGate).Post("/config/google-reviews/reviews/{id}/{action}", s.handleBOGoogleReviewAction)
 
 		// ChatGPT plugin credentials — root only. Always scoped to the caller and
 		// their active restaurant, so a token can never outlive or exceed the

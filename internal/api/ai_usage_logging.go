@@ -18,6 +18,8 @@ const (
 	aiFeatureStockOCR    = "stock_ocr"
 	// Campaign HTML builder assistant (campaign_html_builder_ai_v1).
 	aiFeatureCampaignBuilder = "campaign_builder"
+	// Google review reply assistant (google_reviews_ai_v1).
+	aiFeatureGoogleReviews = "google_reviews"
 )
 
 // recordAIUsage persists one LLM request and fans the event out on the global

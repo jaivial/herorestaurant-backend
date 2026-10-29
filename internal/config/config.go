@@ -66,6 +66,10 @@ type Config struct {
 	OpenAIConcurrency          int
 	PreShiftReminderMinutes    int
 	StockDigestHour            int
+	GoogleClientID             string // google_reviews_ai_v1: OAuth web client + daily review sync hour
+	GoogleClientSecret         string
+	GoogleOAuthRedirectURL     string
+	GoogleReviewsSyncHour      int
 	MiniMaxAPIKey              string
 	MiniMaxBaseURL             string
 	BunnyStorageBaseURL        string
@@ -174,6 +178,10 @@ func Load() Config {
 		OpenAIConcurrency:           getenvIntFirst([]string{"WAVESPEED_IMAGE_CONCURRENCY", "OPENAI_IMAGE_CONCURRENCY", "OPENAI_IMAGE_EDIT_CONCURRENCY"}, 2, 1, 32),
 		PreShiftReminderMinutes:     getenvIntFirst([]string{"PRE_SHIFT_REMINDER_MINUTES", "PRESHIFT_REMINDER_MINUTES"}, 10, 5, 10),
 		StockDigestHour:             getenvIntFirst([]string{"STOCK_DIGEST_HOUR"}, 8, 0, 23),
+		GoogleClientID:              strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
+		GoogleClientSecret:          strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
+		GoogleOAuthRedirectURL:      strings.TrimSpace(os.Getenv("GOOGLE_OAUTH_REDIRECT_URL")),
+		GoogleReviewsSyncHour:       getenvInt("GOOGLE_REVIEWS_SYNC_HOUR", 10, 0, 23),
 		MiniMaxAPIKey:               strings.TrimSpace(os.Getenv("MINIMAX_API_KEY")),
 		MiniMaxBaseURL:              strings.TrimRight(getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic"), "/"),
 		MiniMaxModel:                getenv("MINIMAX_MODEL", "MiniMax-M3.1-Flash"),
