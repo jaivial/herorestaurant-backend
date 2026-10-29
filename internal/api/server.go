@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -2048,6 +2049,9 @@ func SPAHandler(staticDir string) http.Handler {
 		}
 		if strings.HasPrefix(path, "assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		if strings.HasSuffix(path, ".webmanifest") {
+			w.Header().Set("Content-Type", mime.TypeByExtension(".webmanifest"))
 		}
 
 		if info, err := fs.Stat(fsys, path); err == nil {
