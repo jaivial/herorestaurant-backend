@@ -222,7 +222,9 @@ func (s *Server) googleReviewUpsert(ctx context.Context, restaurantID int, rv go
 		return false, err
 	}
 	n, _ := res.RowsAffected()
-	return n == 1, nil
+	// "New" means new AND unanswered: the first import brings hundreds of
+	// reviews that already carry an owner reply.
+	return n == 1 && googleReply == "", nil
 }
 
 func googleParseTime(v string) any {
