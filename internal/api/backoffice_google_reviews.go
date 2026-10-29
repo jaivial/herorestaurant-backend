@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -36,6 +37,7 @@ type googleReviewsStatusDTO struct {
 	Signature           string     `json:"signature"`
 	ComplaintContact    string     `json:"complaintContact"`
 	SyncEnabled         bool       `json:"syncEnabled"`
+	Syncing             bool       `json:"syncing"`
 	SyncHour            int        `json:"syncHour"`
 	LastSyncAt          *time.Time `json:"lastSyncAt"`
 	LastSyncError       string     `json:"lastSyncError"`
@@ -97,11 +99,12 @@ func (s *Server) handleBOGoogleReviewsStatus(w http.ResponseWriter, r *http.Requ
 		boJSONError(w, http.StatusInternalServerError, "Error cargando la conexión con Google")
 		return
 	}
+	_, syncing := googleReviewsRunning.Load(a.ActiveRestaurantID)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "status": googleReviewsStatusDTO{
 		Configured: s.googleOAuthConfigured(), Connected: cfg.connected(), Email: cfg.Email,
 		Location: cfg.Location, LocationTitle: cfg.LocationTitle, AutoPublishMinStars: cfg.AutoPublishMinStars,
 		Formality: cfg.Formality, Signature: cfg.Signature, ComplaintContact: cfg.ComplaintContact,
-		SyncEnabled: cfg.SyncEnabled, SyncHour: s.cfg.GoogleReviewsSyncHour, LastSyncAt: cfg.LastSyncAt,
+		SyncEnabled: cfg.SyncEnabled, Syncing: syncing, SyncHour: s.cfg.GoogleReviewsSyncHour, LastSyncAt: cfg.LastSyncAt,
 		LastSyncError: cfg.LastSyncError, RedirectURI: s.googleRedirectURI(r),
 	}})
 }
@@ -141,6 +144,11 @@ func (s *Server) handleBOGoogleReviewsOAuthStart(w http.ResponseWriter, r *http.
 	a, _ := boAuthFromContext(r.Context())
 	if !s.googleOAuthConfigured() {
 		boJSONError(w, http.StatusServiceUnavailable, "Google no está configurado en el servidor (GOOGLE_CLIENT_ID/SECRET)")
+		return
+	}
+	// The state signature and the stored refresh token both depend on it.
+	if s.cfg.VaultToken == "" {
+		boJSONError(w, http.StatusServiceUnavailable, "VAULT_TOKEN no configurado en el servidor")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true,
@@ -248,14 +256,21 @@ func (s *Server) handleBOGoogleReviewsDisconnect(w http.ResponseWriter, r *http.
 	s.handleBOGoogleReviewsStatus(w, r)
 }
 
+// handleBOGoogleReviewsSync starts a sync detached from the request (it can
+// take minutes: one AI draft per review); the UI follows status.syncing.
 func (s *Server) handleBOGoogleReviewsSync(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	sum, err := s.googleReviewsSync(r.Context(), a.ActiveRestaurantID)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": err.Error(), "summary": sum})
+	if _, busy := googleReviewsRunning.Load(a.ActiveRestaurantID); busy {
+		boJSONError(w, http.StatusConflict, "Ya hay una revisión en curso")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "summary": sum})
+	rid := a.ActiveRestaurantID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), googleReviewsSyncTimeout)
+		defer cancel()
+		_, _ = s.googleReviewsSync(ctx, rid)
+	}()
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"success": true, "started": true})
 }
 
 func (s *Server) handleBOGoogleReviewsList(w http.ResponseWriter, r *http.Request) {
@@ -269,26 +284,19 @@ func (s *Server) handleBOGoogleReviewsList(w http.ResponseWriter, r *http.Reques
 	case "all":
 		where = "1 = 1"
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id FROM google_reviews WHERE restaurant_id = ? AND `+where+`
+	rows, err := s.db.QueryContext(r.Context(), `SELECT `+googleReviewColumns+` FROM google_reviews WHERE restaurant_id = ? AND `+where+`
 		ORDER BY review_created_at DESC LIMIT 100`, a.ActiveRestaurantID)
 	if err != nil {
 		boJSONError(w, http.StatusInternalServerError, "Error cargando reseñas")
 		return
 	}
-	var ids []int64
+	out := []googleReviewRow{}
 	for rows.Next() {
-		var id int64
-		if rows.Scan(&id) == nil {
-			ids = append(ids, id)
-		}
-	}
-	_ = rows.Close()
-	out := make([]googleReviewRow, 0, len(ids))
-	for _, id := range ids {
-		if rv, err := s.loadGoogleReview(r.Context(), a.ActiveRestaurantID, id); err == nil {
+		if rv, err := scanGoogleReview(rows.Scan); err == nil {
 			out = append(out, rv)
 		}
 	}
+	_ = rows.Close()
 	counts := map[string]int{}
 	if crow, err := s.db.QueryContext(r.Context(), `SELECT status, COUNT(*) FROM google_reviews WHERE restaurant_id = ? GROUP BY status`, a.ActiveRestaurantID); err == nil {
 		for crow.Next() {

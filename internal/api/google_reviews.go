@@ -28,6 +28,7 @@ const (
 	googleReviewsAutoPublishDays = 14
 	googleReviewsDraftTimeout    = 60 * time.Second
 	googleReviewsMaxReplyRunes   = 3500
+	googleReviewsSyncTimeout     = 15 * time.Minute
 )
 
 type googleBusinessConfig struct {
@@ -258,12 +259,17 @@ func (s *Server) googleReviewsDraftPending(ctx context.Context, cfg googleBusine
 }
 
 func (s *Server) loadGoogleReview(ctx context.Context, restaurantID int, id int64) (googleReviewRow, error) {
+	return scanGoogleReview(s.db.QueryRowContext(ctx, `SELECT `+googleReviewColumns+` FROM google_reviews WHERE id = ? AND restaurant_id = ?`, id, restaurantID).Scan)
+}
+
+const googleReviewColumns = `id, reviewer_name, star_rating, comment, review_created_at, reply, status, error, published_at`
+
+// scanGoogleReview reads one row selected with googleReviewColumns.
+func scanGoogleReview(scan func(dest ...any) error) (googleReviewRow, error) {
 	var r googleReviewRow
 	var comment, reply sql.NullString
 	var created, published sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT id, reviewer_name, star_rating, comment, review_created_at, reply, status, error, published_at
-		FROM google_reviews WHERE id = ? AND restaurant_id = ?`, id, restaurantID).
-		Scan(&r.ID, &r.Reviewer, &r.Stars, &comment, &created, &reply, &r.Status, &r.Error, &published)
+	err := scan(&r.ID, &r.Reviewer, &r.Stars, &comment, &created, &reply, &r.Status, &r.Error, &published)
 	r.Comment, r.Reply = comment.String, reply.String
 	if created.Valid {
 		r.CreatedAt = &created.Time
@@ -356,11 +362,11 @@ func (s *Server) googleReviewPublish(ctx context.Context, cfg googleBusinessConf
 		return err
 	}
 	if err := googlePutReply(ctx, accessToken, name, text); err != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE google_reviews SET reply = ?, status = 'draft', error = ? WHERE id = ?`, text, truncateRunes(err.Error(), 480), id)
+		_, _ = s.db.ExecContext(ctx, `UPDATE google_reviews SET reply = ?, status = 'draft', error = ? WHERE id = ? AND restaurant_id = ?`, text, truncateRunes(err.Error(), 480), id, cfg.RestaurantID)
 		slog.Default().Warn("google_reviews.publish_failed", "coord_id", "google_reviews_ai_v1", "restaurant_id", cfg.RestaurantID, "review_id", id, "err", err.Error())
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE google_reviews SET reply = ?, status = 'published', error = '', published_at = UTC_TIMESTAMP() WHERE id = ?`, text, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE google_reviews SET reply = ?, status = 'published', error = '', published_at = UTC_TIMESTAMP() WHERE id = ? AND restaurant_id = ?`, text, id, cfg.RestaurantID)
 	slog.Default().Info("google_reviews.published", "coord_id", "google_reviews_ai_v1", "restaurant_id", cfg.RestaurantID, "review_id", id)
 	return err
 }
@@ -409,7 +415,7 @@ func (s *Server) runGoogleReviewsLoop(ctx context.Context) {
 			}
 			_ = rows.Close()
 			for _, id := range ids {
-				syncCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+				syncCtx, cancel := context.WithTimeout(ctx, googleReviewsSyncTimeout)
 				_, _ = s.googleReviewsSync(syncCtx, id)
 				cancel()
 			}
