@@ -26,7 +26,7 @@ import (
 const (
 	googleReviewsDraftsPerSync   = 15
 	googleReviewsAutoPublishDays = 14
-	googleReviewsDraftTimeout    = 60 * time.Second
+	googleReviewsDraftTimeout    = 45 * time.Second
 	googleReviewsMaxReplyRunes   = 3500
 	googleReviewsSyncTimeout     = 15 * time.Minute
 	googleReviewsDraftAttempts   = 3
@@ -389,8 +389,14 @@ func (s *Server) googleReviewsLLMText(ctx context.Context, restaurantID int, ref
 }
 
 // googleReplySuspicious reports MiniMax glitch glyphs (CJK, filler symbols)
-// in the reply that the review itself does not contain.
+// in the reply that the review itself does not contain. A review written in a
+// CJK script is answered in that script, so it is never checked.
 func googleReplySuspicious(reply, review string) bool {
+	for _, r := range review {
+		if assistantMinimaxGlitch(r) {
+			return false
+		}
+	}
 	for _, r := range reply {
 		if assistantMinimaxGlitch(r) && !strings.ContainsRune(review, r) {
 			return true
