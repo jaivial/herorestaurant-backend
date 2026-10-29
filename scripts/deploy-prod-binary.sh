@@ -7,6 +7,9 @@
 set -euo pipefail
 export PATH=$PATH:/usr/local/go/bin
 NAME=newvillacarmen-backend-prod; OLD=${NAME}-old
+# Mismo lock que deploy/release-backend-prod.sh: nunca dos recreates del backend a la vez.
+exec 9<"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/release-backend-prod.sh"
+flock -n 9 || { echo "!! ya hay otro release del backend en curso; reintenta cuando acabe"; exit 1; }
 BIN=${BIN:?BIN=/ruta/al/binario estatico}
 CUR_IMG=$(sudo -n docker inspect $NAME --format '{{.Image}}')
 CUR_SHORT=${CUR_IMG#sha256:}; CUR_SHORT=${CUR_SHORT:0:12}
@@ -22,7 +25,7 @@ for a in $(sudo -n docker run --rm --entrypoint sh "$BASE_IMG" -c 'cat /app/stat
 echo "   estatico base ok"
 NEWTAG=newvillacarmen-prod-backend:privileged
 RB=newvillacarmen-prod-backend:rollback-$CUR_SHORT
-ENVFILE=/tmp/$NAME.env
+ENVFILE=$(mktemp /tmp/$NAME-XXXXXX.env); trap 'rm -f "$ENVFILE"' EXIT
 VOLUME=newvillacarmen-prod_whatsapp-bot-context
 echo "== 0) estado y binario =="
 file "$BIN" | grep -q "statically linked" || { echo "!! binario no estatico"; exit 1; }

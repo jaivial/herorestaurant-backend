@@ -15,7 +15,8 @@ set -euo pipefail
 IMAGE="newvillacarmen-prod-backoffice:privileged"
 NAME="newvillacarmen-backoffice-prod"
 OLD="${NAME}-old"
-ENVFILE="/tmp/${NAME}.env"
+# ENVFILE y el log de build se crean con mktemp mas abajo: rutas fijas en /tmp
+# fallan con sudo si otro usuario dejo el fichero (fs.protected_regular).
 ROLLBACK_TAG="newvillacarmen-prod-backoffice:rollback"
 
 # Sentinels del bundle: el texto de la seccion y el endpoint que la consume.
@@ -31,8 +32,15 @@ HEALTH_CMD="curl -fsS -m 5 http://127.0.0.1:3011/"
 # puede pasar por entorno; por defecto, el checkout de produccion.
 REF="${1:-origin/dev}"
 BACKOFFICE_REPO="${NVC_BACKOFFICE_REPO:-/var/www/newvillacarmen/backoffice}"
+
+# Un solo release del backoffice a la vez.
+exec 9<"${BASH_SOURCE[0]}"
+flock -n 9 || { echo "!! ya hay otro release del backoffice en curso; reintenta cuando acabe"; exit 1; }
+
 STAGE="$(mktemp -d /tmp/nvc-bo-release-XXXXXX)"
 trap 'rm -rf "$STAGE"' EXIT
+ENVFILE="$STAGE/${NAME}.env"
+BUILD_LOG="$(mktemp /tmp/nvc-bo-build-XXXXXX.log)"
 
 echo "== 1) contexto cerrado: exportar $REF =="
 git -C "$BACKOFFICE_REPO" fetch origin --quiet
@@ -47,9 +55,9 @@ git -C "$BACKOFFICE_REPO" archive "$COMMIT" | tar -x -C "$STAGE/backoffice"
 echo "   (el Dockerfile hace COPY . ., asi que el contexto es el repo entero)"
 
 echo "== 2) construir =="
-if ! sudo -n docker build -t "$IMAGE" -f "$STAGE/backoffice/Dockerfile.prod" "$STAGE/backoffice" >/tmp/nvc-bo-build.log 2>&1; then
-  echo "!! el build fallo:"
-  tail -20 /tmp/nvc-bo-build.log | sed 's/^/   /'
+if ! sudo -n docker build -t "$IMAGE" -f "$STAGE/backoffice/Dockerfile.prod" "$STAGE/backoffice" >"$BUILD_LOG" 2>&1; then
+  echo "!! el build fallo (log completo: $BUILD_LOG):"
+  tail -20 "$BUILD_LOG" | sed 's/^/   /'
   exit 1
 fi
 echo "   $(sudo -n docker image inspect "$IMAGE" --format '{{.Id}}' | cut -c1-12)"
