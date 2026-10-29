@@ -26,9 +26,10 @@ import (
 const (
 	googleReviewsDraftsPerSync   = 15
 	googleReviewsAutoPublishDays = 14
-	googleReviewsDraftTimeout    = 60 * time.Second
+	googleReviewsDraftTimeout    = 45 * time.Second
 	googleReviewsMaxReplyRunes   = 3500
 	googleReviewsSyncTimeout     = 15 * time.Minute
+	googleReviewsDraftAttempts   = 3
 )
 
 type googleBusinessConfig struct {
@@ -73,7 +74,7 @@ type googleReviewsSummary struct {
 var googleReviewsRunning sync.Map
 
 func (s *Server) loadGoogleBusiness(ctx context.Context, restaurantID int) (googleBusinessConfig, error) {
-	cfg := googleBusinessConfig{RestaurantID: restaurantID, AutoPublishMinStars: 4, Formality: "tu", SyncEnabled: true}
+	cfg := googleBusinessConfig{RestaurantID: restaurantID, AutoPublishMinStars: 0, Formality: "tu", SyncEnabled: true}
 	var enc sql.NullString
 	var last sql.NullTime
 	err := s.db.QueryRowContext(ctx, `SELECT google_email, refresh_token_encrypted, account_name, location_name, location_title,
@@ -171,7 +172,7 @@ func (s *Server) googleReviewsSyncRun(ctx context.Context, cfg googleBusinessCon
 	}
 	if cfg.AutoPublishMinStars > 0 {
 		rows, err := s.db.QueryContext(ctx, `SELECT id, reply FROM google_reviews WHERE restaurant_id = ? AND status = 'draft'
-			AND star_rating >= ? AND review_created_at >= UTC_TIMESTAMP() - INTERVAL ? DAY`,
+			AND error = '' AND star_rating >= ? AND review_created_at >= UTC_TIMESTAMP() - INTERVAL ? DAY`,
 			cfg.RestaurantID, cfg.AutoPublishMinStars, googleReviewsAutoPublishDays)
 		if err != nil {
 			return sum, err
@@ -325,15 +326,54 @@ func (s *Server) googleReviewDraft(ctx context.Context, cfg googleBusinessConfig
 	}
 	raw, _ := json.Marshal(payload)
 	coordID := fmt.Sprintf("google_reviews_ai_v1:%d:%d", cfg.RestaurantID, id)
+	// MiniMax sometimes bleeds tokens of other languages or scripts into a
+	// sentence ("Gracias porailable a la paella", CJK fragments). Every draft
+	// gets a proofreading pass; glyphs that cannot belong to the reply trigger
+	// a fresh attempt, and a draft still suspicious after the last one keeps an
+	// error so it is never published on its own (google_reviews_quality_v1).
+	text, suspicious := "", true
+	for attempt := 1; attempt <= googleReviewsDraftAttempts && suspicious; attempt++ {
+		draft, err := s.googleReviewsLLMText(ctx, cfg.RestaurantID, ref, coordID, system, string(raw))
+		if err != nil {
+			return "", err
+		}
+		proof, _ := json.Marshal(map[string]string{"reseña": rv.Comment, "respuesta": draft})
+		text, err = s.googleReviewsLLMText(ctx, cfg.RestaurantID, ref, coordID, googleReviewsProofreadPrompt, string(proof))
+		if err != nil || text == "" {
+			text = draft
+		}
+		suspicious = googleReplySuspicious(text, rv.Comment)
+		slog.Default().Info("google_reviews.draft", "coord_id", "google_reviews_quality_v1", "restaurant_id", cfg.RestaurantID, "review_id", id, "attempt", attempt, "suspicious", suspicious)
+	}
+	note := ""
+	if suspicious {
+		text = assistantCleanseReply(text)
+		note = "Revisa el texto antes de publicarlo: la IA devolvió caracteres extraños."
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE google_reviews SET reply = ?, status = 'draft', error = ? WHERE id = ? AND restaurant_id = ? AND status <> 'published'`,
+		text, note, id, cfg.RestaurantID); err != nil {
+		return "", err
+	}
+	return text, nil
+}
+
+const googleReviewsProofreadPrompt = "Eres corrector de textos. Te paso la respuesta que un restaurante va a publicar a una reseña de Google. " +
+	"Corrige SOLO: palabras cortadas, pegadas o deformadas, palabras sueltas de otro idioma o de otro alfabeto que no encajen en la frase, y erratas. " +
+	"Mantén el idioma de la respuesta, el sentido, el tono, los saltos de línea y la firma final. No añadas ni quites frases. " +
+	"Devuelve SOLO el texto corregido, sin comillas ni explicaciones."
+
+// googleReviewsLLMText runs one call with the restaurant model and returns its
+// text (usage recorded under the google_reviews feature).
+func (s *Server) googleReviewsLLMText(ctx context.Context, restaurantID int, ref, coordID, system, user string) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, googleReviewsDraftTimeout)
 	defer cancel()
-	resp, err := s.botCallModelRef(withBotCallTimeout(callCtx, googleReviewsDraftTimeout), cfg.RestaurantID, ref, coordID, system,
-		[]botMessage{{Role: "user", Content: []botBlock{{Type: "text", Text: string(raw)}}}}, nil, 1200)
+	resp, err := s.botCallModelRef(withBotCallTimeout(callCtx, googleReviewsDraftTimeout), restaurantID, ref, coordID, system,
+		[]botMessage{{Role: "user", Content: []botBlock{{Type: "text", Text: user}}}}, nil, 1200)
 	if err != nil {
 		return "", fmt.Errorf("IA: %w", err)
 	}
 	provider, model := botSplitModelRef(ref)
-	s.recordAIUsage(ctx, cfg.RestaurantID, aiFeatureGoogleReviews, provider, model,
+	s.recordAIUsage(ctx, restaurantID, aiFeatureGoogleReviews, provider, model,
 		helperAnthropicUsage(resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens), false)
 	text := ""
 	for _, b := range resp.Content {
@@ -345,11 +385,24 @@ func (s *Server) googleReviewDraft(ctx context.Context, cfg googleBusinessConfig
 	if text == "" {
 		return "", errors.New("La IA no devolvió ninguna respuesta")
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE google_reviews SET reply = ?, status = 'draft', error = '' WHERE id = ? AND restaurant_id = ? AND status <> 'published'`,
-		text, id, cfg.RestaurantID); err != nil {
-		return "", err
-	}
 	return text, nil
+}
+
+// googleReplySuspicious reports MiniMax glitch glyphs (CJK, filler symbols)
+// in the reply that the review itself does not contain. A review written in a
+// CJK script is answered in that script, so it is never checked.
+func googleReplySuspicious(reply, review string) bool {
+	for _, r := range review {
+		if assistantMinimaxGlitch(r) {
+			return false
+		}
+	}
+	for _, r := range reply {
+		if assistantMinimaxGlitch(r) && !strings.ContainsRune(review, r) {
+			return true
+		}
+	}
+	return false
 }
 
 // googleReviewPublish sends the reply to Google. On failure the review stays
