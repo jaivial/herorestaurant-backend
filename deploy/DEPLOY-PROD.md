@@ -142,6 +142,16 @@ sudo RECLAIM_RUN_ID="reclaim-deploy-$(date +%Y%m%d-%H%M%S)" /usr/local/bin/docke
 - Contenedores: `docker compose -f backend/deploy/docker-compose.prod.yml down`
   + re-levantar dev compose si hace falta.
 
+## Clasificador Laya del bot (`laya-heads`, `wa_bot_laya_heads_v1`)
+
+El pipeline del bot clasifica cada mensaje con `laya-heads` (`127.0.0.1:18196`,
+protocolo Jev): el encoder multilingüe de Laya congelado + cabezas lineales
+entrenadas con conversaciones reales etiquetadas (`laya/train_heads.py`).
+Por debajo de `JEV_CONFIDENCE_MIN` (0.7) decide el paso DSPy con el LLM.
+Reentrenar: generar los datos (nunca en git), correr `train_heads.py` sobre la
+imagen `base` + scikit-learn, commitear `heads.npz`/`heads.json` y
+`docker compose ... up -d --build laya-heads`.
+
 ## Contexto persistente del bot WhatsApp
 
 El backend guarda el transcript conversacional del bot en SQLite mediante `BOT_CONTEXT_SQLITE_PATH`. En Docker producción el compose monta el volumen nombrado `whatsapp-bot-context` en `/var/lib/herorestaurant`, por lo que el contexto sobrevive a recreaciones y rebuilds del contenedor. Los mensajes OTP de verificación no se guardan en este transcript. Cada campaña de WhatsApp entregada entra en el transcript del destinatario (`source=campaign`, `wa_bot_campaign_context_v1`), para que el bot entienda las respuestas a la campaña.
