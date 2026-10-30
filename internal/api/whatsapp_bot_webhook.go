@@ -678,7 +678,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 		}
 		promptData.Knowledge = s.botRetrieveKnowledge(ctx, restaurantID, routing, routes, msg.Text)
 	}
-	promptData.RouteDirective = decision.Directive
+	promptData.RouteDirective = s.botSpecialDateRouteDirective(ctx, restaurantID, decision)
 	promptData.RouteNode = decision.Node
 	// Coordination id: wa_bot_group_mention_v1 - a group turn is a staff turn:
 	// the prompt changes and the special-menu CRUD tools become available.
@@ -886,6 +886,7 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			s.botSendFallback(sendCtx, restaurantID, msg.Sender)
 		}
 	}
+	s.botEnsureSpecialDateLink(sendCtx, restaurantID, msg, decision, turn, replyText)
 	botCheckpointCtx(ctx, "wa_bot_turn_reply_v1", "restaurant_id=%d sender=%s message_id=%s kind=%s chars=%d preview=%s",
 		restaurantID, msg.Sender, msg.MessageID, replyKind, len(replyText), botDiagPreview(replyText, 160))
 	endReason := "end_turn"
