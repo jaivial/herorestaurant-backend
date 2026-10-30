@@ -41,7 +41,10 @@ log = logging.getLogger("wa_bot_pipeline")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [pipeline] %(message)s")
 logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 
-JEV_URL = "https://api.typesafe.ai/v1/systemone"
+# wa_bot_laya_heads_v1: JEV_URL points the classifier at a self-hosted
+# Jev-protocol server (laya heads, no API key). Unset = TypeSafe Jev.
+JEV_URL = os.environ.get("JEV_URL", "https://api.typesafe.ai/v1/systemone")
+JEV_SELF_HOSTED = "JEV_URL" in os.environ
 OPENCODE_GO_BASE = "https://opencode.ai/zen/go/v1"
 # The Anthropic-compatible Messages endpoint of MiniMax. The base must carry
 # the /v1 segment: with the bare /anthropic the request lands on a path that
@@ -49,7 +52,7 @@ OPENCODE_GO_BASE = "https://opencode.ai/zen/go/v1"
 MINIMAX_ANTHROPIC_BASE = "https://api.minimax.io/anthropic/v1"
 
 # Thresholds (one place, easy to tune from real traffic in the graph tab).
-CONFIDENCE_MIN = 0.55
+CONFIDENCE_MIN = float(os.environ.get("JEV_CONFIDENCE_MIN", "0.55"))
 ANGER_HANDOFF = 1.6        # score 0..3 (content, annoyed, clearly unhappy, very angry)
 CAN_HANDLE_MIN = 0.30      # below -> human before giving a wrong answer
 SAME_TOPIC_MIN = 0.55      # sticky handoff continues while the topic is the same
@@ -371,7 +374,7 @@ def jev_classify(api_key: str, state: str, handoff_topic: str, special_dates: di
         crit["none"] = "No se refiere a ninguna de estas fechas especiales"
         questions["special_date"] = {"type": "choice", "instructions": "Fecha especial a la que se refiere el último mensaje del cliente", "criteria": crit}
     body = {"state": state, "model": "jev-latest", "questions": questions}
-    req = urllib.request.Request(JEV_URL, json.dumps(body).encode(), {"Authorization": "Bearer " + api_key, "Content-Type": "application/json"})
+    req = urllib.request.Request(JEV_URL, json.dumps(body).encode(), {"Content-Type": "application/json", **({"Authorization": "Bearer " + api_key} if api_key else {})})
     with urllib.request.urlopen(req, timeout=6) as resp:
         a = json.load(resp)["answers"]
     probs = a["intent"].get("probabilities") or {}
@@ -583,13 +586,13 @@ class BotPipeline(dspy.Module):
         path.append("jev_classify")
         jev: dict[str, Any] = {}
         try:
-            if req.jev_api_key:
+            if req.jev_api_key or JEV_SELF_HOSTED:
                 jev = self.jev(api_key=req.jev_api_key, state=state, handoff_topic=handoff_topic, special_dates=special_dates, forwarded=forwarded).toDict()
         except Exception as exc:  # noqa: BLE001 - never block the turn on Jev
             log.warning("jev_failed restaurant_id=%s err=%s", req.restaurant_id, exc)
         intent = jev.get("intent") or {"create_booking": "create_booking", "modify_booking": "modify_booking", "cancel_booking": "cancel_booking"}.get(facts.get("regex_intent") or "", "other")
         confidence = float(jev.get("confidence", 0))
-        classifier = "jev" if jev else "regex"
+        classifier = ("laya" if JEV_SELF_HOSTED else "jev") if jev else "regex"
 
         path.append("confident")
         result_dspy: dict[str, Any] = {}
@@ -640,7 +643,9 @@ class BotPipeline(dspy.Module):
         # sticky_handoff: the topic already belongs to a human.
         path.append("sticky_handoff")
         if handoff_topic:
-            same = float(jev.get("same_topic", 1.0 if not jev else 0.0))
+            # A classifier that did not answer same_topic keeps the topic
+            # with the human (wa_bot_laya_heads_v1), as when Jev is down.
+            same = float(jev.get("same_topic", 1.0))
             closing = intent in ("acknowledgement", "farewell", "greeting") and same < 0.8
             if same >= SAME_TOPIC_MIN and not closing:
                 if forwarded:

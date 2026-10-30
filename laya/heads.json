@@ -1,0 +1,343 @@
+{
+ "revision": "7b928d828b7b0e022f929d9bd2e44165aa270148",
+ "trained_at": "2026-10-30 18:42:36",
+ "n_train": 1408,
+ "n_test": 65,
+ "heads": {
+  "intent": {
+   "kind": "choice",
+   "view": "msg",
+   "classes": [
+    "acknowledgement",
+    "allergens",
+    "arrival_notice",
+    "availability",
+    "booking_status",
+    "cancel_booking",
+    "complaint",
+    "create_booking",
+    "event_inquiry",
+    "extras",
+    "farewell",
+    "feedback",
+    "gift_voucher",
+    "greeting",
+    "group_booking",
+    "human",
+    "info_contact",
+    "info_hours",
+    "info_location",
+    "invoice_payment",
+    "job_application",
+    "lost_item",
+    "menu_content",
+    "menu_policy",
+    "modify_booking",
+    "other",
+    "prices",
+    "rice",
+    "special_date",
+    "special_needs_request",
+    "supplier"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 0.677,
+    "positives_train": null,
+    "acc_vs_jev": 0.719,
+    "gate": {
+     "0.55": {
+      "coverage": 0.523,
+      "acc": 0.853
+     },
+     "0.6": {
+      "coverage": 0.492,
+      "acc": 0.875
+     },
+     "0.7": {
+      "coverage": 0.446,
+      "acc": 0.897
+     },
+     "0.8": {
+      "coverage": 0.385,
+      "acc": 0.88
+     }
+    }
+   }
+  },
+  "booking_op": {
+   "kind": "choice",
+   "view": "msg",
+   "classes": [
+    "cancel",
+    "create",
+    "modify_date",
+    "modify_other",
+    "modify_people",
+    "modify_rice",
+    "modify_time",
+    "none"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 0.815,
+    "positives_train": null
+   }
+  },
+  "stage": {
+   "kind": "choice",
+   "view": "both",
+   "classes": [
+    "choosing_option",
+    "confirming",
+    "new_request",
+    "providing_data",
+    "rejecting",
+    "small_talk"
+   ],
+   "metrics": {
+    "view": "both",
+    "acc": 0.754,
+    "positives_train": null
+   }
+  },
+  "language": {
+   "kind": "choice",
+   "view": "msg",
+   "classes": [
+    "en",
+    "es",
+    "other"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 0.969,
+    "positives_train": null
+   }
+  },
+  "anger": {
+   "kind": "score",
+   "view": "msg",
+   "classes": [
+    "0",
+    "1",
+    "2",
+    "3"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 0.908,
+    "positives_train": null,
+    "fires": {
+     "false_alarms": "0/61",
+     "hits": "1/4"
+    }
+   }
+  },
+  "urgency": {
+   "kind": "score",
+   "view": "both",
+   "classes": [
+    "0",
+    "1",
+    "2"
+   ],
+   "metrics": {
+    "view": "both",
+    "acc": 0.738,
+    "positives_train": null,
+    "fires": {
+     "false_alarms": "1/55",
+     "hits": "3/10"
+    }
+   }
+  },
+  "can_handle": {
+   "kind": "noul",
+   "view": "msg",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 0.892,
+    "positives_train": 231,
+    "fires": {
+     "false_alarms": "2/52",
+     "hits": "7/13"
+    }
+   }
+  },
+  "event": {
+   "kind": "noul",
+   "view": "msg",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 0.969,
+    "positives_train": 64,
+    "fires": {
+     "false_alarms": "0/63",
+     "hits": "0/2"
+    }
+   }
+  },
+  "special_needs": {
+   "kind": "noul",
+   "view": "both",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "both",
+    "acc": 0.846,
+    "positives_train": 216,
+    "fires": {
+     "false_alarms": "2/51",
+     "hits": "8/14"
+    }
+   }
+  },
+  "wants_note": {
+   "kind": "noul",
+   "view": "msg",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 0.862,
+    "positives_train": 92,
+    "fires": {
+     "false_alarms": "2/59",
+     "hits": "0/6"
+    }
+   }
+  },
+  "has_date": {
+   "kind": "noul",
+   "view": "both",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "both",
+    "acc": 0.862,
+    "positives_train": 597,
+    "fires": {
+     "false_alarms": "5/45",
+     "hits": "16/20"
+    }
+   }
+  },
+  "has_time": {
+   "kind": "noul",
+   "view": "both",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "both",
+    "acc": 0.938,
+    "positives_train": 851,
+    "fires": {
+     "false_alarms": "4/56",
+     "hits": "9/9"
+    }
+   }
+  },
+  "has_people": {
+   "kind": "noul",
+   "view": "both",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "both",
+    "acc": 0.908,
+    "positives_train": 762,
+    "fires": {
+     "false_alarms": "2/49",
+     "hits": "12/16"
+    }
+   }
+  },
+  "multi_request": {
+   "kind": "noul",
+   "view": "both",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "both",
+    "acc": 0.969,
+    "positives_train": 118,
+    "fires": {
+     "false_alarms": "0/64",
+     "hits": "0/1"
+    }
+   }
+  },
+  "injection": {
+   "kind": "noul",
+   "view": "msg",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 1.0,
+    "positives_train": 3,
+    "fires": {
+     "false_alarms": "0/65",
+     "hits": "0/0"
+    }
+   }
+  },
+  "off_topic": {
+   "kind": "noul",
+   "view": "msg",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 1.0,
+    "positives_train": 25,
+    "fires": {
+     "false_alarms": "0/65",
+     "hits": "0/0"
+    }
+   }
+  },
+  "formal": {
+   "kind": "noul",
+   "view": "msg",
+   "classes": [
+    "False",
+    "True"
+   ],
+   "metrics": {
+    "view": "msg",
+    "acc": 0.923,
+    "positives_train": 127,
+    "fires": {
+     "false_alarms": "0/60",
+     "hits": "0/5"
+    }
+   }
+  }
+ }
+}

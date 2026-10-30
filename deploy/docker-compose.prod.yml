@@ -46,6 +46,27 @@ services:
     network_mode: host
     environment:
       BOT_PIPELINE_PORT: "18195"
+      # wa_bot_laya_heads_v1: classifier = self-hosted Laya heads (Jev
+      # protocol). Below this intent confidence the DSPy LLM step decides.
+      JEV_URL: http://127.0.0.1:18196/v1/systemone
+      JEV_CONFIDENCE_MIN: "0.7"
+    depends_on:
+      - laya-heads
+
+  # Laya heads (wa_bot_laya_heads_v1): frozen multilingual Laya encoder +
+  # linear heads trained on the restaurant's own turns (laya/train_heads.py).
+  # Localhost-only, CPU, bounded to 2 cores.
+  laya-heads:
+    build:
+      context: ../laya
+    container_name: newvillacarmen-laya-heads-prod
+    restart: unless-stopped
+    network_mode: host
+    cpus: 2
+    mem_limit: 3g
+    environment:
+      LAYA_HEADS_PORT: "18196"
+      LAYA_HEADS_THREADS: "2"
 
   backoffice:
     build:
