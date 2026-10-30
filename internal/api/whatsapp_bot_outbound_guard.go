@@ -3,6 +3,7 @@ package api
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Coordination id: wa_bot_outbound_guard_v1
@@ -93,6 +94,33 @@ func botOutboundSplit(text string) []string {
 
 // botOutboundText is THE outbound gate: sanitize, then split.
 func botOutboundText(text string) []string {
-	clean := botOutboundStripJargon(text)
+	clean := botOutboundStripJargon(botOutboundStripCJK(text))
 	return botOutboundSplit(clean)
+}
+
+// botOutboundCJKRe matches runs of Chinese ideographs and CJK/full-width
+// punctuation.
+var botOutboundCJKRe = regexp.MustCompile(`[\p{Han}\x{3000}-\x{303F}\x{FF00}-\x{FFEF}]+`)
+var botOutboundSpacesRe = regexp.MustCompile(`[ \t]{2,}`)
+
+// botOutboundStripCJK removes the Chinese fragments MiniMax leaks into a reply
+// written in another language (wa_bot_outbound_cjk_v1, prod 2026-10-30:
+// "Ojal\u00e1\u7684\u7a7a\u4f4d\u8fd8\u5728\u3002"). A reply that is mostly Chinese (a
+// Chinese-speaking customer) is left untouched.
+func botOutboundStripCJK(text string) string {
+	letters, han := 0, 0
+	for _, r := range text {
+		if unicode.IsLetter(r) {
+			letters++
+			if unicode.Is(unicode.Han, r) {
+				han++
+			}
+		}
+	}
+	if han == 0 || han*2 > letters {
+		return text
+	}
+	out := strings.TrimSpace(botOutboundSpacesRe.ReplaceAllString(botOutboundCJKRe.ReplaceAllString(text, " "), " "))
+	botCheckpoint("wa_bot_outbound_cjk_v1", "han_removed=%d chars_in=%d", han, len(text))
+	return out
 }

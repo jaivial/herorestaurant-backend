@@ -177,14 +177,6 @@ func botToolDefsForChat(cfg botTenantConfig, inGroup bool) []botToolDef {
 			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"}},"required":["date"]}`),
 		},
 		{
-			// Coordination id: special_booking_v1 - read-only special date
-			// bookings lookup used by the bot to summarise / lookup special
-			// date reservations.
-			Name:        "get_special_date_bookings",
-			Description: "Lista las reservas especiales de una fecha concreta con su bloque special (menús, principales y totales de adelanto) y el flag is_prereserva. ÚSALO cuando el cliente pida ver reservas especiales o para verificar pre-reservas. En el grupo interno añade phone para ver solo las reservas de ese cliente.",
-			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"},"phone":{"type":"string","description":"Filtra por el teléfono de un cliente (opcional)"}},"required":["date"]}`),
-		},
-		{
 			Name:        "check_availability_for_party",
 			Description: "Verifica si un número de personas cabe en una fecha concreta.",
 			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"},"party_size":{"type":"integer","description":"Número de personas"}},"required":["date","party_size"]}`),
@@ -288,6 +280,15 @@ func botToolDefsForChat(cfg botTenantConfig, inGroup bool) []botToolDef {
 	// enabled. botToolDefsInGroup carries the turn context.
 	if inGroup && !cfg.DisableSpecialCRUD {
 		defs = append(defs, botToolDefsSpecialCRUD()...)
+	}
+	// Coordination id: wa_bot_special_bookings_staff_only_v1 - the festive
+	// bookings list carries OTHER customers' names: staff chats only.
+	if inGroup {
+		defs = append(defs, botToolDef{
+			Name:        "get_special_date_bookings",
+			Description: "Lista las reservas especiales de una fecha concreta con su bloque special (menús, principales y totales de adelanto) y el flag is_prereserva. ÚSALO cuando el cliente pida ver reservas especiales o para verificar pre-reservas. En el grupo interno añade phone para ver solo las reservas de ese cliente.",
+			InputSchema: botSchema(`{"type":"object","properties":{"date":{"type":"string","description":"Fecha en formato dd/MM/yyyy o YYYY-MM-DD"},"phone":{"type":"string","description":"Filtra por el teléfono de un cliente (opcional)"}},"required":["date"]}`),
+		})
 	}
 	defs = append(defs, botToolDefsV2()...)
 	// Coordination id: wa_bot_unsubscribe_v1 - customers only, never the staff group.

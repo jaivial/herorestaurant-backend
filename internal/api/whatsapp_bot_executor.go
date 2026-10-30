@@ -47,6 +47,9 @@ func (s *Server) botToolExecutorForTurn(restaurantID int, msg botWebhookMessage,
 		if err != nil {
 			return "", err
 		}
+		if state != nil {
+			state.observe(name, input, out)
+		}
 		if name == "send_contact" && state != nil && !state.contactSent {
 			if phone := botContactPhoneFromResult(out); phone != "" {
 				state.contactSent = true
@@ -106,6 +109,12 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 	if botPrivilegedControlToolNames[name] && !msg.PrivilegedGroup {
 		botCheckpoint("wa_bot_privileged_control_v1", "restaurant_id=%d tool=%s denied", restaurantID, name)
 		return botJSON(map[string]any{"error": "esta herramienta solo está disponible en las conversaciones autorizadas.", "terminal": true}), nil
+	}
+	// Coordination id: wa_bot_special_bookings_staff_only_v1 - the festive
+	// bookings list carries OTHER customers' names: staff chats only.
+	if name == "get_special_date_bookings" && !msg.IsGroup && !msg.PrivilegedGroup {
+		botCheckpoint("wa_bot_special_bookings_staff_only_v1", "restaurant_id=%d tool=%s denied", restaurantID, name)
+		return botJSON(map[string]any{"error": "esta consulta solo está disponible para el equipo del restaurante.", "terminal": true}), nil
 	}
 	switch name {
 	case "send_message":
