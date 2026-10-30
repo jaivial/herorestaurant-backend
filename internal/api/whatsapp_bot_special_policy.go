@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,6 +37,15 @@ type botSpecialDatePolicy struct {
 	MobilityEnabled           bool     `json:"mobility_enabled"`
 	BookingURL                string   `json:"booking_url,omitempty"`
 	MenuTitles                []string `json:"menu_titles,omitempty"`
+	// FreeSeats / IsFull: day capacity of the date (wa_bot_special_date_full_v1).
+	// FreeSeats is nil when the capacity could not be read.
+	FreeSeats *int `json:"free_seats,omitempty"`
+	IsFull    bool `json:"is_full"`
+}
+
+// botFits reports whether a party (0 = size unknown) still fits the date.
+func (p *botSpecialDatePolicy) botFits(party int) bool {
+	return !p.IsFull && (party <= 0 || p.FreeSeats == nil || party <= *p.FreeSeats)
 }
 
 // botLoadSpecialDatePolicy returns the active special date for dateISO or nil.
@@ -68,6 +78,10 @@ func (s *Server) botLoadSpecialDatePolicy(ctx context.Context, restaurantID int,
 	today := time.Now().In(boMadridTZ).Format("2006-01-02")
 	p.PrereservaOpenNow = p.PrereservaEnabled && (p.PrereservaStartsOn == "" || today >= p.PrereservaStartsOn) && (p.PrereservaEndsOn == "" || today <= p.PrereservaEndsOn)
 	p.BookingURL = s.botSpecialBookingURL(ctx, restaurantID, dateISO)
+	if limit, total, err := s.botDayCapacity(ctx, restaurantID, dateISO); err == nil {
+		free := max(0, limit-total)
+		p.FreeSeats, p.IsFull = &free, free == 0
+	}
 	if rows, err := s.db.QueryContext(ctx, `
 		SELECT COALESCE(NULLIF(sdm.custom_title,''), m.menu_title, '')
 		FROM special_date_menus sdm LEFT JOIN menus m ON m.id = sdm.menu_id AND m.restaurant_id = sdm.restaurant_id
@@ -143,6 +157,7 @@ func (s *Server) botSpecialPolicyOperation(ctx context.Context, restaurantID int
 	var in struct {
 		BookingID int64  `json:"booking_id"`
 		Date      string `json:"date"`
+		People    int    `json:"people"`
 	}
 	if name != "create_booking" && name != "modify_booking" && name != "cancel_booking" {
 		return false, ""
@@ -152,7 +167,7 @@ func (s *Server) botSpecialPolicyOperation(ctx context.Context, restaurantID int
 	if name == "create_booking" || (name == "modify_booking" && strings.TrimSpace(in.Date) != "") {
 		if dateISO, err := parseBotDate(in.Date); err == nil {
 			if p := s.botLoadSpecialDatePolicy(ctx, restaurantID, dateISO); p != nil {
-				return true, s.botSendPrereservaLink(ctx, restaurantID, msg, tenant, p, name)
+				return true, s.botSendPrereservaLink(ctx, restaurantID, msg, tenant, p, name, in.People)
 			}
 		}
 	}
@@ -204,8 +219,27 @@ func (s *Server) botManagementHandoff(ctx context.Context, restaurantID int, msg
 }
 
 // botSendPrereservaLink answers a create request for a special date with the
-// website pre-reserva link (never creates the booking via WhatsApp).
-func (s *Server) botSendPrereservaLink(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, p *botSpecialDatePolicy, operation string) string {
+// website pre-reserva link (never creates the booking via WhatsApp). A full
+// date gets the "completo" notice instead (wa_bot_special_date_full_v1).
+func (s *Server) botSendPrereservaLink(ctx context.Context, restaurantID int, msg botWebhookMessage, tenant botTenantConfig, p *botSpecialDatePolicy, operation string, party int) string {
+	reason, text := "special_date_web_only", botPrereservaLinkText(p)
+	instruction := "NO se ha creado ninguna reserva: el cliente ya ha recibido el enlace de la web para esa fecha especial. No envíes otro mensaje salvo que tenga otra pregunta."
+	if !p.botFits(party) {
+		reason, text = "special_date_full", botSpecialDateFullText(p, party, msg.Language)
+		instruction = "NO se ha creado ninguna reserva: la fecha especial está COMPLETA y el cliente ya ha sido avisado. No envíes otro mensaje salvo que tenga otra pregunta."
+	}
+	sent := false
+	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
+		sent = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "special_date_prereserva_link") == nil
+	}
+	botCheckpoint("wa_bot_special_date_policy_v1", "restaurant_id=%d sender=%s reason=%s operation=%s date=%s sent=%t", restaurantID, msg.Sender, reason, operation, p.Date, sent)
+	return botJSON(map[string]any{
+		"blocked": true, "reason": reason, "date": p.Date, "title": p.Title, "booking_url": p.BookingURL, "notice_sent": sent,
+		"instruction": instruction,
+	})
+}
+
+func botPrereservaLinkText(p *botSpecialDatePolicy) string {
 	var b strings.Builder
 	b.WriteString("El *" + botFormatISODateES(p.Date) + "* es una fecha especial: *" + p.Title + "*.\n")
 	if p.PrereservaEnabled {
@@ -223,15 +257,80 @@ func (s *Server) botSendPrereservaLink(ctx context.Context, restaurantID int, ms
 	if p.PrereservaEnabled && !p.PrereservaOpenNow && p.PrereservaStartsOn != "" {
 		b.WriteString("\nLa pre-reserva estará disponible desde el " + botFormatISODateES(p.PrereservaStartsOn) + ".")
 	}
+	return b.String()
+}
+
+// botSpecialDateFullText is the customer notice for a special date with no
+// room left for the party (wa_bot_special_date_full_v1).
+func botSpecialDateFullText(p *botSpecialDatePolicy, party int, lang string) string {
+	if lang == "en" || lang == "other" {
+		day := p.Date
+		if t, err := time.Parse("2006-01-02", p.Date); err == nil {
+			day = t.Format("Monday, 2 January 2006")
+		}
+		return "Sorry, *" + day + "* (*" + p.Title + "*) is fully booked: there are no seats left for that date. If you like, I can help you find another day 😊"
+	}
+	full := "ya está completo: no nos quedan plazas para esa fecha"
+	if !p.IsFull && party > 0 {
+		full = "ya no nos quedan plazas para " + strconv.Itoa(party) + " personas"
+	}
+	return "Lo sentimos, el *" + botFormatISODateES(p.Date) + "* (*" + p.Title + "*) " + full + ". Si quieres, te ayudo a buscar otro día 😊"
+}
+
+// botSpecialDateFullInstruction is the tool/route instruction for a special
+// date with no room left (wa_bot_special_date_full_v1). Prod 2026-10-30: the
+// tools said free_seats=0 for the Comida de Navidad (176/125 pax) but every
+// instruction only said "give the booking link" and the bot answered "Sí".
+func botSpecialDateFullInstruction(p *botSpecialDatePolicy) string {
+	return "FECHA ESPECIAL COMPLETA: " + p.Title + " (" + botFormatISODateES(p.Date) + ") no tiene plazas libres para este cliente. Díselo claramente desde la primera frase: NUNCA digas que hay sitio ni que puede reservar o pre-reservar esa fecha, y NO envíes el enlace de reserva. Ofrécele buscar otra fecha (compruébala con get_date_overview)."
+}
+
+// botSpecialDateRouteDirective adapts the pipeline directive of the special
+// date route to the real capacity: the pipeline always asks for the booking
+// link, even when the date is full (wa_bot_special_date_full_v1).
+func (s *Server) botSpecialDateRouteDirective(ctx context.Context, restaurantID int, d botPipelineDecision) string {
+	if d.Node != "agent_special_date" || d.SpecialDate == "" {
+		return d.Directive
+	}
+	p := s.botLoadSpecialDatePolicy(ctx, restaurantID, d.SpecialDate)
+	if p == nil {
+		return d.Directive
+	}
+	if p.IsFull {
+		botCheckpoint("wa_bot_special_date_full_v1", "restaurant_id=%d date=%s directive=full", restaurantID, p.Date)
+		return botSpecialDateFullInstruction(p)
+	}
+	return d.Directive + " Si get_date_overview devuelve fits_party=false, no hay sitio para ese grupo: dilo claramente y no envíes el enlace."
+}
+
+// botEnsureSpecialDateLink guarantees the booking link on the special date
+// route (wa_bot_special_date_link_guard_v1): the directive asks the model for
+// it, but prod 2026-10-30 answered without it. When nothing delivered this
+// turn carried the booking URL, the server sends it as a button. Skipped when
+// the date does not fit the party, the pre-reserva is not open yet or a
+// server notice already answered.
+func (s *Server) botEnsureSpecialDateLink(ctx context.Context, restaurantID int, msg botWebhookMessage, d botPipelineDecision, turn *botTurnState, replyText string) {
+	if d.Node != "agent_special_date" || d.SpecialDate == "" || turn.noticeDelivered || turn.noFit {
+		return
+	}
+	p := s.botLoadSpecialDatePolicy(ctx, restaurantID, d.SpecialDate)
+	if p == nil || p.BookingURL == "" || !p.botFits(0) || (p.PrereservaEnabled && !p.PrereservaOpenNow) {
+		return
+	}
+	base, _, _ := strings.Cut(p.BookingURL, "?")
+	if strings.Contains(turn.delivered+replyText, base) {
+		return
+	}
+	es := "Puedes hacer la reserva desde el botón de abajo 👇"
+	if p.PrereservaEnabled {
+		es = "Puedes hacer la pre-reserva desde el botón de abajo 👇"
+	}
+	text := botLocalizedHandoff(es, "You can book it from the button below 👇", msg.Language) + "\n" + p.BookingURL
 	sent := false
 	if gw, ok := s.botGatewayFor(ctx, restaurantID); ok {
-		sent = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, b.String(), "special_date_prereserva_link") == nil
+		sent = s.sendWhatsAppTextTracked(ctx, restaurantID, gw, msg.Sender, text, "special_date_link_guard") == nil
 	}
-	botCheckpoint("wa_bot_special_date_policy_v1", "restaurant_id=%d sender=%s reason=prereserva_web operation=%s date=%s sent=%t", restaurantID, msg.Sender, operation, p.Date, sent)
-	return botJSON(map[string]any{
-		"blocked": true, "reason": "special_date_web_only", "date": p.Date, "title": p.Title, "booking_url": p.BookingURL, "notice_sent": sent,
-		"instruction": "NO se ha creado ninguna reserva: el cliente ya ha recibido el enlace de la web para esa fecha especial. No envíes otro mensaje salvo que tenga otra pregunta.",
-	})
+	botCheckpoint("wa_bot_special_date_link_guard_v1", "restaurant_id=%d sender=%s date=%s sent=%t", restaurantID, msg.Sender, p.Date, sent)
 }
 
 func botFormatISODateES(iso string) string {

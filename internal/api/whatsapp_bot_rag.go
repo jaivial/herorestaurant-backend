@@ -78,7 +78,7 @@ func botDefaultKnowledgeV1() []botKnowledgeChunk {
 func botKnowledgeV2() []botKnowledgeChunk {
 	return []botKnowledgeChunk{
 		{ID: "fechas_especiales", Title: "Fechas especiales", Tags: []string{"special_date", "create_booking", "availability"},
-			Body: "Antes de hablar de una fecha usa get_date_overview. Si es FECHA ESPECIAL (Navidad, Nochevieja...) no se reserva por WhatsApp aunque haya plazas: explica el título, los menús y condiciones (pre-reserva, adelanto) y da el enlace booking_url de la web. Si el cliente ya tiene reserva en una fecha especial, no la modifiques ni canceles: el sistema traslada la solicitud al equipo de gestión."},
+			Body: "Antes de hablar de una fecha usa get_date_overview. Si es FECHA ESPECIAL (Navidad, Nochevieja...) no se reserva por WhatsApp aunque haya plazas: explica el título, los menús y condiciones (pre-reserva, adelanto) y da el enlace booking_url de la web. Si la fecha está completa (special_date.is_full=true o fits_party=false) dilo claramente, nunca digas que hay sitio y no des el enlace. Si el cliente ya tiene reserva en una fecha especial, no la modifiques ni canceles: el sistema traslada la solicitud al equipo de gestión."},
 		{ID: "eventos", Title: "Eventos y reservas especiales", Tags: []string{"event", "group_booking", "friendly_negotiation"},
 			Body: "Bodas, comuniones, bautizos, empresas o banquetes y las reservas marcadas como evento se acuerdan siempre con la gestión del restaurante. No negocies precios, menús ni condiciones: usa send_contact para que el equipo de gestión le contacte."},
 		{ID: "negociacion_cercana", Title: "Clientes valorando un evento", Tags: []string{"friendly_negotiation"},

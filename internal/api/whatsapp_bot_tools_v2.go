@@ -71,6 +71,10 @@ func (s *Server) botToolDateOverview(ctx context.Context, restaurantID int, inpu
 		out["special_date"] = p
 		out["whatsapp_booking_allowed"] = false
 		out["instruction"] = "Fecha especial: NO se puede reservar por WhatsApp. Da el enlace booking_url para reservar/pre-reservar en la web. Si el cliente ya tiene reserva ese día, no se puede modificar ni cancelar por aquí: gestión del restaurante."
+		if !p.botFits(in.PartySize) {
+			// wa_bot_special_date_full_v1: a full date must never read as "yes".
+			out["instruction"] = botSpecialDateFullInstruction(p)
+		}
 		if raw, err := s.botToolGetSpecialDateInfo(ctx, restaurantID, json.RawMessage(`{"date":"`+dateISO+`"}`)); err == nil {
 			var menus map[string]any
 			if json.Unmarshal([]byte(raw), &menus) == nil {
