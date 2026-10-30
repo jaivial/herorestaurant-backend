@@ -28,6 +28,29 @@ type botTurnState struct {
 	noticeDelivered bool
 	contactSent     bool
 	contactPhone    string
+	// delivered is the raw input of every successful delivery tool and noFit
+	// is set when a capacity tool said the party does not fit
+	// (wa_bot_special_date_link_guard_v1).
+	delivered string
+	noFit     bool
+}
+
+// observe records what this turn delivered and what the capacity tools said
+// (wa_bot_special_date_link_guard_v1).
+func (t *botTurnState) observe(name string, input json.RawMessage, out string) {
+	if botDeliveryTools[name] && !botResultFailed(out) {
+		t.delivered += strings.ReplaceAll(string(input), `\/`, "/")
+	}
+	if name != "get_date_overview" && name != "check_availability_for_party" {
+		return
+	}
+	var r struct {
+		FitsParty *bool `json:"fits_party"`
+		Fits      *bool `json:"fits"`
+	}
+	if json.Unmarshal([]byte(out), &r) == nil && ((r.FitsParty != nil && !*r.FitsParty) || (r.Fits != nil && !*r.Fits)) {
+		t.noFit = true
+	}
 }
 
 // botLoopResult summarizes one agent run.
