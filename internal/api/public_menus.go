@@ -221,6 +221,10 @@ type publicMenuItemSpecial struct {
 	// Coordination id: special_menu_visibility_v1
 	WebPlacement     string `json:"web_placement"`
 	MenuPublicActive bool   `json:"menu_public_active"`
+	// Coordination id: special_menu_lastmod_v1 - el sitemap necesita saber
+	// cuando se toco el menu especial para fechar su <lastmod>.
+	CreatedAt  string `json:"created_at"`
+	ModifiedAt string `json:"modified_at"`
 	// Coordination id: special_menu_completo_v1 - red "COMPLETO" ribbon over
 	// every section of the special menu page.
 	Completo bool `json:"completo"`
@@ -1261,14 +1265,16 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 			webPlacementRaw    sql.NullString
 			menuPublicActiveIn int
 			completoInt        int
+			createdAtRaw       sql.NullString
+			modifiedAtRaw      sql.NullString
 		)
 		err = s.db.QueryRowContext(r.Context(), `
 			SELECT menu_title, menu_subtitle, comments, special_menu_image_url,
 			       COALESCE(web_placement, 'inside_menus'), COALESCE(menu_public_active, 1),
-			       COALESCE(completo, 0)
+			       COALESCE(completo, 0), created_at, modified_at
 			FROM menus
 			WHERE id = ? AND restaurant_id = ?
-		`, menuID, restaurantID).Scan(&menuTitle, &menuSubtitleRaw, &commentsRaw, &specialImageURL, &webPlacementRaw, &menuPublicActiveIn, &completoInt)
+		`, menuID, restaurantID).Scan(&menuTitle, &menuSubtitleRaw, &commentsRaw, &specialImageURL, &webPlacementRaw, &menuPublicActiveIn, &completoInt, &createdAtRaw, &modifiedAtRaw)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -1293,7 +1299,12 @@ func (s *Server) handlePublicMenuByID(w http.ResponseWriter, r *http.Request, re
 				// Coordination id: special_menu_visibility_v1
 				WebPlacement:     normalizedWebPlacement(webPlacementRaw.String),
 				MenuPublicActive: menuPublicActiveIn != 0,
-				Completo:         completoInt != 0,
+				// Coordination id: special_menu_lastmod_v1
+				CreatedAt:  createdAtRaw.String,
+				ModifiedAt: modifiedAtRaw.String,
+				// Coordination id: special_menu_completo_v1 - red "COMPLETO" ribbon over
+				// every section of the special menu page.
+				Completo: completoInt != 0,
 			},
 		})
 		return
