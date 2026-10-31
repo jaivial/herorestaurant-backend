@@ -129,15 +129,12 @@ func seoItemPath(entityType, slug string) string {
 }
 
 // seoMenuPath mirrors the frontend menuPath(): the SEO slug wins, otherwise
-// the legacy id + slug pair.
-func seoMenuPath(menuID int64, seoSlug, slug string) string {
+// the id and the computed slug of the menu.
+func seoMenuPath(menuID int64, menuTitle, seoSlug string) string {
 	if seoSlug != "" {
 		return "/menu/" + url.PathEscape(seoSlug)
 	}
-	if slug != "" {
-		return "/menu/" + strconv.FormatInt(menuID, 10) + "/" + url.PathEscape(slug)
-	}
-	return "/menu/" + strconv.FormatInt(menuID, 10)
+	return "/menu/" + strconv.FormatInt(menuID, 10) + "/" + url.PathEscape(buildPublicMenuSlug(menuTitle, menuID))
 }
 
 // seoDishSources loads the dishes that are active in a public carta menu.
@@ -157,7 +154,6 @@ func (s *Server) seoDishSources(ctx context.Context, restaurantID int) ([]seoIte
 		       m.id,
 		       COALESCE(m.menu_title, ''),
 		       COALESCE(m.seo_slug, ''),
-		       COALESCE(m.slug, ''),
 		       COALESCE(d.updated_at, '')
 		FROM group_menu_section_dishes_v2 d
 		JOIN menus m ON m.id = d.menu_id AND m.restaurant_id = d.restaurant_id
@@ -190,7 +186,6 @@ func (s *Server) seoDishSources(ctx context.Context, restaurantID int) ([]seoIte
 			displayTitle       string
 			menuID             int64
 			menuSEO            string
-			menuSlug           string
 			dishUpdated        string
 		)
 		if err := rows.Scan(
@@ -208,7 +203,6 @@ func (s *Server) seoDishSources(ctx context.Context, restaurantID int) ([]seoIte
 			&menuID,
 			&source.menuTitle,
 			&menuSEO,
-			&menuSlug,
 			&dishUpdated,
 		); err != nil {
 			return nil, err
@@ -234,7 +228,7 @@ func (s *Server) seoDishSources(ctx context.Context, restaurantID int) ([]seoIte
 		if source.section == "" {
 			source.section = strings.TrimSpace(sectionTitle)
 		}
-		source.menuPath = seoMenuPath(menuID, menuSEO, menuSlug)
+		source.menuPath = seoMenuPath(menuID, source.menuTitle, menuSEO)
 		sources = append(sources, source)
 		ids = append(ids, source.entityID)
 	}
@@ -523,6 +517,7 @@ func (s *Server) handlePublicSeoItemRoutes(w http.ResponseWriter, r *http.Reques
 	}
 	routes, err := s.seoItemRoutesPayload(r.Context(), restaurantID)
 	if err != nil {
+		log.Printf("[seo_item_routes] payload failed for restaurant %d: %v", restaurantID, err)
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error reading item routes"})
 		return
 	}
