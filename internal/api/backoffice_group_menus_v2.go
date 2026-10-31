@@ -2319,6 +2319,10 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDish(w http.ResponseWriter, r *
 
 	s.translateSectionDish(r.Context(), a.ActiveRestaurantID, dishID, title, description)
 
+	// Coordination id: seo_item_routes_v1 - el plato sigue su ruta SEO sin
+	// esperar al siguiente build del frontend.
+	s.syncSeoItemRoutes(r.Context(), a.ActiveRestaurantID)
+
 	d, err := s.loadBOMenuV2DishByID(r, a.ActiveRestaurantID, menuID, sectionID, dishID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2559,6 +2563,9 @@ func (s *Server) handleBOGroupMenusV2Publish(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Coordination id: seo_item_routes_v1
+	s.syncSeoItemRoutes(r.Context(), a.ActiveRestaurantID)
+
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -2598,6 +2605,10 @@ func (s *Server) handleBOGroupMenusV2ToggleActive(w http.ResponseWriter, r *http
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menu")
 		return
 	}
+
+	// Coordination id: seo_item_routes_v1 - activar o desactivar un menu
+	// cambia las rutas de sus platos.
+	s.syncSeoItemRoutes(r.Context(), a.ActiveRestaurantID)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
