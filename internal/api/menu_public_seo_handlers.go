@@ -75,8 +75,13 @@ func (s *Server) handleBOGroupMenusV2PatchSEO(w http.ResponseWriter, r *http.Req
 		{"seo_description_english", "", 500, "La description SEO en ingles"},
 		{"seo_h1", "", 180, "El H1 SEO"},
 		{"seo_h1_english", "", 180, "El H1 SEO en ingles"},
+		// Coordination id: menu_seo_content_v1
+		{"seo_intro", "", 4000, "La introduccion SEO"},
+		{"seo_intro_english", "", 4000, "La introduccion SEO en ingles"},
+		{"seo_faq", "", 8000, "Las preguntas frecuentes"},
+		{"seo_faq_english", "", 8000, "Las preguntas frecuentes en ingles"},
 	}
-	values := make([]any, 0, 10)
+	values := make([]any, 0, 14)
 	values = append(values, nullIfEmptyMenuSEOSlug(slug))
 	for i := range fields {
 		fields[i].value, err = normalizeMenuSEOText(anyToString(input[fields[i].key]), fields[i].max, fields[i].label)
@@ -87,7 +92,7 @@ func (s *Server) handleBOGroupMenusV2PatchSEO(w http.ResponseWriter, r *http.Req
 		values = append(values, fields[i].value)
 	}
 	values = append(values, menuID, a.ActiveRestaurantID)
-	result, err := s.db.ExecContext(r.Context(), `UPDATE menus SET seo_slug = ?, seo_title = ?, seo_title_english = ?, seo_description = ?, seo_description_english = ?, seo_h1 = ?, seo_h1_english = ? WHERE id = ? AND restaurant_id = ?`, values...)
+	result, err := s.db.ExecContext(r.Context(), `UPDATE menus SET seo_slug = ?, seo_title = ?, seo_title_english = ?, seo_description = ?, seo_description_english = ?, seo_h1 = ?, seo_h1_english = ?, seo_intro = ?, seo_intro_english = ?, seo_faq = ?, seo_faq_english = ? WHERE id = ? AND restaurant_id = ?`, values...)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {

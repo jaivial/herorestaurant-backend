@@ -1054,9 +1054,13 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	unsubBase := campaignAbsoluteBase(siteURL)
 	unsubscribeURL := campaignUnsubscribeURL(unsubBase, target.BookingID, target.Channel, target.Target)
 	// Observational point: proves both CTAs were attached to the delivered message.
-	slog.Default().Info("campaign.delivery.links", "coord_id", c.CoordID, "channel", target.Channel,
+	slog.Default().Info("campaign.delivery.links", "coord_id", c.CoordID, "channel", target.Channel, "utm_campaign", campaignUTMCampaign(c),
 		"booking_id", target.BookingID, "website_button", strings.TrimSpace(siteURL) != "", "optout_button", unsubscribeURL != "")
 	if target.Channel == "whatsapp" {
+		// Own-site links (body, buttons, website CTA) carry utm_source=whatsapp so
+		// analytics attributes the visit to this campaign. c is a local copy.
+		c.BodyMarkdown = campaignTagLinks(c.BodyMarkdown, siteURL, "whatsapp", campaignUTMCampaign(c))
+		siteURL = campaignTagLinks(siteURL, siteURL, "whatsapp", campaignUTMCampaign(c))
 		num := normalizeWhatsAppNumber(target.Target)
 		if num == "" {
 			return errors.New("telefono invalido")
@@ -1143,6 +1147,7 @@ func (s *Server) deliverCampaignTo(ctx context.Context, restaurantID int, c boCa
 	} else {
 		html = renderCampaignEmailHTMLWithUnsubscribe(c.BodyMarkdown, c.Theme, branding.BrandName, branding.LogoURL, siteURL, unsubscribeURL)
 	}
+	html = campaignTagLinks(html, siteURL, "email", campaignUTMCampaign(c))
 	slog.Default().Info("campaign.delivery.email", "coord_id", c.CoordID, "booking_id", target.BookingID, "builder_html", strings.TrimSpace(c.EmailHTML) != "", "bytes", len(html))
 	return sendViaConfig(ctx, cfg, fromName, fromAddr, target.Target, subject, html)
 }

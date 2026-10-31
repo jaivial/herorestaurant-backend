@@ -43,7 +43,8 @@ set -euo pipefail
 IMAGE="newvillacarmen-prod-backend:privileged"
 NAME="newvillacarmen-backend-prod"
 OLD="${NAME}-old"
-ENVFILE="/tmp/${NAME}.env"
+# ENVFILE y el log de build se crean con mktemp mas abajo: rutas fijas en /tmp
+# fallan con sudo si otro usuario dejo el fichero (fs.protected_regular).
 ROLLBACK_TAG="newvillacarmen-prod-backend:rollback"
 VOLUME="newvillacarmen-prod_whatsapp-bot-context"
 
@@ -73,8 +74,17 @@ HEALTH_CMD="curl -fsS http://127.0.0.1:8080/healthz"
 
 REF="${1:-origin/main}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Un solo release del contenedor backend a la vez: dos releases en paralelo
+# re-etiquetan :privileged y recrean el contenedor uno encima del otro.
+# scripts/deploy-prod-binary.sh toma el mismo lock (este fichero).
+exec 9<"$REPO_ROOT/deploy/release-backend-prod.sh"
+flock -n 9 || { echo "!! ya hay otro release del backend en curso; reintenta cuando acabe"; exit 1; }
+
 STAGE="$(mktemp -d /tmp/nvc-release-XXXXXX)"
 trap 'rm -rf "$STAGE"' EXIT
+ENVFILE="$STAGE/${NAME}.env"
+BUILD_LOG="$(mktemp /tmp/nvc-build-XXXXXX.log)"
 
 echo "== 1) contexto cerrado =="
 git -C "$REPO_ROOT" fetch origin --quiet
@@ -109,9 +119,9 @@ echo "== 2) construir =="
 # van a stderr.
 # --no-cache: la cache del builder legacy sirvio una vez un binario viejo con
 # un stage correcto (2026-10-20); el coste de rebuild es menor que el riesgo.
-if ! sudo -n docker build --no-cache -t "$IMAGE" -f "$STAGE/backend/Dockerfile.prod" "$STAGE" >/tmp/nvc-build.log 2>&1; then
-  echo "!! el build fallo:"
-  tail -20 /tmp/nvc-build.log | sed 's/^/   /'
+if ! sudo -n docker build --no-cache -t "$IMAGE" -f "$STAGE/backend/Dockerfile.prod" "$STAGE" >"$BUILD_LOG" 2>&1; then
+  echo "!! el build fallo (log completo: $BUILD_LOG):"
+  tail -20 "$BUILD_LOG" | sed 's/^/   /'
   exit 1
 fi
 echo "   $(sudo -n docker image inspect "$IMAGE" --format '{{.Id}}' | cut -c1-12)"

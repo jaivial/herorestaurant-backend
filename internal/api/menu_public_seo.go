@@ -14,10 +14,14 @@ import (
 
 var menuSEOSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
-const menuSEOSelect = `COALESCE(seo_slug, ''), COALESCE(seo_title, ''), COALESCE(seo_title_english, ''), COALESCE(seo_description, ''), COALESCE(seo_description_english, ''), COALESCE(seo_h1, ''), COALESCE(seo_h1_english, '')`
+const menuSEOSelect = `COALESCE(seo_slug, ''), COALESCE(seo_title, ''), COALESCE(seo_title_english, ''), COALESCE(seo_description, ''), COALESCE(seo_description_english, ''), COALESCE(seo_h1, ''), COALESCE(seo_h1_english, ''), COALESCE(seo_intro, ''), COALESCE(seo_intro_english, ''), COALESCE(seo_faq, ''), COALESCE(seo_faq_english, '')`
 
 func scanMenuSEO(scanner interface{ Scan(...any) error }, seo *publicMenuSEO) error {
-	return scanner.Scan(&seo.SEOSlug, &seo.SEOTitle, &seo.SEOTitleEnglish, &seo.SEODescription, &seo.SEODescriptionEnglish, &seo.SEOH1, &seo.SEOH1English)
+	return scanner.Scan(menuSEOScanTargets(seo)...)
+}
+
+func menuSEOScanTargets(seo *publicMenuSEO, prefix ...any) []any {
+	return append(prefix, &seo.SEOSlug, &seo.SEOTitle, &seo.SEOTitleEnglish, &seo.SEODescription, &seo.SEODescriptionEnglish, &seo.SEOH1, &seo.SEOH1English, &seo.SEOIntro, &seo.SEOIntroEnglish, &seo.SEOFAQ, &seo.SEOFAQEnglish)
 }
 
 func (s *Server) loadPublicMenuSEO(ctx context.Context, restaurantID int, menuID int64) publicMenuSEO {
@@ -40,7 +44,7 @@ func (s *Server) loadPublicMenuSEOMap(ctx context.Context, restaurantID int) map
 	for rows.Next() {
 		var id int64
 		var seo publicMenuSEO
-		if err := rows.Scan(&id, &seo.SEOSlug, &seo.SEOTitle, &seo.SEOTitleEnglish, &seo.SEODescription, &seo.SEODescriptionEnglish, &seo.SEOH1, &seo.SEOH1English); err != nil {
+		if err := rows.Scan(menuSEOScanTargets(&seo, &id)...); err != nil {
 			log.Printf("menu_public_seo_list_scan_failed restaurant_id=%d error=%v", restaurantID, err)
 			continue
 		}
@@ -59,6 +63,11 @@ type publicMenuSEO struct {
 	SEODescriptionEnglish string `json:"seo_description_english,omitempty"`
 	SEOH1                 string `json:"seo_h1,omitempty"`
 	SEOH1English          string `json:"seo_h1_english,omitempty"`
+	// Coordination id: menu_seo_content_v1
+	SEOIntro        string `json:"seo_intro,omitempty"`
+	SEOIntroEnglish string `json:"seo_intro_english,omitempty"`
+	SEOFAQ          string `json:"seo_faq,omitempty"`
+	SEOFAQEnglish   string `json:"seo_faq_english,omitempty"`
 }
 
 func normalizeMenuSEOSlug(value string) (string, error) {
