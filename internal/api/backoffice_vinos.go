@@ -465,6 +465,10 @@ func (s *Server) handleBOVinoPatch(w http.ResponseWriter, r *http.Request) {
 		s.translateVino(r.Context(), restaurantID, &item)
 	}
 
+	// Coordination id: seo_item_routes_v1 - el vino sigue su ruta SEO sin
+	// esperar al siguiente build del frontend.
+	s.syncSeoItemRoutes(r.Context(), restaurantID)
+
 	out := map[string]any{
 		"success": true,
 	}
@@ -506,6 +510,9 @@ func (s *Server) handleBOVinoDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deleteEntityTranslations(r.Context(), entityVinos, restaurantID, int64(id))
+
+	// Coordination id: seo_item_routes_v1
+	s.syncSeoItemRoutes(r.Context(), restaurantID)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

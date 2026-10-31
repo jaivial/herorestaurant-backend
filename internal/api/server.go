@@ -727,6 +727,10 @@ func (s *Server) Routes() http.Handler {
 		// Coordination id: special_menu_group_booking_v1
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/special-group-booking", s.handleBOSpecialMenuGroupBooking)
 		r.With(s.requireBOSession, menusGate).Delete("/group-menus-v2/{id}", s.handleBOGroupMenusV2Delete)
+		// Coordination id: seo_item_routes_v1 - rutas SEO de platos y vinos.
+		r.With(s.requireBOSession, menusGate).Get("/seo/item-routes", s.handleBOSeoItemRoutesList)
+		r.With(s.requireBOSession, menusGate).Patch("/seo/item-routes/{id}", s.handleBOSeoItemRoutesPatch)
+		r.With(s.requireBOSession, menusGate).Post("/seo/item-routes/sync", s.handleBOSeoItemRoutesSync)
 		r.With(s.requireBOSession, menusGate).Get("/menus/selector", s.handleBOMenuSelectorGet)
 		r.With(s.requireBOSession, menusGate).Get("/dishes-catalog/search", s.handleBODishesCatalogSearch)
 		r.With(s.requireBOSession, menusGate).Post("/dishes-catalog/upsert", s.handleBODishesCatalogUpsert)
@@ -1193,6 +1197,9 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/menus/finde", s.handleMenuFinde)
 		r.Get("/postres", s.handlePostres)
 		r.Get("/vinos", s.handleVinos)
+		// Coordination id: seo_item_routes_v1 - una ruta publica por plato de
+		// carta y por vino, para el prerender del frontend.
+		r.Get("/seo/item-routes", s.handlePublicSeoItemRoutes)
 		// Forky AI assistant for the public site (anonymous, session_token + rate limit).
 		r.Get("/assistant/ws", s.handlePublicAssistantWS)
 		r.Get("/comida/platos/categorias", s.handleComidaPublicPlatoCategoriesList)
