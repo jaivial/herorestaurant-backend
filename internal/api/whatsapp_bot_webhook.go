@@ -816,6 +816,19 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			}
 			return normalExec(ctx, name, input)
 		}
+		// wa_bot_tool_chain_v1: the chain itself is grant-checked here; every
+		// nested call re-enters the complete privileged executor above, preserving
+		// ACLs, write policy, tenant scope and per-turn state.
+		privilegedExec := exec
+		exec = func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+			if name != "tool_chain" {
+				return privilegedExec(ctx, name, input)
+			}
+			if reason := botToolDeniedForChat(name, tenant, msg.ChatJID); reason != "" {
+				return botJSON(map[string]any{"error": reason, "terminal": true}), nil
+			}
+			return s.botToolChain(ctx, privilegedExec, input)
+		}
 	}
 	sessionID := botSessionID(restaurantID, msg.Sender)
 	caller := func(ctx context.Context, system string, msgs []botMessage, tools []botToolDef) (botLLMResponse, string, error) {
@@ -825,6 +838,8 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// Coordination id: wa_bot_tool_grants_v1 - per-chat tool control: the
 	// catalog offered to the model is filtered, and the executor re-checks.
 	tools = botToolGrantsFilter(tools, tenant, msg.ChatJID)
+	botCheckpointCtx(ctx, "wa_bot_turn_start_v1", "restaurant_id=%d sender=%s message_id=%s privileged=%t direct_writes=%t tools=%d request=%s",
+		restaurantID, msg.Sender, msg.MessageID, msg.PrivilegedGroup, tenant.PrivilegedDirectWrites, len(tools), botDiagPreview(msg.Text, 300))
 	result, err := s.botRunAgentLoopWith(ctx, caller, system, messages, tools, exec)
 	if decisionID > 0 {
 		s.botConversation.SetDecisionModel(ctx, decisionID, result.ModelUsed, map[string]any{

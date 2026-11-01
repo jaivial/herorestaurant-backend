@@ -42,6 +42,9 @@ const assistantSessionSection = "session"
 // routes (exports, POS/stock reports) that legitimately take longer than the 5s the
 // hand-written tools get.
 func assistantToolTimeout(name string) time.Duration {
+	if name == "tool_chain" {
+		return 2 * time.Minute
+	}
 	if name == "admin_call" {
 		return 20 * time.Second
 	}
@@ -611,20 +614,35 @@ func (s *Server) forkyAdminRunOp(rid int, token string, op forkyAdminOp, pathPar
 	rec := httptest.NewRecorder()
 	started := time.Now()
 	s.forkyAdminRoutes().ServeHTTP(rec, req)
-	log.Printf("forky.admin.call coord=%s op=%s status=%d ms=%d", forkyAdminCoord, op.Name, rec.Code, time.Since(started).Milliseconds())
 	raw := rec.Body.Bytes()
 	truncated := false
 	if len(raw) > forkyAdminMaxResult {
 		raw, truncated = raw[:forkyAdminMaxResult], true
 	}
-	out := map[string]any{"tool": "admin_call", "operation": op.Name, "status": rec.Code, "ok": rec.Code < 400}
+	out := map[string]any{"tool": "admin_call", "operation": op.Name, "status": rec.Code}
+	responseOK := rec.Code < 400
+	resultError := ""
 	var parsed any
 	if !truncated && json.Unmarshal(raw, &parsed) == nil {
 		out["data"] = parsed
+		// Several panel handlers deliberately answer validation failures with
+		// HTTP 200 and {success:false,message}. HTTP success is not a mutation.
+		if body, ok := parsed.(map[string]any); ok {
+			if success, exists := body["success"].(bool); exists && !success {
+				responseOK = false
+				resultError, _ = body["message"].(string)
+				if resultError == "" {
+					resultError = "la operación no se aplicó"
+				}
+				out["error"] = resultError
+			}
+		}
 	} else {
 		out["data_text"] = string(raw)
 		out["truncated"] = truncated
 	}
+	out["ok"] = responseOK
+	log.Printf("forky.admin.call coord=%s restaurant=%d op=%s status=%d ok=%t ms=%d result_error=%s", forkyAdminCoord, rid, op.Name, rec.Code, responseOK, time.Since(started).Milliseconds(), sanitizeLogValue(resultError))
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
 		out["hint"] = "Sin permiso para esta operación: díselo al usuario y no reintentes."
 	}

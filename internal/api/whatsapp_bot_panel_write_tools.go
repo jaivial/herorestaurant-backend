@@ -340,15 +340,27 @@ func (s *Server) botPanelRunOp(ctx context.Context, rid int, a botPanelArgs) (st
 		return "", err
 	}
 	var res struct {
-		Status   int    `json:"status"`
-		OK       bool   `json:"ok"`
-		DataText string `json:"data_text"`
+		Status   int             `json:"status"`
+		OK       bool            `json:"ok"`
+		Data     json.RawMessage `json:"data"`
+		DataText string          `json:"data_text"`
+		Error    string          `json:"error"`
 	}
 	_ = json.Unmarshal([]byte(out), &res)
 	if !res.OK {
-		return "", fmt.Errorf("el panel no aplicó el cambio (status %d): %s", res.Status, res.DataText)
+		detail := res.Error
+		if detail == "" {
+			detail = res.DataText
+		}
+		if detail == "" {
+			detail = string(res.Data)
+		}
+		return "", fmt.Errorf("el panel no aplicó el cambio (status %d): %s", res.Status, detail)
 	}
-	return fmt.Sprintf("%s — aplicado por el panel (estado %d).", s.botPanelDesc(ctx, rid, a), res.Status), nil
+	// Return the actual operation result (including the created id), not only
+	// an HTTP status: later tool_chain steps can reference it and the model can
+	// verify exactly what was persisted.
+	return out, nil
 }
 
 // botPanelApplyNow performs the panel write itself, without the OK flow: only

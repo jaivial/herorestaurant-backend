@@ -365,22 +365,23 @@ func (s *Server) botLoadMenuSections(ctx context.Context, restaurantID int, menu
 
 // botToolCoffeeMenu returns the active coffee items (CAFES).
 func (s *Server) botToolCoffeeMenu(ctx context.Context, restaurantID int) (string, error) {
-	return s.botLoadSimpleMenu(ctx, restaurantID, "CAFES", "cafés")
+	return s.botLoadSimpleMenu(ctx, restaurantID, "cafes", "cafés")
 }
 
 // botToolDrinksMenu returns the active drink items (BEBIDAS).
 func (s *Server) botToolDrinksMenu(ctx context.Context, restaurantID int) (string, error) {
-	return s.botLoadSimpleMenu(ctx, restaurantID, "BEBIDAS", "bebidas")
+	return s.botLoadSimpleMenu(ctx, restaurantID, "bebidas", "bebidas")
 }
 
-func (s *Server) botLoadSimpleMenu(ctx context.Context, restaurantID int, table string, human string) (string, error) {
-	//nolint:gosec // table is a hardcoded constant, never user input.
+func (s *Server) botLoadSimpleMenu(ctx context.Context, restaurantID int, sourceType string, human string) (string, error) {
+	// wa_bot_catalog_read_v1: the backoffice CRUD writes comida_items. Reading
+	// the empty legacy CAFES/BEBIDAS tables made new items invisible to the bot.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT nombre, precio, COALESCE(descripcion, ''), COALESCE(titulo, ''), COALESCE(suplemento, 0)
-		FROM `+table+`
-		WHERE restaurant_id = ? AND active = 1
+		FROM comida_items
+		WHERE restaurant_id = ? AND source_type = ? AND active = 1
 		ORDER BY COALESCE(titulo, ''), nombre
-	`, restaurantID)
+	`, restaurantID, sourceType)
 	if err != nil {
 		return botJSON(map[string]any{"error": "error consultando " + human}), nil
 	}

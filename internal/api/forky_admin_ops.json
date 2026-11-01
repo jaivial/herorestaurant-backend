@@ -797,6 +797,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /cafes/{id} (handleBOCafesDelete)",
+   "body": "Sin body. Elimina el café id del restaurante actual.",
    "screens": []
   },
   {
@@ -812,6 +813,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /cafes/{id} (handleBOCafesPatch)",
+   "body": "Edita un café de la carta especializada. {nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.",
    "screens": []
   },
   {
@@ -842,6 +844,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /cafes (handleBOCafesCreate)",
+   "body": "Crea un café en la carta especializada de cafés (comida_items.source_type=cafes). {nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.",
    "screens": []
   },
   {
@@ -1767,6 +1770,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /comida/{tipo}/{id} (handleBOComidaDelete)",
+   "body": "Sin body. Elimina el elemento id solo si pertenece al tipo y restaurante actuales.",
    "screens": []
   },
   {
@@ -1797,6 +1801,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /comida/{tipo}/{id} (handleBOComidaPatch)",
+   "body": "Edita un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). {nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.",
    "screens": []
   },
   {
@@ -1827,6 +1832,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /comida/{tipo} (handleBOComidaCreate)",
+   "body": "Crea un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). {nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta. Vinos exige tipo, nombre, bodega y precio\u003e0; postres acepta descripcion como nombre.",
    "screens": []
   },
   {
