@@ -59,12 +59,20 @@ func botToolChainDef() botToolDef {
 
 func (s *Server) botToolChain(ctx context.Context, exec botToolExecutor, input json.RawMessage) (string, error) {
 	var in struct {
-		Calls []botToolChainCall `json:"calls"`
+		Calls json.RawMessage `json:"calls"`
 	}
-	if err := json.Unmarshal(input, &in); err != nil || len(in.Calls) == 0 {
+	if err := json.Unmarshal(input, &in); err != nil {
+		return botJSON(map[string]any{"error": "argumentos de tool_chain ilegibles (JSON inválido o cortado): " + err.Error() + ". Envía menos llamadas por cadena y vuelve a intentarlo."}), nil
+	}
+	calls, err := botToolChainParseCalls(in.Calls)
+	if err != nil {
+		return botJSON(map[string]any{"error": err.Error()}), nil
+	}
+	in2 := struct{ Calls []botToolChainCall }{calls}
+	if len(in2.Calls) == 0 {
 		return botJSON(map[string]any{"error": "calls debe contener al menos una llamada"}), nil
 	}
-	if len(in.Calls) > botToolChainMaxCalls {
+	if len(in2.Calls) > botToolChainMaxCalls {
 		return botJSON(map[string]any{"error": fmt.Sprintf("demasiadas llamadas: máximo %d", botToolChainMaxCalls)}), nil
 	}
 
@@ -76,12 +84,12 @@ func (s *Server) botToolChain(ctx context.Context, exec botToolExecutor, input j
 		Result json.RawMessage `json:"result,omitempty"`
 		Error  string          `json:"error,omitempty"`
 	}
-	results := make([]stepResult, 0, len(in.Calls))
-	outputs := make(map[string]any, len(in.Calls))
-	seen := make(map[string]bool, len(in.Calls))
+	results := make([]stepResult, 0, len(in2.Calls))
+	outputs := make(map[string]any, len(in2.Calls))
+	seen := make(map[string]bool, len(in2.Calls))
 	succeeded := 0
 	terminal := false
-	for i, call := range in.Calls {
+	for i, call := range in2.Calls {
 		call.ID = strings.TrimSpace(call.ID)
 		call.Name = strings.TrimSpace(call.Name)
 		result := stepResult{Index: i, ID: call.ID, Name: call.Name}
@@ -130,6 +138,37 @@ func (s *Server) botToolChain(ctx context.Context, exec botToolExecutor, input j
 		response["terminal"] = true
 	}
 	return botJSON(response), nil
+}
+
+// botToolChainParseCalls accepts calls as a JSON array or as a string holding
+// that array: models sometimes stringify nested arrays (wa_bot_flexible_types_v1).
+// Each call's input may likewise arrive as a JSON string.
+func botToolChainParseCalls(raw json.RawMessage) ([]botToolChainCall, error) {
+	raw = json.RawMessage(strings.TrimSpace(string(raw)))
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, errors.New("calls debe contener al menos una llamada")
+	}
+	if raw[0] == '"' {
+		var inner string
+		if err := json.Unmarshal(raw, &inner); err != nil {
+			return nil, errors.New("calls ilegible: " + err.Error())
+		}
+		raw = json.RawMessage(inner)
+	}
+	var calls []botToolChainCall
+	if err := json.Unmarshal(raw, &calls); err != nil {
+		return nil, errors.New("calls debe ser un array de {id, name, input}: " + err.Error())
+	}
+	for i := range calls {
+		in := strings.TrimSpace(string(calls[i].Input))
+		if strings.HasPrefix(in, "\"") {
+			var inner string
+			if json.Unmarshal(calls[i].Input, &inner) == nil && json.Valid([]byte(inner)) {
+				calls[i].Input = json.RawMessage(inner)
+			}
+		}
+	}
+	return calls, nil
 }
 
 // botToolChainResolve substitutes exact {$ref:...} objects recursively. All
