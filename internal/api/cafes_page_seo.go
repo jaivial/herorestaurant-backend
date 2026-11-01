@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 
 	"preactvillacarmen/internal/httpx"
 )
@@ -151,8 +152,4 @@ func (s *Server) handlePublicCafesSEO(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "seo": s.loadCafesPageSEO(r.Context(), restaurantID)})
 }
 
-func itoaLen(v string) string {
-	n := len([]rune(v))
-	b, _ := json.Marshal(n)
-	return string(b)
-}
+func itoaLen(v string) string { return strconv.Itoa(len([]rune(v))) }
