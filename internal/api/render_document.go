@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -205,7 +208,7 @@ func renderHTMLSandboxed(ctx context.Context, html, format string, width int, la
 		chromedp.Flag("hide-scrollbars", true),
 		chromedp.Flag("font-render-hinting", "none"),
 	)
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.WithoutCancel(ctx), opts...)
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
 	defer cancelAlloc()
 	taskCtx, cancelTask := chromedp.NewContext(allocCtx)
 	defer cancelTask()
@@ -223,11 +226,22 @@ func renderHTMLSandboxed(ctx context.Context, html, format string, width int, la
 				return
 			}
 			execCtx := cdp.WithExecutor(runCtx, c.Target)
-			if renderDocURLAllowed(e.Request.URL) {
+			u := e.Request.URL
+			if strings.HasPrefix(u, "data:") || u == "about:blank" {
 				_ = fetch.ContinueRequest(e.RequestID).Do(execCtx)
 				return
 			}
-			_ = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient).Do(execCtx)
+			// Chromium never connects by itself: the resource is fetched here
+			// with a dialer that validates the IP AT CONNECT TIME, so a host
+			// that re-resolves to an internal address (DNS rebinding) is
+			// refused too, then handed to the page.
+			status, headers, body, ferr := renderDocFetch(runCtx, u)
+			if ferr != nil {
+				_ = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient).Do(execCtx)
+				return
+			}
+			_ = fetch.FulfillRequest(e.RequestID, status).WithResponseHeaders(headers).
+				WithBody(base64.StdEncoding.EncodeToString(body)).Do(execCtx)
 		}()
 	})
 
@@ -276,7 +290,14 @@ func renderHTMLSandboxed(ctx context.Context, html, format string, width int, la
 	return pdf, png, nil
 }
 
-// renderDocURLAllowed is the SSRF guard of the renderer.
+// renderDocBlockedIP reports addresses the renderer must never reach.
+func renderDocBlockedIP(ip net.IP) bool {
+	return ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast()
+}
+
+// renderDocURLAllowed is the cheap pre-check (scheme + host); the binding
+// check is the dialer of renderDocClient.
 func renderDocURLAllowed(raw string) bool {
 	if strings.HasPrefix(raw, "data:") || raw == "about:blank" {
 		return true
@@ -285,16 +306,69 @@ func renderDocURLAllowed(raw string) bool {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
 		return false
 	}
-	ips, err := net.LookupIP(u.Hostname())
-	if err != nil || len(ips) == 0 {
+	if ip := net.ParseIP(u.Hostname()); ip != nil && renderDocBlockedIP(ip) {
 		return false
 	}
-	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
-			return false
+	h := strings.ToLower(u.Hostname())
+	return h != "localhost" && !strings.HasSuffix(h, ".localhost")
+}
+
+// renderDocClient fetches page resources: https only, no redirects to other
+// schemes, and every connection's real IP is checked by the dialer.
+var renderDocClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		Proxy: nil,
+		DialContext: (&net.Dialer{
+			Timeout: 5 * time.Second,
+			Control: func(network, address string, _ syscall.RawConn) error {
+				host, _, err := net.SplitHostPort(address)
+				if err != nil {
+					return err
+				}
+				if renderDocBlockedIP(net.ParseIP(host)) {
+					return errors.New("render_document: destino interno bloqueado")
+				}
+				return nil
+			},
+		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 8 * time.Second,
+		MaxIdleConns:          4,
+	},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 || !renderDocURLAllowed(req.URL.String()) {
+			return errors.New("redirección bloqueada")
 		}
+		return nil
+	},
+}
+
+const renderDocMaxResource = 8 << 20
+
+func renderDocFetch(ctx context.Context, raw string) (int64, []*fetch.HeaderEntry, []byte, error) {
+	if !renderDocURLAllowed(raw) {
+		return 0, nil, nil, errors.New("url no permitida")
 	}
-	return true
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	res, err := renderDocClient.Do(req)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, renderDocMaxResource+1))
+	if err != nil || len(body) > renderDocMaxResource {
+		return 0, nil, nil, errors.New("recurso ilegible o demasiado grande")
+	}
+	headers := []*fetch.HeaderEntry{}
+	if ct := res.Header.Get("Content-Type"); ct != "" {
+		headers = append(headers, &fetch.HeaderEntry{Name: "Content-Type", Value: ct})
+	}
+	headers = append(headers, &fetch.HeaderEntry{Name: "Access-Control-Allow-Origin", Value: "*"})
+	return int64(res.StatusCode), headers, body, nil
 }
 
 // renderDocFilename turns a title into a safe object/file name.
