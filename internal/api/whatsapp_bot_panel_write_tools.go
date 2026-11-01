@@ -276,6 +276,11 @@ func (s *Server) botToolPanelChange(ctx context.Context, restaurantID int, msg b
 		if err != nil {
 			return botJSON(map[string]any{"error": err.Error()}), nil
 		}
+		if json.Valid([]byte(summary)) {
+			// Op-map writes already return their structured admin result. Keep it
+			// intact so tool_chain refs can reach fields such as data.item.num.
+			return summary, nil
+		}
 		return botJSON(map[string]any{"ok": true, "status": summary}), nil
 	}
 	preview := s.botPanelPreview(ctx, restaurantID, a)
@@ -398,7 +403,15 @@ func (s *Server) botPanelExecute(ctx context.Context, tx *sql.Tx, rid int, p bot
 		if err != nil {
 			return "", err
 		}
-		summary = "Aplicado: " + msg
+		// The approved flow answers a person, not another tool: never leak the
+		// raw admin JSON into WhatsApp. Direct writes still receive that JSON.
+		summary = fmt.Sprintf("Aplicado: %s.", s.botPanelDesc(ctx, rid, a))
+		var result struct {
+			Status int `json:"status"`
+		}
+		if json.Unmarshal([]byte(msg), &result) == nil && result.Status > 0 {
+			summary = fmt.Sprintf("Aplicado: %s (estado %d).", s.botPanelDesc(ctx, rid, a), result.Status)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return "", errors.New("error interno")
