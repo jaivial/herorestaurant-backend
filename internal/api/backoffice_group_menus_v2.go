@@ -30,12 +30,14 @@ type boV2Section struct {
 	Kind         string `json:"kind"`
 	// Coordination id: dessert_section_source_v1 ("general" mirrors the general
 	// desserts carta and is read-only; "custom" owns its own dish list).
-	DessertSource    string     `json:"dessert_source"`
-	Position         int        `json:"position"`
-	Annotations      []string   `json:"annotations"`
-	PublicPageActive bool       `json:"public_page_active"`
-	WebPlacement     string     `json:"web_placement"`
-	Dishes           []boV2Dish `json:"dishes"`
+	DessertSource    string   `json:"dessert_source"`
+	Position         int      `json:"position"`
+	Annotations      []string `json:"annotations"`
+	PublicPageActive bool     `json:"public_page_active"`
+	WebPlacement     string   `json:"web_placement"`
+	// Coordination id: menu_section_cta_v1
+	Cta    *menuSectionCta `json:"cta"`
+	Dishes []boV2Dish      `json:"dishes"`
 }
 
 type boV2Dish struct {
@@ -446,7 +448,7 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''),
 		       section_kind, COALESCE(dessert_source, 'custom'), position, COALESCE(annotations_json, ''),
-		       COALESCE(public_page_active, 0), COALESCE(web_placement, 'inside_menus')
+		       COALESCE(public_page_active, 0), COALESCE(web_placement, 'inside_menus'), cta_json
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
@@ -462,9 +464,11 @@ func (s *Server) loadBOMenuV2SectionsWithDishes(r *http.Request, restaurantID in
 		var sec boV2Section
 		var annotationsRaw sql.NullString
 		var publicActive int
-		if err := rows.Scan(&sec.ID, &sec.Title, &sec.DisplayTitle, &sec.Subtitle, &sec.TabLabel, &sec.Kind, &sec.DessertSource, &sec.Position, &annotationsRaw, &publicActive, &sec.WebPlacement); err != nil {
+		var ctaRaw sql.NullString
+		if err := rows.Scan(&sec.ID, &sec.Title, &sec.DisplayTitle, &sec.Subtitle, &sec.TabLabel, &sec.Kind, &sec.DessertSource, &sec.Position, &annotationsRaw, &publicActive, &sec.WebPlacement, &ctaRaw); err != nil {
 			return nil, err
 		}
+		sec.Cta = decodeMenuSectionCta(ctaRaw)
 		sec.Kind = normalizeV2SectionKind(sec.Kind)
 		// Coordination id: dessert_section_source_v1
 		sec.DessertSource = normalizeV2SectionDessertSource(sec.Kind, sec.DessertSource)

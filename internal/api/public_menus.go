@@ -69,14 +69,16 @@ func publicMenuDescription(description string, enabled bool) string {
 }
 
 type publicMenuSection struct {
-	ID                  int64            `json:"id"`
-	Title               string           `json:"title"`
-	DisplayTitle        string           `json:"display_title"`
-	Subtitle            string           `json:"subtitle"`
-	TabLabel            string           `json:"tab_label"`
-	Kind                string           `json:"kind"`
-	Position            int              `json:"position"`
-	Annotations         []string         `json:"annotations"`
+	ID           int64    `json:"id"`
+	Title        string   `json:"title"`
+	DisplayTitle string   `json:"display_title"`
+	Subtitle     string   `json:"subtitle"`
+	TabLabel     string   `json:"tab_label"`
+	Kind         string   `json:"kind"`
+	Position     int      `json:"position"`
+	Annotations  []string `json:"annotations"`
+	// Coordination id: menu_section_cta_v1 - only enabled buttons are exposed.
+	Cta                 *menuSectionCta  `json:"cta,omitempty"`
 	Dishes              []publicMenuDish `json:"dishes"`
 	TitleEnglish        string           `json:"title_english,omitempty"`
 	DisplayTitleEnglish string           `json:"display_title_english,omitempty"`
@@ -1000,7 +1002,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		sectionsQuery := fmt.Sprintf(`
-			SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, '')
+			SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, ''), cta_json
 			FROM group_menu_sections_v2
 			WHERE restaurant_id = ?
 			  AND menu_id IN (%s)
@@ -1026,8 +1028,9 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				sectionKind    string
 				position       int
 				annotationsRaw sql.NullString
+				ctaRaw         sql.NullString
 			)
-			if err := sectionRows.Scan(&sectionID, &menuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw); err != nil {
+			if err := sectionRows.Scan(&sectionID, &menuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw, &ctaRaw); err != nil {
 				sectionRows.Close()
 				httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 					"success": false,
@@ -1048,6 +1051,7 @@ func (s *Server) handlePublicMenus(w http.ResponseWriter, r *http.Request) {
 				TabLabel:     tabLabel,
 				Kind:         normalizeV2SectionKind(sectionKind),
 				Position:     position,
+				Cta:          publicMenuSectionCta(ctaRaw),
 				Annotations:  normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
 				Dishes:       []publicMenuDish{},
 			}
@@ -1494,7 +1498,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 	sectionsByMenu := make(map[int64][]*publicMenuSection, 1)
 
 	sectionRows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, '')
+		SELECT id, menu_id, title, COALESCE(display_title, ''), COALESCE(subtitle, ''), COALESCE(tab_label, ''), section_kind, position, COALESCE(annotations_json, ''), cta_json
 		FROM group_menu_sections_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
@@ -1517,8 +1521,9 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 			sectionKind    string
 			position       int
 			annotationsRaw sql.NullString
+			ctaRaw         sql.NullString
 		)
-		if err := sectionRows.Scan(&sectionID, &secMenuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw); err != nil {
+		if err := sectionRows.Scan(&sectionID, &secMenuID, &title, &displayTitle, &subtitle, &tabLabel, &sectionKind, &position, &annotationsRaw, &ctaRaw); err != nil {
 			sectionRows.Close()
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"success": false,
@@ -1537,6 +1542,7 @@ func (s *Server) handleFullPublicMenuByID(w http.ResponseWriter, r *http.Request
 			TabLabel:     tabLabel,
 			Kind:         normalizeV2SectionKind(sectionKind),
 			Position:     position,
+			Cta:          publicMenuSectionCta(ctaRaw),
 			Annotations:  normalizeV2SectionAnnotations(anySliceToStringList(decodeJSONOrFallback(annotationsRaw.String, []any{}))),
 			Dishes:       []publicMenuDish{},
 		}

@@ -695,6 +695,8 @@ func (s *Server) Routes() http.Handler {
 		// Coordination id: dessert_section_source_v1 (general carta of desserts <-> custom section list)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/dessert-source", s.handleBOGroupMenusV2PatchSectionDessertSource)
 		r.With(s.requireBOSession, menusGate).Patch("/group-menus-v2/{id}/sections/{sectionId}/annotations", s.handleBOGroupMenusV2PatchSectionAnnotations)
+		// Coordination id: menu_section_cta_v1
+		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/cta", s.handleBOGroupMenusV2PutSectionCta)
 		r.With(s.requireBOSession, menusGate).Get("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2GetSectionDishes)
 		r.With(s.requireBOSession, menusGate).Put("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2PutSectionDishes)
 		r.With(s.requireBOSession, menusGate).Post("/group-menus-v2/{id}/sections/{sectionId}/dishes", s.handleBOGroupMenusV2CreateSectionDish)
@@ -949,6 +951,9 @@ func (s *Server) Routes() http.Handler {
 		// food-type settings switch fail.
 		r.With(s.requireBOSession, menusGate).Get("/restaurant/pages/visibility", s.handleGetPageVisibility)
 		r.With(s.requireBOSession, menusGate).Patch("/restaurant/pages/visibility", s.handlePageVisibilityPatch)
+		// Coordination id: cafes_page_seo_v1
+		r.With(s.requireBOSession, menusGate).Get("/restaurant/pages/cafes-seo", s.handleBOCafesSEOGet)
+		r.With(s.requireBOSession, menusGate).Put("/restaurant/pages/cafes-seo", s.handleBOCafesSEOPut)
 		r.With(s.requireBOSession, ajustesGate).Post("/website/ai-generate", s.handleBOPremiumWebsiteAIGenerate)
 		r.With(s.requireBOSession, ajustesGate).Group(func(r chi.Router) {
 			websiteBuilder.RegisterRoutes(r)
@@ -1194,6 +1199,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireAdmin).Post("/menu-visibility", s.handleMenuVisibilityToggle)
 		r.Get("/menus/public", s.handlePublicMenus)
 		r.Get("/menus/sidebar", s.handlePublicMenusSidebar)
+		r.Get("/public/cafes-seo", s.handlePublicCafesSEO) // cafes_page_seo_v1
 		r.Get("/menus/home", s.handlePublicMenusHome)
 		r.Get("/menus/by-slug/{slug}", s.handlePublicMenuBySlug)
 		r.Get("/menus/{menuID}", s.handlePublicMenuByRouteID)
