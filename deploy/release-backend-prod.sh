@@ -63,7 +63,11 @@ REQUIRED_STRINGS=(
   "operaciones sobre la cuenta de la sesion"
   "gestion de cuentas del panel"
   "es una operacion de gestion de cuentas"
+  # render_document_v1: el mensaje solo existe si el binario lleva el renderer.
+  "el renderizador (Chromium) no est"
 )
+# render_document_v1: binarios que la imagen debe llevar.
+REQUIRED_BINARIES=(chromium)
 PROBE_CMD="strings /app/backend | grep -q"
 # /healthz es la ruta de salud real (hace ping a la BD). /api/health nunca
 # existio: el fallback SPA la contestaba con index.html y 200, y desde que el
@@ -140,6 +144,12 @@ if [ -n "$MISSING" ]; then
   echo "   (construida desde un arbol viejo; no se despliega)"
   exit 1
 fi
+for b in "${REQUIRED_BINARIES[@]}"; do
+  if ! sudo -n docker run --rm --entrypoint sh "$IMAGE" -c "command -v $b" >/dev/null 2>&1; then
+    echo "!! la imagen ${IMAGE_ID:0:12} NO lleva el binario $b; no se despliega"
+    exit 1
+  fi
+done
 echo "   los sentinels estan en la imagen"
 
 echo "== 4) el contenedor vivo es la verdad, no el tag =="

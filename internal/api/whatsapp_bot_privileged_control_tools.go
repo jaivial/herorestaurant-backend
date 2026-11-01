@@ -93,6 +93,8 @@ func botToolDefsPrivilegedControl() []botToolDef {
 	// Coordination id: wa_bot_tool_chain_v1 - multiple custom tools and
 	// result-linked pipelines through the same privileged executor.
 	defs = append(defs, botToolChainDef())
+	// Coordination id: render_document_v1 - HTML -> PDF / 4:3 image, sent to the chat.
+	defs = append(defs, botRenderDocumentDef())
 	// Coordination id: campaign_tools_v1 - the campaign editor (/app/campanas)
 	// as one parameterised tool with the same propose+OK writes.
 	defs = append(defs, botToolDefsCampaign()...)
