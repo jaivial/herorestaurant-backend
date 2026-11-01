@@ -75,22 +75,25 @@ type comidaListQuery struct {
 }
 
 type comidaItemResponse struct {
-	Num          int      `json:"num"`
-	SourceType   string   `json:"source_type,omitempty"`
-	Tipo         string   `json:"tipo,omitempty"`
-	Nombre       string   `json:"nombre"`
-	Precio       float64  `json:"precio"`
-	Descripcion  string   `json:"descripcion,omitempty"`
-	Titulo       string   `json:"titulo,omitempty"`
-	Suplemento   float64  `json:"suplemento,omitempty"`
-	Alergenos    []string `json:"alergenos,omitempty"`
-	Active       bool     `json:"active"`
-	HasFoto      bool     `json:"has_foto"`
-	FotoURL      string   `json:"foto_url,omitempty"`
-	Categoria    string   `json:"categoria,omitempty"`
-	CategoryID   *int     `json:"category_id,omitempty"`
-	CategorySlug string   `json:"category_slug,omitempty"`
-	AiGenerating bool     `json:"ai_generating,omitempty"`
+	Num         int     `json:"num"`
+	SourceType  string  `json:"source_type,omitempty"`
+	Tipo        string  `json:"tipo,omitempty"`
+	Nombre      string  `json:"nombre"`
+	Precio      float64 `json:"precio"`
+	Descripcion string  `json:"descripcion,omitempty"`
+	// Coordination id: comida_description_toggle_v1 - same model as the menu
+	// dishes: the text is kept, the switch decides if the public site shows it.
+	DescriptionEnabled bool     `json:"description_enabled"`
+	Titulo             string   `json:"titulo,omitempty"`
+	Suplemento         float64  `json:"suplemento,omitempty"`
+	Alergenos          []string `json:"alergenos,omitempty"`
+	Active             bool     `json:"active"`
+	HasFoto            bool     `json:"has_foto"`
+	FotoURL            string   `json:"foto_url,omitempty"`
+	Categoria          string   `json:"categoria,omitempty"`
+	CategoryID         *int     `json:"category_id,omitempty"`
+	CategorySlug       string   `json:"category_slug,omitempty"`
+	AiGenerating       bool     `json:"ai_generating,omitempty"`
 	// ProductionType is always sent (never omitempty): the UI needs a definite
 	// RAW/MANUFACTURED value to render, and an absent field would be guessed at.
 	ProductionType     string  `json:"production_type"`
@@ -154,6 +157,7 @@ type comidaUpsertRequest struct {
 	Nombre             *string   `json:"nombre,omitempty"`
 	Precio             *float64  `json:"precio,omitempty"`
 	Descripcion        *string   `json:"descripcion,omitempty"`
+	DescriptionEnabled *bool     `json:"description_enabled,omitempty"`
 	Titulo             *string   `json:"titulo,omitempty"`
 	Suplemento         *float64  `json:"suplemento,omitempty"`
 	Alergenos          *[]string `json:"alergenos,omitempty"`
@@ -828,6 +832,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			ci.category_id,
 			COALESCE(c.slug, ''),
 			ci.ai_generating,
+			COALESCE(ci.description_enabled, 1),
 			COALESCE(ci.production_type, 'RAW'),
 			ci.stock_recipe_id,
 			ci.stock_item_id
@@ -854,6 +859,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			fotoURL       string
 			categoryIDRaw sql.NullInt64
 			aiGenInt      int
+			descEnInt     int
 			recipeIDRaw   sql.NullInt64
 			stockItemRaw  sql.NullInt64
 		)
@@ -875,6 +881,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 			&categoryIDRaw,
 			&item.CategorySlug,
 			&aiGenInt,
+			&descEnInt,
 			&item.ProductionType,
 			&recipeIDRaw,
 			&stockItemRaw,
@@ -892,6 +899,7 @@ func (s *Server) listCatalogItems(r *http.Request, restaurantID int, t comidaTip
 		item.Active = activeInt != 0
 		item.HasFoto = hasFotoInt != 0
 		item.AiGenerating = aiGenInt != 0
+		item.DescriptionEnabled = descEnInt != 0
 		if categoryIDRaw.Valid {
 			v := int(categoryIDRaw.Int64)
 			item.CategoryID = &v
@@ -1172,6 +1180,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 		fotoURL       string
 		categoryIDRaw sql.NullInt64
 		aiGenInt      int
+		descEnInt     int
 	)
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT
@@ -1191,7 +1200,8 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 			COALESCE(ci.categoria, ''),
 			ci.category_id,
 			COALESCE(c.slug, ''),
-			ci.ai_generating
+			ci.ai_generating,
+			COALESCE(ci.description_enabled, 1)
 		FROM comida_items ci
 		LEFT JOIN comida_plato_categories c ON c.id = ci.category_id
 		WHERE ci.restaurant_id = ? AND ci.source_type = ? AND ci.id = ?
@@ -1214,6 +1224,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 		&categoryIDRaw,
 		&item.CategorySlug,
 		&aiGenInt,
+		&descEnInt,
 	)
 	if err == sql.ErrNoRows {
 		return comidaItemResponse{}, false, nil
@@ -1227,6 +1238,7 @@ func (s *Server) getCatalogItemByID(r *http.Request, restaurantID int, t comidaT
 	item.Active = activeInt != 0
 	item.HasFoto = hasFotoInt != 0
 	item.AiGenerating = aiGenInt != 0
+	item.DescriptionEnabled = descEnInt != 0
 	if categoryIDRaw.Valid {
 		v := int(categoryIDRaw.Int64)
 		item.CategoryID = &v
@@ -1474,8 +1486,8 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 
 	res, err := q.ExecContext(r.Context(), `
 		INSERT INTO comida_items
-			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, alergenos_json, active, foto_path, foto, ai_generating, ui_data_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULLIF(?, ''))
+			(restaurant_id, source_type, nombre, tipo, categoria, category_id, titulo, precio, suplemento, descripcion, description_enabled, alergenos_json, active, foto_path, foto, ai_generating, ui_data_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULLIF(?, ''))
 	`, restaurantID,
 		string(t),
 		nombre,
@@ -1486,6 +1498,7 @@ func (s *Server) createCatalogItem(w http.ResponseWriter, r *http.Request, resta
 		precio,
 		suplemento,
 		strings.TrimSpace(comidaPtrString(req.Descripcion)),
+		boolToTinyint(req.DescriptionEnabled == nil || *req.DescriptionEnabled),
 		string(alergJSON),
 		activeInt,
 		foto,
@@ -1710,6 +1723,10 @@ func (s *Server) patchCatalogItem(w http.ResponseWriter, r *http.Request, restau
 		}
 		sets = append(sets, "ai_generating = ?")
 		args = append(args, aiGenVal)
+	}
+	if req.DescriptionEnabled != nil {
+		sets = append(sets, "description_enabled = ?")
+		args = append(args, boolToTinyint(*req.DescriptionEnabled))
 	}
 	if req.ImageBase64 != nil {
 		raw := strings.TrimSpace(*req.ImageBase64)

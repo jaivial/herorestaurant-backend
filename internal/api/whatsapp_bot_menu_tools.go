@@ -377,7 +377,7 @@ func (s *Server) botLoadSimpleMenu(ctx context.Context, restaurantID int, source
 	// wa_bot_catalog_read_v1: the backoffice CRUD writes comida_items. Reading
 	// the empty legacy CAFES/BEBIDAS tables made new items invisible to the bot.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT nombre, precio, COALESCE(descripcion, ''), COALESCE(titulo, ''), COALESCE(suplemento, 0)
+		SELECT nombre, precio, IF(COALESCE(description_enabled, 1) = 1, COALESCE(descripcion, ''), ''), COALESCE(titulo, ''), COALESCE(suplemento, 0)
 		FROM comida_items
 		WHERE restaurant_id = ? AND source_type = ? AND active = 1
 		ORDER BY COALESCE(titulo, ''), nombre

@@ -8,7 +8,7 @@ package main
 // día). admin_describe returns them so Forky and the WhatsApp bot can build
 // panel_change / tool_chain pipelines without guessing bodies.
 
-const carteItemFields = `{nombre:string (obligatorio al crear), precio:number €, descripcion:string, titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.`
+const carteItemFields = `{nombre:string (obligatorio al crear), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.`
 
 const vinoFields = `{tipo:"TINTO"|"BLANCO"|"ROSADO"|"CAVA"|… (obligatorio al crear), nombre (obligatorio), bodega (obligatorio), precio:number>0 (obligatorio), descripcion, denominacion_origen, graduacion:number, anyo:string, active:boolean}. En PATCH todos opcionales.`
 

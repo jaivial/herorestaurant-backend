@@ -113,6 +113,7 @@ func (r *comidaUpsertRequest) UnmarshalJSON(raw []byte) error {
 		CategoryID   *flexInt   `json:"category_id,omitempty"`
 		Graduacion   *flexFloat `json:"graduacion,omitempty"`
 		AiGenerating *flexBool  `json:"ai_generating,omitempty"`
+		DescEnabled  *flexBool  `json:"description_enabled,omitempty"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -122,6 +123,7 @@ func (r *comidaUpsertRequest) UnmarshalJSON(raw []byte) error {
 	*r = comidaUpsertRequest(aux.plain)
 	r.Precio, r.Suplemento, r.Graduacion = flexFloatPtr(aux.Precio), flexFloatPtr(aux.Suplemento), flexFloatPtr(aux.Graduacion)
 	r.Active, r.AiGenerating = flexBoolPtr(aux.Active), flexBoolPtr(aux.AiGenerating)
+	r.DescriptionEnabled = flexBoolPtr(aux.DescEnabled)
 	r.CategoryID = flexIntPtr(aux.CategoryID)
 	return nil
 }
