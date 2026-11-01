@@ -3331,6 +3331,22 @@
    "screens": []
   },
   {
+   "name": "admin_delete_group_menus_v2_id_sections_sectionid_dishes_dis",
+   "method": "DELETE",
+   "path": "/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}",
+   "handler": "handleBOGroupMenusV2DeleteSectionDish",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "high",
+   "description": "DELETE /group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId} (handleBOGroupMenusV2DeleteSectionDish)",
+   "body": "Sin body. Quita UN plato de la sección sin tocar los demás.",
+   "screens": []
+  },
+  {
    "name": "admin_patch_group_menus_v2_id_sections_sectionid_dishes_dish",
    "method": "PATCH",
    "path": "/group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId}",
@@ -3359,6 +3375,22 @@
    "write": false,
    "risk": "low",
    "description": "GET /group-menus-v2/{id}/sections/{sectionId}/dishes (handleBOGroupMenusV2GetSectionDishes)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_group_menus_v2_id_sections_sectionid_dishes",
+   "method": "POST",
+   "path": "/group-menus-v2/{id}/sections/{sectionId}/dishes",
+   "handler": "handleBOGroupMenusV2CreateSectionDish",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "medium",
+   "description": "POST /group-menus-v2/{id}/sections/{sectionId}/dishes (handleBOGroupMenusV2CreateSectionDish)",
+   "body": "Añade UN plato a la sección sin tocar los demás: {title (obligatorio), description?, description_enabled?:boolean, allergens?:[string], supplement_enabled?:boolean, supplement_price?:number|null, price?:number|null (a la carta), active?:boolean (por defecto true), position?:int (por defecto al final), catalog_dish_id?, apply_to_catalog?:boolean}. Devuelve dish_id.",
    "screens": []
   },
   {
@@ -3407,6 +3439,38 @@
    "risk": "high",
    "description": "DELETE /group-menus-v2/{id}/sections/{sectionId} (handleBOGroupMenusV2DeleteSection)",
    "body": "Sin body. Borra la sección y sus platos.",
+   "screens": []
+  },
+  {
+   "name": "admin_patch_group_menus_v2_id_sections_sectionid",
+   "method": "PATCH",
+   "path": "/group-menus-v2/{id}/sections/{sectionId}",
+   "handler": "handleBOGroupMenusV2PatchSection",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "medium",
+   "description": "PATCH /group-menus-v2/{id}/sections/{sectionId} (handleBOGroupMenusV2PatchSection)",
+   "body": "Edita UNA sección: solo los campos que cambian de {title, kind, display_title, subtitle, tab_label, dessert_source, annotations:[string]}.",
+   "screens": []
+  },
+  {
+   "name": "admin_post_group_menus_v2_id_sections",
+   "method": "POST",
+   "path": "/group-menus-v2/{id}/sections",
+   "handler": "handleBOGroupMenusV2CreateSection",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "medium",
+   "description": "POST /group-menus-v2/{id}/sections (handleBOGroupMenusV2CreateSection)",
+   "body": "Añade UNA sección al final sin tocar las demás: {title (obligatorio), kind?:\"entrantes\"|\"principales\"|\"postres\"|\"arroces\"|\"bebidas\"|\"custom\", display_title?, subtitle?, tab_label?, dessert_source?:\"general\"|\"custom\" (solo postres), annotations?:[string]}. Devuelve section_id.",
    "screens": []
   },
   {
