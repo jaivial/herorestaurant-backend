@@ -169,7 +169,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /bebidas/{id} (handleBOBebidasPatch)",
-   "body": "Edita una bebida. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
+   "body": "Edita una bebida. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
    "screens": []
   },
   {
@@ -200,7 +200,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /bebidas (handleBOBebidasCreate)",
-   "body": "Crea una bebida. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
+   "body": "Crea una bebida. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
    "screens": []
   },
   {
@@ -818,7 +818,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /cafes/{id} (handleBOCafesPatch)",
-   "body": "Edita un café de la carta especializada. {nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.",
+   "body": "Edita un café de la carta especializada. {nombre:string (obligatorio), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.",
    "screens": []
   },
   {
@@ -849,7 +849,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /cafes (handleBOCafesCreate)",
-   "body": "Crea un café en la carta especializada de cafés (comida_items.source_type=cafes). {nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.",
+   "body": "Crea un café en la carta especializada de cafés (comida_items.source_type=cafes). {nombre:string (obligatorio), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.",
    "screens": []
   },
   {
@@ -1811,7 +1811,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /comida/{tipo}/{id} (handleBOComidaPatch)",
-   "body": "Edita un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). {nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.",
+   "body": "Edita un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). {nombre:string (obligatorio), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.",
    "screens": []
   },
   {
@@ -1842,7 +1842,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /comida/{tipo} (handleBOComidaCreate)",
-   "body": "Crea un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). {nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta. Vinos exige tipo, nombre, bodega y precio\u003e0; postres acepta descripcion como nombre.",
+   "body": "Crea un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). {nombre:string (obligatorio), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta. Vinos exige tipo, nombre, bodega y precio\u003e0; postres acepta descripcion como nombre.",
    "screens": []
   },
   {
@@ -5951,7 +5951,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /platos/{id} (handleBOPlatosPatch)",
-   "body": "Edita un plato de la carta. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
+   "body": "Edita un plato de la carta. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
    "screens": []
   },
   {
@@ -5982,7 +5982,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /platos (handleBOPlatosCreate)",
-   "body": "Crea un plato de la carta. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
+   "body": "Crea un plato de la carta. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
    "screens": []
   },
   {

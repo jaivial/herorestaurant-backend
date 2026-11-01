@@ -64,7 +64,7 @@ var specialDescriptionsEs = map[string]string{
 	"PATCH /bookings/{id}": "Modifica una reserva (solo los campos enviados); special sustituye el bloque de fecha especial y null lo quita.",
 }
 
-const comidaCatalogWriteFields = `{nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.`
+const comidaCatalogWriteFields = `{nombre:string (obligatorio), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.`
 
 // bodiesEs: the exact request contract per "METHOD /path" (admin_describe).
 var bodiesEs = map[string]string{
