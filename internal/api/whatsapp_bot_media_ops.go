@@ -75,7 +75,7 @@ func botMediaUploadOp(s *Server, ctx context.Context, rid int, p map[string]any)
 	kind := botPanelString(p, "kind")
 	run, ok := botMediaUploadOps[kind]
 	if !ok {
-		return nil, errors.New("kind de media_upload no soportado (usa booking_document, special_section, special_menu, special_date_menu, vino o ads)")
+		return nil, errors.New("kind de media_upload no soportado (usa booking_document, special_section, special_menu, special_date_menu, vino, ads, comida, section_dish, menu_preview o slider)")
 	}
 	payload, err := s.botMediaSource(ctx, rid, p, true)
 	if err != nil {

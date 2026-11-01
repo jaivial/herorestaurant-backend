@@ -137,6 +137,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /bebidas/{id}/toggle (handleBOBebidasToggle)",
+   "body": "Sin body: alterna activo/inactivo (para fijar un valor usa PATCH con active).",
    "screens": []
   },
   {
@@ -152,6 +153,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /bebidas/{id} (handleBOBebidasDelete)",
+   "body": "Sin body. Elimina la bebida.",
    "screens": []
   },
   {
@@ -167,6 +169,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /bebidas/{id} (handleBOBebidasPatch)",
+   "body": "Edita una bebida. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
    "screens": []
   },
   {
@@ -197,6 +200,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /bebidas (handleBOBebidasCreate)",
+   "body": "Crea una bebida. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
    "screens": []
   },
   {
@@ -782,6 +786,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /cafes/{id}/toggle (handleBOCafesToggle)",
+   "body": "Sin body: alterna activo/inactivo (para fijar un valor usa PATCH con active).",
    "screens": []
   },
   {
@@ -1234,6 +1239,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /comida/bebidas/categorias (handleBOComidaBebidaCategoriesCreate)",
+   "body": "Categoría legacy de bebidas: {name (obligatorio), label?, slug?}.",
    "screens": []
   },
   {
@@ -1281,6 +1287,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /comida/categorias/{id} (handleBOComidaCategoryDelete)",
+   "body": "Sin body. Solo categorías editables.",
    "screens": []
   },
   {
@@ -1296,6 +1303,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /comida/categorias/{id} (handleBOComidaCategoryPatch)",
+   "body": "{name?, foodType?, global?, active?:boolean}. Solo categorías editables (id\u003e0 de admin_get_comida_categorias).",
    "screens": []
   },
   {
@@ -1326,6 +1334,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /comida/categorias (handleBOComidaCategoryCreate)",
+   "body": "{name (obligatorio, ≤120), foodType:\"platos\"|\"bebidas\"|\"vinos\"|\"cafes\"|\"postres\" o vacío/\"global\", global?:boolean, active?:boolean}. Rechaza nombres que ya existen en un ámbito solapado.",
    "screens": []
   },
   {
@@ -1387,6 +1396,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /comida/platos/categorias (handleBOComidaPlatoCategoriesCreate)",
+   "body": "Categoría legacy de platos: {name (obligatorio), label?, slug?}.",
    "screens": []
   },
   {
@@ -2902,6 +2912,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /dishes-catalog/upsert (handleBODishesCatalogUpsert)",
+   "body": "Crea (sin id) o edita (con id) un plato del catálogo compartido de los menús v2: {id?, title (obligatorio), description, allergens:[string], default_supplement_enabled:boolean, default_supplement_price:number|null}.",
    "screens": []
   },
   {
@@ -3174,6 +3185,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /group-menus-v2/postres/resolve (handleBOGroupMenusV2ResolvePostres)",
+   "body": "Sin body: devuelve (y crea si falta) el menú de la carta general de postres.",
    "screens": []
   },
   {
@@ -3252,6 +3264,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /group-menus-v2/{id}/same-day-booking/{dishId} (handleBODishSameDayBookingDelete)",
+   "body": "Sin body: quita la reserva en el día del plato.",
    "screens": []
   },
   {
@@ -3267,6 +3280,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /group-menus-v2/{id}/same-day-booking/{dishId} (handleBODishSameDayBookingCreate)",
+   "body": "Sin body: el plato (dishId de la sección) se puede reservar el mismo día.",
    "screens": []
   },
   {
@@ -3297,6 +3311,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/sections/{sectionId}/annotations (handleBOGroupMenusV2PatchSectionAnnotations)",
+   "body": "{annotations:[string]} (notas bajo la sección; lista completa).",
    "screens": []
   },
   {
@@ -3312,6 +3327,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/sections/{sectionId}/dessert-source (handleBOGroupMenusV2PatchSectionDessertSource)",
+   "body": "{dessert_source:\"general\"|\"custom\"} (solo secciones de postres; general = espejo de la carta de postres).",
    "screens": []
   },
   {
@@ -3327,6 +3343,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/sections/{sectionId}/dishes/{dishId} (handleBOGroupMenusV2PatchSectionDish)",
+   "body": "Edita UN plato sin tocar el resto: solo los campos que cambian de {id?:id del plato existente (omitido = nuevo), catalog_dish_id?:id del catálogo (admin_get_dishes_catalog_search), title (obligatorio), description, description_enabled:boolean, allergens:[string], supplement_enabled:boolean, supplement_price:number|null, price:number|null (solo a la carta), active:boolean, apply_to_catalog:boolean}.",
    "screens": []
   },
   {
@@ -3357,6 +3374,7 @@
    "write": true,
    "risk": "medium",
    "description": "PUT /group-menus-v2/{id}/sections/{sectionId}/dishes (handleBOGroupMenusV2PutSectionDishes)",
+   "body": "REEMPLAZA los platos de la sección (los omitidos se BORRAN; copia antes admin_get_group_menus_v2_id_sections_sectionid_dishes): {dishes:[{id?:id del plato existente (omitido = nuevo), catalog_dish_id?:id del catálogo (admin_get_dishes_catalog_search), title (obligatorio), description, description_enabled:boolean, allergens:[string], supplement_enabled:boolean, supplement_price:number|null, price:number|null (solo a la carta), active:boolean, apply_to_catalog:boolean}]}. Devuelve dishes con sus id.",
    "screens": []
   },
   {
@@ -3372,6 +3390,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/sections/{sectionId}/visibility (handleBOGroupMenusV2PatchSectionVisibility)",
+   "body": "Solo lo que cambia: {public_page_active?:boolean, web_placement?:\"inside_menus\"|\"independent_section\"}.",
    "screens": []
   },
   {
@@ -3387,6 +3406,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /group-menus-v2/{id}/sections/{sectionId} (handleBOGroupMenusV2DeleteSection)",
+   "body": "Sin body. Borra la sección y sus platos.",
    "screens": []
   },
   {
@@ -3402,6 +3422,7 @@
    "write": true,
    "risk": "medium",
    "description": "PUT /group-menus-v2/{id}/sections (handleBOGroupMenusV2PutSections)",
+   "body": "REEMPLAZA la lista de secciones (las omitidas se BORRAN con sus platos; copia las actuales de admin_get_group_menus_v2_id): {sections:[{id?:id existente (omitido = nueva), title (obligatorio), display_title?, subtitle?, tab_label?, kind:\"entrantes\"|\"principales\"|\"postres\"|\"arroces\"|\"bebidas\"|\"custom\", dessert_source?:\"general\"|\"custom\" (solo postres), position:int, annotations?:[string]}]}. Devuelve sections con sus id.",
    "screens": []
   },
   {
@@ -3417,7 +3438,7 @@
    "write": true,
    "risk": "medium",
    "description": "Cambia el SEO público de un menú (slug, title, description y H1 en español e inglés).",
-   "body": "{seo_slug, seo_title (≤180), seo_title_english, seo_description (≤500), seo_description_english, seo_h1 (≤180), seo_h1_english}: strings. Se guardan TODOS: el campo que no envíes queda vacío, así que copia los actuales de admin_get_group_menus_v2_id.",
+   "body": "{seo_slug, seo_title (≤180), seo_title_english, seo_description (≤500), seo_description_english, seo_h1 (≤180), seo_h1_english, seo_intro (≤4000), seo_intro_english, seo_faq (≤8000, bloques 'pregunta\\nrespuesta' separados por línea en blanco), seo_faq_english}: strings. Se guardan TODOS: el campo que no envíes queda vacío, así que copia los actuales de admin_get_group_menus_v2_id.",
    "screens": []
   },
   {
@@ -3433,6 +3454,7 @@
    "write": true,
    "risk": "high",
    "description": "Elimina una imagen del carrusel de un menú de grupo.",
+   "body": "Sin body.",
    "screens": []
   },
   {
@@ -3448,6 +3470,7 @@
    "write": true,
    "risk": "medium",
    "description": "Reordena las imágenes del carrusel de un menú de grupo.",
+   "body": "{image_ids:[id en el orden nuevo]} (ids de admin_get_group_menus_v2_id_slider).",
    "screens": []
   },
   {
@@ -3478,6 +3501,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/slider (handleBOGroupMenusV2PatchSlider)",
+   "body": "{mode:\"default\"|\"custom\"|\"both\"|\"hidden\"}.",
    "screens": []
   },
   {
@@ -3746,6 +3770,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /group-menus/{id}/toggle (handleBOGroupMenuToggleActive)",
+   "body": "Sin body: alterna activo/inactivo.",
    "screens": []
   },
   {
@@ -3761,6 +3786,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /group-menus/{id} (handleBOGroupMenuDelete)",
+   "body": "Sin body.",
    "screens": []
   },
   {
@@ -3791,6 +3817,7 @@
    "write": true,
    "risk": "medium",
    "description": "PUT /group-menus/{id} (handleBOGroupMenuUpdate)",
+   "body": "REEMPLAZA el menú de grupo legacy completo (copia antes admin_get_group_menus_id): {menu_title (obligatorio), menu_subtitle, price:number\u003e0 (obligatorio), active:boolean, min_party_size:int, main_dishes_limit:boolean, main_dishes_limit_number:int, included_coffee:boolean, entrantes:[string], principales:{titulo_principales:string, items:[string]}, postre:[string], beverage:{type, price_per_person, has_supplement, supplement_price}, comments:[string]}",
    "screens": []
   },
   {
@@ -3821,6 +3848,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /group-menus (handleBOGroupMenuCreate)",
+   "body": "Crea un menú de grupo legacy: {menu_title (obligatorio), menu_subtitle, price:number\u003e0 (obligatorio), active:boolean, min_party_size:int, main_dishes_limit:boolean, main_dishes_limit_number:int, included_coffee:boolean, entrantes:[string], principales:{titulo_principales:string, items:[string]}, postre:[string], beverage:{type, price_per_person, has_supplement, supplement_price}, comments:[string]}",
    "screens": []
   },
   {
@@ -5258,6 +5286,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /menu-visibility (handleBOMenuVisibilitySet)",
+   "body": "{menuKey:\"menudeldia\"|\"menufindesemana\", isActive:boolean}.",
    "screens": []
   },
   {
@@ -5273,6 +5302,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /menus/dia/dishes/{id} (handleBOMenuDiaDishDelete)",
+   "body": "Sin body. Quita el plato del menú del día.",
    "screens": []
   },
   {
@@ -5288,6 +5318,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /menus/dia/dishes/{id} (handleBOMenuDiaDishPatch)",
+   "body": "Edita un plato del menú del día. {descripcion:string (nombre del plato, obligatorio al crear), tipo:\"ENTRANTE\"|\"PRINCIPAL\"|\"ARROZ\" (obligatorio al crear), alergenos:[string], active:boolean}. En PATCH todos opcionales.",
    "screens": []
   },
   {
@@ -5303,6 +5334,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /menus/dia/dishes (handleBOMenuDiaDishCreate)",
+   "body": "Añade un plato al menú del día. {descripcion:string (nombre del plato, obligatorio al crear), tipo:\"ENTRANTE\"|\"PRINCIPAL\"|\"ARROZ\" (obligatorio al crear), alergenos:[string], active:boolean}. En PATCH todos opcionales.",
    "screens": []
   },
   {
@@ -5318,6 +5350,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /menus/dia/price (handleBOMenuDiaSetPrice)",
+   "body": "{price:\"12.50\" (string con el precio del menú del día)}.",
    "screens": []
   },
   {
@@ -5348,6 +5381,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /menus/finde/dishes/{id} (handleBOMenuFindeDishDelete)",
+   "body": "Sin body. Quita el plato del menú de fin de semana.",
    "screens": []
   },
   {
@@ -5363,6 +5397,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /menus/finde/dishes/{id} (handleBOMenuFindeDishPatch)",
+   "body": "Edita un plato del menú de fin de semana. {descripcion:string (nombre del plato, obligatorio al crear), tipo:\"ENTRANTE\"|\"PRINCIPAL\"|\"ARROZ\" (obligatorio al crear), alergenos:[string], active:boolean}. En PATCH todos opcionales.",
    "screens": []
   },
   {
@@ -5378,6 +5413,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /menus/finde/dishes (handleBOMenuFindeDishCreate)",
+   "body": "Añade un plato al menú de fin de semana. {descripcion:string (nombre del plato, obligatorio al crear), tipo:\"ENTRANTE\"|\"PRINCIPAL\"|\"ARROZ\" (obligatorio al crear), alergenos:[string], active:boolean}. En PATCH todos opcionales.",
    "screens": []
   },
   {
@@ -5393,6 +5429,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /menus/finde/price (handleBOMenuFindeSetPrice)",
+   "body": "{price:\"25.00\" (string con el precio del menú de fin de semana)}.",
    "screens": []
   },
   {
@@ -5818,6 +5855,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /platos/{id}/toggle (handleBOPlatosToggle)",
+   "body": "Sin body: alterna activo/inactivo (para fijar un valor usa PATCH con active).",
    "screens": []
   },
   {
@@ -5833,6 +5871,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /platos/{id} (handleBOPlatosDelete)",
+   "body": "Sin body. Elimina el plato.",
    "screens": []
   },
   {
@@ -5848,6 +5887,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /platos/{id} (handleBOPlatosPatch)",
+   "body": "Edita un plato de la carta. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
    "screens": []
   },
   {
@@ -5878,6 +5918,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /platos (handleBOPlatosCreate)",
+   "body": "Crea un plato de la carta. {nombre:string (obligatorio al crear), precio:number €, descripcion:string, titulo:string (grupo dentro de la carta), suplemento:number, active:boolean (NO activo ni string), alergenos:[string], tipo:string, categoria:string (por nombre; se crea si no existe en platos)}. En PATCH todos opcionales: envía solo lo que cambia.",
    "screens": []
   },
   {
@@ -8135,6 +8176,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /postres/{id} (handleBOPostreDelete)",
+   "body": "Sin body. Elimina el postre.",
    "screens": []
   },
   {
@@ -8150,6 +8192,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /postres/{id} (handleBOPostrePatch)",
+   "body": "Edita un postre: {descripcion?, alergenos?:[string], active?:boolean}.",
    "screens": []
   },
   {
@@ -8180,6 +8223,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /postres (handleBOPostreCreate)",
+   "body": "Crea un postre de la carta general: {descripcion:string (nombre, obligatorio), alergenos:[string], active:boolean}.",
    "screens": []
   },
   {
@@ -8210,6 +8254,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /restaurant/pages/visibility (handlePageVisibilityPatch)",
+   "body": "Solo lo que cambia: {cafe_page_active, bebidas_page_active, postres_page_active, vinos_page_active: boolean; cafes_web_placement, bebidas_web_placement, postres_web_placement, vinos_web_placement: \"inside_menus\"|\"independent_section\"}.",
    "screens": []
   },
   {
@@ -10226,6 +10271,7 @@
    "write": true,
    "risk": "high",
    "description": "DELETE /vinos/{id} (handleBOVinoDelete)",
+   "body": "Sin body. Elimina el vino.",
    "screens": []
   },
   {
@@ -10256,6 +10302,7 @@
    "write": true,
    "risk": "medium",
    "description": "PATCH /vinos/{id} (handleBOVinoPatch)",
+   "body": "Edita un vino. {tipo:\"TINTO\"|\"BLANCO\"|\"ROSADO\"|\"CAVA\"|… (obligatorio al crear), nombre (obligatorio), bodega (obligatorio), precio:number\u003e0 (obligatorio), descripcion, denominacion_origen, graduacion:number, anyo:string, active:boolean}. En PATCH todos opcionales.",
    "screens": []
   },
   {
@@ -10286,6 +10333,7 @@
    "write": true,
    "risk": "medium",
    "description": "POST /vinos (handleBOVinoCreate)",
+   "body": "Crea un vino. {tipo:\"TINTO\"|\"BLANCO\"|\"ROSADO\"|\"CAVA\"|… (obligatorio al crear), nombre (obligatorio), bodega (obligatorio), precio:number\u003e0 (obligatorio), descripcion, denominacion_origen, graduacion:number, anyo:string, active:boolean}. En PATCH todos opcionales.",
    "screens": []
   },
   {
