@@ -452,7 +452,7 @@ func (s *Server) assistantAdminCallBatch(ctx context.Context, rid int, calls []a
 		if err != nil {
 			it.Error = err.Error()
 		} else {
-			it.OK = true
+			it.OK = !botResultFailed(raw)
 			it.Data = raw
 		}
 		out = append(out, it)
