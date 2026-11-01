@@ -243,6 +243,11 @@ type pageVisibility struct {
 	CafesWebPlacement   string `json:"cafes_web_placement"`
 	VinosWebPlacement   string `json:"vinos_web_placement"`
 	BebidasWebPlacement string `json:"bebidas_web_placement"`
+	// Coordination id: foodtype_show_prices_v1
+	CafesShowPrices   bool `json:"cafes_show_prices"`
+	BebidasShowPrices bool `json:"bebidas_show_prices"`
+	PostresShowPrices bool `json:"postres_show_prices"`
+	VinosShowPrices   bool `json:"vinos_show_prices"`
 }
 
 // foodTypeVisibilityColumn binds one public food-type page to the columns that
@@ -256,32 +261,43 @@ type foodTypeVisibilityColumn struct {
 	placementKey    string
 	active          func(*pageVisibility) *bool
 	placement       func(*pageVisibility) *string
+	// Coordination id: foodtype_show_prices_v1 - column and JSON key share the name.
+	pricesColumn string
+	showPrices   func(*pageVisibility) *bool
 }
 
 var foodTypeVisibilityColumns = []foodTypeVisibilityColumn{
 	{
 		activeColumn: "cafe_page_active", placementColumn: "cafes_web_placement",
 		activeKey: "cafe_page_active", placementKey: "cafes_web_placement",
-		active:    func(v *pageVisibility) *bool { return &v.CafeActive },
-		placement: func(v *pageVisibility) *string { return &v.CafesWebPlacement },
+		active:       func(v *pageVisibility) *bool { return &v.CafeActive },
+		pricesColumn: "cafes_show_prices",
+		showPrices:   func(v *pageVisibility) *bool { return &v.CafesShowPrices },
+		placement:    func(v *pageVisibility) *string { return &v.CafesWebPlacement },
 	},
 	{
 		activeColumn: "bebidas_page_active", placementColumn: "bebidas_web_placement",
 		activeKey: "bebidas_page_active", placementKey: "bebidas_web_placement",
-		active:    func(v *pageVisibility) *bool { return &v.BebidasActive },
-		placement: func(v *pageVisibility) *string { return &v.BebidasWebPlacement },
+		active:       func(v *pageVisibility) *bool { return &v.BebidasActive },
+		pricesColumn: "bebidas_show_prices",
+		showPrices:   func(v *pageVisibility) *bool { return &v.BebidasShowPrices },
+		placement:    func(v *pageVisibility) *string { return &v.BebidasWebPlacement },
 	},
 	{
 		activeColumn: "postres_page_active", placementColumn: "postres_web_placement",
 		activeKey: "postres_page_active", placementKey: "postres_web_placement",
-		active:    func(v *pageVisibility) *bool { return &v.PostresActive },
-		placement: func(v *pageVisibility) *string { return &v.PostresWebPlacement },
+		active:       func(v *pageVisibility) *bool { return &v.PostresActive },
+		pricesColumn: "postres_show_prices",
+		showPrices:   func(v *pageVisibility) *bool { return &v.PostresShowPrices },
+		placement:    func(v *pageVisibility) *string { return &v.PostresWebPlacement },
 	},
 	{
 		activeColumn: "vinos_page_active", placementColumn: "vinos_web_placement",
 		activeKey: "vinos_page_active", placementKey: "vinos_web_placement",
-		active:    func(v *pageVisibility) *bool { return &v.VinosActive },
-		placement: func(v *pageVisibility) *string { return &v.VinosWebPlacement },
+		active:       func(v *pageVisibility) *bool { return &v.VinosActive },
+		pricesColumn: "vinos_show_prices",
+		showPrices:   func(v *pageVisibility) *bool { return &v.VinosShowPrices },
+		placement:    func(v *pageVisibility) *string { return &v.VinosWebPlacement },
 	},
 }
 
@@ -301,6 +317,7 @@ func defaultPageVisibility() pageVisibility {
 	for _, col := range foodTypeVisibilityColumns {
 		*col.active(&vis) = true
 		*col.placement(&vis) = "inside_menus"
+		*col.showPrices(&vis) = true
 	}
 	return vis
 }
@@ -312,19 +329,21 @@ func (v pageVisibility) payload() map[string]any {
 	for _, col := range foodTypeVisibilityColumns {
 		out[col.activeKey] = *col.active(&v)
 		out[col.placementKey] = *col.placement(&v)
+		out[col.pricesColumn] = *col.showPrices(&v)
 	}
 	return out
 }
 
 func (s *Server) getPageVisibility(ctx context.Context, restaurantID int) pageVisibility {
 	vis := defaultPageVisibility()
-	columns := make([]string, 0, len(foodTypeVisibilityColumns)*2)
+	columns := make([]string, 0, len(foodTypeVisibilityColumns)*3)
 	actives := make([]int, len(foodTypeVisibilityColumns))
 	placements := make([]string, len(foodTypeVisibilityColumns))
-	targets := make([]any, 0, len(foodTypeVisibilityColumns)*2)
+	prices := make([]int, len(foodTypeVisibilityColumns))
+	targets := make([]any, 0, len(foodTypeVisibilityColumns)*3)
 	for i, col := range foodTypeVisibilityColumns {
-		columns = append(columns, col.activeColumn, col.placementColumn)
-		targets = append(targets, &actives[i], &placements[i])
+		columns = append(columns, col.activeColumn, col.placementColumn, col.pricesColumn)
+		targets = append(targets, &actives[i], &placements[i], &prices[i])
 	}
 
 	err := s.db.QueryRowContext(ctx,
@@ -338,6 +357,7 @@ func (s *Server) getPageVisibility(ctx context.Context, restaurantID int) pageVi
 	for i, col := range foodTypeVisibilityColumns {
 		*col.active(&vis) = actives[i] != 0
 		*col.placement(&vis) = normalizedWebPlacement(placements[i])
+		*col.showPrices(&vis) = prices[i] != 0
 	}
 	return vis
 }
@@ -354,6 +374,10 @@ type pageVisibilityPatch struct {
 	CafesWebPlacement   *string `json:"cafes_web_placement,omitempty"`
 	VinosWebPlacement   *string `json:"vinos_web_placement,omitempty"`
 	BebidasWebPlacement *string `json:"bebidas_web_placement,omitempty"`
+	CafesShowPrices     *bool   `json:"cafes_show_prices,omitempty"`
+	BebidasShowPrices   *bool   `json:"bebidas_show_prices,omitempty"`
+	PostresShowPrices   *bool   `json:"postres_show_prices,omitempty"`
+	VinosShowPrices     *bool   `json:"vinos_show_prices,omitempty"`
 }
 
 // fields pairs every patch value with the column it writes, in the same order as
@@ -368,10 +392,10 @@ func (p pageVisibilityPatch) fields() []any {
 		return &normalized
 	}
 	return []any{
-		p.CafeActive, placement(p.CafesWebPlacement),
-		p.BebidasActive, placement(p.BebidasWebPlacement),
-		p.PostresActive, placement(p.PostresWebPlacement),
-		p.VinosActive, placement(p.VinosWebPlacement),
+		p.CafeActive, placement(p.CafesWebPlacement), p.CafesShowPrices,
+		p.BebidasActive, placement(p.BebidasWebPlacement), p.BebidasShowPrices,
+		p.PostresActive, placement(p.PostresWebPlacement), p.PostresShowPrices,
+		p.VinosActive, placement(p.VinosWebPlacement), p.VinosShowPrices,
 	}
 }
 
@@ -401,11 +425,12 @@ func (s *Server) updatePageVisibility(ctx context.Context, restaurantID int, pat
 	inserts := make([]string, 0, len(values))
 	updates := make([]string, 0, len(values))
 	for _, col := range foodTypeVisibilityColumns {
-		columns = append(columns, col.activeColumn, col.placementColumn)
-		inserts = append(inserts, "COALESCE(?, 1)", "COALESCE(?, 'inside_menus')")
+		columns = append(columns, col.activeColumn, col.placementColumn, col.pricesColumn)
+		inserts = append(inserts, "COALESCE(?, 1)", "COALESCE(?, 'inside_menus')", "COALESCE(?, 1)")
 		updates = append(updates,
 			col.activeColumn+" = COALESCE(?, "+col.activeColumn+")",
 			col.placementColumn+" = COALESCE(?, "+col.placementColumn+")",
+			col.pricesColumn+" = COALESCE(?, "+col.pricesColumn+")",
 		)
 	}
 
@@ -466,6 +491,7 @@ func (s *Server) handlePageVisibilityPatch(w http.ResponseWriter, r *http.Reques
 
 	vis := s.getPageVisibility(r.Context(), restaurantID)
 	logCheckpoint(r, "page_visibility_updated",
+		"cafes_show_prices", strconv.FormatBool(vis.CafesShowPrices),
 		"cafes_web_placement", vis.CafesWebPlacement,
 		"vinos_web_placement", vis.VinosWebPlacement,
 		"bebidas_web_placement", vis.BebidasWebPlacement,
