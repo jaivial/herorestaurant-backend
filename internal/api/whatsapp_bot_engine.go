@@ -248,6 +248,16 @@ func (s *Server) botRunAgentLoopWith(ctx context.Context, call botModelCaller, s
 			return s.botInterrupted(ctx, call, system, &result, msgs, "model_call_failed", err)
 		}
 		result.ModelUsed = used
+		responseTools := make([]string, 0, len(resp.Content))
+		responseTextChars := 0
+		for _, block := range resp.Content {
+			if block.Type == "tool_use" {
+				responseTools = append(responseTools, block.Name)
+			}
+			responseTextChars += len(block.Text)
+		}
+		botCheckpointCtx(ctx, "wa_bot_model_response_v1", "iter=%d model=%s stop_reason=%s tool_calls=%d tools=%s text_chars=%d",
+			i+1, used, resp.StopReason, len(responseTools), strings.Join(responseTools, ","), responseTextChars)
 
 		// Append the assistant turn as-is (text + tool_use blocks).
 		assistant := botMessage{Role: "assistant", Content: resp.Content}

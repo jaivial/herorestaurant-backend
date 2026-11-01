@@ -64,8 +64,16 @@ var specialDescriptionsEs = map[string]string{
 	"PATCH /bookings/{id}": "Modifica una reserva (solo los campos enviados); special sustituye el bloque de fecha especial y null lo quita.",
 }
 
+const comidaCatalogWriteFields = `{nombre:string (obligatorio), precio:number €, descripcion:string, titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.`
+
 // bodiesEs: the exact request contract per "METHOD /path" (admin_describe).
 var bodiesEs = map[string]string{
+	"POST /comida/{tipo}":             `Crea un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). ` + comidaCatalogWriteFields + ` Vinos exige tipo, nombre, bodega y precio>0; postres acepta descripcion como nombre.`,
+	"PATCH /comida/{tipo}/{id}":       `Edita un elemento del tipo de la ruta (platos|bebidas|cafes|vinos|postres). ` + comidaCatalogWriteFields,
+	"DELETE /comida/{tipo}/{id}":      `Sin body. Elimina el elemento id solo si pertenece al tipo y restaurante actuales.`,
+	"POST /cafes":                     `Crea un café en la carta especializada de cafés (comida_items.source_type=cafes). ` + comidaCatalogWriteFields,
+	"PATCH /cafes/{id}":               `Edita un café de la carta especializada. ` + comidaCatalogWriteFields,
+	"DELETE /cafes/{id}":              `Sin body. Elimina el café id del restaurante actual.`,
 	"GET /config/special-dates":       `Sin body. query: date=YYYY-MM-DD opcional (sin date = lista de todas las fechas especiales con su id).`,
 	"GET /config/special-dates/stats": `Sin body. query: date=YYYY-MM-DD (obligatorio).`,
 	"POST /config/special-dates":      `REEMPLAZO TOTAL (lo que falte vuelve al valor por defecto y los menús se reescriben): ` + specialDateFields,
