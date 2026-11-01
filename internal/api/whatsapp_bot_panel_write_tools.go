@@ -128,7 +128,7 @@ func botPanelChangeToolDefs() []botToolDef {
 				"Para cambiar el ADELANTO por persona de una FECHA ESPECIAL usa operation=special_date_adelanto_set con params {date, amount, special_date_menu_id y section_id opcionales para limitarlo}; no parchees las secciones del menú (ahí no se guarda el adelanto). " +
 				"Imágenes (media_upload / media_ai): la imagen es la que enviaron a ESTE chat (params.image_ref de la nota [Imagen disponible…]; vacío = la más reciente); nunca escribas data_base64. Kinds de menús y fechas especiales: special_menu (imagen principal; menu_id), special_section (menu_id + section_id), special_date_menu (menú personalizado de una fecha: devuelve la url para custom_image_url). " +
 				"path_params, query y body: los mismos argumentos que indica admin_describe; params: solo para operaciones directas. " +
-				"IMPORTANTE: propón UN cambio cada vez. Si el cambio depende de otro (por ejemplo, abrir un día y luego crear la reserva), espera a que el primero se aplique con OK y solo entonces propón el siguiente. " +
+				"IMPORTANTE: con propuestas, UN cambio cada vez; con cambios directos, agrupa varias operaciones independientes en tool_chain en vez de llamarme una vez por elemento. Si el cambio depende de otro (por ejemplo, abrir un día y luego crear la reserva), espera a que el primero se aplique con OK y solo entonces propón el siguiente. " +
 				"Las lecturas NO van por aquí: usa admin_call o staff_domain_read.",
 			InputSchema: botSchema(`{"type":"object","properties":{
 				"operation":{"type":"string","description":"Nombre de la operación del panel (admin_catalog) o directa"},
