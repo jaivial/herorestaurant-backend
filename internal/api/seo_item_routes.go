@@ -32,6 +32,11 @@ const (
 	seoItemTypeWine = "wine"
 )
 
+// seoItemUnavailableDays is how long an unpublished dish or wine keeps its page
+// live as "not available right now" before it redirects to its menu.
+// Coordination id: seo_item_unavailable_v1
+const seoItemUnavailableDays = 60
+
 // seoItemSlugLimit is the maximum length of a generated slug. It is cut at a
 // word boundary, never in the middle of a word.
 const seoItemSlugLimit = 72
@@ -133,6 +138,9 @@ type seoRouteRow struct {
 	seoDescription string
 	active         bool
 	updatedAt      string
+	// Coordination id: seo_item_unavailable_v1 - unpublished less than
+	// seoItemUnavailableDays ago: the page stays live as "not available".
+	recentlyInactive bool
 }
 
 // slugifySeoItem turns a dish or wine name into a URL slug: lowercase, no
@@ -235,8 +243,9 @@ func seoMenuPath(menuID int64, menuTitle, seoSlug string) string {
 	return "/menu/" + strconv.FormatInt(menuID, 10) + "/" + url.PathEscape(buildPublicMenuSlug(menuTitle, menuID))
 }
 
-// seoDishSources loads the dishes that are active in a public carta menu.
-func (s *Server) seoDishSources(ctx context.Context, restaurantID int) ([]seoItemSource, error) {
+// seoDishSources loads the dishes of the public carta menus whose active flag
+// matches: 1 for the published routes, 0 for the unavailable ones.
+func (s *Server) seoDishSources(ctx context.Context, restaurantID int, active int) ([]seoItemSource, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT d.id,
 		       d.title_snapshot,
@@ -257,13 +266,13 @@ func (s *Server) seoDishSources(ctx context.Context, restaurantID int) ([]seoIte
 		JOIN menus m ON m.id = d.menu_id AND m.restaurant_id = d.restaurant_id
 		LEFT JOIN group_menu_sections_v2 s ON s.id = d.section_id AND s.restaurant_id = d.restaurant_id
 		WHERE d.restaurant_id = ?
-		  AND d.active = 1
+		  AND d.active = ?
 		  AND m.active = 1
 		  AND m.is_draft = 0
 		  AND COALESCE(m.menu_public_active, 1) = 1
 		  AND m.menu_type IN (1, 2)
 		ORDER BY m.menu_type ASC, m.id ASC, d.position ASC, d.id ASC
-	`, restaurantID)
+	`, restaurantID, active)
 	if err != nil {
 		return nil, err
 	}
@@ -344,8 +353,8 @@ func (s *Server) seoDishSources(ctx context.Context, restaurantID int) ([]seoIte
 	return sources, nil
 }
 
-// seoWineSources loads the wines that are active in the (global) wine list.
-func (s *Server) seoWineSources(ctx context.Context, restaurantID int) ([]seoItemSource, error) {
+// seoWineSources loads the wines of the (global) wine list whose active flag matches.
+func (s *Server) seoWineSources(ctx context.Context, restaurantID int, active int) ([]seoItemSource, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT w.id,
 		       w.nombre,
@@ -361,9 +370,9 @@ func (s *Server) seoWineSources(ctx context.Context, restaurantID int) ([]seoIte
 		       COALESCE(w.updated_at, '')
 		FROM group_menu_wines_v2 w
 		LEFT JOIN legacy_wine_map l ON l.restaurant_id = w.restaurant_id AND l.v2_wine_id = w.id
-		WHERE w.restaurant_id = ? AND w.active = 1
+		WHERE w.restaurant_id = ? AND w.active = ?
 		ORDER BY w.tipo ASC, w.position ASC, w.id ASC
-	`, restaurantID)
+	`, restaurantID, active)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +460,8 @@ func (s *Server) seoWineSources(ctx context.Context, restaurantID int) ([]seoIte
 // loadSeoRouteRows reads the registry of routes for a restaurant.
 func (s *Server) loadSeoRouteRows(ctx context.Context, restaurantID int) ([]seoRouteRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, entity_type, entity_id, slug, slug_locked, COALESCE(seo_title, ''), COALESCE(seo_description, ''), active, COALESCE(updated_at, '')
+		SELECT id, entity_type, entity_id, slug, slug_locked, COALESCE(seo_title, ''), COALESCE(seo_description, ''), active, COALESCE(updated_at, ''),
+		       COALESCE(inactive_since >= NOW() - INTERVAL `+strconv.Itoa(seoItemUnavailableDays)+` DAY, 0)
 		FROM seo_item_routes
 		WHERE restaurant_id = ?
 		ORDER BY id ASC
@@ -465,11 +475,13 @@ func (s *Server) loadSeoRouteRows(ctx context.Context, restaurantID int) ([]seoR
 		var row seoRouteRow
 		var active int
 		var slugLocked int
-		if err := rows.Scan(&row.id, &row.entityType, &row.entityID, &row.slug, &slugLocked, &row.seoTitle, &row.seoDescription, &active, &row.updatedAt); err != nil {
+		var recent int
+		if err := rows.Scan(&row.id, &row.entityType, &row.entityID, &row.slug, &slugLocked, &row.seoTitle, &row.seoDescription, &active, &row.updatedAt, &recent); err != nil {
 			return nil, err
 		}
 		row.active = active != 0
 		row.slugLocked = slugLocked != 0
+		row.recentlyInactive = !row.active && recent != 0
 		out = append(out, row)
 	}
 	return out, rows.Err()
@@ -532,37 +544,41 @@ func seoItemRoutes(existing []seoRouteRow, sources []seoItemSource) (routes []se
 			}
 		}
 		usedKeys = append(usedKeys, seoRouteKey(row.entityType, row.entityID))
-		routes = append(routes, seoItemRoute{
-			ID:                 row.id,
-			EntityType:         source.entityType,
-			EntityID:           source.entityID,
-			LegacyNum:          source.legacyNum,
-			Slug:               row.slug,
-			Path:               seoItemPath(source.entityType, row.slug),
-			Name:               source.name,
-			NameEN:             source.nameEN,
-			Description:        source.description,
-			DescriptionEN:      source.descriptionEN,
-			Price:              source.price,
-			Allergens:          source.allergens,
-			Photo:              source.photo,
-			Section:            source.section,
-			MenuTitle:          source.menuTitle,
-			MenuPath:           source.menuPath,
-			Tipo:               source.tipo,
-			Bodega:             source.bodega,
-			DenominacionOrigen: source.denominacion,
-			Graduacion:         source.graduacion,
-			Anyo:               source.anyo,
-			SEOTitle:           row.seoTitle,
-			SEODescription:     row.seoDescription,
-			Active:             true,
-			HasContent:         strings.TrimSpace(source.description) != "" || strings.TrimSpace(source.photo) != "",
-			UpdatedAt:          source.updatedAt,
-			RouteUpdatedAt:     row.updatedAt,
-		})
+		routes = append(routes, buildSeoItemRoute(row, source, true))
 	}
 	return routes, inserts, updates, usedKeys
+}
+
+func buildSeoItemRoute(row seoRouteRow, source seoItemSource, active bool) seoItemRoute {
+	return seoItemRoute{
+		ID:                 row.id,
+		EntityType:         source.entityType,
+		EntityID:           source.entityID,
+		LegacyNum:          source.legacyNum,
+		Slug:               row.slug,
+		Path:               seoItemPath(source.entityType, row.slug),
+		Name:               source.name,
+		NameEN:             source.nameEN,
+		Description:        source.description,
+		DescriptionEN:      source.descriptionEN,
+		Price:              source.price,
+		Allergens:          source.allergens,
+		Photo:              source.photo,
+		Section:            source.section,
+		MenuTitle:          source.menuTitle,
+		MenuPath:           source.menuPath,
+		Tipo:               source.tipo,
+		Bodega:             source.bodega,
+		DenominacionOrigen: source.denominacion,
+		Graduacion:         source.graduacion,
+		Anyo:               source.anyo,
+		SEOTitle:           row.seoTitle,
+		SEODescription:     row.seoDescription,
+		Active:             active,
+		HasContent:         strings.TrimSpace(source.description) != "" || strings.TrimSpace(source.photo) != "",
+		UpdatedAt:          source.updatedAt,
+		RouteUpdatedAt:     row.updatedAt,
+	}
 }
 
 func seoRouteKey(entityType string, entityID int64) string {
@@ -600,13 +616,13 @@ func (s *Server) persistSeoItemRoutes(ctx context.Context, restaurantID int, ins
 		args = append(args, key)
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		UPDATE seo_item_routes SET active = 1
+		UPDATE seo_item_routes SET active = 1, inactive_since = NULL
 		WHERE restaurant_id = ? AND CONCAT(entity_type, '/', entity_id) IN (`+placeholders+`)
 	`, args...); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		UPDATE seo_item_routes SET active = 0
+		UPDATE seo_item_routes SET active = 0, inactive_since = NOW()
 		WHERE restaurant_id = ? AND active = 1 AND CONCAT(entity_type, '/', entity_id) NOT IN (`+placeholders+`)
 	`, args...); err != nil {
 		return err
@@ -616,11 +632,11 @@ func (s *Server) persistSeoItemRoutes(ctx context.Context, restaurantID int, ins
 
 // seoItemRoutesPayload syncs the registry and returns the public routes.
 func (s *Server) seoItemRoutesPayload(ctx context.Context, restaurantID int) ([]seoItemRoute, error) {
-	sources, err := s.seoDishSources(ctx, restaurantID)
+	sources, err := s.seoDishSources(ctx, restaurantID, 1)
 	if err != nil {
 		return nil, err
 	}
-	wines, err := s.seoWineSources(ctx, restaurantID)
+	wines, err := s.seoWineSources(ctx, restaurantID, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -644,6 +660,55 @@ func (s *Server) seoItemRoutesPayload(ctx context.Context, restaurantID int) ([]
 	return routes, nil
 }
 
+// seoInactiveItemRoutes resolves the unpublished routes: the recent ones keep
+// a live page (unavailable), the older ones redirect to their menu (wines to
+// /vinos), and the ones whose menu is gone too answer 410.
+// Coordination id: seo_item_unavailable_v1
+func (s *Server) seoInactiveItemRoutes(ctx context.Context, restaurantID int) (unavailable []seoItemRoute, redirects map[string]string, gone []string, err error) {
+	rows, err := s.loadSeoRouteRows(ctx, restaurantID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	dishes, err := s.seoDishSources(ctx, restaurantID, 0)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	wines, err := s.seoWineSources(ctx, restaurantID, 0)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	sources := make(map[string]seoItemSource, len(dishes)+len(wines))
+	for _, source := range append(dishes, wines...) {
+		key := seoRouteKey(source.entityType, source.entityID)
+		if _, seen := sources[key]; !seen {
+			sources[key] = source
+		}
+	}
+	unavailable = []seoItemRoute{}
+	redirects = map[string]string{}
+	gone = []string{}
+	for _, row := range rows {
+		if row.active {
+			continue
+		}
+		path := seoItemPath(row.entityType, row.slug)
+		source, ok := sources[seoRouteKey(row.entityType, row.entityID)]
+		target := source.menuPath
+		if row.entityType == seoItemTypeWine {
+			target = "/vinos"
+		}
+		switch {
+		case !ok || target == "":
+			gone = append(gone, path)
+		case row.recentlyInactive:
+			unavailable = append(unavailable, buildSeoItemRoute(row, source, false))
+		default:
+			redirects[path] = target
+		}
+	}
+	return unavailable, redirects, gone, nil
+}
+
 // handlePublicSeoItemRoutes serves the routes the frontend prerenders.
 func (s *Server) handlePublicSeoItemRoutes(w http.ResponseWriter, r *http.Request) {
 	restaurantID, ok := restaurantIDFromContext(r.Context())
@@ -657,7 +722,14 @@ func (s *Server) handlePublicSeoItemRoutes(w http.ResponseWriter, r *http.Reques
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error reading item routes"})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": routes})
+	unavailable, redirects, gone, err := s.seoInactiveItemRoutes(r.Context(), restaurantID)
+	if err != nil {
+		log.Printf("[seo_item_unavailable_v1] inactive routes failed for restaurant %d: %v", restaurantID, err)
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error reading item routes"})
+		return
+	}
+	log.Printf("[seo_item_unavailable_v1] restaurant=%d active=%d unavailable=%d redirects=%d gone=%d", restaurantID, len(routes), len(unavailable), len(redirects), len(gone))
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": routes, "unavailable": unavailable, "redirects": redirects, "gone": gone})
 }
 
 // handleBOSeoItemRoutesList lists every route, including the inactive ones.
