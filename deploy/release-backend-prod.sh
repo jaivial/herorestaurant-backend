@@ -64,10 +64,13 @@ REQUIRED_STRINGS=(
   "gestion de cuentas del panel"
   "es una operacion de gestion de cuentas"
   # render_document_v1: el mensaje solo existe si el binario lleva el renderer.
-  "el renderizador (Chromium) no est"
+  "el renderizador de documentos (WeasyPrint) no est"
 )
 # render_document_v1: binarios que la imagen debe llevar.
-REQUIRED_BINARIES=(chromium)
+REQUIRED_BINARIES=(weasyprint pdftoppm)
+# Binarios que la imagen NO debe llevar: no se ejecuta un navegador en este
+# servidor.
+FORBIDDEN_BINARIES=(chromium chromium-browser google-chrome)
 PROBE_CMD="strings /app/backend | grep -q"
 # /healthz es la ruta de salud real (hace ping a la BD). /api/health nunca
 # existio: el fallback SPA la contestaba con index.html y 200, y desde que el
@@ -147,6 +150,12 @@ fi
 for b in "${REQUIRED_BINARIES[@]}"; do
   if ! sudo -n docker run --rm --entrypoint sh "$IMAGE" -c "command -v $b" >/dev/null 2>&1; then
     echo "!! la imagen ${IMAGE_ID:0:12} NO lleva el binario $b; no se despliega"
+    exit 1
+  fi
+done
+for b in "${FORBIDDEN_BINARIES[@]}"; do
+  if sudo -n docker run --rm --entrypoint sh "$IMAGE" -c "command -v $b" >/dev/null 2>&1; then
+    echo "!! la imagen ${IMAGE_ID:0:12} lleva $b y no debe; no se despliega"
     exit 1
   fi
 done

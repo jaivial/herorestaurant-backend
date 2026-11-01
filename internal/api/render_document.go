@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -8,20 +9,18 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/chromedp/cdproto/cdp"
-	"github.com/chromedp/cdproto/emulation"
-	"github.com/chromedp/cdproto/fetch"
-	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/cdproto/page"
-	"github.com/chromedp/cdproto/runtime"
-	"github.com/chromedp/chromedp"
 )
 
 // Coordination id: render_document_v1
@@ -29,9 +28,14 @@ import (
 // One custom tool (render_document) turns model-written HTML into a PDF
 // and/or a 4:3 image, stores them in the restaurant CDN and returns their
 // URLs. Forky shows them with a forky-doc block; the WhatsApp bot (privileged
-// chats only) also sends them to the chat. Rendering is sandboxed: no
-// JavaScript, and the page may only load https resources on public hosts
-// (images, fonts, CSS) — never internal addresses (SSRF guard).
+// chats only) also sends them to the chat.
+//
+// Rendering uses WeasyPrint (HTML/CSS -> PDF, no browser, no JavaScript) and
+// Poppler's pdftoppm for the 4:3 PNG. It is sandboxed: every external
+// resource is pre-fetched in Go through renderDocClient (https only, IP
+// checked at connect time, SSRF guard) and inlined as data: URIs; WeasyPrint
+// itself runs with a URL fetcher that refuses anything but data:, so the
+// renderer never reaches the network.
 
 const (
 	renderDocMaxHTML  = 400 << 10
@@ -69,7 +73,7 @@ func renderDocumentSchema() json.RawMessage {
 }
 
 const renderDocumentDescription = "Genera un documento a partir de HTML que escribes tú (carta, menú, cartel, informe, presupuesto, ficha) y lo convierte en PDF y/o imagen PNG en proporción 4:3. " +
-	"Escribe HTML completo y autocontenido con CSS en <style>; usa fuentes del sistema o @font-face https, imágenes https públicas del restaurante o data:. NO se ejecuta JavaScript. " +
+	"Escribe HTML completo y autocontenido con CSS en <style>; usa fuentes del sistema o @font-face https, imágenes https públicas del restaurante o data:. NO se ejecuta JavaScript. Para maquetar en varias columnas usa display:grid o flex con anchos explícitos (no CSS columns). " +
 	"Para la imagen 4:3 diseña el contenido para un lienzo de 1600×1200 (o el width que pidas): usa html,body{width:100%;height:100%;margin:0}. Para PDF usa @page {size:A4; margin:...} si necesitas otro tamaño. " +
 	"Devuelve pdf_url e image_url en el CDN del restaurante."
 
@@ -161,8 +165,13 @@ func (s *Server) renderDocument(ctx context.Context, rid int, raw json.RawMessag
 	if width < renderDocWidthMin || width > renderDocWidthMax {
 		return renderDocOutput{}, fmt.Errorf("width debe estar entre %d y %d", renderDocWidthMin, renderDocWidthMax)
 	}
-	if chromeExecPath() == "" {
-		return renderDocOutput{}, errors.New("el renderizador (Chromium) no está disponible en el servidor")
+	if _, err := exec.LookPath("weasyprint"); err != nil {
+		return renderDocOutput{}, errors.New("el renderizador de documentos (WeasyPrint) no está disponible en el servidor")
+	}
+	if format != "pdf" {
+		if _, err := exec.LookPath("pdftoppm"); err != nil {
+			return renderDocOutput{}, errors.New("el conversor a imagen (pdftoppm) no está disponible en el servidor")
+		}
 	}
 	if !s.bunnyConfigured(ctx, rid) {
 		return renderDocOutput{}, errors.New("no hay almacenamiento (BunnyCDN) configurado")
@@ -196,98 +205,198 @@ func (s *Server) renderDocument(ctx context.Context, rid int, raw json.RawMessag
 	return out, nil
 }
 
-// renderHTMLSandboxed renders with JavaScript disabled and every request
-// intercepted: data:/about: pass, https only to public hosts, everything else
-// (file:, http:, private/loopback/link-local IPs) is blocked.
+// renderDocWeasyScript runs WeasyPrint with a fetcher that only resolves
+// data: URIs: every network resource was already inlined by Go.
+const renderDocWeasyScript = `import sys
+from weasyprint import HTML
+from weasyprint.urls import default_url_fetcher
+def fetcher(url, timeout=10, ssl_context=None):
+    if url.startswith("data:"):
+        return default_url_fetcher(url, timeout, ssl_context)
+    raise ValueError("render_document: recurso no permitido")
+html = sys.stdin.buffer.read().decode("utf-8")
+HTML(string=html, url_fetcher=fetcher, base_url="data:,").write_pdf(sys.argv[1])
+`
+
+// renderHTMLSandboxed renders the PDF with WeasyPrint and, for the image, a
+// second PDF whose page is exactly width x width*3/4 rasterised by pdftoppm.
 func renderHTMLSandboxed(ctx context.Context, html, format string, width int, landscape bool) (pdf, png []byte, err error) {
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(chromeExecPath()),
-		chromedp.NoSandbox,
-		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.Flag("hide-scrollbars", true),
-		chromedp.Flag("font-render-hinting", "none"),
-	)
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
-	defer cancelAlloc()
-	taskCtx, cancelTask := chromedp.NewContext(allocCtx)
-	defer cancelTask()
-	runCtx, cancel := context.WithTimeout(taskCtx, renderDocTimeout)
+	runCtx, cancel := context.WithTimeout(ctx, renderDocTimeout)
 	defer cancel()
-
-	chromedp.ListenTarget(runCtx, func(ev any) {
-		e, ok := ev.(*fetch.EventRequestPaused)
-		if !ok {
-			return
-		}
-		go func() {
-			c := chromedp.FromContext(runCtx)
-			if c == nil || c.Target == nil {
-				return
-			}
-			execCtx := cdp.WithExecutor(runCtx, c.Target)
-			u := e.Request.URL
-			if strings.HasPrefix(u, "data:") || u == "about:blank" {
-				_ = fetch.ContinueRequest(e.RequestID).Do(execCtx)
-				return
-			}
-			// Chromium never connects by itself: the resource is fetched here
-			// with a dialer that validates the IP AT CONNECT TIME, so a host
-			// that re-resolves to an internal address (DNS rebinding) is
-			// refused too, then handed to the page.
-			status, headers, body, ferr := renderDocFetch(runCtx, u)
-			if ferr != nil {
-				_ = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient).Do(execCtx)
-				return
-			}
-			_ = fetch.FulfillRequest(e.RequestID, status).WithResponseHeaders(headers).
-				WithBody(base64.StdEncoding.EncodeToString(body)).Do(execCtx)
-		}()
-	})
-
-	height := width * 3 / 4
-	const waitAssets = `new Promise((resolve)=>{
-		const done=()=>resolve(true);
-		const imgs=Array.from(document.images).filter(i=>!i.complete);
-		let pending=imgs.length;
-		const fonts=document.fonts?document.fonts.ready:Promise.resolve();
-		fonts.then(()=>{ if(pending===0) done(); });
-		imgs.forEach(i=>{const f=()=>{if(--pending<=0) fonts.then(done);}; i.addEventListener('load',f); i.addEventListener('error',f);});
-		setTimeout(done,5000);
-	})`
-	actions := []chromedp.Action{
-		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "*"}}),
-		emulation.SetScriptExecutionDisabled(true),
-		emulation.SetDeviceMetricsOverride(int64(width), int64(height), 1, false),
-		chromedp.Navigate("data:text/html;charset=utf-8;base64," + base64.StdEncoding.EncodeToString([]byte(html))),
-		// Evaluate runs over the protocol, not as page script, so it still
-		// works with page scripts disabled.
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			_, _, e := runtime.Evaluate(waitAssets).WithAwaitPromise(true).Do(ctx)
-			return e
-		}),
-	}
-	if format == "image" || format == "both" {
-		actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
-			var e error
-			png, e = page.CaptureScreenshot().WithFormat(page.CaptureScreenshotFormatPng).
-				WithClip(&page.Viewport{X: 0, Y: 0, Width: float64(width), Height: float64(height), Scale: 1}).
-				WithCaptureBeyondViewport(false).Do(ctx)
-			return e
-		}))
-	}
-	if format == "pdf" || format == "both" {
-		actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
-			var e error
-			pdf, _, e = page.PrintToPDF().WithPrintBackground(true).WithPreferCSSPageSize(true).
-				WithLandscape(landscape).WithPaperWidth(8.27).WithPaperHeight(11.69).Do(ctx)
-			return e
-		}))
-	}
-	if err := chromedp.Run(runCtx, actions...); err != nil {
+	inlined, err := renderDocInlineResources(runCtx, html)
+	if err != nil {
 		return nil, nil, err
 	}
+	dir, err := os.MkdirTemp("", "render-doc-")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer os.RemoveAll(dir)
+
+	if format == "pdf" || format == "both" {
+		size := "A4"
+		if landscape {
+			size = "A4 landscape"
+		}
+		// The HTML's own @page wins: this default comes first in the cascade.
+		pdf, err = renderDocWeasy(runCtx, dir, "doc.pdf", renderDocWithPage(inlined, "size:"+size))
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if format == "image" || format == "both" {
+		height := width * 3 / 4
+		// One page sized in CSS px (96 dpi) = width x height; the HTML's
+		// html/body at 100% fill it. A forced @page after the author's one
+		// guarantees the 4:3 canvas.
+		page := fmt.Sprintf("size:%dpx %dpx;margin:0", width, height)
+		imgPDF, err := renderDocWeasy(runCtx, dir, "img.pdf", renderDocForcePage(inlined, page))
+		if err != nil {
+			return nil, nil, err
+		}
+		png, err = renderDocRaster(runCtx, dir, imgPDF, width, height)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	return pdf, png, nil
+}
+
+func renderDocWeasy(ctx context.Context, dir, name, html string) ([]byte, error) {
+	out := filepath.Join(dir, name)
+	cmd := exec.CommandContext(ctx, "python3", "-c", renderDocWeasyScript, out)
+	cmd.Stdin = strings.NewReader(html)
+	cmd.Dir = dir
+	cmd.Env = []string{"HOME=" + dir, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "XDG_CACHE_HOME=" + dir}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("weasyprint: %v %s", err, renderDocTail(stderr.String()))
+	}
+	return os.ReadFile(out)
+}
+
+func renderDocRaster(ctx context.Context, dir string, pdf []byte, width, height int) ([]byte, error) {
+	in := filepath.Join(dir, "raster.pdf")
+	if err := os.WriteFile(in, pdf, 0o600); err != nil {
+		return nil, err
+	}
+	prefix := filepath.Join(dir, "raster")
+	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-singlefile", "-f", "1", "-l", "1",
+		"-scale-to-x", fmt.Sprint(width), "-scale-to-y", fmt.Sprint(height), in, prefix)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("pdftoppm: %v %s", err, renderDocTail(stderr.String()))
+	}
+	return os.ReadFile(prefix + ".png")
+}
+
+func renderDocTail(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 300 {
+		s = s[len(s)-300:]
+	}
+	return s
+}
+
+var renderDocHeadRe = regexp.MustCompile(`(?i)<head[^>]*>`)
+
+// renderDocWithPage puts a default @page FIRST, so the author's own @page
+// (later in the cascade) overrides it.
+func renderDocWithPage(html, decl string) string {
+	style := "<style>@page{" + decl + "}</style>"
+	if loc := renderDocHeadRe.FindStringIndex(html); loc != nil {
+		return html[:loc[1]] + style + html[loc[1]:]
+	}
+	return style + html
+}
+
+// renderDocForcePage appends an @page with !important LAST, so the 4:3
+// canvas always wins over the author's @page.
+func renderDocForcePage(html, decl string) string {
+	style := "<style>@page{" + strings.ReplaceAll(decl, ";", " !important;") + " !important}</style>"
+	if i := strings.LastIndex(strings.ToLower(html), "</body>"); i >= 0 {
+		return html[:i] + style + html[i:]
+	}
+	return html + style
+}
+
+// renderDocURLRe finds external URLs in attributes and CSS url(...).
+var renderDocURLRe = regexp.MustCompile(`(?i)(?:src|href|poster)\s*=\s*["']([^"']+)["']|url\(\s*["']?([^"')\s]+)["']?\s*\)|@import\s+["']([^"']+)["']`)
+
+const renderDocMaxInlined = 24 << 20
+
+// renderDocInlineResources downloads every https resource through the
+// guarded client and replaces it with a data: URI. Anything that is not
+// https or data: (http:, file:, relative...) is left in place and WeasyPrint's
+// data-only fetcher refuses it.
+func renderDocInlineResources(ctx context.Context, html string) (string, error) {
+	urls := map[string]bool{}
+	collect := func(text string) {
+		for _, m := range renderDocURLRe.FindAllStringSubmatch(text, -1) {
+			for _, u := range m[1:] {
+				u = strings.TrimSpace(u)
+				if strings.HasPrefix(strings.ToLower(u), "https://") {
+					urls[u] = true
+				}
+			}
+		}
+	}
+	collect(html)
+	replacements := map[string]string{}
+	total := 0
+	// Stylesheets may reference fonts/images too: inline one level deep.
+	for pass := 0; pass < 2; pass++ {
+		pending := make([]string, 0, len(urls))
+		for u := range urls {
+			if _, done := replacements[u]; !done {
+				pending = append(pending, u)
+			}
+		}
+		sort.Strings(pending)
+		for _, u := range pending {
+			ctype, body, err := renderDocFetch(ctx, u)
+			if err != nil {
+				replacements[u] = "" // leave as-is; the data-only fetcher drops it
+				continue
+			}
+			total += len(body)
+			if total > renderDocMaxInlined {
+				return "", errors.New("los recursos externos superan el máximo permitido")
+			}
+			if strings.Contains(ctype, "css") {
+				collect(string(body))
+			}
+			replacements[u] = "data:" + ctype + ";base64," + base64.StdEncoding.EncodeToString(body)
+		}
+	}
+	// Inline CSS resources inside fetched stylesheets, then the HTML itself.
+	for u, data := range replacements {
+		if data == "" || !strings.HasPrefix(data, "data:text/css") {
+			continue
+		}
+		raw, _ := base64.StdEncoding.DecodeString(data[strings.Index(data, ",")+1:])
+		css := string(raw)
+		for v, d := range replacements {
+			if d != "" && v != u && !strings.HasPrefix(d, "data:text/css") {
+				css = strings.ReplaceAll(css, v, d)
+			}
+		}
+		replacements[u] = "data:text/css;base64," + base64.StdEncoding.EncodeToString([]byte(css))
+	}
+	keys := make([]string, 0, len(replacements))
+	for k := range replacements {
+		keys = append(keys, k)
+	}
+	// Longest first so a URL that is a prefix of another never splits it.
+	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	for _, k := range keys {
+		if d := replacements[k]; d != "" {
+			html = strings.ReplaceAll(html, k, d)
+		}
+	}
+	return html, nil
 }
 
 // renderDocBlockedIP reports addresses the renderer must never reach.
@@ -346,29 +455,32 @@ var renderDocClient = &http.Client{
 
 const renderDocMaxResource = 8 << 20
 
-func renderDocFetch(ctx context.Context, raw string) (int64, []*fetch.HeaderEntry, []byte, error) {
+func renderDocFetch(ctx context.Context, raw string) (string, []byte, error) {
 	if !renderDocURLAllowed(raw) {
-		return 0, nil, nil, errors.New("url no permitida")
+		return "", nil, errors.New("url no permitida")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return 0, nil, nil, err
+		return "", nil, err
 	}
 	res, err := renderDocClient.Do(req)
 	if err != nil {
-		return 0, nil, nil, err
+		return "", nil, err
 	}
 	defer res.Body.Close()
+	if res.StatusCode >= 400 {
+		return "", nil, fmt.Errorf("http %d", res.StatusCode)
+	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, renderDocMaxResource+1))
 	if err != nil || len(body) > renderDocMaxResource {
-		return 0, nil, nil, errors.New("recurso ilegible o demasiado grande")
+		return "", nil, errors.New("recurso ilegible o demasiado grande")
 	}
-	headers := []*fetch.HeaderEntry{}
-	if ct := res.Header.Get("Content-Type"); ct != "" {
-		headers = append(headers, &fetch.HeaderEntry{Name: "Content-Type", Value: ct})
+	ctype, _, _ := mime.ParseMediaType(res.Header.Get("Content-Type"))
+	if ctype == "" {
+		ctype = http.DetectContentType(body)
+		ctype, _, _ = mime.ParseMediaType(ctype)
 	}
-	headers = append(headers, &fetch.HeaderEntry{Name: "Access-Control-Allow-Origin", Value: "*"})
-	return int64(res.StatusCode), headers, body, nil
+	return ctype, body, nil
 }
 
 // renderDocFilename turns a title into a safe object/file name.
