@@ -1373,7 +1373,9 @@ func (s *Server) handleComidaCreateByType(w http.ResponseWriter, r *http.Request
 
 	var req comidaUpsertRequest
 	if err := readJSONBody(r, &req); err != nil {
-		writeComidaValidationError(w, "Invalid JSON")
+		// wa_bot_flexible_types_v1: name the offending field so a model-built
+		// body can be corrected instead of retried blindly.
+		writeComidaValidationError(w, "Invalid JSON: "+err.Error())
 		return
 	}
 
@@ -1635,7 +1637,9 @@ func (s *Server) handleComidaPatchByType(w http.ResponseWriter, r *http.Request,
 	}
 	var req comidaUpsertRequest
 	if err := readJSONBody(r, &req); err != nil {
-		writeComidaValidationError(w, "Invalid JSON")
+		// wa_bot_flexible_types_v1: name the offending field so a model-built
+		// body can be corrected instead of retried blindly.
+		writeComidaValidationError(w, "Invalid JSON: "+err.Error())
 		return
 	}
 
