@@ -490,7 +490,7 @@ func (s *Server) assistantAdminCallSingle(ctx context.Context, rid int, in admin
 		// open for that call. With terminal:true the loop closed before the
 		// model could follow the advice and the customer got a summary instead
 		// of the proposal.
-		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. No lo reintentes por admin_call: llama ahora a panel_change para PROPONER el cambio (se aplica cuando el usuario responde 'OK <código>' en el chat)."}), nil
+		return botJSON(map[string]any{"error": "el bot no puede ejecutar escrituras genéricas del panel (admin_call) sin aprobación humana. No lo reintentes por admin_call: usa panel_change; si son varios elementos independientes, incluye TODOS los panel_change en UNA tool_chain en vez de hacerlos uno a uno."}), nil
 	}
 	if op.Write {
 		if !in.Confirmed {
