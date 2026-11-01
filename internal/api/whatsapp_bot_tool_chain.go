@@ -35,6 +35,13 @@ func init() {
 		Section: assistantSessionSection, BackofficeOnly: true,
 		Handler: func(s *Server, ctx context.Context, rid int, input json.RawMessage) (string, error) {
 			return s.botToolChain(ctx, func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+				// A chain runs within ONE model action: there is no human turn in
+				// which to approve a token returned by an earlier step. Keep Forky
+				// chains read-only; WhatsApp writes retain panel_change/direct policy.
+				def, known := assistantToolLookup(name)
+				if name == "admin_call" || known && (def.Write || def.Confirm) {
+					return botJSON(map[string]any{"error": "en Forky, tool_chain solo ejecuta lecturas: las escrituras requieren una confirmación humana en una llamada separada", "terminal": true}), nil
+				}
 				return s.assistantExecuteTool(ctx, rid, name, input)
 			}, input)
 		},
