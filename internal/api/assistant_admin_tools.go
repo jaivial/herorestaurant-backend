@@ -45,6 +45,9 @@ func assistantToolTimeout(name string) time.Duration {
 	if name == "tool_chain" {
 		return 2 * time.Minute
 	}
+	if name == "render_document" {
+		return renderDocTimeout + 15*time.Second
+	}
 	if name == "admin_call" {
 		return 20 * time.Second
 	}

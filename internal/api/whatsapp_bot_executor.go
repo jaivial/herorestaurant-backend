@@ -166,6 +166,9 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolStaffDomainRead(ctx, restaurantID, msg, input)
 	case "panel_change":
 		return s.botToolPanelChange(ctx, restaurantID, msg, input)
+	// Coordination id: render_document_v1 - privileged chats only (control tool gate above).
+	case "render_document":
+		return s.botToolRenderDocument(ctx, restaurantID, msg, input)
 	// Coordination id: campaign_tools_v1 - the campaign editor of /app/campanas.
 	case "manage_campaign":
 		return s.botToolManageCampaign(ctx, restaurantID, msg, input)

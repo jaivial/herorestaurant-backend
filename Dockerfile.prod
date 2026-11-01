@@ -33,7 +33,8 @@ FROM alpine:3.22
 # wa_bot_privileged_group_v1: tesseract + Spanish/English language data so
 # document/OCR extraction works inside the container. Adds ~40 MB to the image.
 RUN apk add --no-cache ca-certificates tzdata imagemagick imagemagick-jpeg imagemagick-webp \
-	tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-spa
+	tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-spa \
+	chromium font-noto font-noto-emoji font-liberation
 WORKDIR /app
 COPY --from=build /out/backend /app/backend
 COPY --from=frontend /src/dist /app/static
