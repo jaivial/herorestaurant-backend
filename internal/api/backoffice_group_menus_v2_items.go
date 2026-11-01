@@ -82,20 +82,28 @@ func (s *Server) handleBOGroupMenusV2CreateSectionDish(w http.ResponseWriter, r 
 	}
 	defer tx.Rollback()
 
-	var nextPos int
+	// Lock the section row: concurrent single-dish creates (panel + bot) would
+	// otherwise read the same MAX(position) and collide.
+	var lockedID int64
 	err = tx.QueryRowContext(r.Context(), `
-		SELECT COALESCE(MAX(d.position), -1) + 1
-		FROM group_menu_sections_v2 s
-		LEFT JOIN group_menu_section_dishes_v2 d ON d.section_id = s.id AND d.restaurant_id = s.restaurant_id
-		WHERE s.id = ? AND s.menu_id = ? AND s.restaurant_id = ?
-		GROUP BY s.id
-	`, sectionID, menuID, a.ActiveRestaurantID).Scan(&nextPos)
+		SELECT id FROM group_menu_sections_v2
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+		FOR UPDATE
+	`, sectionID, menuID, a.ActiveRestaurantID).Scan(&lockedID)
 	if err == sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
 		return
 	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error verificando seccion")
+		return
+	}
+	var nextPos int
+	if err := tx.QueryRowContext(r.Context(), `
+		SELECT COALESCE(MAX(position), -1) + 1 FROM group_menu_section_dishes_v2
+		WHERE section_id = ? AND menu_id = ? AND restaurant_id = ?
+	`, sectionID, menuID, a.ActiveRestaurantID).Scan(&nextPos); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "Error ordenando platos")
 		return
 	}
 	position := nextPos
