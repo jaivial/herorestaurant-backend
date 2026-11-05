@@ -118,7 +118,7 @@ Response (`success: true`), coordination id `manual_billing_stats_v1`:
 - `series`: zero-filled buckets `[{ key, entries, grossEUR, netEUR, vatEUR }]`.
 - `weekday`: `[{ weekday (1=Mon..7=Sun), entries, grossEUR, netEUR, vatEUR }]`.
 - `vatBreakdown`: `[{ rate, entries, grossEUR, netEUR, vatEUR }]`.
-- `entries`: latest 200 ledger rows `[{ id, date, grossEUR, netEUR, vatEUR, vatRate, includesVat }]`.
+- `entries`: latest 200 ledger rows `[{ id, date, grossEUR, netEUR, vatEUR, vatRate, includesVat }]`; `entriesTruncated` is `true` when the range has more rows than the list shows (totals still count all of them).
 
 Each row stores the amount already split: `net_cents = round(gross_cents * 10000 / (10000 + vat_rate_bp))` when the amount includes VAT, otherwise the whole amount is net and VAT is 0.
 

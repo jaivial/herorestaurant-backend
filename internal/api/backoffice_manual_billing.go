@@ -107,6 +107,17 @@ func (acc manualBillingAccumulator) vatEUR() float64 { return affluenceRound(flo
 
 func manualBillingEUR(cents int64) float64 { return affluenceRound(float64(cents) / 100) }
 
+// manualBillingPercentDelta keeps the sign meaningful when the previous period
+// was negative (the ledger accepts negative entries), so the denominator is
+// always absolute — same rule as the analytics revenue comparison.
+func manualBillingPercentDelta(current, previous float64) *float64 {
+	if previous == 0 {
+		return nil
+	}
+	delta := affluenceRound((current - previous) / math.Abs(previous) * 100)
+	return &delta
+}
+
 // manualBillingSplit turns the signed amount the owner typed into net + VAT
 // cents. With VAT included the net is the rounded base and the VAT is the
 // remainder, so gross never drifts; without VAT the amount is all net (0%).
@@ -432,14 +443,17 @@ func (s *Server) handleBOAnalyticsManualBilling(w http.ResponseWriter, r *http.R
 			"avgGrossEUR":        previous.AvgGrossEUR,
 		},
 		"deltaPercent": map[string]any{
-			"entries":  affluencePercentDelta(float64(totals.Entries), float64(previous.Entries)),
-			"grossEUR": affluencePercentDelta(totals.GrossEUR, previous.GrossEUR),
-			"netEUR":   affluencePercentDelta(totals.NetEUR, previous.NetEUR),
-			"vatEUR":   affluencePercentDelta(totals.VatEUR, previous.VatEUR),
+			"entries":  manualBillingPercentDelta(float64(totals.Entries), float64(previous.Entries)),
+			"grossEUR": manualBillingPercentDelta(totals.GrossEUR, previous.GrossEUR),
+			"netEUR":   manualBillingPercentDelta(totals.NetEUR, previous.NetEUR),
+			"vatEUR":   manualBillingPercentDelta(totals.VatEUR, previous.VatEUR),
 		},
 		"series":       manualBillingSeries(entries, from, to, bucket),
 		"weekday":      manualBillingWeekday(entries),
 		"vatBreakdown": manualBillingVatBreakdown(entries),
-		"entries":      manualBillingListed(entries),
+		// Totals count every row; the list is capped so one long history cannot
+		// grow the response without bound.
+		"entriesTruncated": len(entries) > manualBillingMaxListedRows,
+		"entries":          manualBillingListed(entries),
 	})
 }
