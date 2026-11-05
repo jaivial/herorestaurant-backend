@@ -122,6 +122,14 @@ Response (`success: true`), coordination id `manual_billing_stats_v1`:
 
 Each row stores the amount already split: `net_cents = round(gross_cents * 10000 / (10000 + vat_rate_bp))` when the amount includes VAT, otherwise the whole amount is net and VAT is 0.
 
+### `GET /api/admin/analytics/manual-billing/seasonal`
+
+Requires `estadisticas` access. Query parameter `months`: comma list of values 1..12 (required). Drives the two seasonality comparisons that ignore the page period filters.
+
+Response (`success: true`), coordination id `manual_billing_stats_v1`: `months`, `today`, `history`, and `years: [{ year, entries, grossEUR, netEUR, vatEUR, partial, deltaPercentGross, deltaToDate, months: [{ month, entries, grossEUR, netEUR, vatEUR, weeks: [{ entries, grossEUR, netEUR, vatEUR } ×4] }] }]`.
+
+Only years with entries in the selected months are listed. `deltaPercentGross` compares against the previous listed year; when the current season is still running (`partial`), the previous year is summed only up to the same date (`deltaToDate: true`) so an open month is not read as a drop.
+
 ### `POST /api/admin/analytics/manual-billing`
 
 Requires `estadisticas` access. JSON body: `{ "date": "YYYY-MM-DD", "amount": 123.45, "includesVat": true, "vatRate": 10 }`. `amount` is signed (negative subtracts) and must not be 0; `vatRate` is optional when `includesVat` (default 10%, 0..100) and ignored otherwise. Returns `201` with `{ success, tag, entry: { id, date, grossEUR, netEUR, vatEUR, vatRate, includesVat } }`.
