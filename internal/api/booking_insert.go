@@ -143,6 +143,11 @@ func (s *Server) handleInsertBookingFront(w http.ResponseWriter, r *http.Request
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
+	// Coordination id: special_date_whatsapp_only_v1 - that date is booked by WhatsApp only.
+	if fe := s.whatsAppOnlyBookingError(r.Context(), restaurantID, pb.params.ReservationDate); fe != nil {
+		httpx.WriteJSON(w, fe.Status, fe.Body)
+		return
+	}
 	// Coordination id: stripe_prereserva_adelanto_v1 - a stripe-only
 	// adelanto can only be booked through the checkout (paid first).
 	if pb.requiresStripe {

@@ -127,7 +127,9 @@ func (s *Server) botPipelineSpecialDateFacts(ctx context.Context, restaurantID i
 	for _, d := range dates {
 		out = append(out, map[string]any{
 			"key": "sd_" + strings.ReplaceAll(d.Date, "-", "_"), "date": d.Date,
-			"label": d.Title + " (" + botFormatISODateES(d.Date) + ")", "prereserva": d.PrereservaEnabled,
+			"label": d.Title + " (" + botFormatISODateES(d.Date) + ")", "prereserva": d.PrereservaEnabled && !d.WhatsAppOnly,
+			// Coordination id: special_date_whatsapp_only_v1 - no web booking for this date.
+			"whatsapp_only": d.WhatsAppOnly,
 		})
 	}
 	return out

@@ -155,6 +155,11 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
+	// Coordination id: special_date_whatsapp_only_v1 - that date is booked by WhatsApp only.
+	if fe := s.whatsAppOnlyBookingError(r.Context(), restaurantID, pb.params.ReservationDate); fe != nil {
+		httpx.WriteJSON(w, fe.Status, fe.Body)
+		return
+	}
 	if !pb.requiresStripe {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Esta reserva no requiere pago online", "error_code": "STRIPE_NOT_REQUIRED"})
 		return
