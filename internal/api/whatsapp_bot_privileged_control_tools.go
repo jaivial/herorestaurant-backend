@@ -103,6 +103,8 @@ func botToolDefsPrivilegedControl() []botToolDef {
 	// Coordination id: wa_bot_invoice_v1 - invoices (/app/facturas): draft,
 	// PDF to the chat, send to the client, with the panel's own handlers.
 	defs = append(defs, botToolDefsInvoice()...)
+	// Coordination id: special_date_whatsapp_only_v1 - «Reservas solo por WhatsApp».
+	defs = append(defs, botToolDefsSpecialDateWhatsAppOnly()...)
 	return defs
 }
 
