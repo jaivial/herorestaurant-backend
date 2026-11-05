@@ -23,11 +23,14 @@ import (
 // management handoff for any modification/cancellation.
 
 type botSpecialDatePolicy struct {
-	ID                        int64    `json:"special_date_id"`
-	Date                      string   `json:"date"`
-	Title                     string   `json:"title"`
-	Description               string   `json:"description,omitempty"`
-	PrereservaEnabled         bool     `json:"prereserva_enabled"`
+	ID                int64  `json:"special_date_id"`
+	Date              string `json:"date"`
+	Title             string `json:"title"`
+	Description       string `json:"description,omitempty"`
+	PrereservaEnabled bool   `json:"prereserva_enabled"`
+	// WhatsAppOnly: the date is booked only through WhatsApp, never the web
+	// (special_date_whatsapp_only_v1).
+	WhatsAppOnly              bool     `json:"whatsapp_only"`
 	PrereservaStartsOn        string   `json:"prereserva_starts_on,omitempty"`
 	PrereservaEndsOn          string   `json:"prereserva_ends_on,omitempty"`
 	PrereservaOpenNow         bool     `json:"prereserva_open_now"`
@@ -51,18 +54,18 @@ func (p *botSpecialDatePolicy) botFits(party int) bool {
 // botLoadSpecialDatePolicy returns the active special date for dateISO or nil.
 func (s *Server) botLoadSpecialDatePolicy(ctx context.Context, restaurantID int, dateISO string) *botSpecialDatePolicy {
 	var (
-		p                                         botSpecialDatePolicy
-		desc                                      sql.NullString
-		pre, adel, allowMod, maxEnabled, mobility int
-		maxPer                                    sql.NullInt64
-		startsOn, endsOn                          sql.NullString
+		p                                                 botSpecialDatePolicy
+		desc                                              sql.NullString
+		pre, waOnly, adel, allowMod, maxEnabled, mobility int
+		maxPer                                            sql.NullInt64
+		startsOn, endsOn                                  sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, DATE_FORMAT(date,'%Y-%m-%d'), title, description, prereserva_enabled,
+		SELECT id, DATE_FORMAT(date,'%Y-%m-%d'), title, description, prereserva_enabled, whatsapp_only,
 		       DATE_FORMAT(prereserva_starts_on,'%Y-%m-%d'), DATE_FORMAT(prereserva_ends_on,'%Y-%m-%d'),
 		       requires_adelanto, allow_customer_modification, max_per_table_enabled, max_per_table, mobility_enabled
 		FROM special_dates WHERE restaurant_id = ? AND date = ? AND is_active = 1 LIMIT 1`, restaurantID, dateISO).Scan(
-		&p.ID, &p.Date, &p.Title, &desc, &pre, &startsOn, &endsOn, &adel, &allowMod, &maxEnabled, &maxPer, &mobility)
+		&p.ID, &p.Date, &p.Title, &desc, &pre, &waOnly, &startsOn, &endsOn, &adel, &allowMod, &maxEnabled, &maxPer, &mobility)
 	if err != nil {
 		if err != sql.ErrNoRows && !isSQLSchemaError(err) {
 			botCheckpoint("wa_bot_special_date_policy_v1", "restaurant_id=%d date=%s load_error=%v", restaurantID, dateISO, err)
@@ -72,12 +75,15 @@ func (s *Server) botLoadSpecialDatePolicy(ctx context.Context, restaurantID int,
 	p.Description = strings.TrimSpace(desc.String)
 	p.PrereservaEnabled, p.RequiresAdelanto, p.AllowCustomerModification, p.MobilityEnabled = pre != 0, adel != 0, allowMod != 0, mobility != 0
 	p.PrereservaStartsOn, p.PrereservaEndsOn = startsOn.String, endsOn.String
+	p.WhatsAppOnly = waOnly != 0
 	if maxEnabled != 0 && maxPer.Valid {
 		p.MaxPerTable = int(maxPer.Int64)
 	}
 	today := time.Now().In(boMadridTZ).Format("2006-01-02")
 	p.PrereservaOpenNow = p.PrereservaEnabled && (p.PrereservaStartsOn == "" || today >= p.PrereservaStartsOn) && (p.PrereservaEndsOn == "" || today <= p.PrereservaEndsOn)
-	p.BookingURL = s.botSpecialBookingURL(ctx, restaurantID, dateISO)
+	if !p.WhatsAppOnly {
+		p.BookingURL = s.botSpecialBookingURL(ctx, restaurantID, dateISO)
+	}
 	if limit, total, err := s.botDayCapacity(ctx, restaurantID, dateISO); err == nil {
 		free := max(0, limit-total)
 		p.FreeSeats, p.IsFull = &free, free == 0
@@ -167,6 +173,11 @@ func (s *Server) botSpecialPolicyOperation(ctx context.Context, restaurantID int
 	if name == "create_booking" || (name == "modify_booking" && strings.TrimSpace(in.Date) != "") {
 		if dateISO, err := parseBotDate(in.Date); err == nil {
 			if p := s.botLoadSpecialDatePolicy(ctx, restaurantID, dateISO); p != nil {
+				// Coordination id: special_date_whatsapp_only_v1 - booked by the
+				// team over WhatsApp: the request goes to the management group.
+				if p.WhatsAppOnly && p.botFits(in.People) {
+					return true, s.botManagementHandoff(ctx, restaurantID, msg, tenant, "", "special_date_whatsapp_only", name)
+				}
 				return true, s.botSendPrereservaLink(ctx, restaurantID, msg, tenant, p, name, in.People)
 			}
 		}
@@ -299,6 +310,10 @@ func (s *Server) botSpecialDateRouteDirective(ctx context.Context, restaurantID 
 	if p.IsFull {
 		botCheckpoint("wa_bot_special_date_full_v1", "restaurant_id=%d date=%s directive=full", restaurantID, p.Date)
 		return botSpecialDateFullInstruction(p)
+	}
+	if p.WhatsAppOnly {
+		botCheckpoint("special_date_whatsapp_only_v1", "restaurant_id=%d date=%s directive=whatsapp_only", restaurantID, p.Date)
+		return "FECHA ESPECIAL SOLO POR WHATSAPP: " + p.Title + " (" + botFormatISODateES(p.Date) + ") no se reserva por la web: NO envíes ningún enlace de reserva. Si el cliente quiere reservar, pide fecha, hora y número de personas y llama a create_booking: la solicitud pasa al equipo del restaurante, que la confirma por este WhatsApp."
 	}
 	return d.Directive + " Si get_date_overview devuelve fits_party=false, no hay sitio para ese grupo: dilo claramente y no envíes el enlace."
 }

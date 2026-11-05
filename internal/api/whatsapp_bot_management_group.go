@@ -269,8 +269,10 @@ var botManagementPrefix = map[string][2]string{
 	"allergens":            {"Soy un asistente de reservas con Inteligencia Artificial y no dispongo de información fiable sobre ingredientes ni alérgenos; por seguridad alimentaria debe confirmarlo el restaurante.", "I'm an AI booking assistant and I don't have reliable ingredient or allergen information; for food safety the restaurant must confirm it."},
 	"event_booking":        {"Como se trata de una reserva especial, los detalles se acuerdan directamente con la gestión del restaurante.", "As this is a special booking, the details are agreed directly with the restaurant management."},
 	"special_date_booking": {"Tu reserva es para una fecha especial y, como asistente con Inteligencia Artificial, no puedo modificarla ni cancelarla.", "Your booking is for a special date and, as an AI assistant, I can't change or cancel it."},
-	"human_anger":          {"Siento mucho que no te haya podido ayudar como esperabas 🙏.", "I'm really sorry I couldn't help you as you expected 🙏."},
-	"human_cannot":         {"Esta consulta no la puedo resolver con seguridad y prefiero no darte una respuesta equivocada.", "I can't answer this safely and I'd rather not give you a wrong answer."},
+	// Coordination id: special_date_whatsapp_only_v1
+	"special_date_whatsapp_only": {"Las reservas de esta fecha especial las gestiona directamente el equipo del restaurante por WhatsApp.", "Bookings for this special date are handled directly by the restaurant team over WhatsApp."},
+	"human_anger":                {"Siento mucho que no te haya podido ayudar como esperabas 🙏.", "I'm really sorry I couldn't help you as you expected 🙏."},
+	"human_cannot":               {"Esta consulta no la puedo resolver con seguridad y prefiero no darte una respuesta equivocada.", "I can't answer this safely and I'd rather not give you a wrong answer."},
 }
 
 func botManagementPrefixFor(reason, lang string) string {

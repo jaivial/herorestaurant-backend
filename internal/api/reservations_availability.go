@@ -751,13 +751,14 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	// special_dates_v1 — only the fields the calendar needs to render the
 	// marker (active state + prereserva flag + title) are pulled.
 	type specialMonthRow struct {
-		isActive   int
-		prereserva int
-		title      string
+		isActive     int
+		prereserva   int
+		whatsAppOnly int
+		title        string
 	}
 	specialByDate := map[string]specialMonthRow{}
 	specialRows, err := s.db.QueryContext(ctx, `
-		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, title
+		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, whatsapp_only, title
 		FROM special_dates
 		WHERE restaurant_id = ? AND date BETWEEN ? AND ? AND is_active = 1
 	`, restaurantID, firstDayStr, lastDayStr)
@@ -768,7 +769,7 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 	for specialRows.Next() {
 		var d string
 		var r specialMonthRow
-		if err := specialRows.Scan(&d, &r.isActive, &r.prereserva, &r.title); err != nil {
+		if err := specialRows.Scan(&d, &r.isActive, &r.prereserva, &r.whatsAppOnly, &r.title); err != nil {
 			return nil, err
 		}
 		specialByDate[d] = r
@@ -809,7 +810,9 @@ func (s *Server) buildMonthAvailability(ctx context.Context, restaurantID int, y
 			availability[dateISO]["special"] = map[string]any{
 				"is_active":          sr.isActive != 0,
 				"prereserva_enabled": sr.prereserva != 0,
-				"title":              sr.title,
+				// Coordination id: special_date_whatsapp_only_v1
+				"whatsapp_only": sr.whatsAppOnly != 0,
+				"title":         sr.title,
 			}
 		} else {
 			availability[dateISO]["special"] = nil

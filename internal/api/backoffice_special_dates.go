@@ -67,11 +67,13 @@ type boSpecialDateSaveRequest struct {
 	Description *string `json:"description"`
 	// Coordination id: special_date_custom_notice_v1 - personalised warn
 	// notice shown on step 2 of the public special-date booking wizard.
-	CustomNotice       *string `json:"custom_notice"`
-	PrereservaEnabled  *bool   `json:"prereserva_enabled"`
-	MaxPerTableEnabled *bool   `json:"max_per_table_enabled"`
-	MaxPerTable        *int    `json:"max_per_table"`
-	MobilityEnabled    *bool   `json:"mobility_enabled"`
+	CustomNotice      *string `json:"custom_notice"`
+	PrereservaEnabled *bool   `json:"prereserva_enabled"`
+	// Coordination id: special_date_whatsapp_only_v1 - nil keeps the stored value.
+	WhatsAppOnly       *bool `json:"whatsapp_only"`
+	MaxPerTableEnabled *bool `json:"max_per_table_enabled"`
+	MaxPerTable        *int  `json:"max_per_table"`
+	MobilityEnabled    *bool `json:"mobility_enabled"`
 	// Coordination id: reservation_self_modification_v1 - opt this concrete
 	// special date into the public "modify instead of rebook" self-service.
 	AllowCustomerModification *bool `json:"allow_customer_modification"`
@@ -111,7 +113,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	var id int64
-	var isActive, prereservaEnabled, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
+	var isActive, prereservaEnabled, whatsAppOnly, maxPerTableEnabled, requiresAdelanto, adelantoUnified int
 	var allowCustomerModification int
 	// Coordination id: guest_count_flags_v1
 	var askAdults, askHighChairs, askBabyStrollers int
@@ -123,7 +125,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 	var prereservaStartsOn, prereservaEndsOn sql.NullTime
 
 	err := s.db.QueryRowContext(r.Context(), `
-		SELECT id, is_active, title, description, custom_notice, prereserva_enabled,
+		SELECT id, is_active, title, description, custom_notice, prereserva_enabled, whatsapp_only,
 		       max_per_table_enabled, max_per_table, requires_adelanto,
 		       allow_customer_modification,
 		       ask_adults, ask_high_chairs, ask_baby_strollers,
@@ -133,7 +135,7 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
 	`, a.ActiveRestaurantID, date).Scan(
-		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled,
+		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled, &whatsAppOnly,
 		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
 		&allowCustomerModification,
 		&askAdults, &askHighChairs, &askBabyStrollers,
@@ -183,8 +185,10 @@ func (s *Server) handleBOSpecialDatesGet(w http.ResponseWriter, r *http.Request)
 			"title":       title,
 			"description": description.String,
 			// Coordination id: special_date_custom_notice_v1
-			"custom_notice":         customNotice.String,
-			"prereserva_enabled":    prereservaEnabled != 0,
+			"custom_notice":      customNotice.String,
+			"prereserva_enabled": prereservaEnabled != 0,
+			// Coordination id: special_date_whatsapp_only_v1
+			"whatsapp_only":         whatsAppOnly != 0,
 			"max_per_table_enabled": maxPerTableEnabled != 0,
 			"max_per_table":         nullIfZero(maxPerTable.Valid, maxPerTable.Int64),
 			"mobility_enabled":      mobilityEnabled,
@@ -710,6 +714,12 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	if req.MobilityEnabled != nil {
 		mobilityEnabledReq = *req.MobilityEnabled
 	}
+	// Coordination id: special_date_whatsapp_only_v1 - nil (legacy client) keeps the stored flag.
+	var whatsAppOnlyReq any
+	if req.WhatsAppOnly != nil {
+		whatsAppOnlyReq = boolToInt(*req.WhatsAppOnly)
+		specialDateWhatsAppOnlyCheckpoint("restaurant_id=%d date=%s saved whatsapp_only=%t", a.ActiveRestaurantID, date, *req.WhatsAppOnly)
+	}
 	var maxPerTableVal any
 	maxPerTableVal = nil
 	if maxPerTableEnabled && maxPerTable > 0 {
@@ -721,9 +731,10 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 			(restaurant_id, date, is_active, title, description, custom_notice, prereserva_enabled,
 			 max_per_table_enabled, max_per_table, mobility_enabled, requires_adelanto, allow_customer_modification,
 			 ask_adults, ask_high_chairs, ask_baby_strollers, adelanto_payment_methods,
-			 adelanto_unified, adelanto_unified_amount, prereserva_starts_on, prereserva_ends_on)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 adelanto_unified, adelanto_unified_amount, prereserva_starts_on, prereserva_ends_on, whatsapp_only)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0))
 		ON DUPLICATE KEY UPDATE
+			whatsapp_only = COALESCE(?, whatsapp_only),
 			is_active = VALUES(is_active),
 			title = VALUES(title),
 			description = VALUES(description),
@@ -745,7 +756,8 @@ func (s *Server) handleBOSpecialDatesSave(w http.ResponseWriter, r *http.Request
 	`, a.ActiveRestaurantID, date, boolToInt(isActive), title, description, customNotice, boolToInt(prereservaEnabled),
 		boolToInt(maxPerTableEnabled), maxPerTableVal, boolToInt(mobilityEnabledReq), boolToInt(requiresAdelanto), boolToInt(allowCustomerModificationReq),
 		boolToInt(askAdultsReq), boolToInt(askHighChairsReq), boolToInt(askBabyStrollersReq), string(adelantoMethodsJSON),
-		boolToInt(adelantoUnified), normalizeAdelantoAmount(adelantoUnifiedAmount), prereservaStartsOn, prereservaEndsOn)
+		boolToInt(adelantoUnified), normalizeAdelantoAmount(adelantoUnifiedAmount), prereservaStartsOn, prereservaEndsOn,
+		whatsAppOnlyReq, whatsAppOnlyReq)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando special_dates")
 		return
