@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"preactvillacarmen/internal/httpx"
@@ -73,6 +75,34 @@ type manualBillingVatRateRow struct {
 	GrossEUR float64 `json:"grossEUR"`
 	NetEUR   float64 `json:"netEUR"`
 	VatEUR   float64 `json:"vatEUR"`
+}
+
+type manualBillingSeasonalWeek struct {
+	Entries  int     `json:"entries"`
+	GrossEUR float64 `json:"grossEUR"`
+	NetEUR   float64 `json:"netEUR"`
+	VatEUR   float64 `json:"vatEUR"`
+}
+
+type manualBillingSeasonalMonth struct {
+	Month    int                         `json:"month"`
+	Entries  int                         `json:"entries"`
+	GrossEUR float64                     `json:"grossEUR"`
+	NetEUR   float64                     `json:"netEUR"`
+	VatEUR   float64                     `json:"vatEUR"`
+	Weeks    []manualBillingSeasonalWeek `json:"weeks"`
+}
+
+type manualBillingSeasonalYear struct {
+	Year              int                          `json:"year"`
+	Entries           int                          `json:"entries"`
+	GrossEUR          float64                      `json:"grossEUR"`
+	NetEUR            float64                      `json:"netEUR"`
+	VatEUR            float64                      `json:"vatEUR"`
+	Partial           bool                         `json:"partial"`
+	DeltaPercentGross *float64                     `json:"deltaPercentGross"`
+	DeltaToDate       bool                         `json:"deltaToDate"`
+	Months            []manualBillingSeasonalMonth `json:"months"`
 }
 
 type manualBillingEntryPayload struct {
@@ -244,26 +274,21 @@ func manualBillingVatBreakdown(entries []manualBillingEntry) []manualBillingVatR
 	return rows
 }
 
-func loadManualBillingEntries(ctx context.Context, db *sql.DB, restaurantID int, from, to time.Time) ([]manualBillingEntry, error) {
-	// DATE_FORMAT is required: the DSN sets parseTime=true, so a raw DATE column
-	// scanned into a string arrives as RFC3339 and would not parse below.
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, DATE_FORMAT(entry_date, '%Y-%m-%d'), gross_cents, net_cents, vat_cents, vat_rate_bp, includes_vat
-		FROM analytics_manual_billing_entries
-		WHERE restaurant_id = ? AND entry_date BETWEEN ? AND ?
-		ORDER BY entry_date ASC, id ASC
-	`, restaurantID, affluenceFormatDate(from), affluenceFormatDate(to))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// manualBillingEntrySelect is the shared column list: DATE_FORMAT is required
+// because the DSN sets parseTime=true, so a raw DATE column scanned into a
+// string would arrive as RFC3339 and not parse below.
+const manualBillingEntrySelect = `
+	SELECT id, DATE_FORMAT(entry_date, '%Y-%m-%d'), gross_cents, net_cents, vat_cents, vat_rate_bp, includes_vat
+	FROM analytics_manual_billing_entries`
+
+func scanManualBillingEntries(rows *sql.Rows) ([]manualBillingEntry, error) {
 	entries := make([]manualBillingEntry, 0, 64)
 	for rows.Next() {
 		var id, gross, net, vat int64
 		var date string
 		var rateBP int
 		var includesVat bool
-		if err = rows.Scan(&id, &date, &gross, &net, &vat, &rateBP, &includesVat); err != nil {
+		if err := rows.Scan(&id, &date, &gross, &net, &vat, &rateBP, &includesVat); err != nil {
 			return nil, err
 		}
 		parsed, parseErr := time.Parse("2006-01-02", date)
@@ -273,6 +298,38 @@ func loadManualBillingEntries(ctx context.Context, db *sql.DB, restaurantID int,
 		entries = append(entries, manualBillingEntryFromRow(id, parsed, gross, net, vat, rateBP, includesVat))
 	}
 	return entries, rows.Err()
+}
+
+func loadManualBillingEntries(ctx context.Context, db *sql.DB, restaurantID int, from, to time.Time) ([]manualBillingEntry, error) {
+	rows, err := db.QueryContext(ctx, manualBillingEntrySelect+`
+		WHERE restaurant_id = ? AND entry_date BETWEEN ? AND ?
+		ORDER BY entry_date ASC, id ASC
+	`, restaurantID, affluenceFormatDate(from), affluenceFormatDate(to))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanManualBillingEntries(rows)
+}
+
+// loadManualBillingSeasonalEntries loads every entry of the selected months
+// (all years), which is what both seasonality comparisons aggregate.
+func loadManualBillingSeasonalEntries(ctx context.Context, db *sql.DB, restaurantID int, months []int) ([]manualBillingEntry, error) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(months)), ",")
+	args := make([]any, 0, len(months)+1)
+	args = append(args, restaurantID)
+	for _, month := range months {
+		args = append(args, month)
+	}
+	rows, err := db.QueryContext(ctx, manualBillingEntrySelect+fmt.Sprintf(`
+		WHERE restaurant_id = ? AND MONTH(entry_date) IN (%s)
+		ORDER BY entry_date ASC, id ASC
+	`, placeholders), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanManualBillingEntries(rows)
 }
 
 func manualBillingHistory(ctx context.Context, db *sql.DB, restaurantID int) (string, string, error) {
@@ -455,5 +512,142 @@ func (s *Server) handleBOAnalyticsManualBilling(w http.ResponseWriter, r *http.R
 		// grow the response without bound.
 		"entriesTruncated": len(entries) > manualBillingMaxListedRows,
 		"entries":          manualBillingListed(entries),
+	})
+}
+
+// ---------------------------------------------------------------- seasonal
+
+func manualBillingMonthFinished(year, month int, today time.Time) bool {
+	monthEnd := time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC)
+	return !monthEnd.After(today)
+}
+
+// manualBillingGrossUntil sums the gross of one year's selected months up to
+// limit (inclusive), so an unfinished month compares like-for-like.
+func manualBillingGrossUntil(byMonth map[int][]manualBillingEntry, limit time.Time) float64 {
+	limitDay := time.Date(limit.Year(), limit.Month(), limit.Day(), 0, 0, 0, 0, time.UTC)
+	var acc manualBillingAccumulator
+	for _, entries := range byMonth {
+		for _, entry := range entries {
+			if !entry.Date.After(limitDay) {
+				acc.add(entry)
+			}
+		}
+	}
+	return acc.grossEUR()
+}
+
+// manualBillingSeasonalYears builds one card per year with entries in the
+// selected months. Unlike bookings, a year without manual entries has nothing
+// to compare, so only years with data are listed. Each card's delta is
+// measured against the previous listed year; an unfinished current season is
+// compared up to the same date of that year.
+func manualBillingSeasonalYears(entries []manualBillingEntry, months []int, today time.Time) []manualBillingSeasonalYear {
+	byYear := make(map[int]map[int][]manualBillingEntry)
+	for _, entry := range entries {
+		year, month := entry.Date.Year(), int(entry.Date.Month())
+		if byYear[year] == nil {
+			byYear[year] = make(map[int][]manualBillingEntry, len(months))
+		}
+		byYear[year][month] = append(byYear[year][month], entry)
+	}
+	years := make([]int, 0, len(byYear))
+	for year := range byYear {
+		years = append(years, year)
+	}
+	sort.Ints(years)
+
+	out := make([]manualBillingSeasonalYear, 0, len(years))
+	for index, year := range years {
+		card := manualBillingSeasonalYear{Year: year, Months: make([]manualBillingSeasonalMonth, 0, len(months))}
+		var cardAcc manualBillingAccumulator
+		for _, month := range months {
+			var monthAcc manualBillingAccumulator
+			weekAccs := make([]manualBillingAccumulator, affluenceWeeksPerMonth)
+			for _, entry := range byYear[year][month] {
+				monthAcc.add(entry)
+				cardAcc.add(entry)
+				weekIndex := (entry.Date.Day() - 1) / 7
+				if weekIndex >= affluenceWeeksPerMonth {
+					weekIndex = affluenceWeeksPerMonth - 1
+				}
+				weekAccs[weekIndex].add(entry)
+			}
+			monthRow := manualBillingSeasonalMonth{
+				Month:    month,
+				Entries:  monthAcc.entries,
+				GrossEUR: monthAcc.grossEUR(),
+				NetEUR:   monthAcc.netEUR(),
+				VatEUR:   monthAcc.vatEUR(),
+				Weeks:    make([]manualBillingSeasonalWeek, affluenceWeeksPerMonth),
+			}
+			for weekIndex, week := range weekAccs {
+				monthRow.Weeks[weekIndex] = manualBillingSeasonalWeek{
+					Entries:  week.entries,
+					GrossEUR: week.grossEUR(),
+					NetEUR:   week.netEUR(),
+					VatEUR:   week.vatEUR(),
+				}
+			}
+			card.Months = append(card.Months, monthRow)
+			if !manualBillingMonthFinished(year, month, today) {
+				card.Partial = true
+			}
+		}
+		card.Entries = cardAcc.entries
+		card.GrossEUR = cardAcc.grossEUR()
+		card.NetEUR = cardAcc.netEUR()
+		card.VatEUR = cardAcc.vatEUR()
+		if index > 0 {
+			previous := out[index-1]
+			previousGross := previous.GrossEUR
+			if card.Partial {
+				previousGross = manualBillingGrossUntil(byYear[previous.Year], today.AddDate(-(year-previous.Year), 0, 0))
+				card.DeltaToDate = true
+			}
+			card.DeltaPercentGross = manualBillingPercentDelta(card.GrossEUR, previousGross)
+		}
+		out = append(out, card)
+	}
+	return out
+}
+
+func (s *Server) handleBOAnalyticsManualBillingSeasonal(w http.ResponseWriter, r *http.Request) {
+	auth, ok := boAuthFromContext(r.Context())
+	if !ok || auth.ActiveRestaurantID <= 0 {
+		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	months, err := parseAffluenceMonths(r.URL.Query().Get("months"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), manualBillingQueryTimeout)
+	defer cancel()
+	entries, err := loadManualBillingSeasonalEntries(ctx, s.db, auth.ActiveRestaurantID, months)
+	if err != nil {
+		log.Printf("%s seasonal failed restaurant_id=%d: %v", manualBillingTag, auth.ActiveRestaurantID, err)
+		httpx.WriteError(w, http.StatusInternalServerError, "Unable to load seasonal billing statistics")
+		return
+	}
+	firstDate, lastDate, err := manualBillingHistory(ctx, s.db, auth.ActiveRestaurantID)
+	if err != nil {
+		log.Printf("%s seasonal history failed restaurant_id=%d: %v", manualBillingTag, auth.ActiveRestaurantID, err)
+		httpx.WriteError(w, http.StatusInternalServerError, "Unable to load seasonal billing statistics")
+		return
+	}
+
+	location := affluenceMadridLocation()
+	now := time.Now().In(location)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"tag":     manualBillingTag,
+		"months":  months,
+		"today":   affluenceFormatDate(today),
+		"history": map[string]any{"firstDate": nullableDate(firstDate), "lastDate": nullableDate(lastDate)},
+		"years":   manualBillingSeasonalYears(entries, months, today),
 	})
 }

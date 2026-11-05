@@ -1109,6 +1109,9 @@ func (s *Server) Routes() http.Handler {
 		// (manual_billing_stats_v1): create one entry, read the period ledger.
 		r.With(s.requireBOSession, statisticsGate).Post("/analytics/manual-billing", s.handleBOAnalyticsManualBillingCreate)
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/manual-billing", s.handleBOAnalyticsManualBilling)
+		// Same months across every year with entries: the two seasonality
+		// comparisons stay independent from the page period filters.
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/manual-billing/seasonal", s.handleBOAnalyticsManualBillingSeasonal)
 
 		// Platform (superadmin) endpoints — cross-tenant management.
 		// All gated by requireBOSuperadmin (is_superadmin=1 only).
