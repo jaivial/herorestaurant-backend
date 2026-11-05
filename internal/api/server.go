@@ -1105,6 +1105,11 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/affluence", s.handleBOAffluence)
 		r.With(s.requireBOSession, statisticsGate).Get("/analytics/affluence/seasonal", s.handleBOAffluenceSeasonal)
 
+		// Simple billing entries typed by hand for Estadísticas > Ventas
+		// (manual_billing_stats_v1): create one entry, read the period ledger.
+		r.With(s.requireBOSession, statisticsGate).Post("/analytics/manual-billing", s.handleBOAnalyticsManualBillingCreate)
+		r.With(s.requireBOSession, statisticsGate).Get("/analytics/manual-billing", s.handleBOAnalyticsManualBilling)
+
 		// Platform (superadmin) endpoints — cross-tenant management.
 		// All gated by requireBOSuperadmin (is_superadmin=1 only).
 		r.With(s.requireBOSession, s.requireBOSuperadmin).Get("/platform/dashboard", s.handlePlatformDashboard)
