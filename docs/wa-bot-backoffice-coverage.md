@@ -90,6 +90,28 @@ todo lo que hacen `/app/comida/menus` (menú especial) y `/app/reservas/especial
 | Imagen principal del menú especial / imagen de menú personalizado de una fecha | multipart, inalcanzable | `media_upload` kinds `special_menu` y `special_date_menu` (mismas funciones de dominio que las rutas) |
 | Usar la imagen que mandan al chat | `media_upload` exigía `data_base64` (un modelo no puede escribir una imagen) | bot: `image_ref` del chat (`chat_jid` fijado por el servidor, imagen anclada al proponer); Forky: `attachment` del chat con `special_media_upload` |
 
+## Reservas solo por WhatsApp al 100% (`special_date_whatsapp_only_v1`)
+
+Revisión de los endpoints del interruptor «Reservas solo por WhatsApp» de una
+fecha especial y de lo que necesitan Forky y el bot (conversaciones
+autorizadas) para operarlo entero:
+
+| Endpoint / superficie | Qué hace con el flag | Forky | Bot (autorizados) |
+|---|---|---|---|
+| `GET /admin/config/special-dates?date=` | devuelve `whatsapp_only` | `special_date_whatsapp_only_get` · `admin_call` | `manage_special_date_whatsapp_only` get · `admin_call` |
+| `PATCH /admin/config/special-dates` | cambia solo el flag (GET + fusión + mismo guardado y broadcast) | `special_date_whatsapp_only_set` (token de confirmación) · `admin_call` | `manage_special_date_whatsapp_only` set (propuesta + `OK <código>`) |
+| `POST /admin/config/special-dates` | reemplazo total; `null` conserva el valor | `admin_call` (body documentado en `admin_describe`) | `panel_change` |
+| `GET /api/reservations/special-dates` · `/special-date` · `/month-availability` | públicos: `whatsapp_only` + `whatsapp_phone` | — (web) | — (web) |
+| `POST /api/bookings/front` · `/bookings/front/checkout` | 409 `SPECIAL_DATE_WHATSAPP_ONLY` | — | — |
+| Número del aviso | teléfono de gestión (`/admin/config` contenido contacto), luego la línea conectada, luego el público | lo devuelve `special_date_whatsapp_only_get`; se cambia con `admin_call` | lo devuelve el get; se cambia con `panel_change` |
+| Lecturas de la fecha para reservar | `get_special_date_info` / `get_special_date_menu` incluyen `whatsapp_only` | — | sí |
+| Política de cliente del bot | sin enlace web; la petición va al grupo de gestión | — | automático |
+
+Faltaba: una herramienta dedicada (el modelo tenía que componer un PATCH a
+mano) y el campo en el contrato de `admin_describe`. Al regenerar el mapa
+entraron también 9 rutas que ya existían y no estaban en él (IA de anuncios,
+SEO de cafés, rutas SEO de platos y CTA por sección de menú): 660 operaciones.
+
 ## Fuera de alcance (por diseño, documentado)
 
 - Auth/sesión (`/login`, `/logout`, `/me/*`, `/active-restaurant`), gestión de

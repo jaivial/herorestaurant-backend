@@ -1084,6 +1084,10 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 		// Coordination id: ads_html_editor_v1 - same claim+commit contract.
 		return s.botAdExecute(ctx, tx, rid, p)
 	}
+	if p.Op == botSpecialDateWhatsAppOnlyOp {
+		// Coordination id: special_date_whatsapp_only_v1 - same claim+commit contract.
+		return s.botSpecialDateWhatsAppOnlyExecute(ctx, tx, rid, p)
+	}
 	if p.Op == "invoice" {
 		// Coordination id: wa_bot_invoice_v1 - the claim commits BEFORE the
 		// write (see botInvoiceExecute); msg is the chat the PDF goes back to.

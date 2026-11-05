@@ -150,9 +150,11 @@ type specialDateMenuRecord struct {
 // special_dates row. Anything not represented here is intentionally out of
 // scope for booking-snapshot logic.
 type specialDateSettings struct {
-	Title                  string
-	IsActive               bool
-	PrereservaEnabled      bool
+	Title             string
+	IsActive          bool
+	PrereservaEnabled bool
+	// WhatsAppOnly: booked only through WhatsApp (special_date_whatsapp_only_v1).
+	WhatsAppOnly           bool
 	RequiresAdelanto       bool
 	AdelantoPaymentMethods []string
 	AdelantoUnified        bool
@@ -166,18 +168,19 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 	var (
 		id                                                             int64
 		isActive, prereservaEnabled, requiresAdelanto, adelantoUnified int
+		whatsAppOnly                                                   int
 		title                                                          string
 		adelantoMethodsRaw                                             sql.NullString
 		adelantoUnifiedAmount                                          sql.NullFloat64
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, is_active, title, prereserva_enabled, requires_adelanto,
+		SELECT id, is_active, title, prereserva_enabled, whatsapp_only, requires_adelanto,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
 	`, restaurantID, date).Scan(
-		&id, &isActive, &title, &prereservaEnabled, &requiresAdelanto,
+		&id, &isActive, &title, &prereservaEnabled, &whatsAppOnly, &requiresAdelanto,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
 	)
 	if err == sql.ErrNoRows {
@@ -244,6 +247,7 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 		Title:                  title,
 		IsActive:               true,
 		PrereservaEnabled:      prereservaEnabled != 0,
+		WhatsAppOnly:           whatsAppOnly != 0,
 		RequiresAdelanto:       requiresAdelanto != 0,
 		AdelantoPaymentMethods: adelantoMethods,
 		AdelantoUnified:        adelantoUnified != 0,

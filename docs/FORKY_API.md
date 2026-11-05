@@ -113,7 +113,18 @@ go run ./cmd/forky-docs > docs/FORKY_API.md  # (paste under this header)
 | `admin_catalog` | session | read | no | `{"type":"object","properties":{"q":{"type":"string"},"section":{"type":"string"},"writes_only":{"type":"boolean"},"limit":{"type":"integer"},"offset":{"type":"integer"}}}` |
 | `admin_describe` | session | read | no | `{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}},"name":{"type":"string"}}}` |
 | `admin_call` | session | read | no | `{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"},"body":{"type":"object"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"},"calls":{"type":"array","description":"Varias lecturas en una sola llamada (máx 20)","items":{"type":"object","properties":{"name":{"type":"string"},"path_params":{"type":"object"},"query":{"type":"object"}},"required":["name"]}}}}` |
+| `special_date_whatsapp_only_get` | reservas | read | no | `{"type":"object","properties":{"date":{"type":"string","description":"YYYY-MM-DD (opcional)"}}}` |
+| `special_date_whatsapp_only_set` | reservas | write | sí | `{"type":"object","properties":{"date":{"type":"string","description":"YYYY-MM-DD de la fecha especial"},"whatsapp_only":{"type":"boolean"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["date","whatsapp_only","confirmed"]}` |
 | `special_media_upload` | menus | write | sí | `{"type":"object","properties":{"kind":{"type":"string","enum":["special_menu","special_section","special_date_menu"]},"menu_id":{"type":"integer"},"section_id":{"type":"integer"},"attachment":{"type":"string","description":"ref del adjunto (forky/…)"},"confirmed":{"type":"boolean"},"confirmation_token":{"type":"string"}},"required":["kind","attachment","confirmed"]}` |
+| `render_document` | session | read | no | `{"type":"object","properties":{
+		"html":{"type":"string","description":"Documento HTML completo y autocontenido (estilos en <style>; imágenes https públicas o data:). Sin JavaScript: no se ejecuta."},
+		"title":{"type":"string","description":"Título/nombre del archivo"},
+		"format":{"type":"string","enum":["pdf","image","both"],"description":"pdf, image (PNG 4:3) o both. Por defecto pdf."},
+		"width":{"type":"integer","description":"Ancho de la imagen en px (alto = ancho·3/4). Por defecto 1600."},
+		"orientation":{"type":"string","enum":["portrait","landscape"],"description":"Solo PDF: orientación A4 si el HTML no define @page. Por defecto portrait."},
+		"caption":{"type":"string","description":"Solo WhatsApp: texto que acompaña al envío"}
+	},"required":["html"]}` |
+| `tool_chain` | session | read | no | `{"type":"object","additionalProperties":false,"properties":{"calls":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string","description":"Identificador único para referenciar el resultado"},"name":{"type":"string","description":"Nombre de la custom tool"},"input":{"type":"object","description":"Argumentos; cualquier valor puede ser {\"$ref\":\"paso.ruta\"}"}},"required":["id","name","input"]}}},"required":["calls"]}` |
 
 
 ## Campañas (`campaign_tools_v1`)

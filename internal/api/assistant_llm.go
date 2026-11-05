@@ -685,6 +685,8 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		"Para cambiar una fecha especial (título, activa, pre-reserva, adelanto, métodos de pago, menús…) usa admin_patch_config_special_dates con date y SOLO lo que cambia (nunca el POST, que la reemplaza entera). " +
 		"El adelanto por persona es de la FECHA (menus[].adelanto_amount, o menus[].sections[].adelanto_amount en menús especiales por secciones, o adelanto_unified_amount), nunca de la sección del menú. " +
 		"Las imágenes adjuntas de un menú especial, de sus secciones o de un menú personalizado de una fecha se suben con special_media_upload. " +
+		// special_date_whatsapp_only_v1: the WhatsApp-only switch has its own tools.
+		"Para que una fecha especial se reserve SOLO POR WHATSAPP (la web no deja reservar ni prereservar y enseña el WhatsApp del restaurante) usa special_date_whatsapp_only_get y special_date_whatsapp_only_set. " +
 		// ads_html_editor_v1: the web ads have their own tools too.
 		"Para los anuncios de la web (avisos emergentes de /app/anuncios: crear, ajustar fechas o tipo, diseñar, poner imágenes, publicar o borrar) usa SIEMPRE ad_get, ad_save, ad_design, ad_image y ad_delete, nunca admin_call: solo ellas compilan el diseño que ve la web. Publicar (ad_save action=publish) y borrar necesitan que el usuario diga que sí en su siguiente mensaje." +
 		assistantOutputContract

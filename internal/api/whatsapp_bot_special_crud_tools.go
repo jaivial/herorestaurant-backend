@@ -520,9 +520,11 @@ func (s *Server) botToolGetSpecialDateMenu(ctx context.Context, restaurantID int
 		out = append(out, entry)
 	}
 	payload := map[string]any{
-		"date":                     date,
-		"title":                    settings.Title,
-		"prereserva_enabled":       settings.PrereservaEnabled,
+		"date":               date,
+		"title":              settings.Title,
+		"prereserva_enabled": settings.PrereservaEnabled,
+		// Coordination id: special_date_whatsapp_only_v1
+		"whatsapp_only":            settings.WhatsAppOnly,
 		"requires_adelanto":        settings.RequiresAdelanto,
 		"adelanto_payment_methods": accepted,
 		"menus":                    out,

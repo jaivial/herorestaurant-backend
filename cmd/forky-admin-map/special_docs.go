@@ -11,7 +11,7 @@ package main
 
 // specialDateFields is the shared field list of the special-date save bodies.
 const specialDateFields = `{date:"YYYY-MM-DD" (obligatorio), is_active:bool, title, description, custom_notice (aviso del paso 2 de la reserva web), ` +
-	`prereserva_enabled:bool, prereserva_starts_on/prereserva_ends_on:"YYYY-MM-DD"|null, max_per_table_enabled:bool, max_per_table:int>=1 (obligatorio si max_per_table_enabled), ` +
+	`prereserva_enabled:bool, whatsapp_only:bool (reservas SOLO por WhatsApp: la web no deja reservar ni prereservar ese día y enseña el WhatsApp del restaurante; manda sobre prereserva_enabled), prereserva_starts_on/prereserva_ends_on:"YYYY-MM-DD"|null, max_per_table_enabled:bool, max_per_table:int>=1 (obligatorio si max_per_table_enabled), ` +
 	`mobility_enabled:bool, allow_customer_modification:bool, ask_adults/ask_high_chairs/ask_baby_strollers:bool, ` +
 	`requires_adelanto:bool, adelanto_payment_methods:["card","bizum","transferencia","efectivo"] o ["stripe"] (stripe va solo), ` +
 	`adelanto_unified:bool, adelanto_unified_amount:€/persona|null (si adelanto_unified=true manda sobre los de menú y sección), ` +

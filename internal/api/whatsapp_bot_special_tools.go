@@ -75,10 +75,12 @@ func (s *Server) botToolGetSpecialDateInfo(ctx context.Context, restaurantID int
 		menuPayload = append(menuPayload, entry)
 	}
 	payload := map[string]any{
-		"date":                     date,
-		"title":                    settings.Title,
-		"is_active":                settings.IsActive,
-		"prereserva_enabled":       settings.PrereservaEnabled,
+		"date":               date,
+		"title":              settings.Title,
+		"is_active":          settings.IsActive,
+		"prereserva_enabled": settings.PrereservaEnabled,
+		// Coordination id: special_date_whatsapp_only_v1
+		"whatsapp_only":            settings.WhatsAppOnly,
 		"requires_adelanto":        settings.RequiresAdelanto,
 		"adelanto_payment_methods": settings.AdelantoPaymentMethods,
 		"adelanto_unified":         settings.AdelantoUnified,

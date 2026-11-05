@@ -110,6 +110,51 @@
    "screens": []
   },
   {
+   "name": "admin_post_anuncios_ai_chat",
+   "method": "POST",
+   "path": "/anuncios/ai/chat",
+   "handler": "handleBOAdAIChat",
+   "gates": [
+    "s.requireBOSession",
+    "adsGate"
+   ],
+   "section": "anuncios",
+   "write": true,
+   "risk": "medium",
+   "description": "POST /anuncios/ai/chat (handleBOAdAIChat)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_anuncios_ai_models",
+   "method": "GET",
+   "path": "/anuncios/ai/models",
+   "handler": "handleBOAdAIModels",
+   "gates": [
+    "s.requireBOSession",
+    "adsGate"
+   ],
+   "section": "anuncios",
+   "write": false,
+   "risk": "low",
+   "description": "GET /anuncios/ai/models (handleBOAdAIModels)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_anuncios_context",
+   "method": "GET",
+   "path": "/anuncios/context",
+   "handler": "handleBOAdContext",
+   "gates": [
+    "s.requireBOSession",
+    "adsGate"
+   ],
+   "section": "anuncios",
+   "write": false,
+   "risk": "low",
+   "description": "ads_html_editor_v1: design AI of the ad editor.",
+   "screens": []
+  },
+  {
    "name": "admin_get_arroz_types",
    "method": "GET",
    "path": "/arroz-types",
@@ -2764,7 +2809,7 @@
    "write": true,
    "risk": "medium",
    "description": "Crea o cambia SOLO los campos enviados de una fecha especial (festiva): título, activa, pre-reserva, adelanto, métodos de pago, menús…",
-   "body": "FUSIÓN: envía date y SOLO lo que cambia; el resto se conserva. Campos: {date:\"YYYY-MM-DD\" (obligatorio), is_active:bool, title, description, custom_notice (aviso del paso 2 de la reserva web), prereserva_enabled:bool, prereserva_starts_on/prereserva_ends_on:\"YYYY-MM-DD\"|null, max_per_table_enabled:bool, max_per_table:int\u003e=1 (obligatorio si max_per_table_enabled), mobility_enabled:bool, allow_customer_modification:bool, ask_adults/ask_high_chairs/ask_baby_strollers:bool, requires_adelanto:bool, adelanto_payment_methods:[\"card\",\"bizum\",\"transferencia\",\"efectivo\"] o [\"stripe\"] (stripe va solo), adelanto_unified:bool, adelanto_unified_amount:€/persona|null (si adelanto_unified=true manda sobre los de menú y sección), menus:[{menu_id:id de un menú activo del catálogo (admin_get_group_menus_v2) | custom_title+custom_image_url (menú personalizado; los dos obligatorios, nunca junto a menu_id), adelanto_amount:€/persona, price:€ (opcional, sustituye al del catálogo), position:int, completo:bool (marca el menú COMPLETO), sections:[{section_id (o id), adelanto_amount:€/persona|null, online_enabled:bool}] (solo menús especiales: adelanto y venta online POR SECCIÓN)}]}. menus, si se envía, sustituye la lista ENTERA: copia la de admin_get_config_special_dates?date=… (vale tal cual) y modifícala. Las reservas ya hechas conservan el adelanto con el que se hicieron.",
+   "body": "FUSIÓN: envía date y SOLO lo que cambia; el resto se conserva. Campos: {date:\"YYYY-MM-DD\" (obligatorio), is_active:bool, title, description, custom_notice (aviso del paso 2 de la reserva web), prereserva_enabled:bool, whatsapp_only:bool (reservas SOLO por WhatsApp: la web no deja reservar ni prereservar ese día y enseña el WhatsApp del restaurante; manda sobre prereserva_enabled), prereserva_starts_on/prereserva_ends_on:\"YYYY-MM-DD\"|null, max_per_table_enabled:bool, max_per_table:int\u003e=1 (obligatorio si max_per_table_enabled), mobility_enabled:bool, allow_customer_modification:bool, ask_adults/ask_high_chairs/ask_baby_strollers:bool, requires_adelanto:bool, adelanto_payment_methods:[\"card\",\"bizum\",\"transferencia\",\"efectivo\"] o [\"stripe\"] (stripe va solo), adelanto_unified:bool, adelanto_unified_amount:€/persona|null (si adelanto_unified=true manda sobre los de menú y sección), menus:[{menu_id:id de un menú activo del catálogo (admin_get_group_menus_v2) | custom_title+custom_image_url (menú personalizado; los dos obligatorios, nunca junto a menu_id), adelanto_amount:€/persona, price:€ (opcional, sustituye al del catálogo), position:int, completo:bool (marca el menú COMPLETO), sections:[{section_id (o id), adelanto_amount:€/persona|null, online_enabled:bool}] (solo menús especiales: adelanto y venta online POR SECCIÓN)}]}. menus, si se envía, sustituye la lista ENTERA: copia la de admin_get_config_special_dates?date=… (vale tal cual) y modifícala. Las reservas ya hechas conservan el adelanto con el que se hicieron.",
    "screens": [
     "/app/reservas",
     "/app/reservas/especial"
@@ -2783,7 +2828,7 @@
    "write": true,
    "risk": "medium",
    "description": "REEMPLAZA entera una fecha especial (festiva), menús incluidos. Para cambiar solo algunos campos usa admin_patch_config_special_dates.",
-   "body": "REEMPLAZO TOTAL (lo que falte vuelve al valor por defecto y los menús se reescriben): {date:\"YYYY-MM-DD\" (obligatorio), is_active:bool, title, description, custom_notice (aviso del paso 2 de la reserva web), prereserva_enabled:bool, prereserva_starts_on/prereserva_ends_on:\"YYYY-MM-DD\"|null, max_per_table_enabled:bool, max_per_table:int\u003e=1 (obligatorio si max_per_table_enabled), mobility_enabled:bool, allow_customer_modification:bool, ask_adults/ask_high_chairs/ask_baby_strollers:bool, requires_adelanto:bool, adelanto_payment_methods:[\"card\",\"bizum\",\"transferencia\",\"efectivo\"] o [\"stripe\"] (stripe va solo), adelanto_unified:bool, adelanto_unified_amount:€/persona|null (si adelanto_unified=true manda sobre los de menú y sección), menus:[{menu_id:id de un menú activo del catálogo (admin_get_group_menus_v2) | custom_title+custom_image_url (menú personalizado; los dos obligatorios, nunca junto a menu_id), adelanto_amount:€/persona, price:€ (opcional, sustituye al del catálogo), position:int, completo:bool (marca el menú COMPLETO), sections:[{section_id (o id), adelanto_amount:€/persona|null, online_enabled:bool}] (solo menús especiales: adelanto y venta online POR SECCIÓN)}]}",
+   "body": "REEMPLAZO TOTAL (lo que falte vuelve al valor por defecto y los menús se reescriben): {date:\"YYYY-MM-DD\" (obligatorio), is_active:bool, title, description, custom_notice (aviso del paso 2 de la reserva web), prereserva_enabled:bool, whatsapp_only:bool (reservas SOLO por WhatsApp: la web no deja reservar ni prereservar ese día y enseña el WhatsApp del restaurante; manda sobre prereserva_enabled), prereserva_starts_on/prereserva_ends_on:\"YYYY-MM-DD\"|null, max_per_table_enabled:bool, max_per_table:int\u003e=1 (obligatorio si max_per_table_enabled), mobility_enabled:bool, allow_customer_modification:bool, ask_adults/ask_high_chairs/ask_baby_strollers:bool, requires_adelanto:bool, adelanto_payment_methods:[\"card\",\"bizum\",\"transferencia\",\"efectivo\"] o [\"stripe\"] (stripe va solo), adelanto_unified:bool, adelanto_unified_amount:€/persona|null (si adelanto_unified=true manda sobre los de menú y sección), menus:[{menu_id:id de un menú activo del catálogo (admin_get_group_menus_v2) | custom_title+custom_image_url (menú personalizado; los dos obligatorios, nunca junto a menu_id), adelanto_amount:€/persona, price:€ (opcional, sustituye al del catálogo), position:int, completo:bool (marca el menú COMPLETO), sections:[{section_id (o id), adelanto_amount:€/persona|null, online_enabled:bool}] (solo menús especiales: adelanto y venta online POR SECCIÓN)}]}",
    "screens": [
     "/app/reservas",
     "/app/reservas/especial"
@@ -3312,6 +3357,21 @@
    "risk": "medium",
    "description": "PATCH /group-menus-v2/{id}/sections/{sectionId}/annotations (handleBOGroupMenusV2PatchSectionAnnotations)",
    "body": "{annotations:[string]} (notas bajo la sección; lista completa).",
+   "screens": []
+  },
+  {
+   "name": "admin_put_group_menus_v2_id_sections_sectionid_cta",
+   "method": "PUT",
+   "path": "/group-menus-v2/{id}/sections/{sectionId}/cta",
+   "handler": "handleBOGroupMenusV2PutSectionCta",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "medium",
+   "description": "PUT /group-menus-v2/{id}/sections/{sectionId}/cta (handleBOGroupMenusV2PutSectionCta)",
    "screens": []
   },
   {
@@ -4290,9 +4350,7 @@
    "write": false,
    "risk": "low",
    "description": "invoice_whatsapp_autosend_v1: is the restaurant's WhatsApp connected (facturas send flows).",
-   "screens": [
-    "/app/facturas"
-   ]
+   "screens": []
   },
   {
    "name": "admin_delete_invoices_id_comments_commentid",
@@ -8291,6 +8349,36 @@
    "screens": []
   },
   {
+   "name": "admin_get_restaurant_pages_cafes_seo",
+   "method": "GET",
+   "path": "/restaurant/pages/cafes-seo",
+   "handler": "handleBOCafesSEOGet",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": false,
+   "risk": "low",
+   "description": "GET /restaurant/pages/cafes-seo (handleBOCafesSEOGet)",
+   "screens": []
+  },
+  {
+   "name": "admin_put_restaurant_pages_cafes_seo",
+   "method": "PUT",
+   "path": "/restaurant/pages/cafes-seo",
+   "handler": "handleBOCafesSEOPut",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "medium",
+   "description": "PUT /restaurant/pages/cafes-seo (handleBOCafesSEOPut)",
+   "screens": []
+  },
+  {
    "name": "admin_get_restaurant_pages_visibility",
    "method": "GET",
    "path": "/restaurant/pages/visibility",
@@ -8362,6 +8450,51 @@
     "/app/miembros/:memberId",
     "/app/miembros/roles"
    ]
+  },
+  {
+   "name": "admin_post_seo_item_routes_sync",
+   "method": "POST",
+   "path": "/seo/item-routes/sync",
+   "handler": "handleBOSeoItemRoutesSync",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "medium",
+   "description": "POST /seo/item-routes/sync (handleBOSeoItemRoutesSync)",
+   "screens": []
+  },
+  {
+   "name": "admin_patch_seo_item_routes_id",
+   "method": "PATCH",
+   "path": "/seo/item-routes/{id}",
+   "handler": "handleBOSeoItemRoutesPatch",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": true,
+   "risk": "medium",
+   "description": "PATCH /seo/item-routes/{id} (handleBOSeoItemRoutesPatch)",
+   "screens": []
+  },
+  {
+   "name": "admin_get_seo_item_routes",
+   "method": "GET",
+   "path": "/seo/item-routes",
+   "handler": "handleBOSeoItemRoutesList",
+   "gates": [
+    "s.requireBOSession",
+    "menusGate"
+   ],
+   "section": "menus",
+   "write": false,
+   "risk": "low",
+   "description": "GET /seo/item-routes (handleBOSeoItemRoutesList)",
+   "screens": []
   },
   {
    "name": "admin_delete_site_builder_assets_assetid",

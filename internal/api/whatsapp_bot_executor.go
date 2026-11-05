@@ -175,6 +175,9 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 	// Coordination id: ads_html_editor_v1 - the web ads editor of /app/anuncios.
 	case "manage_ad":
 		return s.botToolManageAd(ctx, restaurantID, msg, input)
+	// Coordination id: special_date_whatsapp_only_v1 - «Reservas solo por WhatsApp».
+	case "manage_special_date_whatsapp_only":
+		return s.botToolManageSpecialDateWhatsAppOnly(ctx, restaurantID, msg, input)
 	// Coordination id: wa_bot_invoice_v1 - invoices of /app/facturas.
 	case "manage_invoice":
 		return s.botToolManageInvoice(ctx, restaurantID, msg, input)
