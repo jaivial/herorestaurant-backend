@@ -100,7 +100,11 @@ func (s *Server) specialDateWhatsAppOnlyPreview(ctx context.Context, rid int, a 
 	if !*a.WhatsAppOnly {
 		return "Desactivar «Reservas solo por WhatsApp» en " + label + ": la web vuelve a permitir reservar o prereservar ese día", nil
 	}
-	return fmt.Sprintf("Activar «Reservas solo por WhatsApp» en %s: la web no dejará reservar ni prereservar ese día y mostrará el aviso con el WhatsApp +%s", label, s.restaurantWhatsAppPhone(ctx, rid)), nil
+	phone := s.restaurantWhatsAppPhone(ctx, rid)
+	if phone == "" {
+		return "", errors.New("el restaurante no tiene número de WhatsApp: añade el teléfono de gestión en Configuración > Contacto antes de activar «Reservas solo por WhatsApp»")
+	}
+	return fmt.Sprintf("Activar «Reservas solo por WhatsApp» en %s: la web no dejará reservar ni prereservar ese día y mostrará el aviso con el WhatsApp +%s", label, phone), nil
 }
 
 // specialDateWhatsAppOnlyApply saves the flag through the panel's own PATCH.
