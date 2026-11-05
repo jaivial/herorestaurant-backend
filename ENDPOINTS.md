@@ -107,6 +107,25 @@ Returns EUR-only summary with invoiced and POS revenue separated, previous-perio
 
 Requires same statistics access. JSON body: `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`. Rebuilds selected tenant/date range idempotently from invoices, POS, stock, and production source tables. Response includes `runId`, row count, and `outbox: false`. Refresh is explicit because V1 has no source-table outbox.
 
+### `GET /api/admin/analytics/manual-billing`
+
+Requires `estadisticas` access. Manual billing ledger for the Ventas tab. Query parameters: required `from` and `to` (`YYYY-MM-DD`, max ~11 years), optional `bucket` (`day`, `week`, `month`, `year`, default `day`).
+
+Response (`success: true`), coordination id `manual_billing_stats_v1`:
+- `totals`: `{ entries, grossEUR, netEUR, vatEUR, vatIncludedEntries, activeDays, avgGrossEUR }` — signed sums, so negative entries subtract.
+- `previous`: same totals for the previous period of equal length, plus `from`/`to`.
+- `deltaPercent`: `{ entries, grossEUR, netEUR, vatEUR }` (null when the previous period is empty).
+- `series`: zero-filled buckets `[{ key, entries, grossEUR, netEUR, vatEUR }]`.
+- `weekday`: `[{ weekday (1=Mon..7=Sun), entries, grossEUR, netEUR, vatEUR }]`.
+- `vatBreakdown`: `[{ rate, entries, grossEUR, netEUR, vatEUR }]`.
+- `entries`: latest 200 ledger rows `[{ id, date, grossEUR, netEUR, vatEUR, vatRate, includesVat }]`.
+
+Each row stores the amount already split: `net_cents = round(gross_cents * 10000 / (10000 + vat_rate_bp))` when the amount includes VAT, otherwise the whole amount is net and VAT is 0.
+
+### `POST /api/admin/analytics/manual-billing`
+
+Requires `estadisticas` access. JSON body: `{ "date": "YYYY-MM-DD", "amount": 123.45, "includesVat": true, "vatRate": 10 }`. `amount` is signed (negative subtracts) and must not be 0; `vatRate` is optional when `includesVat` (default 10%, 0..100) and ignored otherwise. Returns `201` with `{ success, tag, entry: { id, date, grossEUR, netEUR, vatEUR, vatRate, includesVat } }`.
+
 ### `GET /api/admin/analytics/ai-usage`
 
 Requires `estadisticas` access. Append-only ledger of every LLM request the backend makes (Forky assistant, WhatsApp bot, translations, stock AI, OCR).
