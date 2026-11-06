@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -329,7 +330,15 @@ func (s *Server) botToolSendMessage(ctx context.Context, restaurantID int, msg b
 			return botJSON(map[string]any{"error": err.Error()}), nil
 		}
 	}
-	return botJSON(map[string]any{"sent": true, "parts": len(parts)}), nil
+	out := map[string]any{"sent": true, "parts": len(parts)}
+	// wa_bot_outbound_split_v2: the split is sentence-aware, but the ideal is
+	// that the model itself writes several short send_message calls (one per
+	// idea); when the gate had to split, say so in the result so the next
+	// answer adapts.
+	if len(parts) > 1 {
+		out["hint"] = "el mensaje era largo y se envió dividido en " + strconv.Itoa(len(parts)) + " mensajes: para leerse mejor escribe mensajes más cortos (uno por idea, frases completas) y envíalos como send_message separados"
+	}
+	return botJSON(out), nil
 }
 
 func (s *Server) botToolSendButtons(ctx context.Context, restaurantID int, msg botWebhookMessage, input json.RawMessage) (string, error) {
