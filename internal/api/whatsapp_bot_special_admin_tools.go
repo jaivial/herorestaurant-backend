@@ -889,9 +889,24 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 	}
 	// The code is delivered straight to the group by the gateway: it is not
 	// returned to the model and not recorded in the conversation history.
+	// Coordination id: wa_bot_outbound_split_v2 - long previews travel as
+	// SEVERAL SHORT messages too, split at sentence boundaries (botOutboundSplit
+	// directly, NOT botOutboundText: the jargon strip would eat legitimate
+	// ids/codes of the preview). The OK line lands in the final part.
 	text := preview + fmt.Sprintf("\n\nPara aplicarlo, quien lo ha pedido responde en ESTE chat exactamente: OK %s (caduca en 10 minutos).", code)
 	gw, okGw := s.botGatewayFor(ctx, rid)
-	if !okGw || gw.SendText(ctx, origin, text) != nil {
+	previewSent := false
+	if okGw {
+		parts := botOutboundSplit(text)
+		previewSent = len(parts) > 0
+		for _, part := range parts {
+			if gw.SendText(ctx, origin, part) != nil {
+				previewSent = false
+				break
+			}
+		}
+	}
+	if !previewSent {
 		s.botSpecialAdminEvent(ctx, s.db, rid, pid, "preview_send_failed", actor, origin, nil)
 		return botJSON(map[string]any{"ok": false, "error": "no se pudo enviar la vista previa al grupo; la propuesta queda inactiva y no se aplicará. Pide al usuario que lo repita."}), nil
 	}

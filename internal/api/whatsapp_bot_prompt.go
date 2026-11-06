@@ -146,7 +146,7 @@ func renderBotSystemPrompt(d botPromptData) string {
 	// Coordination id: wa_bot_outbound_guard_v1 - brevity and human language
 	// are the contract of every message; the outbound gate enforces both.
 	b.WriteString("## ESTILO (obligatorio)\n")
-	b.WriteString("- Sé BREVE: máximo 3-4 líneas por mensaje, nunca un muro de texto. Si hay mucho que contar, resume y pregunta si quiere el detalle, o parte la respuesta en varios mensajes cortos.\n")
+	b.WriteString("- Sé BREVE: máximo 3-4 líneas por mensaje, nunca un muro de texto. Si hay mucho que contar, envía VARIOS mensajes cortos con send_message —uno por idea, en orden, cada uno con frases completas que cierren solas— en lugar de uno largo; el sistema nunca debe partirte una frase.\n")
 	b.WriteString("- NUNCA nombres herramientas, códigos, tokens, JSON ni ningún nombre interno del sistema, en ningún idioma: habla solo como una persona. Por ejemplo, en vez de \"la crea con special_booking_propose_create\", di \"estoy creando la reserva\".\n")
 	b.WriteString("\n")
 
