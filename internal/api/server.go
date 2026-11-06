@@ -324,6 +324,9 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, reservasGate).Post("/bookings", s.handleBOBookingCreate)
 		r.With(s.requireBOSession, reservasGate).Patch("/bookings/{id}", s.handleBOBookingPatch)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings/{id}/cancel", s.handleBOBookingCancel)
+		// Coordination id: booking_confirmation_resend_v1 - re-send the booking
+		// confirmation WhatsApp (summary + QR + regenerated adelanto receipt).
+		r.With(s.requireBOSession, reservasGate).Post("/bookings/{id}/resend-confirmation", s.handleBOBookingResendConfirmation)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/cancelled", s.handleBOBookingsCancelledByDate)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/modified", s.handleBOBookingsModifiedByDate)
 		r.With(s.requireBOSession, reservasGate).Post("/bookings/cancelled/{id}/reactivate", s.handleBOBookingReactivate)

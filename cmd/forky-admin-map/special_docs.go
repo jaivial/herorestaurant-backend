@@ -62,6 +62,8 @@ var specialDescriptionsEs = map[string]string{
 	// Reservas (incluidas las de fecha especial).
 	"POST /bookings":       "Crea una reserva desde el panel (normal o de fecha especial con su bloque special).",
 	"PATCH /bookings/{id}": "Modifica una reserva (solo los campos enviados); special sustituye el bloque de fecha especial y null lo quita.",
+	// booking_confirmation_resend_v1
+	"POST /bookings/{id}/resend-confirmation": "Reenvía al cliente el WhatsApp de confirmación de una reserva al teléfono ACTUAL: resumen y, si es de fecha especial, su QR; si es prereserva de fecha festiva con abonos registrados, regenera y envía también el PDF de comprobante del adelanto. Sin body. La reserva no cambia.",
 }
 
 const comidaCatalogWriteFields = `{nombre:string (obligatorio), precio:number €, descripcion:string, description_enabled:boolean (muestra u oculta la descripción en la web; por defecto true), titulo:string, suplemento:number, active:boolean (NO activo), alergenos:[string], tipo:string, categoria:string}. En PATCH todos son opcionales; envía solo lo que cambia. category_id NO se usa para cafes/bebidas: usa categoria por nombre si hace falta.`

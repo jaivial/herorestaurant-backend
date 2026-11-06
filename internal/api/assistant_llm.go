@@ -687,6 +687,8 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		"Las imágenes adjuntas de un menú especial, de sus secciones o de un menú personalizado de una fecha se suben con special_media_upload. " +
 		// special_date_whatsapp_only_v1: the WhatsApp-only switch has its own tools.
 		"Para que una fecha especial se reserve SOLO POR WHATSAPP (la web no deja reservar ni prereservar y enseña el WhatsApp del restaurante) usa special_date_whatsapp_only_get y special_date_whatsapp_only_set. " +
+		// booking_confirmation_resend_v1: the confirmation re-send has its own tool.
+		"Para reenviar al cliente el WhatsApp de confirmación de una reserva (no le llegó, se cambió el teléfono después o falló el envío; con su QR si es de fecha especial y el comprobante del adelanto regenerado si es prereserva) usa booking_confirmation_resend: primero confirmed=false para la vista previa y, cuando el usuario confirme, confirmed=true con el confirmation_token. " +
 		// ads_html_editor_v1: the web ads have their own tools too.
 		"Para los anuncios de la web (avisos emergentes de /app/anuncios: crear, ajustar fechas o tipo, diseñar, poner imágenes, publicar o borrar) usa SIEMPRE ad_get, ad_save, ad_design, ad_image y ad_delete, nunca admin_call: solo ellas compilan el diseño que ve la web. Publicar (ad_save action=publish) y borrar necesitan que el usuario diga que sí en su siguiente mensaje." +
 		assistantOutputContract

@@ -238,6 +238,13 @@ func botSpecialAdminToolDefs() []botToolDef {
 			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"date":{"type":"string","description":"YYYY-MM-DD"},"time":{"type":"string","description":"HH:MM"},"party_size":{"type":"integer"},"customer_name":{"type":"string"},"contact_phone":{"type":"string"},"contact_phone_country_code":{"type":"string","description":"Prefijo sin + (por defecto 34)"},"contact_email":{"type":"string"},"commentary":{"type":"string"},"children":{"type":"integer"},"baby_strollers":{"type":"integer"},"high_chairs":{"type":"integer"},"preferred_floor_number":{"type":"integer"},"allow_duplicate_of":{"type":"integer","description":"Solo para confirmar expresamente un duplicado legítimo: booking_id de la reserva existente igual"}},"required":["date","time","party_size","customer_name","contact_phone"]}`),
 		},
 		{
+			// Coordination id: booking_confirmation_resend_v1 - the missing
+			// customer notification of the bot/panel creates, re-sendable.
+			Name:        "booking_propose_resend_confirmation",
+			Description: "PROPONE reenviar al cliente el WhatsApp de confirmación de una reserva existente (el resumen al teléfono ACTUAL de la reserva; si es de fecha especial, con su QR; y si es prereserva de fecha festiva con abonos registrados, con el comprobante de pago del adelanto regenerado). NO envía nada: guarda una propuesta exacta y envía al chat una vista previa con un código; se envía cuando la misma persona escribe 'OK' y ese código en el mismo chat. Úsalo cuando el cliente no recibió la confirmación (reserva creada por aquí sin aviso, teléfono cambiado después o envío fallido). La reserva no cambia. Pide siempre el booking_id y confirma con el usuario antes de proponer.",
+			InputSchema: botSchema(`{"type":"object","additionalProperties":false,"properties":{"booking_id":{"type":"integer"}},"required":["booking_id"]}`),
+		},
+		{
 			// Coordination id: wa_bot_special_sections_prompt_v1 - the sections
 			// breakdown is described explicitly in the schema so the model
 			// sends it on the first call.
@@ -1087,6 +1094,12 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	if p.Op == botSpecialDateWhatsAppOnlyOp {
 		// Coordination id: special_date_whatsapp_only_v1 - same claim+commit contract.
 		return s.botSpecialDateWhatsAppOnlyExecute(ctx, tx, rid, p)
+	}
+	if p.Op == botBookingResendOp {
+		// Coordination id: booking_confirmation_resend_v1 - the claim commits
+		// BEFORE the external sends (invoice pattern): a WhatsApp failure is
+		// the apply result, never a rollback of the claim.
+		return s.botBookingResendExecute(ctx, tx, rid, msg, p)
 	}
 	if p.Op == "invoice" {
 		// Coordination id: wa_bot_invoice_v1 - the claim commits BEFORE the

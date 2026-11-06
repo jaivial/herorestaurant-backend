@@ -173,12 +173,23 @@ func restaurantBrandNameOrDefault(ctx context.Context, s *Server, restaurantID i
 // "booking_confirmation:{restaurant_id}:{booking_id}" keeps re-enqueue safe
 // across the gate path, the send path, and a future recovery tick.
 func sendBookingWhatsAppToCustomer(ctx context.Context, s *Server, restaurantID int, booking map[string]any, bookingID int64) error {
+	return sendBookingWhatsAppToCustomerOpts(ctx, s, restaurantID, booking, bookingID, false)
+}
+
+// sendBookingWhatsAppToCustomerOpts is sendBookingWhatsAppToCustomer with one
+// extra knob. force=true bypasses the per-restaurant confirmation kill switch
+// (ConfigContacto → Notificaciones de reserva): an EXPLICIT resend requested
+// by the operator (booking_confirmation_resend_v1) is their decision, not an
+// automatic notification. Everything else (gate, send, outbox) is identical.
+func sendBookingWhatsAppToCustomerOpts(ctx context.Context, s *Server, restaurantID int, booking map[string]any, bookingID int64, force bool) error {
 	// Operators can disable booking confirmations per restaurant from
 	// ConfigContacto → Notificaciones de reserva (bkg-wa-notif). A disabled
 	// confirmation is not a failure, so callers keep reporting success.
-	if cfg, err := s.loadBookingNotificationSettings(ctx, restaurantID); err == nil && !cfg.SendConfirmation {
-		log.Printf("%s.confirmation.skipped restaurant=%d booking=%d", bookingNotifCoordinationID, restaurantID, bookingID)
-		return nil
+	if !force {
+		if cfg, err := s.loadBookingNotificationSettings(ctx, restaurantID); err == nil && !cfg.SendConfirmation {
+			log.Printf("%s.confirmation.skipped restaurant=%d booking=%d", bookingNotifCoordinationID, restaurantID, bookingID)
+			return nil
+		}
 	}
 
 	// Build the payload up front so every failure path can hand the same
