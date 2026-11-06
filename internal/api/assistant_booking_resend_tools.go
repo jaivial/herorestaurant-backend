@@ -61,6 +61,12 @@ func (s *Server) assistantBookingConfirmationResend(ctx context.Context, rid int
 		URLParam: map[string]string{"id": strconv.FormatInt(in.BookingID, 10)},
 	})
 	if err != nil {
+		// No auth in the context (or a failed request build): the handler
+		// never ran, so there is no body/status to render — surface the real
+		// error instead of fabricating an "http 0".
+		return "", err
+	}
+	if code >= http.StatusBadRequest {
 		return "", assistantHandlerError("booking_confirmation_resend", body, code)
 	}
 	return botHandlerResponse("booking_confirmation_resend", body)
