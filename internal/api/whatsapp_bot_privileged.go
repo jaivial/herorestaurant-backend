@@ -134,6 +134,10 @@ var botForkyExcludedFromWA = map[string]struct{}{
 	// special_date_whatsapp_only_v1: the bot has manage_special_date_whatsapp_only.
 	"special_date_whatsapp_only_get": {},
 	"special_date_whatsapp_only_set": {},
+	// booking_confirmation_resend_v1: the bot has booking_propose_resend_confirmation
+	// (propose+OK); the forky twin's one-shot token must not become a way
+	// around that flow from the chat.
+	"booking_confirmation_resend": {},
 }
 
 // botForkyMetaTools are the forky names still advertised in the WhatsApp

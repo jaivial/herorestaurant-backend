@@ -61,6 +61,51 @@
    "screens": []
   },
   {
+   "name": "admin_get_analytics_manual_billing_seasonal",
+   "method": "GET",
+   "path": "/analytics/manual-billing/seasonal",
+   "handler": "handleBOAnalyticsManualBillingSeasonal",
+   "gates": [
+    "s.requireBOSession",
+    "statisticsGate"
+   ],
+   "section": "estadisticas",
+   "write": false,
+   "risk": "low",
+   "description": "Same months across every year with entries: the two seasonality comparisons stay independent from the page period filters.",
+   "screens": []
+  },
+  {
+   "name": "admin_get_analytics_manual_billing",
+   "method": "GET",
+   "path": "/analytics/manual-billing",
+   "handler": "handleBOAnalyticsManualBilling",
+   "gates": [
+    "s.requireBOSession",
+    "statisticsGate"
+   ],
+   "section": "estadisticas",
+   "write": false,
+   "risk": "low",
+   "description": "GET /analytics/manual-billing (handleBOAnalyticsManualBilling)",
+   "screens": []
+  },
+  {
+   "name": "admin_post_analytics_manual_billing",
+   "method": "POST",
+   "path": "/analytics/manual-billing",
+   "handler": "handleBOAnalyticsManualBillingCreate",
+   "gates": [
+    "s.requireBOSession",
+    "statisticsGate"
+   ],
+   "section": "estadisticas",
+   "write": true,
+   "risk": "medium",
+   "description": "Simple billing entries typed by hand for Estadísticas \u003e Ventas (manual_billing_stats_v1): create one entry, read the period ledger.",
+   "screens": []
+  },
+  {
    "name": "admin_get_analytics_overview",
    "method": "GET",
    "path": "/analytics/overview",
@@ -501,6 +546,28 @@
    "write": false,
    "risk": "low",
    "description": "GET /bookings/{id}/receipt.pdf (handleBOBookingReceiptPDF)",
+   "screens": [
+    "/app/facturas",
+    "/app/reservas",
+    "/app/reservas/anadir",
+    "/app/reservas/especial/reserva",
+    "/app/reservas/tables",
+    "/m/app/reservas"
+   ]
+  },
+  {
+   "name": "admin_post_bookings_id_resend_confirmation",
+   "method": "POST",
+   "path": "/bookings/{id}/resend-confirmation",
+   "handler": "handleBOBookingResendConfirmation",
+   "gates": [
+    "s.requireBOSession",
+    "reservasGate"
+   ],
+   "section": "reservas",
+   "write": true,
+   "risk": "medium",
+   "description": "Reenvía al cliente el WhatsApp de confirmación de una reserva al teléfono ACTUAL: resumen y, si es de fecha especial, su QR; si es prereserva de fecha festiva con abonos registrados, regenera y envía también el PDF de comprobante del adelanto. Sin body. La reserva no cambia.",
    "screens": [
     "/app/facturas",
     "/app/reservas",

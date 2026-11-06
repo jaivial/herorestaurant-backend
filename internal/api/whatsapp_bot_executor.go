@@ -222,6 +222,10 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		return s.botToolCreatePropose(ctx, restaurantID, msg, input)
 	case "special_booking_propose_create":
 		return s.botToolSpecialCreatePropose(ctx, restaurantID, msg, input)
+	// Coordination id: booking_confirmation_resend_v1 - re-send the customer
+	// confirmation of an existing booking (propose + OK).
+	case "booking_propose_resend_confirmation":
+		return s.botToolBookingResendPropose(ctx, restaurantID, msg, input)
 	case "config_propose_day":
 		return s.botToolConfigDayPropose(ctx, restaurantID, msg, input)
 	case "config_propose_daily_limit":

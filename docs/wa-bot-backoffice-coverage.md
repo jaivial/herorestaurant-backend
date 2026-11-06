@@ -112,6 +112,28 @@ mano) y el campo en el contrato de `admin_describe`. Al regenerar el mapa
 entraron también 9 rutas que ya existían y no estaban en él (IA de anuncios,
 SEO de cafés, rutas SEO de platos y CTA por sección de menú): 660 operaciones.
 
+## Reenvío del WhatsApp de confirmación (`booking_confirmation_resend_v1`)
+
+El bot crea reservas normales sin avisar al cliente (como el panel antiguo) y
+las especiales avisan una sola vez al crear; si el WhatsApp falla o el teléfono
+cambia después, no había forma de reenviar la confirmación. Un solo núcleo
+(`booking_confirmation_resend.go`) sirve a las tres superficies:
+
+| Superficie | Cómo | Confirmación humana |
+|---|---|---|
+| Panel | `POST /admin/bookings/{id}/resend-confirmation` | la del propio botón/acción |
+| Forky | `booking_confirmation_resend` (token de un uso) | confirmed=false → vista previa → confirmed=true + token |
+| Bot (autorizados) | `booking_propose_resend_confirmation` | propuesta + `OK <código>` en el mismo chat |
+
+Qué envía: el texto de confirmación estándar al teléfono ACTUAL de la reserva
+(la fila en DB es la fuente de verdad); si es de fecha especial, el QR
+(regenerado y re-almacenado); y si es prereserva de fecha festiva con abonos
+registrados, el PDF de comprobante del adelanto regenerado desde el snapshot
+(`special_json.adelantos_paid`) y re-almacenado en `bookings.receipt_url`. El
+interruptor de confirmaciones del restaurante NO aplica: un reenvío explícito
+es decisión del operador. La reserva no cambia; los envíos van tras el commit
+de la propuesta (patrón factura) y un fallo queda en la outbox de reintentos.
+
 ## Fuera de alcance (por diseño, documentado)
 
 - Auth/sesión (`/login`, `/logout`, `/me/*`, `/active-restaurant`), gestión de
