@@ -897,8 +897,9 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 	gw, okGw := s.botGatewayFor(ctx, rid)
 	previewSent := false
 	if okGw {
-		previewSent = true
-		for _, part := range botOutboundSplit(text) {
+		parts := botOutboundSplit(text)
+		previewSent = len(parts) > 0
+		for _, part := range parts {
 			if gw.SendText(ctx, origin, part) != nil {
 				previewSent = false
 				break
