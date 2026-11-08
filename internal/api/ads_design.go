@@ -325,15 +325,20 @@ func adDesignCSP(nonce string) string {
 // outbound links with the source of the embed (utm_source, as the canvas
 // render did). {type:"vc-ad-measure"} from the parent asks for the height
 // again (the first report can land before the parent listens).
+// Coord id ad_link_same_site_v1: a link to the apex domain from the www one
+// (or the other way round) is the same site, so it keeps the normal
+// navigation of the page (<base target="_top">) instead of opening a tab.
 const adDesignBridgeJS = `(function(){var ad=%s,step=%s,src=%s;
 function post(m){m.type="vc-ad";m.ad=ad;m.step=step;try{parent.postMessage(m,"*")}catch(e){}}
+// ad_link_same_site_v1: the same site is the host without the leading www.
+function sameSite(h){return String(h||"").replace(/^www\./i,"")}
 var last=0;function height(){var b=document.body,h=Math.ceil(Math.max(b.scrollHeight,b.offsetHeight,document.documentElement.scrollHeight));if(h!==last){last=h;post({event:"height",height:h})}}
 window.addEventListener("load",height);if(window.ResizeObserver){new ResizeObserver(height).observe(document.body)}height();
 window.addEventListener("message",function(e){var d=e.data;if(d&&d.type==="vc-ad-measure"){last=0;height()}});
 document.addEventListener("click",function(e){var t=e.target;if(!t||!t.closest)return;var card=t.closest("[data-ad-step]");
 if(card){e.preventDefault();post({event:"step",target:card.getAttribute("data-ad-step")});return}
 var a=t.closest("a[href]");if(!a)return;var href=a.getAttribute("href")||"";
-if(/^https?:/i.test(href)){try{var u=new URL(href);if(src&&!u.searchParams.has("utm_source")){u.searchParams.set("utm_source",src);a.setAttribute("href",u.toString())}if(u.host!==location.host){a.setAttribute("target","_blank");a.setAttribute("rel","noopener")}}catch(err){}}});
+if(/^https?:/i.test(href)){try{var u=new URL(href);if(src&&!u.searchParams.has("utm_source")){u.searchParams.set("utm_source",src);a.setAttribute("href",u.toString())}if(sameSite(u.host)!==sameSite(location.host)){a.setAttribute("target","_blank");a.setAttribute("rel","noopener")}}catch(err){}}});
 })();`
 
 // adDeviceClasses: the device a page is shown on is set on <html> as
