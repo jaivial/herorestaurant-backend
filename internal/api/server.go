@@ -2025,9 +2025,28 @@ func (s *Server) publicSPAHandler() http.Handler {
 	s.spaOnce.Do(func() {
 		fallback := SPAHandler(s.cfg.StaticDir)
 		withMarkdown := newPublicMarkdownHandler(s.cfg.StaticDir, fallback, s.loadEditorialRiceMenus)
-		s.spaHandler = newEditorialRiceSSR(s.cfg.StaticDir, withMarkdown, s.loadEditorialRiceMenus)
+		s.spaHandler = trailingSlashRedirect(newEditorialRiceSSR(s.cfg.StaticDir, withMarkdown, s.loadEditorialRiceMenus))
 	})
 	return s.spaHandler
+}
+
+// trailingSlashRedirect sends every public page URL with a trailing slash
+// (/contacto/, /en/) to its slashless canonical with one 301, so crawlers stop
+// finding a 200 duplicate of each page. Leading slashes collapse to one so
+// //host/ can never become an off-site redirect.
+// Coordination id: seo_trailing_slash_301_v1
+func trailingSlashRedirect(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			len(path) > 1 && strings.HasSuffix(path, "/") &&
+			!strings.HasPrefix(r.RequestURI, "/api/") && !strings.HasPrefix(path, "/backoffice/") {
+			log.Printf("[seo_trailing_slash_301_v1] redirect path=%q", path)
+			seoRedirect(w, r, "/"+strings.Trim(path, "/"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func SPAHandler(staticDir string) http.Handler {
