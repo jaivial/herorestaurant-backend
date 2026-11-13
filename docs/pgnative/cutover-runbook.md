@@ -9,18 +9,36 @@ Estado: **PREPARADO, NO EJECUTADO.** Solo se ejecuta por orden explícita de Mai
 
 Leyenda: **[GO]** orden explícita de Main/Jaime · **[IRREVERSIBLE]** · **[STOP]** parada.
 
-## ⚠ Bloqueante antes del domingo (código)
-`cmd/server/main.go` rechaza `DB_DRIVER=postgres` salvo con `VC_PG_LOCAL_HTTP_QA=1`. Ese modo QA obliga a:
-- escuchar solo en loopback;
-- `BO_DISABLE_BACKGROUND_WORKERS=1`;
-- arrancar sin proveedores (WhatsApp, Stripe, email).
+## Arranque de producción en PG (resuelto en pgnative-K, rama bot/postgres-native-20261113)
+`cmd/server` tiene ahora una ruta de **producción** para `DB_DRIVER=postgres` (`cmd/server/pg_production.go`, coordination id `pg_production_start_v1`). El modo QA local (`VC_PG_LOCAL_HTTP_QA`) no cambia.
 
-Por tanto **no sirve para producción**. Antes del domingo hacen falta:
-1. un cambio de código revisado: una ruta de arranque PG de producción que mantenga los gates (marker, `RequireNativeKeys`, triggers);
-2. una decisión sobre el marker de importación: con 4 FKs NOT VALID y los pendientes abiertos, `ready_for_cutover=false` y el gate actual rechaza el arranque;
-3. una imagen nueva del backend compilada desde el commit aprobado.
+La ruta de producción mantiene la dirección normal (:8080), los workers en segundo plano y los proveedores, igual que el modo MySQL, y ejecuta todos los gates:
+- marker de importación;
+- `RequireNativeKeys` (117 índices ux__, app.norm IMMUTABLE, sin `__wk`/`__pad`/colación dbmigrate);
+- `RequireOnUpdateTriggers`.
 
-**Sin esto, el paso 40 no puede ejecutarse.**
+**No aplica** las migraciones MySQL en PG. Variables (solo nombres; los valores van en `$CUTOVER_DIR/pg-vars.env`, 0600):
+
+| variable | valor / regla |
+|---|---|
+| `DB_DRIVER` | `postgres` |
+| `DB_PG_PRODUCTION_APPROVED` | `1` (aprobación explícita; sin ella el servidor se niega a arrancar) |
+| `DATABASE_URL` | `postgres://…@127.0.0.1:55432/newvillacarmen_business?sslmode=disable` (TCP o socket; sslmode tal cual) |
+| `DB_PG_ACCEPT_IMPORT_STAGING` | `orphans=731,pending=329,fks_not_valid=4`: debe coincidir **exactamente** con el marker o el arranque es fatal. Sin ella, el marker tiene que estar "ready", igual que antes |
+| `BOT_CONTEXT_DRIVER` | `postgres` |
+| `BOT_CONTEXT_POSTGRES_DSN` | el mismo DSN |
+| `BOT_CONTEXT_POSTGRES_SCHEMA` | `bot_context` |
+| `VC_PG_LOCAL_HTTP_QA`, `VC_PG_LOCAL_HTTP_QA_SCRATCH_WAIVE` | **no deben existir**: el servidor se niega a arrancar |
+
+Los 329 pendientes del marker son 328 del plan más 1 por las FKs NOT VALID:
+- **190 `range_narrowing`:** unsigned → rango firmado; los datos caben; los generadores de id son int64.
+- **136 `on_update_explicit_marked_qa`:** triggers implementados y verificados en scratch.
+- **1 `storage_app_adapter`:** assistant_messages.content como bytea; el código ya hace bind/scan con []byte.
+- **1 `view_activation_review`:** recent_conversations; ningún lector en el código.
+
+Ninguno bloquea la ejecución; se aceptan explícitamente con la variable. Los 731 huérfanos (4 FKs NOT VALID) se conservan sin tocarlos.
+
+**Temporizadores del host** (`villacarmen-ops-check`, `villacarmen-cdn-sweep`) leen `/etc/villacarmen/backend.env` y escriben en la BD. Hay que pararlos en el freeze. Para reactivarlos en PG necesitan `DB_DRIVER=postgres`, `DB_PG_TOOLS_QA_APPROVED=1` y `DATABASE_URL`. Decisión: dejarlos parados hasta el día siguiente.
 
 ## 0. Hechos de producción (observados en solo lectura)
 - **MySQL:** servicio del host `mysql.service` 8.0.46 en 127.0.0.1:3306, socket `/var/run/mysqld/mysqld.sock`, BD `newvillacarmen`, usuario `villacarmen`, unos 80 MB. El import tarda **minutos**.
@@ -44,7 +62,9 @@ Por tanto **no sirve para producción**. Antes del domingo hacen falta:
    - `MYSQL_DSN` por socket: `villacarmen:<pw>@unix(/var/run/mysqld/mysqld.sock)/newvillacarmen?information_schema_stats_expiry=0` (el parametro es obligatorio: sin el, la cache de estadisticas de MySQL 8 devuelve AUTO_INCREMENT NULL y el import falla).
 6. **Binarios y fuentes:** `bin/` con sha256 en `expected-sha256.txt`, `src/` con un checkout del commit aprobado, y la imagen `postgres:17-alpine` ya descargada.
 7. **Migración del store del bot:** SQLite del volumen → esquema `bot_context` con `botstore-migrate`. El comando exacto (`BOTSTORE_MIGRATE_CMD`) se ensaya en desktop.
-8. **Bloqueante de código** (arriba): cambio revisado, imagen nueva y decisión sobre el marker.
+8. **Imagen solo para desktop/QA** (no se ejecuta aquí): desde la raíz multi-repo con este backend en `backend/`:
+   `docker build -f backend/Dockerfile.prod -t newvillacarmen-prod-backend:pgnative-20261113 .`
+   En producción, `release-backend-prod.sh` reconstruye desde su contexto cerrado. El switch PG usa `40-switch.sh`, que replica la especificación de `docker run` del release con el env PG.
 
 ## 2. Ventana del domingo
 | hora | paso | script | duración máx. | tipo |
@@ -55,7 +75,7 @@ Por tanto **no sirve para producción**. Antes del domingo hacen falta:
 | 23:15 | **[GO "GO backup"]** mysqldump del host + sha256, restore check con `mysql:8.0.46` desechable, imagen, inspect, env, volumen del bot | 10-backup.sh | 15 min | **[STOP]** si los recuentos difieren |
 | 23:30 | **[GO "GO import"]** schema/export (binario en el host, socket MySQL), referencia independiente, crosscheck, plan, pgcompat, allowlist, PG nuevo, import, verify, ida y vuelta, gate, sqlcheck, recuentos, store del bot | 30-import.sh | 20 min | **[STOP]** duro → 90 con `SWITCH_AT=none` |
 | 23:50 | **Decisión 1** (Main/Jaime) | — | 5 min | — |
-| 23:55 | **[GO "GO switch"]** diff de nombres del env, tag `mysql-pre-cutover`, backend PG, healthz | 40-switch.sh | 10 min | **[IRREVERSIBLE para datos]** desde que entra tráfico · requiere el bloqueante resuelto |
+| 23:55 | **[GO "GO switch"]** diff de nombres del env, tag `mysql-pre-cutover`, backend PG, healthz | 40-switch.sh | 10 min | **[IRREVERSIBLE para datos]** desde que entra tráfico · requiere DB_PG_PRODUCTION_APPROVED=1 y el match exacto de DB_PG_ACCEPT_IMPORT_STAGING |
 | 00:05 | **[GO "GO smoke"]** healthz, menús, BO, visita POS, 1 mensaje desde +34692747052 (solo ese número), logs | 50-smoke.sh | 20 min | — |
 | 00:25 | **Decisión 2**: GO → arrancar bot-pipeline/backoffice/laya-heads y mantenimiento OFF; NO-GO → 90 | 50 / 90 | — | — |
 | 01:30 | **Hora límite**: sin GO final, rollback | 90-rollback.sh | 15 min | — |
@@ -70,7 +90,7 @@ Por tanto **no sirve para producción**. Antes del domingo hacen falta:
 PG (contenedor y volumen) se conserva.
 
 ## 4. Checklist go/no-go
-- [ ] Bloqueante de código resuelto e imagen nueva con sha256 anotado
+- [ ] Imagen `pgnative-20261113` construida desde el commit aprobado (id anotado); `pg-vars.env` preparado; temporizadores del host parados
 - [ ] Ensayo en desktop: import y verify OK, ida y vuelta OK, gate OK, recuentos idénticos, errores de sqlcheck revisados
 - [ ] Precheck sin FAIL: huérfanos 1/726/3/1 (bo_invoice_comments, invoice_line_items, site_builder_domain_mappings, site_builder_pages); NUL = 1; disco OK
 - [ ] Freeze: sin sesiones escribiendo; read_only=ON; recuentos guardados

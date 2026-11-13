@@ -21,22 +21,25 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Invalid configuration: %v", err)
 	}
-	// Coordination id: sqldb_native_pg_v1 - the business SQL is still MySQL
-	// native (see docs/dbmigrate/remaining-callers.json). Starting on PG now
-	// would fail per query at runtime, so it is refused up front; MySQL (the
-	// default) is unchanged.
-	// pgnative-B: when this refusal is lifted, the PG pool must pass
-	// appdb.RequireNativeKeys before serving (app.norm ux__ unique indexes).
+	// Coordination id: sqldb_native_pg_v1 / pg_production_start_v1 - MySQL
+	// (default) unchanged. DB_DRIVER=postgres starts only with an explicit
+	// approval: production (DB_PG_PRODUCTION_APPROVED=1, pg_production.go,
+	// every readiness gate incl. RequireNativeKeys) or local QA
+	// (VC_PG_LOCAL_HTTP_QA=1, pg_local_qa.go); otherwise it is refused.
 	dialect, err := appdb.BusinessDialect(cfg.DBDriver)
 	if err != nil {
 		log.Fatalf("Invalid DB_DRIVER: %v", err)
 	}
 	if dialect != sqldb.MySQL {
-		if os.Getenv(pgLocalQAEnv) != "1" {
-			log.Fatalf("DB_DRIVER=%q refused: native PostgreSQL port of the business SQL is not runtime-verified (cutover blocked)", cfg.DBDriver)
+		if os.Getenv(pgLocalQAEnv) == "1" {
+			runPGLocalQA(cfg, dialect) // local QA mode, unchanged
+			return
 		}
-		runPGLocalQA(cfg, dialect)
-		return
+		if os.Getenv(appdb.PGProductionApprovedEnv) == "1" {
+			runPGProduction(cfg, dialect) // pg_production_start_v1
+			return
+		}
+		log.Fatalf("DB_DRIVER=%q refused: set %s=1 (production, all gates) or %s=1 (local QA only)", cfg.DBDriver, appdb.PGProductionApprovedEnv, pgLocalQAEnv)
 	}
 	// db_dialect_selection_v1: one dialect for every SQL package.
 	api.SetSQLDialect(dialect)
