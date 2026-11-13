@@ -18,7 +18,7 @@ Autoridad: mensajes de Main 11:56/11:57 (pivote a "Postgres puro", sin emulació
   - Inventario con el destino exacto de cada `ON CONFLICT`: `docs/pgnative/native-ddl-inventory.tsv`.
 - **FKs.**
   - 293 FKs, creadas `NOT VALID` y validadas en la misma importación cuando no tienen huérfanos.
-  - Quedan **4 NOT VALID** por los **731 huérfanos** históricos: 1 en bo_invoice_comments, 726 en bo_invoice_line_items (de 245 facturas ausentes), 3 en site_builder_domain_mappings y 1 en site_builder_pages (los dos últimos casos, del mismo site ausente).
+  - Quedan **4 NOT VALID** por los **731 huérfanos** históricos: 1 en bo_invoice_comments, 726 en invoice_line_items (padre invoices) (de 245 facturas ausentes), 3 en site_builder_domain_mappings y 1 en site_builder_pages (los dos últimos casos, del mismo site ausente).
   - Los huérfanos no se borran ni se inventan padres; las escrituras nuevas sí se validan.
 - **ON UPDATE.** 137 columnas `ON UPDATE CURRENT_TIMESTAMP` se reproducen con triggers (`dbmigrate.on_update_ts` + `on_update_mark`). Ya no hay lógica de `__wk` en esas funciones.
 - **Eliminado del modelo:** columnas `__wk`/`__pad`, índices `ixwk__`/`ixpad__`, shadow FKs y la emulación PAD SPACE.
