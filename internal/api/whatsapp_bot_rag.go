@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"preactvillacarmen/internal/graphrag"
 	"regexp"
 	"strings"
 	"sync"
@@ -325,7 +326,27 @@ func BotIndexedKnowledge(raw string) [][4]string {
 // botRetrieveKnowledge returns the relevant knowledge for this turn. On any
 // index failure it degrades to the route-tagged chunks from memory so the
 // rules are never silently dropped.
+// botRetrieveKnowledge adds the restaurant's own GraphRAG snippets
+// (graphrag_retrieve_v1, VC_GRAPHRAG=1, default OFF) in front of the existing
+// RAG chunks. restaurantID is the bot session's restaurant; the graph
+// instance is resolved only from the server-side registry. Any graph error
+// yields no snippets (existing RAG unchanged). Only lengths/counts are logged.
 func (s *Server) botRetrieveKnowledge(ctx context.Context, restaurantID int, routing botAIRouting, routes []string, text string) []botKnowledgeChunk {
+	base := s.botRetrieveKnowledgeBase(ctx, restaurantID, routing, routes, text)
+	if !graphrag.Enabled() {
+		return base
+	}
+	gctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var out []botKnowledgeChunk
+	for _, sn := range graphrag.Query(gctx, restaurantID, text, 4) {
+		out = append(out, botKnowledgeChunk{ID: "graph:" + sn.UID, Title: sn.Title, Body: sn.Body})
+	}
+	botCheckpoint("wa_bot_graphrag_v1", "restaurant_id=%d text_len=%d graph_hits=%d", restaurantID, len(text), len(out))
+	return append(out, base...)
+}
+
+func (s *Server) botRetrieveKnowledgeBase(ctx context.Context, restaurantID int, routing botAIRouting, routes []string, text string) []botKnowledgeChunk {
 	chunks := routing.Knowledge
 	if len(chunks) == 0 {
 		chunks = botDefaultKnowledge()
