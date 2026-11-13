@@ -62,9 +62,12 @@ Ninguno bloquea la ejecución; se aceptan explícitamente con la variable. Los 7
    - `MYSQL_DSN` por socket: `villacarmen:<pw>@unix(/var/run/mysqld/mysqld.sock)/newvillacarmen?information_schema_stats_expiry=0` (el parametro es obligatorio: sin el, la cache de estadisticas de MySQL 8 devuelve AUTO_INCREMENT NULL y el import falla).
 6. **Binarios y fuentes:** `bin/` con sha256 en `expected-sha256.txt`, `src/` con un checkout del commit aprobado, y la imagen `postgres:17-alpine` ya descargada.
 7. **Migración del store del bot:** SQLite del volumen → esquema `bot_context` con `botstore-migrate`. El comando exacto (`BOTSTORE_MIGRATE_CMD`) se ensaya en desktop.
-8. **Imagen solo para desktop/QA** (no se ejecuta aquí): desde la raíz multi-repo con este backend en `backend/`:
-   `docker build -f backend/Dockerfile.prod -t newvillacarmen-prod-backend:pgnative-20261113 .`
-   En producción, `release-backend-prod.sh` reconstruye desde su contexto cerrado. El switch PG usa `40-switch.sh`, que replica la especificación de `docker run` del release con el env PG.
+8. **Imagen = overlay, no rebuild completo.** El frontend publico de produccion (commit 0c67f79 de 9 nov) es mas nuevo que el de desktop (2 nov): un `docker build -f backend/Dockerfile.prod` desde desktop regresaria el sitio. Por eso la imagen PG se crea encima de la actual (`newvillacarmen-prod-backend:privileged`, que conserva /app/static, OCR y librerias) cambiando solo `/app/backend`:
+   - Binario estatico validado en desktop: `vc-server-pgnative-static`, sha256 `370b0f6c8df8dba8219afc8f1127b68ef5541b9172f82054255e37a7eb3032c6` (compilado del commit d6d2649, CGO desactivado).
+   - En la ventana (solo tras la orden de Main): copiar el binario a un directorio 0700, `docker build -f deploy/pgnative/Dockerfile.overlay -t newvillacarmen-prod-backend:pgnative-20261113 <dir>` (segundos, sin red, sin carga) y comprobar el sha256 del binario dentro de la imagen.
+   - Rollback: el contenedor MySQL queda renombrado con su imagen `privileged` intacta.
+   - Los timers `villacarmen-ops-check` y `villacarmen-cdn-sweep` quedan parados durante el cutover (20-freeze); su reactivacion con env PG es un paso posterior documentado, no del cutover.
+   El switch PG usa `40-switch.sh`, que replica la especificacion de `docker run` del release con el env PG.
 
 ## 2. Ventana del domingo
 | hora | paso | script | duración máx. | tipo |

@@ -1,0 +1,7 @@
+# Overlay image for the PostgreSQL cutover: keeps the CURRENT production image
+# (runtime libs, OCR tools and the already-deployed public frontend in /app/static)
+# and replaces only /app/backend with the native-PG static binary.
+# Context: a directory holding ONLY `backend` (the binary). No network needed.
+ARG BASE=newvillacarmen-prod-backend:privileged
+FROM ${BASE}
+COPY backend /app/backend
