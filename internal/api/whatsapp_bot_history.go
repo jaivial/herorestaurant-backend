@@ -43,11 +43,18 @@ func (s *Server) botRecordConversationMessage(ctx context.Context, restaurantID 
 // backoffice (display name / last activity). Conversation content itself lives
 // exclusively in SQLite.
 func (s *Server) botTouchSession(ctx context.Context, restaurantID int, userPhone string, pushName string) {
-	_, err := s.db.ExecContext(ctx, `
+	st := s.botStateDB()
+	q := `
 		INSERT INTO whatsapp_bot_sessions (restaurant_id, user_phone, push_name, last_message_at)
 		VALUES (?, ?, ?, NOW(3))
 		ON DUPLICATE KEY UPDATE push_name = VALUES(push_name), last_message_at = NOW(3)
-	`, restaurantID, userPhone, pushName)
+	`
+	if st.Postgres { // wa_bot_store_pg_mysql_v1
+		q = `INSERT INTO whatsapp_bot_sessions (restaurant_id, user_phone, push_name, last_message_at)
+		VALUES (?, ?, ?, LOCALTIMESTAMP(3))
+		ON CONFLICT (restaurant_id, user_phone) DO UPDATE SET push_name = EXCLUDED.push_name, last_message_at = LOCALTIMESTAMP(3)`
+	}
+	_, err := st.ExecContext(ctx, selectedSQL(q), restaurantID, userPhone, pushName) // q chosen by st.Postgres
 	if err != nil && !isSQLSchemaError(err) {
 		log.Printf("[bot] touch session: %v", err)
 	}

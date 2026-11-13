@@ -39,9 +39,11 @@ func (s *Server) handleBOBotConfigGet(w http.ResponseWriter, r *http.Request) {
 // partial write can be merged onto it instead of replacing it.
 func (s *Server) botStoredTenantConfig(ctx context.Context, restaurantID int) botTenantConfig {
 	var raw sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
-	`, restaurantID).Scan(&raw)
+	`, `
+		SELECT CAST(config_json AS text) FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
+	`), restaurantID).Scan(&raw)
 	if err != nil || !raw.Valid || strings.TrimSpace(raw.String) == "" {
 		return botTenantConfig{}
 	}
@@ -50,9 +52,11 @@ func (s *Server) botStoredTenantConfig(ctx context.Context, restaurantID int) bo
 
 func (s *Server) botStoredPrivilegedGroupJIDs(ctx context.Context, restaurantID int) []string {
 	var raw sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
-	`, restaurantID).Scan(&raw)
+	`, `
+		SELECT CAST(config_json AS text) FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
+	`), restaurantID).Scan(&raw)
 	if err != nil || !raw.Valid || strings.TrimSpace(raw.String) == "" {
 		return nil
 	}
@@ -154,11 +158,15 @@ func (s *Server) handleBOBotConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO whatsapp_bot_config (restaurant_id, config_json)
 		VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE config_json = VALUES(config_json)
-	`, a.ActiveRestaurantID, string(raw)); err != nil {
+	`, `
+		INSERT INTO whatsapp_bot_config (restaurant_id, config_json)
+		VALUES (?, CAST(? AS jsonb))
+		ON CONFLICT (restaurant_id) DO UPDATE SET config_json = EXCLUDED.config_json
+	`), a.ActiveRestaurantID, string(raw)); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Error guardando la configuración",
@@ -313,11 +321,15 @@ func (s *Server) handleBOBotSettingsPut(w http.ResponseWriter, r *http.Request) 
 	}
 
 	raw, _ := json.Marshal(cfg)
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO whatsapp_bot_config (restaurant_id, config_json)
 		VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE config_json = VALUES(config_json)
-	`, rid, string(raw)); err != nil {
+	`, `
+		INSERT INTO whatsapp_bot_config (restaurant_id, config_json)
+		VALUES (?, CAST(? AS jsonb))
+		ON CONFLICT (restaurant_id) DO UPDATE SET config_json = EXCLUDED.config_json
+	`), rid, string(raw)); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Error guardando la configuración",

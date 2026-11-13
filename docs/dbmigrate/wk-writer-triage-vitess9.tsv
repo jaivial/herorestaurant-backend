@@ -1,0 +1,645 @@
+file	line	table	verb	dialect	touches_key	key_cols	manual_class_vitess9
+internal/analytics/service.go	663	analytics_customers	INSERT	mysql	yes	identity_key	
+internal/analytics/service.go	673	analytics_customers	INSERT	pg	yes	identity_key	
+internal/analytics/service.go	693	analytics_customer_sources	INSERT	mysql	yes	source_ref,source_type	
+internal/analytics/service.go	697	analytics_customer_sources	INSERT	pg	yes	source_ref,source_type	
+internal/analytics/service.go	951	analytics_stock_facts	INSERT	mysql	yes	source_type	
+internal/analytics/service.go	955	analytics_stock_facts	INSERT	pg	yes	source_type	
+internal/api/assistant_confirmation.go	50	forky_confirmation_tokens	INSERT	portable	yes	token_hash	
+internal/api/assistant_memory.go	109	assistant_memory_edges	INSERT	mysql	yes	rel	
+internal/api/assistant_memory.go	111	assistant_memory_edges	INSERT	pg	yes	rel	
+internal/api/assistant_memory.go	120	assistant_memory_nodes	INSERT	mysql	yes	label	
+internal/api/assistant_memory.go	123	assistant_memory_nodes	INSERT	pg	yes	label	
+internal/api/assistant_pos_tools.go	48	pos_visits	INSERT	unknown	yes	open_idempotency_key	native-pair-one-line (mysql+pg)
+internal/api/assistant_pos_tools.go	72	pos_tickets	INSERT	unknown	yes	creation_idempotency_key,ticket_number	native-pair-one-line (mysql+pg)
+internal/api/assistant_pos_tools.go	83	pos_payments	INSERT	unknown	yes	idempotency_key	native-pair-one-line (mysql+pg)
+internal/api/assistant_pos_tools.go	92	pos_refunds	INSERT	unknown	yes	idempotency_key	native-pair-one-line (mysql+pg)
+internal/api/assistant_ws.go	295	assistant_sessions	INSERT	portable	yes	session_token	
+internal/api/assistant_ws.go	314	assistant_sessions	INSERT	portable	no		
+internal/api/backoffice_accounting_exports.go	348	accounting_exports	INSERT	mysql	yes	payload_hash	
+internal/api/backoffice_accounting_exports.go	350	accounting_exports	INSERT	pg	yes	payload_hash	
+internal/api/backoffice_comida_ai.go	333	comida_items	UPDATE	portable	no		
+internal/api/backoffice_comida_ai.go	589	comida_items	UPDATE	portable	no		
+internal/api/backoffice_comida_ai.go	613	comida_items	UPDATE	portable	no		
+internal/api/backoffice_comida_upload.go	136	comida_items	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2_ws.go	699	group_menu_section_dishes_v2	UPDATE	unknown	no		mysql
+internal/api/backoffice_group_menus_v2_ws.go	704	group_menu_section_dishes_v2	UPDATE	unknown	no		pg
+internal/api/backoffice_group_menus_v2_ws.go	839	menus	UPDATE	unknown	no		mysql
+internal/api/backoffice_group_menus_v2_ws.go	845	menus	UPDATE	unknown	no		pg
+internal/api/backoffice_group_menus_v2_ws.go	947	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2_ws.go	976	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2_ws.go	1065	group_menu_section_dishes_v2	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2_ws.go	1096	group_menu_section_dishes_v2	UPDATE	portable	no		
+internal/api/backoffice_invoices.go	1454	invoice_wa_sends	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_invoices.go	1479	invoice_wa_sends	UPDATE	unknown	no		false-positive (comment/other line)
+internal/api/backoffice_invoices.go	1506	invoice_wa_sends	UPDATE	portable	no		
+internal/api/backoffice_invoices.go	1508	invoice_wa_sends	UPDATE	portable	no		
+internal/api/backoffice_members.go	315	restaurant_members	UPDATE	unknown	yes	email	mysql
+internal/api/backoffice_members.go	327	restaurant_members	UPDATE	pg	yes	email	
+internal/api/backoffice_members.go	350	restaurant_members	UPDATE	portable	no		
+internal/api/backoffice_members.go	514	restaurant_members	UPDATE	portable	no		
+internal/api/backoffice_members.go	545	bo_member_invitation_tokens	UPDATE	mysql	no		
+internal/api/backoffice_members.go	551	bo_member_invitation_tokens	UPDATE	pg	no		
+internal/api/backoffice_members.go	563	bo_password_reset_tokens	UPDATE	mysql	no		
+internal/api/backoffice_members.go	569	bo_password_reset_tokens	UPDATE	pg	no		
+internal/api/backoffice_members.go	617	restaurant_members	UPDATE	portable	no		
+internal/api/backoffice_members_avatar.go	131	restaurant_members	UPDATE	unknown	no		mysql
+internal/api/backoffice_members_avatar.go	135	restaurant_members	UPDATE	pg	no		
+internal/api/backoffice_menu_visibility.go	53	menu_visibility	INSERT	mysql	yes	menu_key	
+internal/api/backoffice_menu_visibility.go	57	menu_visibility	INSERT	pg	yes	menu_key	
+internal/api/backoffice_menu_visibility.go	153	menu_visibility	UPDATE	unknown	no		mysql
+internal/api/backoffice_menu_visibility.go	157	menu_visibility	UPDATE	pg	no		
+internal/api/backoffice_menu_visibility.go	169	menu_visibility	INSERT	portable	yes	menu_key	
+internal/api/backoffice_pos.go	664	pos_daily_sequences	INSERT	mysql	yes	sequence_type	
+internal/api/backoffice_pos.go	695	pos_daily_sequences	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos.go	847	pos_visits	INSERT	portable	yes	open_idempotency_key	
+internal/api/backoffice_pos.go	870	pos_tickets	INSERT	portable	yes	creation_idempotency_key,ticket_number	
+internal/api/backoffice_pos.go	1015	pos_tickets	UPDATE	portable	no		
+internal/api/backoffice_pos.go	1105	pos_ticket_lines	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos.go	1140	pos_ticket_lines	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos.go	1238	pos_ticket_lines	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos.go	1332	pos_ticket_lines	UPDATE	mysql	no		
+internal/api/backoffice_pos.go	1345	pos_ticket_lines	UPDATE	mysql	no		
+internal/api/backoffice_pos_cash.go	398	pos_cash_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_cash.go	536	pos_cash_closures	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_cash.go	550	pos_shifts	UPDATE	mysql	no		
+internal/api/backoffice_pos_cash_days.go	360	pos_shifts	UPDATE	portable	no		
+internal/api/backoffice_pos_cash_days.go	435	pos_cash_closures	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_cash_days.go	451	pos_shifts	UPDATE	portable	no		
+internal/api/backoffice_pos_catalog.go	95	pos_products	INSERT	portable	yes	sku	
+internal/api/backoffice_pos_catalog.go	104	pos_products	UPDATE	portable	yes	sku	
+internal/api/backoffice_pos_catalog.go	126	pos_products	UPDATE	mysql	no		
+internal/api/backoffice_pos_catalog.go	213	pos_product_categories	INSERT	mysql	yes	name	
+internal/api/backoffice_pos_catalog.go	226	pos_product_categories	INSERT	mysql	yes	name	
+internal/api/backoffice_pos_catalog.go	236	pos_products	INSERT	unknown	no		variable-text (read caller for dialect)
+internal/api/backoffice_pos_catalog.go	241	pos_products	INSERT	unknown	no		variable-text (read caller for dialect)
+internal/api/backoffice_pos_catalog.go	262	pos_products	UPDATE	pg	no		
+internal/api/backoffice_pos_catalog.go	267	pos_products	UPDATE	pg	no		
+internal/api/backoffice_pos_customers.go	159	pos_customers	INSERT	portable	yes	email,phone	
+internal/api/backoffice_pos_customers.go	186	pos_customers	UPDATE	portable	yes	email,phone	
+internal/api/backoffice_pos_customers.go	207	pos_customers	UPDATE	mysql	yes	email,phone	
+internal/api/backoffice_pos_customers.go	330	pos_tickets	UPDATE	portable	no		
+internal/api/backoffice_pos_line_move.go	86	pos_ticket_lines	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_line_move.go	90	pos_ticket_lines	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_line_move.go	241	pos_ticket_lines	UPDATE	portable	no		
+internal/api/backoffice_pos_modifiers.go	429	pos_modifier_groups	INSERT	portable	yes	name	
+internal/api/backoffice_pos_modifiers.go	495	pos_modifier_groups	UPDATE	portable	yes	name	
+internal/api/backoffice_pos_modifiers.go	505	pos_modifier_groups	UPDATE	portable	no		
+internal/api/backoffice_pos_modifiers.go	523	pos_modifier_groups	UPDATE	portable	no		
+internal/api/backoffice_pos_modifiers.go	529	pos_modifier_groups	UPDATE	portable	no		
+internal/api/backoffice_pos_modifiers.go	539	pos_modifier_groups	UPDATE	portable	no		
+internal/api/backoffice_pos_modifiers.go	604	pos_modifier_options	INSERT	portable	yes	name	
+internal/api/backoffice_pos_modifiers.go	646	pos_modifier_options	UPDATE	portable	yes	name	
+internal/api/backoffice_pos_modifiers.go	656	pos_modifier_options	UPDATE	portable	no		
+internal/api/backoffice_pos_modifiers.go	662	pos_modifier_options	UPDATE	portable	no		
+internal/api/backoffice_pos_modifiers.go	672	pos_modifier_options	UPDATE	portable	no		
+internal/api/backoffice_pos_operations.go	63	pos_service_periods	INSERT	portable	yes	name	
+internal/api/backoffice_pos_operations.go	79	pos_service_periods	UPDATE	unknown	yes	name	native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_operations.go	196	pos_visits	UPDATE	portable	no		
+internal/api/backoffice_pos_operations.go	241	pos_visits	UPDATE	mysql	no		
+internal/api/backoffice_pos_operations.go	260	pos_tickets	UPDATE	mysql	no		
+internal/api/backoffice_pos_operations.go	317	pos_tickets	INSERT	portable	yes	creation_idempotency_key,ticket_number	
+internal/api/backoffice_pos_operations.go	387	pos_ticket_lines	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_operations.go	389	pos_ticket_lines	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_operations.go	397	pos_ticket_lines	UPDATE	portable	no		
+internal/api/backoffice_pos_operations.go	468	pos_shifts	INSERT	portable	no		
+internal/api/backoffice_pos_operations.go	511	pos_shifts	UPDATE	mysql	no		
+internal/api/backoffice_pos_operations.go	516	pos_cash_closures	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_operations.go	577	pos_tickets	UPDATE	portable	no		
+internal/api/backoffice_pos_packs.go	323	pos_packs	INSERT	portable	yes	name	
+internal/api/backoffice_pos_packs.go	367	pos_packs	UPDATE	portable	yes	name	
+internal/api/backoffice_pos_packs.go	373	pos_packs	UPDATE	portable	no		
+internal/api/backoffice_pos_packs.go	383	pos_packs	UPDATE	portable	no		
+internal/api/backoffice_pos_packs.go	389	pos_packs	UPDATE	portable	no		
+internal/api/backoffice_pos_packs.go	395	pos_packs	UPDATE	portable	no		
+internal/api/backoffice_pos_packs.go	405	pos_packs	UPDATE	portable	no		
+internal/api/backoffice_pos_packs.go	427	pos_packs	UPDATE	portable	no		
+internal/api/backoffice_pos_rail.go	116	pos_visits	UPDATE	mysql	no		
+internal/api/backoffice_pos_rail.go	118	pos_visits	UPDATE	unknown	no		needs-reading
+internal/api/backoffice_pos_rail.go	185	pos_visit_merges	INSERT	unknown	yes	idempotency_key	native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_rail.go	266	pos_ticket_lines	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_rail.go	279	pos_kitchen_dispatches	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_rail.go	284	pos_ticket_adjustments	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_rail.go	292	pos_tickets	UPDATE	mysql	no		
+internal/api/backoffice_pos_rail.go	296	pos_visits	UPDATE	mysql	no		
+internal/api/backoffice_pos_rail.go	307	pos_visits	UPDATE	portable	no		
+internal/api/backoffice_pos_rail.go	311	pos_tickets	UPDATE	portable	no		
+internal/api/backoffice_pos_rail.go	357	pos_visits	UPDATE	portable	no		
+internal/api/backoffice_pos_rail.go	418	pos_drawer_events	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_rail.go	537	pos_tickets	UPDATE	portable	no		
+internal/api/backoffice_pos_rail.go	549	pos_ticket_adjustments	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_rail.go	631	pos_ticket_lines	UPDATE	mysql	no		
+internal/api/backoffice_pos_rail.go	633	pos_ticket_lines	UPDATE	unknown	no		needs-reading
+internal/api/backoffice_pos_rail.go	689	pos_tickets	UPDATE	unknown	no		variable-text (read caller for dialect)
+internal/api/backoffice_pos_rail.go	759	pos_tags	INSERT	portable	yes	name	
+internal/api/backoffice_pos_recall.go	183	pos_ticket_lines	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_recall.go	235	pos_ticket_lines	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_reports.go	285	pos_stock_exceptions	UPDATE	mysql	yes	replay_idempotency_key	
+internal/api/backoffice_pos_reports.go	296	pos_tickets	UPDATE	portable	no		
+internal/api/backoffice_pos_split.go	47	pos_product_categories	INSERT	portable	yes	name	
+internal/api/backoffice_pos_split.go	57	pos_product_categories	UPDATE	unknown	yes	name	native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_split.go	122	pos_tickets	UPDATE	mysql	no		
+internal/api/backoffice_pos_stock_realtime.go	181	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_stock_realtime.go	291	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_stock_realtime.go	395	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_postres.go	133	POSTRES	INSERT	unknown	no		mysql
+internal/api/backoffice_postres.go	136	POSTRES	INSERT	unknown	no		pg
+internal/api/backoffice_postres.go	225	POSTRES	UPDATE	unknown	no		dynamic-builder
+internal/api/backoffice_premium.go	1134	restaurant_domains	UPDATE	portable	no		
+internal/api/backoffice_premium.go	1149	restaurant_domains	INSERT	mysql	yes	domain	
+internal/api/backoffice_premium.go	1159	restaurant_domains	INSERT	mysql	yes	domain	
+internal/api/backoffice_premium.go	2100	restaurant_tables	UPDATE	mysql	no		
+internal/api/backoffice_premium.go	2102	restaurant_tables	UPDATE	pg	no		
+internal/api/backoffice_premium.go	2159	restaurant_areas	INSERT	mysql	yes	name	
+internal/api/backoffice_premium.go	2161	restaurant_areas	INSERT	pg	yes	name	
+internal/api/backoffice_premium.go	2167	restaurant_areas	INSERT	mysql	yes	name	
+internal/api/backoffice_premium.go	2169	restaurant_areas	INSERT	pg	yes	name	
+internal/api/backoffice_premium.go	2175	restaurant_areas	INSERT	mysql	yes	name	
+internal/api/backoffice_premium.go	2177	restaurant_areas	INSERT	pg	yes	name	
+internal/api/backoffice_premium.go	2234	restaurant_areas	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2240	restaurant_areas	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2250	restaurant_areas	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2256	restaurant_areas	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2266	restaurant_areas	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2270	restaurant_areas	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2412	restaurant_tables	INSERT	mysql	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2414	restaurant_tables	INSERT	pg	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2420	restaurant_tables	INSERT	mysql	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2422	restaurant_tables	INSERT	pg	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2428	restaurant_tables	INSERT	mysql	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2430	restaurant_tables	INSERT	pg	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2436	restaurant_tables	INSERT	mysql	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2438	restaurant_tables	INSERT	pg	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2444	restaurant_tables	INSERT	mysql	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2446	restaurant_tables	INSERT	pg	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2452	restaurant_tables	INSERT	mysql	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2454	restaurant_tables	INSERT	pg	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2460	restaurant_tables	INSERT	mysql	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2462	restaurant_tables	INSERT	pg	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2468	restaurant_tables	INSERT	mysql	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2470	restaurant_tables	INSERT	pg	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2476	restaurant_tables	INSERT	mysql	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2478	restaurant_tables	INSERT	pg	yes	name,numero_mesa	
+internal/api/backoffice_premium.go	2484	restaurant_tables	INSERT	mysql	yes	name	
+internal/api/backoffice_premium.go	2486	restaurant_tables	INSERT	pg	yes	name	
+internal/api/backoffice_premium.go	2675	restaurant_tables	UPDATE	unknown	yes	name	mysql
+internal/api/backoffice_premium.go	2690	restaurant_tables	UPDATE	unknown	yes	name	pg
+internal/api/backoffice_premium.go	2709	restaurant_tables	UPDATE	unknown	yes	name	mysql
+internal/api/backoffice_premium.go	2723	restaurant_tables	UPDATE	unknown	yes	name	pg
+internal/api/backoffice_premium.go	2741	restaurant_tables	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2751	restaurant_tables	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2765	restaurant_tables	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2774	restaurant_tables	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2787	restaurant_tables	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2795	restaurant_tables	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2807	restaurant_tables	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2814	restaurant_tables	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2825	restaurant_tables	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2832	restaurant_tables	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2843	restaurant_tables	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2849	restaurant_tables	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2859	restaurant_tables	UPDATE	mysql	yes	name	
+internal/api/backoffice_premium.go	2865	restaurant_tables	UPDATE	pg	yes	name	
+internal/api/backoffice_premium.go	2896	restaurant_tables	UPDATE	mysql	yes	numero_mesa	
+internal/api/backoffice_premium.go	3953	message_deliveries	INSERT	mysql	no		
+internal/api/backoffice_premium.go	3956	message_deliveries	INSERT	pg	no		
+internal/api/backoffice_premium.go	3963	message_deliveries	INSERT	unknown	no		mysql
+internal/api/backoffice_premium.go	3966	message_deliveries	INSERT	unknown	no		pg
+internal/api/backoffice_stock_permissions.go	106	stock_role_permissions	INSERT	mysql	yes	permission_key,role_slug	
+internal/api/backoffice_uazapi_servers_admin.go	219	uazapi_servers	INSERT	mysql	yes	base_url	
+internal/api/backoffice_uazapi_servers_admin.go	224	uazapi_servers	INSERT	pg	yes	base_url	
+internal/api/backoffice_uazapi_servers_admin.go	426	uazapi_servers	UPDATE	unknown	no		dynamic-builder
+internal/api/booking_extras.go	69	restaurant_booking_extras	INSERT	mysql	yes	slug	
+internal/api/booking_extras.go	73	restaurant_booking_extras	INSERT	pg	yes	slug	
+internal/api/booking_extras.go	98	restaurant_booking_extras	UPDATE	portable	no		
+internal/api/booking_reminders.go	342	booking_reminder_deliveries	INSERT	mysql	yes	delivery_key	
+internal/api/booking_reminders.go	347	booking_reminder_deliveries	INSERT	pg	yes	delivery_key	
+internal/api/booking_reminders.go	370	booking_reminder_deliveries	UPDATE	mysql	no		
+internal/api/booking_reminders.go	372	booking_reminder_deliveries	UPDATE	pg	no		
+internal/api/campaign_auto_retake.go	207	campaign_recipients	UPDATE	portable	no		
+internal/api/campaign_auto_retake.go	217	campaign_recipients	UPDATE	portable	no		
+internal/api/campaign_bounce_sync.go	292	campaign_suppressions	INSERT	mysql	yes	channel,target	
+internal/api/campaign_bounce_sync.go	298	campaign_suppressions	INSERT	pg	yes	channel,target	
+internal/api/campaign_bounce_sync.go	309	campaign_suppressions	INSERT	mysql	yes	channel,target	
+internal/api/campaign_bounce_sync.go	312	campaign_suppressions	INSERT	pg	yes	channel,target	
+internal/api/campaign_bounce_sync.go	348	campaign_bounce_events	INSERT	mysql	yes	event_key	
+internal/api/campaign_bounce_sync.go	350	campaign_bounce_events	INSERT	pg	yes	event_key	
+internal/api/campaign_email_validation.go	114	campaign_suppressions	INSERT	mysql	yes	channel,target	
+internal/api/campaign_email_validation.go	117	campaign_suppressions	INSERT	pg	yes	channel,target	
+internal/api/conversation_history.go	274	conversation_sessions	UPDATE	mysql	no		
+internal/api/conversation_history.go	281	conversation_sessions	UPDATE	pg	no		
+internal/api/conversation_history.go	291	conversation_sessions	INSERT	portable	yes	id	
+internal/api/legal_pages.go	190	legal_pages	INSERT	mysql	yes	slug	
+internal/api/legal_pages.go	198	legal_pages	INSERT	pg	yes	slug	
+internal/api/member_whatsapp_verification.go	100	restaurant_members	UPDATE	portable	no		
+internal/api/member_whatsapp_verification.go	147	restaurant_members	UPDATE	portable	no		
+internal/api/member_whatsapp_verification.go	151	restaurant_members	UPDATE	mysql	no		
+internal/api/menu_visibility_admin.go	37	menu_visibility	UPDATE	pg	no		
+internal/api/menu_visibility_admin.go	195	menu_visibility	UPDATE	pg	no		
+internal/api/public_unsubscribe.go	172	campaign_suppressions	INSERT	mysql	yes	channel,target	
+internal/api/public_unsubscribe.go	175	campaign_suppressions	INSERT	pg	yes	channel,target	
+internal/api/site_builder.go	284	site_builder_sites	INSERT	unknown	yes	id,subdomain	mysql
+internal/api/site_builder.go	287	site_builder_sites	INSERT	unknown	yes	id,subdomain	pg
+internal/api/site_builder.go	304	site_builder_pages	INSERT	unknown	yes	id,site_id,slug	mysql
+internal/api/site_builder.go	307	site_builder_pages	INSERT	unknown	yes	id,site_id,slug	pg
+internal/api/site_builder.go	444	site_builder_sites	UPDATE	unknown	no		dynamic-builder
+internal/api/site_builder.go	588	site_builder_pages	INSERT	unknown	yes	id,site_id,slug	mysql
+internal/api/site_builder.go	591	site_builder_pages	INSERT	unknown	yes	id,site_id,slug	pg
+internal/api/site_builder.go	729	site_builder_pages	UPDATE	unknown	no		dynamic-builder
+internal/api/site_builder.go	897	site_builder_assets	INSERT	unknown	yes	id	mysql
+internal/api/site_builder.go	900	site_builder_assets	INSERT	unknown	yes	id	pg
+internal/api/site_builder.go	1119	site_builder_versions	INSERT	unknown	yes	id,site_id	mysql
+internal/api/site_builder.go	1122	site_builder_versions	INSERT	unknown	yes	id,site_id	pg
+internal/api/site_builder.go	1364	site_builder_bindings	INSERT	unknown	yes	id	mysql
+internal/api/site_builder.go	1367	site_builder_bindings	INSERT	unknown	yes	id	pg
+internal/api/site_builder.go	1437	site_builder_bindings	UPDATE	unknown	no		dynamic-builder
+internal/api/site_builder.go	1547	site_builder_versions	INSERT	unknown	yes	id,site_id	mysql
+internal/api/site_builder.go	1550	site_builder_versions	INSERT	unknown	yes	id,site_id	pg
+internal/api/site_builder.go	1561	site_builder_sites	UPDATE	unknown	no		mysql
+internal/api/site_builder.go	1563	site_builder_sites	UPDATE	pg	no		
+internal/api/site_builder.go	1741	site_builder_domain_mappings	INSERT	unknown	yes	domain,id	mysql
+internal/api/site_builder.go	1744	site_builder_domain_mappings	INSERT	unknown	yes	domain,id	pg
+internal/api/site_builder.go	1841	site_builder_domain_mappings	UPDATE	unknown	no		mysql
+internal/api/site_builder.go	1845	site_builder_domain_mappings	UPDATE	pg	no		
+internal/api/site_builder_billing.go	73	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_billing.go	135	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_billing.go	237	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_billing.go	246	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_billing.go	411	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_billing.go	472	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_registrar.go	140	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_registrar.go	154	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_registrar.go	171	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_registrar.go	235	restaurant_domains	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/site_builder_registrar.go	299	site_builder_domain_mappings	INSERT	mysql	yes	domain,id	
+internal/api/site_builder_registrar.go	303	site_builder_domain_mappings	INSERT	pg	yes	domain,id	
+internal/api/special_menu_cta.go	184	menus	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/special_menu_group_booking.go	200	menus	UPDATE	portable	no		
+internal/api/special_menu_principales.go	157	menus	UPDATE	portable	no		
+internal/api/stripe_connect_fees.go	198	platform_settings	INSERT	mysql	yes	setting_key	
+internal/api/whatsapp_bot_ai_config.go	219	restaurant_ai_provider_keys	INSERT	mysql	yes	provider	
+internal/api/whatsapp_bot_catalog_extras.go	203	restaurant_booking_extras	INSERT	mysql	yes	slug	
+internal/api/whatsapp_bot_catalog_extras.go	247	restaurant_booking_extras	UPDATE	portable	no		
+internal/api/whatsapp_bot_history.go	48	whatsapp_bot_sessions	INSERT	mysql	yes	user_phone	
+internal/api/whatsapp_bot_history.go	53	whatsapp_bot_sessions	INSERT	pg	yes	user_phone	
+internal/api/whatsapp_bot_human_takeover.go	85	whatsapp_bot_sessions	INSERT	mysql	yes	user_phone	
+internal/api/whatsapp_bot_human_takeover.go	90	whatsapp_bot_sessions	INSERT	pg	yes	user_phone	
+internal/api/whatsapp_bot_media_ops.go	454	comida_items	UPDATE	unknown	no		needs-reading
+internal/api/whatsapp_bot_media_ops.go	491	group_menu_section_dishes_v2	UPDATE	unknown	no		mysql
+internal/api/whatsapp_bot_media_ops.go	494	group_menu_section_dishes_v2	UPDATE	unknown	no		pg
+internal/api/whatsapp_bot_media_ops.go	540	menus	UPDATE	unknown	no		mysql
+internal/api/whatsapp_bot_media_ops.go	543	menus	UPDATE	unknown	no		pg
+internal/api/whatsapp_bot_media_ops.go	589	menus	UPDATE	portable	no		
+internal/api/whatsapp_bot_service_session.go	105	bo_sessions	INSERT	portable	yes	token_sha256	
+internal/api/whatsapp_bot_unsubscribe.go	114	campaign_suppressions	INSERT	mysql	yes	channel,target	
+internal/api/whatsapp_bot_unsubscribe.go	117	campaign_suppressions	INSERT	pg	yes	channel,target	
+internal/api/whatsapp_outbox.go	93	message_deliveries	INSERT	mysql	yes	delivery_key	
+internal/api/whatsapp_outbox.go	97	message_deliveries	INSERT	pg	yes	delivery_key	
+internal/api/whatsapp_outbox.go	112	message_deliveries	UPDATE	mysql	no		
+internal/api/whatsapp_outbox.go	121	message_deliveries	UPDATE	pg	no		
+internal/api/whatsapp_outbox.go	175	message_deliveries	UPDATE	mysql	no		
+internal/api/whatsapp_outbox.go	179	message_deliveries	UPDATE	pg	no		
+internal/api/whatsapp_outbox.go	192	message_deliveries	UPDATE	portable	no		
+internal/api/whatsapp_outbox.go	201	message_deliveries	UPDATE	mysql	no		
+internal/api/whatsapp_outbox.go	205	message_deliveries	UPDATE	pg	no		
+internal/api/whatsapp_outbox.go	359	message_deliveries	UPDATE	mysql	no		
+internal/api/whatsapp_outbox.go	368	message_deliveries	UPDATE	pg	no		
+internal/api/whatsapp_outbox.go	384	message_deliveries	UPDATE	mysql	no		
+internal/api/whatsapp_outbox.go	391	message_deliveries	UPDATE	pg	no		
+internal/api/whatsapp_unreachable.go	73	campaign_suppressions	INSERT	mysql	yes	channel,target	
+internal/api/whatsapp_unreachable.go	76	campaign_suppressions	INSERT	pg	yes	channel,target	
+internal/api/backoffice_preferences.go	155	user_preferences	INSERT	mysql	yes	pref_key	
+internal/api/backoffice_preferences.go	159	user_preferences	INSERT	pg	yes	pref_key	
+internal/api/backoffice_preferences.go	194	user_menu_preferences	INSERT	mysql	yes	pref_key	
+internal/api/backoffice_preferences.go	198	user_menu_preferences	INSERT	pg	yes	pref_key	
+internal/api/backoffice_roles.go	538	bo_roles	INSERT	portable	yes	slug	
+internal/api/backoffice_roles.go	547	bo_role_permissions	INSERT	mysql	yes	role_slug,section_key	
+internal/api/backoffice_roles.go	551	bo_role_permissions	INSERT	pg	yes	role_slug,section_key	
+internal/api/backoffice_roles.go	701	bo_users	INSERT	portable	yes	email	
+internal/api/backoffice_roles.go	729	restaurant_members	UPDATE	portable	no		
+internal/api/translations.go	268	dish_translations	INSERT	mysql	yes	entity_type,field_name,lang	
+internal/api/translations.go	274	dish_translations	INSERT	pg	yes	entity_type,field_name,lang	
+internal/api/backoffice_config.go	508	restaurant_floors	INSERT	mysql	no		
+internal/api/backoffice_config.go	513	restaurant_floors	INSERT	pg	yes	scope_key	
+internal/api/backoffice_config.go	601	restaurant_floors	INSERT	mysql	no		
+internal/api/backoffice_config.go	607	restaurant_floors	INSERT	pg	yes	scope_key	
+internal/api/backoffice_config.go	1769	restaurant_floors	UPDATE	portable	no		
+internal/api/backoffice_config.go	1780	restaurant_salons	UPDATE	portable	no		
+internal/api/backoffice_config.go	1808	restaurant_floors	UPDATE	portable	no		
+internal/api/backoffice_config.go	1819	restaurant_salons	UPDATE	portable	no		
+internal/api/backoffice_technical_sheet_bulk.go	178	comida_items	UPDATE	portable	no		
+internal/api/backoffice_technical_sheet_bulk.go	191	comida_bulk_link_batches	INSERT	unknown	yes	idempotency_key	mysql
+internal/api/backoffice_technical_sheet_bulk.go	192	comida_bulk_link_batches	INSERT	unknown	yes	idempotency_key	pg
+internal/api/backoffice_technical_sheet_duplicate.go	60	stock_items	INSERT	portable	no		
+internal/api/backoffice_technical_sheet_duplicate.go	69	stock_item_units	INSERT	portable	yes	code	
+internal/api/backoffice_technical_sheet_ensure.go	107	stock_items	INSERT	portable	no		
+internal/api/backoffice_technical_sheet_ensure.go	115	stock_item_units	INSERT	portable	yes	code	
+internal/api/backoffice_technical_sheet_link.go	102	comida_items	UPDATE	unknown	no		variable-text (read caller for dialect)
+internal/api/backoffice_technical_sheet_link.go	119	POSTRES	UPDATE	unknown	no		variable-text (read caller for dialect)
+internal/api/backoffice_technical_sheet_link.go	123	POSTRES	UPDATE	pg	no		
+internal/api/backoffice_salons.go	315	restaurant_salons	INSERT	portable	yes	name	
+internal/api/backoffice_salons.go	401	restaurant_salons	UPDATE	portable	yes	name	
+internal/api/backoffice_special_dates.go	874	menus	UPDATE	portable	no		
+internal/api/booking_checkout.go	200	booking_checkouts	INSERT	portable	yes	public_id	
+internal/api/booking_checkout.go	233	booking_checkouts	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/booking_checkout.go	237	booking_checkouts	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/booking_checkout.go	280	booking_checkouts	UPDATE	mysql	no		
+internal/api/booking_checkout.go	282	booking_checkouts	UPDATE	pg	no		
+internal/api/booking_checkout.go	288	booking_checkouts	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/booking_checkout.go	360	booking_checkouts	UPDATE	mysql	no		
+internal/api/booking_checkout.go	390	booking_checkouts	UPDATE	portable	no		
+internal/api/booking_checkout.go	437	booking_checkouts	UPDATE	portable	no		
+internal/api/booking_checkout.go	443	booking_checkouts	UPDATE	portable	no		
+internal/api/booking_checkout.go	695	booking_checkouts	UPDATE	mysql	no		
+internal/api/mcp_oauth_routes.go	306	mcp_oauth_tokens	UPDATE	mysql	no		
+internal/api/backoffice_middleware.go	61	bo_sessions	UPDATE	mysql	no		
+internal/api/mcp_oauth_store.go	62	mcp_oauth_clients	INSERT	mysql	yes	client_id	
+internal/api/mcp_oauth_store.go	65	mcp_oauth_clients	INSERT	pg	yes	client_id	
+internal/api/mcp_oauth_store.go	113	mcp_oauth_codes	INSERT	portable	yes	code_hash	
+internal/api/mcp_oauth_store.go	158	mcp_oauth_codes	UPDATE	mysql	no		
+internal/api/mcp_oauth_store.go	160	mcp_oauth_codes	UPDATE	pg	no		
+internal/api/mcp_oauth_store.go	180	mcp_oauth_tokens	INSERT	portable	yes	token_hash	
+internal/api/mcp_oauth_store.go	193	bo_sessions	INSERT	portable	yes	token_sha256	
+internal/api/mcp_oauth_store.go	272	mcp_oauth_tokens	UPDATE	portable	no		
+internal/api/mcp_oauth_store.go	296	mcp_oauth_tokens	UPDATE	mysql	no		
+internal/api/mcp_oauth_store.go	298	mcp_oauth_tokens	UPDATE	pg	no		
+internal/api/chatgpt_plugin_tokens.go	75	chatgpt_plugin_tokens	INSERT	portable	yes	token_hash	
+internal/api/chatgpt_plugin_tokens.go	114	chatgpt_plugin_tokens	UPDATE	mysql	no		
+internal/api/chatgpt_plugin_tokens.go	115	chatgpt_plugin_tokens	UPDATE	pg	no		
+internal/api/chatgpt_plugin_tokens.go	198	chatgpt_plugin_tokens	UPDATE	mysql	no		
+internal/api/backoffice_auth.go	180	bo_sessions	INSERT	portable	yes	token_sha256	
+internal/api/backoffice_auth.go	267	bo_sessions	UPDATE	portable	no		
+internal/api/backoffice_auth.go	366	bo_users	UPDATE	portable	no		
+internal/api/backoffice_auth.go	376	bo_password_reset_tokens	UPDATE	mysql	no		
+internal/api/backoffice_auth.go	383	bo_password_reset_tokens	UPDATE	pg	no		
+internal/api/backoffice_auth.go	395	bo_member_invitation_tokens	UPDATE	mysql	no		
+internal/api/backoffice_auth.go	402	bo_member_invitation_tokens	UPDATE	pg	no		
+internal/api/backoffice_auth.go	458	bo_sessions	UPDATE	portable	no		
+internal/api/backoffice_auth.go	521	bo_users	INSERT	portable	yes	email	
+internal/api/backoffice_platform.go	198	restaurants	INSERT	portable	yes	slug	
+internal/api/backoffice_platform.go	296	restaurants	UPDATE	unknown	no		dynamic-builder
+internal/api/backoffice_platform.go	497	bo_users	INSERT	portable	yes	email	
+internal/api/backoffice_platform.go	583	bo_users	UPDATE	unknown	no		dynamic-builder
+internal/api/backoffice_platform.go	628	bo_users	UPDATE	portable	no		
+internal/api/backoffice_technical_sheet_image_worker.go	103	stock_recipe_step_image_jobs	UPDATE	mysql	no		
+internal/api/backoffice_technical_sheet_images.go	42	stock_recipe_step_image_jobs	UPDATE	mysql	no		
+internal/api/backoffice_technical_sheet_images.go	45	stock_recipe_step_image_jobs	UPDATE	pg	no		
+internal/api/backoffice_technical_sheet_images.go	84	stock_recipe_step_image_jobs	UPDATE	mysql	no		
+internal/api/backoffice_technical_sheet_images.go	87	stock_recipe_step_image_jobs	UPDATE	pg	no		
+internal/api/backoffice_technical_sheet_images.go	213	stock_recipe_step_image_jobs	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_technical_sheets.go	149	stock_items	INSERT	portable	no		
+internal/api/backoffice_technical_sheets.go	157	stock_item_units	INSERT	portable	yes	code	
+internal/api/backoffice_production_labour.go	93	stock_production_orders	UPDATE	portable	no		
+internal/api/backoffice_production_labour.go	203	member_time_allocations	INSERT	portable	yes	idempotency_key	
+internal/api/events.go	91	message_deliveries	INSERT	unknown	no		mysql
+internal/api/events.go	94	message_deliveries	INSERT	unknown	no		pg
+internal/api/events.go	105	message_deliveries	UPDATE	portable	no		
+internal/api/events.go	112	message_deliveries	UPDATE	portable	no		
+internal/api/events.go	119	message_deliveries	UPDATE	portable	no		
+internal/api/events.go	123	message_deliveries	UPDATE	unknown	no		needs-reading
+internal/api/events.go	124	message_deliveries	UPDATE	pg	no		
+internal/api/beverage_options.go	140	restaurant_beverage_options	INSERT	mysql	yes	slug	
+internal/api/beverage_options.go	144	restaurant_beverage_options	INSERT	pg	yes	slug	
+internal/api/beverage_options.go	169	restaurant_beverage_options	UPDATE	portable	no		
+internal/api/floors_date.go	134	restaurant_floors	INSERT	portable	no		
+internal/api/backoffice_stock.go	225	stock_warehouses	INSERT	unknown	yes	code	mysql
+internal/api/backoffice_stock.go	229	stock_warehouses	INSERT	unknown	yes	code	false-positive (comment/other line)
+internal/api/backoffice_stock.go	291	stock_warehouses	UPDATE	portable	no		
+internal/api/backoffice_stock.go	296	stock_warehouses	INSERT	portable	yes	code	
+internal/api/backoffice_stock.go	340	stock_warehouses	UPDATE	portable	no		
+internal/api/backoffice_stock.go	345	stock_warehouses	UPDATE	unknown	yes	code	false-positive (comment/other line)
+internal/api/backoffice_stock.go	387	stock_warehouses	UPDATE	mysql	no		
+internal/api/backoffice_stock.go	440	stock_categories	INSERT	portable	yes	name	
+internal/api/backoffice_stock.go	468	stock_categories	UPDATE	unknown	yes	name	false-positive (comment/other line)
+internal/api/backoffice_stock.go	695	stock_items	INSERT	portable	yes	sku	
+internal/api/backoffice_stock.go	700	stock_item_units	INSERT	portable	yes	code	
+internal/api/backoffice_stock.go	746	stock_items	UPDATE	unknown	yes	sku	false-positive (comment/other line)
+internal/api/backoffice_stock.go	850	stock_item_units	UPDATE	portable	no		
+internal/api/backoffice_stock.go	857	stock_item_units	UPDATE	portable	no		
+internal/api/backoffice_stock.go	863	stock_item_units	INSERT	unknown	yes	code	false-positive (comment/other line)
+internal/api/backoffice_stock.go	970	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_stock.go	1149	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_stock.go	1193	stock_items	UPDATE	mysql	no		
+internal/api/backoffice_stock.go	1462	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_stock_documents.go	158	stock_document_scans	INSERT	unknown	yes	file_hash	native-pair-one-line (mysql+pg)
+internal/api/backoffice_stock_documents.go	409	stock_document_scans	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/backoffice_stock_documents.go	454	stock_document_scans	UPDATE	portable	no		
+internal/api/backoffice_stock_documents.go	566	stock_document_scans	UPDATE	portable	no		
+internal/api/backoffice_stock_documents.go	680	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_stock_documents.go	698	stock_supplier_aliases	INSERT	mysql	yes	normalized_description,supplier_code,supplier_name	
+internal/api/backoffice_stock_documents.go	702	stock_document_scans	UPDATE	portable	no		
+internal/api/backoffice_stock_documents.go	755	stock_document_scans	UPDATE	mysql	no		
+internal/api/backoffice_stock_recipes.go	499	stock_production_orders	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_stock_recipes.go	531	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_stock_recipes.go	553	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_group_menus_v2.go	287	menus	INSERT	portable	no		
+internal/api/backoffice_group_menus_v2.go	404	group_menu_section_dishes_v2	INSERT	unknown	no		mysql
+internal/api/backoffice_group_menus_v2.go	409	group_menu_section_dishes_v2	INSERT	unknown	no		pg
+internal/api/backoffice_group_menus_v2.go	886	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	1321	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	1418	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	2030	group_menu_section_dishes_v2	UPDATE	unknown	no		mysql
+internal/api/backoffice_group_menus_v2.go	2043	group_menu_section_dishes_v2	UPDATE	unknown	no		pg
+internal/api/backoffice_group_menus_v2.go	2091	group_menu_section_dishes_v2	INSERT	unknown	no		mysql
+internal/api/backoffice_group_menus_v2.go	2096	group_menu_section_dishes_v2	INSERT	unknown	no		pg
+internal/api/backoffice_group_menus_v2.go	2370	group_menu_section_dishes_v2	UPDATE	unknown	no		mysql
+internal/api/backoffice_group_menus_v2.go	2383	group_menu_section_dishes_v2	UPDATE	unknown	no		pg
+internal/api/backoffice_group_menus_v2.go	2696	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	2746	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	2863	group_menu_section_dishes_v2	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	2975	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	3100	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	3262	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	3382	menus	UPDATE	unknown	no		mysql
+internal/api/backoffice_group_menus_v2.go	3386	menus	UPDATE	unknown	no		pg
+internal/api/backoffice_group_menus_v2.go	3590	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	3675	menus	UPDATE	unknown	no		mysql
+internal/api/backoffice_group_menus_v2.go	3679	menus	UPDATE	unknown	no		pg
+internal/api/backoffice_group_menus_v2.go	3685	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	3707	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2.go	3793	menus	INSERT	portable	no		
+internal/api/backoffice_group_menus_v2_special_sections.go	734	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2_items.go	114	group_menu_section_dishes_v2	UPDATE	portable	no		
+internal/api/backoffice_group_menus_v2_items.go	123	group_menu_section_dishes_v2	INSERT	unknown	no		mysql
+internal/api/backoffice_group_menus_v2_items.go	128	group_menu_section_dishes_v2	INSERT	unknown	no		pg
+internal/api/backoffice_comida_categories.go	451	comida_categories	INSERT	portable	yes	food_type,slug	
+internal/api/backoffice_comida_categories.go	744	comida_categories	UPDATE	portable	yes	food_type,slug	
+internal/api/backoffice_comida_categories.go	1035	comida_items	UPDATE	portable	no		
+internal/api/backoffice_comida_categories.go	1125	comida_items	UPDATE	portable	no		
+internal/api/comida.go	332	comida_plato_categories	INSERT	mysql	yes	slug	
+internal/api/comida.go	339	comida_plato_categories	INSERT	pg	yes	slug	
+internal/api/comida.go	356	comida_bebida_categories	INSERT	mysql	yes	slug	
+internal/api/comida.go	363	comida_bebida_categories	INSERT	pg	yes	slug	
+internal/api/comida.go	437	comida_plato_categories	INSERT	mysql	yes	slug	
+internal/api/comida.go	443	comida_plato_categories	INSERT	pg	yes	slug	
+internal/api/comida.go	699	comida_plato_categories	INSERT	mysql	yes	slug	
+internal/api/comida.go	705	comida_plato_categories	INSERT	pg	yes	slug	
+internal/api/comida.go	1612	comida_items	INSERT	unknown	yes	ui_data_id	false-positive (comment/other line)
+internal/api/comida.go	1616	comida_items	INSERT	unknown	yes	ui_data_id	false-positive (comment/other line)
+internal/api/comida.go	1675	POSTRES	INSERT	unknown	no		false-positive (comment/other line)
+internal/api/comida.go	1678	POSTRES	INSERT	unknown	no		false-positive (comment/other line)
+internal/api/comida.go	1921	comida_items	UPDATE	unknown	no		false-positive (comment/other line)
+internal/api/comida.go	1997	POSTRES	UPDATE	unknown	no		false-positive (comment/other line)
+internal/api/comida.go	2295	comida_items	UPDATE	portable	no		
+internal/api/comida.go	2398	comida_bebida_categories	INSERT	mysql	yes	slug	
+internal/api/comida.go	2404	comida_bebida_categories	INSERT	pg	yes	slug	
+internal/api/backoffice_stock_analytics.go	464	stock_vat_rates	UPDATE	portable	no		
+internal/api/backoffice_stock_analytics.go	468	stock_vat_rates	INSERT	portable	yes	name	
+internal/api/backoffice_stock_analytics.go	504	stock_vat_rates	UPDATE	portable	no		
+internal/api/backoffice_stock_analytics.go	508	stock_vat_rates	UPDATE	unknown	yes	name	native-pair-one-line (mysql+pg)
+internal/api/backoffice_stock_suppliers.go	95	stock_suppliers	INSERT	portable	yes	name	
+internal/api/backoffice_stock_suppliers.go	137	stock_suppliers	UPDATE	unknown	yes	name	native-pair-one-line (mysql+pg)
+internal/api/backoffice_stock_suppliers.go	307	stock_supplier_aliases	INSERT	mysql	yes	normalized_description,supplier_code,supplier_name	
+internal/api/group_menus.go	265	menus	INSERT	portable	no		
+internal/api/group_menus.go	387	menus	UPDATE	portable	no		
+internal/api/group_menus.go	489	menus	UPDATE	portable	no		
+internal/api/menu_section_dessert_source.go	84	menus	INSERT	portable	no		
+internal/api/menu_section_dessert_source.go	434	group_menu_section_dishes_v2	INSERT	unknown	no		mysql
+internal/api/menu_section_dessert_source.go	446	group_menu_section_dishes_v2	INSERT	unknown	no		pg
+internal/api/backoffice_group_menus.go	406	menus	INSERT	portable	no		
+internal/api/backoffice_group_menus.go	521	menus	UPDATE	portable	no		
+internal/api/backoffice_group_menus.go	606	menus	UPDATE	portable	no		
+internal/api/backoffice_stock_margin_scopes.go	210	stock_margin_scopes	INSERT	portable	yes	scope_key	
+internal/api/backoffice_stock_margin_scopes.go	220	stock_margin_scopes	UPDATE	portable	no		
+internal/api/admin_menus.go	263	group_menu_section_dishes_v2	UPDATE	unknown	no		needs-reading
+internal/api/admin_menus.go	276	group_menu_section_dishes_v2	UPDATE	unknown	no		mysql
+internal/api/admin_menus.go	281	group_menu_section_dishes_v2	UPDATE	pg	no		
+internal/api/admin_menus.go	376	group_menu_section_dishes_v2	UPDATE	unknown	no		mysql
+internal/api/admin_menus.go	381	group_menu_section_dishes_v2	UPDATE	pg	no		
+internal/api/menu_weekday_availability.go	117	menu_weekday_availability	INSERT	mysql	yes	weekday	
+internal/api/menu_weekday_availability.go	121	menu_weekday_availability	INSERT	pg	yes	weekday	
+internal/api/backoffice_stock_import.go	384	stock_categories	INSERT	mysql	yes	name	
+internal/api/backoffice_stock_import.go	396	stock_items	INSERT	portable	yes	sku	
+internal/api/backoffice_stock_import.go	401	stock_item_units	INSERT	portable	yes	code	
+internal/api/menu_public_seo_handlers.go	98	menus	UPDATE	portable	yes	seo_slug	
+internal/api/campaign_email_retry.go	58	campaign_recipients	UPDATE	portable	no		
+internal/api/campaign_email_retry.go	119	campaign_recipients	UPDATE	mysql	no		
+internal/api/campaign_email_retry.go	121	campaign_recipients	UPDATE	unknown	no		needs-reading
+internal/api/campaign_email_retry.go	123	campaign_recipients	UPDATE	portable	no		
+internal/api/campaign_email_retry.go	155	campaign_recipients	UPDATE	unknown	no		needs-reading
+internal/api/backoffice_campaigns.go	424	campaigns	INSERT	portable	yes	coord_id	
+internal/api/backoffice_campaigns.go	464	campaigns	UPDATE	portable	no		
+internal/api/backoffice_campaigns.go	1290	campaign_recipients	INSERT	mysql	yes	channel,target	
+internal/api/backoffice_campaigns.go	1294	campaign_recipients	INSERT	pg	yes	channel,target	
+internal/api/backoffice_campaigns.go	1307	campaigns	UPDATE	portable	no		
+internal/api/backoffice_campaigns.go	1373	campaign_recipients	UPDATE	portable	no		
+internal/api/backoffice_campaigns.go	1393	campaign_recipients	UPDATE	portable	no		
+internal/api/backoffice_campaigns.go	1417	campaign_recipients	UPDATE	portable	no		
+internal/api/backoffice_campaigns.go	1423	campaign_recipients	UPDATE	mysql	no		
+internal/api/backoffice_campaigns.go	1448	campaigns	UPDATE	portable	no		
+internal/api/backoffice_campaigns.go	1453	campaigns	UPDATE	mysql	no		
+internal/api/backoffice_campaigns.go	1547	campaign_recipients	UPDATE	portable	no		
+internal/api/backoffice_campaigns.go	1555	campaign_recipients	UPDATE	portable	no		
+internal/api/backoffice_campaigns.go	1570	campaigns	UPDATE	portable	no		
+internal/api/campaign_email_guard.go	336	campaign_recipients	UPDATE	portable	no		
+internal/api/backoffice_member_access_flows.go	183	restaurant_members	INSERT	portable	yes	email	
+internal/api/backoffice_member_access_flows.go	242	restaurant_members	UPDATE	portable	no		
+internal/api/backoffice_member_access_flows.go	380	bo_users	UPDATE	portable	yes	username	
+internal/api/backoffice_member_access_flows.go	436	bo_users	INSERT	portable	yes	email,username	
+internal/api/backoffice_member_access_flows.go	457	bo_users	UPDATE	portable	yes	username	
+internal/api/backoffice_member_access_flows.go	614	bo_member_invitation_tokens	UPDATE	mysql	no		
+internal/api/backoffice_member_access_flows.go	622	bo_member_invitation_tokens	UPDATE	pg	no		
+internal/api/backoffice_member_access_flows.go	640	bo_member_invitation_tokens	INSERT	portable	yes	token_sha256	
+internal/api/backoffice_member_access_flows.go	652	bo_password_reset_tokens	UPDATE	mysql	no		
+internal/api/backoffice_member_access_flows.go	660	bo_password_reset_tokens	UPDATE	pg	no		
+internal/api/backoffice_member_access_flows.go	678	bo_password_reset_tokens	INSERT	portable	yes	token_sha256	
+internal/api/backoffice_member_access_flows.go	1023	restaurant_members	UPDATE	portable	no		
+internal/api/backoffice_member_access_flows.go	1133	restaurant_members	UPDATE	portable	no		
+internal/api/backoffice_member_access_flows.go	1378	bo_member_invitation_tokens	UPDATE	portable	yes	onboarding_guid	
+internal/api/backoffice_member_access_flows.go	1568	restaurant_members	UPDATE	portable	no		
+internal/api/backoffice_member_access_flows.go	1653	restaurant_members	UPDATE	portable	no		
+internal/api/backoffice_member_access_flows.go	1736	bo_users	UPDATE	portable	no		
+internal/api/backoffice_member_access_flows.go	1745	bo_member_invitation_tokens	UPDATE	mysql	no		
+internal/api/backoffice_member_access_flows.go	1752	bo_member_invitation_tokens	UPDATE	pg	no		
+internal/api/backoffice_member_access_flows.go	1771	bo_password_reset_tokens	UPDATE	mysql	no		
+internal/api/backoffice_member_access_flows.go	1778	bo_password_reset_tokens	UPDATE	pg	no		
+internal/api/backoffice_member_access_flows.go	1993	bo_password_reset_tokens	UPDATE	mysql	no		
+internal/api/backoffice_member_access_flows.go	2000	bo_password_reset_tokens	UPDATE	pg	no		
+internal/api/backoffice_member_access_flows.go	2018	bo_users	UPDATE	portable	no		
+internal/api/backoffice_member_access_flows.go	2028	bo_member_invitation_tokens	UPDATE	mysql	no		
+internal/api/backoffice_member_access_flows.go	2035	bo_member_invitation_tokens	UPDATE	pg	no		
+internal/api/pre_shift_reminders.go	53	message_deliveries	INSERT	mysql	yes	delivery_key	
+internal/api/website_builder_handlers.go	444	website_pages	UPDATE	portable	no		
+internal/api/website_builder_handlers.go	449	website_pages	INSERT	portable	yes	slug	
+internal/api/website_builder_handlers.go	515	website_pages	UPDATE	portable	no		
+internal/api/website_builder_handlers.go	530	website_pages	UPDATE	unknown	no		dynamic-builder
+internal/api/website_builder_handlers.go	1552	website_pages	INSERT	portable	yes	slug	
+internal/api/seo_item_routes.go	657	seo_item_routes	UPDATE	portable	yes	slug	
+internal/api/seo_item_routes.go	672	seo_item_routes	UPDATE	portable	no		
+internal/api/seo_item_routes.go	678	seo_item_routes	UPDATE	mysql	no		
+internal/api/seo_item_routes.go	681	seo_item_routes	UPDATE	pg	no		
+internal/api/seo_item_routes.go	701	seo_item_routes	INSERT	mysql	yes	entity_type,slug	
+internal/api/seo_item_routes.go	725	seo_item_routes	INSERT	pg	yes	entity_type,slug	
+internal/api/seo_item_routes.go	738	seo_item_routes	UPDATE	pg	no		
+internal/api/seo_item_routes.go	966	seo_item_routes	UPDATE	portable	no		
+internal/api/backoffice_pos_pin.go	78	restaurant_members	UPDATE	mysql	no		
+internal/api/backoffice_pos_pin.go	219	restaurant_members	INSERT	portable	no		
+internal/api/backoffice_pos_fiscal.go	107	pos_fiscal_series	INSERT	mysql	yes	terminal_key	
+internal/api/backoffice_pos_fiscal.go	396	pos_fiscal_documents	INSERT	portable	yes	full_number	
+internal/api/backoffice_pos_fiscal.go	410	pos_fiscal_series	UPDATE	portable	no		
+internal/api/backoffice_pos_fiscal.go	503	pos_fiscal_documents	INSERT	unknown	yes	full_number	mysql
+internal/api/backoffice_pos_fiscal.go	504	pos_fiscal_documents	INSERT	unknown	yes	full_number	pg
+internal/api/backoffice_pos_kitchen.go	98	pos_kitchen_stations	INSERT	portable	yes	name	
+internal/api/backoffice_pos_kitchen.go	109	pos_kitchen_stations	UPDATE	unknown	yes	name	native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_kitchen.go	393	pos_kitchen_dispatches	INSERT	portable	yes	command_key	
+internal/api/backoffice_pos_kitchen.go	524	pos_kitchen_dispatches	UPDATE	mysql	no		
+internal/api/backoffice_pos_admin.go	220	pos_role_permissions	INSERT	mysql	yes	permission_key,role_slug	
+internal/api/backoffice_pos_checkout.go	135	pos_stock_exceptions	INSERT	portable	no		
+internal/api/backoffice_pos_checkout.go	196	pos_stock_exceptions	INSERT	portable	no		
+internal/api/backoffice_pos_checkout.go	204	pos_stock_exceptions	INSERT	portable	no		
+internal/api/backoffice_pos_checkout.go	246	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_checkout.go	362	pos_payments	INSERT	portable	yes	idempotency_key,provider,provider_reference	
+internal/api/backoffice_pos_checkout.go	367	pos_tickets	UPDATE	portable	no		
+internal/api/backoffice_pos_checkout.go	389	pos_tickets	UPDATE	mysql	yes	checkout_idempotency_key	
+internal/api/backoffice_pos_checkout.go	404	pos_visits	UPDATE	mysql	no		
+internal/api/backoffice_pos_checkout.go	706	pos_refunds	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_checkout.go	786	stock_movements	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_pos_checkout.go	824	pos_tickets	UPDATE	unknown	no		native-pair-one-line (mysql+pg)
+internal/api/backoffice_pos_checkout.go	864	pos_visits	UPDATE	mysql	no		
+internal/api/backoffice_pos_checkout.go	916	pos_cover_adjustments	INSERT	portable	yes	idempotency_key	
+internal/api/backoffice_uazapi_provisioning.go	246	restaurant_uazapi_instances	UPDATE	mysql	no		
+internal/api/backoffice_uazapi_provisioning.go	251	restaurant_uazapi_instances	UPDATE	pg	no		
+internal/api/backoffice_uazapi_provisioning.go	323	restaurant_uazapi_instances	UPDATE	mysql	no		
+internal/api/backoffice_uazapi_provisioning.go	328	restaurant_uazapi_instances	UPDATE	pg	no		
+internal/api/backoffice_uazapi_provisioning.go	651	restaurant_uazapi_instances	INSERT	mysql	yes	instance_name	
+internal/api/backoffice_uazapi_provisioning.go	664	restaurant_uazapi_instances	INSERT	pg	yes	instance_name	
+internal/api/backoffice_uazapi_provisioning.go	801	restaurant_uazapi_instances	INSERT	mysql	yes	instance_name	
+internal/api/backoffice_uazapi_provisioning.go	806	restaurant_uazapi_instances	INSERT	pg	yes	instance_name	
+internal/api/backoffice_uazapi_provisioning.go	941	restaurant_uazapi_instances	UPDATE	portable	no		
+internal/api/backoffice_uazapi_provisioning.go	959	restaurant_uazapi_instances	UPDATE	mysql	no		
+internal/api/backoffice_uazapi_provisioning.go	970	restaurant_uazapi_instances	UPDATE	pg	no		
+internal/api/backoffice_uazapi_provisioning.go	1002	uazapi_servers	UPDATE	mysql	no		
+internal/api/backoffice_uazapi_provisioning.go	1240	restaurant_uazapi_instances	UPDATE	mysql	no		
+internal/api/backoffice_uazapi_provisioning.go	1248	restaurant_uazapi_instances	UPDATE	pg	no		
+internal/api/backoffice_uazapi_provisioning.go	1270	restaurant_uazapi_instances	UPDATE	mysql	no		
+internal/api/backoffice_uazapi_provisioning.go	1276	restaurant_uazapi_instances	UPDATE	pg	no		
+internal/api/stripe_connect.go	125	restaurant_stripe_connect	INSERT	mysql	yes	account_hash	
+internal/api/stripe_connect.go	129	restaurant_stripe_connect	INSERT	pg	yes	account_hash	
+internal/api/instatic_manager.go	944	site_builder_domain_mappings	INSERT	mysql	yes	domain,id	
+internal/api/instatic_manager.go	948	site_builder_domain_mappings	INSERT	pg	yes	domain,id	
+internal/api/instatic_manager.go	957	restaurant_domains	INSERT	mysql	yes	domain	
+internal/api/instatic_manager.go	961	restaurant_domains	INSERT	pg	yes	domain	
+internal/api/instatic_manager.go	965	restaurant_domains	INSERT	pg	yes	domain	
+internal/api/stripe_event_claim.go	64	stripe_events	INSERT	mysql	yes	event_id	
+internal/api/stripe_event_claim.go	65	stripe_events	INSERT	pg	yes	event_id	
+internal/api/stripe_event_claim.go	86	stripe_events	UPDATE	mysql	no		
+internal/api/stripe_event_claim.go	87	stripe_events	UPDATE	pg	no		
+internal/api/domain_reservation.go	56	restaurant_domains	INSERT	mysql	yes	domain	
+internal/api/domain_reservation.go	60	restaurant_domains	INSERT	pg	yes	domain	
+internal/api/domain_reservation.go	64	restaurant_domains	INSERT	pg	yes	domain	
+internal/api/admin_postres.go	203	POSTRES	INSERT	unknown	no		needs-reading
+internal/api/admin_postres.go	250	POSTRES	UPDATE	unknown	no		needs-reading
+internal/api/admin_postres.go	344	POSTRES	UPDATE	unknown	no		needs-reading
+internal/db/migrations/migrations.go	83	schema_migrations	INSERT	unknown	yes	id	needs-reading
+cmd/backfill-translations/main.go	383	dish_translations	INSERT	mysql	yes	entity_type,field_name,lang	
+cmd/backfill-translations/main.go	387	dish_translations	INSERT	pg	yes	entity_type,field_name,lang	
+cmd/comida-stock-backfill/main.go	230	stock_items	INSERT	portable	yes	sku	
+cmd/comida-stock-backfill/main.go	241	stock_item_units	INSERT	portable	yes	code	
+cmd/group-menu-arroz-cleanup/main.go	243	menus	UPDATE	portable	no		
+cmd/ops-check/main.go	218	message_deliveries	INSERT	unknown	no		native-pair-one-line (mysql+pg)
+cmd/ops-check/main.go	224	message_deliveries	UPDATE	portable	no		
+cmd/ops-check/main.go	230	message_deliveries	UPDATE	portable	no		
+cmd/ops-check/main.go	236	message_deliveries	UPDATE	portable	no		
+cmd/ops-check/main.go	239	message_deliveries	UPDATE	mysql	no		
+cmd/ops-check/main.go	273	stock_document_scans	UPDATE	mysql	no		
+cmd/seed-legal-pages/main.go	101	legal_pages	UPDATE	portable	no		

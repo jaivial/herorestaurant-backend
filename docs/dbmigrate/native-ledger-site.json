@@ -1,0 +1,330 @@
+{
+ "domain": "site_analytics",
+ "inventory": "sql-inventory-r44.json (dbmigrate-r14)",
+ "repo_call_sites": 2474,
+ "repo_native_sites": 1420,
+ "repo_dynamic": 169,
+ "helper_internal_excluded": 9,
+ "prepared_stmt_calls_excluded": 3,
+ "audit_failures": 0,
+ "ledger": [
+  {
+   "file": "internal/analytics/breakdowns.go",
+   "sites": 6,
+   "native_syntax_ported": 6,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/analytics/service.go",
+   "sites": 27,
+   "native_syntax_ported": 27,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/ai_usage_logging.go",
+   "sites": 2,
+   "native_syntax_ported": 2,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/backoffice_ads.go",
+   "sites": 9,
+   "native_syntax_ported": 9,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/backoffice_ai_usage.go",
+   "sites": 7,
+   "native_syntax_ported": 7,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/cafes_page_seo.go",
+   "sites": 2,
+   "native_syntax_ported": 2,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/instatic_manager.go",
+   "sites": 24,
+   "native_syntax_ported": 22,
+   "blocked_on_pg": 2,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/instatic_proxy.go",
+   "sites": 3,
+   "native_syntax_ported": 3,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/legal_pages.go",
+   "sites": 3,
+   "native_syntax_ported": 3,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/public_ads.go",
+   "sites": 1,
+   "native_syntax_ported": 1,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/public_ads_embed.go",
+   "sites": 1,
+   "native_syntax_ported": 1,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/seo_item_routes.go",
+   "sites": 12,
+   "native_syntax_ported": 12,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/site_builder.go",
+   "sites": 47,
+   "native_syntax_ported": 47,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/site_builder_registrar.go",
+   "sites": 3,
+   "native_syntax_ported": 3,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/website_builder_generator.go",
+   "sites": 4,
+   "native_syntax_ported": 4,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/website_builder_handlers.go",
+   "sites": 48,
+   "native_syntax_ported": 48,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  },
+  {
+   "file": "internal/api/website_builder_public.go",
+   "sites": 4,
+   "native_syntax_ported": 4,
+   "blocked_on_pg": 0,
+   "remaining": 0,
+   "remaining_dynamic": 0,
+   "remaining_lines": []
+  }
+ ],
+ "semantic_open": [
+  {
+   "site": "SOURCE ANOMALY website_pages",
+   "note": "Live/restored source website_pages has NO meta_description, meta_keywords, is_homepage, status, position columns (columns: id,website_id,title,slug,page_type,visibility,password_hash,seo_title,seo_description,og_image,page_data,sort_order,is_published,published_at,created_at,updated_at); migration 026a defines them but production schema lacks them. ListPages (both queries), CreatePage, the is_homepage resets, UpdatePage when those fields are sent, ensureHomepage/ensureHomepageAndGetID fail on MySQL and PG alike (preserved, not fixed). PG ORDER BY gets NULLS LAST/FIRST so a later meaning fix keeps MySQL order."
+  },
+  {
+   "site": "SOURCE ANOMALY website_assets / website_publish_history",
+   "note": "Tables absent from source schema: ListAssets/UploadAsset (after the Bunny upload)/DeleteAsset fail on both; PublishHistory and insertPublishHistory version lookup degrade via isSQLSchemaError, which recognises PG 42P01/42703 through sqldb.IsUndefinedObject -> same graceful path; the publish-history INSERT fails on both. JSON cast for snapshot_json not decidable without a schema (portable kept)."
+  },
+  {
+   "site": "DeleteWebsite transaction",
+   "note": "MySQL: DELETE on the missing tables errors per statement, errors ignored, tx continues and the website row is deleted. PG would abort the tx -> all three ignored DELETEs wrapped in sqldb.TxStatementScope (crossaudit rule)."
+  },
+  {
+   "site": "JSON",
+   "note": "COALESCE(json, JSON_OBJECT()) -> CAST(COALESCE(col, CAST('{}' AS jsonb)) AS text); writes CAST(? AS jsonb) incl. dynamic settings/dynamic_params fragments and restaurant_websites settings variants. JSON text rendering/key-order QA pending (existing gap)."
+  },
+  {
+   "site": "execVariants",
+   "note": "Variant query literals now nativeSQL at construction; executor uses selectedSQL(variant.query). Fallback-on-schema-error semantics unchanged (PG undefined-object codes classified). NOW() on timestamptz -> date_trunc('second',statement_timestamp())."
+  },
+  {
+   "site": "website_templates",
+   "note": "category enum CAST AS text; ORDER BY category NULLS FIRST (nullable, MySQL ASC order; PG enum keeps declared order). template_data jsonb read as text."
+  },
+  {
+   "site": "insert ids",
+   "note": "CreatePage/CreateSection/CreateSectionComponent/UploadAsset/seedTemplateSections converted from result.LastInsertId() to sqldb.InsertID (RETURNING id on PG; the source ignored the LastInsertId error, which the MySQL driver never returns). CreatePage/UploadAsset target anomaly columns/tables and still fail on both."
+  },
+  {
+   "site": "anomaly provenance (website_pages/assets/publish_history)",
+   "note": "Evidence = immutable restored-dump schema artifact /home/jaime/orq/villacarmen-bot-20261111/full-export/schema.json (sha256 4cbbdea14083fd075802cd6676fb6a542500440c41974803ec50ccc416578830, database villacarmen_source, server_version 8.0.45 = restored container) and the r4 PG plan. NOT rechecked against current live production; production-readonly-metadata-20261111.tsv has no website_* rows. Do not call live production confirmed."
+  },
+  {
+   "site": "seo dates",
+   "note": "COALESCE(datetime,'') renders MySQL text; PG to_char(...,'YYYY-MM-DD HH24:MI:SS') (dish updated_at TIMESTAMP via AT TIME ZONE 'UTC'). Recent-inactive flag CASE 1/0; NOW() UTC statement second; inactive_since = NOW() naive UTC."
+  },
+  {
+   "site": "legal_pages",
+   "note": "ODKU -> ON CONFLICT (restaurant_id, slug); updated_at naive ON UPDATE via generic trigger (136 ON UPDATE gap)."
+  },
+  {
+   "site": "website_builder_public",
+   "note": "menus COALESCE(price,'') -> CAST(price AS text) (numeric(10,2) keeps scale like MySQL decimal text); modified_at DESC NULLS LAST. openinghours date scanned to string: RFC3339 from time.Time on both drivers (code reading only); date param is a Go-formatted local date string (unchanged)."
+  },
+  {
+   "site": "registrar domain mappings (REVISED, not equivalent)",
+   "note": "Exact MySQL effect of INSERT ... SELECT UUID(), id ... FROM site_builder_sites WHERE restaurant_id=? ON DUPLICATE KEY UPDATE status='active', ssl_status='active' (keys: PRIMARY id, uk_domain): (a) mapping for the domain already exists -> every selected row conflicts; only status/ssl_status change (and updated_at via ON UPDATE only if they changed); site_id, is_primary, id untouched; all generated UUIDs discarded. (b) no mapping yet -> FIRST row in the SELECT's scan order is inserted (its site_id and a fresh UUID), every later row conflicts on uk_domain and only re-sets status/ssl_status to the same values (no change). MySQL scan order depends on the chosen access path (idx_restaurant_id -> (restaurant_id,id) order, i.e. smallest id first) - not runtime-proven. PG branch uses LIMIT 1 with NO ORDER BY: case (a) identical; case (b) the chosen site_id may differ from MySQL's first-scanned row. Not equivalent; candidate source-faithful options (not applied, need decision/evidence): ORDER BY id under the MySQL-equivalent collation, or a two-step insert-first-then-update. Row counts: one mapping row in both; affected-row counts unused (errors ignored)."
+  },
+  {
+   "site": "UUID() v1 vs gen_random_uuid() v4 (NOT accepted)",
+   "note": "Only the two INSERT ... SELECT UUID() sites (site_builder_registrar.go provisionDomainSite; instatic_manager.go not yet ported) generate ids in SQL; site_builder.go uses Go uuid.New() (v4) for every other id. Readers of site_builder_domain_mappings.id: lookups by id (get/delete/verify) and ListDomains ORDER BY is_primary DESC, created_at ASC - no ordering or time extraction by id found in ported code; instatic_proxy reads by domain. A v4 value is therefore not observed to break a consumer, but MySQL v1 embeds time+node and sorts ~chronologically; that property is lost. Recorded NOT-EQUIVALENT; options: keep v4 with explicit owner acceptance, generate the id in Go (would change MySQL path too - not allowed silently), or a v1 generator in PG (uuid-ossp uuid_generate_v1 requires an extension not in the import plan). No change made."
+  },
+  {
+   "site": "seo_item_routes insert ODKU (CUTOVER GATE)",
+   "note": "PG two-step emulation (ON CONFLICT DO NOTHING + UPDATE preferring route-key row) is NOT atomic and the MySQL key-check order (route before slug) is assumed from schema index order, not runtime-proven. Native syntax only; NOT runtime-equivalent. Options: single-statement PG form is impossible for multi-key ODKU; a transaction + row lock (SELECT ... FOR UPDATE on both keys) would make it atomic but changes lock behaviour; needs decision."
+  },
+  {
+   "site": "site_builder.go part A",
+   "note": "jsonb reads CAST AS text, writes CAST(? AS jsonb) incl. dynamic fragments; enum columns read as text; bool is_home -> CAST(CAST(? AS boolean) AS integer) (pgx cannot encode Go bool into int2; MySQL driver sends 1/0). Asset type filter: MySQL ENUM=string compares under the column collation and unknown values match nothing; PG enum cast would raise 22P02 -> CAST(type AS text) COLLATE dbmigrate.ci_ai = ? (depends on the imported collation object). time.Time args all go to TIMESTAMP->timestamptz columns: instant preserved by both drivers (no NaiveUTCArg needed); fractional-second rounding into (0) precision tie gap unchanged. Duplicate detection by err.Error() containing 'uk_subdomain'/'uk_site_slug': PG constraint names ix__site_builder_sites__uk_subdomain / ix__site_builder_pages__uk_site_slug contain the same substring -> same branch (text-coupled, kept as source)."
+  },
+  {
+   "site": "site_builder.go part B",
+   "note": "Components/bindings/publish/status/domains/access helpers: jsonb reads CAST AS text, writes CAST(? AS jsonb) (incl. dynamic UpdateBinding query_config fragment); enum columns (refresh_mode, action, status, verification_method, ssl_status) read as text; enum ASSIGNMENTS (refresh_mode, page_type...) left plain so invalid labels fail on both engines (error classes differ). Bool arg audit: handleCreateDomain is_primary Go bool -> CAST(CAST(? AS boolean) AS integer); no other bool args into smallint in part B. Component category filter is varchar (no enum cast issue). No SQL UUID generation in site_builder.go (Go uuid.New() v4 on both engines). All time.Time args -> timestamptz (instant preserved). No transactions, no RowsAffected gates; publish snapshot reads ignore Scan/Query errors outside any tx (source). uk_domain duplicate detected by err text substring, PG constraint name ix__site_builder_domain_mappings__uk_domain contains it. MAX(version)+1 race on uk_site_version on both."
+  },
+  {
+   "site": "instatic_manager.go:211 instatic_instances upsert BLOCKED_ON_PG",
+   "note": "Source ODKU fires on ANY unique key: uniq_instatic_instances_restaurant(restaurant_id) or uniq_instatic_instances_port(port); a port collision would update another restaurant's row. No single-target PG statement is source-faithful -> MySQL path mysqlOnlySQL unchanged; PG branch does not write (source ignores the error) and logs BLOCKED_ON_PG. Counted by the inventory as a wrapped site but NOT a validated PG port. Cutover gate."
+  },
+  {
+   "site": "instatic_manager.go:903 domain mapping UUID() insert BLOCKED_ON_PG",
+   "note": "MySQL UUID() v1; PG 17 core provides only gen_random_uuid() (v4); the r4 import plan creates no extension (no uuid-ossp/pgcrypto: grep of plan.sql found no CREATE EXTENSION), so uuid_generate_v1 is unavailable without a new extension decision. uk_subdomain makes the SELECT return at most one site row (no first-row ambiguity here). MySQL path unchanged; PG skips the write (source ignores errors), logged. Cutover gate (same family as registrar v1->v4)."
+  },
+  {
+   "site": "instatic_manager.go restaurant_domains upsert",
+   "note": "ON CONFLICT (domain): the only collidable unique key (id generated); cf_zone_id=? second param preserved; cross-tenant on the global domain key as in source."
+  },
+  {
+   "site": "instatic_manager.go other",
+   "note": "last_health_at=NOW() on timestamptz -> date_trunc('second',statement_timestamp()); comida alergenos_json jsonb read as text; ORDER BY nullable category_id ASC -> NULLS FIRST; all other 20 sites portable (plain selects/updates, errors handled as in source, no tx, no time.Time args, no bool args). Instance process/network/Cloudflare code untouched and not run."
+  },
+  {
+   "site": "instatic_proxy.go",
+   "note": "3 portable lookups (domain/slug); CI equality on domain/slug under ci_ai (CI gap). The mapping lookup depends on rows that the PG-blocked insert above no longer writes."
+  },
+  {
+   "site": "inventory classification (r43, dbmigrate-r13)",
+   "note": "New markers: blockedOnPGSQL (MySQL-only, no PG port; counted in blocked_on_pg_sites, NOT native), provisionalSQL/pgProvisionalSQL (syntax-ported, open gate; counted native and listed in provisional_gate_list). native_by_kind reported. mysqlOnlySQL (3) are the MySQL halves of explicit dialect branches whose PG half is a separate counted site: technical_sheet_steps:143 (pg 133/138), booking_documents:413 (pg 394), seo_item_routes:700 (pg provisional 707/715). pgOnlySQL (4): technical_sheet_steps 133/138, booking_documents 394, modification_history 43 (PG DDL). runtime_verified_sites = 0. Denominator unchanged (2474). r42 and earlier inventories preserved."
+  },
+  {
+   "site": "analytics package dialect",
+   "note": "internal/analytics has its own sqlDialect + nativeSQL/portableSQL (sql_native.go) and SetSQLDialect; the cutover must set it together with api.sqlDialect (OPEN wiring item; nothing sets either today, server refuses PG)."
+  },
+  {
+   "site": "analytics dates",
+   "note": "DateRange values are UTC-midnight time.Time (parseAnalyticsDate time.Parse + dateOnly UTC); MySQL driver sends 'YYYY-MM-DD 00:00:00' (loc=UTC) compared against DATE columns; pgx binds the same UTC date for date params -> identical BETWEEN bounds. DATE(naive timestamp) -> CAST(.. AS date) (UTC wall, as source). Business dates are UTC-labelled source dates, not Madrid-converted (source behaviour)."
+  },
+  {
+   "site": "analytics WEEKDAY/HOUR",
+   "note": "WEEKDAY (0=Mon..6=Sun) -> EXTRACT(ISODOW)-1; GROUP BY 1. HOUR(MIN(paid_at)) on naive UTC paid_at -> EXTRACT(HOUR) (UTC hour as source, not Madrid). GROUP BY v.id with v.covers valid via PK dependency on PG."
+  },
+  {
+   "site": "analytics decimals",
+   "note": "AVG(decimal(18,6)) -> ROUND(AVG(..),10) (MySQL AVG scale = 6+div_precision_increment 4); SUM over bigint/decimal exact on both, scanned into int64/float64."
+  },
+  {
+   "site": "analytics upserts",
+   "note": "5 ODKU -> ON CONFLICT on each table's single collidable unique key (customers identity, customer_sources source_ref, sales_documents source, sales_lines source line, stock_facts source); PK is generated id in all; MySQL left-to-right assignment has no cross-column reads here -> EXCLUDED/old-row CASE identical. Enum source_type/status/method/type read as text; invoices COALESCE(status,'') -> CAST(status AS text) (PG enum vs '' would error). IF -> CASE in phone concat; CONCAT NULL-semantics unreachable (guarded). waste_breakdown_json CAST(? AS jsonb) / read as text (JSON text QA)."
+  },
+  {
+   "site": "analytics transaction",
+   "note": "Refresh tx: every tx statement error is checked and returned (AST: 0 ignored); rollback+markRunFailed on error (outside tx). sync run id via sqldb.InsertID. completed_at NOW() naive UTC -> UTC statement second. Ordering: top items/categories ORDER BY revenue DESC LIMIT 10 ties nondeterministic on both; GROUP BY product/category names under ci_ai (CI gap)."
+  },
+  {
+   "site": "classifier r14",
+   "note": "dbmigrate-r14: non-sqldb InsertID/InsertSelectID receivers (botstore.DB.InsertID(ctx,q,...)) read the query at arg 1 (r13 read arg 3). Exact effect on the same tree (r13 vs r14 run): ai_usage_logging.go:109 null->selectedSQL; whatsapp_bot_context_sqlite.go:245 dynamic->static (still unported). Totals unchanged."
+  },
+  {
+   "site": "backoffice_ads.go",
+   "note": "jsonb (content/ctas/layout/canvas/design) read as text, written CAST(? AS jsonb) incl. both dynamic UPDATE variants (selected once, selectedSQL at Exec); image_generation_status enum read as text; ad insert id via sqldb.InsertID; NOW() on timestamptz -> statement second; nullable updated_at DESC -> NULLS LAST (also public_ads/embed). starts_at/ends_at bound as Go-formatted date strings (unchanged). Status-update RowsAffected==0 only logs a warning: MySQL changed-rows logs it for a same-status update, PG matched-rows would not (diagnostic-only delta, recorded). persistBOAdImageURL tx: FOR UPDATE + errors returned (no ignored tx errors)."
+  },
+  {
+   "site": "backoffice_ai_usage.go",
+   "note": "ai_usage_logs (business DB): bucket via sqlFragment(MySQL DATE_FORMAT, existing PG to_char/date_trunc week) wrapped once; from/to are UTC-midnight time.Time against naive timestamp(3) -> same UTC wall on both drivers. whatsapp_message_logs report goes to the bot store (st, own dialect + Rebind); its 3 queries were already dialect-selected (wa_bot_store_pg_mysql_v1) -> selectedSQL marker. PG ILIKE (bot store TEXT, deterministic) is case-insensitive only vs MySQL LIKE CI+AI (accent gap)."
+  },
+  {
+   "site": "ai_usage_logging.go",
+   "note": "ai_usage_logs created_at naive timestamp(3) bound via NaiveUTCArg (MySQL driver stores UTC wall); insert id via sqldb.InsertID (source ignored the LastInsertId error); schema-error tolerance unchanged. cost float64 -> numeric(14,8) rounding QA (float->decimal family). WhatsApp log insert on bot store already PG-aware -> selectedSQL."
+  },
+  {
+   "site": "cafes_page_seo.go",
+   "note": "Dynamic ODKU -> ON CONFLICT (restaurant_id) DO UPDATE SET col = EXCLUDED.col (single collidable key uniq_rest_page_vis_restaurant); full composed string wrapped once."
+  },
+  {
+   "site": "analytics dialect wiring (unchanged gate)",
+   "note": "Not activated; cutover must call analytics.SetSQLDialect with the api dialect. No runtime config added."
+  }
+ ],
+ "pg_ready": false,
+ "runtime_verified": 0,
+ "sites": 203,
+ "remaining": 0,
+ "remaining_dynamic": 0,
+ "done_files": 17,
+ "syntax_complete": false,
+ "cutover_gates": [
+  "seo_item_routes two-step ODKU emulation (non-atomic, assumed key priority)",
+  "registrar LIMIT 1 first-site choice unproven",
+  "registrar UUID v1->v4 unaccepted",
+  "instatic_instances multi-key upsert BLOCKED_ON_PG",
+  "instatic domain mapping UUID() BLOCKED_ON_PG",
+  "bounce invalid UTF-8 suppression",
+  "analytics dialect wiring (SetSQLDialect)"
+ ],
+ "blocked_on_pg": 2,
+ "repo_blocked_on_pg": 2,
+ "repo_unwrapped": 1052,
+ "repo_provisional_gate_list": [
+  "internal/api/seo_item_routes.go:707",
+  "internal/api/seo_item_routes.go:715",
+  "internal/api/site_builder_registrar.go:169"
+ ],
+ "repo_runtime_verified": 0,
+ "native_syntax_ported": 201,
+ "syntax_complete_excluding_blocked": true
+}

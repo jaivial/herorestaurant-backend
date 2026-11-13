@@ -1,0 +1,7 @@
+file	line	call	issue
+internal/api/backoffice_premium.go	1151	sqlFragment	ON adds 1 placeholders, call adds 0 keys
+internal/api/backoffice_premium.go	1161	sqlFragment	ON adds 1 placeholders, call adds 0 keys
+internal/api/whatsapp_bot_history.go	53		ON adds 1 placeholders, call adds 0 keys
+internal/api/whatsapp_bot_human_takeover.go	90		ON adds 1 placeholders, call adds 0 keys
+internal/api/seo_item_routes.go	726	pgOnlySQL	ON adds 2 placeholders, call adds 0 keys
+internal/api/backoffice_stock.go	652	s.db.QueryContext	ON adds -2 placeholders, call adds 0 keys

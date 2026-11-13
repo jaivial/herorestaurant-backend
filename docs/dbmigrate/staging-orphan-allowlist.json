@@ -1,0 +1,26 @@
+{
+  "schema_sha256": "4cbbdea14083fd075802cd6676fb6a542500440c41974803ec50ccc416578830",
+  "purpose": "STAGING-ONLY data-proof exception for 4 historical source FK orphan sets (731 child rows), independently confirmed on the restored MySQL source; NOT approved for production; FKs created NOT VALID, ready_for_cutover stays false",
+  "entries": [
+    {
+      "table": "bo_invoice_comments",
+      "constraint": "fk_bo_invoice_comments_invoice",
+      "orphans": 1
+    },
+    {
+      "table": "invoice_line_items",
+      "constraint": "fk_invoice_line_items_invoice",
+      "orphans": 726
+    },
+    {
+      "table": "site_builder_domain_mappings",
+      "constraint": "fk_domain_site",
+      "orphans": 3
+    },
+    {
+      "table": "site_builder_pages",
+      "constraint": "fk_page_site",
+      "orphans": 1
+    }
+  ]
+}

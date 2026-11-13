@@ -59,7 +59,7 @@ func (s *Server) loadConnectFeeSettings(ctx context.Context) connectFeeSettings 
 		StripeBasePercent:    defaultStripeBasePercent,
 		StripeBaseFixedCents: defaultStripeBaseFixedCents,
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT setting_key, setting_value FROM platform_settings WHERE setting_key IN (?, ?, ?)`,
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT setting_key, setting_value FROM platform_settings WHERE setting_key IN (?, ?, ?)`, `SELECT setting_key, setting_value FROM platform_settings WHERE app.norm_ascii(setting_key) IN (app.norm_ascii(?), app.norm_ascii(?), app.norm_ascii(?))`),
 		settingPlatformFeePercent, settingStripeBasePercent, settingStripeBaseFixedCents)
 	if err != nil {
 		return out
@@ -89,7 +89,7 @@ func (s *Server) loadConnectFeeSettings(ctx context.Context) connectFeeSettings 
 func (s *Server) connectFeeFor(ctx context.Context, restaurantID int) connectFee {
 	fee := connectFee{connectFeeSettings: s.loadConnectFeeSettings(ctx)}
 	var override float64
-	if err := s.db.QueryRowContext(ctx, `SELECT platform_fee_percent FROM restaurant_stripe_fee_overrides WHERE restaurant_id = ?`, restaurantID).Scan(&override); err == nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT platform_fee_percent FROM restaurant_stripe_fee_overrides WHERE restaurant_id = ?`), restaurantID).Scan(&override); err == nil {
 		fee.PlatformFeePercent, fee.Override = override, true
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		log.Printf("[stripe_connect_fees_v1] restaurant=%d override read: %v", restaurantID, err)
@@ -135,7 +135,7 @@ type platformConnectAccount struct {
 
 func (s *Server) handlePlatformStripeConnectList(w http.ResponseWriter, r *http.Request) {
 	settings := s.loadConnectFeeSettings(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT r.id, r.name, r.slug,
 			c.restaurant_id IS NOT NULL, COALESCE(c.demo, 0), COALESCE(c.status, 'not_connected'),
 			COALESCE(c.charges_enabled, 0), COALESCE(c.payouts_enabled, 0),
@@ -144,7 +144,16 @@ func (s *Server) handlePlatformStripeConnectList(w http.ResponseWriter, r *http.
 		FROM restaurants r
 		LEFT JOIN restaurant_stripe_connect c ON c.restaurant_id = r.id
 		LEFT JOIN restaurant_stripe_fee_overrides o ON o.restaurant_id = r.id
-		ORDER BY (c.restaurant_id IS NULL), r.name`)
+		ORDER BY (c.restaurant_id IS NULL), r.name`, `
+		SELECT r.id, r.name, r.slug,
+			c.restaurant_id IS NOT NULL, COALESCE(c.demo, 0), COALESCE(c.status, 'not_connected'),
+			COALESCE(c.charges_enabled, 0), COALESCE(c.payouts_enabled, 0),
+			o.platform_fee_percent,
+			COALESCE(to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '')
+		FROM restaurants r
+		LEFT JOIN restaurant_stripe_connect c ON c.restaurant_id = r.id
+		LEFT JOIN restaurant_stripe_fee_overrides o ON o.restaurant_id = r.id
+		ORDER BY (c.restaurant_id IS NULL), r.name COLLATE "es-x-icu"`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo cuentas conectadas")
 		return
@@ -186,7 +195,7 @@ func (s *Server) handlePlatformStripeConnectSettings(w http.ResponseWriter, r *h
 		settingStripeBasePercent:    strconv.FormatFloat(round2(in.StripeBasePercent), 'f', 2, 64),
 		settingStripeBaseFixedCents: strconv.FormatInt(in.StripeBaseFixedCents, 10),
 	} {
-		if _, err := s.db.ExecContext(r.Context(), `INSERT INTO platform_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`, k, v); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO platform_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`, `INSERT INTO platform_settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value`), k, v); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "No se pudo guardar")
 			return
 		}
@@ -212,14 +221,16 @@ func (s *Server) handlePlatformStripeConnectRestaurantFee(w http.ResponseWriter,
 	}
 	a, _ := boAuthFromContext(r.Context())
 	if in.FeePercent == nil {
-		_, err = s.db.ExecContext(r.Context(), `DELETE FROM restaurant_stripe_fee_overrides WHERE restaurant_id = ?`, rid)
+		_, err = s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM restaurant_stripe_fee_overrides WHERE restaurant_id = ?`), rid)
 	} else if !validPercent(*in.FeePercent) {
 		httpx.WriteError(w, http.StatusBadRequest, "La comisión debe estar entre 0 y 30 %")
 		return
 	} else {
-		_, err = s.db.ExecContext(r.Context(), `
+		_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 			INSERT INTO restaurant_stripe_fee_overrides (restaurant_id, platform_fee_percent, updated_by) VALUES (?, ?, ?)
-			ON DUPLICATE KEY UPDATE platform_fee_percent = VALUES(platform_fee_percent), updated_by = VALUES(updated_by)`,
+			ON DUPLICATE KEY UPDATE platform_fee_percent = VALUES(platform_fee_percent), updated_by = VALUES(updated_by)`, `
+			INSERT INTO restaurant_stripe_fee_overrides (restaurant_id, platform_fee_percent, updated_by) VALUES (?, ?, ?)
+			ON CONFLICT (restaurant_id) DO UPDATE SET platform_fee_percent = EXCLUDED.platform_fee_percent, updated_by = EXCLUDED.updated_by`),
 			rid, round2(*in.FeePercent), a.User.ID)
 	}
 	if err != nil {

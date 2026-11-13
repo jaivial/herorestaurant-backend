@@ -1,0 +1,14 @@
+[
+  {
+    "name": "recent_conversations",
+    "source_file": "villacarmen-full-mysql-views-20261111.txt",
+    "source_sha256": "ee5a2f35986fab37633a52e4cb24360ef83e082252beee2aabfe22ca090d5d4e",
+    "source_ddl": "CREATE ALGORITHM=UNDEFINED DEFINER=`villacarmen_user`@`localhost` SQL SECURITY DEFINER VIEW `recent_conversations` AS select `bot_conversation_messages`.`phone_number` AS `phone_number`,count(0) AS `message_count`,max(`bot_conversation_messages`.`timestamp`) AS `last_activity`,timestampdiff(MINUTE,max(`bot_conversation_messages`.`timestamp`),now()) AS `minutes_since_last` from `bot_conversation_messages` group by `bot_conversation_messages`.`phone_number` order by `last_activity` desc",
+    "source_state": "BROKEN at source (MySQL error 1356: invalid references or DEFINER rights); absent from the restored snapshot; no Go callers",
+    "pg_sql": "CREATE VIEW \"recent_conversations\" WITH (security_invoker = true) AS SELECT \"phone_number\", count(*) AS \"message_count\", max(\"timestamp\") AS \"last_activity\", trunc(extract(epoch FROM ((now() AT TIME ZONE 'UTC') - max(\"timestamp\"))) / 60)::bigint AS \"minutes_since_last\" FROM \"bot_conversation_messages\" GROUP BY \"phone_number\" ORDER BY \"last_activity\" DESC",
+    "semantic_differences": "no DEFINER (security_invoker); TIMESTAMPDIFF(MINUTE,a,NOW()) -> trunc(epoch diff/60) with NOW() as UTC wall clock (source server UTC, column is naive datetime); grouping follows the PG column collation (ci_ai if the source column is _ci, PAD SPACE gap applies); the view never worked at source, so this is the INTENDED semantics, not observed behaviour; verified: source timestamp is MySQL datetime -> PG timestamp (naive), so (now() AT TIME ZONE 'UTC') - max(timestamp) is timestamp - timestamp",
+    "requires_source_types": {
+      "bot_conversation_messages.timestamp": "datetime"
+    }
+  }
+]

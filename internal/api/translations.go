@@ -217,13 +217,18 @@ func (s *Server) loadTranslations(ctx context.Context, restaurantID int, entityT
 		args = append(args, id)
 	}
 
-	query := `
+	// padding_batch2_v1: PG compares app.norm (ux__ index); MySQL text unchanged.
+	query := sqlFragment(`
 		SELECT entity_id, field_name, translated_text
 		FROM dish_translations
 		WHERE restaurant_id = ? AND entity_type = ? AND lang = ?
-		  AND entity_id IN (` + strings.Join(placeholders, ",") + `)`
+		  AND entity_id IN (`, `
+		SELECT entity_id, field_name, translated_text
+		FROM dish_translations
+		WHERE restaurant_id = ? AND app.norm(entity_type) = app.norm(?) AND app.norm(lang) = app.norm(?)
+		  AND entity_id IN (`) + strings.Join(placeholders, ",") + `)`
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(query), args...) // lowercase columns, IN (?...) list: portable
 	if err != nil {
 		return out, err
 	}
@@ -259,14 +264,15 @@ func (s *Server) loadEntityTranslations(ctx context.Context, restaurantID int, e
 }
 
 func (s *Server) upsertTranslation(ctx context.Context, restaurantID int, entityType string, entityID int64, field, sourceHash, translated string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO dish_translations
 			(restaurant_id, entity_type, entity_id, field_name, lang, source_hash, translated_text)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			source_hash = VALUES(source_hash),
 			translated_text = VALUES(translated_text)
-	`, restaurantID, entityType, entityID, field, translationLang, sourceHash, translated)
+	`, `INSERT INTO dish_translations (restaurant_id, entity_type, entity_id, field_name, lang, source_hash, translated_text) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id, app.norm(entity_type), entity_id, app.norm(field_name), app.norm(lang)) DO UPDATE SET source_hash = EXCLUDED.source_hash, translated_text = EXCLUDED.translated_text`), restaurantID, entityType, entityID, field, translationLang, sourceHash, translated)
 	return err
 }
 
@@ -525,11 +531,15 @@ type translationHash struct {
 
 func (s *Server) loadExistingTranslationHashes(ctx context.Context, restaurantID int, entityType string, entityID int64) map[string]translationHash {
 	out := make(map[string]translationHash, 4)
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT field_name, source_hash, translated_text
 		FROM dish_translations
 		WHERE restaurant_id = ? AND entity_type = ? AND entity_id = ? AND lang = ?
-	`, restaurantID, entityType, entityID, translationLang)
+	`, `
+		SELECT field_name, source_hash, translated_text
+		FROM dish_translations
+		WHERE restaurant_id = ? AND app.norm(entity_type) = app.norm(?) AND entity_id = ? AND app.norm(lang) = app.norm(?)
+	`), restaurantID, entityType, entityID, translationLang)
 	if err != nil {
 		return out
 	}
@@ -546,10 +556,13 @@ func (s *Server) loadExistingTranslationHashes(ctx context.Context, restaurantID
 
 // deleteEntityTranslations removes all translations for an entity (used on delete).
 func (s *Server) deleteEntityTranslations(ctx context.Context, entityType string, restaurantID int, entityID int64) {
-	_, _ = s.db.ExecContext(ctx, `
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`
 		DELETE FROM dish_translations
 		WHERE restaurant_id = ? AND entity_type = ? AND entity_id = ?
-	`, restaurantID, entityType, entityID)
+	`, `
+		DELETE FROM dish_translations
+		WHERE restaurant_id = ? AND app.norm(entity_type) = app.norm(?) AND entity_id = ?
+	`), restaurantID, entityType, entityID)
 }
 
 // firstNonEmptyTranslation returns the English value if present and non-empty.

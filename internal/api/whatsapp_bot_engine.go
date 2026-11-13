@@ -26,8 +26,11 @@ type botToolExecutor func(ctx context.Context, name string, input json.RawMessag
 // later calls return the cached phone without a new delivery.
 type botTurnState struct {
 	noticeDelivered bool
-	contactSent     bool
-	contactPhone    string
+	// policyReferred: a hard-policy referral was already sent this turn
+	// (wa_bot_hard_policy_v1), so repeated blocked tool calls stay silent.
+	policyReferred bool
+	contactSent    bool
+	contactPhone   string
 	// delivered is the raw input of every successful delivery tool and noFit
 	// is set when a capacity tool said the party does not fit
 	// (wa_bot_special_date_link_guard_v1).

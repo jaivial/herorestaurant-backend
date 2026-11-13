@@ -91,10 +91,10 @@ func (s *Server) handleBOBrandingLogoUpload(w http.ResponseWriter, r *http.Reque
 
 	fullURL := s.bunnyPullURL(ctx, restaurantID, objectPath)
 
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_branding (restaurant_id, logo_url) VALUES (?, ?)
 		ON DUPLICATE KEY UPDATE logo_url = VALUES(logo_url)
-	`, restaurantID, fullURL)
+	`, `INSERT INTO restaurant_branding (restaurant_id, logo_url) VALUES (?, ?) ON CONFLICT (restaurant_id) DO UPDATE SET logo_url = EXCLUDED.logo_url`), restaurantID, fullURL)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Image uploaded but failed to save logo URL")
 		return
@@ -110,7 +110,7 @@ func (s *Server) handleBOBrandingLogoUpload(w http.ResponseWriter, r *http.Reque
 // or "" if none/unknown.
 func (s *Server) currentLogoObjectPath(ctx context.Context, restaurantID int) (string, error) {
 	var raw sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT logo_url FROM restaurant_branding WHERE restaurant_id = ? LIMIT 1`, restaurantID).Scan(&raw)
+	err := s.db.QueryRowContext(ctx, portableSQL(`SELECT logo_url FROM restaurant_branding WHERE restaurant_id = ? LIMIT 1`), restaurantID).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil

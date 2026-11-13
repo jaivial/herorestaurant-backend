@@ -638,12 +638,13 @@ func (s *Server) campaignToolStoreDesign(ctx context.Context, rid int, c boCampa
 		return boCampaign{}, err
 	}
 	if keep && s.db != nil {
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO campaign_design_revisions (restaurant_id, campaign_id, body_html, body_markdown, source, summary) VALUES (?, ?, ?, ?, ?, ?)`,
+		if _, err := s.db.ExecContext(ctx, portableSQL(`INSERT INTO campaign_design_revisions (restaurant_id, campaign_id, body_html, body_markdown, source, summary) VALUES (?, ?, ?, ?, ?, ?)`),
 			rid, c.ID, nullIfEmpty(c.BodyHTML), c.BodyMarkdown, source, truncateRunes(summary, 240)); err != nil {
 			slog.Default().Warn("campaign.tools.revision_failed", "coord_id", c.CoordID, "campaign_id", c.ID, "err", err.Error())
 		} else {
-			_, _ = s.db.ExecContext(ctx, `DELETE FROM campaign_design_revisions WHERE restaurant_id = ? AND campaign_id = ? AND id NOT IN (
-				SELECT id FROM (SELECT id FROM campaign_design_revisions WHERE restaurant_id = ? AND campaign_id = ? ORDER BY id DESC LIMIT ?) newest)`,
+			// Derived-table NOT IN (MySQL LIMIT-in-subquery workaround) is valid PG too.
+			_, _ = s.db.ExecContext(ctx, portableSQL(`DELETE FROM campaign_design_revisions WHERE restaurant_id = ? AND campaign_id = ? AND id NOT IN (
+				SELECT id FROM (SELECT id FROM campaign_design_revisions WHERE restaurant_id = ? AND campaign_id = ? ORDER BY id DESC LIMIT ?) newest)`),
 				rid, c.ID, rid, c.ID, campaignToolRevisionsKept)
 		}
 	}
@@ -942,8 +943,9 @@ type campaignRevision struct {
 
 func (s *Server) campaignLatestRevision(ctx context.Context, rid int, id int64) (campaignRevision, error) {
 	var r campaignRevision
-	err := s.db.QueryRowContext(ctx, `SELECT id, body_html, body_markdown, source, summary, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i')
-		FROM campaign_design_revisions WHERE restaurant_id = ? AND campaign_id = ? ORDER BY id DESC LIMIT 1`, rid, id).
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT id, body_html, body_markdown, source, summary, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i')
+		FROM campaign_design_revisions WHERE restaurant_id = ? AND campaign_id = ? ORDER BY id DESC LIMIT 1`, `SELECT id, body_html, body_markdown, source, summary, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')
+		FROM campaign_design_revisions WHERE restaurant_id = ? AND campaign_id = ? ORDER BY id DESC LIMIT 1`), rid, id).
 		Scan(&r.ID, &r.BodyHTML, &r.Markdown, &r.Source, &r.Summary, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, errors.New("no hay cambios de diseño hechos desde un chat que deshacer en esta campaña")
@@ -978,7 +980,7 @@ func (s *Server) campaignToolDesignUndo(ctx context.Context, rid int, a campaign
 	if err != nil {
 		return nil, "", err
 	}
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM campaign_design_revisions WHERE id = ? AND restaurant_id = ?`, rev.ID, rid)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`DELETE FROM campaign_design_revisions WHERE id = ? AND restaurant_id = ?`), rev.ID, rid)
 	slog.Default().Info("campaign.tools.design_undo", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", rid, "revision", rev.ID)
 	return map[string]any{
 		"ok": true, "campaign_id": c.ID, "undone": rev.Summary, "undone_at": rev.CreatedAt,
@@ -1224,7 +1226,7 @@ func (s *Server) campaignToolDelete(ctx context.Context, rid int, a campaignTool
 	if _, err := s.campaignToolHandler(ctx, rid, s.handleBOCampaignDelete, assistantHandlerInput{Method: http.MethodDelete, URLParam: campaignIDParam(c.ID)}); err != nil {
 		return nil, "", err
 	}
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM campaign_design_revisions WHERE restaurant_id = ? AND campaign_id = ?`, rid, c.ID)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`DELETE FROM campaign_design_revisions WHERE restaurant_id = ? AND campaign_id = ?`), rid, c.ID)
 	slog.Default().Info("campaign.tools.delete", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", rid)
 	return map[string]any{"ok": true, "deleted": c.ID}, fmt.Sprintf("Campaña «%s» (#%d) eliminada.", c.Name, c.ID), nil
 }

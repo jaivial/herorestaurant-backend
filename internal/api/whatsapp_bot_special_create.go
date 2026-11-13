@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"preactvillacarmen/internal/sqldb"
 	"strings"
 	"time"
 )
@@ -124,7 +125,7 @@ func (s *Server) botSpecialCreateValidate(ctx context.Context, q interface {
 	// table is restaurant_days (is_open = 0 means closed); the legacy
 	// closed_days table no longer exists and the old query errored into
 	// "day closed", blocking every special-date creation from the chat.
-	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM restaurant_days WHERE restaurant_id = ? AND date = ? AND is_open = 0", rid, date).Scan(&closed); err != nil || closed > 0 {
+	if err := q.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM restaurant_days WHERE restaurant_id = ? AND date = ? AND is_open = 0"), rid, date).Scan(&closed); err != nil || closed > 0 {
 		return out, errors.New("el día " + date + " está cerrado (o no se pudo comprobar): no se crea desde aquí")
 	}
 	st, _, serr := s.loadSpecialDateSettings(ctx, rid, date)
@@ -305,9 +306,13 @@ func (s *Server) botSpecialCreateExecute(ctx context.Context, tx *sql.Tx, rid in
 	if after := botSpecialCreateAfterKey(rid, b, in.AllowDuplicateOf); after != p.After {
 		return stale("los datos resueltos cambiaron desde la vista previa; pide una propuesta nueva")
 	}
+	if err := lockBookingDays(ctx, tx, rid, b.ReservationDate); err != nil {
+		return "", errors.New("error interno; no se aplicó nada")
+	}
 	// Same column list and values the panel create writes (boInsertBooking),
 	// but inside the claim transaction.
-	res, err := tx.ExecContext(ctx, `
+	// go-sql-driver v1.9.3 LastInsertId never errors: InsertID keeps MySQL identical.
+	id64, err := sqldb.InsertID(ctx, sqlDialect, tx, nativeSQL(`
 		INSERT INTO bookings (
 			restaurant_id,
 			reservation_date,
@@ -336,7 +341,36 @@ func (s *Server) botSpecialCreateExecute(ctx context.Context, tx *sql.Tx, rid in
 			has_mobility_issues,
 			mobility_people
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
+	`, `
+		INSERT INTO bookings (
+			restaurant_id,
+			reservation_date,
+			party_size,
+			children,
+			reservation_time,
+			customer_name,
+			contact_phone,
+			contact_phone_country_code,
+			commentary,
+			arroz_type,
+			arroz_servings,
+			"babyStrollers",
+			"highChairs",
+			contact_email,
+			special_menu,
+			menu_de_grupo_id,
+			menu_de_grupo_assigned,
+			principales_json,
+			extras_json,
+			table_number,
+			preferred_floor_number,
+			is_special_booking,
+			is_prereserva,
+			special_json,
+			has_mobility_issues,
+			mobility_people
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`), "id",
 		rid,
 		b.ReservationDate,
 		b.PartySize,
@@ -367,8 +401,7 @@ func (s *Server) botSpecialCreateExecute(ctx context.Context, tx *sql.Tx, rid in
 	if err != nil {
 		return "", errors.New("no se pudo crear la reserva; no se aplicó nada")
 	}
-	id64, err := res.LastInsertId()
-	if err != nil || id64 <= 0 {
+	if id64 <= 0 {
 		return "", errors.New("no se pudo crear la reserva; no se aplicó nada")
 	}
 	if err := s.applyBookingLocationOccupancy(ctx, tx, rid, b.ReservationDate, b.PreferredFloorNumber, nil, b.PartySize, +1); err != nil {
@@ -381,7 +414,7 @@ func (s *Server) botSpecialCreateExecute(ctx context.Context, tx *sql.Tx, rid in
 	}
 	notice := fmt.Sprintf("Reserva especial #%d creada: %s %s, %d comensales, a nombre de %s.", id64, b.ReservationDate, strings.TrimSuffix(b.ReservationTime, ":00"), b.PartySize, b.CustomerName)
 	rj, _ := json.Marshal(map[string]any{"booking_id": id64, "op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": id64, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})

@@ -435,12 +435,12 @@ func (s *Server) handleBOGroupMenusV2AIWS(w http.ResponseWriter, r *http.Request
 
 func (s *Server) loadBOMenuV2AIImageTracker(ctx context.Context, restaurantID int, menuID int64) (boV2AIImagesTracker, error) {
 	s.logBOGroupMenuV2AITrace("tracker load start restaurant=%d menu=%d", restaurantID, menuID)
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, COALESCE(ai_requested_img, 0), COALESCE(ai_generating_img, 0), ai_generated_img
 		FROM group_menu_section_dishes_v2
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY id ASC
-	`, restaurantID, menuID)
+	`), restaurantID, menuID)
 	if err != nil {
 		s.logBOGroupMenuV2AITrace("tracker load query error restaurant=%d menu=%d err=%v", restaurantID, menuID, err)
 		return boV2AIImagesTracker{}, err
@@ -529,9 +529,9 @@ func buildBOGroupMenuV2WSHelloPayload(
 
 func (s *Server) loadBOMenuV2SliderTracker(ctx context.Context, restaurantID int, menuID int64) (map[string]any, error) {
 	var generating int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COALESCE(slider_ai_generating, 0) FROM menus WHERE restaurant_id = ? AND id = ? LIMIT 1
-	`, restaurantID, menuID).Scan(&generating)
+	`), restaurantID, menuID).Scan(&generating)
 	if err != nil {
 		return nil, err
 	}
@@ -548,7 +548,7 @@ func (s *Server) loadBOMenuV2MenuPreviewTracker(ctx context.Context, restaurantI
 		requestedInt   int
 		generatingInt  int
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COALESCE(show_menu_preview_image, 0),
 		       menu_preview_image_path,
 		       COALESCE(menu_preview_ai_requested, 0),
@@ -556,7 +556,7 @@ func (s *Server) loadBOMenuV2MenuPreviewTracker(ctx context.Context, restaurantI
 		FROM menus
 		WHERE restaurant_id = ? AND id = ?
 		LIMIT 1
-	`, restaurantID, menuID).Scan(
+	`), restaurantID, menuID).Scan(
 		&showPreviewInt,
 		&pathRaw,
 		&requestedInt,
@@ -695,12 +695,18 @@ func (s *Server) handleBOGroupMenusV2GenerateSectionDishAIImage(w http.ResponseW
 	}
 	s.logBOGroupMenuV2AITrace("generate image accepted restaurant=%d menu=%d section=%d dish=%d bytes=%d contentType=%s", a.ActiveRestaurantID, menuID, sectionID, dishID, len(raw), contentType)
 
-	res, err := s.db.ExecContext(r.Context(), `
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE group_menu_section_dishes_v2
 		SET ai_requested_img = 1,
 		    ai_generating_img = 1
 		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
-	`, dishID, sectionID, menuID, a.ActiveRestaurantID)
+	`, `
+		UPDATE group_menu_section_dishes_v2
+		SET ai_requested_img = 1,
+		    ai_generating_img = 1
+		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
+		  AND (ai_requested_img, ai_generating_img) IS DISTINCT FROM (1, 1)
+	`), dishID, sectionID, menuID, a.ActiveRestaurantID)
 	if err != nil {
 		s.logBOGroupMenuV2AITrace("generate db state update error restaurant=%d menu=%d section=%d dish=%d err=%v", a.ActiveRestaurantID, menuID, sectionID, dishID, err)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating dish AI state")
@@ -829,13 +835,20 @@ func (s *Server) handleBOGroupMenusV2GenerateMenuPreviewAIImage(w http.ResponseW
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE menus
 		SET show_menu_preview_image = 1,
 		    menu_preview_ai_requested = 1,
 		    menu_preview_ai_generating = 1
 		WHERE id = ? AND restaurant_id = ?
-	`, menuID, a.ActiveRestaurantID)
+	`, `
+		UPDATE menus
+		SET show_menu_preview_image = 1,
+		    menu_preview_ai_requested = 1,
+		    menu_preview_ai_generating = 1
+		WHERE id = ? AND restaurant_id = ?
+		  AND (show_menu_preview_image, menu_preview_ai_requested, menu_preview_ai_generating) IS DISTINCT FROM (1, 1, 1)
+	`), menuID, a.ActiveRestaurantID)
 	if err != nil {
 		s.logBOGroupMenuV2AITrace("preview generate db state update error restaurant=%d menu=%d err=%v", a.ActiveRestaurantID, menuID, err)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating preview AI state")
@@ -930,14 +943,14 @@ func (s *Server) runBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuPr
 	}
 
 	fullURL := s.bunnyPullURL(ctx, job.RestaurantID, objectPath)
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		UPDATE menus
 		SET show_menu_preview_image = 1,
 		    menu_preview_image_path = ?,
 		    menu_preview_ai_requested = 1,
 		    menu_preview_ai_generating = 0
 		WHERE id = ? AND restaurant_id = ?
-	`, objectPath, job.MenuID, job.RestaurantID)
+	`), objectPath, job.MenuID, job.RestaurantID)
 	if err != nil {
 		s.logBOGroupMenuV2AITrace("preview job db save error restaurant=%d menu=%d err=%v", job.RestaurantID, job.MenuID, err)
 		s.failBOGroupMenuV2AIMenuPreviewImageJob(job, "Failed saving generated image")
@@ -959,13 +972,13 @@ func (s *Server) failBOGroupMenuV2AIMenuPreviewImageJob(job boGroupMenuV2AIMenuP
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, _ = s.db.ExecContext(ctx, `
+	_, _ = s.db.ExecContext(ctx, portableSQL(`
 		UPDATE menus
 		SET menu_preview_ai_generating = 0,
 		    menu_preview_ai_requested = CASE WHEN menu_preview_image_path IS NULL THEN 0 ELSE menu_preview_ai_requested END,
 		    show_menu_preview_image = CASE WHEN menu_preview_image_path IS NULL THEN 0 ELSE show_menu_preview_image END
 		WHERE id = ? AND restaurant_id = ?
-	`, job.MenuID, job.RestaurantID)
+	`), job.MenuID, job.RestaurantID)
 
 	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "preview_image_failed", map[string]any{
 		"menu_preview_ai_requested":  true,
@@ -1048,14 +1061,14 @@ func (s *Server) runBOGroupMenuV2AIImageJob(job boGroupMenuV2AIImageJob) {
 
 	fullURL := s.bunnyPullURL(ctx, job.RestaurantID, objectPath)
 	s.logBOGroupMenuV2AITrace("job db save start %s fullURL=%s", boGroupMenuV2AIJobLabel(job), fullURL)
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		UPDATE group_menu_section_dishes_v2
 		SET ai_requested_img = 1,
 		    ai_generating_img = 0,
 		    ai_generated_img = ?,
 		    foto_path = ?
 		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
-	`, fullURL, objectPath, job.DishID, job.SectionID, job.MenuID, job.RestaurantID)
+	`), fullURL, objectPath, job.DishID, job.SectionID, job.MenuID, job.RestaurantID)
 	if err != nil {
 		s.logBOGroupMenuV2AITrace("job db save error %s err=%v", boGroupMenuV2AIJobLabel(job), err)
 		s.failBOGroupMenuV2AIImageJob(job, "Failed saving generated image")
@@ -1079,11 +1092,11 @@ func (s *Server) failBOGroupMenuV2AIImageJob(job boGroupMenuV2AIImageJob, messag
 	defer cancel()
 	s.logBOGroupMenuV2AITrace("job failed %s message=%q", boGroupMenuV2AIJobLabel(job), message)
 
-	_, _ = s.db.ExecContext(ctx, `
+	_, _ = s.db.ExecContext(ctx, portableSQL(`
 		UPDATE group_menu_section_dishes_v2
 		SET ai_generating_img = 0
 		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
-	`, job.DishID, job.SectionID, job.MenuID, job.RestaurantID)
+	`), job.DishID, job.SectionID, job.MenuID, job.RestaurantID)
 
 	s.broadcastBOGroupMenuV2AIEvent(job.RestaurantID, job.MenuID, "ai_image_failed", map[string]any{
 		"dish_id":       job.DishID,
@@ -2112,11 +2125,11 @@ func byteSliceFromJSONArray(arr []any) ([]byte, bool) {
 
 func (s *Server) ensureBOGroupMenuV2DishExists(ctx context.Context, restaurantID int, menuID int64, sectionID int64, dishID int64) (bool, error) {
 	var count int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COUNT(*)
 		FROM group_menu_section_dishes_v2
 		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
-	`, dishID, sectionID, menuID, restaurantID).Scan(&count)
+	`), dishID, sectionID, menuID, restaurantID).Scan(&count)
 	if err != nil {
 		return false, err
 	}

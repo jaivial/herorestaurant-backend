@@ -103,17 +103,22 @@ func (s *Server) handleBOGroupMenusV2PutSectionCta(w http.ResponseWriter, r *htt
 		return
 	}
 	stored, _ := json.Marshal(menuSectionCta{Enabled: cta.Enabled, Label: cta.Label, Target: cta.Target})
-	res, err := s.db.ExecContext(r.Context(), `
+	// RowsAffected==0 only triggers an existence COUNT: same response for
+	// matched-vs-changed counts. cta_json is JSON -> jsonb on PG.
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE group_menu_sections_v2 SET cta_json = ?
 		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
-	`, string(stored), sectionID, menuID, a.ActiveRestaurantID)
+	`, `
+		UPDATE group_menu_sections_v2 SET cta_json = CAST(? AS jsonb)
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`), string(stored), sectionID, menuID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando el botón de la sección")
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		var exists int
-		_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM group_menu_sections_v2 WHERE id = ? AND menu_id = ? AND restaurant_id = ?`, sectionID, menuID, a.ActiveRestaurantID).Scan(&exists)
+		_ = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM group_menu_sections_v2 WHERE id = ? AND menu_id = ? AND restaurant_id = ?`), sectionID, menuID, a.ActiveRestaurantID).Scan(&exists)
 		if exists == 0 {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
 			return

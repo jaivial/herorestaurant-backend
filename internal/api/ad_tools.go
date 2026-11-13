@@ -164,7 +164,7 @@ func (s *Server) adToolLoad(ctx context.Context, rid int, id int64) (boAd, error
 }
 
 func (s *Server) adToolList(ctx context.Context, rid int) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM restaurant_ads WHERE restaurant_id = ? ORDER BY active DESC, updated_at DESC, id DESC LIMIT 50`, rid)
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT id FROM restaurant_ads WHERE restaurant_id = ? ORDER BY active DESC, updated_at DESC, id DESC LIMIT 50`), rid)
 	if err != nil {
 		return nil, errors.New("no se pudieron leer los anuncios")
 	}
@@ -440,13 +440,14 @@ func (s *Server) adStoreRevision(ctx context.Context, rid int, ad boAd, source, 
 		b, _ := json.Marshal(ad.Design)
 		raw = string(b)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO ad_design_revisions (restaurant_id, ad_id, design_json, source, summary) VALUES (?, ?, ?, ?, ?)`,
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`INSERT INTO ad_design_revisions (restaurant_id, ad_id, design_json, source, summary) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO ad_design_revisions (restaurant_id, ad_id, design_json, source, summary) VALUES (?, ?, CAST(? AS jsonb), ?, ?)`),
 		rid, ad.ID, raw, truncateRunes(source, 31), truncateRunes(summary, 240)); err != nil {
 		slog.Default().Warn("ad.tools.revision_failed", "restaurant_id", rid, "ad_id", ad.ID, "err", err.Error())
 		return
 	}
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM ad_design_revisions WHERE restaurant_id = ? AND ad_id = ? AND id NOT IN (
-		SELECT id FROM (SELECT id FROM ad_design_revisions WHERE restaurant_id = ? AND ad_id = ? ORDER BY id DESC LIMIT ?) newest)`,
+	_, _ = s.db.ExecContext(ctx, portableSQL(`DELETE FROM ad_design_revisions WHERE restaurant_id = ? AND ad_id = ? AND id NOT IN (
+		SELECT id FROM (SELECT id FROM ad_design_revisions WHERE restaurant_id = ? AND ad_id = ? ORDER BY id DESC LIMIT ?) newest)`),
 		rid, ad.ID, rid, ad.ID, adRevisionsKept)
 }
 
@@ -569,7 +570,8 @@ type adRevision struct {
 
 func (s *Server) adLatestRevision(ctx context.Context, rid int, id int64) (adRevision, error) {
 	var rev adRevision
-	err := s.db.QueryRowContext(ctx, `SELECT id, design_json, summary, created_at FROM ad_design_revisions WHERE restaurant_id = ? AND ad_id = ? ORDER BY id DESC LIMIT 1`, rid, id).
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT id, design_json, summary, created_at FROM ad_design_revisions WHERE restaurant_id = ? AND ad_id = ? ORDER BY id DESC LIMIT 1`,
+		`SELECT id, CAST(design_json AS text), summary, created_at FROM ad_design_revisions WHERE restaurant_id = ? AND ad_id = ? ORDER BY id DESC LIMIT 1`), rid, id).
 		Scan(&rev.ID, &rev.Design, &rev.Summary, &rev.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return rev, errors.New("no hay ningún cambio de diseño hecho desde un chat que deshacer")
@@ -596,7 +598,7 @@ func (s *Server) adToolDesignUndo(ctx context.Context, rid int, a adToolArgs) (m
 	} else {
 		// The change being undone was the conversion: back to the previous
 		// format (the legacy fields were never touched).
-		if _, err := s.db.ExecContext(ctx, `UPDATE restaurant_ads SET design_json = NULL WHERE id = ? AND restaurant_id = ?`, ad.ID, rid); err != nil {
+		if _, err := s.db.ExecContext(ctx, portableSQL(`UPDATE restaurant_ads SET design_json = NULL WHERE id = ? AND restaurant_id = ?`), ad.ID, rid); err != nil {
 			return nil, "", errors.New("no se pudo deshacer")
 		}
 		in.Design = nil
@@ -605,7 +607,7 @@ func (s *Server) adToolDesignUndo(ctx context.Context, rid int, a adToolArgs) (m
 	if err != nil {
 		return nil, "", err
 	}
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM ad_design_revisions WHERE id = ? AND restaurant_id = ?`, rev.ID, rid)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`DELETE FROM ad_design_revisions WHERE id = ? AND restaurant_id = ?`), rev.ID, rid)
 	return map[string]any{"ok": true, "ad": adToolView(next), "version": adDesignFingerprint(next.Design), "undone": rev.Summary},
 		fmt.Sprintf("Deshecho en «%s»: %s.", next.Name, truncateRunes(rev.Summary, 160)), nil
 }
@@ -727,10 +729,10 @@ func (s *Server) adToolDelete(ctx context.Context, rid int, a adToolArgs) (map[s
 	if err != nil {
 		return nil, "", err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM restaurant_ads WHERE id = ? AND restaurant_id = ?`, ad.ID, rid); err != nil {
+	if _, err := s.db.ExecContext(ctx, portableSQL(`DELETE FROM restaurant_ads WHERE id = ? AND restaurant_id = ?`), ad.ID, rid); err != nil {
 		return nil, "", errors.New("no se pudo eliminar el anuncio")
 	}
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM ad_design_revisions WHERE restaurant_id = ? AND ad_id = ?`, rid, ad.ID)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`DELETE FROM ad_design_revisions WHERE restaurant_id = ? AND ad_id = ?`), rid, ad.ID)
 	return map[string]any{"ok": true, "deleted": ad.ID}, fmt.Sprintf("Anuncio «%s» eliminado.", ad.Name), nil
 }
 

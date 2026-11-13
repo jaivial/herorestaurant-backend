@@ -3,18 +3,21 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/joho/godotenv"
 
 	"preactvillacarmen/internal/api"
 	"preactvillacarmen/internal/config"
 	"preactvillacarmen/internal/db"
 	"preactvillacarmen/internal/db/migrations"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // La carta de vinos se escribe en group_menu_wines_v2; `num` es la clave legacy
@@ -26,12 +29,24 @@ const wineFotoPathUpdateSQL = `UPDATE group_menu_wines_v2 w
 	SET w.foto_path = ?
 	WHERE w.restaurant_id = ? AND m.legacy_num = ?`
 
+// wineFotoPathUpdateSQLPG is the PG twin (UPDATE .. FROM, same join/filter).
+const wineFotoPathUpdateSQLPG = `UPDATE group_menu_wines_v2 w
+	SET foto_path = ?
+	FROM legacy_wine_map m
+	WHERE m.v2_wine_id = w.id AND m.restaurant_id = w.restaurant_id
+	  AND w.restaurant_id = ? AND m.legacy_num = ?`
+
 // isLegacyVinosMissing reports whether the error is just "the legacy VINOS
 // table is not there", which is the expected state after the migration to v2
 // finished and the table was dropped.
 func isLegacyVinosMissing(err error) bool {
 	if err == nil {
 		return false
+	}
+	// PG: undefined_table 42P01 ("relation "VINOS" does not exist").
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+		return true
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "doesn't exist") &&
@@ -57,13 +72,22 @@ func main() {
 		log.Printf("warning: BUNNY_STORAGE_ACCESS_KEY unset; restaurants without a stored config will fail to upload")
 	}
 
-	sqlDB, err := db.OpenMySQL(cfg.MySQL)
+	// db_dialect_selection_v1: MySQL unchanged; PG gated by
+	// OpenBusinessForTool and report-only: --dry-run required, --upload
+	// refused (no CDN/network), no MySQL migrations, no api.Server.
+	openCtx, openCancel := context.WithTimeout(context.Background(), time.Minute)
+	defer openCancel()
+	sqlDB, d, err := db.OpenBusinessForTool(openCtx, cfg)
 	if err != nil {
 		log.Fatalf("db open: %v", err)
 	}
 	defer sqlDB.Close()
+	dialect = d
+	if dialect == sqldb.Postgres && (!*dryRun || *upload) {
+		log.Fatal("migrate-wine-images: on PostgreSQL only --dry-run without --upload is allowed until runtime QA")
+	}
 
-	{
+	if dialect != sqldb.Postgres {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		if err := migrations.Apply(ctx, sqlDB); err != nil {
@@ -71,17 +95,27 @@ func main() {
 		}
 	}
 
-	s := api.NewServer(sqlDB, cfg)
+	var s *api.Server
+	if dialect != sqldb.Postgres {
+		s = api.NewServer(sqlDB, cfg)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	rows, err := sqlDB.QueryContext(ctx, `
+	// SOURCE ANOMALY kept: VINOS is absent from the source schema (dump); both
+	// engines report "nothing to do" via isLegacyVinosMissing.
+	rows, err := sqlDB.QueryContext(ctx, nativeSQL(`
 		SELECT restaurant_id, num, COALESCE(tipo,''), foto
 		FROM VINOS
 		WHERE foto IS NOT NULL AND LENGTH(foto) > 0 AND (foto_path IS NULL OR LENGTH(foto_path) = 0)
 		ORDER BY restaurant_id ASC, num ASC
-	`)
+	`, `
+		SELECT restaurant_id, num, COALESCE(tipo,''), foto
+		FROM "VINOS"
+		WHERE foto IS NOT NULL AND octet_length(foto) > 0 AND (foto_path IS NULL OR octet_length(foto_path) = 0)
+		ORDER BY restaurant_id ASC, num ASC
+	`))
 	if err != nil {
 		// The legacy VINOS table was dropped once every blob was uploaded to
 		// BunnyCDN. Say so plainly instead of failing with a raw SQL error:
@@ -162,9 +196,9 @@ func main() {
 
 func updateWinePath(ctx context.Context, db *sql.DB, restaurantID int, num int, objectPath string, keepBlob bool) error {
 	if keepBlob {
-		_, err := db.ExecContext(ctx, wineFotoPathUpdateSQL, objectPath, restaurantID, num)
+		_, err := db.ExecContext(ctx, nativeSQL(wineFotoPathUpdateSQL, wineFotoPathUpdateSQLPG), objectPath, restaurantID, num)
 		return err
 	}
-	_, err := db.ExecContext(ctx, wineFotoPathUpdateSQL, objectPath, restaurantID, num)
+	_, err := db.ExecContext(ctx, nativeSQL(wineFotoPathUpdateSQL, wineFotoPathUpdateSQLPG), objectPath, restaurantID, num)
 	return err
 }

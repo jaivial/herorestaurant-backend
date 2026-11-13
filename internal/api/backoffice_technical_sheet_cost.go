@@ -139,7 +139,7 @@ type sheetCostComponent struct {
 // "unknown"; the older costing query coalesced them to zero, which is exactly
 // the silent-zero trap this feature must avoid.
 func (s *Server) loadSheetCostComponents(ctx context.Context, restaurantID int) (map[int64][]sheetCostComponent, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT c.recipe_id, c.stock_item_id, i.name, COALESCE(i.image_url,''), c.qty_base,
 		       i.base_unit, c.entered_qty, u.code, c.waste_pct, c.sub_recipe_id,
 		       (SELECT p.unit_cost_base FROM stock_item_prices p
@@ -150,7 +150,18 @@ func (s *Server) loadSheetCostComponents(ctx context.Context, restaurantID int) 
 		  JOIN stock_items i ON i.restaurant_id=c.restaurant_id AND i.id=c.stock_item_id
 		  JOIN stock_item_units u ON u.restaurant_id=c.restaurant_id AND u.id=c.entered_unit_id
 		 WHERE c.restaurant_id=?
-		 ORDER BY c.recipe_id, c.sort_order, c.id`, restaurantID)
+		 ORDER BY c.recipe_id, c.sort_order, c.id`, `
+		SELECT c.recipe_id, c.stock_item_id, i.name, COALESCE(i.image_url,''), c.qty_base,
+		       i.base_unit, c.entered_qty, u.code, c.waste_pct, c.sub_recipe_id,
+		       (SELECT p.unit_cost_base FROM stock_item_prices p
+		         WHERE p.restaurant_id=i.restaurant_id AND p.stock_item_id=i.id
+		           AND p.effective_at<=(date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')
+		         ORDER BY p.effective_at DESC, p.id DESC LIMIT 1) AS unit_cost
+		  FROM stock_recipe_components c
+		  JOIN stock_items i ON i.restaurant_id=c.restaurant_id AND i.id=c.stock_item_id
+		  JOIN stock_item_units u ON u.restaurant_id=c.restaurant_id AND u.id=c.entered_unit_id
+		 WHERE c.restaurant_id=?
+		 ORDER BY c.recipe_id, c.sort_order, c.id`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -219,12 +230,12 @@ func (s *Server) handleBOTechnicalSheetCost(w http.ResponseWriter, r *http.Reque
 	var grossPrice, vatRate sql.NullFloat64
 	// The sheet stores a VAT rate id, so the percentage is joined in; a sheet
 	// without a rate simply has no net price to reason about.
-	if err := s.db.QueryRowContext(r.Context(), `
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT COALESCE(r.portions,1), r.selling_price_gross, v.rate
 		  FROM stock_recipes r
 		  LEFT JOIN stock_vat_rates v
 		    ON v.restaurant_id=r.restaurant_id AND v.id=r.vat_rate_id
-		 WHERE r.restaurant_id=? AND r.id=?`,
+		 WHERE r.restaurant_id=? AND r.id=?`),
 		a.ActiveRestaurantID, sheetID).Scan(&portions, &grossPrice, &vatRate); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Ficha tecnica no encontrada")
 		return
@@ -266,7 +277,7 @@ func (s *Server) handleBOTechnicalSheetCost(w http.ResponseWriter, r *http.Reque
 // used to price a sub-recipe per base unit.
 func (s *Server) loadSheetYields(ctx context.Context, restaurantID int) (map[int64]float64, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, COALESCE(output_qty_base,0) FROM stock_recipes WHERE restaurant_id=?`, restaurantID)
+		portableSQL(`SELECT id, COALESCE(output_qty_base,0) FROM stock_recipes WHERE restaurant_id=?`), restaurantID)
 	if err != nil {
 		return nil, err
 	}

@@ -65,7 +65,7 @@ func (s *Server) handleBOPOSCourseFire(w http.ResponseWriter, r *http.Request) {
 	}
 	course := normalisePOSCourse(in.Course)
 	var ticketStatus string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT status FROM pos_tickets WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, ticketID).Scan(&ticketStatus); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT status FROM pos_tickets WHERE restaurant_id=? AND id=?`, `SELECT CAST(status AS text) FROM pos_tickets WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, ticketID).Scan(&ticketStatus); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Ticket not found")
 		return
 	}
@@ -92,7 +92,7 @@ type posCourseFireBodyKey struct{}
 // identical double tap produces the same key (and is ignored) while a course
 // that gained a dish produces a new one (and can be fired again).
 func (s *Server) posCourseFingerprint(r *http.Request, restaurantID int, ticketID int64, course string) string {
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,quantity FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' AND COALESCE(NULLIF(course,''),'1')=? ORDER BY id`, restaurantID, ticketID, course)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id,quantity FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' AND COALESCE(NULLIF(course,''),'1')=? ORDER BY id`, `SELECT id,quantity FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' AND COALESCE(CASE WHEN rtrim(course, ' ') COLLATE "C" = '' THEN NULL ELSE course END,'1')=? ORDER BY id`), restaurantID, ticketID, course)
 	if err != nil {
 		return "unknown"
 	}
@@ -115,10 +115,12 @@ func (s *Server) posCourseFingerprint(r *http.Request, restaurantID int, ticketI
 func (s *Server) handleBOPOSCourseList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	ticketID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	// MySQL resolves GROUP BY course to the l.course column (FROM before alias)
+	// and ORDER BY to the alias: the PG twin spells both out; LENGTH is bytes.
 	// The per-line sent quantity is aggregated in a subquery: nesting SUM() inside
 	// another SUM() is not valid SQL, and a plain JOIN would also fan out the
 	// line count once a dish has been sent to more than one station.
-	rows, err := s.db.QueryContext(r.Context(), `SELECT COALESCE(NULLIF(l.course,''),'1') AS course,
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT COALESCE(NULLIF(l.course,''),'1') AS course,
 		COUNT(*),
 		COALESCE(SUM(CASE WHEN COALESCE(sent.qty,0) >= l.quantity THEN 1 ELSE 0 END),0)
 		FROM pos_ticket_lines l
@@ -133,7 +135,22 @@ func (s *Server) handleBOPOSCourseList(w http.ResponseWriter, r *http.Request) {
 			) moves GROUP BY line_id
 		) sent ON sent.ticket_line_id = l.id
 		WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'
-		GROUP BY course ORDER BY LENGTH(course),course`, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, ticketID)
+		GROUP BY course ORDER BY LENGTH(course),course`, `SELECT COALESCE(CASE WHEN rtrim(l.course, ' ') COLLATE "C" = '' THEN NULL ELSE l.course END,'1') AS course,
+		COUNT(*),
+		COALESCE(SUM(CASE WHEN COALESCE(sent.qty,0) >= l.quantity THEN 1 ELSE 0 END),0)
+		FROM pos_ticket_lines l
+		LEFT JOIN (
+			SELECT line_id AS ticket_line_id, SUM(q) AS qty FROM (
+				SELECT dl.ticket_line_id AS line_id, dl.quantity_delta AS q
+				FROM pos_kitchen_dispatch_lines dl
+				JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id
+				WHERE dl.restaurant_id=? AND d.status<>'CANCELLED'
+				UNION ALL SELECT to_line_id, quantity FROM pos_kitchen_line_transfers WHERE restaurant_id=?
+				UNION ALL SELECT from_line_id, -quantity FROM pos_kitchen_line_transfers WHERE restaurant_id=?
+			) moves GROUP BY line_id
+		) sent ON sent.ticket_line_id = l.id
+		WHERE l.restaurant_id=? AND l.ticket_id=? AND l.status='ACTIVE'
+		GROUP BY l.course ORDER BY octet_length(COALESCE(CASE WHEN rtrim(l.course, ' ') COLLATE "C" = '' THEN NULL ELSE l.course END,'1')),COALESCE(CASE WHEN rtrim(l.course, ' ') COLLATE "C" = '' THEN NULL ELSE l.course END,'1')`), a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, ticketID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading courses")
 		return

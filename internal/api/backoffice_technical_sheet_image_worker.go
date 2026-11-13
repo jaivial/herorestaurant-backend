@@ -52,9 +52,9 @@ func (s *Server) StartStepImageWorker(ctx context.Context, interval time.Duratio
 // reclaimStuckStepImageJobs fails jobs abandoned by a crashed worker so the UI
 // stops showing them as in progress.
 func (s *Server) reclaimStuckStepImageJobs(ctx context.Context) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, restaurant_id, step_id FROM stock_recipe_step_image_jobs
-		 WHERE status='RUNNING' AND started_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+		 WHERE status='RUNNING' AND started_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`, `SELECT id, restaurant_id, step_id FROM stock_recipe_step_image_jobs WHERE status='RUNNING' AND started_at < ((date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') - make_interval(mins => CAST(? AS integer)))`),
 		int(stepImageStuckAfter.Minutes()))
 	if err != nil {
 		return
@@ -90,17 +90,17 @@ func (s *Server) processNextStepImageJob(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	err = tx.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, portableSQL(`
 		SELECT id, restaurant_id, step_id, mode, COALESCE(prompt,'')
 		  FROM stock_recipe_step_image_jobs
-		 WHERE status='PENDING' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED`).
+		 WHERE status='PENDING' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED`)).
 		Scan(&jobID, &restaurantID, &stepID, &mode, &prompt)
 	if err != nil {
 		tx.Rollback()
 		return false
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE stock_recipe_step_image_jobs SET status='RUNNING', started_at=NOW() WHERE id=?`,
+		nativeSQL(`UPDATE stock_recipe_step_image_jobs SET status='RUNNING', started_at=NOW() WHERE id=?`, `UPDATE stock_recipe_step_image_jobs SET status='RUNNING', started_at=(date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE id=?`),
 		jobID); err != nil {
 		tx.Rollback()
 		return false
@@ -193,7 +193,7 @@ func (s *Server) runStepImageJob(ctx context.Context, restaurantID int, jobID, s
 func (s *Server) stepImageURL(ctx context.Context, restaurantID int, stepID int64) (string, error) {
 	var imageURL string
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(image_url,'') FROM stock_recipe_steps WHERE restaurant_id=? AND id=?`,
+		portableSQL(`SELECT COALESCE(image_url,'') FROM stock_recipe_steps WHERE restaurant_id=? AND id=?`),
 		restaurantID, stepID).Scan(&imageURL); err != nil {
 		return "", err
 	}

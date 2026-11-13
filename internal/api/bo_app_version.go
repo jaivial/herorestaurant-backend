@@ -169,12 +169,12 @@ func sectionsForAppVersion(version string, sections []string) []string {
 // without an explicit bo_user_restaurants entry).
 func (s *Server) getBOUserAppVersionForRestaurant(ctx context.Context, userID, restaurantID int) (string, error) {
 	var raw sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT app_version
 		FROM bo_user_restaurants
 		WHERE user_id = ? AND restaurant_id = ?
 		LIMIT 1
-	`, userID, restaurantID).Scan(&raw)
+	`), userID, restaurantID).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return boAppVersion01, nil
@@ -244,7 +244,7 @@ func (s *Server) handleBOUserVersionPatch(w http.ResponseWriter, r *http.Request
 
 	// The target must belong to the active restaurant (member or user link).
 	var targetIsSuper int
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT u.is_superadmin
 		FROM bo_users u
 		LEFT JOIN bo_user_restaurants ur
@@ -264,7 +264,7 @@ func (s *Server) handleBOUserVersionPatch(w http.ResponseWriter, r *http.Request
 			u.id = ?
 			AND (ur.user_id IS NOT NULL OR m.id IS NOT NULL OR u.is_superadmin = 1)
 		LIMIT 1
-	`, a.ActiveRestaurantID, a.ActiveRestaurantID, userID).Scan(&targetIsSuper)
+	`), a.ActiveRestaurantID, a.ActiveRestaurantID, userID).Scan(&targetIsSuper)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
@@ -277,12 +277,12 @@ func (s *Server) handleBOUserVersionPatch(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role, app_version)
 		VALUES (?, ?, 'admin', ?)
 		ON DUPLICATE KEY UPDATE
 			app_version = VALUES(app_version)
-	`, userID, a.ActiveRestaurantID, version); err != nil {
+	`, `INSERT INTO bo_user_restaurants (user_id, restaurant_id, role, app_version) VALUES (?, ?, 'admin', ?) ON CONFLICT (user_id, restaurant_id) DO UPDATE SET app_version = EXCLUDED.app_version`), userID, a.ActiveRestaurantID, version); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando version")
 		return
 	}

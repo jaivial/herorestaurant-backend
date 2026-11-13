@@ -81,11 +81,11 @@ func emptyBOMenuWeekdays() map[string]bool {
 // (false when the menu has no row for that day).
 func (s *Server) loadBOMenuWeekdays(ctx context.Context, restaurantID int, menuID int64) (map[string]bool, error) {
 	out := emptyBOMenuWeekdays()
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT weekday, available
 		FROM menu_weekday_availability
 		WHERE restaurant_id = ? AND menu_id = ?
-	`, restaurantID, menuID)
+	`), restaurantID, menuID)
 	if err != nil {
 		return out, err
 	}
@@ -113,11 +113,15 @@ func (s *Server) saveBOMenuWeekday(ctx context.Context, restaurantID int, menuID
 	if key == "" {
 		return errInvalidBOMenuWeekday
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO menu_weekday_availability (restaurant_id, menu_id, weekday, available)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE available = VALUES(available)
-	`, restaurantID, menuID, key, boolToTinyint(available))
+	`, `
+		INSERT INTO menu_weekday_availability (restaurant_id, menu_id, weekday, available)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (restaurant_id, menu_id, app.norm(weekday)) DO UPDATE SET available = EXCLUDED.available
+	`), restaurantID, menuID, key, boolToTinyint(available))
 	return err
 }
 
@@ -236,16 +240,17 @@ func (s *Server) botMenusAvailableOnWeekday(ctx context.Context, restaurantID in
 		args = append(args, menuTypeCode)
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	// Composed: fixed where fragments + per-dialect price/NULL-order fragments; rebound once.
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT m.id, m.menu_title,
 		       COALESCE(m.menu_type, 1),
-		       COALESCE(m.price, ''), COALESCE(m.menu_subtitle, '')
+		       `+sqlFragment("COALESCE(m.price, '')", "COALESCE(CAST(m.price AS text), '')")+`, COALESCE(m.menu_subtitle, '')
 		FROM menus m
 		JOIN menu_weekday_availability a
 		  ON a.menu_id = m.id AND a.restaurant_id = m.restaurant_id
 		WHERE `+where+`
-		ORDER BY m.modified_at DESC, m.id DESC
-	`, args...)
+		ORDER BY m.modified_at DESC`+sqlFragment("", " NULLS LAST")+`, m.id DESC
+	`), args...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -260,9 +265,9 @@ func (s *Server) botMenusAvailableOnWeekday(ctx context.Context, restaurantID in
 	// The restaurant may simply have configured other weekdays. In that case
 	// "none available on this weekday" is the real answer.
 	var configuredRows int
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COUNT(*) FROM menu_weekday_availability WHERE restaurant_id = ?
-	`, restaurantID).Scan(&configuredRows); err == nil && configuredRows > 0 {
+	`), restaurantID).Scan(&configuredRows); err == nil && configuredRows > 0 {
 		return []map[string]any{}, true, nil
 	}
 
@@ -274,14 +279,14 @@ func (s *Server) botMenusAvailableOnWeekday(ctx context.Context, restaurantID in
 		fallbackWhere += ` AND COALESCE(menu_type, 1) = ?`
 		fallbackArgs = append(fallbackArgs, menuTypeCode)
 	}
-	fallbackRows, ferr := s.db.QueryContext(ctx, `
+	fallbackRows, ferr := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, menu_title,
 		       COALESCE(menu_type, 1),
-		       COALESCE(price, ''), COALESCE(menu_subtitle, '')
+		       `+sqlFragment("COALESCE(price, '')", "COALESCE(CAST(price AS text), '')")+`, COALESCE(menu_subtitle, '')
 		FROM menus
 		WHERE `+fallbackWhere+`
-		ORDER BY modified_at DESC, id DESC
-	`, fallbackArgs...)
+		ORDER BY modified_at DESC`+sqlFragment("", " NULLS LAST")+`, id DESC
+	`), fallbackArgs...)
 	if ferr != nil {
 		return nil, false, ferr
 	}

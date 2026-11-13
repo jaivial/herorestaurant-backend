@@ -46,10 +46,10 @@ func (s *Server) runWhatsAppWatchdogLoop(ctx context.Context) {
 }
 
 func (s *Server) runWhatsAppWatchdogOnce(ctx context.Context) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT restaurant_id FROM restaurant_uazapi_instances
 		WHERE is_active = 1 AND connected_at IS NOT NULL
-	`)
+	`))
 	if err != nil {
 		if !isSQLSchemaError(err) {
 			log.Printf("[whatsapp][watchdog] list instances failed: %v", err)
@@ -112,17 +112,17 @@ func (s *Server) checkWhatsAppConnection(ctx context.Context, restaurantID int) 
 
 func (s *Server) alertWhatsAppDown(ctx context.Context, restaurantID int, status string, downFor time.Duration) {
 	var email string
-	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(email, '') FROM restaurant_info WHERE restaurant_id = ?`, restaurantID).Scan(&email)
+	_ = s.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(email, '') FROM restaurant_info WHERE restaurant_id = ?`), restaurantID).Scan(&email)
 	email = strings.TrimSpace(email)
 	if email == "" {
 		log.Printf("[whatsapp][watchdog][CP-WA-ALERT-SKIPPED] restaurant=%d no restaurant email", restaurantID)
 		return
 	}
 	pending := 0
-	_ = s.db.QueryRowContext(ctx, `
+	_ = s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COUNT(*) FROM message_deliveries
 		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'pending'
-	`, restaurantID).Scan(&pending)
+	`), restaurantID).Scan(&pending)
 
 	body := fmt.Sprintf(`<p>El WhatsApp del restaurante lleva <strong>%d minutos</strong> desconectado (estado: %s).</p>
 <p>Las confirmaciones y recordatorios de reservas se guardan en cola (%d pendientes) y se enviarán solos en cuanto vuelva a conectarse.</p>

@@ -26,6 +26,7 @@ import (
 
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/lib/specialmenuimage"
+	"preactvillacarmen/internal/sqldb"
 )
 
 const (
@@ -531,11 +532,11 @@ func (s *Server) loadBOPremiumWebsiteMenuTemplates(ctx context.Context, restaura
 		defaultThemeID = boWebsiteDefaultThemeID
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT menu_type, theme_id
 		FROM restaurant_menu_templates
 		WHERE restaurant_id = ?
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -575,10 +576,12 @@ func (s *Server) upsertBOPremiumWebsiteMenuTemplateOverrides(ctx context.Context
 		_ = tx.Rollback()
 	}()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM restaurant_menu_templates WHERE restaurant_id = ?`, restaurantID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`DELETE FROM restaurant_menu_templates WHERE restaurant_id = ?`), restaurantID); err != nil {
 		return err
 	}
 
+	// No unique key on restaurant_menu_templates: the MySQL ODKU never fires,
+	// so the PG twin is the plain INSERT.
 	for menuType, themeID := range overrides {
 		if _, ok := boWebsiteMenuTypes[menuType]; !ok {
 			continue
@@ -586,14 +589,18 @@ func (s *Server) upsertBOPremiumWebsiteMenuTemplateOverrides(ctx context.Context
 		if !isValidWebsiteThemeID(themeID) {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, nativeSQL(`
 			INSERT INTO restaurant_menu_templates
 				(restaurant_id, menu_type, theme_id, created_at, updated_at)
 			VALUES (?, ?, ?, NOW(), NOW())
 			ON DUPLICATE KEY UPDATE
 				theme_id = VALUES(theme_id),
 				updated_at = NOW()
-		`, restaurantID, menuType, themeID); err != nil {
+		`, `
+			INSERT INTO restaurant_menu_templates
+				(restaurant_id, menu_type, theme_id, created_at, updated_at)
+			VALUES (?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))
+		`), restaurantID, menuType, themeID); err != nil {
 			return err
 		}
 	}
@@ -844,33 +851,41 @@ func (s *Server) upsertBOPremiumWebsite(ctx context.Context, restaurantID int, t
 
 	updateVariants := []boSQLVariant{
 		{
-			query: `UPDATE restaurant_websites
+			query: sqlFragment(`UPDATE restaurant_websites
 				SET template_id = ?, custom_html = ?, domain = ?, domain_status = ?, is_published = ?, draft_html_content = ?, draft_meta_json = ?, updated_at = NOW()
-				WHERE restaurant_id = ?`,
+				WHERE restaurant_id = ?`, `UPDATE restaurant_websites
+				SET template_id = ?, custom_html = ?, domain = ?, domain_status = ?, is_published = ?, draft_html_content = ?, draft_meta_json = ?, updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ?`),
 			args: []any{templateArg, customArg, domainArg, domainStatus, isPublishedArg, draftHTMLArg, metaArg, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_websites
+			query: sqlFragment(`UPDATE restaurant_websites
 				SET template_id = ?, custom_html = ?, domain = ?, domain_status = ?, is_published = ?, draft_html_content = ?, draft_meta = ?, updated_at = NOW()
-				WHERE restaurant_id = ?`,
+				WHERE restaurant_id = ?`, `UPDATE restaurant_websites
+				SET template_id = ?, custom_html = ?, domain = ?, domain_status = ?, is_published = ?, draft_html_content = ?, draft_meta = ?, updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ?`),
 			args: []any{templateArg, customArg, domainArg, domainStatus, isPublishedArg, draftHTMLArg, metaArg, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_websites
+			query: sqlFragment(`UPDATE restaurant_websites
 				SET template_id = ?, custom_html = ?, domain = ?, domain_status = ?, is_published = ?, updated_at = NOW()
-				WHERE restaurant_id = ?`,
+				WHERE restaurant_id = ?`, `UPDATE restaurant_websites
+				SET template_id = ?, custom_html = ?, domain = ?, domain_status = ?, is_published = ?, updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ?`),
 			args: []any{templateArg, customArg, domainArg, domainStatus, isPublishedArg, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_websites
+			query: sqlFragment(`UPDATE restaurant_websites
 				SET custom_html = ?, is_published = ?, updated_at = NOW()
-				WHERE restaurant_id = ?`,
+				WHERE restaurant_id = ?`, `UPDATE restaurant_websites
+				SET custom_html = ?, is_published = ?, updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ?`),
 			args: []any{customArg, isPublishedArg, restaurantID},
 		},
 	}
 
 	for _, variant := range updateVariants {
-		res, err := s.db.ExecContext(ctx, variant.query, variant.args...)
+		res, err := s.db.ExecContext(ctx, portableSQL(variant.query), variant.args...)
 		if err != nil {
 			if isSQLSchemaError(err) {
 				continue
@@ -885,34 +900,42 @@ func (s *Server) upsertBOPremiumWebsite(ctx context.Context, restaurantID int, t
 
 	insertVariants := []boSQLVariant{
 		{
-			query: `INSERT INTO restaurant_websites
+			query: sqlFragment(`INSERT INTO restaurant_websites
 				(restaurant_id, template_id, custom_html, domain, domain_status, is_published, draft_html_content, draft_meta_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_websites
+				(restaurant_id, template_id, custom_html, domain, domain_status, is_published, draft_html_content, draft_meta_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, templateArg, customArg, domainArg, domainStatus, isPublishedArg, draftHTMLArg, metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_websites
+			query: sqlFragment(`INSERT INTO restaurant_websites
 				(restaurant_id, template_id, custom_html, domain, domain_status, is_published, draft_html_content, draft_meta, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_websites
+				(restaurant_id, template_id, custom_html, domain, domain_status, is_published, draft_html_content, draft_meta, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, templateArg, customArg, domainArg, domainStatus, isPublishedArg, draftHTMLArg, metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_websites
+			query: sqlFragment(`INSERT INTO restaurant_websites
 				(restaurant_id, template_id, custom_html, domain, domain_status, is_published, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_websites
+				(restaurant_id, template_id, custom_html, domain, domain_status, is_published, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, templateArg, customArg, domainArg, domainStatus, isPublishedArg},
 		},
 		{
-			query: `INSERT INTO restaurant_websites
+			query: sqlFragment(`INSERT INTO restaurant_websites
 				(restaurant_id, custom_html, is_published, created_at, updated_at)
-				VALUES (?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_websites
+				(restaurant_id, custom_html, is_published, created_at, updated_at)
+				VALUES (?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, customArg, isPublishedArg},
 		},
 	}
 
 	var lastErr error
 	for _, variant := range insertVariants {
-		_, err := s.db.ExecContext(ctx, variant.query, variant.args...)
+		_, err := s.db.ExecContext(ctx, portableSQL(variant.query), variant.args...)
 		if err == nil || isSQLDuplicateError(err) {
 			return nil
 		}
@@ -1097,7 +1120,7 @@ func (s *Server) handleBOPremiumDomainsRegister(w http.ResponseWriter, r *http.R
 	defer func() { _ = tx.Rollback() }()
 
 	var existingRestaurantID int
-	err = tx.QueryRowContext(r.Context(), `SELECT restaurant_id FROM restaurant_domains WHERE domain = ? LIMIT 1 FOR UPDATE`, domain).Scan(&existingRestaurantID)
+	err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT restaurant_id FROM restaurant_domains WHERE domain = ? LIMIT 1 FOR UPDATE`, `SELECT restaurant_id FROM restaurant_domains WHERE app.norm_ascii(domain) = app.norm_ascii(?) LIMIT 1 FOR UPDATE`), domain).Scan(&existingRestaurantID)
 	if err == nil && existingRestaurantID != a.ActiveRestaurantID {
 		writeBOPremiumError(w, http.StatusConflict, "DOMAIN_UNAVAILABLE", "El dominio ya está registrado")
 		return
@@ -1108,7 +1131,7 @@ func (s *Server) handleBOPremiumDomainsRegister(w http.ResponseWriter, r *http.R
 	}
 
 	if isPrimary {
-		if _, err := tx.ExecContext(r.Context(), `UPDATE restaurant_domains SET is_primary = 0 WHERE restaurant_id = ?`, a.ActiveRestaurantID); err != nil {
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`UPDATE restaurant_domains SET is_primary = 0 WHERE restaurant_id = ?`), a.ActiveRestaurantID); err != nil {
 			writeBOPremiumError(w, http.StatusInternalServerError, "DOMAIN_REGISTER_FAILED", "No se pudo actualizar dominios")
 			return
 		}
@@ -1116,21 +1139,30 @@ func (s *Server) handleBOPremiumDomainsRegister(w http.ResponseWriter, r *http.R
 
 	domainInsertVariants := []boSQLVariant{
 		{
-			query: `INSERT INTO restaurant_domains (restaurant_id, domain, is_primary, created_at)
+			query: sqlFragment(`INSERT INTO restaurant_domains (restaurant_id, domain, is_primary, created_at)
 				VALUES (?, ?, ?, NOW())
-				ON DUPLICATE KEY UPDATE restaurant_id = VALUES(restaurant_id), is_primary = VALUES(is_primary)`,
-			args: []any{a.ActiveRestaurantID, domain, boolToTinyInt(isPrimary)},
+				ON DUPLICATE KEY UPDATE is_primary = IF(restaurant_id = VALUES(restaurant_id), VALUES(is_primary), is_primary)`, `INSERT INTO restaurant_domains (restaurant_id, domain, is_primary, created_at)
+				VALUES (?, ?, ?, date_trunc('second', statement_timestamp()))
+				ON CONFLICT (app.norm_ascii(domain)) DO UPDATE SET is_primary = EXCLUDED.is_primary WHERE restaurant_domains.restaurant_id = EXCLUDED.restaurant_id`),
+			args: ([]any{a.ActiveRestaurantID, domain, boolToTinyInt(isPrimary)}),
 		},
 		{
-			query: `INSERT INTO restaurant_domains (restaurant_id, domain, is_primary)
+			query: sqlFragment(`INSERT INTO restaurant_domains (restaurant_id, domain, is_primary)
 				VALUES (?, ?, ?)
-				ON DUPLICATE KEY UPDATE restaurant_id = VALUES(restaurant_id), is_primary = VALUES(is_primary)`,
-			args: []any{a.ActiveRestaurantID, domain, boolToTinyInt(isPrimary)},
+				ON DUPLICATE KEY UPDATE is_primary = IF(restaurant_id = VALUES(restaurant_id), VALUES(is_primary), is_primary)`, `INSERT INTO restaurant_domains (restaurant_id, domain, is_primary)
+				VALUES (?, ?, ?)
+				ON CONFLICT (app.norm_ascii(domain)) DO UPDATE SET is_primary = EXCLUDED.is_primary WHERE restaurant_domains.restaurant_id = EXCLUDED.restaurant_id`),
+			args: ([]any{a.ActiveRestaurantID, domain, boolToTinyInt(isPrimary)}),
 		},
 	}
 	domainInserted := false
 	for _, variant := range domainInsertVariants {
-		_, err := tx.ExecContext(r.Context(), variant.query, variant.args...)
+		// Savepoint per attempt on PG: the source continues this tx after a
+		// schema/duplicate error, which would abort a PG transaction.
+		err := sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			_, e := tx.ExecContext(r.Context(), portableSQL(variant.query), variant.args...)
+			return e
+		})
 		if err == nil {
 			domainInserted = true
 			break
@@ -1143,6 +1175,18 @@ func (s *Server) handleBOPremiumDomainsRegister(w http.ResponseWriter, r *http.R
 	}
 	if !domainInserted {
 		writeBOPremiumError(w, http.StatusInternalServerError, "DOMAIN_REGISTER_FAILED", "No se pudo registrar el dominio")
+		return
+	}
+	// domain_owner_isolation_v1: the pre-check above locks nothing for an
+	// absent row (PG) and a gap lock can deadlock (MySQL); the owner-guarded
+	// upsert never touches a foreign row, so re-read the (now locked) owner.
+	// Foreign -> DOMAIN_UNAVAILABLE and the deferred rollback undoes the
+	// is_primary reset: no partial writes.
+	if foreign, ownErr := domainOwnedByOther(r.Context(), tx, domain, a.ActiveRestaurantID, true); ownErr != nil {
+		writeBOPremiumError(w, http.StatusInternalServerError, "DOMAIN_REGISTER_FAILED", "No se pudo validar el dominio")
+		return
+	} else if foreign {
+		writeBOPremiumError(w, http.StatusConflict, "DOMAIN_UNAVAILABLE", "El dominio ya está registrado")
 		return
 	}
 
@@ -1166,19 +1210,28 @@ func (s *Server) handleBOPremiumDomainsRegister(w http.ResponseWriter, r *http.R
 
 	for _, variant := range []boSQLVariant{
 		{
-			query: `UPDATE restaurant_websites
+			query: sqlFragment(`UPDATE restaurant_websites
 				SET domain = ?, domain_status = 'pending', updated_at = NOW()
-				WHERE restaurant_id = ?`,
+				WHERE restaurant_id = ?`, `UPDATE restaurant_websites
+				SET domain = ?, domain_status = 'pending', updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ?`),
 			args: []any{domain, a.ActiveRestaurantID},
 		},
 		{
-			query: `UPDATE restaurant_websites
+			query: sqlFragment(`UPDATE restaurant_websites
 				SET domain = ?, updated_at = NOW()
-				WHERE restaurant_id = ?`,
+				WHERE restaurant_id = ?`, `UPDATE restaurant_websites
+				SET domain = ?, updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ?`),
 			args: []any{domain, a.ActiveRestaurantID},
 		},
 	} {
-		_, err := tx.ExecContext(r.Context(), variant.query, variant.args...)
+		// Savepoint per attempt on PG: the source continues this tx after a
+		// schema/duplicate error, which would abort a PG transaction.
+		err := sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			_, e := tx.ExecContext(r.Context(), portableSQL(variant.query), variant.args...)
+			return e
+		})
 		if err == nil {
 			break
 		}
@@ -1234,7 +1287,7 @@ func (s *Server) handleBOPremiumDomainsVerify(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	domainRow, domainFound, err := s.queryOneAsMap(r.Context(), `SELECT * FROM restaurant_domains WHERE restaurant_id = ? AND domain = ? LIMIT 1`, a.ActiveRestaurantID, domain)
+	domainRow, domainFound, err := s.queryOneAsMap(r.Context(), sqlFragment(`SELECT * FROM restaurant_domains WHERE restaurant_id = ? AND domain = ? LIMIT 1`, `SELECT * FROM restaurant_domains WHERE restaurant_id = ? AND app.norm_ascii(domain) = app.norm_ascii(?) LIMIT 1`), a.ActiveRestaurantID, domain)
 	if err != nil {
 		writeBOPremiumError(w, http.StatusInternalServerError, "DOMAIN_VERIFY_FAILED", "No se pudo verificar dominio")
 		return
@@ -1267,6 +1320,10 @@ func (s *Server) handleBOPremiumDomainsVerify(w http.ResponseWriter, r *http.Req
 		verified = false
 	case "pending":
 		status = "pending"
+	case "registering", "register_uncertain":
+		// domain_reservation_v1 in-flight / unreconciled purchase: never active.
+		status = "pending"
+		verified = false
 	default:
 		if verified {
 			status = "active"
@@ -1285,7 +1342,7 @@ func (s *Server) handleBOPremiumDomainsVerify(w http.ResponseWriter, r *http.Req
 
 func (s *Server) ensurePremiumWebsiteRowTx(ctx context.Context, tx *sql.Tx, restaurantID int) error {
 	var one int
-	err := tx.QueryRowContext(ctx, `SELECT 1 FROM restaurant_websites WHERE restaurant_id = ? LIMIT 1`, restaurantID).Scan(&one)
+	err := tx.QueryRowContext(ctx, portableSQL(`SELECT 1 FROM restaurant_websites WHERE restaurant_id = ? LIMIT 1`), restaurantID).Scan(&one)
 	if err == nil {
 		return nil
 	}
@@ -1295,28 +1352,39 @@ func (s *Server) ensurePremiumWebsiteRowTx(ctx context.Context, tx *sql.Tx, rest
 
 	variants := []boSQLVariant{
 		{
-			query: `INSERT INTO restaurant_websites
+			query: sqlFragment(`INSERT INTO restaurant_websites
 				(restaurant_id, custom_html, draft_html_content, draft_meta_json, created_at, updated_at)
-				VALUES (?, '', '', NULL, NOW(), NOW())`,
+				VALUES (?, '', '', NULL, NOW(), NOW())`, `INSERT INTO restaurant_websites
+				(restaurant_id, custom_html, draft_html_content, draft_meta_json, created_at, updated_at)
+				VALUES (?, '', '', NULL, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID},
 		},
 		{
-			query: `INSERT INTO restaurant_websites
+			query: sqlFragment(`INSERT INTO restaurant_websites
 				(restaurant_id, custom_html, created_at, updated_at)
-				VALUES (?, '', NOW(), NOW())`,
+				VALUES (?, '', NOW(), NOW())`, `INSERT INTO restaurant_websites
+				(restaurant_id, custom_html, created_at, updated_at)
+				VALUES (?, '', date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID},
 		},
 		{
-			query: `INSERT INTO restaurant_websites
+			query: sqlFragment(`INSERT INTO restaurant_websites
 				(restaurant_id, created_at, updated_at)
-				VALUES (?, NOW(), NOW())`,
+				VALUES (?, NOW(), NOW())`, `INSERT INTO restaurant_websites
+				(restaurant_id, created_at, updated_at)
+				VALUES (?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID},
 		},
 	}
 
 	var lastErr error
 	for _, variant := range variants {
-		_, err := tx.ExecContext(ctx, variant.query, variant.args...)
+		// Savepoint per attempt on PG: the source continues this tx after a
+		// schema/duplicate error, which would abort a PG transaction.
+		err := sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+			_, e := tx.ExecContext(ctx, portableSQL(variant.query), variant.args...)
+			return e
+		})
 		if err == nil || isSQLDuplicateError(err) {
 			return nil
 		}
@@ -1559,7 +1627,7 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 		item, err := s.createBOPremiumArea(r.Context(), a.ActiveRestaurantID, req)
 		if err != nil {
 			log.Printf("[ERROR] createBOPremiumArea failed: %v", err)
-			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_CREATE_FAILED", "No se pudo crear área")
+			writeBOPremiumError(w, boPremiumDBStatus(err), "TABLES_CREATE_FAILED", "No se pudo crear área")
 			return
 		}
 		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "area_created", item)
@@ -1577,7 +1645,7 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 				writeBOPremiumError(w, http.StatusConflict, "TABLES_CREATE_CONFLICT", conflict.Error())
 				return
 			}
-			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_CREATE_FAILED", "No se pudo crear mesa")
+			writeBOPremiumError(w, boPremiumDBStatus(err), "TABLES_CREATE_FAILED", "No se pudo crear mesa")
 			return
 		}
 		if req.Date != "" && req.FloorNumber != nil {
@@ -1592,7 +1660,7 @@ func (s *Server) handleBOPremiumTablesCreate(w http.ResponseWriter, r *http.Requ
 					y = rawY
 				}
 				if _, err := s.upsertBOPremiumTableLayoutPosition(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, tableID, x, y); err != nil {
-					writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_CREATE_FAILED", "No se pudo guardar posicion de layout")
+					writeBOPremiumError(w, boPremiumDBStatus(err), "TABLES_CREATE_FAILED", "No se pudo guardar posicion de layout")
 					return
 				}
 			}
@@ -1647,7 +1715,7 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 		layout, err := s.patchBOPremiumTableLayout(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, req.Metadata)
 		if err != nil {
 			log.Printf("[ERROR] patchBOPremiumTableLayout failed: %v", err)
-			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar layout")
+			writeBOPremiumError(w, boPremiumDBStatus(err), "TABLES_UPDATE_FAILED", "No se pudo actualizar layout")
 			return
 		}
 		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "layout_updated", map[string]any{
@@ -1672,7 +1740,7 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 	case "area":
 		item, err := s.updateBOPremiumArea(r.Context(), a.ActiveRestaurantID, req)
 		if err != nil {
-			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar área")
+			writeBOPremiumError(w, boPremiumDBStatus(err), "TABLES_UPDATE_FAILED", "No se pudo actualizar área")
 			return
 		}
 		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "area_updated", item)
@@ -1689,7 +1757,7 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 		}
 		if _, err := s.updateBOPremiumTable(r.Context(), a.ActiveRestaurantID, reqForDB); err != nil {
 			log.Printf("[ERROR] updateBOPremiumTable failed: %v", err)
-			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar mesa")
+			writeBOPremiumError(w, boPremiumDBStatus(err), "TABLES_UPDATE_FAILED", "No se pudo actualizar mesa")
 			return
 		}
 		if req.Date != "" && req.FloorNumber != nil && (req.XPos != nil || req.YPos != nil) {
@@ -1706,7 +1774,7 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 					a.ActiveRestaurantID, req.Date, *req.FloorNumber, req.ID, x, y)
 				if _, err := s.upsertBOPremiumTableLayoutPosition(r.Context(), a.ActiveRestaurantID, req.Date, *req.FloorNumber, req.ID, x, y); err != nil {
 					log.Printf("[ERROR] upsertBOPremiumTableLayoutPosition failed: %v", err)
-					writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar posicion del layout")
+					writeBOPremiumError(w, boPremiumDBStatus(err), "TABLES_UPDATE_FAILED", "No se pudo actualizar posicion del layout")
 					return
 				}
 			}
@@ -1716,7 +1784,7 @@ func (s *Server) handleBOPremiumTablesUpdate(w http.ResponseWriter, r *http.Requ
 		item, err := s.loadBOPremiumTableItem(r.Context(), a.ActiveRestaurantID, req.ID, req.Date, req.FloorNumber)
 		if err != nil {
 			log.Printf("[ERROR] loadBOPremiumTableItem failed: %v", err)
-			writeBOPremiumError(w, http.StatusInternalServerError, "TABLES_UPDATE_FAILED", "No se pudo actualizar mesa")
+			writeBOPremiumError(w, boPremiumDBStatus(err), "TABLES_UPDATE_FAILED", "No se pudo actualizar mesa")
 			return
 		}
 		s.broadcastBOTablesEvent(a.ActiveRestaurantID, "table_updated", item)
@@ -1757,11 +1825,11 @@ func (s *Server) handleBOPremiumTablesDelete(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) deleteBOPremiumTable(ctx context.Context, restaurantID int, tableID int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM restaurant_tables WHERE restaurant_id = ? AND id = ?`, restaurantID, tableID)
+	res, err := s.db.ExecContext(ctx, portableSQL(`DELETE FROM restaurant_tables WHERE restaurant_id = ? AND id = ?`), restaurantID, tableID)
 	if err != nil {
 		// FK RESTRICT from pos_visits (open DINE_IN visits reference the table).
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1451 {
+		if (errors.As(err, &mysqlErr) && mysqlErr.Number == 1451) || (sqlDialect == sqldb.Postgres && sqldb.IsForeignKeyViolation(err)) {
 			return &posTableConflictError{msg: "La mesa tiene servicios abiertos en el TPV; ciérralos antes de eliminarla"}
 		}
 		return err
@@ -2018,9 +2086,11 @@ func (s *Server) handleBOPremiumTablesTextureImageUpload(w http.ResponseWriter, 
 
 	_, err = s.db.ExecContext(
 		r.Context(),
-		`UPDATE restaurant_tables
+		nativeSQL(`UPDATE restaurant_tables
 		 SET texture_image_url = ?, updated_at = NOW()
-		 WHERE id = ? AND restaurant_id = ?`,
+		 WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+		 SET texture_image_url = ?, updated_at = date_trunc('second', statement_timestamp())
+		 WHERE id = ? AND restaurant_id = ?`),
 		imageURL,
 		tableID,
 		a.ActiveRestaurantID,
@@ -2075,29 +2145,35 @@ func (s *Server) createBOPremiumArea(ctx context.Context, restaurantID int, req 
 
 	variants := []boSQLVariant{
 		{
-			query: `INSERT INTO restaurant_areas
+			query: sqlFragment(`INSERT INTO restaurant_areas
 				(restaurant_id, name, display_order, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_areas
+				(restaurant_id, name, display_order, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, name, displayOrder, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_areas
+			query: sqlFragment(`INSERT INTO restaurant_areas
 				(restaurant_id, name, sort_order, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_areas
+				(restaurant_id, name, sort_order, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, name, displayOrder, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_areas
+			query: sqlFragment(`INSERT INTO restaurant_areas
 				(restaurant_id, name, is_active, created_at, updated_at)
-				VALUES (?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_areas
+				(restaurant_id, name, is_active, created_at, updated_at)
+				VALUES (?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, name, boolToTinyInt(isActive)},
 		},
 	}
 
-	var insertRes sql.Result
+	var insertID int64
 	var insertErr error
 	for _, variant := range variants {
-		insertRes, insertErr = s.db.ExecContext(ctx, variant.query, variant.args...)
+		insertID, insertErr = sqldb.InsertID(ctx, sqlDialect, s.db, portableSQL(variant.query), "id", variant.args...)
 		if insertErr == nil {
 			break
 		}
@@ -2110,7 +2186,7 @@ func (s *Server) createBOPremiumArea(ctx context.Context, restaurantID int, req 
 		return nil, insertErr
 	}
 
-	id, _ := insertRes.LastInsertId()
+	id := insertID
 	out := map[string]any{
 		"id":            id,
 		"restaurant_id": restaurantID,
@@ -2144,38 +2220,54 @@ func (s *Server) updateBOPremiumArea(ctx context.Context, restaurantID int, req 
 
 	variants := []boSQLVariant{
 		{
-			query: `UPDATE restaurant_areas
+			query: sqlFragment(`UPDATE restaurant_areas
 				SET name = COALESCE(?, name),
 				    display_order = COALESCE(?, display_order),
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_areas
+				SET name = COALESCE(?, name),
+				    display_order = COALESCE(?, display_order),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, displayOrderArg, isActiveArg, metaArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_areas
+			query: sqlFragment(`UPDATE restaurant_areas
 				SET name = COALESCE(?, name),
 				    sort_order = COALESCE(?, sort_order),
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_areas
+				SET name = COALESCE(?, name),
+				    sort_order = COALESCE(?, sort_order),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, displayOrderArg, isActiveArg, metaArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_areas
+			query: sqlFragment(`UPDATE restaurant_areas
 				SET name = COALESCE(?, name),
 				    is_active = COALESCE(?, is_active),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_areas
+				SET name = COALESCE(?, name),
+				    is_active = COALESCE(?, is_active),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, isActiveArg, req.ID, restaurantID},
 		},
 	}
 
 	var updateErr error
 	for _, variant := range variants {
-		_, updateErr = s.db.ExecContext(ctx, variant.query, variant.args...)
+		_, updateErr = s.db.ExecContext(ctx, portableSQL(variant.query), variant.args...)
 		if updateErr == nil {
 			break
 		}
@@ -2213,7 +2305,7 @@ func (s *Server) updateBOPremiumArea(ctx context.Context, restaurantID int, req 
 // scan fails. Used only when the client does not supply a numero_mesa.
 func (s *Server) deriveNextTableNumero(ctx context.Context, restaurantID int) string {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT numero_mesa FROM restaurant_tables WHERE restaurant_id = ?`,
+		portableSQL(`SELECT numero_mesa FROM restaurant_tables WHERE restaurant_id = ?`),
 		restaurantID,
 	)
 	if err != nil {
@@ -2255,9 +2347,8 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 	// of relying solely on the DB unique constraint.
 	var dupCount int
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM restaurant_tables WHERE restaurant_id = ? AND numero_mesa = ?`,
-		restaurantID, numeroMesa,
-	).Scan(&dupCount); err == nil && dupCount > 0 {
+		nativeSQL(`SELECT COUNT(*) FROM restaurant_tables WHERE restaurant_id = ? AND numero_mesa = ?`, `SELECT COUNT(*) FROM restaurant_tables WHERE restaurant_id = ? AND app.norm(numero_mesa) = app.norm(?)`),
+		restaurantID, numeroMesa).Scan(&dupCount); err == nil && dupCount > 0 {
 		return nil, &posTableConflictError{msg: fmt.Sprintf("ya existe una mesa con el número %q", numeroMesa)}
 	}
 	areaID := int64(0)
@@ -2306,71 +2397,91 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 
 	variants := []boSQLVariant{
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, numero_mesa, area_id, name, capacity, status, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, status, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, numeroMesa, areaID, name, capacity, statusArg, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, numero_mesa, area_id, name, capacity, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, shape, fill_color, outline_color, style_preset, texture_image_url, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, numeroMesa, areaID, name, capacity, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, numero_mesa, area_id, name, capacity, status, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, status, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, numeroMesa, areaID, name, capacity, statusArg, xPos, yPos, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, numero_mesa, area_id, name, capacity, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, x_pos, y_pos, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, numeroMesa, areaID, name, capacity, xPos, yPos, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, numero_mesa, area_id, name, capacity, status, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, status, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, numeroMesa, areaID, name, capacity, statusArg, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, numeroMesa, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, numeroMesa, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, numeroMesa, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, numero_mesa, area_id, name, capacity, is_active, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, numeroMesa, areaID, name, capacity, boolToTinyInt(isActive), metaArg},
 		},
 		{
-			query: `INSERT INTO restaurant_tables
+			query: sqlFragment(`INSERT INTO restaurant_tables
 				(restaurant_id, area_id, name, created_at, updated_at)
-				VALUES (?, ?, ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_tables
+				(restaurant_id, area_id, name, created_at, updated_at)
+				VALUES (?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, areaID, name},
 		},
 	}
 
-	var insertRes sql.Result
+	var insertID int64
 	var insertErr error
 	for _, variant := range variants {
-		insertRes, insertErr = s.db.ExecContext(ctx, variant.query, variant.args...)
+		insertID, insertErr = sqldb.InsertID(ctx, sqlDialect, s.db, portableSQL(variant.query), "id", variant.args...)
 		if insertErr == nil {
 			break
 		}
@@ -2386,7 +2497,7 @@ func (s *Server) createBOPremiumTable(ctx context.Context, restaurantID int, req
 		return nil, insertErr
 	}
 
-	id, _ := insertRes.LastInsertId()
+	id := insertID
 	out := map[string]any{
 		"id":                id,
 		"restaurant_id":     restaurantID,
@@ -2437,9 +2548,8 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 			// return a clear conflict instead of relying on the DB constraint.
 			var dupCount int
 			if err := s.db.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM restaurant_tables WHERE restaurant_id = ? AND numero_mesa = ? AND id <> ?`,
-				restaurantID, numeroMesa, req.ID,
-			).Scan(&dupCount); err == nil && dupCount > 0 {
+				nativeSQL(`SELECT COUNT(*) FROM restaurant_tables WHERE restaurant_id = ? AND numero_mesa = ? AND id <> ?`, `SELECT COUNT(*) FROM restaurant_tables WHERE restaurant_id = ? AND app.norm(numero_mesa) = app.norm(?) AND id <> ?`),
+				restaurantID, numeroMesa, req.ID).Scan(&dupCount); err == nil && dupCount > 0 {
 				return nil, &posTableConflictError{msg: fmt.Sprintf("ya existe una mesa con el número %q", numeroMesa)}
 			}
 		}
@@ -2549,7 +2659,7 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 
 	variants := []boSQLVariant{
 		{
-			query: `UPDATE restaurant_tables
+			query: sqlFragment(`UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
@@ -2564,11 +2674,26 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    status = COALESCE(?, status),
+				    shape = COALESCE(?, shape),
+				    fill_color = COALESCE(?, fill_color),
+				    outline_color = COALESCE(?, outline_color),
+				    style_preset = COALESCE(?, style_preset),
+				    texture_image_url = COALESCE(?, texture_image_url),
+				    x_pos = COALESCE(?, x_pos),
+				    y_pos = COALESCE(?, y_pos),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, areaArg, capacityArg, statusArg, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPosArg, yPosArg, isActiveArg, metaArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_tables
+			query: sqlFragment(`UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
@@ -2582,11 +2707,25 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    shape = COALESCE(?, shape),
+				    fill_color = COALESCE(?, fill_color),
+				    outline_color = COALESCE(?, outline_color),
+				    style_preset = COALESCE(?, style_preset),
+				    texture_image_url = COALESCE(?, texture_image_url),
+				    x_pos = COALESCE(?, x_pos),
+				    y_pos = COALESCE(?, y_pos),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, areaArg, capacityArg, shapeArg, fillColorArg, outlineColorArg, stylePresetArg, textureImageURLArg, xPosArg, yPosArg, isActiveArg, metaArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_tables
+			query: sqlFragment(`UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
@@ -2596,11 +2735,21 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    status = COALESCE(?, status),
+				    x_pos = COALESCE(?, x_pos),
+				    y_pos = COALESCE(?, y_pos),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, areaArg, capacityArg, statusArg, xPosArg, yPosArg, isActiveArg, metaArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_tables
+			query: sqlFragment(`UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
@@ -2609,11 +2758,20 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    x_pos = COALESCE(?, x_pos),
+				    y_pos = COALESCE(?, y_pos),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, areaArg, capacityArg, xPosArg, yPosArg, isActiveArg, metaArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_tables
+			query: sqlFragment(`UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
@@ -2621,56 +2779,90 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    status = COALESCE(?, status),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, areaArg, capacityArg, statusArg, isActiveArg, metaArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_tables
+			query: sqlFragment(`UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, areaArg, capacityArg, isActiveArg, metaArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_tables
+			query: sqlFragment(`UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
 				    is_active = COALESCE(?, is_active),
 				    metadata_json = COALESCE(?, metadata_json),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    is_active = COALESCE(?, is_active),
+				    metadata_json = COALESCE(?, metadata_json),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, areaArg, capacityArg, isActiveArg, metaArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_tables
+			query: sqlFragment(`UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
 				    is_active = COALESCE(?, is_active),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    is_active = COALESCE(?, is_active),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, areaArg, capacityArg, isActiveArg, req.ID, restaurantID},
 		},
 		{
-			query: `UPDATE restaurant_tables
+			query: sqlFragment(`UPDATE restaurant_tables
 				SET name = COALESCE(?, name),
 				    area_id = COALESCE(?, area_id),
 				    capacity = COALESCE(?, capacity),
 				    is_active = COALESCE(?, is_active),
 				    updated_at = NOW()
-				WHERE id = ? AND restaurant_id = ?`,
+				WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables
+				SET name = COALESCE(?, name),
+				    area_id = COALESCE(?, area_id),
+				    capacity = COALESCE(?, capacity),
+				    is_active = COALESCE(?, is_active),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE id = ? AND restaurant_id = ?`),
 			args: []any{nameArg, areaArg, capacityArg, isActiveArg, req.ID, restaurantID},
 		},
 	}
 
 	var updateErr error
 	for _, variant := range variants {
-		_, updateErr = s.db.ExecContext(ctx, variant.query, variant.args...)
+		_, updateErr = s.db.ExecContext(ctx, portableSQL(variant.query), variant.args...)
 		if updateErr == nil {
 			break
 		}
@@ -2688,7 +2880,7 @@ func (s *Server) updateBOPremiumTable(ctx context.Context, restaurantID int, req
 	// fallbacks above do not need to carry it.
 	if numeroMesaArg != nil {
 		if _, err := s.db.ExecContext(ctx,
-			`UPDATE restaurant_tables SET numero_mesa = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?`,
+			nativeSQL(`UPDATE restaurant_tables SET numero_mesa = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_tables SET numero_mesa = ?, updated_at = date_trunc('second', statement_timestamp()) WHERE id = ? AND restaurant_id = ?`),
 			numeroMesa, req.ID, restaurantID,
 		); err != nil {
 			if isSQLDuplicateError(err) {
@@ -2847,7 +3039,7 @@ func (s *Server) loadBOPremiumTablesSnapshot(ctx context.Context, restaurantID i
 	}
 
 	openPOSVisits := map[int64]map[string]any{}
-	posRows, posErr := s.db.QueryContext(ctx, `SELECT table_id,id,covers,opened_at FROM pos_visits WHERE restaurant_id=? AND channel='DINE_IN' AND status='OPEN' AND table_id IS NOT NULL`, restaurantID)
+	posRows, posErr := s.db.QueryContext(ctx, portableSQL(`SELECT table_id,id,covers,opened_at FROM pos_visits WHERE restaurant_id=? AND channel='DINE_IN' AND status='OPEN' AND table_id IS NOT NULL`), restaurantID)
 	if posErr == nil {
 		for posRows.Next() {
 			var tableID, visitID int64
@@ -2899,12 +3091,12 @@ func (s *Server) loadBOPremiumTableLayout(ctx context.Context, restaurantID int,
 		return map[string]any{}, nil
 	}
 	var raw sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT data_json
 		FROM restaurant_table_layouts
 		WHERE restaurant_id = ? AND layout_date = ? AND floor_number = ?
 		LIMIT 1
-	`, restaurantID, dateISO, floorNumber).Scan(&raw)
+	`), restaurantID, dateISO, floorNumber).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return map[string]any{}, nil
@@ -2927,13 +3119,19 @@ func (s *Server) upsertBOPremiumTableLayout(ctx context.Context, restaurantID in
 	}
 	normalized := normalizeBOPremiumTableLayoutMap(data)
 	raw, _ := json.Marshal(normalized)
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_table_layouts (restaurant_id, layout_date, floor_number, data_json, created_at, updated_at)
 		VALUES (?, ?, ?, ?, NOW(), NOW())
 		ON DUPLICATE KEY UPDATE
 			data_json = VALUES(data_json),
 			updated_at = NOW()
-	`, restaurantID, dateISO, floorNumber, string(raw))
+	`, `
+		INSERT INTO restaurant_table_layouts (restaurant_id, layout_date, floor_number, data_json, created_at, updated_at)
+		VALUES (?, CAST(? AS date), ?, CAST(? AS jsonb), date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))
+		ON CONFLICT (restaurant_id, layout_date, floor_number) DO UPDATE SET
+			data_json = EXCLUDED.data_json,
+			updated_at = date_trunc('second', statement_timestamp())
+	`), restaurantID, dateISO, floorNumber, string(raw))
 	if err != nil {
 		if isSQLSchemaError(err) {
 			return normalized, nil
@@ -3013,12 +3211,12 @@ func (s *Server) loadBOPremiumTableLayoutTemplate(ctx context.Context, restauran
 		return nil, nil
 	}
 	var raw sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT data_json
 		FROM restaurant_table_layout_templates
 		WHERE restaurant_id = ? AND floor_number = ?
 		LIMIT 1
-	`, restaurantID, floorNumber).Scan(&raw)
+	`), restaurantID, floorNumber).Scan(&raw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -3044,13 +3242,19 @@ func (s *Server) upsertBOPremiumTableLayoutTemplate(ctx context.Context, restaur
 	}
 	normalized := normalizeBOPremiumTableLayoutMap(data)
 	raw, _ := json.Marshal(normalized)
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_table_layout_templates (restaurant_id, floor_number, data_json, created_at, updated_at)
 		VALUES (?, ?, ?, NOW(), NOW())
 		ON DUPLICATE KEY UPDATE
 			data_json = VALUES(data_json),
 			updated_at = NOW()
-	`, restaurantID, floorNumber, string(raw))
+	`, `
+		INSERT INTO restaurant_table_layout_templates (restaurant_id, floor_number, data_json, created_at, updated_at)
+		VALUES (?, ?, CAST(? AS jsonb), date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))
+		ON CONFLICT (restaurant_id, floor_number) DO UPDATE SET
+			data_json = EXCLUDED.data_json,
+			updated_at = date_trunc('second', statement_timestamp())
+	`), restaurantID, floorNumber, string(raw))
 	if err != nil {
 		if isSQLSchemaError(err) {
 			return normalized, nil
@@ -3064,10 +3268,10 @@ func (s *Server) deleteBOPremiumTableLayoutTemplate(ctx context.Context, restaur
 	if floorNumber < 0 {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, portableSQL(`
 		DELETE FROM restaurant_table_layout_templates
 		WHERE restaurant_id = ? AND floor_number = ?
-	`, restaurantID, floorNumber)
+	`), restaurantID, floorNumber)
 	if err != nil && !isSQLSchemaError(err) {
 		return err
 	}
@@ -3316,7 +3520,7 @@ func (s *Server) handleBOMembersWhatsAppSend(w http.ResponseWriter, r *http.Requ
 	phone := normalizeWhatsAppNumber(req.Phone)
 	if req.MemberID != nil {
 		var verifiedAt sql.NullTime
-		if qerr := s.db.QueryRowContext(r.Context(), `SELECT whatsapp_verified_at FROM restaurant_members WHERE restaurant_id = ? AND id = ? AND is_active = 1`, a.ActiveRestaurantID, *req.MemberID).Scan(&verifiedAt); qerr != nil && !errors.Is(qerr, sql.ErrNoRows) {
+		if qerr := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT whatsapp_verified_at FROM restaurant_members WHERE restaurant_id = ? AND id = ? AND is_active = 1`), a.ActiveRestaurantID, *req.MemberID).Scan(&verifiedAt); qerr != nil && !errors.Is(qerr, sql.ErrNoRows) {
 			writeBOPremiumError(w, http.StatusInternalServerError, "WHATSAPP_SEND_FAILED", "No se pudo validar el teléfono")
 			return
 		}
@@ -3328,19 +3532,19 @@ func (s *Server) handleBOMembersWhatsAppSend(w http.ResponseWriter, r *http.Requ
 	if phone == "" && req.MemberID != nil {
 		var dbWhatsApp sql.NullString
 		var dbPhone sql.NullString
-		err := s.db.QueryRowContext(r.Context(), `
+		err := s.db.QueryRowContext(r.Context(), portableSQL(`
 			SELECT whatsapp_number, phone
 			FROM restaurant_members
 			WHERE restaurant_id = ? AND id = ?
 			LIMIT 1
-		`, a.ActiveRestaurantID, *req.MemberID).Scan(&dbWhatsApp, &dbPhone)
+		`), a.ActiveRestaurantID, *req.MemberID).Scan(&dbWhatsApp, &dbPhone)
 		if err != nil && isSQLSchemaError(err) {
-			err = s.db.QueryRowContext(r.Context(), `
+			err = s.db.QueryRowContext(r.Context(), portableSQL(`
 				SELECT phone
 				FROM restaurant_members
 				WHERE restaurant_id = ? AND id = ?
 				LIMIT 1
-			`, a.ActiveRestaurantID, *req.MemberID).Scan(&dbPhone)
+			`), a.ActiveRestaurantID, *req.MemberID).Scan(&dbPhone)
 		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			writeBOPremiumError(w, http.StatusInternalServerError, "WHATSAPP_SEND_FAILED", "No se pudo resolver el teléfono del miembro")
@@ -3448,14 +3652,14 @@ func (s *Server) handleBOMembersWhatsAppSubscribe(w http.ResponseWriter, r *http
 
 func (s *Server) hasActiveRecurringFeature(ctx context.Context, restaurantID int, featureKey string) (bool, error) {
 	queries := []string{
-		`SELECT 1 FROM recurring_invoices WHERE restaurant_id = ? AND feature_key = ? AND is_active = 1 LIMIT 1`,
-		`SELECT 1 FROM recurring_invoices WHERE restaurant_id = ? AND feature_key = ? AND is_active = true LIMIT 1`,
-		`SELECT 1 FROM recurring_invoices WHERE restaurant_id = ? AND feature_key = ? AND status = 'active' LIMIT 1`,
+		sqlFragment(`SELECT 1 FROM recurring_invoices WHERE restaurant_id = ? AND feature_key = ? AND is_active = 1 LIMIT 1`, `SELECT 1 FROM recurring_invoices WHERE restaurant_id = ? AND feature_key = ? AND is_active = 1 LIMIT 1`),
+		sqlFragment(`SELECT 1 FROM recurring_invoices WHERE restaurant_id = ? AND feature_key = ? AND is_active = true LIMIT 1`, `SELECT 1 FROM recurring_invoices WHERE restaurant_id = ? AND feature_key = ? AND is_active = 1 LIMIT 1`),
+		sqlFragment(`SELECT 1 FROM recurring_invoices WHERE restaurant_id = ? AND feature_key = ? AND status = 'active' LIMIT 1`, `SELECT 1 FROM recurring_invoices WHERE restaurant_id = ? AND feature_key = ? AND status = 'active' LIMIT 1`),
 	}
 
 	for _, q := range queries {
 		var one int
-		err := s.db.QueryRowContext(ctx, q, restaurantID, featureKey).Scan(&one)
+		err := s.db.QueryRowContext(ctx, portableSQL(q), restaurantID, featureKey).Scan(&one)
 		if err == nil {
 			return true, nil
 		}
@@ -3474,12 +3678,12 @@ func (s *Server) hasActiveRecurringFeature(ctx context.Context, restaurantID int
 // Tolerant of the several schema variants used across environments.
 func (s *Server) deactivateRecurringFeature(ctx context.Context, restaurantID int, featureKey string) error {
 	variants := []string{
-		`UPDATE recurring_invoices SET is_active = 0, updated_at = NOW() WHERE restaurant_id = ? AND feature_key = ?`,
-		`UPDATE recurring_invoices SET status = 'canceled', updated_at = NOW() WHERE restaurant_id = ? AND feature_key = ?`,
+		sqlFragment(`UPDATE recurring_invoices SET is_active = 0, updated_at = NOW() WHERE restaurant_id = ? AND feature_key = ?`, `UPDATE recurring_invoices SET is_active = 0, updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ? AND feature_key = ?`),
+		sqlFragment(`UPDATE recurring_invoices SET status = 'canceled', updated_at = NOW() WHERE restaurant_id = ? AND feature_key = ?`, `UPDATE recurring_invoices SET status = 'canceled', updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ? AND feature_key = ?`),
 	}
 	var lastErr error
 	for _, q := range variants {
-		_, err := s.db.ExecContext(ctx, q, restaurantID, featureKey)
+		_, err := s.db.ExecContext(ctx, portableSQL(q), restaurantID, featureKey)
 		if err == nil {
 			return nil
 		}
@@ -3535,7 +3739,7 @@ func (s *Server) activateRecurringFeatureMonthly(ctx context.Context, restaurant
 
 	updateVariants := []boSQLVariant{
 		{
-			query: `UPDATE recurring_invoices
+			query: sqlFragment(`UPDATE recurring_invoices
 				SET is_active = 1,
 				    amount = ?,
 				    currency = ?,
@@ -3544,11 +3748,22 @@ func (s *Server) activateRecurringFeatureMonthly(ctx context.Context, restaurant
 				    metadata_json = ?,
 				    next_run_at = DATE_ADD(NOW(), INTERVAL 1 MONTH),
 				    updated_at = NOW()
-				WHERE restaurant_id = ? AND feature_key = ?`,
-			args: []any{amount, currency, metaArg, restaurantID, featureKey},
+				WHERE restaurant_id = ? AND feature_key = ?`, `UPDATE recurring_invoices
+				SET is_active = 1,
+				    amount = ?,
+				    currency = ?,
+				    frequency = 'monthly',
+				    interval_count = 1,
+				    metadata_json = ?,
+				    next_run_at = (date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 month'),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ? AND feature_key = ?
+				  AND ROW(is_active, amount, currency COLLATE "C", CAST(frequency AS text), interval_count, metadata_json, next_run_at, updated_at)
+				      IS DISTINCT FROM ROW(CAST(1 AS smallint), CAST(CAST(? AS double precision) AS numeric(10,2)), CAST(? AS text) COLLATE "C", 'monthly', 1, CAST(? AS jsonb), (date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 month'), date_trunc('second', statement_timestamp()))`),
+			args: posChangedRowArgs([]any{amount, currency, metaArg}, restaurantID, featureKey),
 		},
 		{
-			query: `UPDATE recurring_invoices
+			query: sqlFragment(`UPDATE recurring_invoices
 				SET is_active = 1,
 				    amount = ?,
 				    currency = ?,
@@ -3557,35 +3772,58 @@ func (s *Server) activateRecurringFeatureMonthly(ctx context.Context, restaurant
 				    meta_json = ?,
 				    next_billing_at = DATE_ADD(NOW(), INTERVAL 1 MONTH),
 				    updated_at = NOW()
-				WHERE restaurant_id = ? AND feature_key = ?`,
+				WHERE restaurant_id = ? AND feature_key = ?`, `UPDATE recurring_invoices
+				SET is_active = 1,
+				    amount = ?,
+				    currency = ?,
+				    interval_unit = 'month',
+				    interval_count = 1,
+				    meta_json = ?,
+				    next_billing_at = (date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 month'),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ? AND feature_key = ?`),
 			args: []any{amount, currency, metaArg, restaurantID, featureKey},
 		},
 		{
-			query: `UPDATE recurring_invoices
+			query: sqlFragment(`UPDATE recurring_invoices
 				SET is_active = 1,
 				    amount = ?,
 				    currency = ?,
 				    frequency = 'monthly',
 				    next_billing_date = DATE_ADD(CURDATE(), INTERVAL 1 MONTH),
 				    updated_at = NOW()
-				WHERE restaurant_id = ? AND feature_key = ?`,
+				WHERE restaurant_id = ? AND feature_key = ?`, `UPDATE recurring_invoices
+				SET is_active = 1,
+				    amount = ?,
+				    currency = ?,
+				    frequency = 'monthly',
+				    next_billing_date = (CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date) + INTERVAL '1 month'),
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ? AND feature_key = ?`),
 			args: []any{amount, currency, restaurantID, featureKey},
 		},
 		{
-			query: `UPDATE recurring_invoices
+			query: sqlFragment(`UPDATE recurring_invoices
 				SET status = 'active',
 				    amount = ?,
 				    currency = ?,
 				    period = 'monthly',
 				    metadata_json = ?,
 				    updated_at = NOW()
-				WHERE restaurant_id = ? AND feature_key = ?`,
+				WHERE restaurant_id = ? AND feature_key = ?`, `UPDATE recurring_invoices
+				SET status = 'active',
+				    amount = ?,
+				    currency = ?,
+				    period = 'monthly',
+				    metadata_json = ?,
+				    updated_at = date_trunc('second', statement_timestamp())
+				WHERE restaurant_id = ? AND feature_key = ?`),
 			args: []any{amount, currency, metaArg, restaurantID, featureKey},
 		},
 	}
 
 	for _, variant := range updateVariants {
-		res, err := s.db.ExecContext(ctx, variant.query, variant.args...)
+		res, err := s.db.ExecContext(ctx, portableSQL(variant.query), variant.args...)
 		if err != nil {
 			if isSQLSchemaError(err) {
 				continue
@@ -3620,40 +3858,59 @@ func insertRecurringInvoiceRecord(ctx context.Context, execer boSQLExecutor, res
 
 	variants := []boSQLVariant{
 		{
-			query: `INSERT INTO recurring_invoices
+			query: sqlFragment(`INSERT INTO recurring_invoices
 				(restaurant_id, feature_key, customer_name, customer_email, amount, currency, frequency, start_date, is_active, interval_count, metadata_json, next_run_at, created_at, updated_at)
-				VALUES (?, ?, ?, '', ?, ?, 'monthly', CURDATE(), 1, 1, ?, DATE_ADD(NOW(), INTERVAL 1 MONTH), NOW(), NOW())`,
+				VALUES (?, ?, ?, '', ?, ?, 'monthly', CURDATE(), 1, 1, ?, DATE_ADD(NOW(), INTERVAL 1 MONTH), NOW(), NOW())`, `INSERT INTO recurring_invoices
+				(restaurant_id, feature_key, customer_name, customer_email, amount, currency, frequency, start_date, is_active, interval_count, metadata_json, next_run_at, created_at, updated_at)
+				VALUES (?, ?, ?, '', ?, ?, 'monthly', CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date), 1, 1, ?, (date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 month'), date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, featureKey, customerName, amount, currency, metaArg},
 		},
 		{
-			query: `INSERT INTO recurring_invoices
+			query: sqlFragment(`INSERT INTO recurring_invoices
 				(restaurant_id, feature_key, amount, currency, interval_unit, interval_count, is_active, meta_json, next_billing_at, created_at, updated_at)
-				VALUES (?, ?, ?, ?, 'month', 1, 1, ?, DATE_ADD(NOW(), INTERVAL 1 MONTH), NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, 'month', 1, 1, ?, DATE_ADD(NOW(), INTERVAL 1 MONTH), NOW(), NOW())`, `INSERT INTO recurring_invoices
+				(restaurant_id, feature_key, amount, currency, interval_unit, interval_count, is_active, meta_json, next_billing_at, created_at, updated_at)
+				VALUES (?, ?, ?, ?, 'month', 1, 1, ?, (date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '1 month'), date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, featureKey, amount, currency, metaArg},
 		},
 		{
-			query: `INSERT INTO recurring_invoices
+			query: sqlFragment(`INSERT INTO recurring_invoices
 				(restaurant_id, feature_key, amount, currency, frequency, start_date, next_billing_date, is_active, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH), 1, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 1 MONTH), 1, NOW(), NOW())`, `INSERT INTO recurring_invoices
+				(restaurant_id, feature_key, amount, currency, frequency, start_date, next_billing_date, is_active, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date), (CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date) + INTERVAL '1 month'), 1, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, featureKey, amount, currency, frequency},
 		},
 		{
-			query: `INSERT INTO recurring_invoices
+			query: sqlFragment(`INSERT INTO recurring_invoices
 				(restaurant_id, feature_key, amount, currency, billing_cycle, status, metadata_json, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, 'active', ?, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, ?, 'active', ?, NOW(), NOW())`, `INSERT INTO recurring_invoices
+				(restaurant_id, feature_key, amount, currency, billing_cycle, status, metadata_json, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, 'active', ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, featureKey, amount, currency, frequency, metaArg},
 		},
 		{
-			query: `INSERT INTO recurring_invoices
+			query: sqlFragment(`INSERT INTO recurring_invoices
 				(restaurant_id, feature_key, amount, currency, is_active, created_at, updated_at)
-				VALUES (?, ?, ?, ?, 1, NOW(), NOW())`,
+				VALUES (?, ?, ?, ?, 1, NOW(), NOW())`, `INSERT INTO recurring_invoices
+				(restaurant_id, feature_key, amount, currency, is_active, created_at, updated_at)
+				VALUES (?, ?, ?, ?, 1, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`),
 			args: []any{restaurantID, featureKey, amount, currency},
 		},
 	}
 
 	var lastErr error
 	for _, variant := range variants {
-		_, err := execer.ExecContext(ctx, variant.query, variant.args...)
+		run := func() error {
+			_, e := execer.ExecContext(ctx, portableSQL(variant.query), variant.args...)
+			return e
+		}
+		var err error
+		if tx, ok := execer.(*sql.Tx); ok { // domain register tx: savepoint per attempt on PG
+			err = sqldb.TxStatementScope(ctx, sqlDialect, tx, run)
+		} else {
+			err = run()
+		}
 		if err == nil || isSQLDuplicateError(err) {
 			return nil
 		}
@@ -3679,17 +3936,23 @@ func (s *Server) logMembersWhatsAppDelivery(ctx context.Context, restaurantID in
 	payloadRaw, _ := json.Marshal(payload)
 
 	if status == "sent" {
-		_, _ = s.db.ExecContext(ctx, `
+		_, _ = s.db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO message_deliveries (restaurant_id, channel, event, recipient, payload_json, status, sent_at)
 			VALUES (?, 'whatsapp', 'members_whatsapp_send', ?, ?, 'sent', NOW())
-		`, restaurantID, recipient, nullableString(string(payloadRaw)))
+		`, `
+			INSERT INTO message_deliveries (restaurant_id, channel, event, recipient, payload_json, status, sent_at)
+			VALUES (?, 'whatsapp', 'members_whatsapp_send', ?, CAST(? AS jsonb), 'sent', date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'))
+		`), restaurantID, recipient, nullableString(string(payloadRaw)))
 		return
 	}
 
-	_, _ = s.db.ExecContext(ctx, `
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO message_deliveries (restaurant_id, channel, event, recipient, payload_json, status, error)
 		VALUES (?, 'whatsapp', 'members_whatsapp_send', ?, ?, 'failed', ?)
-	`, restaurantID, recipient, nullableString(string(payloadRaw)), nullableString(errText))
+	`, `
+		INSERT INTO message_deliveries (restaurant_id, channel, event, recipient, payload_json, status, error)
+		VALUES (?, 'whatsapp', 'members_whatsapp_send', ?, CAST(? AS jsonb), 'failed', ?)
+	`), restaurantID, recipient, nullableString(string(payloadRaw)), nullableString(errText))
 }
 
 func (s *Server) lookupTakenDomains(ctx context.Context, domains []string) (map[string]bool, error) {
@@ -3713,8 +3976,11 @@ func (s *Server) lookupTakenDomains(ctx context.Context, domains []string) (map[
 		return out, nil
 	}
 
-	q := fmt.Sprintf(`SELECT domain FROM restaurant_domains WHERE domain IN (%s)`, strings.Join(placeholders, ","))
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	// padding_global_key_v1: PG compares the PAD-aware old-nondeterministic-collation key (same
+	// expression as the app.norm ux__ index); MySQL text unchanged.
+	pgPH := strings.TrimSuffix(strings.Repeat("app.norm_ascii(?),", len(placeholders)), ",")
+	q := fmt.Sprintf(sqlFragment(`SELECT domain FROM restaurant_domains WHERE domain IN (%s)`, `SELECT domain FROM restaurant_domains WHERE app.norm_ascii(domain) IN (%s)`), sqlFragment(strings.Join(placeholders, ","), pgPH))
+	rows, err := s.db.QueryContext(ctx, portableSQL(q), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3736,8 +4002,10 @@ func (s *Server) lookupTakenDomains(ctx context.Context, domains []string) (map[
 	return out, nil
 }
 
+// queryOneAsMap / queryAllAsMaps: every caller passes a static, dialect-
+// portable SELECT with "?" placeholders; rebound once here.
 func (s *Server) queryOneAsMap(ctx context.Context, query string, args ...any) (map[string]any, bool, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(query), args...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -3754,7 +4022,7 @@ func (s *Server) queryOneAsMap(ctx context.Context, query string, args ...any) (
 }
 
 func (s *Server) queryAllAsMaps(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(query), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3794,8 +4062,10 @@ func normalizeSQLValue(col string, v any) any {
 	switch t := v.(type) {
 	case nil:
 		return nil
-	case []byte:
-		s := string(t)
+	case []byte, string:
+		// go-mysql (binary protocol) returns text/decimal/JSON as []byte;
+		// pgx stdlib returns the same text as string: normalise identically.
+		s := asSQLText(t)
 		colLower := strings.ToLower(strings.TrimSpace(col))
 		if strings.HasSuffix(colLower, "_json") || strings.HasSuffix(colLower, "json") {
 			var parsed any
@@ -3809,6 +4079,13 @@ func normalizeSQLValue(col string, v any) any {
 	default:
 		return t
 	}
+}
+
+func asSQLText(v any) string {
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	return v.(string)
 }
 
 func firstStringFromMap(m map[string]any, keys ...string) string {
@@ -4240,6 +4517,9 @@ func isSQLSchemaError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if sqldb.IsUndefinedObject(err) { // SQLSTATE 42P01/42703 or MySQL 1146/1054
+		return true
+	}
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	return strings.Contains(msg, "unknown column") ||
 		strings.Contains(msg, "unknown table") ||
@@ -4250,9 +4530,22 @@ func isSQLSchemaError(err error) bool {
 		strings.Contains(msg, "undefined column")
 }
 
+// boPremiumDBStatus (pgnative-B): a unique violation (MySQL 1062 / PG 23505,
+// e.g. an area or table name equal under app.norm) is a 409 conflict, any
+// other DB error stays 500.
+func boPremiumDBStatus(err error) int {
+	if sqldb.IsUniqueViolation(err) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
+}
+
 func isSQLDuplicateError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if sqldb.IsUniqueViolation(err) {
+		return true
 	}
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	return strings.Contains(msg, "duplicate entry") ||

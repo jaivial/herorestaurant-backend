@@ -1,0 +1,142 @@
+{
+  "inventory": "sql-inventory-r74.json (dbmigrate-r14)",
+  "repo_call_sites": 2475,
+  "repo_native_sites": 2472,
+  "repo_blocked": 3,
+  "repo_unwrapped": 0,
+  "repo_dynamic": 0,
+  "audit_failures": 0,
+  "runtime_verified": 0,
+  "files": {
+    "internal/botstore/botstore.go": {
+      "sites": 11,
+      "selectedSQL": 7,
+      "pgOnlySQL": 4
+    },
+    "internal/botstore/migrate.go": {
+      "sites": 15,
+      "selectedSQL": 9,
+      "pgOnlySQL": 6
+    },
+    "internal/botstore/mysql.go": {
+      "sites": 11,
+      "pgOnlySQL": 11
+    },
+    "internal/dbmigrate/export.go": {
+      "sites": 3,
+      "mysqlOnlySQL": 3
+    },
+    "internal/dbmigrate/schema.go": {
+      "sites": 1,
+      "mysqlOnlySQL": 1
+    },
+    "internal/dbmigrate/pgimport.go": {
+      "sites": 14,
+      "pgOnlySQL": 14
+    },
+    "cmd/ops-check/main.go": {
+      "sites": 15,
+      "nativeSQL": 8,
+      "portableSQL": 7,
+      "note": "the 9 checkTenant query twins (sqlFragment) are counted once at their single QueryRow site (portableSQL)"
+    },
+    "cmd/cdn-sweep": {
+      "sites": 8,
+      "nativeSQL": 7,
+      "portableSQL": 1,
+      "functional_on_pg": false
+    },
+    "mysql_only_tools": {
+      "backfill-translations": 9,
+      "comida-stock-backfill": 8,
+      "group-menu-arroz-cleanup": 5,
+      "update-restaurant-info": 4,
+      "migrate-wine-images": 3,
+      "chatgpt-plugin-token": 1,
+      "cmd/dbmigrate": 1,
+      "seed-legal-pages": 1,
+      "internal/db(+migrations)": 5
+    },
+    "cmd/botstore-migrate": {
+      "sites": 2,
+      "selectedSQL": 2,
+      "role": "SQLite source reads"
+    }
+  },
+  "botstore_done": 37,
+  "tooling_remaining": {},
+  "semantic_open": [
+    {
+      "site": "botstore markers",
+      "note": "Marker-only change: package-local identity selectedSQL/pgOnlySQL (no SQL text change). Wrapper methods (ExecContext/QueryContext/QueryRowContext/Exec/InsertID/txQuerier) carry caller-selected text; caller sites were ported earlier. SQLite halves (sqlite_master, sqlite_sequence, rowid, ALTER ADD COLUMN) marked selectedSQL inside explicit branches; importer/sequence/meta statements PG-only."
+    },
+    {
+      "site": "botstore copy/import proof",
+      "note": "bot_context 6-table copy + MySQL import + rollback round trip r5 verified earlier; code paths unchanged, proof data untouched, nothing re-run."
+    },
+    {
+      "site": "schemaless PG open",
+      "note": "Open(postgres, dsn) with schema=='' uses plain sql.Open(pgx) without the sqldb UTC session pin: legacy separate-DB mode default session timezone gap remains (unified schema path pins UTC, confirmed pos1)."
+    },
+    {
+      "site": "FTS",
+      "note": "SQLite FTS5 vs PG tsvector/FTSFold ranking mismatch stays an open gate."
+    },
+    {
+      "site": "Rebind",
+      "note": "botstore Rebind is not quote-aware (documented: queries never carry literal ?); unchanged."
+    },
+    {
+      "site": "dbmigrate roles",
+      "note": "Marker-only: export.go/schema.go = MySQL source reads (mysqlOnlySQL, session UTC/RR consistent snapshot unchanged); pgimport.go = PG target (pgOnlySQL). No SQL text changed; r5/import proof data and the 1117 pending gate classification untouched; nothing run."
+    },
+    {
+      "site": "ops-check wiring",
+      "note": "Explicit twins behind a package dialect var that stays MySQL: ops-check still opens MySQL and runs the MySQL migration runner unconditionally (source behaviour). PG cutover wiring needed: open PG pool (sqldb.OpenPostgres UTC pin), skip MySQL migrations.Apply, set dialect. Open gate, not activated."
+    },
+    {
+      "site": "ops-check lock",
+      "note": "GET_LOCK/RELEASE_LOCK -> pg_try_advisory_lock/pg_advisory_unlock(hashtextextended(name,0)) session locks; source and twin both take/release on arbitrary pooled connections (release may hit another connection; lock then lives until that connection closes) - source bug class kept, gate."
+    },
+    {
+      "site": "ops-check checks",
+      "note": "Cover check: HAVING alias -> repeated expression, three distinct service_type enums compared as text, covers_mode enum COALESCE as text. Margin-scope check: SUBSTRING_INDEX -> split_part / last-segment regexp; lenient CAST AS UNSIGNED -> leading-digits numeric (same exotic-input gate as pos14; ci_ai collation on 'platos'/'bebidas' compare). opened_at naive UTC intervals; ids via InsertID; payload/summary jsonb; sent_at naive, original_deleted_at timestamptz, retention CURDATE -> UTC date. Ignored delivery updates outside tx."
+    },
+    {
+      "site": "marker coverage != functional",
+      "note": "46 mysqlOnlySQL sites belong to MySQL-bound tools/bootstrap (one-shot backfills, cleanups, seeding, token tool, MySQL migration runner, MySQL admin create DB); they have no PG twin and are NOT part of the PG runtime. Running any of them after cutover requires a port or retirement decision first."
+    },
+    {
+      "site": "cdn-sweep PG twins unwired",
+      "note": "Twins behind dialect var (stays MySQL): advisory lock, InsertID, naive UTC times (LastModified via NaiveUTCArg), PAD SPACE NULLIF, information_schema lower(column_name) LIKE (MySQL *_ci), quoted identifiers for mixed-case registry tables. Unwired: open PG pool + pass PG schema name. Safety: a wrong registry/schema on PG would mark live images orphaned; dry-run default kept; must QA before any --apply on PG."
+    },
+    {
+      "site": "advisory locks (ops-check, cdn-sweep, comida-stock-backfill)",
+      "note": "GET_LOCK/pg_try_advisory_lock are session locks taken on an arbitrary pooled *sql.DB connection; RELEASE may run on another connection (lock leaks until that connection closes). Source bug class on both engines; repair candidate: pin a *sql.Conn for lock+release (or use a tx-scoped pg_try_advisory_xact_lock)."
+    }
+  ],
+  "dbmigrate_done": 18,
+  "opscheck_done": 15,
+  "native_by_kind": {
+    "blockedOnPGSQL": 3,
+    "mysqlOnlySQL": 46,
+    "nativeSQL": 841,
+    "pgOnlySQL": 39,
+    "pgProvisionalSQL": 2,
+    "portableSQL": 1460,
+    "provisionalSQL": 3,
+    "selectedSQL": 81
+  },
+  "provisional": [
+    "internal/api/backoffice_uazapi_provisioning.go:637",
+    "internal/api/seo_item_routes.go:707",
+    "internal/api/seo_item_routes.go:715",
+    "internal/api/site_builder_registrar.go:169",
+    "internal/api/stripe_connect.go:117"
+  ],
+  "blocked": [
+    "internal/api/assistant_pos_tools.go:68",
+    "internal/api/instatic_manager.go:211",
+    "internal/api/instatic_manager.go:903"
+  ]
+}

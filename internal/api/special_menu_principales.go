@@ -40,13 +40,19 @@ type specialMenuPrincipal struct {
 // being offered inside a special menu is a separate, explicit choice.
 func (s *Server) loadSpecialMenuPrincipales(ctx context.Context, restaurantID int, menuID int64) map[int64][]specialMenuPrincipal {
 	out := map[int64][]specialMenuPrincipal{}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT p.id, p.section_id, p.dish_id, ci.nombre, COALESCE(ci.descripcion, ''), COALESCE(ci.alergenos_json, '[]'), p.position
 		FROM special_menu_section_principales p
 		JOIN comida_items ci ON ci.id = p.dish_id AND ci.restaurant_id = p.restaurant_id
 		WHERE p.restaurant_id = ? AND p.menu_id = ?
 		ORDER BY p.section_id ASC, p.position ASC, p.id ASC
-	`, restaurantID, menuID)
+	`, `
+		SELECT p.id, p.section_id, p.dish_id, ci.nombre, COALESCE(ci.descripcion, ''), COALESCE(CAST(ci.alergenos_json AS text), '[]'), p.position
+		FROM special_menu_section_principales p
+		JOIN comida_items ci ON ci.id = p.dish_id AND ci.restaurant_id = p.restaurant_id
+		WHERE p.restaurant_id = ? AND p.menu_id = ?
+		ORDER BY p.section_id ASC, p.position ASC, p.id ASC
+	`), restaurantID, menuID)
 	if err != nil {
 		log.Printf("[special_menu_principales_v1] load menu=%d err=%v", menuID, err)
 		return out
@@ -71,7 +77,7 @@ func (s *Server) loadSpecialMenuPrincipales(ctx context.Context, restaurantID in
 func (s *Server) specialMenuPrincipalesEnabled(ctx context.Context, restaurantID int, menuID int64) bool {
 	var enabled int
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT special_principales_enabled FROM menus WHERE id = ? AND restaurant_id = ?`,
+		portableSQL(`SELECT special_principales_enabled FROM menus WHERE id = ? AND restaurant_id = ?`),
 		menuID, restaurantID).Scan(&enabled); err != nil {
 		return false
 	}
@@ -119,7 +125,7 @@ func (s *Server) requireBOSpecialSection(w http.ResponseWriter, r *http.Request)
 	}
 	var found int
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		portableSQL(`SELECT COUNT(*) FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`),
 		sectionID, menuID, a.ActiveRestaurantID).Scan(&found); err != nil || found == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Seccion no encontrada"})
 		return 0, 0, 0, false
@@ -148,7 +154,7 @@ func (s *Server) handleBOSpecialMenuPrincipalesToggle(w http.ResponseWriter, r *
 		return
 	}
 	res, err := s.db.ExecContext(r.Context(),
-		`UPDATE menus SET special_principales_enabled = ? WHERE id = ? AND restaurant_id = ?`,
+		portableSQL(`UPDATE menus SET special_principales_enabled = ? WHERE id = ? AND restaurant_id = ?`),
 		boolToTinyint(req.Enabled), menuID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando principales")
@@ -180,17 +186,22 @@ func (s *Server) handleBOSpecialSectionPrincipalAdd(w http.ResponseWriter, r *ht
 	}
 	var found int
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = 'platos'`,
+		portableSQL(`SELECT COUNT(*) FROM comida_items WHERE id = ? AND restaurant_id = ? AND source_type = 'platos'`),
 		req.DishID, restaurantID).Scan(&found); err != nil || found == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Plato no encontrado"})
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO special_menu_section_principales (restaurant_id, menu_id, section_id, dish_id, position)
 		SELECT ?, ?, ?, ?, COALESCE(MAX(position), -1) + 1
 		FROM special_menu_section_principales WHERE section_id = ?
 		ON DUPLICATE KEY UPDATE dish_id = dish_id
-	`, restaurantID, menuID, sectionID, req.DishID, sectionID); err != nil {
+	`, `
+		INSERT INTO special_menu_section_principales (restaurant_id, menu_id, section_id, dish_id, position)
+		SELECT CAST(? AS integer), CAST(? AS integer), CAST(? AS bigint), CAST(? AS integer), COALESCE(MAX(position), -1) + 1
+		FROM special_menu_section_principales WHERE section_id = ?
+		ON CONFLICT (section_id, dish_id) DO UPDATE SET dish_id = special_menu_section_principales.dish_id
+	`), restaurantID, menuID, sectionID, req.DishID, sectionID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error anadiendo principal")
 		return
 	}
@@ -212,7 +223,7 @@ func (s *Server) handleBOSpecialSectionPrincipalDelete(w http.ResponseWriter, r 
 		return
 	}
 	if _, err := s.db.ExecContext(r.Context(),
-		`DELETE FROM special_menu_section_principales WHERE restaurant_id = ? AND section_id = ? AND dish_id = ?`,
+		portableSQL(`DELETE FROM special_menu_section_principales WHERE restaurant_id = ? AND section_id = ? AND dish_id = ?`),
 		restaurantID, sectionID, dishID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando principal")
 		return

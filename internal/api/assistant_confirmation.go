@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"preactvillacarmen/internal/sqldb"
 	"sync"
 	"time"
 )
@@ -42,11 +43,13 @@ func (s *confirmationStore) Issue(user, restaurant, tool, args, session string, 
 	k := hex.EncodeToString(d[:])
 	if s.db != nil {
 		// Opportunistic purge of expired tokens keeps the table bounded.
-		_, _ = s.db.Exec(`DELETE FROM forky_confirmation_tokens WHERE expires_at <= NOW()`)
-		_, err := s.db.Exec(`
+		// expires_at is a naive UTC DATETIME: MySQL NOW() (session UTC) per
+		// statement -> PG statement_timestamp() UTC wall clock truncated to s.
+		_, _ = s.db.Exec(nativeSQL(`DELETE FROM forky_confirmation_tokens WHERE expires_at <= NOW()`, `DELETE FROM forky_confirmation_tokens WHERE expires_at <= date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')`))
+		_, err := s.db.Exec(portableSQL(`
 			INSERT INTO forky_confirmation_tokens (token_hash, user_id, restaurant_id, tool, args_hash, session_key, expires_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, k, user, restaurant, tool, sha256Hex(args), session, time.Now().Add(ttl))
+		`), k, user, restaurant, tool, sha256Hex(args), session, sqldb.NaiveUTCArg(sqlDialect, time.Now().Add(ttl)))
 		if err != nil {
 			return "", err
 		}
@@ -63,10 +66,15 @@ func (s *confirmationStore) Consume(tok, user, restaurant, tool, args, session s
 	if s.db != nil {
 		// Atomic single-use: the row is deleted on consume, so a replay (or an
 		// expired/mismatched token) affects zero rows.
-		res, err := s.db.Exec(`
+		// Single use on PG too: a concurrent DELETE of the same row blocks on
+		// the row lock and re-checks after commit -> 0 rows (code review only).
+		res, err := s.db.Exec(nativeSQL(`
 			DELETE FROM forky_confirmation_tokens
 			WHERE token_hash = ? AND user_id = ? AND restaurant_id = ? AND tool = ? AND args_hash = ? AND session_key = ? AND expires_at > NOW()
-		`, k, user, restaurant, tool, sha256Hex(args), session)
+		`, `
+			DELETE FROM forky_confirmation_tokens
+			WHERE app.norm_ascii(token_hash) = app.norm_ascii(?) AND user_id = ? AND restaurant_id = ? AND tool = ? AND args_hash = ? AND session_key = ? AND expires_at > date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')
+		`), k, user, restaurant, tool, sha256Hex(args), session)
 		if err != nil {
 			return err
 		}
@@ -101,7 +109,7 @@ func (s *confirmationStore) rejectReason(hash, restaurant, tool, argsHash, sessi
 	const base = "confirmation token expired or invalid"
 	var rowTool, rowArgs, rowRest, rowSess string
 	var live bool
-	err := s.db.QueryRow(`SELECT tool, args_hash, restaurant_id, session_key, expires_at > NOW() FROM forky_confirmation_tokens WHERE token_hash = ?`, hash).Scan(&rowTool, &rowArgs, &rowRest, &rowSess, &live)
+	err := s.db.QueryRow(nativeSQL(`SELECT tool, args_hash, restaurant_id, session_key, expires_at > NOW() FROM forky_confirmation_tokens WHERE token_hash = ?`, `SELECT tool, args_hash, restaurant_id, session_key, expires_at > date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') FROM forky_confirmation_tokens WHERE app.norm_ascii(token_hash) = app.norm_ascii(?)`), hash).Scan(&rowTool, &rowArgs, &rowRest, &rowSess, &live)
 	reason, hint := "unknown", ""
 	switch {
 	case err == sql.ErrNoRows:

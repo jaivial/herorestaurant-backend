@@ -20,15 +20,18 @@ package api
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
 
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/integrations"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func newPlatformStripeClient(secretKey string) *integrations.PlatformStripeClient {
@@ -83,7 +86,7 @@ type platformRestaurant struct {
 }
 
 func (s *Server) handlePlatformRestaurantsList(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			r.id, r.slug, r.name,
 			r.avatar, r.cif, r.contact_phone, r.contact_email,
@@ -102,7 +105,26 @@ func (s *Server) handlePlatformRestaurantsList(w http.ResponseWriter, r *http.Re
 		LEFT JOIN (SELECT restaurant_id, COUNT(*) AS cnt FROM restaurant_domains GROUP BY restaurant_id) d ON d.restaurant_id = r.id
 		LEFT JOIN (SELECT restaurant_id, status FROM restaurant_uazapi_instances) wa ON wa.restaurant_id = r.id
 		ORDER BY r.id ASC
-	`)
+	`, `
+		SELECT
+			r.id, r.slug, r.name,
+			r.avatar, r.cif, r.contact_phone, r.contact_email,
+			r.location, r.website_url,
+			1 AS is_active,
+			to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+			COALESCE(u.cnt, 0) AS user_count,
+			COALESCE(m.cnt, 0) AS member_count,
+			COALESCE(b.cnt, 0) AS booking_count,
+			COALESCE(d.cnt, 0) AS domain_count,
+			COALESCE(wa.status, '') AS wa_status
+		FROM restaurants r
+		LEFT JOIN (SELECT restaurant_id, COUNT(*) AS cnt FROM bo_user_restaurants GROUP BY restaurant_id) u ON u.restaurant_id = r.id
+		LEFT JOIN (SELECT restaurant_id, COUNT(*) AS cnt FROM restaurant_members WHERE is_active = 1 GROUP BY restaurant_id) m ON m.restaurant_id = r.id
+		LEFT JOIN (SELECT restaurant_id, COUNT(*) AS cnt FROM bookings GROUP BY restaurant_id) b ON b.restaurant_id = r.id
+		LEFT JOIN (SELECT restaurant_id, COUNT(*) AS cnt FROM restaurant_domains GROUP BY restaurant_id) d ON d.restaurant_id = r.id
+		LEFT JOIN (SELECT restaurant_id, status FROM restaurant_uazapi_instances) wa ON wa.restaurant_id = r.id
+		ORDER BY r.id ASC
+	`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo restaurantes")
 		return
@@ -172,19 +194,14 @@ func (s *Server) handlePlatformRestaurantCreate(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 		INSERT INTO restaurants (slug, name, cif, contact_phone, contact_email, location, website_url)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`,
-		slug, name,
-		nullableStr(req.CIF), nullableStr(req.ContactPhone), nullableStr(req.ContactEmail),
-		nullableStr(req.Location), nullableStr(req.WebsiteURL),
-	)
+	`), "id", slug, name, nullableStr(req.CIF), nullableStr(req.ContactPhone), nullableStr(req.ContactEmail), nullableStr(req.Location), nullableStr(req.WebsiteURL))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error creando restaurante: " + err.Error()})
 		return
 	}
-	id, _ := res.LastInsertId()
 
 	// Multitenant provisioning: a new restaurant must be usable right away -
 	// seed its satellite rows with defaults and grant the creator ownership.
@@ -273,7 +290,8 @@ func (s *Server) handlePlatformRestaurantPatch(w http.ResponseWriter, r *http.Re
 
 	args = append(args, restaurantID)
 	query := "UPDATE restaurants SET " + strings.Join(sets, ", ") + " WHERE id = ?"
-	if _, err := s.db.ExecContext(r.Context(), query, args...); err != nil {
+	// SET fragments are fixed lowercase column names (name, cif, contact_*, location, website_url): portable.
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(query), args...); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error actualizando: " + err.Error()})
 		return
 	}
@@ -290,14 +308,14 @@ func (s *Server) handlePlatformRestaurantDeactivate(w http.ResponseWriter, r *ht
 	ctx := r.Context()
 
 	// Deactivate all sessions for this restaurant's users.
-	_, _ = s.db.ExecContext(ctx, `
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`
 		DELETE s FROM bo_sessions s
 		JOIN bo_user_restaurants ur ON ur.user_id = s.user_id AND ur.restaurant_id = s.active_restaurant_id
 		WHERE s.active_restaurant_id = ?
-	`, restaurantID)
+	`, `DELETE FROM bo_sessions s USING bo_user_restaurants ur WHERE ur.user_id = s.user_id AND ur.restaurant_id = s.active_restaurant_id AND s.active_restaurant_id = ?`), restaurantID)
 
 	// Deactivate all recurring features.
-	_, _ = s.db.ExecContext(ctx, "UPDATE recurring_invoices SET is_active = 0 WHERE restaurant_id = ?", restaurantID)
+	_, _ = s.db.ExecContext(ctx, portableSQL("UPDATE recurring_invoices SET is_active = 0 WHERE restaurant_id = ?"), restaurantID)
 
 	// Suspend WhatsApp instance.
 	_ = s.suspendRestaurantUAZAPIInstance(ctx, restaurantID)
@@ -314,7 +332,7 @@ func (s *Server) handlePlatformRestaurantActivate(w http.ResponseWriter, r *http
 		httpx.WriteError(w, http.StatusBadRequest, "ID invalido")
 		return
 	}
-	_, err = s.db.ExecContext(r.Context(), "UPDATE recurring_invoices SET is_active = 1 WHERE restaurant_id = ?", restaurantID)
+	_, err = s.db.ExecContext(r.Context(), portableSQL("UPDATE recurring_invoices SET is_active = 1 WHERE restaurant_id = ?"), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reactivando")
 		return
@@ -344,14 +362,21 @@ type userRestaurantAssignment struct {
 }
 
 func (s *Server) handlePlatformUsersList(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			u.id, u.email, u.username, u.name, u.is_superadmin, u.must_change_password,
 			DATE_FORMAT(u.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at,
 			(SELECT COUNT(*) FROM bo_sessions s WHERE s.user_id = u.id AND s.expires_at > NOW()) AS active_sessions
 		FROM bo_users u
 		ORDER BY u.is_superadmin DESC, u.id ASC
-	`)
+	`, `
+		SELECT
+			u.id, u.email, u.username, u.name, u.is_superadmin, u.must_change_password,
+			to_char(u.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+			(SELECT COUNT(*) FROM bo_sessions s WHERE s.user_id = u.id AND s.expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')) AS active_sessions
+		FROM bo_users u
+		ORDER BY u.is_superadmin DESC, u.id ASC
+	`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo usuarios")
 		return
@@ -396,11 +421,11 @@ func (s *Server) handlePlatformUsersList(w http.ResponseWriter, r *http.Request)
 
 	// Load restaurant assignments.
 	if len(orderedIDs) > 0 {
-		rRows, err := s.db.QueryContext(r.Context(), `
+		rRows, err := s.db.QueryContext(r.Context(), portableSQL(`
 			SELECT ur.user_id, ur.restaurant_id, r.name, ur.role
 			FROM bo_user_restaurants ur
 			JOIN restaurants r ON r.id = ur.restaurant_id
-		`)
+		`))
 		if err == nil {
 			for rRows.Next() {
 				var userID, restID int
@@ -464,15 +489,14 @@ func (s *Server) handlePlatformUserCreate(w http.ResponseWriter, r *http.Request
 		superVal = 1
 	}
 
-	res, err := s.db.ExecContext(r.Context(), `
+	userID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 		INSERT INTO bo_users (email, name, password_hash, is_superadmin, must_change_password)
 		VALUES (?, ?, ?, ?, 1)
-	`, email, name, string(hash), superVal)
+	`), "id", email, name, string(hash), superVal)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error creando usuario: " + err.Error()})
 		return
 	}
-	userID, _ := res.LastInsertId()
 
 	// Assign to restaurant if provided.
 	if req.RestaurantID != nil && *req.RestaurantID > 0 {
@@ -480,10 +504,25 @@ func (s *Server) handlePlatformUserCreate(w http.ResponseWriter, r *http.Request
 		if req.Role != nil && strings.TrimSpace(*req.Role) != "" {
 			role = strings.TrimSpace(*req.Role)
 		}
-		_, _ = s.db.ExecContext(r.Context(), `
-			INSERT IGNORE INTO bo_user_restaurants (user_id, restaurant_id, role)
+		// repair-ignore3: role varchar(32) is a permission identity; IGNORE /
+		// PG CAST(varchar(32)) silently cut it. An FK failure was skipped and
+		// still answered success. Both now fail explicitly (user already created,
+		// so the response says so instead of claiming full success).
+		var assignErr error
+		if utf8.RuneCountInString(role) > 32 {
+			assignErr = fmt.Errorf("rol demasiado largo (max 32)")
+		} else {
+			_, assignErr = s.db.ExecContext(r.Context(), nativeSQL(`
+			INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
 			VALUES (?, ?, ?)
-		`, userID, *req.RestaurantID, role)
+			ON DUPLICATE KEY UPDATE user_id = user_id
+		`, `INSERT INTO bo_user_restaurants (user_id, restaurant_id, role) VALUES (?, ?, CAST(? AS text))
+		ON CONFLICT (user_id, restaurant_id) DO NOTHING`), userID, *req.RestaurantID, role)
+		}
+		if assignErr != nil {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "userId": userID, "message": "Usuario creado, pero no se pudo asignar al restaurante: " + assignErr.Error()})
+			return
+		}
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -538,7 +577,8 @@ func (s *Server) handlePlatformUserPatch(w http.ResponseWriter, r *http.Request)
 	if len(sets) > 0 {
 		args = append(args, userID)
 		query := "UPDATE bo_users SET " + strings.Join(sets, ", ") + " WHERE id = ?"
-		if _, err := s.db.ExecContext(r.Context(), query, args...); err != nil {
+		// SET fragments: name, is_superadmin, must_change_password (0/1): portable.
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(query), args...); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error: " + err.Error()})
 			return
 		}
@@ -581,12 +621,12 @@ func (s *Server) handlePlatformUserPasswordReset(w http.ResponseWriter, r *http.
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(r.Context(), "UPDATE bo_users SET password_hash = ?, must_change_password = 1 WHERE id = ?", string(hash), userID); err != nil {
+	if _, err := tx.ExecContext(r.Context(), portableSQL("UPDATE bo_users SET password_hash = ?, must_change_password = 1 WHERE id = ?"), string(hash), userID); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error actualizando password"})
 		return
 	}
 	// Kill all sessions for this user.
-	if _, err := tx.ExecContext(r.Context(), "DELETE FROM bo_sessions WHERE user_id = ?", userID); err != nil {
+	if _, err := tx.ExecContext(r.Context(), portableSQL("DELETE FROM bo_sessions WHERE user_id = ?"), userID); err != nil {
 		_ = tx.Rollback()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error cerrando sesiones"})
 		return
@@ -605,7 +645,7 @@ func (s *Server) handlePlatformUserRevokeSessions(w http.ResponseWriter, r *http
 		httpx.WriteError(w, http.StatusBadRequest, "ID invalido")
 		return
 	}
-	_, err = s.db.ExecContext(r.Context(), "DELETE FROM bo_sessions WHERE user_id = ?", userID)
+	_, err = s.db.ExecContext(r.Context(), portableSQL("DELETE FROM bo_sessions WHERE user_id = ?"), userID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error revocando sesiones")
 		return
@@ -638,11 +678,11 @@ func (s *Server) handlePlatformUserAssign(w http.ResponseWriter, r *http.Request
 		role = "admin"
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO bo_user_restaurants (user_id, restaurant_id, role)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE role = VALUES(role)
-	`, userID, req.RestaurantID, role)
+	`, `INSERT INTO bo_user_restaurants (user_id, restaurant_id, role) VALUES (?, ?, ?) ON CONFLICT (user_id, restaurant_id) DO UPDATE SET role = EXCLUDED.role`), userID, req.RestaurantID, role)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error: " + err.Error()})
 		return
@@ -662,7 +702,7 @@ func (s *Server) handlePlatformUserUnassign(w http.ResponseWriter, r *http.Reque
 		httpx.WriteError(w, http.StatusBadRequest, "restaurantId invalido")
 		return
 	}
-	_, err = s.db.ExecContext(r.Context(), "DELETE FROM bo_user_restaurants WHERE user_id = ? AND restaurant_id = ?", userID, restaurantID)
+	_, err = s.db.ExecContext(r.Context(), portableSQL("DELETE FROM bo_user_restaurants WHERE user_id = ? AND restaurant_id = ?"), userID, restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error desasignando")
 		return
@@ -687,7 +727,7 @@ type platformSubscription struct {
 }
 
 func (s *Server) handlePlatformSubscriptionsList(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			ri.id, ri.restaurant_id, r.name,
 			COALESCE(ri.feature_key, '') AS feature_key,
@@ -699,7 +739,19 @@ func (s *Server) handlePlatformSubscriptionsList(w http.ResponseWriter, r *http.
 		FROM recurring_invoices ri
 		LEFT JOIN restaurants r ON r.id = ri.restaurant_id
 		ORDER BY ri.is_active DESC, ri.id DESC
-	`)
+	`, `
+		SELECT
+			ri.id, ri.restaurant_id, r.name,
+			COALESCE(ri.feature_key, '') AS feature_key,
+			COALESCE(ri.concept, '') AS concept,
+			ri.amount, COALESCE(ri.currency, 'EUR') AS currency,
+			ri.frequency, ri.is_active,
+			to_char(ri.start_date, 'YYYY-MM-DD') AS start_date,
+			COALESCE(to_char(ri.next_run_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '') AS next_run_at
+		FROM recurring_invoices ri
+		LEFT JOIN restaurants r ON r.id = ri.restaurant_id
+		ORDER BY ri.is_active DESC, ri.id DESC
+	`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo suscripciones")
 		return
@@ -753,7 +805,7 @@ func (s *Server) handlePlatformSubscriptionToggle(w http.ResponseWriter, r *http
 	if req.IsActive {
 		val = 1
 	}
-	_, err = s.db.ExecContext(r.Context(), "UPDATE recurring_invoices SET is_active = ? WHERE id = ?", val, subID)
+	_, err = s.db.ExecContext(r.Context(), portableSQL("UPDATE recurring_invoices SET is_active = ? WHERE id = ?"), val, subID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando suscripcion")
 		return
@@ -779,7 +831,7 @@ type platformWhatsAppInstance struct {
 }
 
 func (s *Server) handlePlatformWhatsAppList(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			i.id, i.restaurant_id, r.name,
 			i.server_id, i.instance_name,
@@ -791,7 +843,19 @@ func (s *Server) handlePlatformWhatsAppList(w http.ResponseWriter, r *http.Reque
 		FROM restaurant_uazapi_instances i
 		LEFT JOIN restaurants r ON r.id = i.restaurant_id
 		ORDER BY i.id DESC
-	`)
+	`, `
+		SELECT
+			i.id, i.restaurant_id, r.name,
+			i.server_id, i.instance_name,
+			COALESCE(i.connected_phone, '') AS connected_phone,
+			i.status, COALESCE(i.pair_code, '') AS pair_code,
+			i.is_active,
+			COALESCE(to_char(i.connected_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '') AS connected_at,
+			COALESCE(to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '') AS updated_at
+		FROM restaurant_uazapi_instances i
+		LEFT JOIN restaurants r ON r.id = i.restaurant_id
+		ORDER BY i.id DESC
+	`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo instancias WhatsApp")
 		return
@@ -835,7 +899,7 @@ func (s *Server) handlePlatformWhatsAppRenewQR(w http.ResponseWriter, r *http.Re
 
 	ctx := r.Context()
 	var restaurantID int
-	err = s.db.QueryRowContext(ctx, "SELECT restaurant_id FROM restaurant_uazapi_instances WHERE id = ?", instanceID).Scan(&restaurantID)
+	err = s.db.QueryRowContext(ctx, portableSQL("SELECT restaurant_id FROM restaurant_uazapi_instances WHERE id = ?"), instanceID).Scan(&restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Instancia no encontrada")
 		return
@@ -864,7 +928,7 @@ func (s *Server) handlePlatformWhatsAppDisconnect(w http.ResponseWriter, r *http
 
 	ctx := r.Context()
 	var restaurantID int
-	err = s.db.QueryRowContext(ctx, "SELECT restaurant_id FROM restaurant_uazapi_instances WHERE id = ?", instanceID).Scan(&restaurantID)
+	err = s.db.QueryRowContext(ctx, portableSQL("SELECT restaurant_id FROM restaurant_uazapi_instances WHERE id = ?"), instanceID).Scan(&restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Instancia no encontrada")
 		return
@@ -894,7 +958,7 @@ type platformDomain struct {
 }
 
 func (s *Server) handlePlatformDomainsList(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			d.id, d.restaurant_id, r.name,
 			d.domain, d.is_primary,
@@ -904,7 +968,17 @@ func (s *Server) handlePlatformDomainsList(w http.ResponseWriter, r *http.Reques
 		FROM restaurant_domains d
 		LEFT JOIN restaurants r ON r.id = d.restaurant_id
 		ORDER BY d.id DESC
-	`)
+	`, `
+		SELECT
+			d.id, d.restaurant_id, r.name,
+			d.domain, d.is_primary,
+			d.registration_status, d.stripe_payment_status,
+			COALESCE(d.registration_cost, 0), d.auto_renew,
+			to_char(d.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+		FROM restaurant_domains d
+		LEFT JOIN restaurants r ON r.id = d.restaurant_id
+		ORDER BY d.id DESC
+	`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo dominios")
 		return
@@ -954,7 +1028,7 @@ type platformStripePayment struct {
 
 func (s *Server) handlePlatformStripePaymentsList(w http.ResponseWriter, r *http.Request) {
 	// First: local stripe_events (checkout completions).
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			e.event_id, e.type,
 			COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.amount')), 0) AS amount,
@@ -967,7 +1041,18 @@ func (s *Server) handlePlatformStripePaymentsList(w http.ResponseWriter, r *http
 		LEFT JOIN restaurants r ON r.id = CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.data.object.metadata.restaurant_id')), '0') AS UNSIGNED)
 		ORDER BY e.created_at DESC
 		LIMIT 200
-	`)
+	`, `SELECT e.event_id, e.type,
+			COALESCE(CASE WHEN jsonb_typeof(e.payload #> '{data,object,amount}') = 'null' THEN 'null' ELSE e.payload #>> '{data,object,amount}' END, '0') AS amount,
+			COALESCE(CASE WHEN jsonb_typeof(e.payload #> '{data,object,currency}') = 'null' THEN 'null' ELSE e.payload #>> '{data,object,currency}' END, '') AS currency,
+			COALESCE(CASE WHEN jsonb_typeof(e.payload #> '{data,object,metadata,domain}') = 'null' THEN 'null' ELSE e.payload #>> '{data,object,metadata,domain}' END, '') AS domain,
+			COALESCE(CASE WHEN jsonb_typeof(e.payload #> '{data,object,metadata,restaurant_id}') = 'null' THEN 'null' ELSE e.payload #>> '{data,object,metadata,restaurant_id}' END, '0') AS restaurant_id,
+			COALESCE(r.name, '') AS restaurant_name,
+			COALESCE(to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '') AS paid_at
+		FROM stripe_events e
+		LEFT JOIN restaurants r ON r.id = CASE WHEN substring(COALESCE(CASE WHEN jsonb_typeof(e.payload #> '{data,object,metadata,restaurant_id}') = 'null' THEN 'null' ELSE e.payload #>> '{data,object,metadata,restaurant_id}' END, '0') FROM '^\s*([0-9]+)') IS NULL THEN 0
+				WHEN length(substring(COALESCE(CASE WHEN jsonb_typeof(e.payload #> '{data,object,metadata,restaurant_id}') = 'null' THEN 'null' ELSE e.payload #>> '{data,object,metadata,restaurant_id}' END, '0') FROM '^\s*([0-9]+)')) > 18 THEN 0
+				ELSE CAST(substring(COALESCE(CASE WHEN jsonb_typeof(e.payload #> '{data,object,metadata,restaurant_id}') = 'null' THEN 'null' ELSE e.payload #>> '{data,object,metadata,restaurant_id}' END, '0') FROM '^\s*([0-9]+)') AS bigint) END
+		ORDER BY e.created_at DESC LIMIT 200`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo pagos de Stripe")
 		return
@@ -1057,17 +1142,17 @@ func (s *Server) handlePlatformDashboard(w http.ResponseWriter, r *http.Request)
 
 	var restaurantCount, userCount, superadminCount, activeSessionCount, subCount, activeSubCount, domainCount, waCount int
 
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM restaurants").Scan(&restaurantCount)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM bo_users").Scan(&userCount)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM bo_users WHERE is_superadmin = 1").Scan(&superadminCount)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM bo_sessions WHERE expires_at > NOW()").Scan(&activeSessionCount)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM recurring_invoices").Scan(&subCount)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM recurring_invoices WHERE is_active = 1").Scan(&activeSubCount)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM restaurant_domains").Scan(&domainCount)
-	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM restaurant_uazapi_instances").Scan(&waCount)
+	_ = s.db.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM restaurants")).Scan(&restaurantCount)
+	_ = s.db.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM bo_users")).Scan(&userCount)
+	_ = s.db.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM bo_users WHERE is_superadmin = 1")).Scan(&superadminCount)
+	_ = s.db.QueryRowContext(ctx, nativeSQL("SELECT COUNT(*) FROM bo_sessions WHERE expires_at > NOW()", `SELECT COUNT(*) FROM bo_sessions WHERE expires_at > (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC')`)).Scan(&activeSessionCount)
+	_ = s.db.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM recurring_invoices")).Scan(&subCount)
+	_ = s.db.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM recurring_invoices WHERE is_active = 1")).Scan(&activeSubCount)
+	_ = s.db.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM restaurant_domains")).Scan(&domainCount)
+	_ = s.db.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM restaurant_uazapi_instances")).Scan(&waCount)
 
 	var monthlyRecurringRevenue float64
-	_ = s.db.QueryRowContext(ctx, `
+	_ = s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT COALESCE(SUM(
 			CASE
 				WHEN frequency = 'monthly' THEN amount
@@ -1078,7 +1163,9 @@ func (s *Server) handlePlatformDashboard(w http.ResponseWriter, r *http.Request)
 			END
 		), 0)
 		FROM recurring_invoices WHERE is_active = 1
-	`).Scan(&monthlyRecurringRevenue)
+	`, `SELECT COALESCE(SUM(CASE WHEN frequency = 'monthly' THEN amount WHEN frequency = 'yearly' THEN ROUND(amount / 12, 6)
+			WHEN frequency = 'quarterly' THEN ROUND(amount / 3, 6) WHEN frequency = 'weekly' THEN amount * 4.33 ELSE 0 END), 0)
+		FROM recurring_invoices WHERE is_active = 1`)).Scan(&monthlyRecurringRevenue)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -1112,13 +1199,13 @@ func (s *Server) handlePlatformUAZAPIServersList(w http.ResponseWriter, r *http.
 	// used_count is a stored counter that can drift from the real number of
 	// instances (QA: "1 en uso" with 0 WhatsApp instances). Report the live
 	// count of active instances per server instead.
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT s.id, s.name, s.provider, s.base_url, s.capacity,
 		  (SELECT COUNT(*) FROM restaurant_uazapi_instances i WHERE i.server_id = s.id AND i.is_active = 1) AS used_count,
 		  s.is_active
 		FROM uazapi_servers s
 		ORDER BY s.is_active DESC, s.priority DESC, s.id ASC
-	`)
+	`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo servidores UAZAPI")
 		return

@@ -19,12 +19,17 @@ import (
 // loadMobilityDayOverride returns the raw per-day override; NULL = inherit.
 func (s *Server) loadMobilityDayOverride(ctx context.Context, restaurantID int, date string) (sql.NullInt64, error) {
 	var v sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT mobility_enabled
 		FROM mobility_day_override
 		WHERE restaurant_id = ? AND reservationDate = ?
 		LIMIT 1
-	`, restaurantID, date).Scan(&v)
+	`, `
+		SELECT mobility_enabled
+		FROM mobility_day_override
+		WHERE restaurant_id = ? AND "reservationDate" = ?
+		LIMIT 1
+	`), restaurantID, date).Scan(&v)
 	if err == sql.ErrNoRows {
 		return sql.NullInt64{}, nil
 	}
@@ -131,11 +136,15 @@ func (s *Server) handleBOConfigMobilityDaySet(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO mobility_day_override (restaurant_id, reservationDate, mobility_enabled)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE mobility_enabled = VALUES(mobility_enabled)
-	`, a.ActiveRestaurantID, date, boolToInt(*req.MobilityEnabled)); err != nil {
+	`, `
+		INSERT INTO mobility_day_override (restaurant_id, "reservationDate", mobility_enabled)
+		VALUES (?, ?, ?)
+		ON CONFLICT (restaurant_id, "reservationDate") DO UPDATE SET mobility_enabled = EXCLUDED.mobility_enabled
+	`), a.ActiveRestaurantID, date, boolToInt(*req.MobilityEnabled)); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando configuración de movilidad")
 		return
 	}

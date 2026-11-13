@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // group_menu_wines_v2 is the wine catalogue; the legacy VINOS table is left
@@ -25,6 +26,8 @@ const (
 	// the plain int the handlers use. The CAST keeps the value signed so every
 	// existing Scan target keeps working unchanged.
 	vinoV2NumExpr = `CAST(COALESCE(m.legacy_num, v.id) AS SIGNED)`
+	// vinoV2NumExprPG is the PG twin (MySQL SIGNED = 64-bit) (sqldb_native_pg_v1).
+	vinoV2NumExprPG = `CAST(COALESCE(m.legacy_num, v.id) AS bigint)`
 
 	// vinoV2WhereLegacyNum pins one catalogue row from its legacy num. The
 	// subquery only reads legacy_wine_map, which MySQL permits inside the
@@ -45,6 +48,13 @@ const (
 // vinoV2LegacyNumArgs fills vinoV2WhereLegacyNum.
 func vinoV2LegacyNumArgs(restaurantID int, legacyNum int) []any {
 	return []any{restaurantID, restaurantID, legacyNum}
+}
+
+// vinoV2NumSQL is vinoV2NumExpr per dialect (MySQL CAST AS SIGNED wraps above
+// 2^63; PG CAST AS bigint errors there - range class pending). No "?": safe to
+// compose before the single rebind of the whole statement.
+func vinoV2NumSQL() string {
+	return sqlFragment(vinoV2NumExpr, `CAST(COALESCE(m.legacy_num, v.id) AS bigint)`)
 }
 
 // vinoV2Insert carries the columns the legacy INSERT used to write. There is no
@@ -76,32 +86,34 @@ func (s *Server) insertVinoV2(ctx context.Context, restaurantID int, in vinoV2In
 	}
 	defer tx.Rollback()
 
-	res, err := tx.ExecContext(ctx, `
+	v2ID, err := sqldb.InsertID(ctx, sqlDialect, tx, nativeSQL(`
 		INSERT INTO group_menu_wines_v2
 			(restaurant_id, tipo, nombre, precio, descripcion, bodega, denominacion_origen, graduacion, anyo, active, foto_path, position)
 		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, COALESCE(MAX(position), 0) + 1
-		  FROM group_menu_wines_v2 WHERE restaurant_id = ?`,
+		  FROM group_menu_wines_v2 WHERE restaurant_id = ?`, `
+		INSERT INTO group_menu_wines_v2
+			(restaurant_id, tipo, nombre, precio, descripcion, bodega, denominacion_origen, graduacion, anyo, active, foto_path, position)
+		SELECT CAST(? AS integer), CAST(? AS text), CAST(? AS text), CAST(? AS real), CAST(? AS text), CAST(? AS text), CAST(? AS text), CAST(? AS numeric), CAST(? AS text), CAST(? AS smallint), NULL, COALESCE(MAX(position), 0) + 1
+		  FROM group_menu_wines_v2 WHERE restaurant_id = ?`), "id",
 		restaurantID, in.Tipo, in.Nombre, in.Precio, in.Descripcion, in.Bodega,
 		in.DenominacionOrigen, in.Graduacion, in.Anyo, in.Active, restaurantID,
 	)
 	if err != nil {
 		return 0, 0, err
 	}
-	v2ID, err := res.LastInsertId()
-	if err != nil {
-		return 0, 0, err
-	}
+	// InsertID: one statement; the INSERT...SELECT always yields one row (aggregate
+	// without GROUP BY), so RETURNING cannot be empty.
 
 	var legacyNum int64
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(legacy_num), 0) + 1 FROM legacy_wine_map WHERE restaurant_id = ?`,
+		portableSQL(`SELECT COALESCE(MAX(legacy_num), 0) + 1 FROM legacy_wine_map WHERE restaurant_id = ?`),
 		restaurantID,
 	).Scan(&legacyNum); err != nil {
 		return 0, 0, err
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO legacy_wine_map (restaurant_id, legacy_num, v2_wine_id) VALUES (?, ?, ?)`,
+		portableSQL(`INSERT INTO legacy_wine_map (restaurant_id, legacy_num, v2_wine_id) VALUES (?, ?, ?)`),
 		restaurantID, legacyNum, v2ID,
 	); err != nil {
 		return 0, 0, err
@@ -123,7 +135,7 @@ func (s *Server) deleteVinoV2(ctx context.Context, restaurantID int, legacyNum i
 	defer tx.Rollback()
 
 	res, err := tx.ExecContext(ctx,
-		`DELETE FROM group_menu_wines_v2 WHERE `+vinoV2WhereLegacyNum,
+		portableSQL(`DELETE FROM group_menu_wines_v2 WHERE `+vinoV2WhereLegacyNum),
 		vinoV2LegacyNumArgs(restaurantID, legacyNum)...,
 	)
 	if err != nil {
@@ -135,7 +147,7 @@ func (s *Server) deleteVinoV2(ctx context.Context, restaurantID int, legacyNum i
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM legacy_wine_map WHERE restaurant_id = ? AND legacy_num = ?`,
+		portableSQL(`DELETE FROM legacy_wine_map WHERE restaurant_id = ? AND legacy_num = ?`),
 		restaurantID, legacyNum,
 	); err != nil {
 		return false, err

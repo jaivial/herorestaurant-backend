@@ -1,0 +1,73 @@
+file	line	column	reason
+internal/api/backoffice_menu_visibility.go	163	menu_key	pattern form (qualified/cast/other)
+internal/api/backoffice_pos.go	853	open_idempotency_key	pattern form (qualified/cast/other)
+internal/api/backoffice_pos.go	70	role_slug	already flagged text
+internal/api/backoffice_pos_catalog.go	267	name	pattern form (qualified/cast/other)
+internal/api/backoffice_pos_catalog.go	262	name	pattern form (qualified/cast/other)
+internal/api/menu_visibility_admin.go	225	menu_key	multiple key comparisons in one statement
+internal/api/menu_visibility_admin.go	206	menu_key	multiple key comparisons in one statement
+internal/api/menu_visibility_admin.go	195	menu_key	multiple key comparisons in one statement
+internal/api/menu_visibility_admin.go	97	menu_key	multiple key comparisons in one statement
+internal/api/menu_visibility_admin.go	60	menu_key	multiple key comparisons in one statement
+internal/api/menu_visibility_admin.go	46	menu_key	multiple key comparisons in one statement
+internal/api/menu_visibility_admin.go	37	menu_key	multiple key comparisons in one statement
+internal/api/public_unsubscribe.go	207	target	already flagged text
+internal/api/site_builder.go	1926	id	call form
+internal/api/site_builder.go	1818	id	multiple key comparisons in one statement
+internal/api/site_builder.go	1803	id	multiple key comparisons in one statement
+internal/api/site_builder.go	1528	id	multiple key comparisons in one statement
+internal/api/site_builder.go	1520	site_id	table not unique (site_builder_assets,site_builder_bindings,site_builder_pages,site_builder_sites,site_builder_versions)
+internal/api/site_builder.go	1492	id	multiple key comparisons in one statement
+internal/api/site_builder.go	1477	id	multiple key comparisons in one statement
+internal/api/site_builder.go	1409	id	call form
+internal/api/site_builder.go	1089	id	table not unique (site_builder_assets,site_builder_pages,site_builder_sites,site_builder_versions)
+internal/api/site_builder.go	1081	site_id	table not unique (site_builder_assets,site_builder_pages,site_builder_sites,site_builder_versions)
+internal/api/site_builder.go	995	id	multiple key comparisons in one statement
+internal/api/site_builder.go	980	id	multiple key comparisons in one statement
+internal/api/site_builder.go	784	id	multiple key comparisons in one statement
+internal/api/site_builder.go	764	id	multiple key comparisons in one statement
+internal/api/site_builder.go	668	id	call form
+internal/api/site_builder.go	488	id	call form
+internal/api/site_builder_billing.go	472	domain	args slice/count
+internal/api/whatsapp_bot_human_takeover.go	109	user_phone	table not unique ()
+internal/api/backoffice_rbac.go	236	section_key	already flagged text
+internal/api/tenant.go	128	domain	call form
+internal/api/backoffice_config_ai_image.go	359	slug	already flagged text
+internal/api/translations.go	542	lang	already flagged text
+internal/api/translations.go	228	entity_type	call form
+internal/api/translations.go	228	lang	call form
+internal/api/backoffice_middleware.go	163	token_sha256	pattern form (qualified/cast/other)
+internal/api/backoffice_middleware.go	159	slug	pattern form (qualified/cast/other)
+internal/api/mcp_oauth_store.go	311	client_id	table not unique (mcp_oauth_tokens)
+internal/api/mcp_oauth_store.go	251	token_hash	pattern form (qualified/cast/other)
+internal/api/mcp_oauth_store.go	147	client_id	already flagged text
+internal/api/chatgpt_plugin_tokens.go	165	token_hash	pattern form (qualified/cast/other)
+internal/api/backoffice_auth.go	513	email	table not unique (bo_sessions,bo_users)
+internal/api/backoffice_auth.go	220	token_sha256	call form
+internal/api/backoffice_stock_documents.go	170	normalized_description	already flagged text
+internal/api/backoffice_stock_documents.go	170	supplier_code	multiple key comparisons in one statement
+internal/api/backoffice_comida_categories.go	550	slug	call form
+internal/api/backoffice_stock_suppliers.go	323	supplier_name	call form
+internal/api/backoffice_stock_suppliers.go	314	supplier_code	already flagged text
+internal/api/backoffice_stock_suppliers.go	314	supplier_name	already flagged text
+internal/api/backoffice_stock_suppliers.go	210	supplier_name	pattern form (qualified/cast/other)
+internal/api/backoffice_stock_suppliers.go	37	supplier_name	pattern form (qualified/cast/other)
+internal/api/backoffice_stock_suppliers.go	36	supplier_name	pattern form (qualified/cast/other)
+internal/api/menu_public_seo_handlers.go	31	seo_slug	table not unique ()
+internal/api/backoffice_member_access_flows.go	1880	token_sha256	pattern form (qualified/cast/other)
+internal/api/backoffice_member_access_flows.go	1879	slug	pattern form (qualified/cast/other)
+internal/api/backoffice_member_access_flows.go	1343	onboarding_guid	pattern form (qualified/cast/other)
+internal/api/backoffice_member_access_flows.go	1342	slug	pattern form (qualified/cast/other)
+internal/api/backoffice_member_access_flows.go	1241	token_sha256	pattern form (qualified/cast/other)
+internal/api/backoffice_member_access_flows.go	1240	slug	pattern form (qualified/cast/other)
+internal/api/backoffice_member_access_flows.go	931	slug	pattern form (qualified/cast/other)
+internal/api/seo_item_routes.go	954	slug	already flagged text
+internal/api/seo_item_routes.go	745	entity_type	already flagged text
+internal/api/domain_ownership.go	35	domain	call form
+internal/api/domain_ownership.go	33	domain	call form
+internal/api/instatic_manager.go	956	subdomain	already flagged text
+internal/api/instatic_manager.go	952	subdomain	already flagged text
+internal/api/campaign_suppression_target.go	125	channel	pattern form (qualified/cast/other)
+internal/api/campaign_suppression_target.go	125	target	pattern form (qualified/cast/other)
+internal/api/backoffice_stock.go	96	role_slug	already flagged text
+internal/api/backoffice_pos_customers.go	86	phone	already flagged text

@@ -88,14 +88,24 @@ func registeredColumnSet() map[string]bool {
 // discoverURLColumns finds every text column whose name suggests it stores an
 // image or URL. It is the tripwire for the registry going stale.
 func discoverURLColumns(ctx context.Context, database *sql.DB, schema string) ([]string, error) {
-	rows, err := database.QueryContext(ctx, `
+	// MySQL information_schema LIKE is case-insensitive (utf8 *_ci); PG names
+	// compare in "C", so the twin lowers column_name. varchar|text map to
+	// character varying|text (char/bpchar excluded on both).
+	rows, err := database.QueryContext(ctx, nativeSQL(`
 		SELECT CONCAT(TABLE_NAME,'.',COLUMN_NAME) FROM information_schema.COLUMNS
 		 WHERE TABLE_SCHEMA=?
 		   AND DATA_TYPE IN ('varchar','text')
 		   AND (COLUMN_NAME LIKE '%foto%' OR COLUMN_NAME LIKE '%image%'
 		        OR COLUMN_NAME LIKE '%img%' OR COLUMN_NAME LIKE '%logo%'
 		        OR COLUMN_NAME LIKE '%photo%' OR COLUMN_NAME LIKE '%\_url')
-		 ORDER BY TABLE_NAME, COLUMN_NAME`, schema)
+		 ORDER BY TABLE_NAME, COLUMN_NAME`, `
+		SELECT table_name||'.'||column_name FROM information_schema.columns
+		 WHERE table_schema=?
+		   AND data_type IN ('character varying','text')
+		   AND (lower(column_name) LIKE '%foto%' OR lower(column_name) LIKE '%image%'
+		        OR lower(column_name) LIKE '%img%' OR lower(column_name) LIKE '%logo%'
+		        OR lower(column_name) LIKE '%photo%' OR lower(column_name) LIKE '%\_url')
+		 ORDER BY table_name, column_name`), schema)
 	if err != nil {
 		return nil, err
 	}
@@ -119,8 +129,9 @@ func collectReferenced(ctx context.Context, database *sql.DB, schema string) (ma
 	for _, entry := range referenceColumns {
 		var exists int
 		if err := database.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM information_schema.COLUMNS
-			  WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND COLUMN_NAME=?`,
+			nativeSQL(`SELECT COUNT(*) FROM information_schema.COLUMNS
+			  WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND COLUMN_NAME=?`, `SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema=? AND table_name=? AND column_name=?`),
 			schema, entry.Table, entry.Column).Scan(&exists); err != nil {
 			return nil, err
 		}
@@ -129,9 +140,10 @@ func collectReferenced(ctx context.Context, database *sql.DB, schema string) (ma
 		}
 		// Table and column names come from the fixed registry above, never from
 		// user input, so interpolation here cannot be abused.
-		rows, err := database.QueryContext(ctx,
-			`SELECT `+"`"+entry.Column+"`"+` FROM `+"`"+entry.Table+"`"+
-				` WHERE `+"`"+entry.Column+"`"+` IS NOT NULL AND `+"`"+entry.Column+"`"+` <> ''`)
+		rows, err := database.QueryContext(ctx, portableSQL(
+			sqlFragment(`SELECT `+"`"+entry.Column+"`"+` FROM `+"`"+entry.Table+"`"+
+				` WHERE `+"`"+entry.Column+"`"+` IS NOT NULL AND `+"`"+entry.Column+"`"+` <> ''`,
+				`SELECT "`+entry.Column+`" FROM "`+entry.Table+`" WHERE "`+entry.Column+`" IS NOT NULL AND "`+entry.Column+`" <> ''`)))
 		if err != nil {
 			return nil, err
 		}

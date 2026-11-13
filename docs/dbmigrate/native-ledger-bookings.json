@@ -1,0 +1,455 @@
+{
+  "domain": "bookings",
+  "inventory": "sql-inventory-r16.json",
+  "repo_call_sites": 2478,
+  "repo_native_sites": 567,
+  "repo_dynamic": 291,
+  "audit_failures": 0,
+  "sites": 161,
+  "native": 161,
+  "remaining": 0,
+  "remaining_dynamic": 0,
+  "files": 24,
+  "done_files": 24,
+  "remaining_files": [],
+  "ledger": [
+    {
+      "file": "internal/api/backoffice_booking_documents_ws.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_booking_mutations.go",
+      "sites": 11,
+      "native": 11,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_bookings.go",
+      "sites": 11,
+      "native": 11,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_bookings_search.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_special_dates.go",
+      "sites": 13,
+      "native": 13,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/booking_availability_context.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/booking_checkout.go",
+      "sites": 15,
+      "native": 15,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/booking_documents.go",
+      "sites": 12,
+      "native": 12,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/booking_extras.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/booking_insert.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/booking_notification_settings.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/booking_reminders.go",
+      "sites": 6,
+      "native": 6,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/bookings_admin.go",
+      "sites": 14,
+      "native": 14,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/floors_date.go",
+      "sites": 6,
+      "native": 6,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/location_booking.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/public_booking_api.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/public_reservation_pages.go",
+      "sites": 6,
+      "native": 6,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/reservation_day_context.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/reservation_self_service.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/reservation_special_dates_public.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/reservations_availability.go",
+      "sites": 17,
+      "native": 17,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/special_booking_qr.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/special_booking_snapshot.go",
+      "sites": 8,
+      "native": 8,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/special_date_stats.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    }
+  ],
+  "syntax_complete": true,
+  "runtime_verified": false,
+  "pg_ready": false,
+  "behaviour_deltas_pending": [
+    {
+      "sites": [
+        "backoffice_bookings.go buildBookingSearchFulltextClause"
+      ],
+      "mysql": "InnoDB FULLTEXT MATCH(customer_name,contact_email,commentary) AGAINST(+tok* BOOLEAN MODE): InnoDB tokeniser, default stopwords, min token 3, collation folding",
+      "pg": "to_tsvector(simple, plan GIN index expression) @@ to_tsquery(simple, tok:* & ...)",
+      "status": "NOT equivalent: tokenisation (emails, punctuation), stopwords, accent folding differ; tsquery syntax error falls back to prefix path like MySQL errors. Pending decision/QA."
+    },
+    {
+      "sites": [
+        "backoffice_bookings.go prefix search",
+        "backoffice_bookings_search.go general search"
+      ],
+      "mysql": "LIKE under utf8mb4_general_ci (case+accent insensitive)",
+      "pg": "LOWER(col) COLLATE C LIKE lower(pattern) (case-insensitive, accent-SENSITIVE); phone digits COLLATE C LIKE",
+      "status": "pending CI/accent search gap"
+    },
+    {
+      "sites": [
+        "bookings list/export/byID added_date"
+      ],
+      "mysql": "DATE_FORMAT timestamp in session UTC",
+      "pg": "to_char(added_date AT TIME ZONE UTC)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "cancel/reactivate cancelled_bookings.reservation_time varchar(10)"
+      ],
+      "mysql": "TIME_FORMAT on varchar: invalid -> NULL+warning",
+      "pg": "to_char(CAST(... AS time)): invalid -> error",
+      "status": "pending: differs only for invalid stored strings"
+    },
+    {
+      "sites": [
+        "cancelled_bookings.cancellation_date, booking_modifications.modification_date NOW()"
+      ],
+      "mysql": "NOW() session UTC into datetime",
+      "pg": "now() AT TIME ZONE UTC",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "boInsertBooking, special_date_menus insert"
+      ],
+      "mysql": "LastInsertId (special_date_menus error ignored)",
+      "pg": "InsertID RETURNING id; error now surfaces in both dialects for special_date_menus",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "special_dates upsert"
+      ],
+      "mysql": "ON DUPLICATE KEY on uq(restaurant_id,date); whatsapp_only=COALESCE(?,whatsapp_only); updated_at ON UPDATE",
+      "pg": "ON CONFLICT (restaurant_id,date) DO UPDATE ... COALESCE(?, special_dates.whatsapp_only); adelanto_payment_methods CAST jsonb",
+      "status": "ON UPDATE gap pending; json text render class"
+    },
+    {
+      "sites": [
+        "booking_mutations rice list FORMAT"
+      ],
+      "mysql": "FORMAT(x,0) en_US",
+      "pg": "to_char(ROUND(x,0),FM999,999,990)",
+      "status": "pending manual QA"
+    },
+    {
+      "sites": [
+        "ORDER BY on formatted aliases (reservation_time/added_date/cancellation_date/modification_date)"
+      ],
+      "mysql": "ORDER BY resolves to SELECT alias (formatted string)",
+      "pg": "same alias resolution",
+      "status": "equivalent by review; minute-precision ties unordered in both"
+    },
+    {
+      "sites": [
+        "backoffice_bookings.go reactivate cancelled_bookings.reservation_time (varchar(10))"
+      ],
+      "mysql": "TIME_FORMAT(varchar) uses MySQL lenient string->TIME: accepts HH:MM, HH:MM:SS, also forms like HHMMSS, D HH:MM, fractional, hours up to 838 (TIME range), returns NULL+warning for garbage",
+      "pg": "CASE regex ^([01]?d|2[0-3]):[0-5]d(:[0-5]d)?$ THEN to_char(time) ELSE NULL: NULL instead of error for invalid text",
+      "status": "bounded fail-equivalent subset only: MySQL-accepted non-HH:MM forms and hours>=24 (MySQL TIME up to 838:59:59 vs PG time <24h) now yield NULL; not claimed equal"
+    },
+    {
+      "sites": [
+        "booking_checkout.go stripe_events INSERT IGNORE"
+      ],
+      "mysql": "IGNORE: dup on uq(event_id) skipped (RowsAffected 0 -> duplicate response); event_id/type truncated to 128 chars; payload constant {}",
+      "pg": "VALUES CTE CAST varchar(128) + jsonb + ON CONFLICT (event_id) DO NOTHING (RowsAffected 0 on dup); no FK on table",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "booking_checkout.go claim UPDATE ... WHERE status=? RowsAffected"
+      ],
+      "mysql": "changed rows; status always changes (paid->completed)",
+      "pg": "matched=changed here; concurrent second claimer re-evaluates WHERE after lock -> 0",
+      "status": "equivalent by review, not runtime-verified"
+    },
+    {
+      "sites": [
+        "booking_insert.go public insert"
+      ],
+      "mysql": "LastInsertId",
+      "pg": "InsertID RETURNING id in same tx",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "is_open = FALSE"
+      ],
+      "mysql": "FALSE = 0 on tinyint",
+      "pg": "is_open = 0 (smallint)",
+      "status": "equivalent"
+    },
+    {
+      "sites": [
+        "mesas_de_dos upsert, restaurant_days upsert"
+      ],
+      "mysql": "ON DUPLICATE KEY on uq(restaurant_id,reservationDate)/(restaurant_id,date)",
+      "pg": "ON CONFLICT same keys",
+      "status": "compile only; mesas_de_dos.dailyLimit varchar(20) kept text"
+    },
+    {
+      "sites": [
+        "reservation_day_context mandatory_menus.menu_choose_main"
+      ],
+      "mysql": "JSON text",
+      "pg": "CAST(jsonb AS text): different normalisation",
+      "status": "pending JSON render class"
+    },
+    {
+      "sites": [
+        "ALL ported PG DML using now()/CURRENT_TIMESTAMP (36 occurrences, 21 files)"
+      ],
+      "mysql": "NOW() statement-start time, fsp 0 (truncated)",
+      "pg": "date_trunc(second, statement_timestamp()) / its AT TIME ZONE UTC naive form",
+      "status": "FIXED in code (compile only); schema DEFAULTs and ON UPDATE trigger still transaction-time + rounding: see now-semantics-ledger.json (pending, proof schema untouched)"
+    },
+    {
+      "sites": [
+        "bookings_admin.go string-scanned date/timestamp columns (reservation_date, added_date, cancellation_date)"
+      ],
+      "mysql": "parseTime=true + loc UTC: time.Time -> database/sql string conversion RFC3339Nano (e.g. 2026-05-01T00:00:00Z)",
+      "pg": "explicit to_char producing the same RFC3339 text (date: YYYY-MM-DDT00:00:00Z; timestamptz AT TIME ZONE UTC; naive datetime as UTC)",
+      "status": "compile only; fractional seconds absent because columns are (0) precision"
+    },
+    {
+      "sites": [
+        "bookings_admin.go reactivate: resDate RFC3339 text reinserted into bookings.reservation_date"
+      ],
+      "mysql": "MySQL converts the datetime-like string to DATE (time part dropped, possibly with note)",
+      "pg": "PG date input accepts ISO datetime text and drops time",
+      "status": "pending manual check, not runtime-verified"
+    },
+    {
+      "sites": [
+        "booking_documents.go insert attached to booking"
+      ],
+      "mysql": "INSERT ... SELECT takes InnoDB shared lock on booking row; RowsAffected != 1 -> reserva ya no existe",
+      "pg": "INSERT ... SELECT ... FOR SHARE OF b RETURNING id; no row -> same error",
+      "status": "compile only; lock equivalence by review"
+    },
+    {
+      "sites": [
+        "booking_reminders.go claimBookingReminder INSERT IGNORE"
+      ],
+      "mysql": "IGNORE: dup on uq(delivery_key) -> 0 rows (claim lost); delivery_key truncated to 128; no FK",
+      "pg": "VALUES CTE CAST varchar(128) + ON CONFLICT (delivery_key) DO NOTHING; RowsAffected 0/1",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "special_booking_snapshot.go:672 SELECT name FROM menu_dishes_catalog"
+      ],
+      "mysql": "column name does not exist (table has title): query errors",
+      "pg": "same error",
+      "status": "SOURCE ANOMALY blocker, preserved; candidate fix title (review)"
+    },
+    {
+      "sites": [
+        "special_booking_snapshot.go lookup(DIA/FINDE)"
+      ],
+      "mysql": "tables DIA/FINDE absent from exported schema: errors",
+      "pg": "same (quoted identifiers)",
+      "status": "SOURCE ANOMALY, preserved"
+    },
+    {
+      "sites": [
+        "adelanto_payment_methods, menu_choose_main"
+      ],
+      "mysql": "JSON text",
+      "pg": "CAST(jsonb AS text)",
+      "status": "pending JSON render class"
+    },
+    {
+      "sites": [
+        "reactivation cancelled reservation_time invalid forms"
+      ],
+      "mysql": "lenient TIME parse up to 838h",
+      "pg": "bounded regex subset -> NULL",
+      "status": "pending, not waived"
+    },
+    {
+      "sites": [
+        "public_booking_api.go customer rice update RowsAffected>0 -> modification record"
+      ],
+      "mysql": "changed rows (unchanged values -> 0, no record)",
+      "pg": "UPDATE ... AND (arroz_type COLLATE C, arroz_servings COLLATE C) IS DISTINCT FROM ($1,$2) (source columns utf8mb4_bin -> byte compare)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "upserts restaurant_booking_extras(restaurant_id,slug), booking_notification_settings(restaurant_id), restaurant_floor_overrides(restaurant_id,date,floor_id)"
+      ],
+      "mysql": "ON DUPLICATE KEY",
+      "pg": "ON CONFLICT real unique keys",
+      "status": "ON UPDATE gap pending for updated_at"
+    },
+    {
+      "sites": [
+        "floors_date.go restaurant_floors insert"
+      ],
+      "mysql": "LastInsertId (error ignored); scope_key STORED GENERATED",
+      "pg": "InsertID RETURNING id; generated column from plan",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "public_booking_api/public_reservation_pages cancelled_bookings NOW()"
+      ],
+      "mysql": "statement time datetime",
+      "pg": "date_trunc(second, statement_timestamp()) AT TIME ZONE UTC",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "reservation_self_service.go composed projection + dynamic SET list"
+      ],
+      "mysql": "single text",
+      "pg": "sqlFragment head + portableSQL rebind once; camelCase quoted",
+      "status": "compile only"
+    }
+  ]
+}

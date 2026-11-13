@@ -127,11 +127,16 @@ func (s *Server) handleBOMemberAvatarUpload(w http.ResponseWriter, r *http.Reque
 	}
 
 	avatarURL := s.bunnyMembersPullURL(ctx, a.ActiveRestaurantID, objectPath)
-	result, err := s.db.ExecContext(r.Context(), `
+	result, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE restaurant_members
 		SET photo_url = ?
 		WHERE id = ? AND restaurant_id = ? AND is_active = 1
-	`, avatarURL, memberID, a.ActiveRestaurantID)
+	`, `
+		UPDATE restaurant_members
+		SET photo_url = $1
+		WHERE id = $2 AND restaurant_id = $3 AND is_active = 1
+		  AND photo_url COLLATE "C" IS DISTINCT FROM CAST($1 AS text)
+	`), avatarURL, memberID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo guardar el avatar")
 		return

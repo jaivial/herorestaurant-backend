@@ -43,14 +43,14 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dailyLimit := 45
-	_ = s.db.QueryRowContext(r.Context(), "SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id DESC LIMIT 1", restaurantID, date).Scan(&dailyLimit)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL("SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? ORDER BY id DESC LIMIT 1", `SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? ORDER BY id DESC LIMIT 1`), restaurantID, date).Scan(&dailyLimit)
 	if dailyLimit <= 0 {
 		dailyLimit = 45
 	}
 
 	salonState := 0
 	var salonStateRaw sql.NullInt64
-	if err := s.db.QueryRowContext(r.Context(), "SELECT state FROM salon_condesa WHERE restaurant_id = ? AND date = ? LIMIT 1", restaurantID, date).Scan(&salonStateRaw); err == nil && salonStateRaw.Valid {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT state FROM salon_condesa WHERE restaurant_id = ? AND date = ? LIMIT 1"), restaurantID, date).Scan(&salonStateRaw); err == nil && salonStateRaw.Valid {
 		salonState = int(salonStateRaw.Int64)
 	}
 
@@ -65,7 +65,7 @@ func (s *Server) handleGetHourData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var hourDataRaw sql.NullString
-	err = s.db.QueryRowContext(r.Context(), "SELECT hourData FROM hour_configuration WHERE restaurant_id = ? AND date = ? LIMIT 1", restaurantID, date).Scan(&hourDataRaw)
+	err = s.db.QueryRowContext(r.Context(), nativeSQL("SELECT hourData FROM hour_configuration WHERE restaurant_id = ? AND date = ? LIMIT 1", `SELECT "hourData" FROM hour_configuration WHERE restaurant_id = ? AND date = ? LIMIT 1`), restaurantID, date).Scan(&hourDataRaw)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -241,7 +241,7 @@ func (s *Server) handleSaveHourData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dailyLimit := 45
-	_ = s.db.QueryRowContext(r.Context(), "SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", restaurantID, date).Scan(&dailyLimit)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL("SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), restaurantID, date).Scan(&dailyLimit)
 	if dailyLimit <= 0 {
 		dailyLimit = 45
 	}
@@ -288,7 +288,7 @@ func (s *Server) handleSaveHourData(w http.ResponseWriter, r *http.Request) {
 	payload, _ := json.Marshal(input.HourData)
 
 	var exists int
-	err = s.db.QueryRowContext(r.Context(), "SELECT id FROM hour_configuration WHERE restaurant_id = ? AND date = ? LIMIT 1", restaurantID, date).Scan(&exists)
+	err = s.db.QueryRowContext(r.Context(), portableSQL("SELECT id FROM hour_configuration WHERE restaurant_id = ? AND date = ? LIMIT 1"), restaurantID, date).Scan(&exists)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -299,9 +299,9 @@ func (s *Server) handleSaveHourData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err == nil {
-		_, err = s.db.ExecContext(r.Context(), "UPDATE hour_configuration SET hourData = ?, updated_at = NOW() WHERE restaurant_id = ? AND date = ?", string(payload), restaurantID, date)
+		_, err = s.db.ExecContext(r.Context(), nativeSQL("UPDATE hour_configuration SET hourData = ?, updated_at = NOW() WHERE restaurant_id = ? AND date = ?", `UPDATE hour_configuration SET "hourData" = ?, updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ? AND date = ?`), string(payload), restaurantID, date)
 	} else {
-		_, err = s.db.ExecContext(r.Context(), "INSERT INTO hour_configuration (restaurant_id, date, hourData, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())", restaurantID, date, string(payload))
+		_, err = s.db.ExecContext(r.Context(), nativeSQL("INSERT INTO hour_configuration (restaurant_id, date, hourData, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())", `INSERT INTO hour_configuration (restaurant_id, date, "hourData", created_at, updated_at) VALUES (?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`), restaurantID, date, string(payload))
 	}
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -327,7 +327,7 @@ func (s *Server) getOpeningHoursForDate(r *http.Request, date string) ([]string,
 	}
 
 	var hoursRaw sql.NullString
-	err := s.db.QueryRowContext(r.Context(), "SELECT hoursarray FROM openinghours WHERE restaurant_id = ? AND dateselected = ? LIMIT 1", restaurantID, date).Scan(&hoursRaw)
+	err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT hoursarray FROM openinghours WHERE restaurant_id = ? AND dateselected = ? LIMIT 1"), restaurantID, date).Scan(&hoursRaw)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
@@ -352,12 +352,12 @@ func (s *Server) fetchBookingsByHourHHMM(r *http.Request, date string) (map[stri
 		return nil, 0, errors.New("unknown restaurant")
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT reservation_time, COALESCE(SUM(party_size), 0) AS total_people
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
 		GROUP BY reservation_time
-	`, restaurantID, date)
+	`), restaurantID, date)
 	if err != nil {
 		return nil, 0, err
 	}

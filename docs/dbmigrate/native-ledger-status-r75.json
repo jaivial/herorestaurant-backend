@@ -1,0 +1,1318 @@
+{
+ "inventory": "r95 /tmp/villacarmen-bot-20261111/sql-inventory-r95.json 2499 sites native863 portable1494 selected82 pgOnly43 mysqlOnly17",
+ "call_sites": 2485,
+ "note_sites": "2485: r79 2490 - 6 pooled lock statements (ops-check, cdn-sweep, comida-stock-backfill) now inside sqldb.TryNamedLock (helper-internal 9->13) + 1 PG import-marker readiness query (internal/db/business.go)",
+ "classification": {
+  "syntax_classified": 2485,
+  "blocked": 0,
+  "unclassified": 0,
+  "by_kind": {
+   "mysqlOnlySQL": 44,
+   "nativeSQL": 845,
+   "pgOnlySQL": 42,
+   "portableSQL": 1472,
+   "selectedSQL": 82
+  },
+  "helper_internal_excluded": 13
+ },
+ "not_functional": {
+  "mysql_only_port_or_retire": 46,
+  "unwired_pg_twins": [],
+  "provisional": {},
+  "blocked": {},
+  "reclassified_r76_reviewed_fix_QA_pending": {
+   "internal/api/stripe_connect.go saveConnectAccount": "provisional -> nativeSQL (owner-guarded, account_hash foreign -> errConnectAccountTaken)",
+   "internal/api/backoffice_uazapi_provisioning.go provision upsert": "provisional -> nativeSQL (owner-guarded, instance_name foreign -> errUAZAPIInstanceTaken)",
+   "internal/api/instatic_manager.go instatic_instances upsert": "blocked -> nativeSQL (owner-guarded, foreign port -> not written, logged)"
+  },
+  "reclassified_r77_reviewed_QA_pending": {
+   "internal/api/assistant_pos_tools.go pos_ticket_create": "blocked -> nativeSQL: PG binds 'F-'+Go v1 UUID, MySQL UUID() unchanged",
+   "internal/api/instatic_manager.go mapping insert": "blocked -> nativeSQL: PG binds Go v1 UUID, owner-guarded conflict",
+   "internal/api/seo_item_routes.go insertSeoItemRoute": "2x pgProvisionalSQL -> pgOnlySQL in one tx (route-key ON CONFLICT DO UPDATE in savepoint; slug 23505 -> slug row update; 0-row -> one retry; else fail closed)"
+  },
+  "reclassified_r78_reviewed_QA_pending": {
+   "internal/api/site_builder_registrar.go mapDomainToSite": "provisional -> nativeSQL: explicit site (request site_id owned by restaurant, or the single site); several sites without site_id -> site_id_required (no mapping)"
+  },
+  "wired_but_gated": {
+   "cmd/ops-check": "DB_DRIVER=postgres + DB_PG_TOOLS_QA_APPROVED=1 + DATABASE_URL + dbmigrate.marker import_verified; MySQL migrations skipped on PG",
+   "cmd/cdn-sweep": "same gates; schema=public on PG; --apply refused on PG",
+   "cmd/server": "PG refused (unchanged); dialect set once for api + analytics"
+  },
+  "mysql_only_runtime_utilities_port_followup": {
+   "cmd/backfill-translations": 9,
+   "cmd/comida-stock-backfill": 6,
+   "cmd/group-menu-arroz-cleanup": 5,
+   "cmd/update-restaurant-info": 4,
+   "cmd/migrate-wine-images": 3,
+   "cmd/chatgpt-plugin-token": 1,
+   "cmd/seed-legal-pages": 1
+  },
+  "mysql_only_legitimate": {
+   "cmd/dbmigrate source DATABASE()": 1,
+   "internal/dbmigrate export/schema (source reads)": 4,
+   "internal/db + migrations (MySQL bootstrap/runner)": 5
+  }
+ },
+ "semantic_validation": "open (see domain ledgers)",
+ "runtime_verified": 0,
+ "repair_isolation1": {
+  "bug": "restaurant_domains ODKU/ON CONFLICT on unique domain reassigned (premium) or rewrote (registrar/billing/instatic) another restaurant's row; site_builder_domain_mappings ODKU on unique domain rewrote another site's mapping status",
+  "fix": "owner-guarded conflict update on both dialects + owner re-read; foreign -> existing unavailable error, no foreign-row change",
+  "files": [
+   "internal/api/domain_ownership.go (new)",
+   "internal/api/backoffice_premium.go",
+   "internal/api/site_builder_registrar.go",
+   "internal/api/site_builder_billing.go",
+   "internal/api/instatic_manager.go"
+  ],
+  "writers_audited": [
+   "backoffice_premium register (tx)",
+   "site_builder_registrar register + provisionDomainSite (+mapping)",
+   "site_builder_billing webhook (+checkout UPDATE scoped by restaurant_id, unchanged)",
+   "instatic_manager ProvisionSubdomain (+MySQL mapping)",
+   "site_builder handleCreateDomain mapping plain INSERT (unique -> 409, no upsert, unchanged)",
+   "no DELETE/UPDATE of restaurant_domains.restaurant_id anywhere",
+   "premium fallback variants: both domain variants guarded"
+  ]
+ },
+ "repair_isolation2": {
+  "fix": "shared_identity_isolation_v1: MySQL ODKU assignments IF(restaurant_id = VALUES(restaurant_id), new, old); PG ON CONFLICT (restaurant_id); foreign shared key -> guarded no-op + owner re-read, or unique error on the shared key -> mapped error; no foreign row modified",
+  "files": [
+   "internal/api/stripe_connect.go",
+   "internal/api/backoffice_uazapi_provisioning.go",
+   "internal/api/instatic_manager.go"
+  ],
+  "qa": "code review only; runtime QA pending",
+  "known_effect": "demo Stripe connect uses one constant demo account id -> one shared lookup hash: a second restaurant enabling demo now fails closed ('No se pudo activar el modo demo') instead of (MySQL) corrupting the first restaurant's row; per-restaurant demo identity is a follow-up decision-free repair candidate"
+ },
+ "repair_uuidseo1": {
+  "uuid": "sqlUUIDv1() google/uuid v1.6.0 NewUUID (RFC4122 v1); consumers rely on uniqueness only; node differs from MySQL server node (format/version same); error returned, never empty id",
+  "instatic_keeper": "port map is per-process and routing uses it: a port recorded for another restaurant was previously started anyway (error ignored) -> pre-start owner check and post-record re-check kill the process and forget the port (fail closed)",
+  "orphans": "provider/Stripe/UAZAPI resources created before a shared-key conflict stay orphaned (logged, no external cleanup)"
+ },
+ "repair_domain2": {
+  "claim": "domain_reservation_v1 claimOwnedDomain: INSERT pending with no-op conflict branch + owner re-read (unique constraint, no missing-row lock)",
+  "registrar": "state transitions pending|paid|failed -> registering -> registered | register_uncertain; same-owner retry with registered/active returns already_registered; registering/register_uncertain -> 409, never a second purchase; no row deleted",
+  "checkout": "reserve marker creating:<uuid> on own row (only if no session or payment failed, not paid) before CreateCheckoutSession; Stripe error releases own marker only; success stores session id scoped to marker; abandoned sessions keep blocking until manual reset / future checkout.session.expired handling",
+  "mapping_guard": "handleCreateDomain refuses a domain whose restaurant_domains row is owned by another restaurant (409 Domain already in use); DNS proof not implemented (source TODO)",
+  "instatic": "instatic_port_claim_v1: claim row 'provisioning' + owner re-read BEFORE process start; only the owner starts; status running after start; no post-start kill needed"
+ },
+ "repair_domain_audit1": {
+  "schema_facts": {
+   "restaurant_domains.registration_status": "varchar(32) NOT NULL default 'pending', no CHECK/enum on either engine (MySQL schema.json, PG plan) -> pending/registering/register_uncertain valid without migration",
+   "restaurant_domains.stripe_payment_status": "enum('pending','paid','failed') both -> code only writes these",
+   "restaurant_domains.stripe_checkout_session_id": "varchar(255) nullable -> creating:/uncertain:<uuid> (46 chars) fits",
+   "instatic_instances.status": "enum('provisioning','running','stopped','error') both -> provisioning/error valid"
+  },
+  "fixes": [
+   "checkout_idempotency_v1: per-attempt key in stripe_checkout_session_id + Stripe Idempotency-Key (new CreateCheckoutSessionKeyed via existing doIdempotent); ambiguous error -> uncertain:<key>, never cleared; retry/concurrent loser reuses the key",
+   "site resolution before payment/purchase/DNS; site_id in signed checkout metadata -> webhook",
+   "webhook: VerifyWebhookSignatureWithTolerance(5m) replay guard; INSERT on unique event_id is the dedupe claim; only payment_status=paid marks paid; paid never downgrades registered/active/registering registration_status",
+   "premium verify: registering/register_uncertain shown pending, never verified",
+   "instatic: start failure marks own row error; foreign owner of a port recorded in the map so allocation skips it"
+  ],
+  "reported_not_fixed": [
+   "custom mapping create for an unowned domain reserves nothing: another restaurant can later claim restaurant_domains; the stale unverified mapping then blocks that owner's mapping (skipped_mapped_to_other_site). No silent claim added (would let any site owner squat a domain without DNS proof)",
+   "verify marks mappings verified without DNS proof (source TODO); router mapping lookup queries a non-existent column, so mapping routing stays inactive",
+   "abandoned real sessions (cs_...) still block until manual reset / expiry handling",
+   "processing failure after the event insert drops Stripe retries (source)"
+  ]
+ },
+ "repair_wiring1": {
+  "dialect": "internal/db.BusinessDialect(DB_DRIVER): ''/mysql -> MySQL, postgres -> Postgres, other -> error; api.SetSQLDialect + analytics.SetSQLDialect from server main (MySQL only while refused)",
+  "pg_open": "internal/db.OpenBusinessForTool: PG via sqldb.OpenPostgres(DATABASE_URL, public) (search_path public, TimeZone UTC, timestamptz ScanLocation UTC), fail-closed gates, no MySQL fallback, no schema creation",
+  "botstore": "legacy schemaless PG now sqldb.OpenPostgresUTC (UTC pin without search_path); unified bot_context path unchanged",
+  "locks": "sqldb.TryNamedLock: GET_LOCK / pg_try_advisory_lock and release on one pinned *sql.Conn; release with background ctx then conn.Close (session end frees the lock on error/cancel)"
+ },
+ "retained_caveats": [
+  "Stripe Idempotency-Key retention is finite (Stripe keeps keys ~24h): an uncertain:<key> attempt older than that can no longer be replayed safely; needs a reconcile step (RetrieveCheckoutSession / list by metadata) before a new key, not an indefinite retry",
+  "stripe_events row is recorded before processing: a processing failure turns Stripe retries into duplicates; needs a processed flag / reconcile implementation (code, not an external blocker)",
+  "DNS proof protocol to design later; unverified mappings must not activate routing"
+ ],
+ "repair_rebind1": {
+  "lexer": "internal/sqldb/rebind.go RebindPostgres (sqldb_rebind_v2): skips '..' (standard_conforming_strings on), E'..' backslash escapes, \"..\" identifiers, $tag$/$$ dollar quotes, -- line (CRLF ok) and nested /* */ comments; refuses unterminated literal/identifier/dollar/comment, backtick, ?| ?& ??, mixed ? and $n; sqldb.Rebind returns a parse-failing 'sqldb_rebind_refused' statement + log on refusal (no panic, no silent misbinding); botstore.Rebind delegates for PG, SQLite unchanged",
+  "audit": "static scan of 3454 Go string literals with ? and SQL keywords: 19 lexer findings, all non-PG or fragments: 5 MySQL backtick halves (never rebound on PG), 1 MySQL REGEXP '(is )?' half (PG twin uses {0,1}), 8 concatenation fragments (complete at runtime), 5 non-SQL strings (regex/prose). No PG-bound literal changes placeholder count vs the old rebind; residual: composed statements audited per fragment only",
+  "lock": "TryNamedLock: release reads the unlock result (PG bool / MySQL RELEASE_LOCK 1); on error or not-released, conn.Raw returning driver.ErrBadConn discards the physical connection (session ends -> lock freed) before Close; corrected claim: plain Conn.Close returns the connection to the pool WITH the lock",
+  "marker": "tool gate now parses dbmigrate.marker('import_verified') value (written by pgimport even when not ready) and requires ok && ready_for_cutover && pending_blocking_decisions==0 && no NOT VALID FKs; no DB read performed this batch"
+ },
+ "repair_ignore1": {
+  "status": "code_only_build_ok_qa_pending_until_runtime",
+  "fixed": [
+   "suppression target never truncated (campaignSuppressionKey, rune<=190 valid utf8 no NUL) both dialects",
+   "filter blocked() fail closed for unstorable targets",
+   "byte->char width checks unsubscribe/email_validation",
+   "reason sanitized+255 rune cut bot_unsubscribe/unreachable/public_unsubscribe",
+   "bounce diag 300 byte cut at rune boundary",
+   "outbox width refusal key191/recipient255/event64 + cause rune-safe",
+   "standard_conforming_strings=on pinned sqldb pools"
+  ],
+  "open": [
+   "accent ci_ai collision suppression not found by exact Go filter (source too)",
+   "diag preexisting invalid bytes PG 22021 skips suppression",
+   "MySQL stored value for split rune unproven",
+   "outbox payload NUL jsonb"
+  ]
+ },
+ "repair_suppression2": {
+  "status": "code_only_build_ok_qa_pending_until_runtime",
+  "fixed": [
+   "DB-collation suppression lookup (uq_suppression collation per engine) batched for all send/requeue paths, error fail closed",
+   "outbox campaign rows rechecked before send",
+   "bounce event insert decoupled from suppression; suppression errors surfaced",
+   "invalid diagnostic flagged [raw-latin1] lossless",
+   "campaign enqueue error logged",
+   "truncate rune-safe"
+  ],
+  "open": [
+   "MySQL unicode_ci vs PG ci_ai semantic difference (collation gate, PG disabled)",
+   "MySQL stored invalid-diagnostic unproven",
+   "validation filter partial on read error (source)",
+   "outbox payload NUL jsonb"
+  ]
+ },
+ "repair_ignore2": {
+  "status": "code_only_build_ok_qa_pending",
+  "fixed": [
+   "category >120 fail closed 400 + errors propagate tx rollback",
+   "fiscal series enum/terminal validation, trailing-space PAD parity scope only",
+   "stock anomaly MySQL ODKU no-op, range/FK propagate",
+   "replay snapshot ODKU id=id",
+   "tags ODKU no-op FK errors surface",
+   "diag NUL base64 lossless flag"
+  ],
+  "open": [
+   "12 IGNORE sites remaining",
+   "realtime snapshot lookup swallowed",
+   "fullnumber lacks terminal (source)",
+   "collation PAD/ci_ai",
+   "diag raw prefix only (216 b64 / 288 latin1), not full lossless"
+  ]
+ },
+ "repair_stripe1": {
+  "status": "code_only_build_ok_qa_pending",
+  "schema_applied": false,
+  "proposal": "docs/dbmigrate/proposed-stripe-events-claim.sql (not applied)",
+  "fixed": [
+   "event claim processed_at NULL until effects succeed, lease takeover 600s via created_at, 503 retry",
+   "domain paid tx row lock + invoice once NOT EXISTS + amount/currency/attempt checks",
+   "expired/async_failed scoped to own session/attempt",
+   "attempt key <uuid>@<unix> 23h window fail closed",
+   "reconcile by stable cs id only",
+   "connect webhook retry on non-terminal errors"
+  ],
+  "open": [
+   "created_at lease overload",
+   "CF provision failure not retried",
+   "legacy dropped events manual",
+   "diag b64/latin1 prefix only"
+  ],
+  "superseded_by": "repair_stripe_audit1 (lease removed)"
+ },
+ "repair_stripe_audit1": {
+  "status": "code_only_build_ok_qa_pending",
+  "schema_applied": false,
+  "fixed": [
+   "pinned per-event advisory lock (TryNamedLockConn) replaces created_at lease; created_at untouched",
+   "effects tx + processed mark fenced on lock connection",
+   "provider re-read of session, livemode check both webhooks",
+   "server-recorded expected amount (registration_cost euros) at reservation; mismatch/non-current attempt/legacy -> review (processed_at NULL)",
+   "CF failure retryable, site conflicts review"
+  ],
+  "open": [
+   "CRITICAL price authority: client amount_eur, no server EUR price for this flow",
+   "booking at-most-once after completed claim",
+   "23h window modelled not repo-evidenced",
+   "lock conn pool pressure"
+  ]
+ },
+ "repair_ignore3": {
+  "status": "code_only_build_ok_qa_pending",
+  "ignore_statements_before": 24,
+  "fixed_this_batch": 14,
+  "remaining_guarded": 10,
+  "fixed": [
+   "reminder key width",
+   "preshift claim error no longer claims",
+   "inbound queue mysql width refusal",
+   "provisioning FK no longer skipped",
+   "bootstrap logged",
+   "user create role width+assign error explicit",
+   "accounting FK",
+   "menu_visibility logged",
+   "email retries logged",
+   "campaign target never cut"
+  ],
+  "domain_price": "no grounded authority; checkout fail closed 503 (domainCheckoutPriceAuthority=false); owner decision pending",
+  "open": [
+   "booking paid->completed crash critical next",
+   "review state not durable queue"
+  ]
+ },
+ "repair_booking_atomic1": {
+  "status": "code_only_build_ok_qa_pending",
+  "schema_applied": false,
+  "fixed": [
+   "booking insert + paid->completed + booking_id in one tx under checkout row lock",
+   "insertBookingTx shared",
+   "finishFrontBooking post-commit only",
+   "pending->paid error surfaced",
+   "invalid replay failed only if still paid",
+   "legacy completed without booking logged for manual review"
+  ],
+  "open": [
+   "notifications at-most-once (no email outbox; proposal only)",
+   "capacity non-locking (gap-lock gate)"
+  ]
+ },
+ "repair_capacity1": {
+  "status": "code_only_build_ok_qa_pending",
+  "lock": "PG pg_advisory_xact_lock per (rid,date) ascending; MySQL restaurants row FOR UPDATE",
+  "covered": [
+   "insertBookingTx (front/admin insertBooking/checkout)",
+   "bot create recheck+insert one tx",
+   "bot modify two-day lock recheck+update",
+   "bot daily limit execute"
+  ],
+  "gates": [
+   "BO daily limit handlers autocommit",
+   "other booking writers unlocked",
+   "defaults limit read outside tx",
+   "front path no capacity rule (source)",
+   "notifications at-most-once"
+  ]
+ },
+ "repair_capacity2": {
+  "status": "code_only_build_ok_qa_pending",
+  "lock_order": "restaurant (PG FOR SHARE / MySQL FOR UPDATE) then PG day advisory xact locks ascending; defaults writer restaurant FOR UPDATE",
+  "covered": "all capacity-increasing booking writers + all limit writers (day + default)",
+  "not_locked_by_reason": "total-decreasing and non-capacity writers",
+  "gates": [
+   "provision defaults insert",
+   "mysql per-restaurant contention",
+   "QA pending"
+  ]
+ },
+ "repair_types1": {
+  "status": "code_only_build_ok_qa_pending",
+  "schema_applied": false,
+  "time": "8 TIME cols all clock; source values all 00-23h; ensureHHMMSS strict both dialects; no plan revision",
+  "nul": "source NUL only assistant_messages (bytea adapter kept); jsonb ~75 cols no source NUL; outbox explicit refusal on PG; others gate; proposal docs/dbmigrate/proposed-types1.md",
+  "qa_plan": "manual read-only commands in result-repair-types1.md, not run"
+ },
+ "repair_types2": {
+  "status": "code_only_build_ok_qa_pending",
+  "time": "all TIME writers validated clock; modifications_api reservation_time fixed",
+  "collation": "plan only (applied false): per-column C for opaque ids / keep ci_ai human text / PAD SPACE trim proposal after data check",
+  "preflight_0532": "coordinator manual read-only evidence recorded; local source env != production (sql_mode ONLY_FULL_GROUP_BY, server 0900_ai_ci)",
+  "qa_fixes": [
+   "added_date not created_at",
+   "bytea position for NUL",
+   "MySQL BINARY UNHEX(00)"
+  ]
+ },
+ "repair_collation1": {
+  "status": "code_only_build_ok_qa_pending",
+  "applied": false,
+  "fixed": [
+   "POS category import PG rtrim ASCII space (PAD SPACE parity)",
+   "posClockMinutes strict suffix"
+  ],
+  "evidence_0543": "ci_ai: pad FALSE, accent TRUE, ss TRUE; MySQL unicode_ci all TRUE; unaccent/uuid-ossp available not installed; trailing keys 0",
+  "unique_keys": "121 listed heuristic (53 opaque/32 code/15 human/8 contact/13 unknown) docs/dbmigrate/collation-unique-keys-r93.tsv",
+  "gates": [
+   "PAD on unverified keys",
+   "accent LIKE",
+   "opaque keep ci_ai"
+  ]
+ },
+ "repair_utils1": {
+  "status": "code_only_build_ok_qa_pending",
+  "ported": "backfill-translations 9, comida-stock-backfill 6, group-menu-arroz-cleanup 5",
+  "pg_mode": "report/dry-run only until QA",
+  "mysqlOnly_remaining": {
+   "utilities": 9,
+   "legit_source_bootstrap": 10,
+   "api_recheck": 5
+  },
+  "manual_readonly_qa_0554": "5 SQL shapes PG vs MySQL match (override 0/default 45/used 55/search ids/first5 times); not handler proof"
+ },
+ "repair_utils2": {
+  "status": "code_only_build_ok_qa_pending",
+  "ported": "chatgpt-plugin-token (PG --list only), migrate-wine-images (PG dry-run no upload), seed-legal-pages (PG report), update-restaurant-info (PG report)",
+  "mysqlOnly_17": "10 bootstrap/source + 2 MySQL ALTER bootstrap + 5 api MySQL arms of proven dialect branches with native PG twins"
+ },
+ "repair_padding1": {
+  "status": "code_only_build_ok_qa_pending",
+  "fixed_keys": [
+   "restaurant_domains.domain",
+   "site_builder_domain_mappings.domain",
+   "site_builder_sites.custom_domain",
+   "site_builder_sites.subdomain (refuse edge spaces)",
+   "restaurant_uazapi_instances.instance_name (refuse trailing space)"
+  ],
+  "gap_keys": [
+   "restaurant_areas.name",
+   "restaurant_tables.name",
+   "site_builder_pages.slug",
+   "stock_supplier_aliases.supplier_name"
+  ],
+  "proposal": "docs/dbmigrate/proposed-padding-index-1.md (applied false)",
+  "unaudited_keys": 93,
+  "inventory": "r95 unchanged 2499"
+ },
+ "audit_padding2": {
+  "status": "docs_audit_plus_bounded_fix_build_ok",
+  "keys_audited_total": 58,
+  "keys_unaudited": 63,
+  "fix": "site update custom_domain domainOwnedByOther guard (409/500), no activation",
+  "gates": [
+   "legacy padded global identities not matched by exact owner lookups (proposal only)",
+   "4 human GAP keys proposals only",
+   "5 open items"
+  ]
+ },
+ "audit_padding3": {
+  "status": "docs_only",
+  "keys_audited_total": 88,
+  "keys_unaudited": 33,
+  "audit2_open_closed": 5,
+  "open_this_batch": [
+   "stock_margin_scopes validation compare",
+   "POSTRES ui_data_id",
+   "analytics identity builder",
+   "comida_items ui_data_id",
+   "group_menu dishes ui_data_id"
+  ],
+  "gates": [
+   "padded global owner lookups unapplied",
+   "4 human GAP proposals",
+   "planner rtrim plan unimplemented"
+  ]
+ },
+ "audit_padding4": {
+  "keys_audited": 33,
+  "keys_total_audited_source_only": 121,
+  "set_check": "121/121 unique no dup/missing",
+  "full_parity": false,
+  "status_counts": {
+   "S-GEN-HEX": 5,
+   "S-GEN-FMT": 1,
+   "S-GEN-COL": 2,
+   "S-CLIENT-TRIM": 7,
+   "S-CLIENT-RAW": 10,
+   "S-CLIENT-MIXED": 3,
+   "S-PROVIDER": 1,
+   "S-ALLOWLIST": 3,
+   "S-NO-WRITER": 1,
+   "S-UNTRACED": 0
+  },
+  "callers_tsv": "docs/dbmigrate/padding-index-callers.tsv",
+  "callers_blocked_unresolved": 0,
+  "code_changes": 0,
+  "sql_executed": 0,
+  "build": "not run (docs-only)",
+  "pg_gates": "all held; runtime handler QA 0"
+ },
+ "repair_padmeta1": {
+  "files_changed": [
+   "internal/dbmigrate/padmeta.go (new)",
+   "internal/dbmigrate/schema.go",
+   "internal/dbmigrate/types.go",
+   "internal/dbmigrate/plan.go",
+   "cmd/dbmigrate/main.go"
+  ],
+  "docs": [
+   "docs/result-repair-padmeta1.md",
+   "docs/dbmigrate/collation-padding-audit-4.md",
+   "docs/dbmigrate/padding-index-callers.tsv",
+   "docs/dbmigrate/padplan-proposal-r5-nometa.json"
+  ],
+  "build": "go build -p 2 ./... OK",
+  "sql_executed": 0,
+  "export_or_import_run": false,
+  "padplan_on_archived_r5": {
+   "blocked": 136,
+   "gated_no_pad_expression": 7,
+   "reason": "archived export lacks collation metadata"
+  },
+  "applied": false,
+  "r5_unchanged": true,
+  "runtime_api_changes": 0,
+  "callers_tsv_blocked_resolved": 25
+ },
+ "repair_padglobal1": {
+  "keys": [
+   "restaurant_domains.domain",
+   "site_builder_domain_mappings.domain",
+   "site_builder_sites.subdomain",
+   "site_builder_sites.custom_domain",
+   "restaurant_uazapi_instances.instance_name"
+  ],
+  "callers_patched_tsv": "docs/dbmigrate/padding-global-key-callers.tsv",
+  "caller_rows": 32,
+  "mysql_text_changed": false,
+  "readiness_gate": "internal/db/padkeys.go RequirePadKeyIndexes in OpenBusinessForTool; server refusal unchanged",
+  "future_ddl_applied": false,
+  "metadata": "local restored source 8.0.45 sidecar, not production",
+  "inventory": "r96 2500 sites (+1 gate query)",
+  "build": "go build -p 2 ./... OK",
+  "runtime_verified": 0,
+  "general_collation_parity": false
+ },
+ "repair_padidem1": {
+  "keys": 10,
+  "patched_sites": [
+   "backoffice_pos.go:853",
+   "backoffice_pos_operations.go:323",
+   "backoffice_pos_checkout.go:316-319 (both dialects bugfix)",
+   "backoffice_stock.go:1463",
+   "backoffice_stock_recipes.go:502"
+  ],
+  "gate": "composite pg_catalog validator 15 indexes; rendering regex unverified",
+  "ddl_applied": false,
+  "inventory": "r97 2501 sites",
+  "build": "go build -p 2 ./... OK",
+  "coverage": {
+   "pad_keys_of_121": 116,
+   "enum_only": 4,
+   "no_pad": 1,
+   "primary_pad": 18,
+   "caller_patched": 15,
+   "remaining_of_121": 101
+  },
+  "mysql_text_changed": "checkout replay sameKey (reviewed bugfix)",
+  "runtime_verified": 0
+ },
+ "repair_padmixed1": {
+  "indexes": 9,
+  "tables": 7,
+  "gate_entries_total": 24,
+  "patched_sites": [
+   "backoffice_pos_cash.go:488,541",
+   "backoffice_premium.go:2350,2552",
+   "backoffice_stock_documents.go:161,686",
+   "backoffice_stock_suppliers.go:31-32,206,300,306,315,319"
+  ],
+  "bugfix": "stockAliasDescription rune-safe 255-byte cut (old valid keys identical)",
+  "pk_audit": "18 PAD PKs design-only; FK padded-child compat open",
+  "ddl_applied": false,
+  "inventory": "r98 2501",
+  "build": "go build -p 2 ./... OK",
+  "remaining_unique": 92,
+  "runtime_verified": 0
+ },
+ "repair_padcontact1": {
+  "keys": 8,
+  "gate_entries_total": 32,
+  "patched_sites": [
+   "backoffice_auth.go:510",
+   "backoffice_pos_customers.go:85",
+   "backoffice_campaigns.go:1296",
+   "campaign_bounce_sync.go:300,314",
+   "campaign_email_validation.go:119",
+   "public_unsubscribe.go:177,201",
+   "whatsapp_bot_unsubscribe.go:119",
+   "whatsapp_unreachable.go:78",
+   "campaign_suppression_target.go:125"
+  ],
+  "pad_neutral_unchanged": "LOWER(TRIM()) login/invite/join comparisons",
+  "gate_kept": "campaigns.go:880 Go map preview stricter than DB (both engines)",
+  "alias_description": "fail-closed on split boundary (revises padmixed1)",
+  "pk_audit": "complete source pass; options A/B/C; probes prepared not executed",
+  "ddl_applied": false,
+  "inventory": "r99 2501",
+  "build": "go build -p 2 ./... OK",
+  "remaining_unique": 84,
+  "runtime_verified": 0
+ },
+ "repair_padbatch1": {
+  "new_keys": 20,
+  "patched_total": 52,
+  "remaining": 64,
+  "sets": "docs/dbmigrate/pad-key-sets-padbatch1.txt",
+  "probes": "docs/dbmigrate/pad-collision-probes.sql (52 unique+18 PK+11 FK, not executed)",
+  "pk_decision": "rtrim readers + supplementary unique; FK future-writer gate open",
+  "ddl_applied": false,
+  "inventory": "r100 2501",
+  "build": "go build -p 2 ./... OK",
+  "runtime_verified": 0
+ },
+ "repair_padbatch2": {
+  "new_keys": 20,
+  "patched_total": 72,
+  "remaining": 44,
+  "sets": "docs/dbmigrate/pad-key-sets-padbatch2.txt",
+  "mcp_client_binding": "DB comparison both dialects (reviewed bugfix)",
+  "probes": [
+   "docs/dbmigrate/pad-collision-probes.sql",
+   "docs/dbmigrate/pad-collision-probes-mysql.sql"
+  ],
+  "ddl_applied": false,
+  "inventory": "r101 2501",
+  "build": "go build -p 2 ./... OK",
+  "runtime_verified": 0
+ },
+ "repair_padbatch3": {
+  "new_keys": 20,
+  "patched_total": 92,
+  "remaining": 24,
+  "sets": "docs/dbmigrate/pad-key-sets-padbatch3.txt",
+  "probes": "121 count SELECTs PG+MySQL not executed",
+  "ddl_applied": false,
+  "inventory": "r102 2501",
+  "build": "go build -p 2 ./... OK",
+  "runtime_verified": 0,
+  "functional_complete": false
+ },
+ "repair_padbatch4": {
+  "new_keys": 24,
+  "patched_total": 116,
+  "remaining_nonpk": 0,
+  "sets": "docs/dbmigrate/pad-key-sets-padbatch4.txt",
+  "probes": "145 count SELECTs PG+MySQL not executed",
+  "ddl_applied": false,
+  "inventory": "r103 2501",
+  "build": "go build -p 2 ./... OK",
+  "runtime_verified": 0,
+  "functional_complete": false,
+  "open": [
+   "18 PK supplementary+future writer canon",
+   "general collation/LIKE/ENUM",
+   "1117 pending",
+   "manual+whole-app QA"
+  ]
+ },
+ "repair_padpk1": {
+  "pk_keys": 18,
+  "gate_entries_total": 134,
+  "blocked": [
+   "whatsapp_bot_sessions botstore gate"
+  ],
+  "fk_child_design": "Option1 parent-raw readback vs Option2 shadow; needs signoff",
+  "ddl_applied": false,
+  "inventory": "r104 2501",
+  "build": "go build -p 2 ./... OK",
+  "runtime_verified": 0,
+  "functional_complete": false
+ },
+ "repair_padfk1": {
+  "gate": {
+   "business": 133,
+   "bot_context": 1
+  },
+  "whatsapp_sessions": "bot store PG statements padded; bot gate on open; PG business requires PG bot store",
+  "fk_design": "generated STORED shadow keys + UNIQUE parent + fkpad (ON UPDATE NO ACTION valid); trigger alternative only for future ON UPDATE CASCADE",
+  "shadow_validator": "not written (next)",
+  "ddl_applied": false,
+  "inventory": "r105 2501",
+  "build": "go build -p 2 ./... OK",
+  "runtime_verified": 0,
+  "functional_complete": false,
+  "superseded_by": "repair_wiring2 (namespace assumption wrong)"
+ },
+ "repair_padgate1": {
+  "regex": "strict anchored per observed rtrim(col::text, ::text)",
+  "shadow_validator": "RequirePadShadowFKs in OpenBusinessForTool",
+  "shadow_ddl": "docs/dbmigrate/pad-shadow-fk-ddl-proposal.sql (not applied)",
+  "manual_cmd": "cmd/pad-gate-check read-only",
+  "scratch": "134 public indexes created by coordinator; bot index pending",
+  "inventory": "r106 2506",
+  "build": "go build -p 2 ./... OK",
+  "runtime_verified": 0,
+  "functional_complete": false
+ },
+ "repair_wiring2": {
+  "mysql_origin_bot_tables": "business pool/public, business dialect",
+  "context_tables": "bot store unchanged",
+  "gate": {
+   "business": 134,
+   "bot": 0
+  },
+  "removed": [
+   "padfk1 PG-business-requires-PG-botstore",
+   "bot pad gate"
+  ],
+  "botstore_mysql_import": "refused in unified mode",
+  "checkout_replay_payload": "researched; 409 mismatch proposal pending signoff",
+  "inventory": "r107 2507",
+  "build": "go build -p 2 ./... OK",
+  "missing_table_block_confirmed": false,
+  "runtime_verified": 0
+ },
+ "manual_proof_scratch_20261112": {
+  "09:27_pad_gate_check": {
+   "business.pad_key_indexes": true,
+   "business.mysql_origin_bot_tables": true,
+   "bot.no_mysql_origin_tables": true,
+   "business.pad_shadow_fks": false
+  },
+  "09:16_shadow_ddl": "syntax ok; FK validation failed on historical orphans (site_builder_domain_mappings.site_id); rolled back; no NOT VALID waiver",
+  "scope": "read-only diagnostic; not handler QA",
+  "10:11_temporal_qa": {
+   "table": "restaurant_areas (1 row)",
+   "verified": [
+    "noop unchanged",
+    "real change -> truncated statement time",
+    "explicit same kept",
+    "explicit different kept",
+    "UPDATE FROM duplicate join once, GUC empty",
+    "savepoint mark cleared",
+    "mark before refresh order (2 tables)"
+   ],
+   "not_verified": [
+    "multi-row (1 row only)",
+    "generated-column table (pos_visits empty)"
+   ],
+   "rollback": true
+  }
+ },
+ "repair_types3": {
+  "pending_items": {
+   "like_on_nondeterministic_collation": 774,
+   "pad_space": 771,
+   "range_narrowing": 190,
+   "on_update_explicit_same_value_gap": 136,
+   "storage_app_adapter": 1,
+   "view_activation_review": 1
+  },
+  "unsigned": {
+   "preserved": 40,
+   "narrowed": 190,
+   "future_option": "B numeric(20,0)+sequence defaults (not implemented)"
+  },
+  "division_audit": "15 PG sites numeric/trunc/ROUND; none truncating",
+  "code_changes": 0,
+  "ready": false
+ },
+ "repair_time1": {
+  "clock_defaults": 353,
+  "fix": "statement_timestamp truncated to fsp (defaults+ON UPDATE trigger)",
+  "on_update_catalogue": {
+   "omitted": 373,
+   "clock": 102,
+   "go_time": 4,
+   "same_value": 0
+  },
+  "unsigned_full_domain": "opt-in planner; 190 storage closed in fulldomain render; 91 generator pending",
+  "renders": [
+   "/tmp/villacarmen-bot-20261111/future-plan-time1-r5compat",
+   "/tmp/villacarmen-bot-20261111/future-plan-time1-fulldomain"
+  ],
+  "r5_changed": false,
+  "inventory": "r108 2507",
+  "build": "go build -p 2 ./... OK",
+  "ready": false,
+  "render_counts_note": "renders lacked reviewed storage override; superseded by repair_enums1 renders"
+ },
+ "repair_enums1": {
+  "storage_override": "docs/dbmigrate/storage-overrides.json sha b58da14e49d8 (matches R4); time1 renders lacked it -> regenerated",
+  "renders": [
+   "/tmp/villacarmen-bot-20261111/future-plan-enums1-r5compat",
+   "/tmp/villacarmen-bot-20261111/future-plan-enums1-fulldomain"
+  ],
+  "on_update": "catalog generated exclusion + UPDATE OF mark triggers; pending on_update_explicit_marked_qa 136",
+  "enums": {
+   "columns": 113,
+   "label_sets": 103,
+   "mixed_case": 74,
+   "edge_space": 0,
+   "numeric": 0,
+   "empty": 0,
+   "adapter": "design only"
+  },
+  "code_changes": [
+   "internal/dbmigrate/plan.go"
+  ],
+  "build": "go build -p 2 ./... OK",
+  "inventory": "r108 2507",
+  "ready": false
+ },
+ "repair_timeqa1": {
+  "forward_ddl": "docs/dbmigrate/forward-temporal-timeqa1.sql (2 functions, drop 136, create 273, 353 defaults; not executed)",
+  "manual_qa": "docs/dbmigrate/manual-qa-timeqa1.sql (coordinator; ROLLBACK)",
+  "mark_safety": "cross-table stale mark raises; same-table safety requires no foreign BEFORE UPDATE trigger between onupc/onupd",
+  "enum_audit": {
+   "audited": 10,
+   "fixed": [
+    "pos_payments.method",
+    "pos_refunds.payment_method",
+    "stock_movements.waste_reason"
+   ],
+   "unaudited": 103
+  },
+  "inventory": "r109 2507",
+  "build": "go build -p 2 ./... OK",
+  "ready": false
+ },
+ "repair_enums2": {
+  "service_type": "closed canonical (DB periods validated)",
+  "enum_audited_total": 40,
+  "enum_remaining": 73,
+  "fixed_total": 9,
+  "fixed_here": [
+   "email_provider_config.provider",
+   "email_provider_config.smtp_encryption",
+   "conversation_messages.message_type",
+   "conversation_messages.message_role",
+   "invoices.payment_method",
+   "invoices.discount_type"
+  ],
+  "temporal_gate": "RequireOnUpdateTriggers (prosrc sha256 + 273 triggers + no foreign BEFORE UPDATE row triggers)",
+  "inventory": "r110 2511",
+  "build": "go build -p 2 ./... OK",
+  "ready": false
+ },
+ "repair_enums3": {
+  "audited_total": 75,
+  "unverified": 38,
+  "tsv": "docs/dbmigrate/enum-columns-audit.tsv",
+  "counts": {
+   "canonical": 55,
+   "fixed": 12,
+   "no-writer": 7,
+   "seed": 1,
+   "unverified": 38
+  },
+  "fixed_here": [
+   "restaurant_websites.status",
+   "site_builder_assets.type",
+   "site_builder_bindings.refresh_mode"
+  ],
+  "readers": {
+   "enum_param_comparisons": 46,
+   "columns": 32,
+   "reviewed": 1,
+   "order_by_sites": 38,
+   "order_by_equivalent": true
+  },
+  "inventory": "r111 2511",
+  "build": "go build -p 2 ./... OK",
+  "ready": false
+ },
+ "repair_enums4": {
+  "doc": "docs/result-repair-enums4.md",
+  "enum_columns": 113,
+  "counts": {
+   "canonical": 81,
+   "fixed": 17,
+   "no_writer": 13,
+   "seed": 2
+  },
+  "readers_scan_rows": 46,
+  "unresolved_readers": 0,
+  "inventory": "r112 2511",
+  "build": "ok",
+  "scratch_1022": "temporal DDL committed; index/ownership/onupdate PASS; shadowFK expected FAIL; multirow/generated unverified",
+  "handler_qa": 0,
+  "gates_open": [
+   "R5 untouched",
+   "1117 pending",
+   "731 orphans",
+   "PG disabled",
+   "checkout503",
+   "ci_ai approx",
+   "enum numeric/external",
+   "shadowFK",
+   "replay payload",
+   "unsigned generator"
+  ]
+ },
+ "repair_semantic1": {
+  "doc": "docs/result-repair-semantic1.md",
+  "manual_cmd": "pad-gate-check -read-qa (7 real ported read funcs, readonly session+tx+guard, aggregate only, not run)",
+  "files": [
+   "internal/api/manual_readqa.go",
+   "cmd/pad-gate-check/main.go",
+   "docs/dbmigrate/orphan-classify-semantic1.sql",
+   "docs/dbmigrate/collation-matrix-semantic1.sql"
+  ],
+  "build": "ok",
+  "inventory": "r112 2511 unchanged",
+  "handler_qa": 0,
+  "orphans": {
+   "bo_invoice_comments": 1,
+   "invoice_line_items": 726,
+   "site_builder_domain_mappings": 3,
+   "site_builder_pages": 1,
+   "options": "A quarantine recommended / B in-place; both need user approval",
+   "mutated": false
+  },
+  "enum_numeric_adapter": "proposal only, not applied",
+  "like_ci_ai": "open, matrix prepared",
+  "findings": [
+   "instatic_proxy.go:151 selects nonexistent site_builder_domain_mappings.restaurant_id (source bug, unchanged)"
+  ]
+ },
+ "manual_readqa_1055": {
+  "rid": 1,
+  "date": "2023-09-23",
+  "ok_functions": 6,
+  "scan_verified": [
+   "affluenceDailyRows",
+   "botDayCapacityOn",
+   "botLoadDateFloorsFrom",
+   "botLoadBookingExtras"
+  ],
+  "scan_unverified_zero_rows": [
+   "loadPOSModifierGroupsFrom",
+   "loadStockBOM"
+  ],
+  "not_covered": "HTTP/auth/writes/concurrency",
+  "handler_qa": 0
+ },
+ "repair_collation2": {
+  "doc": "docs/result-repair-collation2.md",
+  "matrix_1055": "ICU ci_ai ~ 0900; mismatches unicode_ci (ae) and general_ci (sharp s, combining, NUL); PG17 nondeterministic LIKE errors",
+  "recommended": "weight-key bytea via MySQL WEIGHT_STRING at import + reviewed Go MySQL-collation lib (vitess collations candidate, unverified offline) + Go LIKE over tenant-bounded prefilter",
+  "prototype": "not implemented: no reviewed library offline",
+  "orphans": {
+   "line_items": 726,
+   "missing_invoices": 245,
+   "comments": 1,
+   "mappings": 3,
+   "pages": 1,
+   "missing_sites": 1,
+   "active_verified_mappings": 3,
+   "restaurant_domains_overlap": 1,
+   "cause_claims": "retracted",
+   "design": "keep rows; domain tombstones before any archival; owner UNKNOWN; approval needed",
+   "recovery_candidate": "~/newvillacarmen/.dev-dump.sql.gz (provenance unknown)"
+  },
+  "code_changed": false
+ },
+ "repair_vitess1": {
+  "doc": "docs/result-repair-vitess1.md",
+  "candidate": "vitess.io/vitess v0.23.5 (go1.25.11; v0.24.2 needs go1.26.4 rejected)",
+  "download": "blocked: sandbox no network",
+  "diag_cli": "/tmp/villacarmen-vitess-review-20261112/diag (source only, unbuilt, API unverified)",
+  "app_dependency_added": false,
+  "runtime_changed": false
+ },
+ "repair_vitess2": {
+  "doc": "docs/result-repair-vitess2.md",
+  "module": "vitess.io/vitess v0.23.5 1e30dbc6 h1:hdJlWjs1le0mR5aD3okgZAd/8X6UCkfguNlIuOAFGos=",
+  "closure": "209 deps; colldata->collations->sqltypes->protobuf/grpc; small-closure claim retracted",
+  "api_findings": [
+   "Collate not PAD-aware",
+   "invalid UTF-8 silently stops -> wrapper utf8.Valid fail closed",
+   "raw WEIGHT_STRING not canonical for PAD"
+  ],
+  "pad_design": "strip trailing SPACE weight units (PAD SPACE per metadata); NO PAD naked; LIKE Wildcard on original bytes",
+  "diag_cli": "built offline 16MB, 21 samples, not run by worker",
+  "mysql_twin": "docs/dbmigrate/vitess2-weightstring-mysql.sql",
+  "app_dependency_added": false,
+  "full_compat": false
+ },
+ "repair_vitess3": {
+  "doc": "docs/result-repair-vitess3.md",
+  "design_only": true,
+  "like_sites_lexical": 52,
+  "like_groups": {
+   "A_user_search_postfilter": "~40 lines incl group_menus.go:940 join (separate design)",
+   "B_literal_ascii": 10,
+   "C_metadata": 6
+  },
+  "dependency_recommendation": "minimal vendored subtree pinned 1e30dbc6 (approval needed)",
+  "licence": "Apache-2.0 root LICENSE, no NOTICE; vindex BSD not imported; weight-data provenance legal note",
+  "compare_tool": "cmd/collkey-compare designed, not built",
+  "go_mod_changed": false
+ },
+ "repair_vitess4": {
+  "doc": "docs/result-repair-vitess4.md",
+  "vendored": "internal/third_party/vitess v0.23.5 1e30dbc6 67 files 6.8MB; CollationForType removed; 29 files marked MODIFIED; LICENSE + highway LICENSE; no NOTICE upstream",
+  "mysqlcoll": "internal/mysqlcoll Key/Equal/Compare/Like utf8 fail-closed, no runtime callers",
+  "collkey_compare": "cmd/collkey-compare built 19MB not run; counts only; read-only refusal",
+  "inventory": "r113 2521 = 2511 native + 10 diagnostic (collkey-compare)",
+  "go_mod_changed": false,
+  "build": "ok",
+  "like_940": "Go join design",
+  "regexp": "campaign_email_guard approx gated",
+  "production_activation": false,
+  "gpl_question": "open with owner"
+ },
+ "repair_vitess5": {
+  "doc": "docs/result-repair-vitess5.md",
+  "run": "BLOCKED: docker.sock permission denied in worker sandbox; containers network none; host PG sockets not touched",
+  "cols": "140 runnable (unicode_ci 138, general_ci 2) + 9 unresolved composite PK; from recorded metadata not live",
+  "tool_change": "MySQL-only / PG-only passes + raw_set_digest; static binary",
+  "results": null,
+  "go_mod_changed": false
+ },
+ "ckc_run_1235": {
+  "columns": 140,
+  "rows": 15722,
+  "nonnull": 14925,
+  "anomalies": 0,
+  "digest_equal": 140,
+  "empty_columns": 68,
+  "pad_strip_exercised_by_data": false,
+  "max_key_len": 210
+ },
+ "repair_vitess6": {
+  "doc": "docs/result-repair-vitess6.md",
+  "collkey_compare": "composite PK + -check-metadata; 9 composite cols file",
+  "wk": "internal/mysqlcoll/wk.go WriterKey/CheckStoredKeys; DDL proposal 149 cols 134 indexes not applied",
+  "like": "internal/mysqlcoll/like.go LikeAny/SortByKey/TitleMatches/TitleJoin not wired",
+  "go_mod_changed": false,
+  "wired": false,
+  "rule_slip": "go vet invoked once by mistake, aborted on syntax error"
+ },
+ "repair_vitess7": {
+  "doc": "docs/result-repair-vitess7.md",
+  "wk_backfill": "cmd/wk-backfill dry-run default, guarded apply, resumable, refuses with onupd triggers; not run",
+  "flag": "VC_PG_WK_KEYS off by default; off = byte-identical SQL/args",
+  "writers_wired": "restaurant_domains.domain 4 PG inserts (1/149 columns)",
+  "writer_candidates": "651 lexical lines over 107/119 tables",
+  "like_wired": "admin_postres DESCRIPCION (422 too broad)",
+  "new_gate": "temporal onupdate helper must exclude __wk columns",
+  "inventory": "r114 2531 = 2511 native + 20 diagnostic/flag",
+  "go_mod_changed": false
+ },
+ "repair_vitess8": {
+  "doc": "docs/result-repair-vitess8.md",
+  "onupdate_ts_sha256": {
+   "old": "4e165e675d74d2fe96f06c6630da4e05ce5f387a3f5108d200417930b9830cce",
+   "new": "fb5d43068b75333aacee0291c3902e296fc5a4eb19ade7c3a968808108bde3eb"
+  },
+  "scratch_gate": "will FAIL until docs/dbmigrate/onupdate-wk-replace-vitess8.sql applied (not applied)",
+  "triage": "644 rows TSV",
+  "writers_wired_columns": 2,
+  "like_sites_wired": [
+   "admin_postres",
+   "backoffice_stock list",
+   "comida listPostres"
+  ],
+  "admin_menus": "source anomaly DIA/FINDE absent, not wired",
+  "inventory": "r115 2532 = 2511 native + 21",
+  "go_mod_changed": false
+ },
+ "scratch_onupdate_1324": {
+  "on_update_ts": "fb5d4306 applied+committed scratch",
+  "gate": "onupdate_triggers PASS",
+  "shadow_fk": "FAIL expected"
+ },
+ "repair_vitess9": {
+  "doc": "docs/result-repair-vitess9.md",
+  "wk_backfill": "trigger tables allowed only if RequireOnUpdateTriggers passes",
+  "writers_wired_columns": 4,
+  "new": "campaign_suppressions channel/target 6 PG inserts",
+  "like_sites_wired": 4,
+  "unknown_triage": "133 rule-assisted classes, 11 needs-reading",
+  "inventory": "r116 2532/2511 native",
+  "go_mod_changed": false
+ },
+ "repair_vitess10": {
+  "doc": "docs/result-repair-vitess10.md",
+  "flag": "moved to mysqlcoll (shared api+analytics)",
+  "generator_inserts_wired": 21,
+  "not_wired_inserts": [
+   "site_builder_registrar.go:303",
+   "instatic_manager.go:948",
+   "comida.go:2404"
+  ],
+  "set_builders": "wkSetItems at 8 sites",
+  "like_sites_wired": 5,
+  "needs_reading_11": "10 non-key, 1 mysqlOnly migrations",
+  "inventory": "r117 2532/2511 native",
+  "go_mod_changed": false
+ },
+ "repair_vitess11": {
+  "doc": "docs/result-repair-vitess11.md",
+  "writers_new": [
+   "registrar 303",
+   "instatic 948",
+   "comida 2404",
+   "areas/tables 12 UPDATE variants",
+   "numero_mesa update"
+  ],
+  "unwired_rows": 151,
+  "unwired_file": "docs/dbmigrate/wk-writer-unwired-vitess11.tsv",
+  "like_sites_wired": 7,
+  "guard": "internal/db/wk_gate.go RequireWKKeysIfFlag in OpenBusinessForTool; pad-gate-check PADQA_WK=1",
+  "inventory": "r118 2534/2513 native",
+  "go_mod_changed": false
+ },
+ "repair_vitess12": {
+  "doc": "docs/result-repair-vitess12.md",
+  "auto_wired": 126,
+  "auto_wired_review": "required per site",
+  "unwired": 12,
+  "unverified": 11,
+  "ixwk_unique_names_added": 4,
+  "like_sites_wired": 8,
+  "sort_parity": "3 text-ordered sites need ORDER BY __wk after DDL; SortByKey not needed",
+  "inventory": "r119 2534/2513 native",
+  "go_mod_changed": false
+ },
+ "scratch_wk_1431": {
+  "ddl": "149 __wk cols + 134 ixwk applied scratch, backfilled",
+  "gate": "business.wk_keys PASS (PADQA_WK=1)",
+  "shadow_fk": "FAIL orphans"
+ },
+ "repair_vitess13": {
+  "doc": "docs/result-repair-vitess13.md",
+  "hand_wired": [
+   "fiscal copy full_number__wk SQL copy",
+   "accounting payload_hash",
+   "booking reminder delivery_key",
+   "restaurant_members email",
+   "whatsapp_bot_sessions x2",
+   "restaurant_floors scope_key global x2",
+   "menus seo_slug"
+  ],
+  "source_bug": "backoffice_stock_documents.go:680 14 cols/15 values/13 placeholders/12 args fails both engines (unchanged)",
+  "unverified_updates": "11 reviewed: NOT wired; flag must stay off",
+  "scope_key_gap": "specific_date writers floors+salons",
+  "sort": "stock list + options ORDER BY name__wk; dish allergens gap (stock_recipes.name not registered)",
+  "lookups": "186 listed docs/dbmigrate/wk-lookups-vitess13.tsv",
+  "like_sites_wired": 8,
+  "inventory": "r120 2534/2513",
+  "go_mod_changed": false
+ },
+ "repair_vitess14": {
+  "doc": "docs/result-repair-vitess14.md",
+  "correction": "vitess13 ORDER BY i.name__wk reverted (stock_items.name not registered)",
+  "updates_wired": 8,
+  "pos_tickets_slice": "not wired",
+  "scope_key": "salons create + floors date create + global floors",
+  "sortkeys_proposal": "docs/dbmigrate/wk-sortkeys-proposal-vitess14.sql not applied, not in registry",
+  "lookups_converted": 113,
+  "lookups_remaining": 72,
+  "like_sites_wired": 8,
+  "stock_doc_bug": "untouched (user decision)",
+  "flag": "must stay off",
+  "inventory": "r121 2534/2513",
+  "go_mod_changed": false
+ },
+ "repair_vitess15": {
+  "doc": "docs/result-repair-vitess15.md",
+  "like_wired_new": 7,
+  "like_wired_total": 15,
+  "like_not_wired": [
+   "assistant catalog",
+   "technical sheet",
+   "AI usage",
+   "group_menus.go:940"
+  ],
+  "pos_ticket_insert": "wired",
+  "lookups_converted_new": 7,
+  "lookups_remaining": 63,
+  "sortkeys": "not done",
+  "flag": "must stay off",
+  "inventory": "r122 2534/2513",
+  "go_mod_changed": false
+ },
+ "repair_vitess16": {
+  "doc": "docs/result-repair-vitess16.md",
+  "registry": 151,
+  "sortkeys": "stock_items.name + stock_recipes.name registered; writers wired; ORDER BY name__wk behind flag; DDL docs/dbmigrate/wk-sortkeys-vitess16.sql not applied",
+  "like_new": [
+   "technical sheet",
+   "assistant postres/customers/stock_items",
+   "AI usage"
+  ],
+  "like_not_wired": [
+   "assistant generic catalog_list",
+   "assistant vinos",
+   "group_menus.go:940"
+  ],
+  "lookups_remaining": 63,
+  "readiness": "docs/dbmigrate/wk-flag-readiness-vitess16.tsv; writers lexically all wired except stock_documents:680 (decision)",
+  "flag": "off; needs sortkey DDL+backfill first",
+  "inventory": "r123 2534/2513",
+  "go_mod_changed": false
+ },
+ "scratch_sortkeys_1533": {
+  "applied": "wk-sortkeys-vitess16.sql",
+  "backfill": {
+   "stock_items.name": 479,
+   "stock_recipes.name": 0
+  },
+  "gate": "wk_keys PASS"
+ },
+ "repair_vitess17": {
+  "doc": "docs/result-repair-vitess17.md",
+  "like": "all vitess4 catalogue paths wired (catalog_list map, vinos, group_menus TitleJoin)",
+  "lookups_remaining": 63,
+  "review": "328 wkPG sites/96 files structural check; 6 flagged all OK by hand",
+  "measure_file": "docs/dbmigrate/like-bounds-measure-vitess17.sql (not run)",
+  "inventory": "r124 2535/2512 native (+2 dynamic: group menus query var + TitleJoin candidates)",
+  "go_mod_changed": false
+ },
+ "scratch_like_measure_1548": {
+  "bookings": 2355,
+  "stock_items": 479,
+  "group_menu_dishes": 308,
+  "wines": 42,
+  "checkcancel": 11,
+  "menus": 10,
+  "platos": 9,
+  "invoices": 6,
+  "ai_usage": {
+   "1d": 70,
+   "7d": 256,
+   "31d": 677,
+   "bytes_31d": "164KB"
+  }
+ },
+ "repair_vitess18": {
+  "doc": "docs/result-repair-vitess18.md",
+  "bounds": "internal/api/wk_bounds.go (4x, floor 1000, bookings 10000, 64MB cap)",
+  "lookups_converted": 20,
+  "lookups_remaining": 40,
+  "qa_plan": "docs only; server refuses DB_DRIVER=postgres (cmd/server/main.go:34) so handler QA impossible without lifting gate",
+  "inventory": "r125 2535/2512",
+  "go_mod_changed": false
+ },
+ "repair_vitess19": {
+  "doc": "docs/result-repair-vitess19.md",
+  "wk_qa": "pad-gate-check -wk-qa (manual, read-only, counts vs old path) built not run",
+  "lookups_converted": 11,
+  "lookups_remaining_approx": 29,
+  "local_http_qa": "cmd/server VC_PG_LOCAL_HTTP_QA=1 guarded path (loopback, workers off, provider env refused, outbound HTTP refused, OpenBusinessForTool gates); normal PG refusal unchanged; refuses today (marker not ready, shadow FK)",
+  "inventory": "r126 2540/2512",
+  "go_mod_changed": false
+ },
+ "wkqa_1617": {
+  "stock": "288/6/445 equal MySQL",
+  "bookings": "2151/1/2334 equal MySQL",
+  "old_path_accented": [
+   11,
+   137
+  ]
+ },
+ "repair_vitess20": {
+  "doc": "docs/result-repair-vitess20.md",
+  "waiver_env": "VC_PG_LOCAL_HTTP_QA_SCRATCH_WAIVE (import-marker,shadow-fk) only in VC_PG_LOCAL_HTTP_QA, unix/loopback DSN, banner",
+  "binary": "/tmp/villacarmen-bot-20261111/vc-server-qa sha256 4e88bae0f1bd79200a6f725fee842d811bf0a1c8ab66dc31aa02d2048836c075 static",
+  "run": "inside scratch container, 127.0.0.1:18080, env -i",
+  "go_mod_changed": false,
+  "orphans": "untouched"
+ },
+ "qa_server_1634": {
+  "ok_200": [
+   "healthz",
+   "getActiveMenusForDisplay",
+   "getMenuForDisplay 1-3",
+   "searchPostres",
+   "getAllMenus"
+  ],
+  "issue": "bot context store ran on sqlite (BOT_CONTEXT_DRIVER default)"
+ },
+ "repair_vitess21": {
+  "doc": "docs/result-repair-vitess21.md",
+  "fix": "DB_DRIVER=postgres forces bot context store PG (DATABASE_URL, schema bot_context), explicit non-postgres BOT_CONTEXT_DRIVER refused",
+  "startup": "CREATE SCHEMA/TABLE IF NOT EXISTS no-op DDL + RequireMigrated migration_verified",
+  "auth": "VAULT_KEY empty disables only shared-secret layers; requireBOSession still enforced and writes bo_sessions last_seen",
+  "binary_sha256": "ba0075bd102beee2e51bcf8bccdeaaf49db815a84478549f4f82b4ea6924a5b9",
+  "go_mod_changed": false
+ },
+ "qa_server_1650": {
+  "bot_store": "driver=postgres postgres=true",
+  "endpoints": "public + admin-token 200",
+  "sqlite_leftover": "removed by coordinator"
+ },
+ "repair_vitess22": {
+  "doc": "docs/result-repair-vitess22.md",
+  "tool": "cmd/qa-seed-scratch (seed/cleanup, guards, 0600 secret+state, __wk keys)",
+  "binary": "/tmp/villacarmen-bot-20261111/qa-seed-scratch",
+  "qa_script": "reads plain vs accented + 7 write flows W1-W7 with pad-gate-check PADQA_WK=1 after each",
+  "go_mod_changed": false
+ },
+ "qa_1706": {
+  "ok": [
+   "bookings search (plain=accented bytes)",
+   "invoices",
+   "comida platos/postres/vinos",
+   "group-menus-v2"
+  ],
+  "403": [
+   "stock/items",
+   "stock/item-options",
+   "pos/customers",
+   "technical-sheets"
+  ]
+ },
+ "repair_vitess23": {
+  "doc": "docs/result-repair-vitess23.md",
+  "cause_403": "app_version gate >=0.2 (bo_user_restaurants.app_version default 0.1), independent of superadmin",
+  "fix_scratch": "set app_version>=0.2 for user 207 rid 1 then re-login (scratch write)",
+  "routes": "vitess22 routes correct",
+  "like_ci_ai": "no app/cmd PG LIKE on ci_ai outside wk/COLLATE C; manual SQL must use COLLATE \"C\"",
+  "code_changed": false
+ },
+ "qa_writes_1723": {
+  "creates_ok": [
+   "stock category",
+   "area",
+   "supplier",
+   "plato category"
+  ],
+  "wk_keys": "PASS after each",
+  "dups": {
+   "supplier": 409,
+   "stock_category": 400,
+   "area": 500
+  }
+ },
+ "repair_vitess24": {
+  "doc": "docs/result-repair-vitess24.md",
+  "area_500": "source parity (handler maps all errors to 500 on both engines); unchanged",
+  "fired_index": "raw R5 ix__ unique under ci_ai (lower OID) -> over-rejects vs unicode_ci; retirement pending",
+  "classifier": "IsUniqueViolationOn ixpad entries also match derived ixwk twin",
+  "stock_category_dup": "400 both engines",
+  "qa_http": "dac985b00d04b0f6a0babde05f7fd45c6da593be0a052b85cde440bf974b6714",
+  "vc_server_qa": "088928cc7f35b51372a3ce9dd6b4b82f983a0ec5e95807cde5068394ded3cff1",
+  "go_mod_changed": false
+ },
+ "repair_vitess25": {
+  "doc": "docs/result-repair-vitess25.md",
+  "cause": "Key returned nil for empty key -> bound as SQL NULL",
+  "fix": "Key returns []byte{} (non-nil) for non-NULL text",
+  "aliases": "suppliers PUT + stock_documents:698 wired (3 __wk, ON CONFLICT __wk)",
+  "rescan": "14 more app writers wired; remaining :680 (decision) + 3 cmd tools",
+  "prior_claim": "vitess16 all-wired claim was wrong (window false positive)",
+  "sha256": {
+   "vc-server-qa": "5ec8cfcc9caf20726224b39e7a74f66bfbbf4262d9616129861097cbc6748638",
+   "wk-backfill": "32d87a0ba90182c26a1501c846ac6f7b6c04fe10fd276e4c90a54ef4121a27a2",
+   "pad-gate-check": "0cf1eb8bcdfc149f8081a21e841413703b762bc426e3f3706578caf45ba24c79",
+   "qa-http": "dac985b00d04b0f6a0babde05f7fd45c6da593be0a052b85cde440bf974b6714",
+   "qa-seed-scratch": "8233f4edde9c342a12e0d84615781168f11af7513ff8c29aec97ad2c12dfa991"
+  },
+  "go_mod_changed": false
+ },
+ "repair_vitess28": {
+  "doc": "docs/result-vitess28-qa.md",
+  "retire_sql": "docs/dbmigrate/ci-ai-retire-vitess28.sql (116 DROP, ROLLBACK; scratch only)",
+  "keep": {
+   "enum": 4,
+   "blocker_no_twin": "ix__bot_inbound_queue__uq_inbound_msg (0900 NO PAD, not registered)"
+  },
+  "fk_dependents": 0,
+  "on_conflict_on_retired": 0,
+  "qa_not_exercisable": [
+   "bot booking extras (WhatsApp)",
+   "pre-shift deliveries (worker+send)",
+   "AI keys without VAULT_KEY",
+   "stock-exception replay without OPEN exception"
+  ],
+  "code_changed": false
+ },
+ "entries": [
+  {
+   "unit": "vitess29",
+   "summary": "3 wrong __wk key values fixed (fiscal full_number, assistant payments/refunds idempotency_key); 206 sites audited (149 OK script, 43 manual OK, 11 false-positive literals); build ok; no DB run",
+   "doc": "docs/result-repair-vitess29.md"
+  },
+  {
+   "unit": "vitess30",
+   "summary": "regexp/split_part/substring on ci_ai columns now COLLATE C (pos ticket number, ops-check margin scopes); LIKE audit no unfixed; build ok; no DB run",
+   "doc": "docs/result-repair-vitess30.md"
+  },
+  {
+   "unit": "vitess31",
+   "summary": "GraphRAG design (process-per-tenant neo4j-rust, loopback, 0600 tokens, server-side registry), tenant-instance.sh, cmd/graph-ingest dry-run default; built, nothing run",
+   "doc": "docs/result-repair-vitess31.md"
+  }
+ ]
+}

@@ -18,14 +18,22 @@ func (s *Server) handleBOComidaCounts(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	var vinos, cafes, postres, platos, bebidas int
-	if err := s.db.QueryRowContext(ctx, `
+	// POSTRES is an upper-case MySQL table name: quoted on PG.
+	if err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			(SELECT COUNT(*) FROM group_menu_wines_v2 WHERE restaurant_id = ?),
 			(SELECT COUNT(*) FROM comida_items WHERE restaurant_id = ? AND source_type = 'cafes'),
 			(SELECT COUNT(*) FROM POSTRES WHERE restaurant_id = ?),
 			(SELECT COUNT(*) FROM comida_items WHERE restaurant_id = ? AND source_type = 'platos'),
 			(SELECT COUNT(*) FROM comida_items WHERE restaurant_id = ? AND source_type = 'bebidas')
-	`, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID).Scan(
+	`, `
+		SELECT
+			(SELECT COUNT(*) FROM group_menu_wines_v2 WHERE restaurant_id = ?),
+			(SELECT COUNT(*) FROM comida_items WHERE restaurant_id = ? AND source_type = 'cafes'),
+			(SELECT COUNT(*) FROM "POSTRES" WHERE restaurant_id = ?),
+			(SELECT COUNT(*) FROM comida_items WHERE restaurant_id = ? AND source_type = 'platos'),
+			(SELECT COUNT(*) FROM comida_items WHERE restaurant_id = ? AND source_type = 'bebidas')
+	`), a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID).Scan(
 		&vinos,
 		&cafes,
 		&postres,

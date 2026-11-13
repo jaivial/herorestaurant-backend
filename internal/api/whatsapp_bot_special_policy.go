@@ -60,11 +60,15 @@ func (s *Server) botLoadSpecialDatePolicy(ctx context.Context, restaurantID int,
 		maxPer                                            sql.NullInt64
 		startsOn, endsOn                                  sql.NullString
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT id, DATE_FORMAT(date,'%Y-%m-%d'), title, description, prereserva_enabled, whatsapp_only,
 		       DATE_FORMAT(prereserva_starts_on,'%Y-%m-%d'), DATE_FORMAT(prereserva_ends_on,'%Y-%m-%d'),
 		       requires_adelanto, allow_customer_modification, max_per_table_enabled, max_per_table, mobility_enabled
-		FROM special_dates WHERE restaurant_id = ? AND date = ? AND is_active = 1 LIMIT 1`, restaurantID, dateISO).Scan(
+		FROM special_dates WHERE restaurant_id = ? AND date = ? AND is_active = 1 LIMIT 1`, `
+		SELECT id, to_char(date,'YYYY-MM-DD'), title, description, prereserva_enabled, whatsapp_only,
+		       to_char(prereserva_starts_on,'YYYY-MM-DD'), to_char(prereserva_ends_on,'YYYY-MM-DD'),
+		       requires_adelanto, allow_customer_modification, max_per_table_enabled, max_per_table, mobility_enabled
+		FROM special_dates WHERE restaurant_id = ? AND date = ? AND is_active = 1 LIMIT 1`), restaurantID, dateISO).Scan(
 		&p.ID, &p.Date, &p.Title, &desc, &pre, &waOnly, &startsOn, &endsOn, &adel, &allowMod, &maxEnabled, &maxPer, &mobility)
 	if err != nil {
 		if err != sql.ErrNoRows && !isSQLSchemaError(err) {
@@ -88,10 +92,13 @@ func (s *Server) botLoadSpecialDatePolicy(ctx context.Context, restaurantID int,
 		free := max(0, limit-total)
 		p.FreeSeats, p.IsFull = &free, free == 0
 	}
-	if rows, err := s.db.QueryContext(ctx, `
+	if rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT COALESCE(NULLIF(sdm.custom_title,''), m.menu_title, '')
 		FROM special_date_menus sdm LEFT JOIN menus m ON m.id = sdm.menu_id AND m.restaurant_id = sdm.restaurant_id
-		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ? ORDER BY sdm.position, sdm.id`, restaurantID, p.ID); err == nil {
+		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ? ORDER BY sdm.position, sdm.id`, `
+		SELECT COALESCE(CASE WHEN rtrim(sdm.custom_title, ' ') COLLATE "C" = '' THEN NULL ELSE sdm.custom_title END, m.menu_title, '')
+		FROM special_date_menus sdm LEFT JOIN menus m ON m.id = sdm.menu_id AND m.restaurant_id = sdm.restaurant_id
+		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ? ORDER BY sdm.position, sdm.id`), restaurantID, p.ID); err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var t string
@@ -120,7 +127,7 @@ func (s *Server) botSpecialBookingURL(ctx context.Context, restaurantID int, dat
 // botUpcomingSpecialDates lists active special dates from today on (for the
 // pipeline "which special date is the customer talking about" question).
 func (s *Server) botUpcomingSpecialDates(ctx context.Context, restaurantID int) []botSpecialDatePolicy {
-	rows, err := s.db.QueryContext(ctx, `SELECT DATE_FORMAT(date,'%Y-%m-%d') FROM special_dates WHERE restaurant_id = ? AND is_active = 1 AND date >= CURDATE() ORDER BY date LIMIT 12`, restaurantID)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT DATE_FORMAT(date,'%Y-%m-%d') FROM special_dates WHERE restaurant_id = ? AND is_active = 1 AND date >= CURDATE() ORDER BY date LIMIT 12`, `SELECT to_char(date,'YYYY-MM-DD') FROM special_dates WHERE restaurant_id = ? AND is_active = 1 AND date >= CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date) ORDER BY date LIMIT 12`), restaurantID)
 	if err != nil {
 		return nil
 	}
@@ -146,10 +153,13 @@ func (s *Server) botOwnedBookingFlags(ctx context.Context, restaurantID int, boo
 	national, digits := botPhoneVariants(phone)
 	var date string
 	var isEvent, isSpecial int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT DATE_FORMAT(reservation_date,'%Y-%m-%d'), COALESCE(is_event,0), COALESCE(is_special_booking,0)
 		FROM bookings WHERE restaurant_id = ? AND id = ?
-		  AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)`,
+		  AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)`, `
+		SELECT to_char(reservation_date,'YYYY-MM-DD'), COALESCE(is_event,0), COALESCE(is_special_booking,0)
+		FROM bookings WHERE restaurant_id = ? AND id = ?
+		  AND (contact_phone = ? OR contact_phone = ? OR (COALESCE(contact_phone_country_code,'') || contact_phone) = ?)`),
 		restaurantID, bookingID, national, digits, digits).Scan(&date, &isEvent, &isSpecial)
 	if err != nil {
 		return "", false, false, false

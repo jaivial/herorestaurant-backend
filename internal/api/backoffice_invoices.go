@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // InvoiceLineItem is a single billable line on an invoice.
@@ -217,25 +218,29 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 	args := []any{restaurantID}
 
 	if params.Search != "" {
+		// PG: case-insensitive only (LOWER .. COLLATE "C"); accent/PAD SPACE folding stays search gate.
 		prefix := params.Search + "%"
+		if sqlDialect == sqldb.Postgres {
+			prefix = strings.ToLower(prefix)
+		}
 		switch strings.ToLower(params.SearchBy) {
 		case "invoice_number":
-			baseWhere += " AND invoice_number LIKE ?"
+			baseWhere += sqlFragment(" AND invoice_number LIKE ?", ` AND LOWER(invoice_number) COLLATE "C" LIKE ?`)
 			args = append(args, prefix)
 		case "email":
-			baseWhere += " AND customer_email LIKE ?"
+			baseWhere += sqlFragment(" AND customer_email LIKE ?", ` AND LOWER(customer_email) COLLATE "C" LIKE ?`)
 			args = append(args, prefix)
 		case "name":
-			baseWhere += " AND customer_name LIKE ?"
+			baseWhere += sqlFragment(" AND customer_name LIKE ?", ` AND LOWER(customer_name) COLLATE "C" LIKE ?`)
 			args = append(args, prefix)
 		default:
-			baseWhere += " AND (customer_name LIKE ? OR customer_email LIKE ?)"
+			baseWhere += sqlFragment(" AND (customer_name LIKE ? OR customer_email LIKE ?)", ` AND (LOWER(customer_name) COLLATE "C" LIKE ? OR LOWER(customer_email) COLLATE "C" LIKE ?)`)
 			args = append(args, prefix, prefix)
 		}
 	}
 
 	if params.Status != "" {
-		baseWhere += " AND status = ?"
+		baseWhere += sqlFragment(" AND status = ?", " AND app.norm(CAST(status AS text)) = app.norm(?)") // unknown status -> no rows, not enum error; repair-enums4: ci+PAD as the MySQL ENUM string comparison
 		args = append(args, params.Status)
 	}
 
@@ -278,7 +283,7 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := (params.Page - 1) * params.Limit
-	query := `
+	query := sqlFragment(`
 		SELECT 
 			id, restaurant_id, invoice_number,
 			customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
@@ -289,11 +294,22 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 			reservation_customer_name, reservation_party_size, pdf_url,
 			currency, subtotal, iva_rate, iva_amount, total,
 			created_at, updated_at
-	` + baseWhere + orderBy + " LIMIT ? OFFSET ?"
+	`, `
+		SELECT 
+			id, restaurant_id, invoice_number,
+			customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
+			customer_address_street, customer_address_number, customer_address_postal_code,
+			customer_address_city, customer_address_province, customer_address_country,
+			amount, CAST(payment_method AS text), account_image_url, invoice_date, payment_date,
+			CAST(status AS text), is_reservation, reservation_id, reservation_date,
+			reservation_customer_name, reservation_party_size, pdf_url,
+			CAST(currency AS text), subtotal, iva_rate, iva_amount, total,
+			created_at, updated_at
+	`) + baseWhere + orderBy + " LIMIT ? OFFSET ?"
 	queryArgs := append(append([]any{}, args...), params.Limit, offset)
 
 	// Execute query
-	rows, err := s.db.QueryContext(r.Context(), query, queryArgs...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(query), queryArgs...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error querying invoices: "+err.Error())
 		return
@@ -334,7 +350,7 @@ func (s *Server) handleBOInvoicesList(w http.ResponseWriter, r *http.Request) {
 
 	countQuery := "SELECT COUNT(*)" + baseWhere
 	var total int
-	if err := s.db.QueryRowContext(r.Context(), countQuery, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(countQuery), args...).Scan(&total); err != nil {
 		total = 0
 	}
 
@@ -364,7 +380,7 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 	var inv Invoice
 	var getSubtotal, getIvaRate, getIvaAmount, getTotal sql.NullFloat64
 	var invoiceNumber, dniCifType sql.NullString
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT 
 			id, restaurant_id, invoice_number,
 			customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
@@ -377,7 +393,20 @@ func (s *Server) handleBOInvoiceGet(w http.ResponseWriter, r *http.Request) {
 			created_at, updated_at
 		FROM invoices
 		WHERE id = ? AND restaurant_id = ?
-	`, invoiceID, a.ActiveRestaurantID).Scan(
+	`, `
+		SELECT 
+			id, restaurant_id, invoice_number,
+			customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
+			customer_address_street, customer_address_number, customer_address_postal_code,
+			customer_address_city, customer_address_province, customer_address_country,
+			amount, CAST(payment_method AS text), account_image_url, invoice_date, payment_date,
+			CAST(status AS text), is_reservation, reservation_id, reservation_date,
+			reservation_customer_name, reservation_party_size, pdf_url,
+			CAST(currency AS text), subtotal, iva_rate, iva_amount, total,
+			created_at, updated_at
+		FROM invoices
+		WHERE id = ? AND restaurant_id = ?
+	`), invoiceID, a.ActiveRestaurantID).Scan(
 		&inv.ID, &inv.RestaurantID, &invoiceNumber,
 		&inv.CustomerName, &inv.CustomerSurname, &inv.CustomerEmail, &inv.CustomerDniCif, &dniCifType, &inv.CustomerPhone, &inv.CustomerPhoneCountryCode,
 		&inv.CustomerAddressStreet, &inv.CustomerAddressNumber, &inv.CustomerAddressPostalCode,
@@ -486,7 +515,8 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := tx.ExecContext(r.Context(), `
+	// is_reservation smallint <- Go bool: typed cast on PG; id via RETURNING.
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, tx, nativeSQL(`
 		INSERT INTO invoices (
 			restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
 			customer_address_street, customer_address_number, customer_address_postal_code,
@@ -498,22 +528,33 @@ func (s *Server) handleBOInvoiceCreate(w http.ResponseWriter, r *http.Request) {
 			discount_type, discount_value, discount_amount, discount_reason,
 			due_date, internal_notes, category, tags, deposit_type, deposit_amount
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, a.ActiveRestaurantID, number,
+	`, `
+		INSERT INTO invoices (
+			restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
+			customer_address_street, customer_address_number, customer_address_postal_code,
+			customer_address_city, customer_address_province, customer_address_country,
+			amount, payment_method, account_image_url, invoice_date, payment_date,
+			status, is_reservation, reservation_id, reservation_date,
+			reservation_customer_name, reservation_party_size,
+			pdf_template, currency, subtotal, iva_rate, iva_amount, total,
+			discount_type, discount_value, discount_amount, discount_reason,
+			due_date, internal_notes, category, tags, deposit_type, deposit_amount
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(CAST(? AS boolean) AS integer), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`), "id", a.ActiveRestaurantID, number,
 		input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerDniCifType, input.CustomerPhone, input.CustomerPhoneCountryCode,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
-		input.Amount, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
+		input.Amount, mysqlLowerEnumPtr(input.PaymentMethod), input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
 		input.Status, input.IsReservation, input.ReservationID, input.ReservationDate,
 		input.ReservationCustomerName, input.ReservationPartySize,
 		template, currency, bv.Subtotal, bv.IVARate, bv.IVAAmount, bv.Total,
-		input.DiscountType, input.DiscountValue, input.DiscountAmount, input.DiscountReason,
+		mysqlLowerEnumPtr(input.DiscountType), input.DiscountValue, input.DiscountAmount, input.DiscountReason,
 		input.DueDate, input.InternalNotes, input.Category, tags, input.DepositType, input.DepositAmount)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creating invoice: "+err.Error())
 		return
 	}
 
-	id, _ := result.LastInsertId()
 	if err := replaceInvoiceLineItems(r.Context(), tx, id, lines); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving line items: "+err.Error())
 		return
@@ -590,9 +631,9 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 	// payload does not mention it, and an invoice without a number gets the
 	// automatic one of the restaurant's series.
 	var storedNumber sql.NullString
-	if err := tx.QueryRowContext(r.Context(), `
+	if err := tx.QueryRowContext(r.Context(), portableSQL(`
 		SELECT invoice_number FROM invoices WHERE id = ? AND restaurant_id = ?
-	`, invoiceID, a.ActiveRestaurantID).Scan(&storedNumber); err != nil && err != sql.ErrNoRows {
+	`), invoiceID, a.ActiveRestaurantID).Scan(&storedNumber); err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reading invoice: "+err.Error())
 		return
 	}
@@ -602,7 +643,7 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := tx.ExecContext(r.Context(), `
+	res, err := tx.ExecContext(r.Context(), nativeSQL(`
 		UPDATE invoices SET
 			invoice_number = ?, customer_name = ?, customer_surname = ?, customer_email = ?, customer_dni_cif = ?, customer_dni_cif_type = ?, customer_phone = ?, customer_phone_country_code = ?,
 			customer_address_street = ?, customer_address_number = ?, customer_address_postal_code = ?,
@@ -614,14 +655,26 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 			discount_type = ?, discount_value = ?, discount_amount = ?, discount_reason = ?,
 			due_date = ?, internal_notes = ?, category = ?, tags = ?, deposit_type = ?, deposit_amount = ?
 		WHERE id = ? AND restaurant_id = ?
-	`, number, input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerDniCifType, input.CustomerPhone, input.CustomerPhoneCountryCode,
+	`, `
+		UPDATE invoices SET
+			invoice_number = ?, customer_name = ?, customer_surname = ?, customer_email = ?, customer_dni_cif = ?, customer_dni_cif_type = ?, customer_phone = ?, customer_phone_country_code = ?,
+			customer_address_street = ?, customer_address_number = ?, customer_address_postal_code = ?,
+			customer_address_city = ?, customer_address_province = ?, customer_address_country = ?,
+			amount = ?, payment_method = ?, account_image_url = ?, invoice_date = ?, payment_date = ?,
+			status = ?, is_reservation = CAST(CAST(? AS boolean) AS integer), reservation_id = ?, reservation_date = ?,
+			reservation_customer_name = ?, reservation_party_size = ?,
+			pdf_template = ?, currency = ?, subtotal = ?, iva_rate = ?, iva_amount = ?, total = ?,
+			discount_type = ?, discount_value = ?, discount_amount = ?, discount_reason = ?,
+			due_date = ?, internal_notes = ?, category = ?, tags = ?, deposit_type = ?, deposit_amount = ?
+		WHERE id = ? AND restaurant_id = ?
+	`), number, input.CustomerName, input.CustomerSurname, input.CustomerEmail, input.CustomerDniCif, input.CustomerDniCifType, input.CustomerPhone, input.CustomerPhoneCountryCode,
 		input.CustomerAddressStreet, input.CustomerAddressNumber, input.CustomerAddressPostalCode,
 		input.CustomerAddressCity, input.CustomerAddressProvince, input.CustomerAddressCountry,
-		input.Amount, input.PaymentMethod, input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
+		input.Amount, mysqlLowerEnumPtr(input.PaymentMethod), input.AccountImageURL, input.InvoiceDate, input.PaymentDate,
 		input.Status, input.IsReservation, input.ReservationID, input.ReservationDate,
 		input.ReservationCustomerName, input.ReservationPartySize,
 		template, currency, bv.Subtotal, bv.IVARate, bv.IVAAmount, bv.Total,
-		input.DiscountType, input.DiscountValue, input.DiscountAmount, input.DiscountReason,
+		mysqlLowerEnumPtr(input.DiscountType), input.DiscountValue, input.DiscountAmount, input.DiscountReason,
 		input.DueDate, input.InternalNotes, input.Category, tags, input.DepositType, input.DepositAmount,
 		invoiceID, a.ActiveRestaurantID)
 	if err != nil {
@@ -631,7 +684,7 @@ func (s *Server) handleBOInvoiceUpdate(w http.ResponseWriter, r *http.Request) {
 	if n, _ := res.RowsAffected(); n == 0 {
 		// Ensure the invoice belongs to this restaurant before touching line items.
 		var exists int
-		_ = tx.QueryRowContext(r.Context(), `SELECT 1 FROM invoices WHERE id = ? AND restaurant_id = ?`, invoiceID, a.ActiveRestaurantID).Scan(&exists)
+		_ = tx.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM invoices WHERE id = ? AND restaurant_id = ?`), invoiceID, a.ActiveRestaurantID).Scan(&exists)
 		if exists == 0 {
 			httpx.WriteError(w, http.StatusNotFound, "Invoice not found")
 			return
@@ -666,9 +719,9 @@ func (s *Server) handleBOInvoiceDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.db.ExecContext(r.Context(), `
+	result, err := s.db.ExecContext(r.Context(), portableSQL(`
 		DELETE FROM invoices WHERE id = ? AND restaurant_id = ?
-	`, invoiceID, a.ActiveRestaurantID)
+	`), invoiceID, a.ActiveRestaurantID)
 
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error deleting invoice: "+err.Error())
@@ -706,11 +759,15 @@ func (s *Server) handleBOInvoicesSearchReservation(w http.ResponseWriter, r *htt
 	reservationTime := strings.TrimSpace(r.URL.Query().Get("time"))
 
 	// Build query
-	query := `
+	query := sqlFragment(`
 		SELECT id, customer_name, contact_email, contact_phone, contact_phone_country_code, reservation_date, reservation_time, party_size
 		FROM bookings
 		WHERE restaurant_id = ? AND status != 'cancelled'
-	`
+	`, `
+		SELECT id, customer_name, contact_email, contact_phone, contact_phone_country_code, reservation_date, to_char(reservation_time, 'HH24:MI:SS'), party_size
+		FROM bookings
+		WHERE restaurant_id = ? AND status != 'cancelled'
+	`)
 	args := []interface{}{restaurantID}
 
 	if dateFrom != "" {
@@ -721,13 +778,15 @@ func (s *Server) handleBOInvoicesSearchReservation(w http.ResponseWriter, r *htt
 		query += " AND reservation_date <= ?"
 		args = append(args, dateTo)
 	}
-	if searchName != "" {
-		query += " AND customer_name LIKE CONCAT('%', ?, '%')"
-		args = append(args, searchName)
-	}
-	if searchPhone != "" {
-		query += " AND contact_phone LIKE CONCAT('%', ?, '%')"
-		args = append(args, searchPhone)
+	{
+		if searchName != "" {
+			query += sqlFragment(" AND customer_name LIKE CONCAT('%', ?, '%')", ` AND LOWER(customer_name) COLLATE "C" LIKE ?`)
+			args = append(args, assistantLikeArg(searchName))
+		}
+		if searchPhone != "" {
+			query += sqlFragment(" AND contact_phone LIKE CONCAT('%', ?, '%')", ` AND LOWER(contact_phone) COLLATE "C" LIKE ?`)
+			args = append(args, assistantLikeArg(searchPhone))
+		}
 	}
 	if partySizeStr != "" {
 		if partySize, err := strconv.Atoi(partySizeStr); err == nil {
@@ -742,7 +801,7 @@ func (s *Server) handleBOInvoicesSearchReservation(w http.ResponseWriter, r *htt
 
 	query += " ORDER BY reservation_date DESC, reservation_time DESC LIMIT 20"
 
-	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(query), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error searching reservations: "+err.Error())
 		return
@@ -908,12 +967,12 @@ func (s *Server) handleBOInvoiceSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if pdfURL != "" {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE invoices SET status = 'enviada', pdf_url = ? WHERE id = ? AND restaurant_id = ?`, pdfURL, invoiceID, a.ActiveRestaurantID); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE invoices SET status = 'enviada', pdf_url = ? WHERE id = ? AND restaurant_id = ?`), pdfURL, invoiceID, a.ActiveRestaurantID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice status: "+err.Error())
 			return
 		}
 	} else {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE invoices SET status = 'enviada' WHERE id = ? AND restaurant_id = ?`, invoiceID, a.ActiveRestaurantID); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE invoices SET status = 'enviada' WHERE id = ? AND restaurant_id = ?`), invoiceID, a.ActiveRestaurantID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice status: "+err.Error())
 			return
 		}
@@ -1260,9 +1319,9 @@ func (s *Server) handleBOInvoiceSendWhatsApp(w http.ResponseWriter, r *http.Requ
 	// moved back (enviada is kept so a same-key resume is a no-op).
 	if attempt.TextStatus == "sent" {
 		if attempt.PdfURL != "" {
-			s.db.ExecContext(r.Context(), `UPDATE invoices SET status = 'enviada', pdf_url = ? WHERE id = ? AND restaurant_id = ? AND status IN ('borrador','solicitada','pendiente','enviada')`, attempt.PdfURL, invoiceID, a.ActiveRestaurantID)
+			s.db.ExecContext(r.Context(), portableSQL(`UPDATE invoices SET status = 'enviada', pdf_url = ? WHERE id = ? AND restaurant_id = ? AND status IN ('borrador','solicitada','pendiente','enviada')`), attempt.PdfURL, invoiceID, a.ActiveRestaurantID)
 		} else {
-			s.db.ExecContext(r.Context(), `UPDATE invoices SET status = 'enviada' WHERE id = ? AND restaurant_id = ? AND status IN ('borrador','solicitada','pendiente','enviada')`, invoiceID, a.ActiveRestaurantID)
+			s.db.ExecContext(r.Context(), portableSQL(`UPDATE invoices SET status = 'enviada' WHERE id = ? AND restaurant_id = ? AND status IN ('borrador','solicitada','pendiente','enviada')`), invoiceID, a.ActiveRestaurantID)
 		}
 	}
 
@@ -1374,11 +1433,11 @@ type invoiceWaSend struct {
 }
 
 func (s *Server) loadInvoiceWaSend(ctx context.Context, restaurantID int, key string) (*invoiceWaSend, error) {
-	return s.scanInvoiceWaSend(s.db.QueryRowContext(ctx, `SELECT id, restaurant_id, invoice_id, idempotency_key, phone, text_status, pdf_status, IFNULL(pdf_url,''), stage_error FROM invoice_wa_sends WHERE restaurant_id = ? AND idempotency_key = ?`, restaurantID, key))
+	return s.scanInvoiceWaSend(s.db.QueryRowContext(ctx, nativeSQL(`SELECT id, restaurant_id, invoice_id, idempotency_key, phone, text_status, pdf_status, IFNULL(pdf_url,''), stage_error FROM invoice_wa_sends WHERE restaurant_id = ? AND idempotency_key = ?`, `SELECT id, restaurant_id, invoice_id, idempotency_key, phone, text_status, pdf_status, COALESCE(pdf_url,''), stage_error FROM invoice_wa_sends WHERE restaurant_id = ? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`), restaurantID, key))
 }
 
 func (s *Server) loadLatestInvoiceWaSend(ctx context.Context, restaurantID, invoiceID int) (*invoiceWaSend, error) {
-	return s.scanInvoiceWaSend(s.db.QueryRowContext(ctx, `SELECT id, restaurant_id, invoice_id, idempotency_key, phone, text_status, pdf_status, IFNULL(pdf_url,''), stage_error FROM invoice_wa_sends WHERE restaurant_id = ? AND invoice_id = ? ORDER BY id DESC LIMIT 1`, restaurantID, invoiceID))
+	return s.scanInvoiceWaSend(s.db.QueryRowContext(ctx, nativeSQL(`SELECT id, restaurant_id, invoice_id, idempotency_key, phone, text_status, pdf_status, IFNULL(pdf_url,''), stage_error FROM invoice_wa_sends WHERE restaurant_id = ? AND invoice_id = ? ORDER BY id DESC LIMIT 1`, `SELECT id, restaurant_id, invoice_id, idempotency_key, phone, text_status, pdf_status, COALESCE(pdf_url,''), stage_error FROM invoice_wa_sends WHERE restaurant_id = ? AND invoice_id = ? ORDER BY id DESC LIMIT 1`), restaurantID, invoiceID))
 }
 
 func (s *Server) scanInvoiceWaSend(row *sql.Row) (*invoiceWaSend, error) {
@@ -1394,11 +1453,11 @@ func (s *Server) scanInvoiceWaSend(row *sql.Row) (*invoiceWaSend, error) {
 }
 
 func (s *Server) insertInvoiceWaSend(ctx context.Context, row *invoiceWaSend) error {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO invoice_wa_sends (restaurant_id, invoice_id, idempotency_key, phone) VALUES (?,?,?,?)`, row.RestaurantID, row.InvoiceID, row.IdempotencyKey, row.Phone)
+	id, err := sqldb.InsertID(ctx, sqlDialect, s.db, portableSQL(`INSERT INTO invoice_wa_sends (restaurant_id, invoice_id, idempotency_key, phone) VALUES (?,?,?,?)`), "id", row.RestaurantID, row.InvoiceID, row.IdempotencyKey, row.Phone)
 	if err != nil {
 		return err
 	}
-	row.ID, _ = res.LastInsertId()
+	row.ID = id
 	return nil
 }
 
@@ -1424,7 +1483,7 @@ func (s *Server) claimInvoiceWaSendStage(ctx context.Context, id int64, stage st
 		q += ` OR ` + col + ` = 'unknown'`
 	}
 	q += `)`
-	res, err := s.db.ExecContext(ctx, q, id)
+	res, err := s.db.ExecContext(ctx, portableSQL(q), id)
 	if err != nil {
 		return false, err
 	}
@@ -1446,9 +1505,9 @@ func (s *Server) setInvoiceWaSendStage(ctx context.Context, id int64, stage, sta
 	}
 	var err error
 	if stage == "text" {
-		_, err = s.db.ExecContext(ctx, `UPDATE invoice_wa_sends SET text_status = ?, stage_error = ? WHERE id = ?`, status, stageError, id)
+		_, err = s.db.ExecContext(ctx, portableSQL(`UPDATE invoice_wa_sends SET text_status = ?, stage_error = ? WHERE id = ?`), status, stageError, id)
 	} else {
-		_, err = s.db.ExecContext(ctx, `UPDATE invoice_wa_sends SET pdf_status = ?, pdf_url = NULLIF(?, ''), stage_error = ? WHERE id = ?`, status, pdfURL, stageError, id)
+		_, err = s.db.ExecContext(ctx, nativeSQL(`UPDATE invoice_wa_sends SET pdf_status = ?, pdf_url = NULLIF(?, ''), stage_error = ? WHERE id = ?`, `UPDATE invoice_wa_sends SET pdf_status = ?, pdf_url = NULLIF(CAST(? AS text), ''), stage_error = ? WHERE id = ?`), status, padSpaceNullIfArg(pdfURL), stageError, id)
 	}
 	if err != nil {
 		log.Printf("[invoice-wa] attempt %d stage %s->%s persist failed: %v", id, stage, status, err)
@@ -1498,9 +1557,9 @@ func (s *Server) handleBOInvoicePdf(w http.ResponseWriter, r *http.Request) {
 // Get restaurant by ID
 func (s *Server) getRestaurant(ctx context.Context, restaurantID int) (*Restaurant, error) {
 	var r Restaurant
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT id, slug, name, avatar FROM restaurants WHERE id = ?
-	`, restaurantID).Scan(&r.ID, &r.Slug, &r.Name, &r.Avatar)
+	`), restaurantID).Scan(&r.ID, &r.Slug, &r.Name, &r.Avatar)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -1558,9 +1617,9 @@ func (s *Server) handleBOInvoiceUploadImage(w http.ResponseWriter, r *http.Reque
 	imageURL := s.bunnyPullURL(r.Context(), a.ActiveRestaurantID, objectPath)
 
 	// Update invoice with image URL
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE invoices SET account_image_url = ? WHERE id = ? AND restaurant_id = ?
-	`, imageURL, invoiceID, a.ActiveRestaurantID)
+	`), imageURL, invoiceID, a.ActiveRestaurantID)
 
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating invoice: "+err.Error())

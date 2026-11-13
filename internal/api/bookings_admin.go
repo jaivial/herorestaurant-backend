@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func (s *Server) handleFetchBookings(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +56,7 @@ func (s *Server) handleFetchBookings(w http.ResponseWriter, r *http.Request) {
 
 	var totalCount int
 	var totalPeople int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) AS total_count, COALESCE(SUM(party_size), 0) AS total_people FROM bookings WHERE restaurant_id = ? AND reservation_date = ?", restaurantID, date).Scan(&totalCount, &totalPeople); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT COUNT(*) AS total_count, COALESCE(SUM(party_size), 0) AS total_people FROM bookings WHERE restaurant_id = ? AND reservation_date = ?"), restaurantID, date).Scan(&totalCount, &totalPeople); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
 			"message": "Error al cargar las reservas: " + err.Error(),
@@ -76,7 +78,8 @@ func (s *Server) handleFetchBookings(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * pageSize
 
-	sqlQuery := `
+	// Composed: fixed head + validated orderBy (column + ASC/DESC) + LIMIT; rebound once below.
+	sqlQuery := sqlFragment(`
 		SELECT
 			id,
 			reservation_date,
@@ -99,14 +102,37 @@ func (s *Server) handleFetchBookings(w http.ResponseWriter, r *http.Request) {
 			table_number
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
-		ORDER BY ` + orderBy
+		ORDER BY `, `
+		SELECT
+			id,
+			to_char(reservation_date, 'YYYY-MM-DD"T00:00:00Z"') AS reservation_date,
+			customer_name,
+			party_size,
+			"babyStrollers",
+			"highChairs",
+			to_char(reservation_time, 'HH24:MI:SS') AS reservation_time,
+			contact_phone,
+			contact_email,
+			arroz_type,
+			arroz_servings,
+			commentary,
+			special_menu,
+			menu_de_grupo_id,
+			principales_json,
+			to_char(added_date AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS added_date,
+			re_confirmation,
+			status,
+			table_number
+		FROM bookings
+		WHERE restaurant_id = ? AND reservation_date = ?
+		ORDER BY `) + orderBy
 	args := []any{restaurantID, date}
 	if !all {
 		sqlQuery += " LIMIT ? OFFSET ?"
 		args = append(args, pageSize, offset)
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), sqlQuery, args...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(sqlQuery), args...)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -266,7 +292,7 @@ func (s *Server) handleGetBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := s.db.QueryRowContext(r.Context(), `
+	row := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT
 			id,
 			reservation_date,
@@ -283,7 +309,24 @@ func (s *Server) handleGetBooking(w http.ResponseWriter, r *http.Request) {
 			added_date
 		FROM bookings
 		WHERE restaurant_id = ? AND id = ?
-	`, restaurantID, id)
+	`, `
+		SELECT
+			id,
+			to_char(reservation_date, 'YYYY-MM-DD"T00:00:00Z"') AS reservation_date,
+			customer_name,
+			party_size,
+			"babyStrollers",
+			"highChairs",
+			to_char(reservation_time, 'HH24:MI:SS') AS reservation_time,
+			contact_phone,
+			contact_email,
+			arroz_type,
+			arroz_servings,
+			commentary,
+			to_char(added_date AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS added_date
+		FROM bookings
+		WHERE restaurant_id = ? AND id = ?
+	`), restaurantID, id)
 
 	var (
 		bookingID  int
@@ -445,7 +488,9 @@ func (s *Server) handleEditBooking(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	// booking_day_lock_v1: old + new day locked; concurrent move fails closed.
+	_, err = s.execBookingUpdateDayLocked(r.Context(), restaurantID, int64(id), resDate, func(ex execQueryer) (sql.Result, error) {
+		return ex.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bookings SET
 			reservation_date = ?,
 			party_size = ?,
@@ -463,7 +508,26 @@ func (s *Server) handleEditBooking(w http.ResponseWriter, r *http.Request) {
 			menu_de_grupo_assigned = ?,
 			principales_json = ?
 		WHERE restaurant_id = ? AND id = ?
-	`, resDate, partySize, resTime, name, phoneDigits, commentary, babyStrollers, highChairs, arrozTypeJSON, arrozServingsJSON, contactEmail, specialMenu, menuID, menuDeGrupoAssignedTinyint(menuID), principalesJSON, restaurantID, id)
+	`, `
+		UPDATE bookings SET
+			reservation_date = ?,
+			party_size = ?,
+			reservation_time = ?,
+			customer_name = ?,
+			contact_phone = ?,
+			commentary = ?,
+			"babyStrollers" = ?,
+			"highChairs" = ?,
+			arroz_type = ?,
+			arroz_servings = ?,
+			contact_email = ?,
+			special_menu = ?,
+			menu_de_grupo_id = ?,
+			menu_de_grupo_assigned = ?,
+			principales_json = ?
+		WHERE restaurant_id = ? AND id = ?
+	`), resDate, partySize, resTime, name, phoneDigits, commentary, babyStrollers, highChairs, arrozTypeJSON, arrozServingsJSON, contactEmail, specialMenu, menuID, menuDeGrupoAssignedTinyint(menuID), principalesJSON, restaurantID, id)
+	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": err.Error()})
 		return
@@ -519,7 +583,7 @@ func (s *Server) handleDeleteBooking(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var b booking
-	row := tx.QueryRowContext(ctx, `
+	row := tx.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			id,
 			reservation_date,
@@ -540,7 +604,28 @@ func (s *Server) handleDeleteBooking(w http.ResponseWriter, r *http.Request) {
 			preferred_salon_id
 		FROM bookings
 		WHERE restaurant_id = ? AND id = ?
-	`, restaurantID, id)
+	`, `
+		SELECT
+			id,
+			to_char(reservation_date, 'YYYY-MM-DD"T00:00:00Z"') AS reservation_date,
+			party_size,
+			to_char(reservation_time, 'HH24:MI:SS') AS reservation_time,
+			customer_name,
+			contact_phone,
+			contact_email,
+			commentary,
+			arroz_type,
+			arroz_servings,
+			"babyStrollers",
+			"highChairs",
+			special_menu,
+			menu_de_grupo_id,
+			principales_json,
+			preferred_floor_number,
+			preferred_salon_id
+		FROM bookings
+		WHERE restaurant_id = ? AND id = ?
+	`), restaurantID, id)
 	if err := row.Scan(
 		&b.ID,
 		&b.ReservationDate,
@@ -568,14 +653,21 @@ func (s *Server) handleDeleteBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO cancelled_bookings
 			(restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name,
 			 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
 			 babyStrollers, highChairs, cancellation_date, cancelled_by,
 			 special_menu, menu_de_grupo_id, principales_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'staff', ?, ?, ?)
-	`,
+	`, `
+		INSERT INTO cancelled_bookings
+			(restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name,
+			 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
+			 "babyStrollers", "highChairs", cancellation_date, cancelled_by,
+			 special_menu, menu_de_grupo_id, principales_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), 'staff', ?, ?, ?)
+	`),
 		restaurantID,
 		b.ID,
 		b.ReservationDate,
@@ -604,7 +696,7 @@ func (s *Server) handleDeleteBooking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := tx.ExecContext(ctx, "DELETE FROM bookings WHERE restaurant_id = ? AND id = ?", restaurantID, id)
+	res, err := tx.ExecContext(ctx, portableSQL("DELETE FROM bookings WHERE restaurant_id = ? AND id = ?"), restaurantID, id)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error: " + err.Error()})
 		return
@@ -657,7 +749,7 @@ func (s *Server) handleUpdateTableNumber(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), "UPDATE bookings SET table_number = ? WHERE restaurant_id = ? AND id = ?", tableNumber, restaurantID, bookingID); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE bookings SET table_number = ? WHERE restaurant_id = ? AND id = ?"), tableNumber, restaurantID, bookingID); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
@@ -683,18 +775,26 @@ func (s *Server) handleGetReservations(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if v := strings.TrimSpace(r.FormValue("specificdate")); v != "" {
-		rows, err = s.db.QueryContext(r.Context(), `
+		rows, err = s.db.QueryContext(r.Context(), nativeSQL(`
 			SELECT customer_name, contact_email, reservation_date, TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time, party_size, contact_phone, commentary, id
 			FROM bookings
 			WHERE restaurant_id = ? AND reservation_date = ?
-		`, restaurantID, v)
+		`, `
+			SELECT customer_name, contact_email, to_char(reservation_date, 'YYYY-MM-DD"T00:00:00Z"') AS reservation_date, to_char(reservation_time, 'HH24:MI:SS') AS reservation_time, party_size, contact_phone, commentary, id
+			FROM bookings
+			WHERE restaurant_id = ? AND reservation_date = ?
+		`), restaurantID, v)
 	} else if a := strings.TrimSpace(r.FormValue("daterangestart")); a != "" && strings.TrimSpace(r.FormValue("daterangeend")) != "" {
 		b := strings.TrimSpace(r.FormValue("daterangeend"))
-		rows, err = s.db.QueryContext(r.Context(), `
+		rows, err = s.db.QueryContext(r.Context(), nativeSQL(`
 			SELECT customer_name, contact_email, reservation_date, TIME_FORMAT(reservation_time, '%H:%i:%s') AS reservation_time, party_size, contact_phone, commentary, id
 			FROM bookings
 			WHERE restaurant_id = ? AND reservation_date BETWEEN ? AND ?
-		`, restaurantID, a, b)
+		`, `
+			SELECT customer_name, contact_email, to_char(reservation_date, 'YYYY-MM-DD"T00:00:00Z"') AS reservation_date, to_char(reservation_time, 'HH24:MI:SS') AS reservation_time, party_size, contact_phone, commentary, id
+			FROM bookings
+			WHERE restaurant_id = ? AND reservation_date BETWEEN ? AND ?
+		`), restaurantID, a, b)
 	} else {
 		// No-op
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{})
@@ -773,7 +873,7 @@ func (s *Server) handleFetchCancelledBookings(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			id,
 			booking_id,
@@ -793,7 +893,27 @@ func (s *Server) handleFetchCancelledBookings(w http.ResponseWriter, r *http.Req
 		FROM cancelled_bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
 		ORDER BY cancellation_date DESC
-	`, restaurantID, date)
+	`, `
+		SELECT
+			id,
+			booking_id,
+			to_char(reservation_date, 'YYYY-MM-DD"T00:00:00Z"') AS reservation_date,
+			party_size,
+			reservation_time,
+			customer_name,
+			contact_phone,
+			contact_email,
+			commentary,
+			arroz_type,
+			arroz_servings,
+			"babyStrollers",
+			"highChairs",
+			to_char(cancellation_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS cancellation_date,
+			cancelled_by
+		FROM cancelled_bookings
+		WHERE restaurant_id = ? AND reservation_date = ?
+		ORDER BY cancellation_date DESC
+	`), restaurantID, date)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error fetching cancelled bookings: " + err.Error()})
 		return
@@ -902,11 +1022,15 @@ func (s *Server) handleReactivateBooking(w http.ResponseWriter, r *http.Request)
 		principales  sql.NullString
 	)
 
-	err = tx.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, nativeSQL(`
 		SELECT reservation_date, party_size, reservation_time, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, babyStrollers, highChairs, special_menu, menu_de_grupo_id, principales_json
 		FROM cancelled_bookings
 		WHERE restaurant_id = ? AND id = ?
-	`, restaurantID, cancelledID).Scan(&resDate, &partySize, &resTime, &customerName, &phone, &email, &comment, &arrozType, &arrozServ, &baby, &chairs, &specialMenu, &menuID, &principales)
+	`, `
+		SELECT to_char(reservation_date, 'YYYY-MM-DD"T00:00:00Z"') AS reservation_date, party_size, reservation_time, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, "babyStrollers", "highChairs", special_menu, menu_de_grupo_id, principales_json
+		FROM cancelled_bookings
+		WHERE restaurant_id = ? AND id = ?
+	`), restaurantID, cancelledID).Scan(&resDate, &partySize, &resTime, &customerName, &phone, &email, &comment, &arrozType, &arrozServ, &baby, &chairs, &specialMenu, &menuID, &principales)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "No se encontró la reserva cancelada"})
@@ -915,13 +1039,18 @@ func (s *Server) handleReactivateBooking(w http.ResponseWriter, r *http.Request)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": err.Error()})
 		return
 	}
+	// booking_day_lock_v1: the re-inserted booking joins the day lock.
+	if err := lockBookingDays(ctx, tx, restaurantID, fmt.Sprint(resDate)); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reactivating booking: " + err.Error()})
+		return
+	}
 
 	resTimeNorm, _ := ensureHHMMSS(resTime)
 	if resTimeNorm != "" {
 		resTime = resTimeNorm
 	}
 
-	res2, err := tx.ExecContext(ctx, `
+	newID, err := sqldb.InsertID(ctx, sqlDialect, tx, nativeSQL(`
 		INSERT INTO bookings (
 			restaurant_id,
 			customer_name,
@@ -943,14 +1072,35 @@ func (s *Server) handleReactivateBooking(w http.ResponseWriter, r *http.Request)
 			reminder_sent,
 			rice_reminder_sent
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 1, 1)
-	`, restaurantID, customerName, email.String, resDate, resTime, partySize, phone, comment.String, nullIntToInt(baby), nullIntToInt(chairs), nullStringOrNil(arrozType), nullStringOrNil(arrozServ), int64OrZero(specialMenu), nullInt64OrNil(menuID), menuDeGrupoAssignedTinyint(menuID), nullStringOrNil(principales))
+	`, `
+		INSERT INTO bookings (
+			restaurant_id,
+			customer_name,
+			contact_email,
+			reservation_date,
+			reservation_time,
+			party_size,
+			contact_phone,
+			commentary,
+			"babyStrollers",
+			"highChairs",
+			arroz_type,
+			arroz_servings,
+			special_menu,
+			menu_de_grupo_id,
+			menu_de_grupo_assigned,
+			principales_json,
+			status,
+			reminder_sent,
+			rice_reminder_sent
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 1, 1)
+	`), "id", restaurantID, customerName, email.String, resDate, resTime, partySize, phone, comment.String, nullIntToInt(baby), nullIntToInt(chairs), nullStringOrNil(arrozType), nullStringOrNil(arrozServ), int64OrZero(specialMenu), nullInt64OrNil(menuID), menuDeGrupoAssignedTinyint(menuID), nullStringOrNil(principales))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error reactivando reserva: " + err.Error()})
 		return
 	}
-	newID, _ := res2.LastInsertId()
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM cancelled_bookings WHERE restaurant_id = ? AND id = ?", restaurantID, cancelledID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL("DELETE FROM cancelled_bookings WHERE restaurant_id = ? AND id = ?"), restaurantID, cancelledID); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error eliminando registro de cancelación: " + err.Error()})
 		return
 	}

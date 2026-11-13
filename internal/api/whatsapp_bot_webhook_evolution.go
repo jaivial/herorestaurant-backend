@@ -273,11 +273,11 @@ func (s *Server) resolveBotRestaurantByProviderInstance(ctx context.Context, ins
 		return 0, false
 	}
 	var rid int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT restaurant_id FROM restaurant_uazapi_instances
 		WHERE provider_instance_id = ? AND is_active = 1
 		LIMIT 1
-	`, instanceName).Scan(&rid)
+	`), instanceName).Scan(&rid)
 	if err != nil {
 		return 0, false
 	}

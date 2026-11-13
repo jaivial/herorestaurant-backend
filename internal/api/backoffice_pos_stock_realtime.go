@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"strconv"
+
+	"preactvillacarmen/internal/sqldb"
 )
 
 // loadPOSProductStock builds the per-product stock status map for the sell
@@ -16,7 +18,7 @@ func (s *Server) loadPOSProductStock(ctx context.Context, restaurantID int, stoc
 	if stockMode == "OFF" {
 		return map[int64]string{}, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT r.pos_product_id,
 		       MIN(CASE WHEN COALESCE(l.qty_base,0) <= 0 THEN 0
 		                WHEN l.reorder_point_base > 0 AND COALESCE(l.qty_base,0) < l.reorder_point_base THEN 1
@@ -29,7 +31,7 @@ func (s *Server) loadPOSProductStock(ctx context.Context, restaurantID int, stoc
 		  AND i.is_active = 1 AND i.deleted_at IS NULL AND i.is_tracked = 1 AND i.deduction_source <> 'PRODUCTION'
 		  AND w.is_active = 1 AND w.deleted_at IS NULL
 		GROUP BY r.pos_product_id
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +73,7 @@ type posRealtimeStockResult struct {
 
 // getStockRulesForProduct fetches active stock rules for a POS product
 func (s *Server) getStockRulesForProduct(ctx context.Context, tx *sql.Tx, restaurantID int, productID int64) ([]posStockRule, error) {
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, nativeSQL(`
 		SELECT r.id, r.stock_item_id, r.warehouse_id, r.qty_base_per_sale, i.is_tracked, i.deduction_source
 		FROM pos_product_stock_rules r
 		JOIN stock_items i ON i.restaurant_id = r.restaurant_id AND i.id = r.stock_item_id
@@ -80,7 +82,16 @@ func (s *Server) getStockRulesForProduct(ctx context.Context, tx *sql.Tx, restau
 		  AND i.is_active = 1 AND i.deleted_at IS NULL
 		  AND w.is_active = 1 AND w.deleted_at IS NULL
 		ORDER BY r.warehouse_id, r.stock_item_id, r.id
-	`, restaurantID, productID)
+	`, `
+		SELECT r.id, r.stock_item_id, r.warehouse_id, r.qty_base_per_sale, i.is_tracked, CAST(i.deduction_source AS text)
+		FROM pos_product_stock_rules r
+		JOIN stock_items i ON i.restaurant_id = r.restaurant_id AND i.id = r.stock_item_id
+		JOIN stock_warehouses w ON w.restaurant_id = r.restaurant_id AND w.id = r.warehouse_id
+		WHERE r.restaurant_id = ? AND r.pos_product_id = ? AND r.is_active = 1
+		  AND i.is_active = 1 AND i.deleted_at IS NULL
+		  AND w.is_active = 1 AND w.deleted_at IS NULL
+		ORDER BY r.warehouse_id, r.stock_item_id, r.id
+	`), restaurantID, productID)
 	if err != nil {
 		return nil, err
 	}
@@ -130,73 +141,92 @@ func (s *Server) deductStockForLine(ctx context.Context, tx *sql.Tx, restaurantI
 		}
 
 		// Ensure stock level row exists
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, nativeSQL(`
 			INSERT INTO stock_levels (restaurant_id, stock_item_id, warehouse_id, qty_base)
 			VALUES (?, ?, ?, 0)
 			ON DUPLICATE KEY UPDATE stock_item_id = VALUES(stock_item_id)
-		`, restaurantID, rule.StockItemID, rule.WarehouseID)
+		`, `
+			INSERT INTO stock_levels (restaurant_id, stock_item_id, warehouse_id, qty_base)
+			VALUES (?, ?, ?, 0)
+			ON CONFLICT (restaurant_id, stock_item_id, warehouse_id) DO NOTHING
+		`), restaurantID, rule.StockItemID, rule.WarehouseID)
 		if err != nil {
 			return nil, err
 		}
 
 		// Lock and get current stock level
 		var current float64
-		if err = tx.QueryRowContext(ctx, `
+		if err = tx.QueryRowContext(ctx, portableSQL(`
 			SELECT qty_base FROM stock_levels
 			WHERE restaurant_id = ? AND stock_item_id = ? AND warehouse_id = ?
 			FOR UPDATE
-		`, restaurantID, rule.StockItemID, rule.WarehouseID).Scan(&current); err != nil {
+		`), restaurantID, rule.StockItemID, rule.WarehouseID).Scan(&current); err != nil {
 			return nil, err
 		}
 
 		// Get default unit for movement record
 		var unitID int64
 		var factor float64
-		if err = tx.QueryRowContext(ctx, `
+		if err = tx.QueryRowContext(ctx, portableSQL(`
 			SELECT id, factor_to_base FROM stock_item_units
 			WHERE restaurant_id = ? AND stock_item_id = ? AND is_default_display = 1
 			LIMIT 1
-		`, restaurantID, rule.StockItemID).Scan(&unitID, &factor); err != nil {
+		`), restaurantID, rule.StockItemID).Scan(&unitID, &factor); err != nil {
 			return nil, err
 		}
 
 		// Create stock movement (SALE type for deduction)
 		idempotencyKey := idempotencyPrefix + ":line:" + strconv.FormatInt(lineID, 10) + ":rule:" + strconv.FormatInt(rule.RuleID, 10)
-		res, err := tx.ExecContext(ctx, `
+		movementID, err := sqldb.InsertID(ctx, sqlDialect, tx, portableSQL(`
 			INSERT INTO stock_movements (restaurant_id, stock_item_id, warehouse_id, qty_base, type, entered_qty, entered_unit_id, ref_type, ref_id, idempotency_key, note, actor_user_id)
 			VALUES (?, ?, ?, ?, 'SALE', ?, ?, 'pos_ticket_line', ?, ?, 'POS realtime deduction', ?)
-		`, restaurantID, rule.StockItemID, rule.WarehouseID, -qtyBase, qtyBase/factor, unitID, lineID, idempotencyKey, actorID)
+		`), "id", restaurantID, rule.StockItemID, rule.WarehouseID, -qtyBase, qtyBase/factor, unitID, lineID, idempotencyKey, actorID)
 		if err != nil {
 			return nil, err
 		}
-		movementID, _ := res.LastInsertId()
 
 		// Deduct from stock level
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, portableSQL(`
 			UPDATE stock_levels SET qty_base = qty_base - ?, version = version + 1
 			WHERE restaurant_id = ? AND stock_item_id = ? AND warehouse_id = ?
-		`, qtyBase, restaurantID, rule.StockItemID, rule.WarehouseID)
+		`), qtyBase, restaurantID, rule.StockItemID, rule.WarehouseID)
 		if err != nil {
 			return nil, err
 		}
 
 		// Create pos_ticket_line_stock record
-		stockRes, err := tx.ExecContext(ctx, `
+		snapshotID, err := sqldb.InsertID(ctx, sqlDialect, tx, nativeSQL(`
 			INSERT INTO pos_ticket_line_stock (restaurant_id, ticket_id, ticket_line_id, stock_rule_id, stock_item_id, warehouse_id, quantity_sold, qty_base_planned, status, sale_movement_id, applied_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPLIED', ?, NOW())
-		`, restaurantID, ticketID, lineID, rule.RuleID, rule.StockItemID, rule.WarehouseID, quantity, qtyBase, movementID)
+		`, `
+			INSERT INTO pos_ticket_line_stock (restaurant_id, ticket_id, ticket_line_id, stock_rule_id, stock_item_id, warehouse_id, quantity_sold, qty_base_planned, status, sale_movement_id, applied_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'APPLIED', ?, date_trunc('second', statement_timestamp()))
+		`), "id", restaurantID, ticketID, lineID, rule.RuleID, rule.StockItemID, rule.WarehouseID, quantity, qtyBase, movementID)
 		if err != nil {
 			return nil, err
 		}
-		snapshotID, _ := stockRes.LastInsertId()
 
 		// Track negative stock anomaly
 		quantityAfter := current - qtyBase
 		if quantityAfter < 0 {
-			_, _ = tx.ExecContext(ctx, `
-				INSERT IGNORE INTO pos_stock_anomalies (restaurant_id, ticket_id, ticket_line_stock_id, stock_item_id, warehouse_id, quantity_after_base)
+			// repair-ignore2: only the snapshot-key duplicate is a no-op (MySQL
+			// ODKU no-op, PG DO NOTHING). A range overflow (IGNORE clamped it to
+			// the column max = wrong figure) or FK error now fails the sale tx
+			// on both dialects, as the checkout path already did.
+			if err := sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+				_, e := tx.ExecContext(ctx, nativeSQL(`
+				INSERT INTO pos_stock_anomalies (restaurant_id, ticket_id, ticket_line_stock_id, stock_item_id, warehouse_id, quantity_after_base)
 				VALUES (?, ?, ?, ?, ?, ?)
-			`, restaurantID, ticketID, snapshotID, rule.StockItemID, rule.WarehouseID, quantityAfter)
+				ON DUPLICATE KEY UPDATE ticket_line_stock_id = ticket_line_stock_id
+			`, `
+				INSERT INTO pos_stock_anomalies (restaurant_id, ticket_id, ticket_line_stock_id, stock_item_id, warehouse_id, quantity_after_base)
+				VALUES (?, ?, ?, ?, ?, ?)
+				ON CONFLICT (restaurant_id, ticket_line_stock_id) DO NOTHING
+			`), restaurantID, ticketID, snapshotID, rule.StockItemID, rule.WarehouseID, quantityAfter)
+				return e
+			}); err != nil {
+				return nil, err
+			}
 		}
 
 		result.Snapshots = append(result.Snapshots, posStockSnapshot{
@@ -216,12 +246,12 @@ func (s *Server) deductStockForLine(ctx context.Context, tx *sql.Tx, restaurantI
 // restoreStockForLine restores stock when a line is voided or quantity decreased.
 func (s *Server) restoreStockForLine(ctx context.Context, tx *sql.Tx, restaurantID, actorID int, lineID int64, idempotencyPrefix string) error {
 	// Find all APPLIED stock records for this line
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, portableSQL(`
 		SELECT id, stock_item_id, warehouse_id, qty_base_planned
 		FROM pos_ticket_line_stock
 		WHERE restaurant_id = ? AND ticket_line_id = ? AND status = 'APPLIED'
 		ORDER BY id
-	`, restaurantID, lineID)
+	`), restaurantID, lineID)
 	if err != nil {
 		return err
 	}
@@ -247,39 +277,41 @@ func (s *Server) restoreStockForLine(ctx context.Context, tx *sql.Tx, restaurant
 		// Get default unit
 		var unitID int64
 		var factor float64
-		if err = tx.QueryRowContext(ctx, `
+		if err = tx.QueryRowContext(ctx, portableSQL(`
 			SELECT id, factor_to_base FROM stock_item_units
 			WHERE restaurant_id = ? AND stock_item_id = ? AND is_default_display = 1
 			LIMIT 1
-		`, restaurantID, rec.ItemID).Scan(&unitID, &factor); err != nil {
+		`), restaurantID, rec.ItemID).Scan(&unitID, &factor); err != nil {
 			return err
 		}
 
 		// Create RETURN movement
 		idempotencyKey := idempotencyPrefix + ":restore:snapshot:" + strconv.FormatInt(rec.ID, 10)
-		moveRes, err := tx.ExecContext(ctx, `
+		movementID, err := sqldb.InsertID(ctx, sqlDialect, tx, portableSQL(`
 			INSERT INTO stock_movements (restaurant_id, stock_item_id, warehouse_id, qty_base, type, entered_qty, entered_unit_id, ref_type, ref_id, idempotency_key, note, actor_user_id)
 			VALUES (?, ?, ?, ?, 'RETURN', ?, ?, 'pos_ticket_line_stock', ?, ?, 'POS line void/cancel', ?)
-		`, restaurantID, rec.ItemID, rec.WarehouseID, rec.QtyBase, rec.QtyBase/factor, unitID, rec.ID, idempotencyKey, actorID)
+		`), "id", restaurantID, rec.ItemID, rec.WarehouseID, rec.QtyBase, rec.QtyBase/factor, unitID, rec.ID, idempotencyKey, actorID)
 		if err != nil {
 			return err
 		}
-		movementID, _ := moveRes.LastInsertId()
 
 		// Restore stock level
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, portableSQL(`
 			UPDATE stock_levels SET qty_base = qty_base + ?, version = version + 1
 			WHERE restaurant_id = ? AND stock_item_id = ? AND warehouse_id = ?
-		`, rec.QtyBase, restaurantID, rec.ItemID, rec.WarehouseID)
+		`), rec.QtyBase, restaurantID, rec.ItemID, rec.WarehouseID)
 		if err != nil {
 			return err
 		}
 
 		// Update pos_ticket_line_stock status
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, nativeSQL(`
 			UPDATE pos_ticket_line_stock SET status = 'REVERSED', return_movement_id = ?, reversed_at = NOW()
 			WHERE restaurant_id = ? AND id = ?
-		`, movementID, restaurantID, rec.ID)
+		`, `
+			UPDATE pos_ticket_line_stock SET status = 'REVERSED', return_movement_id = ?, reversed_at = date_trunc('second', statement_timestamp())
+			WHERE restaurant_id = ? AND id = ?
+		`), movementID, restaurantID, rec.ID)
 		if err != nil {
 			return err
 		}
@@ -311,31 +343,35 @@ func (s *Server) adjustStockForQuantityChange(ctx context.Context, tx *sql.Tx, r
 		// Get default unit
 		var unitID int64
 		var factor float64
-		if err = tx.QueryRowContext(ctx, `
+		if err = tx.QueryRowContext(ctx, portableSQL(`
 			SELECT id, factor_to_base FROM stock_item_units
 			WHERE restaurant_id = ? AND stock_item_id = ? AND is_default_display = 1
 			LIMIT 1
-		`, restaurantID, rule.StockItemID).Scan(&unitID, &factor); err != nil {
+		`), restaurantID, rule.StockItemID).Scan(&unitID, &factor); err != nil {
 			return err
 		}
 
 		// Ensure stock level exists
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, nativeSQL(`
 			INSERT INTO stock_levels (restaurant_id, stock_item_id, warehouse_id, qty_base)
 			VALUES (?, ?, ?, 0)
 			ON DUPLICATE KEY UPDATE stock_item_id = VALUES(stock_item_id)
-		`, restaurantID, rule.StockItemID, rule.WarehouseID)
+		`, `
+			INSERT INTO stock_levels (restaurant_id, stock_item_id, warehouse_id, qty_base)
+			VALUES (?, ?, ?, 0)
+			ON CONFLICT (restaurant_id, stock_item_id, warehouse_id) DO NOTHING
+		`), restaurantID, rule.StockItemID, rule.WarehouseID)
 		if err != nil {
 			return err
 		}
 
 		// Lock stock level
 		var current float64
-		if err = tx.QueryRowContext(ctx, `
+		if err = tx.QueryRowContext(ctx, portableSQL(`
 			SELECT qty_base FROM stock_levels
 			WHERE restaurant_id = ? AND stock_item_id = ? AND warehouse_id = ?
 			FOR UPDATE
-		`, restaurantID, rule.StockItemID, rule.WarehouseID).Scan(&current); err != nil {
+		`), restaurantID, rule.StockItemID, rule.WarehouseID).Scan(&current); err != nil {
 			return err
 		}
 
@@ -355,29 +391,29 @@ func (s *Server) adjustStockForQuantityChange(ctx context.Context, tx *sql.Tx, r
 		}
 
 		idempotencyKey := idempotencyPrefix + ":adjust:rule:" + strconv.FormatInt(rule.RuleID, 10)
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, portableSQL(`
 			INSERT INTO stock_movements (restaurant_id, stock_item_id, warehouse_id, qty_base, type, entered_qty, entered_unit_id, ref_type, ref_id, idempotency_key, note, actor_user_id)
 			VALUES (?, ?, ?, ?, ?, ?, ?, 'pos_ticket_line', ?, ?, ?, ?)
-		`, restaurantID, rule.StockItemID, rule.WarehouseID, qtyBaseMovement, movementType, -qtyBaseMovement/factor, unitID, lineID, idempotencyKey, note, actorID)
+		`), restaurantID, rule.StockItemID, rule.WarehouseID, qtyBaseMovement, movementType, -qtyBaseMovement/factor, unitID, lineID, idempotencyKey, note, actorID)
 		if err != nil {
 			return err
 		}
 
 		// Update stock level
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, portableSQL(`
 			UPDATE stock_levels SET qty_base = qty_base + ?, version = version + 1
 			WHERE restaurant_id = ? AND stock_item_id = ? AND warehouse_id = ?
-		`, qtyBaseMovement, restaurantID, rule.StockItemID, rule.WarehouseID)
+		`), qtyBaseMovement, restaurantID, rule.StockItemID, rule.WarehouseID)
 		if err != nil {
 			return err
 		}
 
 		// Update pos_ticket_line_stock record with new quantity
-		_, err = tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, portableSQL(`
 			UPDATE pos_ticket_line_stock
 			SET quantity_sold = ?, qty_base_planned = ?
 			WHERE restaurant_id = ? AND ticket_line_id = ? AND stock_rule_id = ? AND status = 'APPLIED'
-		`, newQuantity, newQuantity*rule.QtyBasePerSale, restaurantID, lineID, rule.RuleID)
+		`), newQuantity, newQuantity*rule.QtyBasePerSale, restaurantID, lineID, rule.RuleID)
 		if err != nil {
 			return err
 		}
@@ -388,15 +424,28 @@ func (s *Server) adjustStockForQuantityChange(ctx context.Context, tx *sql.Tx, r
 			if quantityAfter < 0 {
 				// Find the snapshot ID
 				var snapshotID int64
-				_ = tx.QueryRowContext(ctx, `
+				_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+					return tx.QueryRowContext(ctx, portableSQL(`
 					SELECT id FROM pos_ticket_line_stock
 					WHERE restaurant_id = ? AND ticket_line_id = ? AND stock_rule_id = ? AND status = 'APPLIED'
-				`, restaurantID, lineID, rule.RuleID).Scan(&snapshotID)
+				`), restaurantID, lineID, rule.RuleID).Scan(&snapshotID)
+				})
 				if snapshotID > 0 {
-					_, _ = tx.ExecContext(ctx, `
-						INSERT IGNORE INTO pos_stock_anomalies (restaurant_id, ticket_id, ticket_line_stock_id, stock_item_id, warehouse_id, quantity_after_base)
+					// repair-ignore2: duplicate no-op only; range/FK errors propagate.
+					if err := sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+						_, e := tx.ExecContext(ctx, nativeSQL(`
+						INSERT INTO pos_stock_anomalies (restaurant_id, ticket_id, ticket_line_stock_id, stock_item_id, warehouse_id, quantity_after_base)
 						VALUES (?, ?, ?, ?, ?, ?)
-					`, restaurantID, ticketID, snapshotID, rule.StockItemID, rule.WarehouseID, quantityAfter)
+						ON DUPLICATE KEY UPDATE ticket_line_stock_id = ticket_line_stock_id
+					`, `
+						INSERT INTO pos_stock_anomalies (restaurant_id, ticket_id, ticket_line_stock_id, stock_item_id, warehouse_id, quantity_after_base)
+						VALUES (?, ?, ?, ?, ?, ?)
+						ON CONFLICT (restaurant_id, ticket_line_stock_id) DO NOTHING
+					`), restaurantID, ticketID, snapshotID, rule.StockItemID, rule.WarehouseID, quantityAfter)
+						return e
+					}); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -408,10 +457,10 @@ func (s *Server) adjustStockForQuantityChange(ctx context.Context, tx *sql.Tx, r
 // restoreStockForTicket restores all stock for a ticket (used when voiding/cancelling)
 func (s *Server) restoreStockForTicket(ctx context.Context, tx *sql.Tx, restaurantID, actorID int, ticketID int64, idempotencyPrefix string) error {
 	// Get all ACTIVE lines from this ticket
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, portableSQL(`
 		SELECT id FROM pos_ticket_lines
 		WHERE restaurant_id = ? AND ticket_id = ? AND status = 'ACTIVE'
-	`, restaurantID, ticketID)
+	`), restaurantID, ticketID)
 	if err != nil {
 		return err
 	}
@@ -440,10 +489,10 @@ func (s *Server) restoreStockForTicket(ctx context.Context, tx *sql.Tx, restaura
 // restoreStockForVisit restores all stock for a visit (used when cancelling visit)
 func (s *Server) restoreStockForVisit(ctx context.Context, tx *sql.Tx, restaurantID, actorID int, visitID int64, idempotencyPrefix string) error {
 	// Get all open tickets for this visit
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, portableSQL(`
 		SELECT id FROM pos_tickets
 		WHERE restaurant_id = ? AND visit_id = ? AND status = 'OPEN'
-	`, restaurantID, visitID)
+	`), restaurantID, visitID)
 	if err != nil {
 		return err
 	}
@@ -472,9 +521,9 @@ func (s *Server) restoreStockForVisit(ctx context.Context, tx *sql.Tx, restauran
 // hasRealtimeStockDeductions checks if a ticket line already has APPLIED stock deductions
 func (s *Server) hasRealtimeStockDeductions(ctx context.Context, tx *sql.Tx, restaurantID int, lineID int64) (bool, error) {
 	var count int
-	err := tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, portableSQL(`
 		SELECT COUNT(*) FROM pos_ticket_line_stock
 		WHERE restaurant_id = ? AND ticket_line_id = ? AND status = 'APPLIED'
-	`, restaurantID, lineID).Scan(&count)
+	`), restaurantID, lineID).Scan(&count)
 	return count > 0, err
 }

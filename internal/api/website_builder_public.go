@@ -64,7 +64,7 @@ func (s *Server) websiteBuilderRestaurantID(ctx context.Context, r *http.Request
 		return 0, fmt.Errorf("invalid website id")
 	}
 	var restaurantID int
-	err = s.db.QueryRowContext(ctx, `SELECT restaurant_id FROM restaurant_websites WHERE id = ? LIMIT 1`, websiteID).Scan(&restaurantID)
+	err = s.db.QueryRowContext(ctx, portableSQL(`SELECT restaurant_id FROM restaurant_websites WHERE id = ? LIMIT 1`), websiteID).Scan(&restaurantID)
 	if err != nil {
 		return 0, err
 	}
@@ -72,13 +72,19 @@ func (s *Server) websiteBuilderRestaurantID(ctx context.Context, r *http.Request
 }
 
 func (s *Server) renderWebsiteBuilderMenus(ctx context.Context, restaurantID int) (string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT COALESCE(menu_title, ''), COALESCE(price, ''), COALESCE(menu_type, 1)
 		FROM menus
 		WHERE restaurant_id = ? AND active = 1 AND is_draft = 0
 		ORDER BY modified_at DESC, id DESC
 		LIMIT 12
-	`, restaurantID)
+	`, `
+		SELECT COALESCE(menu_title, ''), CAST(price AS text), COALESCE(menu_type, 1)
+		FROM menus
+		WHERE restaurant_id = ? AND active = 1 AND is_draft = 0
+		ORDER BY modified_at DESC NULLS LAST, id DESC
+		LIMIT 12
+	`), restaurantID)
 	if err != nil {
 		return "", err
 	}
@@ -115,13 +121,13 @@ func (s *Server) renderWebsiteBuilderMenus(ctx context.Context, restaurantID int
 }
 
 func (s *Server) renderWebsiteBuilderWines(ctx context.Context, restaurantID int) (string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT COALESCE(v.nombre, ''), COALESCE(v.precio, 0), COALESCE(v.tipo, ''), COALESCE(v.bodega, '')
 		FROM group_menu_wines_v2 v
 		WHERE v.restaurant_id = ? AND v.active = 1
 		ORDER BY v.tipo ASC, v.id ASC
 		LIMIT 40
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return "", err
 	}
@@ -157,13 +163,13 @@ func (s *Server) renderWebsiteBuilderWines(ctx context.Context, restaurantID int
 }
 
 func (s *Server) renderWebsiteBuilderHours(ctx context.Context, restaurantID int) (string, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT dateselected, hoursarray
 		FROM openinghours
 		WHERE restaurant_id = ? AND dateselected >= ?
 		ORDER BY dateselected ASC
 		LIMIT 7
-	`, restaurantID, time.Now().Format("2006-01-02"))
+	`), restaurantID, time.Now().Format("2006-01-02"))
 	if err != nil {
 		return "", err
 	}

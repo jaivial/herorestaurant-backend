@@ -398,7 +398,7 @@ func (s *Server) loadBotPromptData(ctx context.Context, restaurantID int, pushNa
 	}
 	if data.BrandName == "" {
 		var name sql.NullString
-		if err := s.db.QueryRowContext(ctx, `SELECT name FROM restaurants WHERE id = ? LIMIT 1`, restaurantID).Scan(&name); err == nil {
+		if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT name FROM restaurants WHERE id = ? LIMIT 1`), restaurantID).Scan(&name); err == nil {
 			data.BrandName = strings.TrimSpace(name.String)
 		}
 	}

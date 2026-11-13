@@ -60,7 +60,7 @@ func (s *Server) ensureBookingQR(ctx context.Context, restaurantID int, bookingI
 		return out
 	}
 	out.URL = s.bunnyPullURL(ctx, restaurantID, objectPath)
-	_, _ = s.db.ExecContext(ctx, `UPDATE bookings SET qr_url = ? WHERE id = ? AND restaurant_id = ?`, out.URL, bookingID, restaurantID)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE bookings SET qr_url = ? WHERE id = ? AND restaurant_id = ?`), out.URL, bookingID, restaurantID)
 	log.Printf("[special_booking_qr_v1] stored booking=%d url=%s", bookingID, out.URL)
 	return out
 }
@@ -70,7 +70,7 @@ func (s *Server) setBookingReceiptURL(ctx context.Context, restaurantID int, boo
 	if receiptURL == "" {
 		return
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE bookings SET receipt_url = ? WHERE id = ? AND restaurant_id = ?`, receiptURL, bookingID, restaurantID)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE bookings SET receipt_url = ? WHERE id = ? AND restaurant_id = ?`), receiptURL, bookingID, restaurantID)
 }
 
 // handleBOBookingQR returns (creating on demand) the QR + receipt URLs of a
@@ -91,9 +91,11 @@ func (s *Server) handleBOBookingQR(w http.ResponseWriter, r *http.Request) {
 	var date string
 	var qrURL, receiptURL sql.NullString
 	var isSpecial int
-	if err := s.db.QueryRowContext(r.Context(), `
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'), qr_url, receipt_url, COALESCE(is_special_booking, 0)
-		FROM bookings WHERE id = ? AND restaurant_id = ? LIMIT 1`, id, rid).Scan(&date, &qrURL, &receiptURL, &isSpecial); err != nil {
+		FROM bookings WHERE id = ? AND restaurant_id = ? LIMIT 1`, `
+		SELECT to_char(reservation_date, 'YYYY-MM-DD'), qr_url, receipt_url, COALESCE(is_special_booking, 0)
+		FROM bookings WHERE id = ? AND restaurant_id = ? LIMIT 1`), id, rid).Scan(&date, &qrURL, &receiptURL, &isSpecial); err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Booking not found"})
 		return
 	}
@@ -108,7 +110,7 @@ func (s *Server) handleBOBookingQR(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(receiptURL.String) == "" {
 		var fromCheckout sql.NullString
-		if s.db.QueryRowContext(r.Context(), `SELECT receipt_url FROM booking_checkouts WHERE booking_id = ? AND restaurant_id = ? AND receipt_url IS NOT NULL ORDER BY id DESC LIMIT 1`, id, rid).Scan(&fromCheckout) == nil && fromCheckout.String != "" {
+		if s.db.QueryRowContext(r.Context(), portableSQL(`SELECT receipt_url FROM booking_checkouts WHERE booking_id = ? AND restaurant_id = ? AND receipt_url IS NOT NULL ORDER BY id DESC LIMIT 1`), id, rid).Scan(&fromCheckout) == nil && fromCheckout.String != "" {
 			receiptURL.String = fromCheckout.String
 			s.setBookingReceiptURL(r.Context(), rid, id, fromCheckout.String)
 		}
@@ -152,7 +154,7 @@ func (s *Server) handleBOBookingReceiptPDF(w http.ResponseWriter, r *http.Reques
 	}
 	rid := a.ActiveRestaurantID
 	var receiptURL sql.NullString
-	if err := s.db.QueryRowContext(r.Context(), `SELECT receipt_url FROM bookings WHERE id = ? AND restaurant_id = ? LIMIT 1`, id, rid).Scan(&receiptURL); err != nil || strings.TrimSpace(receiptURL.String) == "" {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT receipt_url FROM bookings WHERE id = ? AND restaurant_id = ? LIMIT 1`), id, rid).Scan(&receiptURL); err != nil || strings.TrimSpace(receiptURL.String) == "" {
 		httpx.WriteError(w, http.StatusNotFound, "Comprobante no disponible")
 		return
 	}

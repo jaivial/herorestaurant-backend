@@ -1,0 +1,587 @@
+{
+  "domain": "core_backoffice",
+  "inventory": "sql-inventory-r12.json",
+  "repo_call_sites": 2477,
+  "repo_native_sites": 406,
+  "repo_dynamic": 303,
+  "sites": 406,
+  "native": 406,
+  "remaining": 0,
+  "remaining_dynamic": 0,
+  "audit_failures": 0,
+  "files": 63,
+  "done_files": 63,
+  "remaining_files": [],
+  "ledger": [
+    {
+      "file": "internal/api/ad_tools.go",
+      "sites": 8,
+      "native": 8,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_accounting_exports.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_affluence.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_auth.go",
+      "sites": 14,
+      "native": 14,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_branding_logo.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_calendar.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_config.go",
+      "sites": 43,
+      "native": 43,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_config_ai_image.go",
+      "sites": 8,
+      "native": 8,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_config_bunny.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_config_chatgpt_plugin.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_config_minimax.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_dashboard.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_labour_cost.go",
+      "sites": 12,
+      "native": 12,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_middleware.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_platform.go",
+      "sites": 33,
+      "native": 33,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_preferences.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_production_labour.go",
+      "sites": 16,
+      "native": 16,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_provision.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_rbac.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_roles.go",
+      "sites": 14,
+      "native": 14,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_salons.go",
+      "sites": 10,
+      "native": 10,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_settings.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_bulk.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_components.go",
+      "sites": 11,
+      "native": 11,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_cost.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_duplicate.go",
+      "sites": 6,
+      "native": 6,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_ensure.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_image_worker.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_images.go",
+      "sites": 9,
+      "native": 9,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_link.go",
+      "sites": 20,
+      "native": 20,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_step_upload.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_steps.go",
+      "sites": 12,
+      "native": 12,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheets.go",
+      "sites": 13,
+      "native": 13,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheets_ws.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/beverage_options.go",
+      "sites": 6,
+      "native": 6,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/bo_app_version.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/bunny_config.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/calendar_data.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/chatgpt_plugin_tokens.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/checkcancel.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/events.go",
+      "sites": 6,
+      "native": 6,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/guest_count_flags.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/hour_percentages.go",
+      "sites": 8,
+      "native": 8,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/hour_split.go",
+      "sites": 8,
+      "native": 8,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/hours.go",
+      "sites": 9,
+      "native": 9,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/marketing_advertising.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/mcp_oauth_routes.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/mcp_oauth_store.go",
+      "sites": 10,
+      "native": 10,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/mobility_config.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/modification_checker.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/modification_history.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/modifications_api.go",
+      "sites": 12,
+      "native": 12,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/n8n_reminder.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/occupancy.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/opening_hours.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/public_unsubscribe.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/restaurant_profile.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/rice_types.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/salon_condesa.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/server.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/tenant.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/translations.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    },
+    {
+      "file": "internal/api/widget_routes.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": [],
+      "audit_failures": 0
+    }
+  ],
+  "runtime_verified": false,
+  "syntax_complete": true,
+  "pg_ready": false
+}

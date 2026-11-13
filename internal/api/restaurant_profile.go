@@ -52,7 +52,7 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 	// restaurant_info.website, so that column wins and the legacy
 	// restaurants.website_url stays only as fallback; blank or NULL collapses
 	// to '' so callers can skip the website block.
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT
 			COALESCE(NULLIF(TRIM(rb.brand_name), ''), r.name) AS brand_name,
 			rb.logo_url,
@@ -71,7 +71,7 @@ func (s *Server) loadRestaurantBranding(ctx context.Context, restaurantID int) (
 		LEFT JOIN restaurant_info ri ON ri.restaurant_id = r.id
 		WHERE r.id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&brandName, &logoURL, &website, &primaryColor, &accentColor, &emailFromName, &emailFromAddress,
+	`), restaurantID).Scan(&brandName, &logoURL, &website, &primaryColor, &accentColor, &emailFromName, &emailFromAddress,
 		&address, &phone, &email, &menuURL, &managementPhone)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -137,13 +137,13 @@ func (s *Server) loadProvisionedUAZAPICredentials(ctx context.Context, restauran
 		token    sql.NullString
 		provider sql.NullString
 	)
-	err = s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT s.base_url, i.instance_token, s.provider
 		FROM restaurant_uazapi_instances i
 		JOIN uazapi_servers s ON s.id = i.server_id
 		WHERE i.restaurant_id = ? AND i.is_active = 1
 		LIMIT 1
-	`, restaurantID).Scan(&baseURL, &token, &provider)
+	`), restaurantID).Scan(&baseURL, &token, &provider)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || isSQLSchemaError(err) {
 			return "", "", nil
@@ -171,12 +171,12 @@ func (s *Server) loadRestaurantIntegrations(ctx context.Context, restaurantID in
 		uazToken   sql.NullString
 		numbersRaw sql.NullString
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT n8n_webhook_url, enabled_events_json, uazapi_url, uazapi_token, restaurant_whatsapp_numbers_json
 		FROM restaurant_integrations
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&webhook, &enabledRaw, &uazURL, &uazToken, &numbersRaw)
+	`), restaurantID).Scan(&webhook, &enabledRaw, &uazURL, &uazToken, &numbersRaw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return restaurantIntegrationsCfg{}, nil

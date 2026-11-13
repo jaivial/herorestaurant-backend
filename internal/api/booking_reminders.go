@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Scheduled booking reconfirmation (reminder) WhatsApp worker.
@@ -130,11 +131,11 @@ func (s *Server) runBookingReminderLoop(ctx context.Context) {
 
 func (s *Server) runBookingRemindersOnce(ctx context.Context) error {
 	scanCtx, cancel := context.WithTimeout(ctx, bookingReminderQueryTimeout)
-	rows, err := s.db.QueryContext(scanCtx, `
+	rows, err := s.db.QueryContext(scanCtx, portableSQL(`
 		SELECT restaurant_id, reconfirmation_days_before
 		FROM booking_notification_settings
 		WHERE send_reconfirmation = 1
-	`)
+	`))
 	if err != nil {
 		cancel()
 		return err
@@ -234,7 +235,11 @@ func (s *Server) deliverBookingReminders(ctx context.Context, restaurantID int, 
 		}
 		key := bookingReminderDeliveryKey(restaurantID, b.ID)
 		claimed, e := s.claimBookingReminder(ctx, restaurantID, b.ID, key)
-		if e != nil || !claimed {
+		if e != nil {
+			log.Printf("%s.reminder.claim_failed restaurant=%d booking=%d err=%v", bookingNotifCoordinationID, restaurantID, b.ID, e)
+			continue
+		}
+		if !claimed {
 			continue
 		}
 		log.Printf("%s.reminder.claimed restaurant=%d booking=%d", bookingNotifCoordinationID, restaurantID, b.ID)
@@ -272,7 +277,7 @@ func (s *Server) deliverBookingReminders(ctx context.Context, restaurantID int, 
 func (s *Server) dueBookingReminders(ctx context.Context, restaurantID int, from, to time.Time) ([]dueBookingReminder, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, bookingReminderQueryTimeout)
 	defer cancel()
-	rows, err := s.db.QueryContext(queryCtx, `
+	rows, err := s.db.QueryContext(queryCtx, nativeSQL(`
 		SELECT b.id, b.customer_name, b.contact_phone_country_code, b.contact_phone,
 		       DATE_FORMAT(b.reservation_date, '%Y-%m-%d') AS reservation_date,
 		       TIME_FORMAT(b.reservation_time, '%H:%i:%s') AS reservation_time,
@@ -288,7 +293,23 @@ func (s *Server) dueBookingReminders(ctx context.Context, restaurantID int, from
 		  AND (b.status IN ('pending','confirmed') OR b.status IS NULL OR b.status = '')
 		  AND TIMESTAMP(b.reservation_date, COALESCE(NULLIF(b.reservation_time, ''), '00:00:00')) BETWEEN ? AND ?
 		ORDER BY b.reservation_date, b.reservation_time
-	`, restaurantID, from.Format("2006-01-02 15:04:05"), to.Format("2006-01-02 15:04:05"))
+	`, `
+		SELECT b.id, b.customer_name, b.contact_phone_country_code, b.contact_phone,
+		       to_char(b.reservation_date, 'YYYY-MM-DD') AS reservation_date,
+		       to_char(b.reservation_time, 'HH24:MI:SS') AS reservation_time,
+		       b.party_size, b.arroz_type, b.arroz_servings, b."highChairs", b."babyStrollers",
+		       b.preferred_floor_number, sal.name, COALESCE(b.extras_json, ''),
+		       COALESCE(b.is_special_booking, 0), COALESCE(b.is_prereserva, 0), COALESCE(b.special_json, '')
+		FROM bookings b
+		LEFT JOIN restaurant_salons sal ON sal.id = b.preferred_salon_id AND sal.restaurant_id = b.restaurant_id
+		LEFT JOIN booking_reminder_deliveries d
+		       ON d.booking_id = b.id AND d.restaurant_id = b.restaurant_id AND d.status IN ('pending','sent')
+		WHERE b.restaurant_id = ?
+		  AND d.id IS NULL
+		  AND (b.status IN ('pending','confirmed') OR b.status IS NULL OR b.status = '')
+		  AND (b.reservation_date + COALESCE(b.reservation_time, TIME '00:00:00')) BETWEEN CAST(? AS timestamp) AND CAST(? AS timestamp)
+		ORDER BY b.reservation_date, b.reservation_time
+	`), restaurantID, from.Format("2006-01-02 15:04:05"), to.Format("2006-01-02 15:04:05"))
 	if err != nil {
 		return nil, err
 	}
@@ -310,10 +331,23 @@ func (s *Server) dueBookingReminders(ctx context.Context, restaurantID int, from
 // claimBookingReminder reserves the delivery slot. The unique delivery_key makes
 // the claim safe against concurrent instances and process restarts.
 func (s *Server) claimBookingReminder(ctx context.Context, restaurantID int, bookingID int64, key string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `
-		INSERT IGNORE INTO booking_reminder_deliveries (restaurant_id, booking_id, delivery_key, status)
+	// repair-ignore3: delivery_key varchar(128) is the idempotency identity;
+	// MySQL IGNORE / PG CAST(varchar(128)) silently cut it (two keys sharing a
+	// prefix -> the second reminder never claimed). Refuse instead; only the
+	// duplicate is a no-op (MySQL ODKU no-op, PG ON CONFLICT DO NOTHING).
+	if utf8.RuneCountInString(key) > 128 {
+		return false, fmt.Errorf("booking reminder key exceeds 128 characters")
+	}
+	res, err := s.db.ExecContext(ctx, nativeSQL(`
+		INSERT INTO booking_reminder_deliveries (restaurant_id, booking_id, delivery_key, status)
 		VALUES (?, ?, ?, 'pending')
-	`, restaurantID, bookingID, key)
+		ON DUPLICATE KEY UPDATE delivery_key = delivery_key
+	`, `
+		WITH v(restaurant_id, booking_id, delivery_key) AS (VALUES (CAST(? AS integer), CAST(? AS bigint), CAST(? AS varchar(128))))
+		INSERT INTO booking_reminder_deliveries (restaurant_id, booking_id, delivery_key, status)
+		SELECT v.restaurant_id, v.booking_id, v.delivery_key, 'pending' FROM v
+		ON CONFLICT (app.norm_ascii(delivery_key)) DO NOTHING
+	`), restaurantID, bookingID, key)
 	if err != nil {
 		return false, err
 	}
@@ -323,18 +357,22 @@ func (s *Server) claimBookingReminder(ctx context.Context, restaurantID int, boo
 
 // markBookingReminderFailed frees the claim so the next scan retries.
 func (s *Server) markBookingReminderFailed(ctx context.Context, key string, cause error) {
-	_, _ = s.db.ExecContext(ctx, `
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`
 		DELETE FROM booking_reminder_deliveries WHERE delivery_key = ? AND status = 'pending'
-	`, key)
+	`, `
+		DELETE FROM booking_reminder_deliveries WHERE app.norm_ascii(delivery_key) = app.norm_ascii(?) AND status = 'pending'
+	`), key)
 	_ = cause
 }
 
 func (s *Server) markBookingReminderSent(ctx context.Context, restaurantID int, bookingID int64, key string) {
-	_, _ = s.db.ExecContext(ctx, `
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE booking_reminder_deliveries SET status = 'sent', sent_at = NOW() WHERE delivery_key = ?
-	`, key)
+	`, `
+		UPDATE booking_reminder_deliveries SET status = 'sent', sent_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE app.norm_ascii(delivery_key) = app.norm_ascii(?)
+	`), key)
 	// Legacy flag kept in sync for the n8n reminder path; tolerated if absent.
-	_, _ = s.db.ExecContext(ctx, `UPDATE bookings SET reminder_sent = 1 WHERE restaurant_id = ? AND id = ?`, restaurantID, bookingID)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE bookings SET reminder_sent = 1 WHERE restaurant_id = ? AND id = ?`), restaurantID, bookingID)
 }
 
 func bookingReminderFloorDisplay(floor sql.NullInt64) string {

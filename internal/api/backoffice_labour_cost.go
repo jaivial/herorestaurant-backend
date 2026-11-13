@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type boMemberCompensation struct {
@@ -116,7 +117,7 @@ func (s *Server) handleBOMemberCompensationsList(w http.ResponseWriter, r *http.
 		httpx.WriteError(w, http.StatusBadRequest, "id invalido")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,pay_type,gross_amount,monthly_hours,employer_cost_pct,effective_from,effective_to,notes FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND deleted_at IS NULL ORDER BY effective_from DESC,id DESC`, a.ActiveRestaurantID, memberID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT id,pay_type,gross_amount,monthly_hours,employer_cost_pct,effective_from,effective_to,notes FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND deleted_at IS NULL ORDER BY effective_from DESC,id DESC`), a.ActiveRestaurantID, memberID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error leyendo salarios")
 		return
@@ -134,9 +135,15 @@ func (s *Server) handleBOMemberCompensationsList(w http.ResponseWriter, r *http.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "items": items})
 }
 
+// compensationOverlaps: from/to are Madrid-midnight time.Time (parseBODate). The
+// MySQL driver (loc=UTC) binds them as the previous UTC day 22:00/23:00 and
+// MySQL compares the DATE columns against that DATETIME. The PG twin keeps that
+// exact comparison (timestamp vs the UTC wall time of the instant) instead of a
+// date cast, which would change the second bound (sqldb_native_pg_v1). Note the
+// source quirk this preserves: effective_from <= to resolves to effective_from <= to_date-1.
 func compensationOverlaps(ctx context.Context, q boMemberScannerQueryer, restaurantID, memberID int, excludeID int64, from time.Time, to *time.Time) (bool, error) {
 	var exists int
-	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND deleted_at IS NULL AND id<>? AND effective_from<=COALESCE(?, '9999-12-31') AND COALESCE(effective_to,'9999-12-31')>=?)`, restaurantID, memberID, excludeID, to, from).Scan(&exists)
+	err := q.QueryRowContext(ctx, nativeSQL(`SELECT EXISTS(SELECT 1 FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND deleted_at IS NULL AND id<>? AND effective_from<=COALESCE(?, '9999-12-31') AND COALESCE(effective_to,'9999-12-31')>=?)`, `SELECT CASE WHEN EXISTS(SELECT 1 FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND deleted_at IS NULL AND id<>? AND CAST(effective_from AS timestamp)<=COALESCE(CAST(? AS timestamptz) AT TIME ZONE 'UTC', TIMESTAMP '9999-12-31 00:00:00') AND CAST(COALESCE(effective_to, DATE '9999-12-31') AS timestamp)>=(CAST(? AS timestamptz) AT TIME ZONE 'UTC')) THEN 1 ELSE 0 END`), restaurantID, memberID, excludeID, to, from).Scan(&exists)
 	return exists != 0, err
 }
 
@@ -173,7 +180,7 @@ func (s *Server) saveBOMemberCompensation(w http.ResponseWriter, r *http.Request
 	}
 	defer tx.Rollback()
 	var lockedMemberID int
-	if err = tx.QueryRowContext(r.Context(), `SELECT id FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1 FOR UPDATE`, a.ActiveRestaurantID, memberID).Scan(&lockedMemberID); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT id FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1 FOR UPDATE`), a.ActiveRestaurantID, memberID).Scan(&lockedMemberID); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Miembro no encontrado")
 		return
 	}
@@ -196,15 +203,19 @@ func (s *Server) saveBOMemberCompensation(w http.ResponseWriter, r *http.Request
 	}
 	action := "CREATE"
 	if id == 0 {
-		res, err := tx.ExecContext(r.Context(), `INSERT INTO member_compensations (restaurant_id,restaurant_member_id,pay_type,gross_amount,monthly_hours,employer_cost_pct,effective_from,effective_to,notes,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, memberID, in.PayType, in.GrossAmount, monthly, in.EmployerCostPct, from.Format("2006-01-02"), toValue, in.Notes, a.User.ID)
+		newID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO member_compensations (restaurant_id,restaurant_member_id,pay_type,gross_amount,monthly_hours,employer_cost_pct,effective_from,effective_to,notes,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, memberID, in.PayType, in.GrossAmount, monthly, in.EmployerCostPct, from.Format("2006-01-02"), toValue, in.Notes, a.User.ID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "No se pudo guardar salario")
 			return
 		}
-		id, _ = res.LastInsertId()
+		id = newID
 	} else {
 		action = "UPDATE"
-		res, err := tx.ExecContext(r.Context(), `UPDATE member_compensations SET pay_type=?,gross_amount=?,monthly_hours=?,employer_cost_pct=?,effective_from=?,effective_to=?,notes=? WHERE id=? AND restaurant_id=? AND restaurant_member_id=? AND deleted_at IS NULL`, in.PayType, in.GrossAmount, monthly, in.EmployerCostPct, from.Format("2006-01-02"), toValue, in.Notes, id, a.ActiveRestaurantID, memberID)
+		res, err := tx.ExecContext(r.Context(), nativeSQL(`UPDATE member_compensations SET pay_type=?,gross_amount=?,monthly_hours=?,employer_cost_pct=?,effective_from=?,effective_to=?,notes=? WHERE id=? AND restaurant_id=? AND restaurant_member_id=? AND deleted_at IS NULL`, `UPDATE member_compensations t SET pay_type=v.pt, gross_amount=v.ga, monthly_hours=v.mh, employer_cost_pct=v.ec, effective_from=v.ef, effective_to=v.et, notes=v.nt
+		FROM (VALUES (CAST(? AS "enum__member_compensations__pay_type"), CAST(? AS numeric(12,2)), CAST(? AS numeric(7,2)), CAST(? AS numeric(5,2)), CAST(? AS date), CAST(? AS date), CAST(? AS text))) AS v(pt, ga, mh, ec, ef, et, nt)
+		WHERE t.id=? AND t.restaurant_id=? AND t.restaurant_member_id=? AND t.deleted_at IS NULL
+		  AND (t.pay_type, t.gross_amount, t.monthly_hours, t.employer_cost_pct, t.effective_from, t.effective_to, t.notes COLLATE "C")
+		      IS DISTINCT FROM (v.pt, v.ga, v.mh, v.ec, v.ef, v.et, v.nt COLLATE "C")`), in.PayType, in.GrossAmount, monthly, in.EmployerCostPct, from.Format("2006-01-02"), toValue, in.Notes, id, a.ActiveRestaurantID, memberID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "No se pudo guardar salario")
 			return
@@ -215,7 +226,7 @@ func (s *Server) saveBOMemberCompensation(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO member_compensation_audit (restaurant_id,compensation_id,action,snapshot,actor_user_id) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, id, action, compensationSnapshot(in, memberID), a.User.ID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO member_compensation_audit (restaurant_id,compensation_id,action,snapshot,actor_user_id) VALUES (?,?,?,?,?)`, `INSERT INTO member_compensation_audit (restaurant_id,compensation_id,action,snapshot,actor_user_id) VALUES (?,?,?,CAST(? AS jsonb),?)`), a.ActiveRestaurantID, id, action, compensationSnapshot(in, memberID), a.User.ID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error auditando salario")
 		return
 	}
@@ -251,15 +262,15 @@ func (s *Server) handleBOMemberCompensationDelete(w http.ResponseWriter, r *http
 	}
 	defer tx.Rollback()
 	var snapshot []byte
-	if err = tx.QueryRowContext(r.Context(), `SELECT JSON_OBJECT('restaurantMemberId',restaurant_member_id,'payType',pay_type,'grossAmount',gross_amount,'monthlyHours',monthly_hours,'employerCostPct',employer_cost_pct,'effectiveFrom',effective_from,'effectiveTo',effective_to,'notes',notes) FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND id=? AND deleted_at IS NULL FOR UPDATE`, a.ActiveRestaurantID, memberID, id).Scan(&snapshot); err != nil {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT JSON_OBJECT('restaurantMemberId',restaurant_member_id,'payType',pay_type,'grossAmount',gross_amount,'monthlyHours',monthly_hours,'employerCostPct',employer_cost_pct,'effectiveFrom',effective_from,'effectiveTo',effective_to,'notes',notes) FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND id=? AND deleted_at IS NULL FOR UPDATE`, `SELECT jsonb_build_object('restaurantMemberId',restaurant_member_id,'payType',pay_type,'grossAmount',gross_amount,'monthlyHours',monthly_hours,'employerCostPct',employer_cost_pct,'effectiveFrom',effective_from,'effectiveTo',effective_to,'notes',notes)::text FROM member_compensations WHERE restaurant_id=? AND restaurant_member_id=? AND id=? AND deleted_at IS NULL FOR UPDATE`), a.ActiveRestaurantID, memberID, id).Scan(&snapshot); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Salario no encontrado")
 		return
 	}
-	if _, err = tx.ExecContext(r.Context(), `UPDATE member_compensations SET deleted_at=NOW() WHERE restaurant_id=? AND restaurant_member_id=? AND id=?`, a.ActiveRestaurantID, memberID, id); err != nil {
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE member_compensations SET deleted_at=NOW() WHERE restaurant_id=? AND restaurant_member_id=? AND id=?`, `UPDATE member_compensations SET deleted_at=date_trunc('second', statement_timestamp()) WHERE restaurant_id=? AND restaurant_member_id=? AND id=?`), a.ActiveRestaurantID, memberID, id); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando salario")
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO member_compensation_audit (restaurant_id,compensation_id,action,snapshot,actor_user_id) VALUES (?,?,'DELETE',?,?)`, a.ActiveRestaurantID, id, snapshot, a.User.ID)
+	_, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO member_compensation_audit (restaurant_id,compensation_id,action,snapshot,actor_user_id) VALUES (?,?,'DELETE',?,?)`, `INSERT INTO member_compensation_audit (restaurant_id,compensation_id,action,snapshot,actor_user_id) VALUES (?,?,'DELETE',CAST(? AS jsonb),?)`), a.ActiveRestaurantID, id, snapshot, a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error auditando salario")
 		return
@@ -283,7 +294,14 @@ func (s *Server) handleBOFichajeLabourCost(w http.ResponseWriter, r *http.Reques
 		httpx.WriteError(w, http.StatusBadRequest, "to invalido")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT e.restaurant_member_id,CONCAT(m.first_name,' ',m.last_name),SUM(e.minutes_worked),SUM(CASE WHEN c.id IS NULL THEN 0 ELSE e.minutes_worked/60*(CASE c.pay_type WHEN 'MONTHLY' THEN c.gross_amount/c.monthly_hours ELSE c.gross_amount END)*(1+c.employer_cost_pct/100) END),MAX(c.id IS NULL) FROM member_time_entries e JOIN restaurant_members m ON m.restaurant_id=e.restaurant_id AND m.id=e.restaurant_member_id LEFT JOIN member_compensations c ON c.restaurant_id=e.restaurant_id AND c.restaurant_member_id=e.restaurant_member_id AND c.deleted_at IS NULL AND e.work_date BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE e.restaurant_id=? AND e.work_date BETWEEN ? AND ? GROUP BY e.restaurant_member_id,m.first_name,m.last_name ORDER BY m.last_name,m.first_name`, a.ActiveRestaurantID, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT e.restaurant_member_id,CONCAT(m.first_name,' ',m.last_name),SUM(e.minutes_worked),SUM(CASE WHEN c.id IS NULL THEN 0 ELSE e.minutes_worked/60*(CASE c.pay_type WHEN 'MONTHLY' THEN c.gross_amount/c.monthly_hours ELSE c.gross_amount END)*(1+c.employer_cost_pct/100) END),MAX(c.id IS NULL) FROM member_time_entries e JOIN restaurant_members m ON m.restaurant_id=e.restaurant_id AND m.id=e.restaurant_member_id LEFT JOIN member_compensations c ON c.restaurant_id=e.restaurant_id AND c.restaurant_member_id=e.restaurant_member_id AND c.deleted_at IS NULL AND e.work_date BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE e.restaurant_id=? AND e.work_date BETWEEN ? AND ? GROUP BY e.restaurant_member_id,m.first_name,m.last_name ORDER BY m.last_name,m.first_name`, `SELECT e.restaurant_member_id, (m.first_name || ' ' || m.last_name), SUM(e.minutes_worked),
+		SUM(CASE WHEN c.id IS NULL THEN 0 ELSE ROUND(e.minutes_worked::numeric/60, 4)
+			* (CASE c.pay_type WHEN 'MONTHLY' THEN ROUND(c.gross_amount/NULLIF(c.monthly_hours, 0), 6) ELSE c.gross_amount END)
+			* (1 + ROUND(c.employer_cost_pct/100, 6)) END),
+		MAX(CASE WHEN c.id IS NULL THEN 1 ELSE 0 END)
+		FROM member_time_entries e JOIN restaurant_members m ON m.restaurant_id=e.restaurant_id AND m.id=e.restaurant_member_id
+		LEFT JOIN member_compensations c ON c.restaurant_id=e.restaurant_id AND c.restaurant_member_id=e.restaurant_member_id AND c.deleted_at IS NULL AND e.work_date BETWEEN c.effective_from AND COALESCE(c.effective_to, DATE '9999-12-31')
+		WHERE e.restaurant_id=? AND e.work_date BETWEEN ? AND ? GROUP BY e.restaurant_member_id, m.first_name, m.last_name ORDER BY m.last_name COLLATE "es-x-icu", m.first_name COLLATE "es-x-icu"`), a.ActiveRestaurantID, from.Format("2006-01-02"), to.Format("2006-01-02"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error calculando coste laboral")
 		return
@@ -312,7 +330,7 @@ func (s *Server) handleBOFichajeLabourCost(w http.ResponseWriter, r *http.Reques
 }
 
 func loadStockRecipeLabourCosts(ctx context.Context, tx *sql.Tx, restaurantID int, effectiveDate time.Time) (map[int64]float64, map[int64][]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT l.recipe_id,l.minutes_per_batch,CONCAT(m.first_name,' ',m.last_name),c.pay_type,c.gross_amount,c.monthly_hours,c.employer_cost_pct FROM stock_recipe_labour l JOIN restaurant_members m ON m.restaurant_id=l.restaurant_id AND m.id=l.restaurant_member_id LEFT JOIN member_compensations c ON c.restaurant_id=l.restaurant_id AND c.restaurant_member_id=l.restaurant_member_id AND c.deleted_at IS NULL AND ? BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE l.restaurant_id=?`, effectiveDate.Format("2006-01-02"), restaurantID)
+	rows, err := tx.QueryContext(ctx, nativeSQL(`SELECT l.recipe_id,l.minutes_per_batch,CONCAT(m.first_name,' ',m.last_name),c.pay_type,c.gross_amount,c.monthly_hours,c.employer_cost_pct FROM stock_recipe_labour l JOIN restaurant_members m ON m.restaurant_id=l.restaurant_id AND m.id=l.restaurant_member_id LEFT JOIN member_compensations c ON c.restaurant_id=l.restaurant_id AND c.restaurant_member_id=l.restaurant_member_id AND c.deleted_at IS NULL AND ? BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE l.restaurant_id=?`, `SELECT l.recipe_id,l.minutes_per_batch,(m.first_name || ' ' || m.last_name),c.pay_type,c.gross_amount,c.monthly_hours,c.employer_cost_pct FROM stock_recipe_labour l JOIN restaurant_members m ON m.restaurant_id=l.restaurant_id AND m.id=l.restaurant_member_id LEFT JOIN member_compensations c ON c.restaurant_id=l.restaurant_id AND c.restaurant_member_id=l.restaurant_member_id AND c.deleted_at IS NULL AND ? BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE l.restaurant_id=?`), effectiveDate.Format("2006-01-02"), restaurantID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -345,7 +363,7 @@ func loadStockRecipeLabourCosts(ctx context.Context, tx *sql.Tx, restaurantID in
 func (s *Server) handleBOStockLabourMembers(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	today := boTodayDate()
-	rows, err := s.db.QueryContext(r.Context(), `SELECT m.id,CONCAT(m.first_name,' ',m.last_name),c.pay_type,c.gross_amount,c.monthly_hours,c.employer_cost_pct FROM restaurant_members m LEFT JOIN member_compensations c ON c.restaurant_id=m.restaurant_id AND c.restaurant_member_id=m.id AND c.deleted_at IS NULL AND ? BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE m.restaurant_id=? AND m.is_active=1 ORDER BY m.last_name,m.first_name`, today.Format("2006-01-02"), a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT m.id,CONCAT(m.first_name,' ',m.last_name),c.pay_type,c.gross_amount,c.monthly_hours,c.employer_cost_pct FROM restaurant_members m LEFT JOIN member_compensations c ON c.restaurant_id=m.restaurant_id AND c.restaurant_member_id=m.id AND c.deleted_at IS NULL AND ? BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE m.restaurant_id=? AND m.is_active=1 ORDER BY m.last_name,m.first_name`, `SELECT m.id,(m.first_name || ' ' || m.last_name),c.pay_type,c.gross_amount,c.monthly_hours,c.employer_cost_pct FROM restaurant_members m LEFT JOIN member_compensations c ON c.restaurant_id=m.restaurant_id AND c.restaurant_member_id=m.id AND c.deleted_at IS NULL AND ? BETWEEN c.effective_from AND COALESCE(c.effective_to,'9999-12-31') WHERE m.restaurant_id=? AND m.is_active=1 ORDER BY m.last_name COLLATE "es-x-icu",m.first_name COLLATE "es-x-icu"`), today.Format("2006-01-02"), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading labour members")
 		return

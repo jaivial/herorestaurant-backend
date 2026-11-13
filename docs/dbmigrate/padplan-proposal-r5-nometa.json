@@ -1,0 +1,3731 @@
+{
+  "applied": false,
+  "collation_metadata_source": "",
+  "collations": 0,
+  "proposals": [
+    {
+      "table": "POSTRES",
+      "index": "uq_postres_restaurant_ui_data",
+      "pg_index_name": "ixpad__POSTRES__uq_postres_restaurant_ui_data",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "ui_data_id",
+          "expression": "\"ui_data_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "accounting_exports",
+      "index": "uq_accounting_export_hash",
+      "pg_index_name": "ixpad__accounting_exports__uq_accounting_export_hash",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "export_type",
+          "expression": "\"export_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "enum"
+        },
+        {
+          "column": "period_from",
+          "expression": "\"period_from\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "date"
+        },
+        {
+          "column": "period_to",
+          "expression": "\"period_to\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "date"
+        },
+        {
+          "column": "payload_hash",
+          "expression": "\"payload_hash\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "enum_input_trailing_space_parity_gated:export_type",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "admin_sessions",
+      "index": "uniq_admin_sessions_session_id",
+      "pg_index_name": "ixpad__admin_sessions__uniq_admin_sessions_session_id",
+      "parts": [
+        {
+          "column": "session_id",
+          "expression": "\"session_id\"",
+          "source_collation": "utf8mb4_general_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_general_ci"
+      ]
+    },
+    {
+      "table": "ai_image_models",
+      "index": "uniq_ai_image_models_provider_slug",
+      "pg_index_name": "ixpad__ai_image_models__uniq_ai_image_models_provider_slug",
+      "parts": [
+        {
+          "column": "provider_slug",
+          "expression": "\"provider_slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "ai_image_providers",
+      "index": "uniq_ai_image_providers_slug",
+      "pg_index_name": "ixpad__ai_image_providers__uniq_ai_image_providers_slug",
+      "parts": [
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "analytics_customer_sources",
+      "index": "uq_analytics_customer_source",
+      "pg_index_name": "ixpad__analytics_customer_sources__uq_analytics_customer_source",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "source_type",
+          "expression": "\"source_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "source_ref",
+          "expression": "\"source_ref\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "analytics_customers",
+      "index": "uq_analytics_customers_identity",
+      "pg_index_name": "ixpad__analytics_customers__uq_analytics_customers_identity",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "identity_key",
+          "expression": "\"identity_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "analytics_sales_documents",
+      "index": "uq_analytics_sales_document_source",
+      "pg_index_name": "ixpad__analytics_sales_documents__uq_analytics_sales_d_70a4f08e",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "source_type",
+          "expression": "\"source_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "enum"
+        },
+        {
+          "column": "source_id",
+          "expression": "\"source_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        }
+      ],
+      "status": "gated_no_pad_expression",
+      "gates": [
+        "enum_input_trailing_space_parity_gated:source_type"
+      ]
+    },
+    {
+      "table": "analytics_stock_facts",
+      "index": "uq_analytics_stock_fact_source",
+      "pg_index_name": "ixpad__analytics_stock_facts__uq_analytics_stock_fact_source",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "source_type",
+          "expression": "\"source_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "source_id",
+          "expression": "\"source_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "app_settings",
+      "index": "uniq_app_settings_k",
+      "pg_index_name": "ixpad__app_settings__uniq_app_settings_k",
+      "parts": [
+        {
+          "column": "k",
+          "expression": "\"k\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "assistant_memory_edges",
+      "index": "uq_edge",
+      "pg_index_name": "ixpad__assistant_memory_edges__uq_edge",
+      "parts": [
+        {
+          "column": "from_node",
+          "expression": "\"from_node\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        },
+        {
+          "column": "to_node",
+          "expression": "\"to_node\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        },
+        {
+          "column": "rel",
+          "expression": "\"rel\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "assistant_memory_nodes",
+      "index": "uq_memory_scope_label",
+      "pg_index_name": "ixpad__assistant_memory_nodes__uq_memory_scope_label",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "user_id",
+          "expression": "\"user_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "label",
+          "expression": "\"label\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "assistant_sessions",
+      "index": "uq_assistant_sessions_token",
+      "pg_index_name": "ixpad__assistant_sessions__uq_assistant_sessions_token",
+      "parts": [
+        {
+          "column": "session_token",
+          "expression": "\"session_token\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "bo_member_invitation_tokens",
+      "index": "uniq_bo_member_invitation_tokens_guid",
+      "pg_index_name": "ixpad__bo_member_invitation_tokens__uniq_bo_member_inv_b1aeb2d9",
+      "parts": [
+        {
+          "column": "onboarding_guid",
+          "expression": "\"onboarding_guid\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "bo_member_invitation_tokens",
+      "index": "uniq_bo_member_invitation_tokens_token",
+      "pg_index_name": "ixpad__bo_member_invitation_tokens__uniq_bo_member_inv_a551d2cc",
+      "parts": [
+        {
+          "column": "token_sha256",
+          "expression": "\"token_sha256\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "bo_password_reset_tokens",
+      "index": "uniq_bo_password_reset_tokens_token",
+      "pg_index_name": "ixpad__bo_password_reset_tokens__uniq_bo_password_rese_abfbaead",
+      "parts": [
+        {
+          "column": "token_sha256",
+          "expression": "\"token_sha256\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "bo_role_permissions",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__bo_role_permissions__PRIMARY",
+      "parts": [
+        {
+          "column": "role_slug",
+          "expression": "\"role_slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "section_key",
+          "expression": "\"section_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "bo_roles",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__bo_roles__PRIMARY",
+      "parts": [
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "bo_sessions",
+      "index": "uniq_bo_sessions_token",
+      "pg_index_name": "ixpad__bo_sessions__uniq_bo_sessions_token",
+      "parts": [
+        {
+          "column": "token_sha256",
+          "expression": "\"token_sha256\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "bo_users",
+      "index": "uniq_bo_users_email",
+      "pg_index_name": "ixpad__bo_users__uniq_bo_users_email",
+      "parts": [
+        {
+          "column": "email",
+          "expression": "\"email\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "bo_users",
+      "index": "uniq_bo_users_username",
+      "pg_index_name": "ixpad__bo_users__uniq_bo_users_username",
+      "parts": [
+        {
+          "column": "username",
+          "expression": "\"username\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "booking_checkouts",
+      "index": "uq_booking_checkouts_public",
+      "pg_index_name": "ixpad__booking_checkouts__uq_booking_checkouts_public",
+      "parts": [
+        {
+          "column": "public_id",
+          "expression": "\"public_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "booking_reminder_deliveries",
+      "index": "uq_booking_reminder_key",
+      "pg_index_name": "ixpad__booking_reminder_deliveries__uq_booking_reminder_key",
+      "parts": [
+        {
+          "column": "delivery_key",
+          "expression": "\"delivery_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "bot_inbound_queue",
+      "index": "uq_inbound_msg",
+      "pg_index_name": "ixpad__bot_inbound_queue__uq_inbound_msg",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "message_id",
+          "expression": "\"message_id\"",
+          "source_collation": "utf8mb4_0900_ai_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_0900_ai_ci"
+      ]
+    },
+    {
+      "table": "campaign_bounce_events",
+      "index": "uq_bounce_event",
+      "pg_index_name": "ixpad__campaign_bounce_events__uq_bounce_event",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "event_key",
+          "expression": "\"event_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "campaign_recipients",
+      "index": "uq_campaign_target",
+      "pg_index_name": "ixpad__campaign_recipients__uq_campaign_target",
+      "parts": [
+        {
+          "column": "campaign_id",
+          "expression": "\"campaign_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        },
+        {
+          "column": "channel",
+          "expression": "\"channel\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "target",
+          "expression": "\"target\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "campaign_suppressions",
+      "index": "uq_suppression",
+      "pg_index_name": "ixpad__campaign_suppressions__uq_suppression",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "channel",
+          "expression": "\"channel\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "target",
+          "expression": "\"target\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "campaigns",
+      "index": "uq_campaign_coord",
+      "pg_index_name": "ixpad__campaigns__uq_campaign_coord",
+      "parts": [
+        {
+          "column": "coord_id",
+          "expression": "\"coord_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "chatgpt_plugin_tokens",
+      "index": "uq_chatgpt_plugin_tokens_hash",
+      "pg_index_name": "ixpad__chatgpt_plugin_tokens__uq_chatgpt_plugin_tokens_hash",
+      "parts": [
+        {
+          "column": "token_hash",
+          "expression": "\"token_hash\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "comida_bebida_categories",
+      "index": "uniq_comida_bebida_categories_restaurant_slug",
+      "pg_index_name": "ixpad__comida_bebida_categories__uniq_comida_bebida_ca_d53427b6",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "comida_bulk_link_batches",
+      "index": "uq_comida_bulk_link_idem",
+      "pg_index_name": "ixpad__comida_bulk_link_batches__uq_comida_bulk_link_idem",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "comida_categories",
+      "index": "uniq_comida_categories_restaurant_type_slug",
+      "pg_index_name": "ixpad__comida_categories__uniq_comida_categories_resta_83a5cbf6",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "food_type",
+          "expression": "\"food_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "comida_items",
+      "index": "uq_comida_items_restaurant_ui_data",
+      "pg_index_name": "ixpad__comida_items__uq_comida_items_restaurant_ui_data",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "ui_data_id",
+          "expression": "\"ui_data_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "comida_plato_categories",
+      "index": "uniq_comida_plato_categories_restaurant_slug",
+      "pg_index_name": "ixpad__comida_plato_categories__uniq_comida_plato_cate_9b85ca31",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "conversation_sessions",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__conversation_sessions__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "discount_tokens",
+      "index": "idx_token",
+      "pg_index_name": "ixpad__discount_tokens__idx_token",
+      "parts": [
+        {
+          "column": "token",
+          "expression": "\"token\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "dish_translations",
+      "index": "uniq_dish_translation",
+      "pg_index_name": "ixpad__dish_translations__uniq_dish_translation",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "entity_type",
+          "expression": "\"entity_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "entity_id",
+          "expression": "\"entity_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        },
+        {
+          "column": "field_name",
+          "expression": "\"field_name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "lang",
+          "expression": "\"lang\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "forky_confirmation_tokens",
+      "index": "uq_forky_conf_token_hash",
+      "pg_index_name": "ixpad__forky_confirmation_tokens__uq_forky_conf_token_hash",
+      "parts": [
+        {
+          "column": "token_hash",
+          "expression": "\"token_hash\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "group_menu_section_dishes_v2",
+      "index": "uq_group_menu_dishes_restaurant_ui_data",
+      "pg_index_name": "ixpad__group_menu_section_dishes_v2__uq_group_menu_dis_823c83d1",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "ui_data_id",
+          "expression": "\"ui_data_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "invoice_wa_sends",
+      "index": "uq_invoice_wa_sends_key",
+      "pg_index_name": "ixpad__invoice_wa_sends__uq_invoice_wa_sends_key",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "legacy_dish_map",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__legacy_dish_map__PRIMARY",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "legacy_table",
+          "expression": "\"legacy_table\"",
+          "source_collation": "utf8mb4_0900_ai_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "legacy_num",
+          "expression": "\"legacy_num\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_0900_ai_ci"
+      ]
+    },
+    {
+      "table": "legal_pages",
+      "index": "uniq_legal_pages_restaurant_slug",
+      "pg_index_name": "ixpad__legal_pages__uniq_legal_pages_restaurant_slug",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "mcp_oauth_clients",
+      "index": "uq_mcp_oauth_clients_client_id",
+      "pg_index_name": "ixpad__mcp_oauth_clients__uq_mcp_oauth_clients_client_id",
+      "parts": [
+        {
+          "column": "client_id",
+          "expression": "\"client_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "mcp_oauth_codes",
+      "index": "uq_mcp_oauth_codes_hash",
+      "pg_index_name": "ixpad__mcp_oauth_codes__uq_mcp_oauth_codes_hash",
+      "parts": [
+        {
+          "column": "code_hash",
+          "expression": "\"code_hash\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "mcp_oauth_tokens",
+      "index": "uq_mcp_oauth_tokens_hash",
+      "pg_index_name": "ixpad__mcp_oauth_tokens__uq_mcp_oauth_tokens_hash",
+      "parts": [
+        {
+          "column": "token_hash",
+          "expression": "\"token_hash\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "member_time_allocations",
+      "index": "uq_member_time_allocation_idempotency",
+      "pg_index_name": "ixpad__member_time_allocations__uq_member_time_allocat_b4151cea",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "menu_visibility",
+      "index": "uniq_menu_visibility_restaurant_key",
+      "pg_index_name": "ixpad__menu_visibility__uniq_menu_visibility_restaurant_key",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "menu_key",
+          "expression": "\"menu_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "menu_weekday_availability",
+      "index": "uq_menu_weekday_availability",
+      "pg_index_name": "ixpad__menu_weekday_availability__uq_menu_weekday_availability",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "menu_id",
+          "expression": "\"menu_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "weekday",
+          "expression": "\"weekday\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "menus",
+      "index": "idx_menus_restaurant_seo_slug",
+      "pg_index_name": "ixpad__menus__idx_menus_restaurant_seo_slug",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "seo_slug",
+          "expression": "\"seo_slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "message_deliveries",
+      "index": "uniq_message_deliveries_delivery_key",
+      "pg_index_name": "ixpad__message_deliveries__uniq_message_deliveries_delivery_key",
+      "parts": [
+        {
+          "column": "delivery_key",
+          "expression": "\"delivery_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "migration_runs",
+      "index": "run_key",
+      "pg_index_name": "ixpad__migration_runs__run_key",
+      "parts": [
+        {
+          "column": "run_key",
+          "expression": "\"run_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "no_marketing",
+      "index": "idx_no_marketing_phone",
+      "pg_index_name": "ixpad__no_marketing__idx_no_marketing_phone",
+      "parts": [
+        {
+          "column": "contact_phone",
+          "expression": "\"contact_phone\"",
+          "source_collation": "utf8mb4_general_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_general_ci"
+      ]
+    },
+    {
+      "table": "platform_settings",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__platform_settings__PRIMARY",
+      "parts": [
+        {
+          "column": "setting_key",
+          "expression": "\"setting_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_cash_closures",
+      "index": "uq_pos_cash_closure_idempotency",
+      "pg_index_name": "ixpad__pos_cash_closures__uq_pos_cash_closure_idempotency",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_cash_movements",
+      "index": "uq_pos_cash_movement_idempotency",
+      "pg_index_name": "ixpad__pos_cash_movements__uq_pos_cash_movement_idempotency",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_cover_adjustments",
+      "index": "uq_pos_cover_adjustment_idempotency",
+      "pg_index_name": "ixpad__pos_cover_adjustments__uq_pos_cover_adjustment__f16820e6",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_customers",
+      "index": "uq_pos_customers_email",
+      "pg_index_name": "ixpad__pos_customers__uq_pos_customers_email",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "email",
+          "expression": "\"email\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_customers",
+      "index": "uq_pos_customers_phone",
+      "pg_index_name": "ixpad__pos_customers__uq_pos_customers_phone",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "phone",
+          "expression": "\"phone\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_daily_sequences",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__pos_daily_sequences__PRIMARY",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "business_date",
+          "expression": "\"business_date\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "date"
+        },
+        {
+          "column": "sequence_type",
+          "expression": "\"sequence_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_drawer_events",
+      "index": "uq_pos_drawer_event_idempotency",
+      "pg_index_name": "ixpad__pos_drawer_events__uq_pos_drawer_event_idempotency",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_fiscal_documents",
+      "index": "uq_pos_fiscal_documents_full",
+      "pg_index_name": "ixpad__pos_fiscal_documents__uq_pos_fiscal_documents_full",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "full_number",
+          "expression": "\"full_number\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "copy_number",
+          "expression": "\"copy_number\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_fiscal_series",
+      "index": "uq_pos_fiscal_series_scope",
+      "pg_index_name": "ixpad__pos_fiscal_series__uq_pos_fiscal_series_scope",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "terminal_key",
+          "expression": "\"terminal_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "series_type",
+          "expression": "\"series_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "enum"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "enum_input_trailing_space_parity_gated:series_type"
+      ]
+    },
+    {
+      "table": "pos_kitchen_dispatches",
+      "index": "uq_pos_kitchen_dispatch_command",
+      "pg_index_name": "ixpad__pos_kitchen_dispatches__uq_pos_kitchen_dispatch_command",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "station_id",
+          "expression": "\"station_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        },
+        {
+          "column": "command_key",
+          "expression": "\"command_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_kitchen_stations",
+      "index": "uq_pos_kitchen_station_name",
+      "pg_index_name": "ixpad__pos_kitchen_stations__uq_pos_kitchen_station_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_modifier_groups",
+      "index": "uq_pos_modifier_group_name",
+      "pg_index_name": "ixpad__pos_modifier_groups__uq_pos_modifier_group_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_modifier_options",
+      "index": "uq_pos_modifier_option_name",
+      "pg_index_name": "ixpad__pos_modifier_options__uq_pos_modifier_option_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "group_id",
+          "expression": "\"group_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_packs",
+      "index": "uq_pos_pack_name",
+      "pg_index_name": "ixpad__pos_packs__uq_pos_pack_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_payments",
+      "index": "uq_pos_payment_idempotency",
+      "pg_index_name": "ixpad__pos_payments__uq_pos_payment_idempotency",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_payments",
+      "index": "uq_pos_payment_provider_ref",
+      "pg_index_name": "ixpad__pos_payments__uq_pos_payment_provider_ref",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "provider",
+          "expression": "\"provider\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "provider_reference",
+          "expression": "\"provider_reference\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_product_categories",
+      "index": "uq_pos_product_category_name",
+      "pg_index_name": "ixpad__pos_product_categories__uq_pos_product_category_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_products",
+      "index": "uq_pos_product_sku",
+      "pg_index_name": "ixpad__pos_products__uq_pos_product_sku",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "sku",
+          "expression": "\"sku\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_products",
+      "index": "uq_pos_product_source",
+      "pg_index_name": "ixpad__pos_products__uq_pos_product_source",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "source_type",
+          "expression": "\"source_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "enum"
+        },
+        {
+          "column": "source_id",
+          "expression": "\"source_id\"",
+          "nullable": true,
+          "generated": false,
+          "kind": "bigint"
+        }
+      ],
+      "status": "gated_no_pad_expression",
+      "gates": [
+        "enum_input_trailing_space_parity_gated:source_type"
+      ]
+    },
+    {
+      "table": "pos_refunds",
+      "index": "uq_pos_refund_idempotency",
+      "pg_index_name": "ixpad__pos_refunds__uq_pos_refund_idempotency",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_role_permissions",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__pos_role_permissions__PRIMARY",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "role_slug",
+          "expression": "\"role_slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "permission_key",
+          "expression": "\"permission_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_service_periods",
+      "index": "uq_pos_service_period_name",
+      "pg_index_name": "ixpad__pos_service_periods__uq_pos_service_period_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_shifts",
+      "index": "uq_pos_shift_open_terminal",
+      "pg_index_name": "ixpad__pos_shifts__uq_pos_shift_open_terminal",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "open_terminal_key",
+          "expression": "\"open_terminal_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": true,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "generated_column_pg_expression_review:open_terminal_key",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_stock_exceptions",
+      "index": "uq_pos_stock_exception_replay",
+      "pg_index_name": "ixpad__pos_stock_exceptions__uq_pos_stock_exception_replay",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "replay_idempotency_key",
+          "expression": "\"replay_idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_tags",
+      "index": "uq_pos_tag_name",
+      "pg_index_name": "ixpad__pos_tags__uq_pos_tag_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_ticket_adjustments",
+      "index": "uq_pos_ticket_adjustment_idempotency",
+      "pg_index_name": "ixpad__pos_ticket_adjustments__uq_pos_ticket_adjustmen_610cf45e",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_ticket_lines",
+      "index": "uq_pos_ticket_line_idempotency",
+      "pg_index_name": "ixpad__pos_ticket_lines__uq_pos_ticket_line_idempotency",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_tickets",
+      "index": "uq_pos_ticket_checkout",
+      "pg_index_name": "ixpad__pos_tickets__uq_pos_ticket_checkout",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "checkout_idempotency_key",
+          "expression": "\"checkout_idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_tickets",
+      "index": "uq_pos_ticket_creation",
+      "pg_index_name": "ixpad__pos_tickets__uq_pos_ticket_creation",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "creation_idempotency_key",
+          "expression": "\"creation_idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_tickets",
+      "index": "uq_pos_ticket_number",
+      "pg_index_name": "ixpad__pos_tickets__uq_pos_ticket_number",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "ticket_number",
+          "expression": "\"ticket_number\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_visit_merges",
+      "index": "uq_pos_visit_merges_restaurant_key",
+      "pg_index_name": "ixpad__pos_visit_merges__uq_pos_visit_merges_restaurant_key",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_visits",
+      "index": "uq_pos_visit_open_idempotency",
+      "pg_index_name": "ixpad__pos_visits__uq_pos_visit_open_idempotency",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "open_idempotency_key",
+          "expression": "\"open_idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "pos_visits",
+      "index": "uq_pos_visit_open_table",
+      "pg_index_name": "ixpad__pos_visits__uq_pos_visit_open_table",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "open_table_id",
+          "expression": "\"open_table_id\"",
+          "nullable": true,
+          "generated": true,
+          "kind": "int"
+        }
+      ],
+      "status": "gated_no_pad_expression",
+      "gates": [
+        "generated_column_pg_expression_review:open_table_id"
+      ]
+    },
+    {
+      "table": "reservation_location_occupancy",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__reservation_location_occupancy__PRIMARY",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "date",
+          "expression": "\"date\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "date"
+        },
+        {
+          "column": "scope",
+          "expression": "\"scope\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "enum"
+        },
+        {
+          "column": "target_id",
+          "expression": "\"target_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        }
+      ],
+      "status": "gated_no_pad_expression",
+      "gates": [
+        "enum_input_trailing_space_parity_gated:scope"
+      ]
+    },
+    {
+      "table": "restaurant_ai_provider_keys",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__restaurant_ai_provider_keys__PRIMARY",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "provider",
+          "expression": "\"provider\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_areas",
+      "index": "uniq_restaurant_areas_restaurant_name",
+      "pg_index_name": "ixpad__restaurant_areas__uniq_restaurant_areas_restaurant_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_beverage_options",
+      "index": "uq_restaurant_beverage_option_slug",
+      "pg_index_name": "ixpad__restaurant_beverage_options__uq_restaurant_beve_2945eb03",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_booking_extras",
+      "index": "uq_restaurant_booking_extras_slug",
+      "pg_index_name": "ixpad__restaurant_booking_extras__uq_restaurant_bookin_038fec0f",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_domains",
+      "index": "uniq_restaurant_domains_domain",
+      "pg_index_name": "ixpad__restaurant_domains__uniq_restaurant_domains_domain",
+      "parts": [
+        {
+          "column": "domain",
+          "expression": "\"domain\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_floors",
+      "index": "uniq_restaurant_floors_scope",
+      "pg_index_name": "ixpad__restaurant_floors__uniq_restaurant_floors_scope",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "floor_number",
+          "expression": "\"floor_number\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "scope_key",
+          "expression": "\"scope_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": true,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "generated_column_pg_expression_review:scope_key",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_members",
+      "index": "uniq_restaurant_members_restaurant_email",
+      "pg_index_name": "ixpad__restaurant_members__uniq_restaurant_members_res_bcbe3c17",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "email",
+          "expression": "\"email\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_salons",
+      "index": "uniq_restaurant_salons_scope",
+      "pg_index_name": "ixpad__restaurant_salons__uniq_restaurant_salons_scope",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "floor_id",
+          "expression": "\"floor_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "scope_key",
+          "expression": "\"scope_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": true,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "generated_column_pg_expression_review:scope_key",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_stripe_connect",
+      "index": "uq_restaurant_stripe_connect_hash",
+      "pg_index_name": "ixpad__restaurant_stripe_connect__uq_restaurant_stripe_261cbce4",
+      "parts": [
+        {
+          "column": "account_hash",
+          "expression": "\"account_hash\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_tables",
+      "index": "idx_restaurant_numero",
+      "pg_index_name": "ixpad__restaurant_tables__idx_restaurant_numero",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "numero_mesa",
+          "expression": "\"numero_mesa\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_tables",
+      "index": "uniq_restaurant_tables_restaurant_name",
+      "pg_index_name": "ixpad__restaurant_tables__uniq_restaurant_tables_resta_4d031b62",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_tables",
+      "index": "uniq_restaurant_tables_restaurant_numero",
+      "pg_index_name": "ixpad__restaurant_tables__uniq_restaurant_tables_resta_efc1635a",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "numero_mesa",
+          "expression": "\"numero_mesa\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurant_uazapi_instances",
+      "index": "uniq_restaurant_uazapi_instances_name",
+      "pg_index_name": "ixpad__restaurant_uazapi_instances__uniq_restaurant_ua_96a63182",
+      "parts": [
+        {
+          "column": "instance_name",
+          "expression": "\"instance_name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "restaurants",
+      "index": "uniq_restaurants_slug",
+      "pg_index_name": "ixpad__restaurants__uniq_restaurants_slug",
+      "parts": [
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "schema_migrations",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__schema_migrations__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "seo_item_routes",
+      "index": "uniq_seo_item_route",
+      "pg_index_name": "ixpad__seo_item_routes__uniq_seo_item_route",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "entity_type",
+          "expression": "\"entity_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "entity_id",
+          "expression": "\"entity_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "seo_item_routes",
+      "index": "uniq_seo_item_slug",
+      "pg_index_name": "ixpad__seo_item_routes__uniq_seo_item_slug",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "entity_type",
+          "expression": "\"entity_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_assets",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__site_builder_assets__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_bindings",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__site_builder_bindings__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_collections",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__site_builder_collections__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_collections",
+      "index": "uk_site_name",
+      "pg_index_name": "ixpad__site_builder_collections__uk_site_name",
+      "parts": [
+        {
+          "column": "site_id",
+          "expression": "\"site_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_component_registry",
+      "index": "type",
+      "pg_index_name": "ixpad__site_builder_component_registry__type",
+      "parts": [
+        {
+          "column": "type",
+          "expression": "\"type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_domain_mappings",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__site_builder_domain_mappings__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_domain_mappings",
+      "index": "uk_domain",
+      "pg_index_name": "ixpad__site_builder_domain_mappings__uk_domain",
+      "parts": [
+        {
+          "column": "domain",
+          "expression": "\"domain\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_pages",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__site_builder_pages__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_pages",
+      "index": "uk_site_slug",
+      "pg_index_name": "ixpad__site_builder_pages__uk_site_slug",
+      "parts": [
+        {
+          "column": "site_id",
+          "expression": "\"site_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_publish_queue",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__site_builder_publish_queue__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_sites",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__site_builder_sites__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_sites",
+      "index": "uk_custom_domain",
+      "pg_index_name": "ixpad__site_builder_sites__uk_custom_domain",
+      "parts": [
+        {
+          "column": "custom_domain",
+          "expression": "\"custom_domain\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_sites",
+      "index": "uk_subdomain",
+      "pg_index_name": "ixpad__site_builder_sites__uk_subdomain",
+      "parts": [
+        {
+          "column": "subdomain",
+          "expression": "\"subdomain\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_versions",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__site_builder_versions__PRIMARY",
+      "parts": [
+        {
+          "column": "id",
+          "expression": "\"id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "site_builder_versions",
+      "index": "uk_site_version",
+      "pg_index_name": "ixpad__site_builder_versions__uk_site_version",
+      "parts": [
+        {
+          "column": "site_id",
+          "expression": "\"site_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "version_number",
+          "expression": "\"version_number\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_affluence_daily",
+      "index": "uq_stock_affluence_day",
+      "pg_index_name": "ixpad__stock_affluence_daily__uq_stock_affluence_day",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "service_date",
+          "expression": "\"service_date\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "date"
+        },
+        {
+          "column": "service_type",
+          "expression": "\"service_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "enum"
+        }
+      ],
+      "status": "gated_no_pad_expression",
+      "gates": [
+        "enum_input_trailing_space_parity_gated:service_type"
+      ]
+    },
+    {
+      "table": "stock_categories",
+      "index": "uq_stock_category_name",
+      "pg_index_name": "ixpad__stock_categories__uq_stock_category_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_document_scans",
+      "index": "uq_stock_document_hash",
+      "pg_index_name": "ixpad__stock_document_scans__uq_stock_document_hash",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "file_hash",
+          "expression": "\"file_hash\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "char"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_item_units",
+      "index": "uq_stock_item_unit_code",
+      "pg_index_name": "ixpad__stock_item_units__uq_stock_item_unit_code",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "stock_item_id",
+          "expression": "\"stock_item_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        },
+        {
+          "column": "code",
+          "expression": "\"code\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_items",
+      "index": "uq_stock_item_sku",
+      "pg_index_name": "ixpad__stock_items__uq_stock_item_sku",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "sku",
+          "expression": "\"sku\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_margin_scope_bands",
+      "index": "uq_stock_margin_scope_band",
+      "pg_index_name": "ixpad__stock_margin_scope_bands__uq_stock_margin_scope_band",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "scope_id",
+          "expression": "\"scope_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "bigint"
+        },
+        {
+          "column": "zone",
+          "expression": "\"zone\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "enum"
+        }
+      ],
+      "status": "gated_no_pad_expression",
+      "gates": [
+        "enum_input_trailing_space_parity_gated:zone"
+      ]
+    },
+    {
+      "table": "stock_margin_scopes",
+      "index": "uq_stock_margin_scope",
+      "pg_index_name": "ixpad__stock_margin_scopes__uq_stock_margin_scope",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "scope_kind",
+          "expression": "\"scope_kind\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "enum"
+        },
+        {
+          "column": "scope_key",
+          "expression": "\"scope_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "enum_input_trailing_space_parity_gated:scope_kind",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_movements",
+      "index": "uq_stock_movement_idempotency",
+      "pg_index_name": "ixpad__stock_movements__uq_stock_movement_idempotency",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_production_orders",
+      "index": "uq_stock_production_idempotency",
+      "pg_index_name": "ixpad__stock_production_orders__uq_stock_production_idempotency",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_recipe_step_image_jobs",
+      "index": "uq_step_image_job_idem",
+      "pg_index_name": "ixpad__stock_recipe_step_image_jobs__uq_step_image_job_idem",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "idempotency_key",
+          "expression": "\"idempotency_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_recipes",
+      "index": "uq_stock_recipe_output",
+      "pg_index_name": "ixpad__stock_recipes__uq_stock_recipe_output",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "active_output_item_id",
+          "expression": "\"active_output_item_id\"",
+          "nullable": true,
+          "generated": true,
+          "kind": "bigint"
+        }
+      ],
+      "status": "gated_no_pad_expression",
+      "gates": [
+        "generated_column_pg_expression_review:active_output_item_id"
+      ]
+    },
+    {
+      "table": "stock_role_permissions",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__stock_role_permissions__PRIMARY",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "role_slug",
+          "expression": "\"role_slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "permission_key",
+          "expression": "\"permission_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_supplier_aliases",
+      "index": "uq_stock_supplier_alias",
+      "pg_index_name": "ixpad__stock_supplier_aliases__uq_stock_supplier_alias",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "supplier_name",
+          "expression": "\"supplier_name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "supplier_code",
+          "expression": "\"supplier_code\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        },
+        {
+          "column": "normalized_description",
+          "expression": "\"normalized_description\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci",
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_suppliers",
+      "index": "uq_stock_suppliers",
+      "pg_index_name": "ixpad__stock_suppliers__uq_stock_suppliers",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_vat_rates",
+      "index": "uq_stock_vat_name",
+      "pg_index_name": "ixpad__stock_vat_rates__uq_stock_vat_name",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "name",
+          "expression": "\"name\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stock_warehouses",
+      "index": "uq_stock_warehouse_code",
+      "pg_index_name": "ixpad__stock_warehouses__uq_stock_warehouse_code",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "code",
+          "expression": "\"code\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": true,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "stripe_events",
+      "index": "uniq_stripe_events_event_id",
+      "pg_index_name": "ixpad__stripe_events__uniq_stripe_events_event_id",
+      "parts": [
+        {
+          "column": "event_id",
+          "expression": "\"event_id\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "uazapi_servers",
+      "index": "uniq_uazapi_servers_base_url",
+      "pg_index_name": "ixpad__uazapi_servers__uniq_uazapi_servers_base_url",
+      "parts": [
+        {
+          "column": "base_url",
+          "expression": "\"base_url\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "user_menu_preferences",
+      "index": "uq_user_menu_pref",
+      "pg_index_name": "ixpad__user_menu_preferences__uq_user_menu_pref",
+      "parts": [
+        {
+          "column": "user_id",
+          "expression": "\"user_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "menu_id",
+          "expression": "\"menu_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "pref_key",
+          "expression": "\"pref_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "user_preferences",
+      "index": "uq_user_pref",
+      "pg_index_name": "ixpad__user_preferences__uq_user_pref",
+      "parts": [
+        {
+          "column": "user_id",
+          "expression": "\"user_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "pref_key",
+          "expression": "\"pref_key\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "website_components",
+      "index": "uk_component_type",
+      "pg_index_name": "ixpad__website_components__uk_component_type",
+      "parts": [
+        {
+          "column": "component_type",
+          "expression": "\"component_type\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "website_pages",
+      "index": "uk_website_slug",
+      "pg_index_name": "ixpad__website_pages__uk_website_slug",
+      "parts": [
+        {
+          "column": "website_id",
+          "expression": "\"website_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "website_templates",
+      "index": "slug",
+      "pg_index_name": "ixpad__website_templates__slug",
+      "parts": [
+        {
+          "column": "slug",
+          "expression": "\"slug\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    },
+    {
+      "table": "whatsapp_bot_sessions",
+      "index": "PRIMARY",
+      "pg_index_name": "ixpad__whatsapp_bot_sessions__PRIMARY",
+      "parts": [
+        {
+          "column": "restaurant_id",
+          "expression": "\"restaurant_id\"",
+          "nullable": false,
+          "generated": false,
+          "kind": "int"
+        },
+        {
+          "column": "user_phone",
+          "expression": "\"user_phone\"",
+          "source_collation": "utf8mb4_unicode_ci",
+          "nullable": false,
+          "generated": false,
+          "kind": "varchar"
+        }
+      ],
+      "status": "blocked",
+      "gates": [
+        "pad_attribute_unknown:utf8mb4_unicode_ci"
+      ]
+    }
+  ]
+}

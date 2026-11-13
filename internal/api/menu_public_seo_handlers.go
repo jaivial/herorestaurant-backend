@@ -12,6 +12,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Coordination id: menu_public_seo_v1
@@ -27,7 +28,7 @@ func (s *Server) handlePublicMenuBySlug(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var menuID int64
-	err = s.db.QueryRowContext(r.Context(), `SELECT id FROM menus WHERE `+activePublicMenuWhere()+` AND seo_slug = ? LIMIT 1`, restaurantID, slug).Scan(&menuID)
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT id FROM menus WHERE `+activePublicMenuWhere()+sqlFragment(` AND seo_slug = ? LIMIT 1`, ` AND app.norm_ascii(seo_slug) = app.norm_ascii(?) LIMIT 1`)), restaurantID, slug).Scan(&menuID)
 	if err != nil {
 		status := http.StatusInternalServerError
 		message := "Error fetching menu"
@@ -92,10 +93,13 @@ func (s *Server) handleBOGroupMenusV2PatchSEO(w http.ResponseWriter, r *http.Req
 		values = append(values, fields[i].value)
 	}
 	values = append(values, menuID, a.ActiveRestaurantID)
-	result, err := s.db.ExecContext(r.Context(), `UPDATE menus SET seo_slug = ?, seo_title = ?, seo_title_english = ?, seo_description = ?, seo_description_english = ?, seo_h1 = ?, seo_h1_english = ?, seo_intro = ?, seo_intro_english = ?, seo_faq = ?, seo_faq_english = ? WHERE id = ? AND restaurant_id = ?`, values...)
+	// RowsAffected==0 only triggers an existence COUNT, so matched-vs-changed
+	// rows give the same response; no changed-row predicate needed.
+	result, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE menus SET seo_slug = ?, seo_title = ?, seo_title_english = ?, seo_description = ?, seo_description_english = ?, seo_h1 = ?, seo_h1_english = ?, seo_intro = ?, seo_intro_english = ?, seo_faq = ?, seo_faq_english = ? WHERE id = ? AND restaurant_id = ?`), values...)
 	if err != nil {
 		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		// Same breadth as MySQL 1062 (any unique key; only idx_menus_restaurant_seo_slug is reachable).
+		if (errors.As(err, &mysqlErr) && mysqlErr.Number == 1062) || (sqlDialect == sqldb.Postgres && sqldb.IsUniqueViolation(err)) {
 			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Ese slug ya esta en uso por otro menu"})
 			return
 		}
@@ -104,7 +108,7 @@ func (s *Server) handleBOGroupMenusV2PatchSEO(w http.ResponseWriter, r *http.Req
 	}
 	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
 		var exists int
-		if queryErr := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM menus WHERE id = ? AND restaurant_id = ?`, menuID, a.ActiveRestaurantID).Scan(&exists); queryErr != nil || exists == 0 {
+		if queryErr := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM menus WHERE id = ? AND restaurant_id = ?`), menuID, a.ActiveRestaurantID).Scan(&exists); queryErr != nil || exists == 0 {
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Menu not found"})
 			return
 		}

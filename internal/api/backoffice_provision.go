@@ -18,14 +18,25 @@ func (s *Server) provisionRestaurantDefaults(ctx context.Context, restaurantID i
 		query string
 		args  []any
 	}{
-		{`INSERT IGNORE INTO restaurant_branding (restaurant_id, brand_name) VALUES (?, ?)`, []any{restaurantID, strings.TrimSpace(name)}},
-		{`INSERT IGNORE INTO restaurant_reservation_defaults (restaurant_id) VALUES (?)`, []any{restaurantID}},
-		{`INSERT IGNORE INTO restaurant_info (restaurant_id) VALUES (?)`, []any{restaurantID}},
-		{`INSERT IGNORE INTO restaurant_bot_ai_config (restaurant_id) VALUES (?)`, []any{restaurantID}},
-		{`INSERT IGNORE INTO restaurant_page_visibility (restaurant_id) VALUES (?)`, []any{restaurantID}},
+		// repair-ignore3: duplicate-only no-op on both dialects (MySQL ODKU
+		// no-op, PG ON CONFLICT on the table's actual key). The source IGNORE
+		// (and the PG EXISTS guard) also skipped an FK failure silently, so a
+		// tenant could be reported provisioned without its satellite rows; an
+		// FK error now fails provisioning. brand_name comes from
+		// restaurants.name varchar(255) = brand_name varchar(255): no cut.
+		{nativeSQL(`INSERT INTO restaurant_branding (restaurant_id, brand_name) VALUES (?, ?) ON DUPLICATE KEY UPDATE restaurant_id = restaurant_id`,
+			`INSERT INTO restaurant_branding (restaurant_id, brand_name) VALUES (CAST(? AS integer), CAST(? AS text)) ON CONFLICT (restaurant_id) DO NOTHING`), []any{restaurantID, strings.TrimSpace(name)}},
+		{nativeSQL(`INSERT INTO restaurant_reservation_defaults (restaurant_id) VALUES (?) ON DUPLICATE KEY UPDATE restaurant_id = restaurant_id`,
+			`INSERT INTO restaurant_reservation_defaults (restaurant_id) VALUES (?) ON CONFLICT (restaurant_id) DO NOTHING`), []any{restaurantID}}, // no FK
+		{nativeSQL(`INSERT INTO restaurant_info (restaurant_id) VALUES (?) ON DUPLICATE KEY UPDATE restaurant_id = restaurant_id`,
+			`INSERT INTO restaurant_info (restaurant_id) VALUES (?) ON CONFLICT (restaurant_id) DO NOTHING`), []any{restaurantID}},
+		{nativeSQL(`INSERT INTO restaurant_bot_ai_config (restaurant_id) VALUES (?) ON DUPLICATE KEY UPDATE restaurant_id = restaurant_id`,
+			`INSERT INTO restaurant_bot_ai_config (restaurant_id) VALUES (?) ON CONFLICT (restaurant_id) DO NOTHING`), []any{restaurantID}},
+		{nativeSQL(`INSERT INTO restaurant_page_visibility (restaurant_id) VALUES (?) ON DUPLICATE KEY UPDATE restaurant_id = restaurant_id`,
+			`INSERT INTO restaurant_page_visibility (restaurant_id) VALUES (?) ON CONFLICT (restaurant_id) DO NOTHING`), []any{restaurantID}}, // no FK; uniq restaurant_id
 	}
 	for _, seed := range seeds {
-		if _, err := s.db.ExecContext(ctx, seed.query, seed.args...); err != nil {
+		if _, err := s.db.ExecContext(ctx, selectedSQL(seed.query), seed.args...); err != nil {
 			return err
 		}
 	}
@@ -40,7 +51,9 @@ func (s *Server) provisionRestaurantOwner(ctx context.Context, restaurantID, use
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT IGNORE INTO bo_user_restaurants (user_id, restaurant_id, role) VALUES (?, ?, 'owner')`,
+		// Duplicate (user_id, restaurant_id) = existing membership kept (its
+		// role is not changed); an FK failure now errors (was skipped).
+		nativeSQL(`INSERT INTO bo_user_restaurants (user_id, restaurant_id, role) VALUES (?, ?, 'owner') ON DUPLICATE KEY UPDATE user_id = user_id`, `INSERT INTO bo_user_restaurants (user_id, restaurant_id, role) VALUES (?, ?, 'owner') ON CONFLICT (user_id, restaurant_id) DO NOTHING`),
 		userID, restaurantID)
 	return err
 }

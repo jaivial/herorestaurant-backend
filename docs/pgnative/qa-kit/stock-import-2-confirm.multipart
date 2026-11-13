@@ -1,0 +1,13 @@
+------qakitU4boundary
+Content-Disposition: form-data; name="confirm"
+
+1
+------qakitU4boundary
+Content-Disposition: form-data; name="file"; filename="qa-stock.csv"
+Content-Type: text/csv
+
+nombre,categoria,dimension,unidad,factor
+qa cafe MOLIDO,qa categoria,MASS,g,1
+QA AZUCAR ,QA CATEGORIA,MASS,g,1
+
+------qakitU4boundary--

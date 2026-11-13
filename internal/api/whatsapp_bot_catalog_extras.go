@@ -106,7 +106,7 @@ func (s *Server) botToolCatalogExtraCreatePropose(ctx context.Context, rid int, 
 	if slug == "" {
 		return botJSON(map[string]any{"error": "ese nombre no genera un identificador válido"}), nil
 	}
-	cur, err := botScanCatalogExtra(s.db.QueryRowContext(ctx, `SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND slug = ?`, rid, slug))
+	cur, err := botScanCatalogExtra(s.db.QueryRowContext(ctx, nativeSQL(`SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND slug = ?`, `SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND app.norm_ascii(slug) = app.norm_ascii(?)`), rid, slug))
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer el catálogo"}), nil
 	}
@@ -150,7 +150,7 @@ func (s *Server) botToolCatalogExtraDeletePropose(ctx context.Context, rid int, 
 	if dec.Decode(&in) != nil || in.ExtraID <= 0 {
 		return botJSON(map[string]any{"error": "argumentos inválidos: extra_id"}), nil
 	}
-	cur, err := botScanCatalogExtra(s.db.QueryRowContext(ctx, `SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND id = ?`, rid, in.ExtraID))
+	cur, err := botScanCatalogExtra(s.db.QueryRowContext(ctx, portableSQL(`SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND id = ?`), rid, in.ExtraID))
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer el catálogo"}), nil
 	}
@@ -188,7 +188,7 @@ func (s *Server) botCatalogExtraCreateExecute(ctx context.Context, tx *sql.Tx, r
 	if json.Unmarshal([]byte(p.Args), &in) != nil || in.Name == "" || in.Slug == "" {
 		return "", errors.New("propuesta ilegible")
 	}
-	cur, err := botScanCatalogExtra(tx.QueryRowContext(ctx, `SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND slug = ? FOR UPDATE`, rid, in.Slug))
+	cur, err := botScanCatalogExtra(tx.QueryRowContext(ctx, nativeSQL(`SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND slug = ? FOR UPDATE`, `SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND app.norm_ascii(slug) = app.norm_ascii(?) FOR UPDATE`), rid, in.Slug))
 	if err != nil {
 		return "", errors.New("error interno")
 	}
@@ -200,10 +200,10 @@ func (s *Server) botCatalogExtraCreateExecute(ctx context.Context, tx *sql.Tx, r
 		// upsert below must never rename/reactivate a built-in extra.
 		return stale("ese identificador corresponde a un extra fijo del sistema; pide una propuesta nueva")
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO restaurant_booking_extras (restaurant_id, slug, name, is_custom, active) VALUES (?, ?, ?, 1, 1) ON DUPLICATE KEY UPDATE name = VALUES(name), active = 1`, rid, in.Slug, in.Name); err != nil {
+	if _, err := tx.ExecContext(ctx, nativeSQL(`INSERT INTO restaurant_booking_extras (restaurant_id, slug, name, is_custom, active) VALUES (?, ?, ?, 1, 1) ON DUPLICATE KEY UPDATE name = VALUES(name), active = 1`, `INSERT INTO restaurant_booking_extras (restaurant_id, slug, name, is_custom, active) VALUES (?, ?, ?, 1, 1) ON CONFLICT (restaurant_id, app.norm_ascii(slug)) DO UPDATE SET name = EXCLUDED.name, active = 1`), rid, in.Slug, in.Name); err != nil {
 		return "", errors.New("error al guardar; no se aplicó nada")
 	}
-	final, err := botScanCatalogExtra(tx.QueryRowContext(ctx, `SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND slug = ?`, rid, in.Slug))
+	final, err := botScanCatalogExtra(tx.QueryRowContext(ctx, nativeSQL(`SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND slug = ?`, `SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND app.norm_ascii(slug) = app.norm_ascii(?)`), rid, in.Slug))
 	if err != nil || !final.Found || !final.Active || final.Name != in.Name {
 		return "", errors.New("verificación fallida: el extra no quedó como se propuso; no se aplicó nada")
 	}
@@ -212,7 +212,7 @@ func (s *Server) botCatalogExtraCreateExecute(ctx context.Context, tx *sql.Tx, r
 	}
 	notice := fmt.Sprintf("Catálogo de extras: «%s» (%s) disponible para nuevas reservas. Las reservas existentes no cambian.", final.Name, final.Slug)
 	rj, _ := json.Marshal(map[string]any{"op": p.Op, "extra_id": final.ID, "slug": final.Slug, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "extra_id": final.ID, "slug": final.Slug, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
@@ -237,21 +237,21 @@ func (s *Server) botCatalogExtraDeleteExecute(ctx context.Context, tx *sql.Tx, r
 	if json.Unmarshal([]byte(p.Args), &in) != nil || in.ExtraID <= 0 {
 		return "", errors.New("propuesta ilegible")
 	}
-	cur, err := botScanCatalogExtra(tx.QueryRowContext(ctx, `SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND id = ? FOR UPDATE`, rid, in.ExtraID))
+	cur, err := botScanCatalogExtra(tx.QueryRowContext(ctx, portableSQL(`SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND id = ? FOR UPDATE`), rid, in.ExtraID))
 	if err != nil {
 		return "", errors.New("error interno")
 	}
 	if botCatalogBeforeKey(cur) != p.Before {
 		return stale("el catálogo cambió desde la vista previa; pide una propuesta nueva")
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE restaurant_booking_extras SET active = 0 WHERE id = ? AND restaurant_id = ? AND is_custom = 1`, in.ExtraID, rid)
+	res, err := tx.ExecContext(ctx, portableSQL(`UPDATE restaurant_booking_extras SET active = 0 WHERE id = ? AND restaurant_id = ? AND is_custom = 1`), in.ExtraID, rid)
 	if err != nil {
 		return "", errors.New("error al guardar; no se aplicó nada")
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return "", errors.New("verificación fallida: el extra no quedó como se propuso; no se aplicó nada")
 	}
-	final, err := botScanCatalogExtra(tx.QueryRowContext(ctx, `SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND id = ?`, rid, in.ExtraID))
+	final, err := botScanCatalogExtra(tx.QueryRowContext(ctx, portableSQL(`SELECT id, slug, name, is_custom, active FROM restaurant_booking_extras WHERE restaurant_id = ? AND id = ?`), rid, in.ExtraID))
 	if err != nil || !final.Found || final.Active {
 		return "", errors.New("verificación fallida: el extra no quedó como se propuso; no se aplicó nada")
 	}
@@ -260,7 +260,7 @@ func (s *Server) botCatalogExtraDeleteExecute(ctx context.Context, tx *sql.Tx, r
 	}
 	notice := fmt.Sprintf("Catálogo de extras: «%s» (id %d) desactivado. Las reservas que ya lo tenían conservan su copia.", cur.Name, cur.ID)
 	rj, _ := json.Marshal(map[string]any{"op": p.Op, "extra_id": cur.ID, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "extra_id": cur.ID, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})

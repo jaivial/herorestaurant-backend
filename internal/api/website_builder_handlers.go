@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 const websiteBuilderDBTimeout = 12 * time.Second
@@ -33,12 +34,17 @@ func (wb *WebsiteBuilder) ListTemplates(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), websiteBuilderDBTimeout)
 	defer cancel()
 
-	rows, err := wb.db.QueryContext(ctx, `
+	rows, err := wb.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, slug, name, description, thumbnail_url, category, is_active
 		FROM website_templates
 		WHERE is_active = 1
 		ORDER BY category, name
-	`)
+	`, `
+		SELECT id, slug, name, description, thumbnail_url, CAST(category AS text), is_active
+		FROM website_templates
+		WHERE is_active = 1
+		ORDER BY category NULLS FIRST, name COLLATE "es-x-icu"
+	`))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to fetch templates"})
 		return
@@ -71,12 +77,17 @@ func (wb *WebsiteBuilder) GetTemplate(w http.ResponseWriter, r *http.Request) {
 	var item WebsiteTemplate
 	var createdAt sql.NullTime
 	var updatedAt sql.NullTime
-	err = wb.db.QueryRowContext(ctx, `
+	err = wb.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT id, slug, name, description, thumbnail_url, template_data, category, is_active, created_at, updated_at
 		FROM website_templates
 		WHERE id = ?
 		LIMIT 1
-	`, templateID).Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ThumbnailURL, &item.TemplateData, &item.Category, &item.IsActive, &createdAt, &updatedAt)
+	`, `
+		SELECT id, slug, name, description, thumbnail_url, CAST(template_data AS text), CAST(category AS text), is_active, created_at, updated_at
+		FROM website_templates
+		WHERE id = ?
+		LIMIT 1
+	`), templateID).Scan(&item.ID, &item.Slug, &item.Name, &item.Description, &item.ThumbnailURL, &item.TemplateData, &item.Category, &item.IsActive, &createdAt, &updatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Template not found"})
@@ -209,7 +220,7 @@ func (wb *WebsiteBuilder) UpdateWebsite(w http.ResponseWriter, r *http.Request) 
 
 	if req.TemplateID != nil {
 		if err := wb.execVariants(ctx, []boSQLVariant{
-			{query: `UPDATE restaurant_websites SET template_id = ?, updated_at = NOW() WHERE restaurant_id = ?`, args: []any{strconv.Itoa(*req.TemplateID), restaurantID}},
+			{query: nativeSQL(`UPDATE restaurant_websites SET template_id = ?, updated_at = NOW() WHERE restaurant_id = ?`, `UPDATE restaurant_websites SET template_id = ?, updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ?`), args: []any{strconv.Itoa(*req.TemplateID), restaurantID}},
 		}); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to update template"})
 			return
@@ -217,7 +228,7 @@ func (wb *WebsiteBuilder) UpdateWebsite(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.Domain != nil {
 		if err := wb.execVariants(ctx, []boSQLVariant{
-			{query: `UPDATE restaurant_websites SET domain = ?, updated_at = NOW() WHERE restaurant_id = ?`, args: []any{strings.TrimSpace(*req.Domain), restaurantID}},
+			{query: nativeSQL(`UPDATE restaurant_websites SET domain = ?, updated_at = NOW() WHERE restaurant_id = ?`, `UPDATE restaurant_websites SET domain = ?, updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ?`), args: []any{strings.TrimSpace(*req.Domain), restaurantID}},
 		}); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to update domain"})
 			return
@@ -225,7 +236,7 @@ func (wb *WebsiteBuilder) UpdateWebsite(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.Subdomain != nil {
 		if err := wb.execVariants(ctx, []boSQLVariant{
-			{query: `UPDATE restaurant_websites SET subdomain = ?, updated_at = NOW() WHERE restaurant_id = ?`, args: []any{strings.TrimSpace(*req.Subdomain), restaurantID}},
+			{query: nativeSQL(`UPDATE restaurant_websites SET subdomain = ?, updated_at = NOW() WHERE restaurant_id = ?`, `UPDATE restaurant_websites SET subdomain = ?, updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ?`), args: []any{strings.TrimSpace(*req.Subdomain), restaurantID}},
 		}); err != nil && !isSQLSchemaError(err) {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to update subdomain"})
 			return
@@ -233,17 +244,17 @@ func (wb *WebsiteBuilder) UpdateWebsite(w http.ResponseWriter, r *http.Request) 
 	}
 	if len(req.Settings) > 0 {
 		if err := wb.execVariants(ctx, []boSQLVariant{
-			{query: `UPDATE restaurant_websites SET settings = ?, updated_at = NOW() WHERE restaurant_id = ?`, args: []any{req.Settings, restaurantID}},
+			{query: nativeSQL(`UPDATE restaurant_websites SET settings = ?, updated_at = NOW() WHERE restaurant_id = ?`, `UPDATE restaurant_websites SET settings = CAST(? AS jsonb), updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ?`), args: []any{req.Settings, restaurantID}},
 		}); err != nil && !isSQLSchemaError(err) {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to update settings"})
 			return
 		}
 	}
 	if req.Status != nil {
-		status := strings.TrimSpace(*req.Status)
+		status := mysqlLowerEnumArg(strings.TrimSpace(*req.Status)) // repair-enums3: stored label (restaurant_websites.status ENUM)
 		if err := wb.execVariants(ctx, []boSQLVariant{
-			{query: `UPDATE restaurant_websites SET status = ?, updated_at = NOW() WHERE restaurant_id = ?`, args: []any{status, restaurantID}},
-			{query: `UPDATE restaurant_websites SET is_published = ?, updated_at = NOW() WHERE restaurant_id = ?`, args: []any{boolToTinyInt(strings.EqualFold(status, "published")), restaurantID}},
+			{query: nativeSQL(`UPDATE restaurant_websites SET status = ?, updated_at = NOW() WHERE restaurant_id = ?`, `UPDATE restaurant_websites SET status = ?, updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ?`), args: []any{status, restaurantID}},
+			{query: nativeSQL(`UPDATE restaurant_websites SET is_published = ?, updated_at = NOW() WHERE restaurant_id = ?`, `UPDATE restaurant_websites SET is_published = ?, updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ?`), args: []any{boolToTinyInt(strings.EqualFold(status, "published")), restaurantID}},
 		}); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to update status"})
 			return
@@ -290,10 +301,19 @@ func (wb *WebsiteBuilder) DeleteWebsite(w http.ResponseWriter, r *http.Request) 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, _ = tx.ExecContext(ctx, `DELETE FROM website_assets WHERE website_id = ?`, website.ID)
-	_, _ = tx.ExecContext(ctx, `DELETE FROM website_publish_history WHERE website_id = ?`, website.ID)
-	_, _ = tx.ExecContext(ctx, `DELETE FROM website_pages WHERE website_id = ?`, website.ID)
-	if _, err := tx.ExecContext(ctx, `DELETE FROM restaurant_websites WHERE id = ? AND restaurant_id = ?`, website.ID, restaurantID); err != nil {
+	_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(ctx, portableSQL(`DELETE FROM website_assets WHERE website_id = ?`), website.ID)
+		return e
+	})
+	_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(ctx, portableSQL(`DELETE FROM website_publish_history WHERE website_id = ?`), website.ID)
+		return e
+	})
+	_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(ctx, portableSQL(`DELETE FROM website_pages WHERE website_id = ?`), website.ID)
+		return e
+	})
+	if _, err := tx.ExecContext(ctx, portableSQL(`DELETE FROM restaurant_websites WHERE id = ? AND restaurant_id = ?`), website.ID, restaurantID); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to delete website"})
 		return
 	}
@@ -321,19 +341,29 @@ func (wb *WebsiteBuilder) ListPages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := wb.db.QueryContext(ctx, `
+	rows, err := wb.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, website_id, slug, title, meta_description, meta_keywords, is_homepage, status, created_at, updated_at
 		FROM website_pages
 		WHERE website_id = ?
 		ORDER BY is_homepage DESC, position ASC, slug ASC, id ASC
-	`, websiteID)
+	`, `
+		SELECT id, website_id, slug, title, meta_description, meta_keywords, is_homepage, status, created_at, updated_at
+		FROM website_pages
+		WHERE website_id = ?
+		ORDER BY is_homepage DESC NULLS LAST, position ASC NULLS FIRST, slug ASC, id ASC
+	`), websiteID)
 	if err != nil {
-		rows, err = wb.db.QueryContext(ctx, `
+		rows, err = wb.db.QueryContext(ctx, nativeSQL(`
 			SELECT id, website_id, slug, title, meta_description, meta_keywords, is_homepage, status, created_at, updated_at
 			FROM website_pages
 			WHERE website_id = ?
 			ORDER BY is_homepage DESC, slug ASC, id ASC
-		`, websiteID)
+		`, `
+			SELECT id, website_id, slug, title, meta_description, meta_keywords, is_homepage, status, created_at, updated_at
+			FROM website_pages
+			WHERE website_id = ?
+			ORDER BY is_homepage DESC NULLS LAST, slug ASC, id ASC
+		`), websiteID)
 	}
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to fetch pages"})
@@ -411,19 +441,18 @@ func (wb *WebsiteBuilder) CreatePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.IsHomepage {
-		_, _ = wb.db.ExecContext(ctx, `UPDATE website_pages SET is_homepage = 0 WHERE website_id = ?`, websiteID)
+		_, _ = wb.db.ExecContext(ctx, portableSQL(`UPDATE website_pages SET is_homepage = 0 WHERE website_id = ?`), websiteID)
 		slug = ""
 	}
 
-	result, err := wb.db.ExecContext(ctx, `
+	id, err := sqldb.InsertID(ctx, sqlDialect, wb.db, portableSQL(`
 		INSERT INTO website_pages (website_id, slug, title, meta_description, meta_keywords, is_homepage, status)
 		VALUES (?, ?, ?, ?, ?, ?, 'draft')
-	`, websiteID, slug, title, strings.TrimSpace(req.MetaDescription), strings.TrimSpace(req.MetaKeywords), boolToTinyInt(req.IsHomepage))
+	`), "id", websiteID, slug, title, strings.TrimSpace(req.MetaDescription), strings.TrimSpace(req.MetaKeywords), boolToTinyInt(req.IsHomepage))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to create page"})
 		return
 	}
-	id, _ := result.LastInsertId()
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "id": id})
 }
@@ -483,7 +512,7 @@ func (wb *WebsiteBuilder) UpdatePage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.IsHomepage != nil {
 		if *req.IsHomepage {
-			_, _ = wb.db.ExecContext(ctx, `UPDATE website_pages SET is_homepage = 0 WHERE website_id = ?`, websiteID)
+			_, _ = wb.db.ExecContext(ctx, portableSQL(`UPDATE website_pages SET is_homepage = 0 WHERE website_id = ?`), websiteID)
 		}
 		updates = append(updates, "is_homepage = ?")
 		args = append(args, boolToTinyInt(*req.IsHomepage))
@@ -499,7 +528,7 @@ func (wb *WebsiteBuilder) UpdatePage(w http.ResponseWriter, r *http.Request) {
 	args = append(args, pageID)
 
 	query := `UPDATE website_pages SET ` + strings.Join(updates, ", ") + ` WHERE id = ?`
-	if _, err := wb.db.ExecContext(ctx, query, args...); err != nil {
+	if _, err := wb.db.ExecContext(ctx, portableSQL(query), args...); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to update page"})
 		return
 	}
@@ -530,12 +559,12 @@ func (wb *WebsiteBuilder) DeletePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pageCount int
-	if err := wb.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM website_pages WHERE website_id = ?`, websiteID).Scan(&pageCount); err == nil && pageCount <= 1 {
+	if err := wb.db.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM website_pages WHERE website_id = ?`), websiteID).Scan(&pageCount); err == nil && pageCount <= 1 {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Website must keep at least one page"})
 		return
 	}
 
-	if _, err := wb.db.ExecContext(ctx, `DELETE FROM website_pages WHERE id = ?`, pageID); err != nil {
+	if _, err := wb.db.ExecContext(ctx, portableSQL(`DELETE FROM website_pages WHERE id = ?`), pageID); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to delete page"})
 		return
 	}
@@ -566,12 +595,17 @@ func (wb *WebsiteBuilder) ListSections(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = websiteID
 
-	rows, err := wb.db.QueryContext(ctx, `
+	rows, err := wb.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, page_id, section_type, position, COALESCE(settings, JSON_OBJECT()), is_visible, created_at, updated_at
 		FROM website_page_sections
 		WHERE page_id = ?
 		ORDER BY position ASC, id ASC
-	`, pageID)
+	`, `
+		SELECT id, page_id, section_type, position, CAST(COALESCE(settings, CAST('{}' AS jsonb)) AS text), is_visible, created_at, updated_at
+		FROM website_page_sections
+		WHERE page_id = ?
+		ORDER BY position ASC, id ASC
+	`), pageID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to fetch sections"})
 		return
@@ -644,22 +678,24 @@ func (wb *WebsiteBuilder) CreateSection(w http.ResponseWriter, r *http.Request) 
 	if req.Position != nil {
 		position = *req.Position
 	} else {
-		_ = wb.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(position), -1) + 1 FROM website_page_sections WHERE page_id = ?`, pageID).Scan(&position)
+		_ = wb.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(MAX(position), -1) + 1 FROM website_page_sections WHERE page_id = ?`), pageID).Scan(&position)
 	}
 	settings := req.Settings
 	if len(settings) == 0 {
 		settings = json.RawMessage(`{}`)
 	}
 
-	result, err := wb.db.ExecContext(ctx, `
+	id, err := sqldb.InsertID(ctx, sqlDialect, wb.db, nativeSQL(`
 		INSERT INTO website_page_sections (page_id, section_type, position, settings, is_visible)
 		VALUES (?, ?, ?, ?, 1)
-	`, pageID, sectionType, position, settings)
+	`, `
+		INSERT INTO website_page_sections (page_id, section_type, position, settings, is_visible)
+		VALUES (?, ?, ?, CAST(? AS jsonb), 1)
+	`), "id", pageID, sectionType, position, settings)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to create section"})
 		return
 	}
-	id, _ := result.LastInsertId()
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "id": id})
 }
@@ -707,7 +743,7 @@ func (wb *WebsiteBuilder) UpdateSection(w http.ResponseWriter, r *http.Request) 
 		args = append(args, *req.Position)
 	}
 	if len(req.Settings) > 0 {
-		updates = append(updates, "settings = ?")
+		updates = append(updates, sqlFragment("settings = ?", "settings = CAST(? AS jsonb)"))
 		args = append(args, req.Settings)
 	}
 	if req.IsVisible != nil {
@@ -720,7 +756,7 @@ func (wb *WebsiteBuilder) UpdateSection(w http.ResponseWriter, r *http.Request) 
 	}
 	args = append(args, sectionID)
 
-	if _, err := wb.db.ExecContext(ctx, `UPDATE website_page_sections SET `+strings.Join(updates, ", ")+` WHERE id = ?`, args...); err != nil {
+	if _, err := wb.db.ExecContext(ctx, portableSQL(`UPDATE website_page_sections SET `+strings.Join(updates, ", ")+` WHERE id = ?`), args...); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to update section"})
 		return
 	}
@@ -749,7 +785,7 @@ func (wb *WebsiteBuilder) DeleteSection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if _, err := wb.db.ExecContext(ctx, `DELETE FROM website_page_sections WHERE id = ?`, sectionID); err != nil {
+	if _, err := wb.db.ExecContext(ctx, portableSQL(`DELETE FROM website_page_sections WHERE id = ?`), sectionID); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to delete section"})
 		return
 	}
@@ -793,7 +829,7 @@ func (wb *WebsiteBuilder) ReorderSections(w http.ResponseWriter, r *http.Request
 	defer func() { _ = tx.Rollback() }()
 
 	for idx, sectionID := range req.SectionIDs {
-		if _, err := tx.ExecContext(ctx, `UPDATE website_page_sections SET position = ? WHERE id = ? AND page_id = ?`, idx, sectionID, req.PageID); err != nil {
+		if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE website_page_sections SET position = ? WHERE id = ? AND page_id = ?`), idx, sectionID, req.PageID); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to reorder sections"})
 			return
 		}
@@ -810,12 +846,17 @@ func (wb *WebsiteBuilder) ListComponents(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), websiteBuilderDBTimeout)
 	defer cancel()
 
-	rows, err := wb.db.QueryContext(ctx, `
+	rows, err := wb.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, component_type, name, description, icon, COALESCE(default_settings, JSON_OBJECT()), COALESCE(schema_json, JSON_OBJECT()), is_active, created_at, updated_at
 		FROM website_components
 		WHERE is_active = 1
 		ORDER BY name ASC
-	`)
+	`, `
+		SELECT id, component_type, name, description, icon, CAST(COALESCE(default_settings, CAST('{}' AS jsonb)) AS text), CAST(COALESCE(schema_json, CAST('{}' AS jsonb)) AS text), is_active, created_at, updated_at
+		FROM website_components
+		WHERE is_active = 1
+		ORDER BY name COLLATE "es-x-icu" ASC
+	`))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to fetch components"})
 		return
@@ -856,12 +897,17 @@ func (wb *WebsiteBuilder) GetComponent(w http.ResponseWriter, r *http.Request) {
 	var item WebsiteComponent
 	var createdAt sql.NullTime
 	var updatedAt sql.NullTime
-	err = wb.db.QueryRowContext(ctx, `
+	err = wb.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT id, component_type, name, description, icon, COALESCE(default_settings, JSON_OBJECT()), COALESCE(schema_json, JSON_OBJECT()), is_active, created_at, updated_at
 		FROM website_components
 		WHERE id = ?
 		LIMIT 1
-	`, componentID).Scan(&item.ID, &item.ComponentType, &item.Name, &item.Description, &item.Icon, &item.DefaultSettings, &item.SchemaJSON, &item.IsActive, &createdAt, &updatedAt)
+	`, `
+		SELECT id, component_type, name, description, icon, CAST(COALESCE(default_settings, CAST('{}' AS jsonb)) AS text), CAST(COALESCE(schema_json, CAST('{}' AS jsonb)) AS text), is_active, created_at, updated_at
+		FROM website_components
+		WHERE id = ?
+		LIMIT 1
+	`), componentID).Scan(&item.ID, &item.ComponentType, &item.Name, &item.Description, &item.Icon, &item.DefaultSettings, &item.SchemaJSON, &item.IsActive, &createdAt, &updatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Component not found"})
@@ -955,7 +1001,7 @@ func (wb *WebsiteBuilder) CreateSectionComponent(w http.ResponseWriter, r *http.
 	if req.Position != nil {
 		position = *req.Position
 	} else {
-		_ = wb.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(position), -1) + 1 FROM website_section_components WHERE section_id = ?`, sectionID).Scan(&position)
+		_ = wb.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(MAX(position), -1) + 1 FROM website_section_components WHERE section_id = ?`), sectionID).Scan(&position)
 	}
 	settings := req.Settings
 	if len(settings) == 0 {
@@ -966,15 +1012,17 @@ func (wb *WebsiteBuilder) CreateSectionComponent(w http.ResponseWriter, r *http.
 		dynamicParams = json.RawMessage(`{}`)
 	}
 
-	result, err := wb.db.ExecContext(ctx, `
+	id, err := sqldb.InsertID(ctx, sqlDialect, wb.db, nativeSQL(`
 		INSERT INTO website_section_components (section_id, component_id, position, settings, dynamic_source, dynamic_params)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, sectionID, req.ComponentID, position, settings, strings.TrimSpace(req.DynamicSource), dynamicParams)
+	`, `
+		INSERT INTO website_section_components (section_id, component_id, position, settings, dynamic_source, dynamic_params)
+		VALUES (?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS jsonb))
+	`), "id", sectionID, req.ComponentID, position, settings, strings.TrimSpace(req.DynamicSource), dynamicParams)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to create section component"})
 		return
 	}
-	id, _ := result.LastInsertId()
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "id": id})
 }
@@ -1018,7 +1066,7 @@ func (wb *WebsiteBuilder) UpdateSectionComponent(w http.ResponseWriter, r *http.
 		args = append(args, *req.Position)
 	}
 	if len(req.Settings) > 0 {
-		updates = append(updates, "settings = ?")
+		updates = append(updates, sqlFragment("settings = ?", "settings = CAST(? AS jsonb)"))
 		args = append(args, req.Settings)
 	}
 	if req.DynamicSource != nil {
@@ -1026,7 +1074,7 @@ func (wb *WebsiteBuilder) UpdateSectionComponent(w http.ResponseWriter, r *http.
 		args = append(args, strings.TrimSpace(*req.DynamicSource))
 	}
 	if len(req.DynamicParams) > 0 {
-		updates = append(updates, "dynamic_params = ?")
+		updates = append(updates, sqlFragment("dynamic_params = ?", "dynamic_params = CAST(? AS jsonb)"))
 		args = append(args, req.DynamicParams)
 	}
 	if len(updates) == 0 {
@@ -1035,7 +1083,7 @@ func (wb *WebsiteBuilder) UpdateSectionComponent(w http.ResponseWriter, r *http.
 	}
 	args = append(args, componentID)
 
-	if _, err := wb.db.ExecContext(ctx, `UPDATE website_section_components SET `+strings.Join(updates, ", ")+` WHERE id = ?`, args...); err != nil {
+	if _, err := wb.db.ExecContext(ctx, portableSQL(`UPDATE website_section_components SET `+strings.Join(updates, ", ")+` WHERE id = ?`), args...); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to update section component"})
 		return
 	}
@@ -1064,7 +1112,7 @@ func (wb *WebsiteBuilder) DeleteSectionComponent(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if _, err := wb.db.ExecContext(ctx, `DELETE FROM website_section_components WHERE id = ?`, componentID); err != nil {
+	if _, err := wb.db.ExecContext(ctx, portableSQL(`DELETE FROM website_section_components WHERE id = ?`), componentID); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to delete section component"})
 		return
 	}
@@ -1108,7 +1156,7 @@ func (wb *WebsiteBuilder) ReorderSectionComponents(w http.ResponseWriter, r *htt
 	defer func() { _ = tx.Rollback() }()
 
 	for idx, componentID := range req.ComponentIDs {
-		if _, err := tx.ExecContext(ctx, `UPDATE website_section_components SET position = ? WHERE id = ? AND section_id = ?`, idx, componentID, req.SectionID); err != nil {
+		if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE website_section_components SET position = ? WHERE id = ? AND section_id = ?`), idx, componentID, req.SectionID); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to reorder components"})
 			return
 		}
@@ -1137,12 +1185,12 @@ func (wb *WebsiteBuilder) ListAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := wb.db.QueryContext(ctx, `
+	rows, err := wb.db.QueryContext(ctx, portableSQL(`
 		SELECT id, website_id, asset_type, original_filename, storage_path, public_url, mime_type, file_size, width, height, alt_text, created_at
 		FROM website_assets
 		WHERE website_id = ?
 		ORDER BY id DESC
-	`, websiteID)
+	`), websiteID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to fetch assets"})
 		return
@@ -1227,15 +1275,14 @@ func (wb *WebsiteBuilder) UploadAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	publicURL := wb.server.bunnyPullURL(ctx, restaurantID, objectPath)
-	result, err := wb.db.ExecContext(ctx, `
+	id, err := sqldb.InsertID(ctx, sqlDialect, wb.db, portableSQL(`
 		INSERT INTO website_assets (website_id, asset_type, original_filename, storage_path, public_url, mime_type, file_size, width, height, alt_text)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
-	`, websiteID, assetType, header.Filename, objectPath, publicURL, contentType, len(raw), altText)
+	`), "id", websiteID, assetType, header.Filename, objectPath, publicURL, contentType, len(raw), altText)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to persist asset"})
 		return
 	}
-	id, _ := result.LastInsertId()
 
 	asset := WebsiteAsset{
 		ID:               int(id),
@@ -1271,13 +1318,13 @@ func (wb *WebsiteBuilder) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var owned int
-	err = wb.db.QueryRowContext(ctx, `
+	err = wb.db.QueryRowContext(ctx, portableSQL(`
 		SELECT 1
 		FROM website_assets wa
 		JOIN restaurant_websites rw ON rw.id = wa.website_id
 		WHERE wa.id = ? AND rw.restaurant_id = ?
 		LIMIT 1
-	`, assetID, restaurantID).Scan(&owned)
+	`), assetID, restaurantID).Scan(&owned)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Asset not found"})
@@ -1287,7 +1334,7 @@ func (wb *WebsiteBuilder) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := wb.db.ExecContext(ctx, `DELETE FROM website_assets WHERE id = ?`, assetID); err != nil {
+	if _, err := wb.db.ExecContext(ctx, portableSQL(`DELETE FROM website_assets WHERE id = ?`), assetID); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Failed to delete asset"})
 		return
 	}
@@ -1411,12 +1458,12 @@ func (wb *WebsiteBuilder) PublishHistory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rows, err := wb.db.QueryContext(ctx, `
+	rows, err := wb.db.QueryContext(ctx, portableSQL(`
 		SELECT id, website_id, version, snapshot_json, published_by, published_at, storage_path
 		FROM website_publish_history
 		WHERE website_id = ?
 		ORDER BY version DESC, id DESC
-	`, website.ID)
+	`), website.ID)
 	if err != nil {
 		if isSQLSchemaError(err) {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "history": []WebsitePublishHistoryEntry{}})
@@ -1485,24 +1532,24 @@ func (wb *WebsiteBuilder) insertWebsiteRow(ctx context.Context, restaurantID int
 	}
 
 	return wb.execVariantsResult(ctx, []boSQLVariant{
-		{query: `INSERT INTO restaurant_websites (restaurant_id, template_id, domain, subdomain, status, settings, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, NOW(), NOW())`, args: []any{restaurantID, templateArg, domainArg, subdomainArg, settingsArg}},
-		{query: `INSERT INTO restaurant_websites (restaurant_id, template_id, domain, status, settings, created_at, updated_at) VALUES (?, ?, ?, 'draft', ?, NOW(), NOW())`, args: []any{restaurantID, templateArg, domainArg, settingsArg}},
-		{query: `INSERT INTO restaurant_websites (restaurant_id, template_id, domain, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())`, args: []any{restaurantID, templateArg, domainArg}},
-		{query: `INSERT INTO restaurant_websites (restaurant_id, template_id, created_at, updated_at) VALUES (?, ?, NOW(), NOW())`, args: []any{restaurantID, templateArg}},
-		{query: `INSERT INTO restaurant_websites (restaurant_id, created_at, updated_at) VALUES (?, NOW(), NOW())`, args: []any{restaurantID}},
+		{query: nativeSQL(`INSERT INTO restaurant_websites (restaurant_id, template_id, domain, subdomain, status, settings, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', ?, NOW(), NOW())`, `INSERT INTO restaurant_websites (restaurant_id, template_id, domain, subdomain, status, settings, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', CAST(? AS jsonb), date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`), args: []any{restaurantID, templateArg, domainArg, subdomainArg, settingsArg}},
+		{query: nativeSQL(`INSERT INTO restaurant_websites (restaurant_id, template_id, domain, status, settings, created_at, updated_at) VALUES (?, ?, ?, 'draft', ?, NOW(), NOW())`, `INSERT INTO restaurant_websites (restaurant_id, template_id, domain, status, settings, created_at, updated_at) VALUES (?, ?, ?, 'draft', CAST(? AS jsonb), date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`), args: []any{restaurantID, templateArg, domainArg, settingsArg}},
+		{query: nativeSQL(`INSERT INTO restaurant_websites (restaurant_id, template_id, domain, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())`, `INSERT INTO restaurant_websites (restaurant_id, template_id, domain, created_at, updated_at) VALUES (?, ?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`), args: []any{restaurantID, templateArg, domainArg}},
+		{query: nativeSQL(`INSERT INTO restaurant_websites (restaurant_id, template_id, created_at, updated_at) VALUES (?, ?, NOW(), NOW())`, `INSERT INTO restaurant_websites (restaurant_id, template_id, created_at, updated_at) VALUES (?, ?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`), args: []any{restaurantID, templateArg}},
+		{query: nativeSQL(`INSERT INTO restaurant_websites (restaurant_id, created_at, updated_at) VALUES (?, NOW(), NOW())`, `INSERT INTO restaurant_websites (restaurant_id, created_at, updated_at) VALUES (?, date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))`), args: []any{restaurantID}},
 	})
 }
 
 func (wb *WebsiteBuilder) ensureHomepage(ctx context.Context, websiteID int) error {
 	var existingID int
-	err := wb.db.QueryRowContext(ctx, `SELECT id FROM website_pages WHERE website_id = ? AND is_homepage = 1 LIMIT 1`, websiteID).Scan(&existingID)
+	err := wb.db.QueryRowContext(ctx, portableSQL(`SELECT id FROM website_pages WHERE website_id = ? AND is_homepage = 1 LIMIT 1`), websiteID).Scan(&existingID)
 	if err == nil {
 		return nil
 	}
 	if err != sql.ErrNoRows {
 		return err
 	}
-	_, err = wb.db.ExecContext(ctx, `INSERT INTO website_pages (website_id, slug, title, is_homepage, status) VALUES (?, '', 'Inicio', 1, 'draft')`, websiteID)
+	_, err = wb.db.ExecContext(ctx, portableSQL(`INSERT INTO website_pages (website_id, slug, title, is_homepage, status) VALUES (?, '', 'Inicio', 1, 'draft')`), websiteID)
 	return err
 }
 
@@ -1527,7 +1574,7 @@ func (wb *WebsiteBuilder) resolveWebsiteID(ctx context.Context, r *http.Request,
 
 func (wb *WebsiteBuilder) websiteBelongsToRestaurant(ctx context.Context, websiteID int, restaurantID int) (bool, error) {
 	var one int
-	err := wb.db.QueryRowContext(ctx, `SELECT 1 FROM restaurant_websites WHERE id = ? AND restaurant_id = ? LIMIT 1`, websiteID, restaurantID).Scan(&one)
+	err := wb.db.QueryRowContext(ctx, portableSQL(`SELECT 1 FROM restaurant_websites WHERE id = ? AND restaurant_id = ? LIMIT 1`), websiteID, restaurantID).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -1539,32 +1586,32 @@ func (wb *WebsiteBuilder) websiteBelongsToRestaurant(ctx context.Context, websit
 
 func (wb *WebsiteBuilder) websiteIDForPage(ctx context.Context, pageID int, restaurantID int) (int, error) {
 	var websiteID int
-	err := wb.db.QueryRowContext(ctx, `
+	err := wb.db.QueryRowContext(ctx, portableSQL(`
 		SELECT wp.website_id
 		FROM website_pages wp
 		JOIN restaurant_websites rw ON rw.id = wp.website_id
 		WHERE wp.id = ? AND rw.restaurant_id = ?
 		LIMIT 1
-	`, pageID, restaurantID).Scan(&websiteID)
+	`), pageID, restaurantID).Scan(&websiteID)
 	return websiteID, err
 }
 
 func (wb *WebsiteBuilder) pageIDForSection(ctx context.Context, sectionID int, restaurantID int) (int, error) {
 	var pageID int
-	err := wb.db.QueryRowContext(ctx, `
+	err := wb.db.QueryRowContext(ctx, portableSQL(`
 		SELECT s.page_id
 		FROM website_page_sections s
 		JOIN website_pages p ON p.id = s.page_id
 		JOIN restaurant_websites rw ON rw.id = p.website_id
 		WHERE s.id = ? AND rw.restaurant_id = ?
 		LIMIT 1
-	`, sectionID, restaurantID).Scan(&pageID)
+	`), sectionID, restaurantID).Scan(&pageID)
 	return pageID, err
 }
 
 func (wb *WebsiteBuilder) sectionIDForPlacedComponent(ctx context.Context, sectionComponentID int, restaurantID int) (int, error) {
 	var sectionID int
-	err := wb.db.QueryRowContext(ctx, `
+	err := wb.db.QueryRowContext(ctx, portableSQL(`
 		SELECT sc.section_id
 		FROM website_section_components sc
 		JOIN website_page_sections s ON s.id = sc.section_id
@@ -1572,12 +1619,12 @@ func (wb *WebsiteBuilder) sectionIDForPlacedComponent(ctx context.Context, secti
 		JOIN restaurant_websites rw ON rw.id = p.website_id
 		WHERE sc.id = ? AND rw.restaurant_id = ?
 		LIMIT 1
-	`, sectionComponentID, restaurantID).Scan(&sectionID)
+	`), sectionComponentID, restaurantID).Scan(&sectionID)
 	return sectionID, err
 }
 
 func (wb *WebsiteBuilder) listSectionComponentsBySection(ctx context.Context, sectionID int) ([]WebsiteSectionComponent, error) {
-	rows, err := wb.db.QueryContext(ctx, `
+	rows, err := wb.db.QueryContext(ctx, nativeSQL(`
 		SELECT
 			sc.id,
 			sc.section_id,
@@ -1598,7 +1645,28 @@ func (wb *WebsiteBuilder) listSectionComponentsBySection(ctx context.Context, se
 		JOIN website_components wc ON wc.id = sc.component_id
 		WHERE sc.section_id = ?
 		ORDER BY sc.position ASC, sc.id ASC
-	`, sectionID)
+	`, `
+		SELECT
+			sc.id,
+			sc.section_id,
+			sc.component_id,
+			sc.position,
+			CAST(COALESCE(sc.settings, CAST('{}' AS jsonb)) AS text),
+			COALESCE(sc.dynamic_source, ''),
+			CAST(COALESCE(sc.dynamic_params, CAST('{}' AS jsonb)) AS text),
+			wc.component_type,
+			wc.name,
+			CAST(COALESCE(wc.default_settings, CAST('{}' AS jsonb)) AS text),
+			wc.description,
+			COALESCE(wc.icon, ''),
+			wc.is_active,
+			sc.created_at,
+			sc.updated_at
+		FROM website_section_components sc
+		JOIN website_components wc ON wc.id = sc.component_id
+		WHERE sc.section_id = ?
+		ORDER BY sc.position ASC, sc.id ASC
+	`), sectionID)
 	if err != nil {
 		return nil, err
 	}
@@ -1653,7 +1721,7 @@ func (wb *WebsiteBuilder) execVariants(ctx context.Context, variants []boSQLVari
 func (wb *WebsiteBuilder) execVariantsResult(ctx context.Context, variants []boSQLVariant) (sql.Result, error) {
 	var lastErr error
 	for _, variant := range variants {
-		res, err := wb.db.ExecContext(ctx, variant.query, variant.args...)
+		res, err := wb.db.ExecContext(ctx, selectedSQL(variant.query), variant.args...)
 		if err == nil {
 			return res, nil
 		}
@@ -1678,12 +1746,12 @@ func (wb *WebsiteBuilder) seedTemplateSections(ctx context.Context, restaurantID
 		return err
 	}
 	var existingCount int
-	if err := wb.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM website_page_sections WHERE page_id = ?`, homepageID).Scan(&existingCount); err == nil && existingCount > 0 {
+	if err := wb.db.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM website_page_sections WHERE page_id = ?`), homepageID).Scan(&existingCount); err == nil && existingCount > 0 {
 		return nil
 	}
 
 	var raw json.RawMessage
-	if err := wb.db.QueryRowContext(ctx, `SELECT template_data FROM website_templates WHERE id = ? LIMIT 1`, templateID).Scan(&raw); err != nil {
+	if err := wb.db.QueryRowContext(ctx, nativeSQL(`SELECT template_data FROM website_templates WHERE id = ? LIMIT 1`, `SELECT CAST(template_data AS text) FROM website_templates WHERE id = ? LIMIT 1`), templateID).Scan(&raw); err != nil {
 		return err
 	}
 
@@ -1717,14 +1785,16 @@ func (wb *WebsiteBuilder) seedTemplateSections(ctx context.Context, restaurantID
 		if len(sectionSettings) == 0 || string(sectionSettings) == "null" {
 			sectionSettings = []byte(`{}`)
 		}
-		res, err := wb.db.ExecContext(ctx, `
+		sectionID, err := sqldb.InsertID(ctx, sqlDialect, wb.db, nativeSQL(`
 			INSERT INTO website_page_sections (page_id, section_type, position, settings, is_visible)
 			VALUES (?, ?, ?, ?, 1)
-		`, homepageID, strings.TrimSpace(section.Type), idx, sectionSettings)
+		`, `
+			INSERT INTO website_page_sections (page_id, section_type, position, settings, is_visible)
+			VALUES (?, ?, ?, CAST(? AS jsonb), 1)
+		`), "id", homepageID, strings.TrimSpace(section.Type), idx, sectionSettings)
 		if err != nil {
 			return err
 		}
-		sectionID, _ := res.LastInsertId()
 
 		componentType, dynamicSource, componentSettings := defaultTemplateComponentForSection(section.Type, brandName)
 		componentID := componentIDs[componentType]
@@ -1735,17 +1805,20 @@ func (wb *WebsiteBuilder) seedTemplateSections(ctx context.Context, restaurantID
 		if len(settingsRaw) == 0 || string(settingsRaw) == "null" {
 			settingsRaw = []byte(`{}`)
 		}
-		if _, err := wb.db.ExecContext(ctx, `
+		if _, err := wb.db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO website_section_components (section_id, component_id, position, settings, dynamic_source, dynamic_params)
 			VALUES (?, ?, 0, ?, ?, JSON_OBJECT())
-		`, sectionID, componentID, settingsRaw, dynamicSource); err != nil {
+		`, `
+			INSERT INTO website_section_components (section_id, component_id, position, settings, dynamic_source, dynamic_params)
+			VALUES (?, ?, 0, CAST(? AS jsonb), ?, CAST('{}' AS jsonb))
+		`), sectionID, componentID, settingsRaw, dynamicSource); err != nil {
 			return err
 		}
 	}
 
 	if len(seed.Settings) > 0 {
 		if rawSettings, err := json.Marshal(seed.Settings); err == nil {
-			_ = wb.execVariants(ctx, []boSQLVariant{{query: `UPDATE restaurant_websites SET settings = ?, updated_at = NOW() WHERE id = ?`, args: []any{rawSettings, websiteID}}})
+			_ = wb.execVariants(ctx, []boSQLVariant{{query: nativeSQL(`UPDATE restaurant_websites SET settings = ?, updated_at = NOW() WHERE id = ?`, `UPDATE restaurant_websites SET settings = CAST(? AS jsonb), updated_at = date_trunc('second', statement_timestamp()) WHERE id = ?`), args: []any{rawSettings, websiteID}}})
 		}
 	}
 	return nil
@@ -1756,12 +1829,12 @@ func (wb *WebsiteBuilder) ensureHomepageAndGetID(ctx context.Context, websiteID 
 		return 0, err
 	}
 	var homepageID int
-	err := wb.db.QueryRowContext(ctx, `SELECT id FROM website_pages WHERE website_id = ? AND is_homepage = 1 LIMIT 1`, websiteID).Scan(&homepageID)
+	err := wb.db.QueryRowContext(ctx, portableSQL(`SELECT id FROM website_pages WHERE website_id = ? AND is_homepage = 1 LIMIT 1`), websiteID).Scan(&homepageID)
 	return homepageID, err
 }
 
 func (wb *WebsiteBuilder) componentIDMap(ctx context.Context) (map[string]int, error) {
-	rows, err := wb.db.QueryContext(ctx, `SELECT id, component_type FROM website_components WHERE is_active = 1`)
+	rows, err := wb.db.QueryContext(ctx, portableSQL(`SELECT id, component_type FROM website_components WHERE is_active = 1`))
 	if err != nil {
 		return nil, err
 	}
@@ -1780,14 +1853,14 @@ func (wb *WebsiteBuilder) componentIDMap(ctx context.Context) (map[string]int, e
 
 func (wb *WebsiteBuilder) markWebsitePublished(ctx context.Context, restaurantID int) error {
 	return wb.execVariants(ctx, []boSQLVariant{
-		{query: `UPDATE restaurant_websites SET status = 'published', published_at = NOW(), updated_at = NOW() WHERE restaurant_id = ?`, args: []any{restaurantID}},
-		{query: `UPDATE restaurant_websites SET is_published = 1, updated_at = NOW() WHERE restaurant_id = ?`, args: []any{restaurantID}},
+		{query: nativeSQL(`UPDATE restaurant_websites SET status = 'published', published_at = NOW(), updated_at = NOW() WHERE restaurant_id = ?`, `UPDATE restaurant_websites SET status = 'published', published_at = date_trunc('second', statement_timestamp()), updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ?`), args: []any{restaurantID}},
+		{query: nativeSQL(`UPDATE restaurant_websites SET is_published = 1, updated_at = NOW() WHERE restaurant_id = ?`, `UPDATE restaurant_websites SET is_published = 1, updated_at = date_trunc('second', statement_timestamp()) WHERE restaurant_id = ?`), args: []any{restaurantID}},
 	})
 }
 
 func (wb *WebsiteBuilder) insertPublishHistory(ctx context.Context, websiteID int, userID int64, storagePath string, files []GeneratedFile) (int, error) {
 	var version int
-	if err := wb.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) + 1 FROM website_publish_history WHERE website_id = ?`, websiteID).Scan(&version); err != nil {
+	if err := wb.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(MAX(version), 0) + 1 FROM website_publish_history WHERE website_id = ?`), websiteID).Scan(&version); err != nil {
 		if !isSQLSchemaError(err) {
 			return 0, err
 		}
@@ -1798,10 +1871,10 @@ func (wb *WebsiteBuilder) insertPublishHistory(ctx context.Context, websiteID in
 		"files":        files,
 	}
 	raw, _ := json.Marshal(snapshot)
-	if _, err := wb.db.ExecContext(ctx, `
+	if _, err := wb.db.ExecContext(ctx, portableSQL(`
 		INSERT INTO website_publish_history (website_id, version, snapshot_json, published_by, storage_path)
 		VALUES (?, ?, ?, ?, ?)
-	`, websiteID, version, raw, userID, storagePath); err != nil {
+	`), websiteID, version, raw, userID, storagePath); err != nil {
 		return 0, err
 	}
 	return version, nil

@@ -44,9 +44,9 @@ func botSpecialDateAdelantoSet(s *Server, ctx context.Context, rid int, p map[st
 		title             string
 		isActive, unified int
 	)
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT id, title, is_active, adelanto_unified FROM special_dates WHERE restaurant_id = ? AND date = ? LIMIT 1
-	`, rid, date).Scan(&sdID, &title, &isActive, &unified); err != nil {
+	`), rid, date).Scan(&sdID, &title, &isActive, &unified); err != nil {
 		return nil, fmt.Errorf("no hay fecha especial configurada para %s", date)
 	}
 
@@ -61,12 +61,12 @@ func botSpecialDateAdelantoSet(s *Server, ctx context.Context, rid int, p map[st
 	}
 	var menus, sections int
 	countArgs := append(append(append([]any{}, secArgs...), rid, sdID), fargs...)
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COUNT(DISTINCT sdm.id), COUNT(sms.id)
 		FROM special_date_menus sdm
 		LEFT JOIN special_menu_sections sms
 		  ON sms.menu_id = sdm.menu_id AND sms.restaurant_id = sdm.restaurant_id`+secFilter+`
-		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?`+filter, countArgs...).Scan(&menus, &sections); err != nil {
+		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?`+filter), countArgs...).Scan(&menus, &sections); err != nil {
 		return nil, errors.New("no se pudo leer los menús de la fecha especial")
 	}
 	if unified == 0 && (menus == 0 || sectionID > 0 && sections == 0) {
@@ -81,22 +81,21 @@ func botSpecialDateAdelantoSet(s *Server, ctx context.Context, rid int, p map[st
 	scope := "por menú/sección"
 	if unified != 0 {
 		scope = "unificado (todos los menús de la fecha)"
-		_, err = tx.ExecContext(ctx, `UPDATE special_dates SET adelanto_unified_amount = ? WHERE id = ? AND restaurant_id = ?`, amount, sdID, rid)
+		_, err = tx.ExecContext(ctx, portableSQL(`UPDATE special_dates SET adelanto_unified_amount = ? WHERE id = ? AND restaurant_id = ?`), amount, sdID, rid)
 	} else {
 		if sectionID == 0 {
-			_, err = tx.ExecContext(ctx, `UPDATE special_date_menus sdm SET sdm.adelanto_amount = ? WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?`+filter,
+			_, err = tx.ExecContext(ctx, portableSQL(sqlFragment(`UPDATE special_date_menus sdm SET sdm.adelanto_amount = ? WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?`, `UPDATE special_date_menus sdm SET adelanto_amount = ? WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?`)+filter),
 				append([]any{amount, rid, sdID}, fargs...)...)
 		}
 		if err == nil && sections > 0 {
-			_, err = tx.ExecContext(ctx, `
+			_, err = tx.ExecContext(ctx, portableSQL(`
 				INSERT INTO special_date_menu_sections (restaurant_id, special_date_menu_id, section_id, adelanto_amount)
-				SELECT sdm.restaurant_id, sdm.id, sms.id, ?
+				SELECT sdm.restaurant_id, sdm.id, sms.id, `+sqlFragment("?", "CAST(CAST(? AS double precision) AS numeric(10,2))")+`
 				FROM special_date_menus sdm
 				JOIN special_menu_sections sms
 				  ON sms.menu_id = sdm.menu_id AND sms.restaurant_id = sdm.restaurant_id`+secFilter+`
 				WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?`+filter+`
-				ON DUPLICATE KEY UPDATE adelanto_amount = VALUES(adelanto_amount)
-			`, append(append(append([]any{amount}, secArgs...), rid, sdID), fargs...)...)
+				`+sqlFragment("ON DUPLICATE KEY UPDATE adelanto_amount = VALUES(adelanto_amount)", "ON CONFLICT (special_date_menu_id, section_id) DO UPDATE SET adelanto_amount = EXCLUDED.adelanto_amount")), append(append(append([]any{amount}, secArgs...), rid, sdID), fargs...)...)
 		}
 	}
 	if err != nil || tx.Commit() != nil {

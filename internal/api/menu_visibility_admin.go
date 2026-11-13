@@ -34,7 +34,7 @@ func (s *Server) handleMenuVisibilityToggle(w http.ResponseWriter, r *http.Reque
 		activeInt = 1
 	}
 
-	res, err := s.db.ExecContext(r.Context(), "UPDATE menu_visibility SET is_active = ? WHERE restaurant_id = ? AND menu_key = ?", activeInt, restaurantID, menuKey)
+	res, err := s.db.ExecContext(r.Context(), nativeSQL("UPDATE menu_visibility SET is_active = ? WHERE restaurant_id = ? AND menu_key = ?", "UPDATE menu_visibility SET is_active = ? WHERE restaurant_id = ? AND app.norm_ascii(menu_key) = app.norm_ascii(?)"), activeInt, restaurantID, menuKey)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando menu_visibility")
 		return
@@ -43,7 +43,7 @@ func (s *Server) handleMenuVisibilityToggle(w http.ResponseWriter, r *http.Reque
 	if affected == 0 {
 		// Menu exists?
 		var tmp int
-		if err := s.db.QueryRowContext(r.Context(), "SELECT id FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", restaurantID, menuKey).Scan(&tmp); err != nil {
+		if err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT id FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", "SELECT id FROM menu_visibility WHERE restaurant_id = ? AND app.norm_ascii(menu_key) = app.norm_ascii(?) LIMIT 1"), restaurantID, menuKey).Scan(&tmp); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				httpx.WriteError(w, http.StatusNotFound, "Menu not found")
 				return
@@ -57,7 +57,7 @@ func (s *Server) handleMenuVisibilityToggle(w http.ResponseWriter, r *http.Reque
 	var menuName string
 	var activeDB int
 	var updatedAt sql.NullString
-	if err := s.db.QueryRowContext(r.Context(), "SELECT menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", restaurantID, menuKey).Scan(&menuName, &activeDB, &updatedAt); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", "SELECT menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? AND app.norm_ascii(menu_key) = app.norm_ascii(?) LIMIT 1"), restaurantID, menuKey).Scan(&menuName, &activeDB, &updatedAt); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menu_visibility")
 		return
 	}
@@ -94,7 +94,7 @@ func (s *Server) handleGetMenuVisibilityLegacy(w http.ResponseWriter, r *http.Re
 		var menuName string
 		var isActiveInt int
 		var updatedAt sql.NullString
-		err := s.db.QueryRowContext(r.Context(), "SELECT menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", restaurantID, menuKey).
+		err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", "SELECT menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? AND app.norm_ascii(menu_key) = app.norm_ascii(?) LIMIT 1"), restaurantID, menuKey).
 			Scan(&menuName, &isActiveInt, &updatedAt)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -123,7 +123,7 @@ func (s *Server) handleGetMenuVisibilityLegacy(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), "SELECT menu_key, menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? ORDER BY id", restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL("SELECT menu_key, menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? ORDER BY id"), restaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -192,7 +192,7 @@ func (s *Server) handleToggleMenuVisibilityLegacy(w http.ResponseWriter, r *http
 		activeInt = 1
 	}
 
-	res, err := s.db.ExecContext(r.Context(), "UPDATE menu_visibility SET is_active = ? WHERE restaurant_id = ? AND menu_key = ?", activeInt, restaurantID, menuKey)
+	res, err := s.db.ExecContext(r.Context(), nativeSQL("UPDATE menu_visibility SET is_active = ? WHERE restaurant_id = ? AND menu_key = ?", "UPDATE menu_visibility SET is_active = ? WHERE restaurant_id = ? AND app.norm_ascii(menu_key) = app.norm_ascii(?)"), activeInt, restaurantID, menuKey)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -203,7 +203,7 @@ func (s *Server) handleToggleMenuVisibilityLegacy(w http.ResponseWriter, r *http
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
 		var tmp int
-		if err := s.db.QueryRowContext(r.Context(), "SELECT id FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", restaurantID, menuKey).Scan(&tmp); err != nil {
+		if err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT id FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", "SELECT id FROM menu_visibility WHERE restaurant_id = ? AND app.norm_ascii(menu_key) = app.norm_ascii(?) LIMIT 1"), restaurantID, menuKey).Scan(&tmp); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				httpx.WriteJSON(w, http.StatusNotFound, map[string]any{
 					"success": false,
@@ -222,7 +222,7 @@ func (s *Server) handleToggleMenuVisibilityLegacy(w http.ResponseWriter, r *http
 	var menuName string
 	var activeDB int
 	var updatedAt sql.NullString
-	if err := s.db.QueryRowContext(r.Context(), "SELECT menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", restaurantID, menuKey).Scan(&menuName, &activeDB, &updatedAt); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? AND menu_key = ? LIMIT 1", "SELECT menu_name, is_active, updated_at FROM menu_visibility WHERE restaurant_id = ? AND app.norm_ascii(menu_key) = app.norm_ascii(?) LIMIT 1"), restaurantID, menuKey).Scan(&menuName, &activeDB, &updatedAt); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
 			"message": "Database error",

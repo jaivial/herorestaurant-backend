@@ -26,6 +26,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
 
+	"preactvillacarmen/internal/config"
+	bizdb "preactvillacarmen/internal/db"
+	"preactvillacarmen/internal/sqldb"
 	"preactvillacarmen/internal/vault"
 )
 
@@ -44,20 +47,45 @@ func main() {
 	password := envDefault("DB_PASSWORD", "villacarmen")
 	dbName := envDefault("DB_NAME", "villacarmen")
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci",
-		user, password, host, port, dbName)
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		fmt.Printf("open db: %v\n", err)
+	ctx := context.Background()
+	// db_dialect_selection_v1: DB_DRIVER selects the engine. MySQL keeps this
+	// tool's own DSN exactly as before. PG opens only through
+	// bizdb.OpenBusinessForTool (QA env + DATABASE_URL + import marker, no
+	// MySQL fallback) and requires --dry-run: no MiniMax call and no write on
+	// PG until runtime QA.
+	d, derr := bizdb.BusinessDialect(os.Getenv("DB_DRIVER"))
+	if derr != nil {
+		fmt.Println(derr)
 		os.Exit(1)
+	}
+	var db *sql.DB
+	if d == sqldb.Postgres {
+		if !*dryRun {
+			fmt.Println("backfill-translations: PostgreSQL requires --dry-run until runtime QA (no provider call, no write)")
+			os.Exit(1)
+		}
+		pg, _, err := bizdb.OpenBusinessForTool(ctx, config.Load())
+		if err != nil {
+			fmt.Printf("open db: %v\n", err)
+			os.Exit(1)
+		}
+		db = pg
+		dialect = sqldb.Postgres
+	} else {
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci",
+			user, password, host, port, dbName)
+		my, err := sql.Open("mysql", dsn)
+		if err != nil {
+			fmt.Printf("open db: %v\n", err)
+			os.Exit(1)
+		}
+		db = my
+		if err := db.PingContext(ctx); err != nil {
+			fmt.Printf("ping db: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	defer db.Close()
-
-	ctx := context.Background()
-	if err := db.PingContext(ctx); err != nil {
-		fmt.Printf("ping db: %v\n", err)
-		os.Exit(1)
-	}
 
 	tr := &translator{
 		db:      db,
@@ -71,6 +99,9 @@ func main() {
 
 	total := 0
 	total += backfillCatalog(ctx, db, tr, *restaurantID, *dryRun)
+	// Identifiers are quoted per dialect inside backfillSimple/backfillMenuTable.
+	// SOURCE ANOMALY kept: VINOS / DIA / FINDE are absent from the source
+	// schema (dump); their query fails and is reported on both engines.
 	total += backfillSimple(ctx, db, tr, *restaurantID, *dryRun, "POSTRES", "NUM", "POSTRES", map[string]string{"descripcion": "DESCRIPCION"})
 	total += backfillSimple(ctx, db, tr, *restaurantID, *dryRun, "VINOS", "num", "VINOS", map[string]string{
 		"nombre": "nombre", "descripcion": "descripcion", "bodega": "bodega", "denominacion_origen": "denominacion_origen", "tipo": "tipo",
@@ -87,9 +118,9 @@ func main() {
 // ---- entity backfills ----
 
 func backfillCatalog(ctx context.Context, db *sql.DB, tr *translator, restaurantID int, dry bool) int {
-	rows, err := db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, portableSQL(`
 		SELECT id, COALESCE(nombre,''), COALESCE(descripcion,''), COALESCE(titulo,''), COALESCE(tipo,''), COALESCE(categoria,'')
-		FROM comida_items WHERE restaurant_id = ?`, restaurantID)
+		FROM comida_items WHERE restaurant_id = ?`), restaurantID)
 	if err != nil {
 		fmt.Printf("comida_items query: %v\n", err)
 		return 0
@@ -111,21 +142,26 @@ func backfillCatalog(ctx context.Context, db *sql.DB, tr *translator, restaurant
 }
 
 func backfillSimple(ctx context.Context, db *sql.DB, tr *translator, restaurantID int, dry bool, table, idCol, entityType string, cols map[string]string) int {
-	sel := idCol
-	for _, c := range cols {
-		sel += ", COALESCE(" + c + ",'')"
+	// Map iteration order is random but taken ONCE here and reused for both
+	// the select list and fieldNames below (as in the source: same range).
+	names := make([]string, 0, len(cols))
+	for name := range cols {
+		names = append(names, name)
 	}
-	rows, err := db.QueryContext(ctx, "SELECT "+sel+" FROM "+table+" WHERE restaurant_id = ?", restaurantID)
+	sel, selPG := idCol, pgIdent(idCol)
+	for _, name := range names {
+		sel += ", COALESCE(" + cols[name] + ",'')"
+		selPG += ", COALESCE(" + pgIdent(cols[name]) + ",'')"
+	}
+	// Fixed identifiers from main (never user input); rebound once.
+	rows, err := db.QueryContext(ctx, nativeSQL("SELECT "+sel+" FROM "+table+" WHERE restaurant_id = ?", "SELECT "+selPG+" FROM "+pgIdent(table)+" WHERE restaurant_id = ?"), restaurantID)
 	if err != nil {
 		fmt.Printf("%s query: %v\n", table, err)
 		return 0
 	}
 	defer rows.Close()
 
-	fieldNames := make([]string, 0, len(cols))
-	for name := range cols {
-		fieldNames = append(fieldNames, name)
-	}
+	fieldNames := names
 
 	count := 0
 	for rows.Next() {
@@ -149,7 +185,7 @@ func backfillSimple(ctx context.Context, db *sql.DB, tr *translator, restaurantI
 }
 
 func backfillMenuTable(ctx context.Context, db *sql.DB, tr *translator, restaurantID int, dry bool, table string) int {
-	rows, err := db.QueryContext(ctx, "SELECT NUM, COALESCE(DESCRIPCION,''), COALESCE(TIPO,'') FROM "+table+" WHERE restaurant_id = ?", restaurantID)
+	rows, err := db.QueryContext(ctx, nativeSQL("SELECT NUM, COALESCE(DESCRIPCION,''), COALESCE(TIPO,'') FROM "+table+" WHERE restaurant_id = ?", `SELECT "NUM", COALESCE("DESCRIPCION",''), COALESCE("TIPO",'') FROM `+pgIdent(table)+" WHERE restaurant_id = ?"), restaurantID)
 	if err != nil {
 		fmt.Printf("%s query: %v\n", table, err)
 		return 0
@@ -171,10 +207,10 @@ func backfillMenuTable(ctx context.Context, db *sql.DB, tr *translator, restaura
 }
 
 func backfillGroupMenus(ctx context.Context, db *sql.DB, tr *translator, restaurantID int, dry bool) int {
-	rows, err := db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, portableSQL(`
 		SELECT id, COALESCE(menu_title,''), COALESCE(menu_subtitle,'[]'), COALESCE(comments,'[]'),
 		       COALESCE(entrantes,'[]'), COALESCE(principales,'{}'), COALESCE(postre,'[]')
-		FROM menus WHERE restaurant_id = ?`, restaurantID)
+		FROM menus WHERE restaurant_id = ?`), restaurantID)
 	if err != nil {
 		fmt.Printf("menus query: %v\n", err)
 		return 0
@@ -213,9 +249,9 @@ func backfillGroupMenus(ctx context.Context, db *sql.DB, tr *translator, restaur
 }
 
 func backfillGroupMenuSections(ctx context.Context, db *sql.DB, tr *translator, restaurantID int, dry bool) int {
-	rows, err := db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, portableSQL(`
 		SELECT id, COALESCE(title,''), COALESCE(annotations_json,'[]')
-		FROM group_menu_sections_v2 WHERE restaurant_id = ?`, restaurantID)
+		FROM group_menu_sections_v2 WHERE restaurant_id = ?`), restaurantID)
 	if err != nil {
 		fmt.Printf("group_menu_sections_v2 query: %v\n", err)
 		return 0
@@ -239,9 +275,9 @@ func backfillGroupMenuSections(ctx context.Context, db *sql.DB, tr *translator, 
 }
 
 func backfillGroupMenuDishes(ctx context.Context, db *sql.DB, tr *translator, restaurantID int, dry bool) int {
-	rows, err := db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, portableSQL(`
 		SELECT id, COALESCE(title_snapshot,''), COALESCE(description_snapshot,'')
-		FROM group_menu_section_dishes_v2 WHERE restaurant_id = ? AND active = 1`, restaurantID)
+		FROM group_menu_section_dishes_v2 WHERE restaurant_id = ? AND active = 1`), restaurantID)
 	if err != nil {
 		fmt.Printf("group_menu_section_dishes_v2 query: %v\n", err)
 		return 0
@@ -342,11 +378,16 @@ func processEntity(ctx context.Context, db *sql.DB, tr *translator, restaurantID
 		if translated == "" {
 			continue
 		}
-		if _, err := db.ExecContext(ctx, `
+		// Only collidable key: uniq_dish_translation (id is identity).
+		if _, err := db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO dish_translations (restaurant_id, entity_type, entity_id, field_name, lang, source_hash, translated_text)
 			VALUES (?, ?, ?, ?, 'en', ?, ?)
 			ON DUPLICATE KEY UPDATE source_hash = VALUES(source_hash), translated_text = VALUES(translated_text)
-		`, restaurantID, entityType, entityID, name, h, translated); err != nil {
+		`, `
+			INSERT INTO dish_translations (restaurant_id, entity_type, entity_id, field_name, lang, source_hash, translated_text)
+			VALUES (?, ?, ?, ?, 'en', ?, ?)
+			ON CONFLICT (restaurant_id, app.norm(entity_type), entity_id, app.norm(field_name), app.norm(lang)) DO UPDATE SET source_hash = EXCLUDED.source_hash, translated_text = EXCLUDED.translated_text
+		`), restaurantID, entityType, entityID, name, h, translated); err != nil {
 			fmt.Printf("[db] %s#%d %s: %v\n", entityType, entityID, name, err)
 			continue
 		}
@@ -358,9 +399,11 @@ func processEntity(ctx context.Context, db *sql.DB, tr *translator, restaurantID
 
 func loadHashes(ctx context.Context, db *sql.DB, restaurantID int, entityType string, entityID int64) map[string]string {
 	out := map[string]string{}
-	rows, err := db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, nativeSQL(`
 		SELECT field_name, source_hash FROM dish_translations
-		WHERE restaurant_id = ? AND entity_type = ? AND entity_id = ? AND lang = 'en'`,
+		WHERE restaurant_id = ? AND entity_type = ? AND entity_id = ? AND lang = 'en'`, `
+		SELECT field_name, source_hash FROM dish_translations
+		WHERE restaurant_id = ? AND app.norm(entity_type) = app.norm(?) AND entity_id = ? AND app.norm(lang) = 'en'`),
 		restaurantID, entityType, entityID)
 	if err != nil {
 		return out
@@ -393,7 +436,7 @@ func (t *translator) translate(ctx context.Context, restaurantID int, text strin
 		var encrypted sql.NullString
 		var dbModel sql.NullString
 		err := t.db.QueryRowContext(ctx,
-			`SELECT api_key_encrypted, model FROM restaurant_minimax_config WHERE restaurant_id = ?`,
+			portableSQL(`SELECT api_key_encrypted, model FROM restaurant_minimax_config WHERE restaurant_id = ?`),
 			restaurantID,
 		).Scan(&encrypted, &dbModel)
 		if err == nil && encrypted.Valid && encrypted.String != "" {
@@ -472,3 +515,7 @@ func envDefault(key, fallback string) string {
 	}
 	return fallback
 }
+
+// pgIdent double-quotes a fixed source identifier for PG (the import kept the
+// MySQL case: "POSTRES", "NUM", "DESCRIPCION").
+func pgIdent(name string) string { return `"` + name + `"` }

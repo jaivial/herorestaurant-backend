@@ -35,7 +35,7 @@ func memberGreeting(name string) string {
 func (s *Server) sendScheduleChangeNotification(ctx context.Context, restaurantID, memberID int, schedule boFichajeSchedule, updated bool) {
 	var email, phone, whatsapp string
 	var verified bool
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(email,''), COALESCE(phone,''), COALESCE(whatsapp_number,''), COALESCE(whatsapp_verified_at IS NOT NULL, 0) FROM restaurant_members WHERE restaurant_id=? AND id=? LIMIT 1`, restaurantID, memberID).Scan(&email, &phone, &whatsapp, &verified); err != nil {
+	if err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT COALESCE(email,''), COALESCE(phone,''), COALESCE(whatsapp_number,''), COALESCE(whatsapp_verified_at IS NOT NULL, 0) FROM restaurant_members WHERE restaurant_id=? AND id=? LIMIT 1`, `SELECT COALESCE(email,''), COALESCE(phone,''), COALESCE(whatsapp_number,''), CASE WHEN whatsapp_verified_at IS NOT NULL THEN 1 ELSE 0 END FROM restaurant_members WHERE restaurant_id=? AND id=? LIMIT 1`), restaurantID, memberID).Scan(&email, &phone, &whatsapp, &verified); err != nil {
 		log.Printf("schedule notification contact lookup failed restaurant=%d member=%d: %v", restaurantID, memberID, err)
 		return
 	}

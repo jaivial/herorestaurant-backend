@@ -172,14 +172,20 @@ func (s *Server) handlePublicBookingGet(w http.ResponseWriter, r *http.Request) 
 
 	// Load rice options for rice page.
 	rows, err := s.db.QueryContext(r.Context(),
-		`SELECT CONCAT(TRIM(d.title_snapshot),
+		nativeSQL(`SELECT CONCAT(TRIM(d.title_snapshot),
 			    IF(d.supplement_price > 0, CONCAT(' (+', FORMAT(d.supplement_price, 0), '€)'), ''))
 			FROM group_menu_section_dishes_v2 d
 			JOIN group_menu_sections_v2 s ON s.id = d.section_id
 			WHERE d.restaurant_id = ? AND d.active = 1
 			  AND s.section_kind = 'arroces'
 			  AND d.menu_id = 42
-			ORDER BY d.title_snapshot`,
+			ORDER BY d.title_snapshot`, `SELECT TRIM(d.title_snapshot) || CASE WHEN d.supplement_price > 0 THEN ' (+' || to_char(ROUND(d.supplement_price, 0), 'FM999,999,990') || '€)' ELSE '' END
+			FROM group_menu_section_dishes_v2 d
+			JOIN group_menu_sections_v2 s ON s.id = d.section_id
+			WHERE d.restaurant_id = ? AND d.active = 1
+			  AND s.section_kind = 'arroces'
+			  AND d.menu_id = 42
+			ORDER BY d.title_snapshot`),
 		restaurantID)
 	riceOptions := []string{}
 	if err == nil {
@@ -243,7 +249,7 @@ func (s *Server) handlePublicBookingConfirm(w http.ResponseWriter, r *http.Reque
 	}
 
 	_, err = s.db.ExecContext(r.Context(),
-		"UPDATE bookings SET status = 'confirmed' WHERE restaurant_id = ? AND id = ?",
+		portableSQL("UPDATE bookings SET status = 'confirmed' WHERE restaurant_id = ? AND id = ?"),
 		restaurantID, b.ID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error al confirmar la reserva"})
@@ -324,7 +330,7 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 		if resTimeNorm != "" {
 			b.ReservationTime = resTimeNorm
 		}
-		_, err := tx.ExecContext(ctx, `
+		_, err := tx.ExecContext(ctx, nativeSQL(`
 			INSERT INTO cancelled_bookings
 				(restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name,
 				 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
@@ -332,7 +338,15 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 				 cancelled_by_user_id, cancelled_by_name,
 				 special_menu, menu_de_grupo_id, principales_json)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?)
-		`,
+		`, `
+			INSERT INTO cancelled_bookings
+				(restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name,
+				 contact_phone, contact_email, commentary, arroz_type, arroz_servings,
+				 "babyStrollers", "highChairs", cancellation_date, cancelled_by,
+				 cancelled_by_user_id, cancelled_by_name,
+				 special_menu, menu_de_grupo_id, principales_json)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), ?, ?, ?, ?, ?, ?)
+		`),
 			restaurantID,
 			b.ID,
 			b.ReservationDate,
@@ -360,7 +374,7 @@ func (s *Server) handlePublicBookingCancel(w http.ResponseWriter, r *http.Reques
 		if err := s.applyBookingLocationOccupancy(ctx, tx, restaurantID, b.ReservationDate, b.PreferredFloor, b.PreferredSalon, b.PartySize, -1); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, "DELETE FROM bookings WHERE restaurant_id = ? AND id = ?", restaurantID, b.ID)
+		_, err = tx.ExecContext(ctx, portableSQL("DELETE FROM bookings WHERE restaurant_id = ? AND id = ?"), restaurantID, b.ID)
 		return err
 	})
 	if err != nil {
@@ -488,7 +502,7 @@ func (s *Server) handlePublicBookingRice(w http.ResponseWriter, r *http.Request)
 	typeJSON, _ := json.Marshal([]string{selectedRice})
 	servJSON, _ := json.Marshal([]int{body.Servings})
 	res, err := s.db.ExecContext(r.Context(),
-		"UPDATE bookings SET arroz_type = ?, arroz_servings = ? WHERE restaurant_id = ? AND id = ?",
+		nativeSQL("UPDATE bookings SET arroz_type = ?, arroz_servings = ? WHERE restaurant_id = ? AND id = ?", `UPDATE bookings SET arroz_type = $1, arroz_servings = $2 WHERE restaurant_id = $3 AND id = $4 AND (arroz_type COLLATE "C", arroz_servings COLLATE "C") IS DISTINCT FROM ($1, $2)`),
 		string(typeJSON), string(servJSON), restaurantID, b.ID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error al actualizar la reserva"})

@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func (s *Server) handleBOBookingsExport(w http.ResponseWriter, r *http.Request) {
@@ -598,7 +599,7 @@ func (s *Server) handleBOArrozTypes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT CONCAT(TRIM(d.title_snapshot),
 			    IF(d.supplement_price > 0, CONCAT(' (+', FORMAT(d.supplement_price, 0), '€)'), ''))
 		FROM group_menu_section_dishes_v2 d
@@ -607,7 +608,16 @@ func (s *Server) handleBOArrozTypes(w http.ResponseWriter, r *http.Request) {
 		  AND s.section_kind = 'arroces'
 		  AND d.menu_id = 42
 		ORDER BY d.title_snapshot ASC
-	`, a.ActiveRestaurantID)
+	`, `
+		SELECT TRIM(d.title_snapshot) ||
+			    CASE WHEN d.supplement_price > 0 THEN ' (+' || to_char(ROUND(d.supplement_price, 0), 'FM999,999,990') || '€)' ELSE '' END
+		FROM group_menu_section_dishes_v2 d
+		JOIN group_menu_sections_v2 s ON s.id = d.section_id
+		WHERE d.restaurant_id = ? AND d.active = 1
+		  AND s.section_kind = 'arroces'
+		  AND d.menu_id = 42
+		ORDER BY d.title_snapshot ASC
+	`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando FINDE")
 		return
@@ -1044,12 +1054,12 @@ func parseArrozFromArrays(types []string, servs []int, partySize int) (arrozType
 func (s *Server) boFetchActiveGroupMenuTitleAndPrincipales(ctx context.Context, restaurantID int, menuID int) (title string, principalesRaw string, err error) {
 	var t string
 	var principales sql.NullString
-	err = s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT menu_title, principales
 		FROM menus
 		WHERE restaurant_id = ? AND id = ? AND active = 1
 		LIMIT 1
-	`, restaurantID, menuID).Scan(&t, &principales)
+	`), restaurantID, menuID).Scan(&t, &principales)
 	if err != nil {
 		return "", "", err
 	}
@@ -1062,8 +1072,11 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := lockBookingDays(ctx, tx, restaurantID, b.ReservationDate); err != nil {
+		return 0, err
+	}
 
-	res, err := tx.ExecContext(ctx, `
+	id64, err := sqldb.InsertID(ctx, sqlDialect, tx, nativeSQL(`
 		INSERT INTO bookings (
 			restaurant_id,
 			reservation_date,
@@ -1092,7 +1105,36 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 			has_mobility_issues,
 			mobility_people
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
+	`, `
+		INSERT INTO bookings (
+			restaurant_id,
+			reservation_date,
+			party_size,
+			children,
+			reservation_time,
+			customer_name,
+			contact_phone,
+			contact_phone_country_code,
+			commentary,
+			arroz_type,
+			arroz_servings,
+			"babyStrollers",
+			"highChairs",
+			contact_email,
+			special_menu,
+			menu_de_grupo_id,
+			menu_de_grupo_assigned,
+			principales_json,
+			extras_json,
+			table_number,
+			preferred_floor_number,
+			is_special_booking,
+			is_prereserva,
+			special_json,
+			has_mobility_issues,
+			mobility_people
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`), "id",
 		restaurantID,
 		b.ReservationDate,
 		b.PartySize,
@@ -1124,10 +1166,6 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 	if err != nil {
 		return 0, err
 	}
-	id64, err := res.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
 	// Track occupancy for the selected floor on the reservation date.
 	if err := s.applyBookingLocationOccupancy(ctx, tx, restaurantID, b.ReservationDate, b.PreferredFloorNumber, nil, b.PartySize, +1); err != nil {
 		return 0, err
@@ -1139,7 +1177,9 @@ func (s *Server) boInsertBooking(ctx context.Context, restaurantID int, b boNorm
 }
 
 func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, b boNormalizedBooking) error {
-	_, err := s.db.ExecContext(ctx, `
+	// booking_day_lock_v1: old + new day locked; concurrent move fails closed.
+	_, err := s.execBookingUpdateDayLocked(ctx, restaurantID, int64(id), b.ReservationDate, func(ex execQueryer) (sql.Result, error) {
+		return ex.ExecContext(ctx, nativeSQL(`
 		UPDATE bookings SET
 			reservation_date = ?,
 			reservation_time = ?,
@@ -1167,41 +1207,70 @@ func (s *Server) boUpdateBooking(ctx context.Context, restaurantID int, id int, 
 			has_mobility_issues = ?,
 			mobility_people = ?
 		WHERE restaurant_id = ? AND id = ?
-	`,
-		b.ReservationDate,
-		b.ReservationTime,
-		b.PartySize,
-		b.Children,
-		b.CustomerName,
-		b.ContactPhone,
-		b.ContactPhoneCountryCode,
-		b.ContactEmail,
-		nullableStringOrNil(b.TableNumber),
-		nullableInt64OrNil(b.PreferredFloorNumber),
-		nullableStringOrNil(b.Commentary),
-		b.BabyStrollers,
-		b.HighChairs,
-		b.ArrozTypeJSON,
-		b.ArrozServingsJSON,
-		boolToTinyint(b.SpecialMenu),
-		b.MenuDeGrupoID,
-		boolToTinyint(b.MenuDeGrupoAssigned),
-		b.PrincipalesJSON,
-		b.ExtrasJSON,
-		boolToTinyint(b.IsSpecialBooking),
-		boolToTinyint(b.IsPrereserva),
-		nullableStringOrNilFromAny(b.SpecialJSON),
-		// Coordination id: mobility_issues_v1
-		boolToTinyint(b.HasMobilityIssues),
-		b.MobilityPeople,
-		restaurantID,
-		id,
-	)
+	`, `
+		UPDATE bookings SET
+			reservation_date = ?,
+			reservation_time = ?,
+			party_size = ?,
+			children = ?,
+			customer_name = ?,
+			contact_phone = ?,
+			contact_phone_country_code = ?,
+			contact_email = ?,
+			table_number = ?,
+			preferred_floor_number = ?,
+			commentary = ?,
+			"babyStrollers" = ?,
+			"highChairs" = ?,
+			arroz_type = ?,
+			arroz_servings = ?,
+			special_menu = ?,
+			menu_de_grupo_id = ?,
+			menu_de_grupo_assigned = ?,
+			principales_json = ?,
+			extras_json = ?,
+			is_special_booking = ?,
+			is_prereserva = ?,
+			special_json = ?,
+			has_mobility_issues = ?,
+			mobility_people = ?
+		WHERE restaurant_id = ? AND id = ?
+	`),
+			b.ReservationDate,
+			b.ReservationTime,
+			b.PartySize,
+			b.Children,
+			b.CustomerName,
+			b.ContactPhone,
+			b.ContactPhoneCountryCode,
+			b.ContactEmail,
+			nullableStringOrNil(b.TableNumber),
+			nullableInt64OrNil(b.PreferredFloorNumber),
+			nullableStringOrNil(b.Commentary),
+			b.BabyStrollers,
+			b.HighChairs,
+			b.ArrozTypeJSON,
+			b.ArrozServingsJSON,
+			boolToTinyint(b.SpecialMenu),
+			b.MenuDeGrupoID,
+			boolToTinyint(b.MenuDeGrupoAssigned),
+			b.PrincipalesJSON,
+			b.ExtrasJSON,
+			boolToTinyint(b.IsSpecialBooking),
+			boolToTinyint(b.IsPrereserva),
+			nullableStringOrNilFromAny(b.SpecialJSON),
+			// Coordination id: mobility_issues_v1
+			boolToTinyint(b.HasMobilityIssues),
+			b.MobilityPeople,
+			restaurantID,
+			id,
+		)
+	})
 	return err
 }
 
 func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int, date string) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT
 			id,
 			customer_name,
@@ -1233,7 +1302,39 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
 		ORDER BY reservation_time ASC, id ASC
-	`, restaurantID, date)
+	`, `
+		SELECT
+			id,
+			customer_name,
+			contact_email,
+			to_char(reservation_date, 'YYYY-MM-DD') AS reservation_date,
+			to_char(reservation_time, 'HH24:MI:SS') AS reservation_time,
+			party_size,
+			children,
+			contact_phone,
+			contact_phone_country_code,
+			status,
+			arroz_type,
+			arroz_servings,
+			commentary,
+			"babyStrollers",
+			"highChairs",
+			table_number,
+			preferred_floor_number,
+			preferred_salon_id,
+			to_char(added_date AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS added_date,
+			special_menu,
+			menu_de_grupo_id,
+			COALESCE(menu_de_grupo_assigned, 0),
+			principales_json,
+			COALESCE(extras_json, ''),
+			COALESCE(is_special_booking, 0),
+			COALESCE(is_prereserva, 0),
+			COALESCE(special_json, '')
+		FROM bookings
+		WHERE restaurant_id = ? AND reservation_date = ?
+		ORDER BY reservation_time ASC, id ASC
+	`), restaurantID, date)
 	if err != nil {
 		return nil, err
 	}
@@ -1344,7 +1445,7 @@ func (s *Server) boFetchBookingsForExport(ctx context.Context, restaurantID int,
 }
 
 func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id int) (map[string]any, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			id,
 			customer_name,
@@ -1380,7 +1481,43 @@ func (s *Server) boFetchBookingByID(ctx context.Context, restaurantID int, id in
 		FROM bookings
 		WHERE restaurant_id = ? AND id = ?
 		LIMIT 1
-	`, restaurantID, id)
+	`, `
+		SELECT
+			id,
+			customer_name,
+			contact_email,
+			to_char(reservation_date, 'YYYY-MM-DD') AS reservation_date,
+			to_char(reservation_time, 'HH24:MI:SS') AS reservation_time,
+			party_size,
+			children,
+			contact_phone,
+			contact_phone_country_code,
+			status,
+			arroz_type,
+			arroz_servings,
+			commentary,
+			"babyStrollers",
+			"highChairs",
+			table_number,
+			preferred_floor_number,
+			preferred_salon_id,
+			to_char(added_date AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS added_date,
+			special_menu,
+			menu_de_grupo_id,
+			COALESCE(menu_de_grupo_assigned, 0),
+			principales_json,
+			COALESCE(extras_json, ''),
+			COALESCE(is_special_booking, 0),
+			COALESCE(is_prereserva, 0),
+			COALESCE(special_json, ''),
+			COALESCE(has_mobility_issues, 0),
+			COALESCE(mobility_people, 0),
+			qr_url,
+			receipt_url
+		FROM bookings
+		WHERE restaurant_id = ? AND id = ?
+		LIMIT 1
+	`), restaurantID, id)
 
 	var (
 		bookingID           int
@@ -1594,12 +1731,17 @@ func (s *Server) insertBookingModification(ctx context.Context, restaurantID, bo
 	if oldVal == newVal {
 		return
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO booking_modifications
 				(restaurant_id, booking_id, original_reservation_date, field_modified,
 				 old_value, new_value, modified_by, modified_by_user_id, modified_by_name,
 				 customer_name, contact_phone, modification_date)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`, `
+			INSERT INTO booking_modifications
+				(restaurant_id, booking_id, original_reservation_date, field_modified,
+				 old_value, new_value, modified_by, modified_by_user_id, modified_by_name,
+				 customer_name, contact_phone, modification_date)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'))`),
 		restaurantID, bookingID, origDate, field, oldVal, newVal,
 		actor, actorUserID, actorName, customerName, contactPhone); err != nil {
 		log.Printf("checkpoint booking_modification_record_failed restaurant_id=%d booking_id=%d field=%s actor=%s error=%v",
@@ -1652,7 +1794,7 @@ func (s *Server) boSetBookingIsEvent(ctx context.Context, restaurantID int, book
 	if isEvent == nil || bookingID <= 0 {
 		return
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE bookings SET is_event = ? WHERE restaurant_id = ? AND id = ?`, boolToTinyint(*isEvent), restaurantID, bookingID); err != nil {
+	if _, err := s.db.ExecContext(ctx, portableSQL(`UPDATE bookings SET is_event = ? WHERE restaurant_id = ? AND id = ?`), boolToTinyint(*isEvent), restaurantID, bookingID); err != nil {
 		log.Printf("[booking_is_event_v1] restaurant=%d booking=%d update_error=%v", restaurantID, bookingID, err)
 	}
 }
@@ -1665,7 +1807,7 @@ func (s *Server) boSetBookingSendDocumentsToClient(ctx context.Context, restaura
 	if send == nil || bookingID <= 0 {
 		return
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE bookings SET send_documents_to_client = ? WHERE restaurant_id = ? AND id = ?`, boolToTinyint(*send), restaurantID, bookingID); err != nil {
+	if _, err := s.db.ExecContext(ctx, portableSQL(`UPDATE bookings SET send_documents_to_client = ? WHERE restaurant_id = ? AND id = ?`), boolToTinyint(*send), restaurantID, bookingID); err != nil {
 		log.Printf("[booking_documents_v1] restaurant=%d booking=%d toggle_update_error=%v", restaurantID, bookingID, err)
 	}
 }
@@ -1675,7 +1817,7 @@ func (s *Server) boSetBookingSendDocumentsToClient(ctx context.Context, restaura
 // documented default instead of failing the whole booking payload.
 func (s *Server) boBookingSendDocumentsToClient(ctx context.Context, restaurantID int, bookingID int64) bool {
 	var v int
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(send_documents_to_client,0) FROM bookings WHERE restaurant_id = ? AND id = ?`, restaurantID, bookingID).Scan(&v); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(send_documents_to_client,0) FROM bookings WHERE restaurant_id = ? AND id = ?`), restaurantID, bookingID).Scan(&v); err != nil {
 		return false
 	}
 	return v != 0
@@ -1699,7 +1841,7 @@ func (s *Server) boBookingDocumentsSummary(ctx context.Context, restaurantID int
 // boBookingIsEvent reads the event flag (false on any error / missing column).
 func (s *Server) boBookingIsEvent(ctx context.Context, restaurantID int, bookingID int64) bool {
 	var v int
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(is_event,0) FROM bookings WHERE restaurant_id = ? AND id = ?`, restaurantID, bookingID).Scan(&v); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(is_event,0) FROM bookings WHERE restaurant_id = ? AND id = ?`), restaurantID, bookingID).Scan(&v); err != nil {
 		return false
 	}
 	return v != 0

@@ -74,12 +74,17 @@ func (g *HTMXGenerator) loadPageData(ctx context.Context, websiteID int) (*PageD
 		website.ID = websiteID
 	}
 
-	pageRows, err := g.server.db.QueryContext(ctx, `
+	pageRows, err := g.server.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, website_id, slug, title, meta_description, meta_keywords, is_homepage, status, created_at, updated_at
 		FROM website_pages
 		WHERE website_id = ?
 		ORDER BY is_homepage DESC, slug ASC, id ASC
-	`, websiteID)
+	`, `
+		SELECT id, website_id, slug, title, meta_description, meta_keywords, is_homepage, status, created_at, updated_at
+		FROM website_pages
+		WHERE website_id = ?
+		ORDER BY is_homepage DESC NULLS LAST, slug ASC, id ASC
+	`), websiteID)
 	if err != nil {
 		return nil, err
 	}
@@ -107,12 +112,17 @@ func (g *HTMXGenerator) loadPageData(ctx context.Context, websiteID int) (*PageD
 
 	sectionsByPage := map[int][]*WebsitePageSection{}
 	for _, page := range pages {
-		rows, err := g.server.db.QueryContext(ctx, `
+		rows, err := g.server.db.QueryContext(ctx, nativeSQL(`
 			SELECT id, page_id, section_type, position, COALESCE(settings, JSON_OBJECT()), is_visible, created_at, updated_at
 			FROM website_page_sections
 			WHERE page_id = ?
 			ORDER BY position ASC, id ASC
-		`, page.ID)
+		`, `
+			SELECT id, page_id, section_type, position, CAST(COALESCE(settings, CAST('{}' AS jsonb)) AS text), is_visible, created_at, updated_at
+			FROM website_page_sections
+			WHERE page_id = ?
+			ORDER BY position ASC, id ASC
+		`), page.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -138,13 +148,19 @@ func (g *HTMXGenerator) loadPageData(ctx context.Context, websiteID int) (*PageD
 	componentsBySection := map[int][]*WebsiteSectionComponent{}
 	for _, sections := range sectionsByPage {
 		for _, section := range sections {
-			rows, err := g.server.db.QueryContext(ctx, `
+			rows, err := g.server.db.QueryContext(ctx, nativeSQL(`
 				SELECT sc.id, sc.section_id, sc.component_id, sc.position, COALESCE(sc.settings, JSON_OBJECT()), COALESCE(sc.dynamic_source, ''), COALESCE(sc.dynamic_params, JSON_OBJECT()), wc.component_type, wc.name, COALESCE(wc.default_settings, JSON_OBJECT())
 				FROM website_section_components sc
 				JOIN website_components wc ON wc.id = sc.component_id
 				WHERE sc.section_id = ?
 				ORDER BY sc.position ASC, sc.id ASC
-			`, section.ID)
+			`, `
+				SELECT sc.id, sc.section_id, sc.component_id, sc.position, CAST(COALESCE(sc.settings, CAST('{}' AS jsonb)) AS text), COALESCE(sc.dynamic_source, ''), CAST(COALESCE(sc.dynamic_params, CAST('{}' AS jsonb)) AS text), wc.component_type, wc.name, CAST(COALESCE(wc.default_settings, CAST('{}' AS jsonb)) AS text)
+				FROM website_section_components sc
+				JOIN website_components wc ON wc.id = sc.component_id
+				WHERE sc.section_id = ?
+				ORDER BY sc.position ASC, sc.id ASC
+			`), section.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -161,12 +177,12 @@ func (g *HTMXGenerator) loadPageData(ctx context.Context, websiteID int) (*PageD
 	}
 
 	assetsByType := map[string][]*WebsiteAsset{}
-	assetRows, err := g.server.db.QueryContext(ctx, `
+	assetRows, err := g.server.db.QueryContext(ctx, portableSQL(`
 		SELECT id, website_id, asset_type, original_filename, storage_path, public_url, mime_type, file_size, width, height, alt_text, created_at
 		FROM website_assets
 		WHERE website_id = ?
 		ORDER BY id DESC
-	`, websiteID)
+	`), websiteID)
 	if err == nil {
 		defer assetRows.Close()
 		for assetRows.Next() {

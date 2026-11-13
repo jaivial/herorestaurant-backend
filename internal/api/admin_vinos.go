@@ -73,7 +73,7 @@ func (s *Server) handleVinosUpdateStatus(w http.ResponseWriter, r *http.Request)
 	}
 
 	if _, err := s.db.ExecContext(r.Context(),
-		"UPDATE group_menu_wines_v2 SET active = ? WHERE "+vinoV2WhereLegacyNum,
+		portableSQL("UPDATE group_menu_wines_v2 SET active = ? WHERE "+vinoV2WhereLegacyNum),
 		append([]any{status}, vinoV2LegacyNumArgs(restaurantID, wineID)...)...,
 	); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error al actualizar el estado")
@@ -150,7 +150,7 @@ func (s *Server) handleVinosUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := s.db.ExecContext(
 		r.Context(),
-		"UPDATE group_menu_wines_v2 SET nombre = ?, precio = ?, descripcion = ?, bodega = ?, denominacion_origen = ?, graduacion = ?, anyo = ? WHERE "+vinoV2WhereLegacyNum,
+		portableSQL("UPDATE group_menu_wines_v2 SET nombre = ?, precio = ?, descripcion = ?, bodega = ?, denominacion_origen = ?, graduacion = ?, anyo = ? WHERE "+vinoV2WhereLegacyNum),
 		append([]any{nombre, precio, descripcion, bodega, denominacionOrigen, graduacion, anyo}, vinoV2LegacyNumArgs(restaurantID, wineID)...),
 	); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error al actualizar el vino")
@@ -169,7 +169,7 @@ func (s *Server) handleVinosUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if hasImg {
 		var wineTipo string
-		if err := s.db.QueryRowContext(r.Context(), "SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1", vinoV2LegacyNumArgs(restaurantID, wineID)...).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
+		if err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1"), vinoV2LegacyNumArgs(restaurantID, wineID)...).Scan(&wineTipo); err != nil || strings.TrimSpace(wineTipo) == "" {
 			wineTipo = "OTROS"
 		}
 
@@ -182,7 +182,7 @@ func (s *Server) handleVinosUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum, append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, wineID)...)...); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum), append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, wineID)...)...); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": true,
 				"warning": "Vino actualizado pero la imagen no se pudo actualizar",
@@ -273,7 +273,7 @@ func (s *Server) handleVinosAdd(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum, append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, uniqueNum)...)...); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum), append([]any{objectPath}, vinoV2LegacyNumArgs(restaurantID, uniqueNum)...)...); err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": true,
 				"wineId":  uniqueNum,

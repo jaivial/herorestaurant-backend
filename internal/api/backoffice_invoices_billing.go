@@ -261,15 +261,15 @@ func unmarshalTags(v sql.NullString) []string {
 // replaceInvoiceLineItems deletes existing line items for the invoice and
 // inserts the provided computed lines. Runs inside the given tx.
 func replaceInvoiceLineItems(ctx context.Context, tx *sql.Tx, invoiceID int64, lines []computedLineItem) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM invoice_line_items WHERE invoice_id = ?`, invoiceID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`DELETE FROM invoice_line_items WHERE invoice_id = ?`), invoiceID); err != nil {
 		return err
 	}
 	for i, l := range lines {
-		if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, portableSQL(`
 			INSERT INTO invoice_line_items
 				(invoice_id, description, quantity, unit_price, iva_rate, iva_amount, line_total, sort_order)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, invoiceID, l.Description, l.Quantity, l.UnitPrice, l.IVARate, l.IVAAmount, l.Total, i); err != nil {
+		`), invoiceID, l.Description, l.Quantity, l.UnitPrice, l.IVARate, l.IVAAmount, l.Total, i); err != nil {
 			return err
 		}
 	}
@@ -306,7 +306,7 @@ func (s *Server) resolveInvoiceLogoURL(ctx context.Context, restaurantID int, br
 		return v
 	}
 	var avatar sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT avatar FROM restaurants WHERE id = ?`, restaurantID).Scan(&avatar); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT avatar FROM restaurants WHERE id = ?`), restaurantID).Scan(&avatar); err != nil {
 		return ""
 	}
 	return strings.TrimSpace(avatar.String)
@@ -325,7 +325,7 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 		subtotal, ivaRate, ivaAmount, total, discountValue, discountAmount, depositAmount             sql.NullFloat64
 		discountType, discountReason, dueDate, internalNotes, category, tags, depositType             sql.NullString
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			id, restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
 			customer_address_street, customer_address_number, customer_address_postal_code,
@@ -338,7 +338,20 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 			created_at, updated_at
 		FROM invoices
 		WHERE id = ? AND restaurant_id = ?
-	`, invoiceID, restaurantID).Scan(
+	`, `
+		SELECT
+			id, restaurant_id, invoice_number, customer_name, customer_surname, customer_email, customer_dni_cif, customer_dni_cif_type, customer_phone, customer_phone_country_code,
+			customer_address_street, customer_address_number, customer_address_postal_code,
+			customer_address_city, customer_address_province, customer_address_country,
+			amount, CAST(payment_method AS text), account_image_url, invoice_date, payment_date,
+			CAST(status AS text), is_reservation, reservation_id, reservation_date, reservation_customer_name, reservation_party_size,
+			pdf_url, pdf_template, CAST(currency AS text), subtotal, iva_rate, iva_amount, total,
+			CAST(discount_type AS text), discount_value, discount_amount, discount_reason,
+			due_date, internal_notes, category, tags, deposit_type, deposit_amount,
+			created_at, updated_at
+		FROM invoices
+		WHERE id = ? AND restaurant_id = ?
+	`), invoiceID, restaurantID).Scan(
 		&inv.ID, &inv.RestaurantID, &invoiceNumber, &inv.CustomerName, &customerSurname, &inv.CustomerEmail, &customerDniCif, &customerDniCifType, &customerPhone, &customerPhoneCC,
 		&addrStreet, &addrNumber, &addrPostal, &addrCity, &addrProvince, &addrCountry,
 		&inv.Amount, &paymentMethod, &accountImageURL, &inv.InvoiceDate, &paymentDate,
@@ -400,12 +413,12 @@ func (s *Server) loadFullInvoice(ctx context.Context, restaurantID, invoiceID in
 
 // loadInvoiceLineItems returns the ordered line items for an invoice.
 func (s *Server) loadInvoiceLineItems(ctx context.Context, invoiceID int) ([]InvoiceLineItem, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, description, quantity, unit_price, iva_rate, iva_amount, line_total
 		FROM invoice_line_items
 		WHERE invoice_id = ?
 		ORDER BY sort_order ASC, id ASC
-	`, invoiceID)
+	`), invoiceID)
 	if err != nil {
 		return nil, err
 	}

@@ -97,11 +97,15 @@ func (s *Server) loadCheckout(ctx context.Context, restaurantID int, publicID st
 		bookingID                          sql.NullInt64
 		formJSON                           string
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT id, restaurant_id, public_id, provider, provider_session_id, status, amount_cents, currency,
 		       form_json, booking_id, payment_intent_id, receipt_url, error_message, paid_at,
 		       COALESCE(destination_hash, ''), expires_at
-		FROM booking_checkouts WHERE public_id = ? AND restaurant_id = ?`, publicID, restaurantID).
+		FROM booking_checkouts WHERE public_id = ? AND restaurant_id = ?`, `
+		SELECT id, restaurant_id, public_id, provider, provider_session_id, status, amount_cents, currency,
+		       form_json, booking_id, payment_intent_id, receipt_url, error_message, paid_at,
+		       COALESCE(destination_hash, ''), expires_at
+		FROM booking_checkouts WHERE app.norm_ascii(public_id) = app.norm_ascii(?) AND restaurant_id = ?`), publicID, restaurantID).
 		Scan(&row.ID, &row.RestaurantID, &row.PublicID, &row.Provider, &sessionID, &row.Status, &row.AmountCents, &row.Currency,
 			&formJSON, &bookingID, &intent, &receipt, &errMsg, &row.PaidAt, &row.DestinationHash, &row.ExpiresAt)
 	if err != nil {
@@ -192,10 +196,9 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 		provider = "demo"
 	}
 	expires := time.Now().Add(checkoutTTL)
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 		INSERT INTO booking_checkouts (restaurant_id, public_id, provider, status, amount_cents, currency, form_json, destination_hash, application_fee_cents, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, restaurantID, publicID, provider, checkoutStatusPending, amount, currency, string(formJSON),
-		s.connectAccountHash(connect.AccountID), fee, expires); err != nil {
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`), restaurantID, publicID, provider, checkoutStatusPending, amount, currency, string(formJSON), s.connectAccountHash(connect.AccountID), fee, expires); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "No se pudo iniciar el pago"})
 		return
 	}
@@ -226,11 +229,11 @@ func (s *Server) handleBookingCheckoutCreate(w http.ResponseWriter, r *http.Requ
 		})
 		if err != nil || sess.URL == "" {
 			logStripeFlow("session_create_failed", restaurantID, publicID, fmt.Sprint(err))
-			_, _ = s.db.ExecContext(r.Context(), `UPDATE booking_checkouts SET status = ?, error_message = ? WHERE public_id = ?`, checkoutStatusFailed, "stripe session create failed", publicID)
+			_, _ = s.db.ExecContext(r.Context(), nativeSQL(`UPDATE booking_checkouts SET status = ?, error_message = ? WHERE public_id = ?`, `UPDATE booking_checkouts SET status = ?, error_message = ? WHERE app.norm_ascii(public_id) = app.norm_ascii(?)`), checkoutStatusFailed, "stripe session create failed", publicID)
 			httpx.WriteJSON(w, http.StatusFailedDependency, map[string]any{"success": false, "message": "No se pudo abrir el pago con tarjeta. Inténtalo de nuevo."})
 			return
 		}
-		_, _ = s.db.ExecContext(r.Context(), `UPDATE booking_checkouts SET provider_session_id = ? WHERE public_id = ?`, sess.ID, publicID)
+		_, _ = s.db.ExecContext(r.Context(), nativeSQL(`UPDATE booking_checkouts SET provider_session_id = ? WHERE public_id = ?`, `UPDATE booking_checkouts SET provider_session_id = ? WHERE app.norm_ascii(public_id) = app.norm_ascii(?)`), sess.ID, publicID)
 		redirectURL = sess.URL
 	}
 	logCheckpoint(r, "prereserva_checkout_created", "checkout", publicID, "provider", provider, "amount_cents", fmt.Sprint(amount))
@@ -272,14 +275,16 @@ func (s *Server) handleBookingCheckoutDemoPage(w http.ResponseWriter, r *http.Re
 	cancel := baseURL + "/reservas?date=" + url.QueryEscape(row.Form.Get("reservation_date")) + "&pago=cancelado"
 	if r.Method == http.MethodPost {
 		if r.FormValue("action") == "pay" {
-			_, _ = s.db.ExecContext(r.Context(), `
+			_, _ = s.db.ExecContext(r.Context(), nativeSQL(`
 				UPDATE booking_checkouts SET status = ?, paid_at = NOW(), payment_intent_id = ?
-				WHERE public_id = ? AND status = ?`, checkoutStatusPaid, "demo_"+row.PublicID[3:15], row.PublicID, checkoutStatusPending)
+				WHERE public_id = ? AND status = ?`, `
+				UPDATE booking_checkouts SET status = ?, paid_at = date_trunc('second', statement_timestamp()), payment_intent_id = ?
+				WHERE app.norm_ascii(public_id) = app.norm_ascii(?) AND status = ?`), checkoutStatusPaid, "demo_"+row.PublicID[3:15], row.PublicID, checkoutStatusPending)
 			logCheckpoint(r, "prereserva_checkout_demo_paid", "checkout", row.PublicID)
 			http.Redirect(w, r, success, http.StatusSeeOther)
 			return
 		}
-		_, _ = s.db.ExecContext(r.Context(), `UPDATE booking_checkouts SET status = ? WHERE public_id = ? AND status = ?`, checkoutStatusCancelled, row.PublicID, checkoutStatusPending)
+		_, _ = s.db.ExecContext(r.Context(), nativeSQL(`UPDATE booking_checkouts SET status = ? WHERE public_id = ? AND status = ?`, `UPDATE booking_checkouts SET status = ? WHERE app.norm_ascii(public_id) = app.norm_ascii(?) AND status = ?`), checkoutStatusCancelled, row.PublicID, checkoutStatusPending)
 		http.Redirect(w, r, cancel, http.StatusSeeOther)
 		return
 	}
@@ -310,6 +315,11 @@ func (s *Server) completeCheckout(r *http.Request, restaurantID int, publicID st
 		return nil, nil, errors.New("Pago no encontrado")
 	}
 	if row.Status == checkoutStatusCompleted {
+		if row.BookingID <= 0 {
+			// Source crash window (completed marked before the insert): paid,
+			// no booking. Never re-created automatically; manual reconciliation.
+			logStripeFlow("completed_without_booking_review", restaurantID, publicID, "")
+		}
 		return row, nil, nil
 	}
 	if row.Status == checkoutStatusCancelled || row.Status == checkoutStatusFailed {
@@ -344,22 +354,29 @@ func (s *Server) completeCheckout(r *http.Request, restaurantID int, publicID st
 			return row, nil, errors.New("El pago todavía no se ha completado")
 		}
 		sessPaymentIntent := sess.PaymentIntent.ID
-		_, _ = s.db.ExecContext(ctx, `UPDATE booking_checkouts SET status = ?, paid_at = NOW(), payment_intent_id = ? WHERE id = ? AND status = ?`,
-			checkoutStatusPaid, sessPaymentIntent, row.ID, checkoutStatusPending)
+		// Conditional pending -> paid; an error is surfaced (retry) instead of
+		// continuing with a row that is not paid.
+		if _, err := s.db.ExecContext(ctx, nativeSQL(`UPDATE booking_checkouts SET status = ?, paid_at = NOW(), payment_intent_id = ? WHERE id = ? AND status = ?`, `UPDATE booking_checkouts SET status = ?, paid_at = date_trunc('second', statement_timestamp()), payment_intent_id = ? WHERE id = ? AND status = ?`),
+			checkoutStatusPaid, sessPaymentIntent, row.ID, checkoutStatusPending); err != nil {
+			return row, nil, errors.New("No se pudo registrar el pago")
+		}
 	}
 
-	// 2) Claim the insert: only one caller moves paid -> completed.
-	res, err := s.db.ExecContext(ctx, `UPDATE booking_checkouts SET status = ?, completed_at = NOW() WHERE id = ? AND status = ?`,
-		checkoutStatusCompleted, row.ID, checkoutStatusPaid)
-	if err != nil {
-		return row, nil, errors.New("No se pudo registrar la prereserva")
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		fresh, _ := s.loadCheckout(ctx, restaurantID, publicID)
-		return fresh, nil, nil // another caller completed it
-	}
-
-	// 3) Replay the stored form: same validation, then insert + notify.
+	// booking_atomic_v1. Source order was: mark completed, THEN insert the
+	// booking - a crash between them left a paid "completed" checkout with no
+	// booking (retries saw "completed" and did nothing). Now:
+	//   a) replay validation (non-locking reads, exactly the source policy);
+	//   b) ONE tx: lock the checkout row (FOR UPDATE on an existing row),
+	//      re-check status = paid, insert the booking (insertBookingTx: same
+	//      insert + occupancy as every other caller), then paid -> completed
+	//      WITH booking_id; commit. The row lock + status re-check is the
+	//      checkout->booking uniqueness guard: a concurrent or duplicate caller
+	//      waits, then sees completed and creates nothing.
+	//   c) after commit only: QR, receipt upload, broadcast, notifications.
+	// Crash before commit: everything rolls back, the row stays paid, the
+	// webhook retry / success page redoes it. Crash after commit: completed
+	// with booking_id; retries return it (no second booking); notifications
+	// not yet sent stay unsent (at-most-once gate).
 	replay := r.Clone(ctx)
 	replay.Form = row.Form
 	replay.PostForm = row.Form
@@ -367,15 +384,28 @@ func (s *Server) completeCheckout(r *http.Request, restaurantID int, publicID st
 	pb, err := s.prepareFrontBooking(replay, restaurantID)
 	if err != nil {
 		// Paid but no longer bookable (e.g. sold out meanwhile): keep the
-		// payment on record for a manual refund.
+		// payment on record for a manual refund. Only a still-paid row moves.
 		logStripeFlow("paid_but_invalid", restaurantID, publicID, err.Error())
-		_, _ = s.db.ExecContext(ctx, `UPDATE booking_checkouts SET status = ?, error_message = ? WHERE id = ?`, checkoutStatusFailed, truncate(err.Error(), 500), row.ID)
+		_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE booking_checkouts SET status = ?, error_message = ? WHERE id = ? AND status = ?`), checkoutStatusFailed, truncate(err.Error(), 500), row.ID, checkoutStatusPaid)
 		if fresh, ferr := s.loadCheckout(ctx, restaurantID, publicID); ferr == nil {
 			row = fresh
+		}
+		if row.Status == checkoutStatusCompleted {
+			return row, nil, nil
 		}
 		return row, nil, errors.New("El pago se recibió pero la prereserva no se pudo completar. El restaurante contactará contigo para el reembolso.")
 	}
 	markSnapshotPaidByStripe(pb, float64(row.AmountCents)/100)
+
+	bookingID, done, err := s.completeCheckoutBookingTx(ctx, row.ID, restaurantID, pb.params)
+	if err != nil {
+		logStripeFlow("booking_tx_failed", restaurantID, publicID, err.Error())
+		return row, nil, errors.New("No se pudo registrar la prereserva")
+	}
+	if !done {
+		fresh, _ := s.loadCheckout(ctx, restaurantID, publicID)
+		return fresh, nil, nil // another caller completed it
+	}
 
 	paidAt := time.Now()
 	if row.PaidAt.Valid {
@@ -399,24 +429,17 @@ func (s *Server) completeCheckout(r *http.Request, restaurantID int, publicID st
 		return receipt
 	}
 
-	bookingID, status, resp := s.commitFrontBooking(replay, pb, buildReceipt)
-	if bookingID > 0 && status != http.StatusOK {
+	_, status, resp := s.finishFrontBooking(replay, pb, bookingID, buildReceipt)
+	if status != http.StatusOK {
 		// Stored and paid; only a notification failed. Keep it completed.
 		logStripeFlow("notification_failed", restaurantID, publicID, anyToString(resp["message"]))
-		_, _ = s.db.ExecContext(ctx, `UPDATE booking_checkouts SET error_message = ? WHERE id = ?`, truncate(anyToString(resp["message"]), 500), row.ID)
-	}
-	if bookingID <= 0 {
-		_, _ = s.db.ExecContext(ctx, `UPDATE booking_checkouts SET status = ?, error_message = ? WHERE id = ?`, checkoutStatusFailed, truncate(anyToString(resp["message"]), 500), row.ID)
-		if fresh, ferr := s.loadCheckout(ctx, restaurantID, publicID); ferr == nil {
-			row = fresh
-		}
-		return row, resp, fmt.Errorf("%s", anyToString(resp["message"]))
+		_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE booking_checkouts SET error_message = ? WHERE id = ?`), truncate(anyToString(resp["message"]), 500), row.ID)
 	}
 	receiptURL := ""
 	if receipt != nil {
 		receiptURL = receipt.URL
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE booking_checkouts SET booking_id = ?, receipt_url = ? WHERE id = ?`, bookingID, nullIfEmpty(receiptURL), row.ID)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE booking_checkouts SET receipt_url = ? WHERE id = ?`), nullIfEmpty(receiptURL), row.ID)
 	logStripeFlow("completed", restaurantID, publicID, fmt.Sprintf("booking=%d status=%d", bookingID, status))
 	out, _ := s.loadCheckout(ctx, restaurantID, publicID)
 	return out, resp, nil
@@ -478,7 +501,7 @@ func (s *Server) checkoutPublicView(ctx context.Context, restaurantID int, row *
 	}
 	if row.BookingID > 0 {
 		var specialRaw sql.NullString
-		if s.db.QueryRowContext(ctx, `SELECT special_json FROM bookings WHERE id = ? AND restaurant_id = ?`, row.BookingID, restaurantID).Scan(&specialRaw) == nil {
+		if s.db.QueryRowContext(ctx, portableSQL(`SELECT special_json FROM bookings WHERE id = ? AND restaurant_id = ?`), row.BookingID, restaurantID).Scan(&specialRaw) == nil {
 			view["special"] = s.buildSpecialBookingResponse(ctx, restaurantID, true, true, specialRaw.String)
 		}
 	}
@@ -550,15 +573,30 @@ func (s *Server) handleStripeConnectWebhook(w http.ResponseWriter, r *http.Reque
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "firma inválida"})
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT IGNORE INTO stripe_events (event_id, type, payload, processed_at) VALUES (?, ?, ?, NOW())`, ev.ID, ev.Type, "{}")
-	if err != nil {
+	// A test-mode event must never act on a live platform key (and vice versa).
+	var mode struct {
+		Livemode bool `json:"livemode"`
+	}
+	if json.Unmarshal(body, &mode) != nil || mode.Livemode != integrations.NewStripeClient(s.cfg.StripePlatformSecretKey, "").Live() {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "livemode mismatch"})
+		return
+	}
+	// stripe_event_processing_v2: pinned per-event lock, fenced mark.
+	claim, state, claimErr := s.claimStripeEvent(r.Context(), ev.ID, ev.Type, "{}")
+	if claimErr != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false})
 		return
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if state == stripeEventDone {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true})
 		return
 	}
+	if state == stripeEventBusy {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false, "message": "event in progress"})
+		return
+	}
+	defer claim.close()
+	var procErr error
 	switch ev.Type {
 	case "checkout.session.completed":
 		var obj struct {
@@ -571,8 +609,14 @@ func (s *Server) handleStripeConnectWebhook(w http.ResponseWriter, r *http.Reque
 			ctx := withRestaurantID(r.Context(), restaurantID)
 			// completeCheckout re-reads the session from Stripe and checks the
 			// destination account, so forged metadata cannot complete anything.
-			if _, _, err := s.completeCheckout(r.WithContext(ctx), restaurantID, publicID); err != nil {
+			// completeCheckout is a conditional state machine (pending -> paid ->
+			// completed), so a retry repeats nothing already done. Unknown or
+			// cancelled/failed checkouts are terminal; anything else retries.
+			if row, _, err := s.completeCheckout(r.WithContext(ctx), restaurantID, publicID); err != nil {
 				logStripeFlow("webhook_complete_error", restaurantID, publicID, err.Error())
+				if row != nil && row.Status != checkoutStatusCancelled && row.Status != checkoutStatusFailed {
+					procErr = err
+				}
 			}
 		}
 	case "account.updated":
@@ -581,16 +625,24 @@ func (s *Server) handleStripeConnectWebhook(w http.ResponseWriter, r *http.Reque
 		}
 		_ = json.Unmarshal(ev.Data.Object, &obj)
 		var restaurantID int
-		if obj.ID != "" && s.db.QueryRowContext(r.Context(), `SELECT restaurant_id FROM restaurant_stripe_connect WHERE account_hash = ?`, s.connectAccountHash(obj.ID)).Scan(&restaurantID) == nil {
+		if obj.ID != "" && s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT restaurant_id FROM restaurant_stripe_connect WHERE account_hash = ?`, `SELECT restaurant_id FROM restaurant_stripe_connect WHERE app.norm_ascii(account_hash) = app.norm_ascii(?)`), s.connectAccountHash(obj.ID)).Scan(&restaurantID) == nil {
 			if row, err := s.loadConnectAccount(r.Context(), restaurantID); err == nil && row != nil && row.AccountID == obj.ID {
 				if acct, err := s.refreshConnectAccount(r.Context(), row); err != nil {
 					log.Printf("[stripe_connect_multitenant_v1] restaurant=%d account.updated refresh: %v", restaurantID, err)
+					procErr = err // idempotent refresh: retry
 				} else {
 					log.Printf("[stripe_connect_multitenant_v1] restaurant=%d account status=%s", restaurantID, row.Status)
 					s.broadcastStripeConnectStatus(r.Context(), restaurantID, row, acct)
 				}
 			}
 		}
+	}
+	if procErr == nil {
+		procErr = claim.markProcessed(r.Context())
+	}
+	if procErr != nil {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"success": false})
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
@@ -617,4 +669,38 @@ func (s *Server) checkoutReturnBaseURL(r *http.Request, restaurantID int) string
 		return origin
 	}
 	return strings.TrimRight(resolveRestaurantPublicBaseURL(r.Context(), s, restaurantID), "/")
+}
+
+// completeCheckoutBookingTx inserts the booking and completes the checkout in
+// ONE transaction (booking_atomic_v1). done=false: the row was no longer paid
+// under the lock (another caller completed it) - nothing written.
+func (s *Server) completeCheckoutBookingTx(ctx context.Context, checkoutID int64, restaurantID int, p bookingInsertParams) (int64, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var status string
+	if err := tx.QueryRowContext(ctx, portableSQL(`SELECT status FROM booking_checkouts WHERE id = ? AND restaurant_id = ? FOR UPDATE`), checkoutID, restaurantID).Scan(&status); err != nil {
+		return 0, false, err
+	}
+	if status != checkoutStatusPaid {
+		return 0, false, nil
+	}
+	bookingID, err := s.insertBookingTx(ctx, tx, restaurantID, p)
+	if err != nil {
+		return 0, false, err
+	}
+	res, err := tx.ExecContext(ctx, nativeSQL(`UPDATE booking_checkouts SET status = ?, completed_at = NOW(), booking_id = ? WHERE id = ? AND status = ?`, `UPDATE booking_checkouts SET status = ?, completed_at = date_trunc('second', statement_timestamp()), booking_id = ? WHERE id = ? AND status = ?`),
+		checkoutStatusCompleted, bookingID, checkoutID, checkoutStatusPaid)
+	if err != nil {
+		return 0, false, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return 0, false, errors.New("checkout changed under lock")
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, false, err
+	}
+	return bookingID, true, nil
 }

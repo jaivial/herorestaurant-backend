@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"strings"
 	"sync"
 	"time"
@@ -244,10 +245,13 @@ func (c *assistantClient) historyLimit() int {
 }
 
 func (c *assistantClient) loadHistory(ctx context.Context, sessionID int64) ([]assistantChatMessage, error) {
-	rows, err := c.s.db.QueryContext(ctx,
+	rows, err := c.s.db.QueryContext(ctx, nativeSQL(
 		`SELECT role, content, COALESCE(audio_url, ''), COALESCE(audio_duration_ms, 0) FROM (
 			SELECT id, role, content, audio_url, audio_duration_ms FROM assistant_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?
-		) t ORDER BY id ASC`, sessionID, c.historyLimit())
+		) t ORDER BY id ASC`,
+		`SELECT CAST(role AS text), content, COALESCE(audio_url, ''), COALESCE(audio_duration_ms, 0) FROM (
+			SELECT id, role, content, audio_url, audio_duration_ms FROM assistant_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?
+		) t ORDER BY id ASC`), sessionID, c.historyLimit())
 	if err != nil {
 		return nil, err
 	}
@@ -258,12 +262,16 @@ func (c *assistantClient) loadHistory(ctx context.Context, sessionID int64) ([]a
 		// yields []byte, and the hello frame's JSON marshal would emit it as
 		// base64 (assistant replies were rescued by the client-side decoder,
 		// but user messages rendered as raw base64 blobs).
-		var role, content, audioURL string
+		// content as []byte: assistant_messages.content is bytea on PG (one
+		// source row holds a NUL byte, sqldb_native_pg_v1); []byte keeps the
+		// exact bytes on both dialects, and string() keeps the JSON text frame.
+		var role, audioURL string
+		var content []byte
 		var audioDurationMS int64
 		if err := rows.Scan(&role, &content, &audioURL, &audioDurationMS); err != nil {
 			return nil, err
 		}
-		out = append(out, assistantChatMessage{Role: role, Content: content, AudioURL: audioURL, AudioDurationMS: audioDurationMS})
+		out = append(out, assistantChatMessage{Role: role, Content: string(content), AudioURL: audioURL, AudioDurationMS: audioDurationMS})
 	}
 	// Contaminated rows already in the database keep poisoning their session on
 	// every replay, so filter them out of the context we send to the model.
@@ -280,33 +288,35 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "session_token required"})
 			return
 		}
-		err := c.s.db.QueryRowContext(ctx, `SELECT id FROM assistant_sessions WHERE session_token = ?`, token).Scan(&sid)
+		err := c.s.db.QueryRowContext(ctx, nativeSQL(`SELECT id FROM assistant_sessions WHERE session_token = ?`, `SELECT id FROM assistant_sessions WHERE app.norm_ascii(session_token) = app.norm_ascii(?)`), token).Scan(&sid)
 		if err == sql.ErrNoRows {
-			res, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_sessions (session_token) VALUES (?)`, token)
+			// go-sql-driver v1.9.3 LastInsertId never errors: InsertID keeps
+			// the MySQL path identical; PG uses RETURNING id.
+			newID, err := sqldb.InsertID(ctx, sqlDialect, c.s.db, portableSQL(`INSERT INTO assistant_sessions (session_token) VALUES (?)`), "id", token)
 			if err != nil {
 				_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to create session"})
 				return
 			}
-			sid, _ = res.LastInsertId()
+			sid = newID
 		} else if err != nil {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "session lookup failed"})
 			return
 		}
 	} else if sessionID != nil && *sessionID > 0 {
 		var rid int
-		err := c.s.db.QueryRowContext(ctx, `SELECT restaurant_id FROM assistant_sessions WHERE id = ? AND user_id = ?`, *sessionID, c.auth.User.ID).Scan(&rid)
+		err := c.s.db.QueryRowContext(ctx, portableSQL(`SELECT restaurant_id FROM assistant_sessions WHERE id = ? AND user_id = ?`), *sessionID, c.auth.User.ID).Scan(&rid)
 		if err != nil || rid != c.auth.ActiveRestaurantID {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "session not found"})
 			return
 		}
 		sid = *sessionID
 	} else {
-		res, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_sessions (restaurant_id, user_id) VALUES (?, ?)`, c.auth.ActiveRestaurantID, c.auth.User.ID)
+		newID, err := sqldb.InsertID(ctx, sqlDialect, c.s.db, portableSQL(`INSERT INTO assistant_sessions (restaurant_id, user_id) VALUES (?, ?)`), "id", c.auth.ActiveRestaurantID, c.auth.User.ID)
 		if err != nil {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to create session"})
 			return
 		}
-		sid, _ = res.LastInsertId()
+		sid = newID
 	}
 
 	c.sessionID = sid
@@ -314,7 +324,7 @@ func (c *assistantClient) handleHello(ctx context.Context, sessionID *int64, ses
 	if c.auth != nil {
 		c.restaurantID = c.auth.ActiveRestaurantID
 	} else {
-		_ = c.s.db.QueryRowContext(ctx, `SELECT COALESCE(restaurant_id, 0) FROM assistant_sessions WHERE id=?`, sid).Scan(&c.restaurantID)
+		_ = c.s.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(restaurant_id, 0) FROM assistant_sessions WHERE id=?`), sid).Scan(&c.restaurantID)
 	}
 
 	hist, err := c.loadHistory(ctx, sid)
@@ -380,7 +390,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "no session: envía hello con session_token primero"})
 		return
 	} else {
-		err := c.s.db.QueryRowContext(ctx, `SELECT id FROM assistant_sessions WHERE restaurant_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1`, c.auth.ActiveRestaurantID, c.auth.User.ID).Scan(&sid)
+		err := c.s.db.QueryRowContext(ctx, portableSQL(`SELECT id FROM assistant_sessions WHERE restaurant_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1`), c.auth.ActiveRestaurantID, c.auth.User.ID).Scan(&sid)
 		if err == sql.ErrNoRows {
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "no session: envía hello primero"})
 			return
@@ -411,9 +421,10 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 
 	// The clip's Bunny URL rides the row so a reload replays it at this exact
 	// message; NULLIF keeps a plain text turn at NULL instead of ''.
-	if _, err := c.s.db.ExecContext(ctx,
+	if _, err := c.s.db.ExecContext(ctx, nativeSQL(
 		`INSERT INTO assistant_messages (session_id, role, content, audio_url, audio_duration_ms) VALUES (?, 'user', ?, NULLIF(?, ''), ?)`,
-		sid, userContentPersisted, audioURL, audioDurationMS); err != nil {
+		`INSERT INTO assistant_messages (session_id, role, content, audio_url, audio_duration_ms) VALUES (?, 'user', ?, NULLIF(CAST(? AS text), ''), ?)`),
+		sid, []byte(userContentPersisted), padSpaceNullIfArg(audioURL), audioDurationMS); err != nil { // exact bytes (bytea on PG)
 		_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist message"})
 		return
 	}
@@ -437,7 +448,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 		restaurantID = c.restaurantID
 	}
 	if restaurantID <= 0 && sid > 0 {
-		_ = c.s.db.QueryRowContext(ctx, `SELECT COALESCE(restaurant_id,0) FROM assistant_sessions WHERE id=?`, sid).Scan(&restaurantID)
+		_ = c.s.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(restaurant_id,0) FROM assistant_sessions WHERE id=?`), sid).Scan(&restaurantID)
 	}
 	prompt := c.s.buildAssistantSystemPrompt(ctx, restaurantID)
 	if c.auth != nil {
@@ -546,7 +557,7 @@ func (c *assistantClient) handleMessage(ctx context.Context, content string, att
 	// without it contaminating future context.
 	reply := assistantNormalizeRichBlocks(assistantSanitizeForHistory(final.String()), toolMsgs)
 	if strings.TrimSpace(reply) != "" {
-		if _, err := c.s.db.ExecContext(ctx, `INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`, sid, reply); err != nil {
+		if _, err := c.s.db.ExecContext(ctx, portableSQL(`INSERT INTO assistant_messages (session_id, role, content) VALUES (?, 'assistant', ?)`), sid, []byte(reply)); err != nil { // exact bytes
 			_ = c.writeJSON(map[string]any{"type": "error", "message": "failed to persist reply"})
 			return
 		}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 const (
@@ -66,7 +67,7 @@ func withBOPOSTimeout(next http.Handler) http.Handler {
 
 func (s *Server) boPOSPermissionAllowed(ctx context.Context, a boAuth, permission string) (bool, error) {
 	var allowed int
-	err := s.db.QueryRowContext(ctx, `SELECT is_allowed FROM pos_role_permissions WHERE restaurant_id=? AND role_slug=? AND permission_key=? LIMIT 1`, a.ActiveRestaurantID, a.Role, permission).Scan(&allowed)
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT is_allowed FROM pos_role_permissions WHERE restaurant_id=? AND role_slug=? AND permission_key=? LIMIT 1`, `SELECT is_allowed FROM pos_role_permissions WHERE restaurant_id=? AND app.norm_ascii(role_slug) = app.norm_ascii(?) AND app.norm_ascii(permission_key) = app.norm_ascii(?) LIMIT 1`), a.ActiveRestaurantID, a.Role, permission).Scan(&allowed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a.Role == "root" || a.Role == "admin", nil
 	}
@@ -228,6 +229,11 @@ func normalizePOSDate(value string) string {
 
 func posClockMinutes(value string) (int, error) {
 	value = strings.TrimSpace(value)
+	// types_time_clock_v1: the raw value is stored as TIME, so a suffix must
+	// be a valid ":SS" (was ignored: "23:59:99" passed and the write failed).
+	if len(value) > 5 && (len(value) != 8 || !validClockHHMMSS(value)) {
+		return 0, fmt.Errorf("invalid clock time")
+	}
 	if len(value) >= 5 {
 		value = value[:5]
 	}
@@ -341,7 +347,7 @@ func (s *Server) loadPOSRestaurantProfile(ctx context.Context, restaurantID int)
 		LogoURL: s.resolveInvoiceLogoURL(ctx, restaurantID, branding),
 	}
 	if out.Name == "" {
-		if err = s.db.QueryRowContext(ctx, `SELECT name FROM restaurants WHERE id=?`, restaurantID).Scan(&out.Name); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err = s.db.QueryRowContext(ctx, portableSQL(`SELECT name FROM restaurants WHERE id=?`), restaurantID).Scan(&out.Name); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return out, err
 		}
 	}
@@ -356,7 +362,7 @@ func (s *Server) loadPOSSettings(ctx context.Context, restaurantID int) (posSett
 	out := defaultPOSSettings()
 	var enabled, autoClose, requireShift, pinDiscount int
 	var pinThreshold sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT is_enabled,stock_mode,covers_mode,timezone,TIME_FORMAT(business_day_cutoff,'%H:%i'),auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount FROM pos_settings WHERE restaurant_id=?`, restaurantID).Scan(&enabled, &out.StockMode, &out.CoversMode, &out.Timezone, &out.BusinessDayCutoff, &autoClose, &requireShift, &out.ReceiptPrefix, &pinThreshold, &pinDiscount)
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT is_enabled,stock_mode,covers_mode,timezone,TIME_FORMAT(business_day_cutoff,'%H:%i'),auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount FROM pos_settings WHERE restaurant_id=?`, `SELECT is_enabled,CAST(stock_mode AS text),CAST(covers_mode AS text),timezone,to_char(business_day_cutoff,'HH24:MI'),auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount FROM pos_settings WHERE restaurant_id=?`), restaurantID).Scan(&enabled, &out.StockMode, &out.CoversMode, &out.Timezone, &out.BusinessDayCutoff, &autoClose, &requireShift, &out.ReceiptPrefix, &pinThreshold, &pinDiscount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
 	}
@@ -429,7 +435,7 @@ func (s *Server) handleBOPOSSettingsPatch(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		var id int64
-		if err = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_activation_acceptances WHERE restaurant_id=? AND acceptance_type=? AND consumed_at IS NULL ORDER BY accepted_at DESC LIMIT 1 FOR UPDATE`, a.ActiveRestaurantID, acceptance.kind).Scan(&id); err != nil {
+		if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM pos_activation_acceptances WHERE restaurant_id=? AND acceptance_type=? AND consumed_at IS NULL ORDER BY accepted_at DESC LIMIT 1 FOR UPDATE`, `SELECT id FROM pos_activation_acceptances WHERE restaurant_id=? AND CAST(acceptance_type AS text)=? AND consumed_at IS NULL ORDER BY accepted_at DESC LIMIT 1 FOR UPDATE`), a.ActiveRestaurantID, acceptance.kind).Scan(&id); err != nil {
 			httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": acceptance.message, "code": acceptance.code})
 			return
 		}
@@ -439,7 +445,7 @@ func (s *Server) handleBOPOSSettingsPatch(w http.ResponseWriter, r *http.Request
 	// PIN, otherwise the very next discount locks the till.
 	if (in.PinRequiredForDiscount || (in.PinThresholdCents != nil && *in.PinThresholdCents > 0)) && !(current.PinRequiredForDiscount || current.PinThresholdCents != nil) {
 		var withPIN int
-		if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`, a.ActiveRestaurantID).Scan(&withPIN); err != nil || withPIN == 0 {
+		if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`), a.ActiveRestaurantID).Scan(&withPIN); err != nil || withPIN == 0 {
 			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "code": "PIN_POLICY_NO_PIN", "message": "Nadie tiene PIN configurado: crea al menos uno (Mi PIN) antes de exigirlo"})
 			return
 		}
@@ -448,17 +454,20 @@ func (s *Server) handleBOPOSSettingsPatch(w http.ResponseWriter, r *http.Request
 	if in.PinThresholdCents != nil && *in.PinThresholdCents > 0 {
 		pinThreshold = *in.PinThresholdCents
 	}
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO pos_settings (restaurant_id,is_enabled,stock_mode,covers_mode,timezone,business_day_cutoff,auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE is_enabled=VALUES(is_enabled),stock_mode=VALUES(stock_mode),covers_mode=VALUES(covers_mode),timezone=VALUES(timezone),business_day_cutoff=VALUES(business_day_cutoff),auto_close_visit=VALUES(auto_close_visit),require_open_shift=VALUES(require_open_shift),receipt_prefix=VALUES(receipt_prefix),pin_threshold_cents=VALUES(pin_threshold_cents),pin_required_for_discount=VALUES(pin_required_for_discount)`, a.ActiveRestaurantID, stockBoolInt(in.IsEnabled), in.StockMode, in.CoversMode, in.Timezone, in.BusinessDayCutoff, stockBoolInt(in.AutoCloseVisit), stockBoolInt(in.RequireOpenShift), strings.TrimSpace(in.ReceiptPrefix), pinThreshold, stockBoolInt(in.PinRequiredForDiscount))
+	_, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_settings (restaurant_id,is_enabled,stock_mode,covers_mode,timezone,business_day_cutoff,auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE is_enabled=VALUES(is_enabled),stock_mode=VALUES(stock_mode),covers_mode=VALUES(covers_mode),timezone=VALUES(timezone),business_day_cutoff=VALUES(business_day_cutoff),auto_close_visit=VALUES(auto_close_visit),require_open_shift=VALUES(require_open_shift),receipt_prefix=VALUES(receipt_prefix),pin_threshold_cents=VALUES(pin_threshold_cents),pin_required_for_discount=VALUES(pin_required_for_discount)`, `INSERT INTO pos_settings (restaurant_id,is_enabled,stock_mode,covers_mode,timezone,business_day_cutoff,auto_close_visit,require_open_shift,receipt_prefix,pin_threshold_cents,pin_required_for_discount) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (restaurant_id) DO UPDATE SET is_enabled=EXCLUDED.is_enabled,stock_mode=EXCLUDED.stock_mode,covers_mode=EXCLUDED.covers_mode,timezone=EXCLUDED.timezone,business_day_cutoff=EXCLUDED.business_day_cutoff,auto_close_visit=EXCLUDED.auto_close_visit,require_open_shift=EXCLUDED.require_open_shift,receipt_prefix=EXCLUDED.receipt_prefix,pin_threshold_cents=EXCLUDED.pin_threshold_cents,pin_required_for_discount=EXCLUDED.pin_required_for_discount`), a.ActiveRestaurantID, stockBoolInt(in.IsEnabled), in.StockMode, in.CoversMode, in.Timezone, in.BusinessDayCutoff, stockBoolInt(in.AutoCloseVisit), stockBoolInt(in.RequireOpenShift), strings.TrimSpace(in.ReceiptPrefix), pinThreshold, stockBoolInt(in.PinRequiredForDiscount))
 	if err != nil {
 		httpx.WriteError(w, 500, "Error saving POS settings")
 		return
 	}
 	for _, id := range consumed {
-		if _, err = tx.ExecContext(r.Context(), `UPDATE pos_activation_acceptances SET consumed_at=NOW() WHERE restaurant_id=? AND id=? AND consumed_at IS NULL`, a.ActiveRestaurantID, id); err != nil {
+		if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_activation_acceptances SET consumed_at=NOW() WHERE restaurant_id=? AND id=? AND consumed_at IS NULL`, `UPDATE pos_activation_acceptances SET consumed_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') WHERE restaurant_id=? AND id=? AND consumed_at IS NULL`), a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, 500, "Error consuming activation acceptance")
 			return
 		}
-		_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'settings',?,'LIVE_ACTIVATED',JSON_OBJECT('stockMode',?,'coversMode',?),?)`, a.ActiveRestaurantID, id, in.StockMode, in.CoversMode, a.User.ID)
+		_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored audit error continues the tx
+			_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'settings',?,'LIVE_ACTIVATED',JSON_OBJECT('stockMode',?,'coversMode',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'settings',?,'LIVE_ACTIVATED',jsonb_build_object('stockMode',CAST(? AS text),'coversMode',CAST(? AS text)),?)`), a.ActiveRestaurantID, id, in.StockMode, in.CoversMode, a.User.ID)
+			return e
+		})
 	}
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, 500, "Error saving POS settings")
@@ -468,7 +477,7 @@ func (s *Server) handleBOPOSSettingsPatch(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) loadPOSBusinessMoment(ctx context.Context, restaurantID int, settings posSettings) (posBusinessMoment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT service_type,TIME_FORMAT(start_time,'%H:%i'),TIME_FORMAT(end_time,'%H:%i') FROM pos_service_periods WHERE restaurant_id=? AND is_active=1 ORDER BY sort_order,id`, restaurantID)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT service_type,TIME_FORMAT(start_time,'%H:%i'),TIME_FORMAT(end_time,'%H:%i') FROM pos_service_periods WHERE restaurant_id=? AND is_active=1 ORDER BY sort_order,id`, `SELECT CAST(service_type AS text),to_char(start_time,'HH24:MI'),to_char(end_time,'HH24:MI') FROM pos_service_periods WHERE restaurant_id=? AND is_active=1 ORDER BY sort_order,id`), restaurantID)
 	if err != nil {
 		return posBusinessMoment{}, err
 	}
@@ -526,7 +535,7 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		tableArgs = append(tableArgs, date)
 	}
 	tableArgs = append(tableArgs, a.ActiveRestaurantID)
-	tableRows, err := s.db.QueryContext(r.Context(), `SELECT t.id,t.name,t.capacity,EXISTS(SELECT 1 FROM pos_visits v WHERE v.restaurant_id=t.restaurant_id AND v.table_id=t.id AND `+occupiedWhere+`),COALESCE(t.area_id,0),COALESCE(ra.name,'') FROM restaurant_tables t LEFT JOIN restaurant_areas ra ON ra.id=t.area_id AND ra.restaurant_id=t.restaurant_id WHERE t.restaurant_id=? AND t.is_active=1 ORDER BY ra.display_order,t.display_order,t.id`, tableArgs...)
+	tableRows, err := s.db.QueryContext(r.Context(), portableSQL(sqlFragment(`SELECT t.id,t.name,t.capacity,EXISTS(SELECT 1 FROM pos_visits v WHERE v.restaurant_id=t.restaurant_id AND v.table_id=t.id AND `, `SELECT t.id,t.name,t.capacity,CAST(EXISTS(SELECT 1 FROM pos_visits v WHERE v.restaurant_id=t.restaurant_id AND v.table_id=t.id AND `)+occupiedWhere+sqlFragment(`),COALESCE(t.area_id,0),COALESCE(ra.name,'') FROM restaurant_tables t LEFT JOIN restaurant_areas ra ON ra.id=t.area_id AND ra.restaurant_id=t.restaurant_id WHERE t.restaurant_id=? AND t.is_active=1 ORDER BY ra.display_order,t.display_order,t.id`, `) AS integer),COALESCE(t.area_id,0),COALESCE(ra.name,'') FROM restaurant_tables t LEFT JOIN restaurant_areas ra ON ra.id=t.area_id AND ra.restaurant_id=t.restaurant_id WHERE t.restaurant_id=? AND t.is_active=1 ORDER BY ra.display_order NULLS FIRST,t.display_order,t.id`)), tableArgs...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading tables")
 		return
@@ -572,7 +581,7 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading visits")
 		return
 	}
-	operatorRows, err := s.db.QueryContext(r.Context(), `SELECT id,TRIM(CONCAT(first_name,' ',last_name)) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 ORDER BY first_name,last_name,id`, a.ActiveRestaurantID)
+	operatorRows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id,TRIM(CONCAT(first_name,' ',last_name)) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 ORDER BY first_name,last_name,id`, `SELECT id,TRIM(first_name||' '||last_name) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 ORDER BY first_name COLLATE "es-x-icu",last_name COLLATE "es-x-icu",id`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading POS operators")
 		return
@@ -594,7 +603,7 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 	var opening int64
 	var opened time.Time
 	var currentShift any
-	shiftErr := s.db.QueryRowContext(r.Context(), `SELECT id,terminal_key,status,opening_cash_cents,opened_at FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`, a.ActiveRestaurantID).Scan(&shiftID, &terminal, &shiftStatus, &opening, &opened)
+	shiftErr := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT id,terminal_key,status,opening_cash_cents,opened_at FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`, `SELECT id,terminal_key,CAST(status AS text),opening_cash_cents,opened_at FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`), a.ActiveRestaurantID).Scan(&shiftID, &terminal, &shiftStatus, &opening, &opened)
 	if shiftErr == nil {
 		currentShift = map[string]any{"id": shiftID, "terminalKey": terminal, "status": shiftStatus, "openingCashCents": opening, "openedAt": opened}
 	} else if !errors.Is(shiftErr, sql.ErrNoRows) {
@@ -641,13 +650,23 @@ func (s *Server) handleBOPOSBootstrap(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, payload)
 }
 
+// posLowerLikeArg lowers a LIKE pattern on PG, matching LOWER(col) COLLATE "C"
+// (case-insensitive only; accent/PAD SPACE folding stays a search gate).
+func posLowerLikeArg(v string) string {
+	if sqlDialect == sqldb.Postgres {
+		return strings.ToLower(v)
+	}
+	return v
+}
+
 func nextPOSTicketNumber(ctx context.Context, tx *sql.Tx, restaurantID int, businessDate, prefix string) (string, error) {
-	_, err := tx.ExecContext(ctx, `INSERT INTO pos_daily_sequences (restaurant_id,business_date,sequence_type,next_value) VALUES (?,?,'TICKET',2) ON DUPLICATE KEY UPDATE next_value=LAST_INSERT_ID(next_value+1)`, restaurantID, businessDate)
+	// LAST_INSERT_ID(expr) result is never read (next is re-read FOR UPDATE).
+	_, err := tx.ExecContext(ctx, nativeSQL(`INSERT INTO pos_daily_sequences (restaurant_id,business_date,sequence_type,next_value) VALUES (?,?,'TICKET',2) ON DUPLICATE KEY UPDATE next_value=LAST_INSERT_ID(next_value+1)`, `INSERT INTO pos_daily_sequences (restaurant_id,business_date,sequence_type,next_value) VALUES (?,?,'TICKET',2) ON CONFLICT (restaurant_id, business_date, sequence_type) DO UPDATE SET next_value=pos_daily_sequences.next_value+1`), restaurantID, businessDate)
 	if err != nil {
 		return "", err
 	}
 	var next int64
-	if err = tx.QueryRowContext(ctx, `SELECT next_value-1 FROM pos_daily_sequences WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' FOR UPDATE`, restaurantID, businessDate).Scan(&next); err != nil {
+	if err = tx.QueryRowContext(ctx, nativeSQL(`SELECT next_value-1 FROM pos_daily_sequences WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' FOR UPDATE`, `SELECT next_value-1 FROM pos_daily_sequences WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' FOR UPDATE`), restaurantID, businessDate).Scan(&next); err != nil {
 		return "", err
 	}
 
@@ -667,13 +686,13 @@ func nextPOSTicketNumber(ctx context.Context, tx *sql.Tx, restaurantID int, busi
 	// so the normal path stays exactly as fast and as strict as before.
 	used := fmt.Sprintf("%s-%s-%%", prefix, strings.ReplaceAll(businessDate, "-", ""))
 	var highest int64
-	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(ticket_number,'-',-1) AS UNSIGNED)),0) FROM pos_tickets WHERE restaurant_id=? AND ticket_number LIKE ?`, restaurantID, used).Scan(&highest); err != nil {
+	if err = tx.QueryRowContext(ctx, nativeSQL(`SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(ticket_number,'-',-1) AS UNSIGNED)),0) FROM pos_tickets WHERE restaurant_id=? AND ticket_number LIKE ?`, `SELECT COALESCE(MAX(CAST(COALESCE(substring((regexp_match(ticket_number, '([^-]*)$'))[1] from '^\s*([0-9]+)'),'0') AS numeric)),0) FROM pos_tickets WHERE restaurant_id=? AND LOWER(ticket_number) COLLATE "C" LIKE ?`), restaurantID, posLowerLikeArg(used)).Scan(&highest); err != nil {
 		return "", err
 	}
 	if highest >= next {
 		// next_value stores "one past the last issued number", so it must end up
 		// one past the highest number that exists.
-		if _, err = tx.ExecContext(ctx, `UPDATE pos_daily_sequences SET next_value=? WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' AND next_value<=?`, highest+1, restaurantID, businessDate, highest+1); err != nil {
+		if _, err = tx.ExecContext(ctx, nativeSQL(`UPDATE pos_daily_sequences SET next_value=? WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' AND next_value<=?`, `UPDATE pos_daily_sequences SET next_value=? WHERE restaurant_id=? AND business_date=? AND sequence_type='TICKET' AND next_value<=?`), highest+1, restaurantID, businessDate, highest+1); err != nil {
 			return "", err
 		}
 		log.Printf("POS ticket sequence for %s was behind the issued tickets (next=%d, highest issued=%d): moved forward so no number is reused", businessDate, next, highest)
@@ -689,7 +708,7 @@ func (s *Server) loadPOSVisits(ctx context.Context, restaurantID int, statuses [
 	where := "v.restaurant_id=?"
 	args := []any{restaurantID}
 	if len(statuses) > 0 {
-		where += " AND v.status IN (" + strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",") + ")"
+		where += sqlFragment(" AND v.status IN (", " AND CAST(v.status AS text) IN (") + strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",") + ")"
 		for _, status := range statuses {
 			args = append(args, status)
 		}
@@ -703,7 +722,7 @@ func (s *Server) loadPOSVisits(ctx context.Context, restaurantID int, statuses [
 		args = append(args, date)
 		limit = ""
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT v.id,v.channel,v.table_id,COALESCE(t.name,''),v.service_date,v.service_type,v.covers,v.status,v.opened_at,v.version,COALESCE((SELECT SUM(total_gross_cents-refunded_cents) FROM pos_tickets p WHERE p.restaurant_id=v.restaurant_id AND p.visit_id=v.id AND p.status<>'VOIDED'),0),v.parked_at,COALESCE(v.parked_note,''),COALESCE(v.customer_name,''),COALESCE(v.customer_tax_id,''),COALESCE(v.customer_address,'') FROM pos_visits v LEFT JOIN restaurant_tables t ON t.id=v.table_id AND t.restaurant_id=v.restaurant_id WHERE `+where+` ORDER BY v.opened_at DESC`+limit, args...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(sqlFragment(`SELECT v.id,v.channel,v.table_id,COALESCE(t.name,''),v.service_date,v.service_type,v.covers,v.status,v.opened_at,v.version,COALESCE((SELECT SUM(total_gross_cents-refunded_cents) FROM pos_tickets p WHERE p.restaurant_id=v.restaurant_id AND p.visit_id=v.id AND p.status<>'VOIDED'),0),v.parked_at,COALESCE(v.parked_note,''),COALESCE(v.customer_name,''),COALESCE(v.customer_tax_id,''),COALESCE(v.customer_address,'') FROM pos_visits v LEFT JOIN restaurant_tables t ON t.id=v.table_id AND t.restaurant_id=v.restaurant_id WHERE `, `SELECT v.id,CAST(v.channel AS text),v.table_id,COALESCE(t.name,''),v.service_date,CAST(v.service_type AS text),v.covers,CAST(v.status AS text),v.opened_at,v.version,COALESCE((SELECT SUM(total_gross_cents-refunded_cents) FROM pos_tickets p WHERE p.restaurant_id=v.restaurant_id AND p.visit_id=v.id AND p.status<>'VOIDED'),0),v.parked_at,COALESCE(v.parked_note,''),COALESCE(v.customer_name,''),COALESCE(v.customer_tax_id,''),COALESCE(v.customer_address,'') FROM pos_visits v LEFT JOIN restaurant_tables t ON t.id=v.table_id AND t.restaurant_id=v.restaurant_id WHERE `)+where+` ORDER BY v.opened_at DESC`+limit), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -794,20 +813,20 @@ func (s *Server) handleBOPOSVisitCreate(w http.ResponseWriter, r *http.Request) 
 	defer tx.Rollback()
 	if in.TableID != nil {
 		var table int
-		if err = tx.QueryRowContext(r.Context(), `SELECT 1 FROM restaurant_tables WHERE restaurant_id=? AND id=? AND is_active=1 FOR UPDATE`, a.ActiveRestaurantID, *in.TableID).Scan(&table); err != nil {
+		if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM restaurant_tables WHERE restaurant_id=? AND id=? AND is_active=1 FOR UPDATE`), a.ActiveRestaurantID, *in.TableID).Scan(&table); err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "Table not found")
 			return
 		}
 	}
 	if in.BookingID != nil {
 		var booking int
-		if err = tx.QueryRowContext(r.Context(), `SELECT 1 FROM bookings WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, *in.BookingID).Scan(&booking); err != nil {
+		if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM bookings WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, *in.BookingID).Scan(&booking); err != nil {
 			httpx.WriteError(w, http.StatusNotFound, "Booking not found")
 			return
 		}
 		var existingVisitID, existingTicketID int64
 		var existingVisitStatus string
-		if err = tx.QueryRowContext(r.Context(), `SELECT v.id,t.id,v.status FROM pos_visits v JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id WHERE v.restaurant_id=? AND v.booking_id=? ORDER BY t.status='OPEN' DESC,t.id LIMIT 1`, a.ActiveRestaurantID, *in.BookingID).Scan(&existingVisitID, &existingTicketID, &existingVisitStatus); err == nil {
+		if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT v.id,t.id,v.status FROM pos_visits v JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id WHERE v.restaurant_id=? AND v.booking_id=? ORDER BY t.status='OPEN' DESC,t.id LIMIT 1`, `SELECT v.id,t.id,CAST(v.status AS text) FROM pos_visits v JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id WHERE v.restaurant_id=? AND v.booking_id=? ORDER BY t.status='OPEN' DESC,t.id LIMIT 1`), a.ActiveRestaurantID, *in.BookingID).Scan(&existingVisitID, &existingTicketID, &existingVisitStatus); err == nil {
 			tx.Rollback()
 			if existingVisitStatus != "OPEN" {
 				httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Reservation was already seated", "code": "RESERVATION_ALREADY_SEATED", "visitId": existingVisitID})
@@ -821,11 +840,17 @@ func (s *Server) handleBOPOSVisitCreate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO pos_visits (restaurant_id,channel,table_id,booking_id,service_date,service_type,covers,opened_by,open_idempotency_key) VALUES (?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, in.Channel, in.TableID, in.BookingID, moment.ServiceDate, moment.ServiceType, in.Covers, a.User.ID, in.IdempotencyKey)
+	// Duplicate (idempotency key or open table) re-reads in this tx: savepoint on PG.
+	var visitID int64
+	err = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		var e error
+		visitID, e = sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_visits (restaurant_id,channel,table_id,booking_id,service_date,service_type,covers,opened_by,open_idempotency_key) VALUES (?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, in.Channel, in.TableID, in.BookingID, moment.ServiceDate, moment.ServiceType, in.Covers, a.User.ID, in.IdempotencyKey)
+		return e
+	})
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			var existingVisitID, existingTicketID int64
-			if duplicateErr := tx.QueryRowContext(r.Context(), `SELECT v.id,t.id FROM pos_visits v JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id WHERE v.restaurant_id=? AND v.open_idempotency_key=? ORDER BY t.id LIMIT 1`, a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existingVisitID, &existingTicketID); duplicateErr == nil {
+			if duplicateErr := tx.QueryRowContext(r.Context(), nativeSQL(`SELECT v.id,t.id FROM pos_visits v JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id WHERE v.restaurant_id=? AND v.open_idempotency_key=? ORDER BY t.id LIMIT 1`, `SELECT v.id,t.id FROM pos_visits v JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id WHERE v.restaurant_id=? AND app.norm_ascii(v.open_idempotency_key) = app.norm_ascii(?) ORDER BY t.id LIMIT 1`), a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existingVisitID, &existingTicketID); duplicateErr == nil {
 				tx.Rollback()
 				ticket, _ := s.loadPOSTicket(r.Context(), a.ActiveRestaurantID, existingTicketID)
 				httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "visit": map[string]any{"id": existingVisitID}, "ticket": ticket})
@@ -837,19 +862,20 @@ func (s *Server) handleBOPOSVisitCreate(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusBadRequest, "Visit could not be opened")
 		return
 	}
-	visitID, _ := res.LastInsertId()
 	ticketNumber, err := nextPOSTicketNumber(r.Context(), tx, a.ActiveRestaurantID, moment.ServiceDate, settings.ReceiptPrefix)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creating ticket")
 		return
 	}
-	ticketRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_tickets (restaurant_id,visit_id,ticket_number,creation_idempotency_key,opened_by) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, visitID, ticketNumber, in.IdempotencyKey+":ticket", a.User.ID)
+	ticketID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_tickets (restaurant_id,visit_id,ticket_number,creation_idempotency_key,opened_by) VALUES (?,?,?,?,?)`), "id", a.ActiveRestaurantID, visitID, ticketNumber, in.IdempotencyKey+":ticket", a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creating ticket")
 		return
 	}
-	ticketID, _ := ticketRes.LastInsertId()
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,actor_user_id) VALUES (?,'visit',?,'OPEN',?)`, a.ActiveRestaurantID, visitID, a.User.ID)
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored audit error continues the tx
+		_, e := tx.ExecContext(r.Context(), portableSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,actor_user_id) VALUES (?,'visit',?,'OPEN',?)`), a.ActiveRestaurantID, visitID, a.User.ID)
+		return e
+	})
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error opening visit")
 		return
@@ -871,7 +897,7 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	var guestLabel sql.NullString
 	var customerID sql.NullInt64
 	var customerName, customerNotes string
-	err := s.db.QueryRowContext(ctx, `SELECT t.ticket_number,t.status,t.subtotal_gross_cents,t.discount_cents,t.tax_cents,t.total_gross_cents,t.paid_cents,t.refunded_cents,t.version,t.surcharge_cents,t.tip_cents,t.operator_member_id,COALESCE(t.note,''),t.guest_label,t.customer_id,COALESCE(c.display_name,''),COALESCE(c.notes,'') FROM pos_tickets t LEFT JOIN pos_customers c ON c.restaurant_id=t.restaurant_id AND c.id=t.customer_id WHERE t.restaurant_id=? AND t.id=?`, restaurantID, ticketID).Scan(&number, &status, &subtotal, &discount, &tax, &total, &paid, &refunded, &version, &surcharge, &tip, &operator, &ticketNote, &guestLabel, &customerID, &customerName, &customerNotes)
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT t.ticket_number,t.status,t.subtotal_gross_cents,t.discount_cents,t.tax_cents,t.total_gross_cents,t.paid_cents,t.refunded_cents,t.version,t.surcharge_cents,t.tip_cents,t.operator_member_id,COALESCE(t.note,''),t.guest_label,t.customer_id,COALESCE(c.display_name,''),COALESCE(c.notes,'') FROM pos_tickets t LEFT JOIN pos_customers c ON c.restaurant_id=t.restaurant_id AND c.id=t.customer_id WHERE t.restaurant_id=? AND t.id=?`, `SELECT t.ticket_number,CAST(t.status AS text),t.subtotal_gross_cents,t.discount_cents,t.tax_cents,t.total_gross_cents,t.paid_cents,t.refunded_cents,t.version,t.surcharge_cents,t.tip_cents,t.operator_member_id,COALESCE(t.note,''),t.guest_label,t.customer_id,COALESCE(c.display_name,''),COALESCE(c.notes,'') FROM pos_tickets t LEFT JOIN pos_customers c ON c.restaurant_id=t.restaurant_id AND c.id=t.customer_id WHERE t.restaurant_id=? AND t.id=?`), restaurantID, ticketID).Scan(&number, &status, &subtotal, &discount, &tax, &total, &paid, &refunded, &version, &surcharge, &tip, &operator, &ticketNote, &guestLabel, &customerID, &customerName, &customerNotes)
 	if err != nil {
 		return nil, err
 	}
@@ -895,7 +921,7 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 	if sentErr != nil {
 		return nil, sentErr
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at,pack_id,parent_line_id,COALESCE(NULLIF(course,''),'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, restaurantID, ticketID)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),status,comped_at,COALESCE(comp_reason,''),updated_at,pack_id,parent_line_id,COALESCE(NULLIF(course,''),'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,discount_cents,line_total_gross_cents,COALESCE(notes,''),CAST(status AS text),comped_at,COALESCE(comp_reason,''),updated_at,pack_id,parent_line_id,COALESCE(CASE WHEN rtrim(course, ' ') COLLATE "C" = '' THEN NULL ELSE course END,'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? ORDER BY id`), restaurantID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -935,13 +961,13 @@ func (s *Server) loadPOSTicket(ctx context.Context, restaurantID int, ticketID i
 // counts as sent once either has it: the waiter's question is "did the kitchen
 // hear about this", and the per-station deltas are the dispatch's business.
 func (s *Server) loadPOSTicketKitchenSent(ctx context.Context, restaurantID int, ticketID int64) (map[int64]float64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT line_id,MAX(qty) FROM (
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT line_id,MAX(qty) FROM (
 		SELECT x.line_id,x.station_id,SUM(x.qty) qty FROM (
 			SELECT dl.ticket_line_id line_id,d.station_id,dl.quantity_delta qty FROM pos_ticket_lines l JOIN pos_kitchen_dispatch_lines dl ON dl.restaurant_id=l.restaurant_id AND dl.ticket_line_id=l.id JOIN pos_kitchen_dispatches d ON d.restaurant_id=dl.restaurant_id AND d.id=dl.dispatch_id WHERE l.restaurant_id=? AND l.ticket_id=? AND d.status<>'CANCELLED'
 			UNION ALL SELECT kt.to_line_id,kt.station_id,kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.to_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=?
 			UNION ALL SELECT kt.from_line_id,kt.station_id,-kt.quantity FROM pos_ticket_lines l JOIN pos_kitchen_line_transfers kt ON kt.restaurant_id=l.restaurant_id AND kt.from_line_id=l.id WHERE l.restaurant_id=? AND l.ticket_id=?
 		) x GROUP BY x.line_id,x.station_id
-	) per_station GROUP BY line_id`, restaurantID, ticketID, restaurantID, ticketID, restaurantID, ticketID)
+	) per_station GROUP BY line_id`), restaurantID, ticketID, restaurantID, ticketID, restaurantID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -965,10 +991,10 @@ func (s *Server) loadPOSTicketKitchenSent(ctx context.Context, restaurantID int,
 // cannot silently drop an applied Recargo.
 func (s *Server) recalculatePOSTicket(ctx context.Context, tx *sql.Tx, restaurantID int, ticketID int64, ticketDiscount int64) (posTotals, error) {
 	var surcharge int64
-	if err := tx.QueryRowContext(ctx, `SELECT surcharge_cents FROM pos_tickets WHERE restaurant_id=? AND id=?`, restaurantID, ticketID).Scan(&surcharge); err != nil {
+	if err := tx.QueryRowContext(ctx, portableSQL(`SELECT surcharge_cents FROM pos_tickets WHERE restaurant_id=? AND id=?`), restaurantID, ticketID).Scan(&surcharge); err != nil {
 		return posTotals{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT quantity,unit_price_gross_cents,discount_cents,vat_rate_snapshot FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`, restaurantID, ticketID)
+	rows, err := tx.QueryContext(ctx, portableSQL(`SELECT quantity,unit_price_gross_cents,discount_cents,vat_rate_snapshot FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`), restaurantID, ticketID)
 	if err != nil {
 		return posTotals{}, err
 	}
@@ -986,7 +1012,7 @@ func (s *Server) recalculatePOSTicket(ctx context.Context, tx *sql.Tx, restauran
 	if err != nil {
 		return totals, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE pos_tickets SET subtotal_gross_cents=?,discount_cents=?,ticket_discount_cents=?,tax_cents=?,total_gross_cents=?,version=version+1 WHERE restaurant_id=? AND id=?`, totals.SubtotalGrossCents, totals.DiscountCents, ticketDiscount, totals.TaxCents, totals.TotalGrossCents, restaurantID, ticketID)
+	_, err = tx.ExecContext(ctx, portableSQL(`UPDATE pos_tickets SET subtotal_gross_cents=?,discount_cents=?,ticket_discount_cents=?,tax_cents=?,total_gross_cents=?,version=version+1 WHERE restaurant_id=? AND id=?`), totals.SubtotalGrossCents, totals.DiscountCents, ticketDiscount, totals.TaxCents, totals.TotalGrossCents, restaurantID, ticketID)
 	return totals, err
 }
 
@@ -1039,7 +1065,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	var status string
 	var existingDiscount int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &existingDiscount); err != nil || status != "OPEN" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text),ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, ticketID).Scan(&status, &existingDiscount); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
@@ -1072,7 +1098,13 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		// The idempotency key is unique per restaurant, so each component line
 		// derives its own key from the caller's: a retried request must collide
 		// with its own previous rows, never with an unrelated line.
-		parentRes, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,course,created_by) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, pack.Name, qty, pack.PriceGrossCents, pack.VATRate, packTotal, stockNullableString(in.Notes), in.IdempotencyKey, pack.ID, normalisePOSCourse(in.Course), a.User.ID)
+		// Duplicate key -> commit and reload in this tx: savepoint on PG.
+		var parentID int64
+		insErr := sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			var e error
+			parentID, e = sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,course,created_by) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, ticketID, pack.Name, qty, pack.PriceGrossCents, pack.VATRate, packTotal, stockNullableString(in.Notes), in.IdempotencyKey, pack.ID, normalisePOSCourse(in.Course), a.User.ID)
+			return e
+		})
 		if insErr != nil {
 			if !strings.Contains(strings.ToLower(insErr.Error()), "duplicate") {
 				httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
@@ -1092,7 +1124,6 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "ticket": ticket})
 			return
 		}
-		parentID, _ := parentRes.LastInsertId()
 		// Settings are read once for the whole menu, not once per dish.
 		settings, settingsErr := s.loadPOSSettings(r.Context(), a.ActiveRestaurantID)
 		if settingsErr != nil {
@@ -1102,7 +1133,13 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		for i, c := range components {
 			componentQty := c.Quantity * float64(qty)
 			compKey := in.IdempotencyKey + ":c" + strconv.Itoa(i)
-			compRes, cErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,idempotency_key,parent_line_id,course,created_by) VALUES (?,?,?,?,?,0,?,0,?,?,?,?)`, a.ActiveRestaurantID, ticketID, c.ProductID, c.ProductName, componentQty, c.VATRate, compKey, parentID, normalisePOSCourse(in.Course), a.User.ID)
+			// Swallowed duplicate continues the tx: savepoint on PG.
+			var componentID int64
+			cErr := sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+				var e error
+				componentID, e = sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,idempotency_key,parent_line_id,course,created_by) VALUES (?,?,?,?,?,0,?,0,?,?,?,?)`), "id", a.ActiveRestaurantID, ticketID, c.ProductID, c.ProductName, componentQty, c.VATRate, compKey, parentID, normalisePOSCourse(in.Course), a.User.ID)
+				return e
+			})
 			if cErr != nil {
 				// A duplicate component key means this whole request already
 				// applied. Swallowing it keeps the retry idempotent.
@@ -1112,7 +1149,6 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			componentID, _ := compRes.LastInsertId()
 			// Components carry the stock, not the parent: the parent is a menu,
 			// the components are the dishes that leave it.
 			if settings.StockMode == "LIVE" {
@@ -1129,7 +1165,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		// Audit the menu: which pack, at what price, with which choices. A
 		// pack is the unit the guest bought, so the void/discount trail has to
 		// name it even though its component lines are separately traceable.
-		if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PACK_RUNG',JSON_OBJECT('packId',?,'packName',?,'quantity',?,'unitPriceCents',?,'totalCents',?),?)`, a.ActiveRestaurantID, parentID, pack.ID, pack.Name, qty, pack.PriceGrossCents, packTotal, a.User.ID); err != nil {
+		if _, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PACK_RUNG',JSON_OBJECT('packId',?,'packName',?,'quantity',?,'unitPriceCents',?,'totalCents',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PACK_RUNG',jsonb_build_object('packId',CAST(? AS bigint),'packName',CAST(? AS text),'quantity',CAST(? AS bigint),'unitPriceCents',CAST(? AS bigint),'totalCents',CAST(? AS bigint)),?)`), a.ActiveRestaurantID, parentID, pack.ID, pack.Name, qty, pack.PriceGrossCents, packTotal, a.User.ID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error auditing pack line")
 			return
 		}
@@ -1150,7 +1186,7 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 	var sku sql.NullString
 	var price int64
 	var vat float64
-	if err = tx.QueryRowContext(r.Context(), `SELECT p.name,p.sku,p.price_gross_cents,`+posProductVATRateSQL+` FROM pos_products p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE p.restaurant_id=? AND p.id=? AND p.is_active=1 AND p.deleted_at IS NULL`, a.ActiveRestaurantID, in.ProductID).Scan(&name, &sku, &price, &vat); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT p.name,p.sku,p.price_gross_cents,`+posProductVATRateSQL+` FROM pos_products p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE p.restaurant_id=? AND p.id=? AND p.is_active=1 AND p.deleted_at IS NULL`), a.ActiveRestaurantID, in.ProductID).Scan(&name, &sku, &price, &vat); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "POS product not found")
 		return
 	}
@@ -1195,14 +1231,19 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lineTotal := int64(math.Round(in.Quantity * float64(lineUnitPrice)))
-	lineRes, err := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, lineUnitPrice, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, normalisePOSCourse(in.Course), a.User.ID)
+	// Duplicate key -> commit in this tx: savepoint on PG.
+	var lineID int64
+	err = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		var e error
+		lineID, e = sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,product_sku_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, ticketID, in.ProductID, name, sku, in.Quantity, lineUnitPrice, vat, lineTotal, stockNullableString(in.Notes), in.IdempotencyKey, normalisePOSCourse(in.Course), a.User.ID)
+		return e
+	})
 	if err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
 			return
 		}
 	} else {
-		lineID, _ := lineRes.LastInsertId()
 		if err = persistPOSModifiers(r.Context(), tx, a.ActiveRestaurantID, lineID, modifierRows); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be added")
 			return
@@ -1221,7 +1262,10 @@ func (s *Server) handleBOPOSLineCreate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if overrideApplied {
-			_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PRICE_OVERRIDE',JSON_OBJECT('productId',?,'catalogPriceCents',?,'overridePriceCents',?,'modifierDeltaCents',?),?)`, a.ActiveRestaurantID, lineID, in.ProductID, catalogPrice, price, modifierDelta, a.User.ID)
+			_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored audit error continues the tx
+				_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PRICE_OVERRIDE',JSON_OBJECT('productId',?,'catalogPriceCents',?,'overridePriceCents',?,'modifierDeltaCents',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket_line',?,'PRICE_OVERRIDE',jsonb_build_object('productId',CAST(? AS bigint),'catalogPriceCents',CAST(? AS bigint),'overridePriceCents',CAST(? AS bigint),'modifierDeltaCents',CAST(? AS bigint)),?)`), a.ActiveRestaurantID, lineID, in.ProductID, catalogPrice, price, modifierDelta, a.User.ID)
+				return e
+			})
 		}
 	}
 	if err = tx.Commit(); err != nil {
@@ -1259,7 +1303,7 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 	// the name is whatever the browser felt like sending.
 	// The amount the policy compares is what the guest stops paying.
 	var voidAmount int64
-	_ = s.db.QueryRowContext(r.Context(), `SELECT line_total_gross_cents FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND id=?`, a.ActiveRestaurantID, ticketID, lineID).Scan(&voidAmount)
+	_ = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT line_total_gross_cents FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND id=?`), a.ActiveRestaurantID, ticketID, lineID).Scan(&voidAmount)
 	approvedBy, ok := s.posPINApproval(w, r, a.ActiveRestaurantID, in.ApprovalPin, voidAmount, false)
 	if !ok {
 		return
@@ -1272,7 +1316,7 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	var ticketStatus string
 	var ticketDiscount int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&ticketStatus, &ticketDiscount); err != nil || ticketStatus != "OPEN" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text),ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, ticketID).Scan(&ticketStatus, &ticketDiscount); err != nil || ticketStatus != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
@@ -1285,7 +1329,7 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	res, err := tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=NOW() WHERE restaurant_id=? AND ticket_id=? AND id=? AND status='ACTIVE'`, strings.TrimSpace(in.Reason), a.User.ID, a.ActiveRestaurantID, ticketID, lineID)
+	res, err := tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=NOW() WHERE restaurant_id=? AND ticket_id=? AND id=? AND status='ACTIVE'`, `UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=date_trunc('second', statement_timestamp()) WHERE restaurant_id=? AND ticket_id=? AND id=? AND status='ACTIVE'`), strings.TrimSpace(in.Reason), a.User.ID, a.ActiveRestaurantID, ticketID, lineID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error voiding line")
 		return
@@ -1298,7 +1342,7 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 	// dishes with it: the money is on the parent, so leaving the children
 	// active would print them to the kitchen and keep the plate on the bill
 	// with nothing to pay for.
-	if _, err = tx.ExecContext(r.Context(), `UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=NOW() WHERE restaurant_id=? AND parent_line_id=? AND status='ACTIVE'`, strings.TrimSpace(in.Reason), a.User.ID, a.ActiveRestaurantID, lineID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=NOW() WHERE restaurant_id=? AND parent_line_id=? AND status='ACTIVE'`, `UPDATE pos_ticket_lines SET status='VOIDED',void_reason=?,voided_by=?,voided_at=date_trunc('second', statement_timestamp()) WHERE restaurant_id=? AND parent_line_id=? AND status='ACTIVE'`), strings.TrimSpace(in.Reason), a.User.ID, a.ActiveRestaurantID, lineID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error voiding line")
 		return
 	}
@@ -1310,8 +1354,9 @@ func (s *Server) handleBOPOSLineVoid(w http.ResponseWriter, r *http.Request) {
 	// written to the audit trail with the reason and, when a manager signed it
 	// off, who did. Without this there is no way to answer "who removed this
 	// dish and when" after the fact.
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id)
-		VALUES (?,'ticket_line',?,'LINE_VOID',JSON_OBJECT('reason',?,'approvedBy',?),?)`,
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id)
+		VALUES (?,'ticket_line',?,'LINE_VOID',JSON_OBJECT('reason',?,'approvedBy',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id)
+		VALUES (?,'ticket_line',?,'LINE_VOID',jsonb_build_object('reason',CAST(? AS text),'approvedBy',CAST(? AS text)),?)`),
 		a.ActiveRestaurantID, lineID, strings.TrimSpace(in.Reason), approvedBy, a.User.ID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error voiding line")
 		return
@@ -1352,7 +1397,7 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 	var status string
 	var version int
 	var currentDiscount int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,version,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, ticketID).Scan(&status, &version, &currentDiscount); err != nil || status != "OPEN" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status,version,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text),version,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, ticketID).Scan(&status, &version, &currentDiscount); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
@@ -1373,7 +1418,10 @@ func (s *Server) handleBOPOSDiscount(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'DISCOUNT',JSON_OBJECT('amountCents',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, ticketID, in.AmountCents, strings.TrimSpace(in.Reason), approvedBy, a.User.ID)
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error { // ignored audit error continues the tx
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'DISCOUNT',JSON_OBJECT('amountCents',?,'reason',?,'approvedBy',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'DISCOUNT',jsonb_build_object('amountCents',CAST(? AS bigint),'reason',CAST(? AS text),'approvedBy',CAST(? AS text)),?)`), a.ActiveRestaurantID, ticketID, in.AmountCents, strings.TrimSpace(in.Reason), approvedBy, a.User.ID)
+		return e
+	})
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error applying discount")
 		return

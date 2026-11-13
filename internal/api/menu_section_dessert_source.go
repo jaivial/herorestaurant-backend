@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Dessert source for a menu section.
@@ -55,7 +56,7 @@ func isGeneralDessertSection(kind, source string) bool {
 // menu), creating the carrier menu and section when the restaurant has none.
 // Coordination id: dessert_section_source_v1
 func (s *Server) resolveGeneralDessertsSectionID(ctx context.Context, restaurantID int) (menuID int64, sectionID int64, err error) {
-	err = s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT m.id, sec.id
 		  FROM menus m
 		  JOIN group_menu_sections_v2 sec
@@ -63,7 +64,7 @@ func (s *Server) resolveGeneralDessertsSectionID(ctx context.Context, restaurant
 		 WHERE m.restaurant_id = ? AND UPPER(COALESCE(m.legacy_source_table, '')) = 'POSTRES'
 		 ORDER BY m.id ASC, sec.position ASC, sec.id ASC
 		 LIMIT 1
-	`, restaurantID).Scan(&menuID, &sectionID)
+	`), restaurantID).Scan(&menuID, &sectionID)
 	if err == nil {
 		return menuID, sectionID, nil
 	}
@@ -73,33 +74,33 @@ func (s *Server) resolveGeneralDessertsSectionID(ctx context.Context, restaurant
 
 	// The carrier menu may exist without its section (older rows), so reuse it
 	// when present instead of creating a duplicate carrier.
-	err = s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT id FROM menus
 		 WHERE restaurant_id = ? AND UPPER(COALESCE(legacy_source_table, '')) = 'POSTRES'
 		 ORDER BY id ASC LIMIT 1
-	`, restaurantID).Scan(&menuID)
+	`), restaurantID).Scan(&menuID)
 	if err == sql.ErrNoRows {
-		res, insErr := s.db.ExecContext(ctx, `
+		newMenuID, insErr := sqldb.InsertID(ctx, sqlDialect, s.db, portableSQL(`
 			INSERT INTO menus (restaurant_id, menu_title, price, menu_type, active, is_draft, legacy_source_table)
 			VALUES (?, 'Postres', 0, ?, 1, 0, 'POSTRES')
-		`, restaurantID, MenuTypeSpecial)
+		`), "id", restaurantID, MenuTypeSpecial)
 		if insErr != nil {
 			return 0, 0, insErr
 		}
-		menuID, _ = res.LastInsertId()
+		menuID = newMenuID
 	} else if err != nil {
 		return 0, 0, err
 	}
 
-	res, insErr := s.db.ExecContext(ctx, `
+	newSectionID, insErr := sqldb.InsertID(ctx, sqlDialect, s.db, portableSQL(`
 		INSERT INTO group_menu_sections_v2
 			(restaurant_id, menu_id, title, display_title, section_kind, dessert_source, position, public_page_active, web_placement)
 		VALUES (?, ?, 'Postres', 'Postres', 'postres', 'custom', 0, 0, 'inside_menus')
-	`, restaurantID, menuID)
+	`), "id", restaurantID, menuID)
 	if insErr != nil {
 		return 0, 0, insErr
 	}
-	sectionID, _ = res.LastInsertId()
+	sectionID = newSectionID
 	return menuID, sectionID, nil
 }
 
@@ -107,14 +108,14 @@ func (s *Server) resolveGeneralDessertsSectionID(ctx context.Context, restaurant
 // carta sections, so loaders can tell a mirror apart from its source without an
 // extra round trip per section.
 func (s *Server) generalDessertSectionIDs(ctx context.Context, restaurantID int) (map[int64]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT sec.id
 		  FROM group_menu_sections_v2 sec
 		  JOIN menus m ON m.id = sec.menu_id
 		 WHERE sec.restaurant_id = ?
 		   AND sec.section_kind = 'postres'
 		   AND UPPER(COALESCE(m.legacy_source_table, '')) = 'POSTRES'
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +190,7 @@ func (s *Server) publicGeneralDessertDishes(ctx context.Context, restaurantID in
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT d.id, d.title_snapshot,
 		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description, '') AS description_snapshot,
 		       COALESCE(d.description_enabled, 1), d.allergens_json, d.foto_path,
@@ -198,7 +199,16 @@ func (s *Server) publicGeneralDessertDishes(ctx context.Context, restaurantID in
 		LEFT JOIN menu_dishes_catalog c ON c.id = d.catalog_dish_id
 		WHERE d.restaurant_id = ? AND d.section_id = ? AND d.active = 1
 		ORDER BY d.position ASC, d.id ASC
-	`, restaurantID, carrierSectionID)
+	`, `
+		SELECT d.id, d.title_snapshot,
+		       COALESCE(NULLIF(TRIM(d.description_snapshot), ''), c.description, '') AS description_snapshot,
+		       COALESCE(d.description_enabled, 1), CAST(d.allergens_json AS text), d.foto_path,
+		       d.supplement_enabled, d.supplement_price, d.price, d.position
+		FROM group_menu_section_dishes_v2 d
+		LEFT JOIN menu_dishes_catalog c ON c.id = d.catalog_dish_id
+		WHERE d.restaurant_id = ? AND d.section_id = ? AND d.active = 1
+		ORDER BY d.position ASC, d.id ASC
+	`), restaurantID, carrierSectionID)
 	if err != nil {
 		return nil, err
 	}
@@ -250,12 +260,12 @@ func (s *Server) publicGeneralDessertDishes(ctx context.Context, restaurantID in
 // replaces the ad-hoc existence checks the section mutation handlers used to run.
 // Coordination id: dessert_section_source_v1
 func (s *Server) loadSectionDessertSource(ctx context.Context, restaurantID int, menuID, sectionID int64) (kind string, source string, found bool, err error) {
-	err = s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT section_kind, COALESCE(dessert_source, 'custom')
 		  FROM group_menu_sections_v2
 		 WHERE id = ? AND menu_id = ? AND restaurant_id = ?
 		 LIMIT 1
-	`, sectionID, menuID, restaurantID).Scan(&kind, &source)
+	`), sectionID, menuID, restaurantID).Scan(&kind, &source)
 	if err == sql.ErrNoRows {
 		return "", "", false, nil
 	}
@@ -367,10 +377,10 @@ func (s *Server) handleBOGroupMenusV2PatchSectionDessertSource(w http.ResponseWr
 		}
 	}
 
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE group_menu_sections_v2 SET dessert_source = ?
 		 WHERE id = ? AND menu_id = ? AND restaurant_id = ?
-	`, next, sectionID, menuID, a.ActiveRestaurantID); err != nil {
+	`), next, sectionID, menuID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando origen de postres")
 		return
 	}
@@ -413,14 +423,14 @@ func (s *Server) seedSectionFromGeneralDesserts(ctx context.Context, restaurantI
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, portableSQL(`
 		DELETE FROM group_menu_section_dishes_v2
 		 WHERE restaurant_id = ? AND menu_id = ? AND section_id = ?
-	`, restaurantID, menuID, sectionID); err != nil {
+	`), restaurantID, menuID, sectionID); err != nil {
 		return err
 	}
 
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO group_menu_section_dishes_v2
 			(restaurant_id, menu_id, section_id, catalog_dish_id, title_snapshot, description_snapshot,
 			 description_enabled, allergens_json, supplement_enabled, supplement_price, price, foto_path, active, position)
@@ -432,7 +442,19 @@ func (s *Server) seedSectionFromGeneralDesserts(ctx context.Context, restaurantI
 		  LEFT JOIN menu_dishes_catalog c ON c.id = src.catalog_dish_id
 		 WHERE src.restaurant_id = ? AND src.section_id = ?
 		 ORDER BY src.position ASC, src.id ASC
-	`, restaurantID, menuID, sectionID, restaurantID, carrierSectionID); err != nil {
+	`, `
+		INSERT INTO group_menu_section_dishes_v2
+			(restaurant_id, menu_id, section_id, catalog_dish_id, title_snapshot, description_snapshot,
+			 description_enabled, allergens_json, supplement_enabled, supplement_price, price, foto_path, active, position)
+		SELECT CAST(? AS integer), CAST(? AS integer), CAST(? AS bigint), src.catalog_dish_id, src.title_snapshot,
+		       COALESCE(NULLIF(TRIM(src.description_snapshot), ''), c.description, ''),
+		       COALESCE(src.description_enabled, 1), src.allergens_json, src.supplement_enabled,
+		       src.supplement_price, src.price, src.foto_path, src.active, src.position
+		  FROM group_menu_section_dishes_v2 src
+		  LEFT JOIN menu_dishes_catalog c ON c.id = src.catalog_dish_id
+		 WHERE src.restaurant_id = ? AND src.section_id = ?
+		 ORDER BY src.position ASC, src.id ASC
+	`), restaurantID, menuID, sectionID, restaurantID, carrierSectionID); err != nil {
 		return err
 	}
 
@@ -455,7 +477,7 @@ func (s *Server) generalDessertMirrorSectionIDs(ctx context.Context, restaurantI
 		}
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(query), args...)
 	if err != nil {
 		return nil, err
 	}

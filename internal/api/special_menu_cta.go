@@ -72,7 +72,7 @@ func normalizeSpecialMenuCtaConfig(c specialMenuCtaConfig) specialMenuCtaConfig 
 func (s *Server) loadSpecialMenuCta(ctx context.Context, restaurantID int, menuID int64) *specialMenuCta {
 	var raw sql.NullString
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT special_cta FROM menus WHERE id = ? AND restaurant_id = ?`, menuID, restaurantID).Scan(&raw); err != nil {
+		nativeSQL(`SELECT special_cta FROM menus WHERE id = ? AND restaurant_id = ?`, `SELECT CAST(special_cta AS text) FROM menus WHERE id = ? AND restaurant_id = ?`), menuID, restaurantID).Scan(&raw); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[special_menu_cta_v1] load menu=%d err=%v", menuID, err)
 		}
@@ -129,7 +129,7 @@ func (s *Server) resolveSpecialMenuCta(ctx context.Context, restaurantID int, cf
 	case specialMenuCtaActionMenu:
 		var title string
 		if cfg.MenuID > 0 && s.db.QueryRowContext(ctx,
-			`SELECT menu_title FROM menus WHERE id = ? AND restaurant_id = ? AND active = 1`,
+			portableSQL(`SELECT menu_title FROM menus WHERE id = ? AND restaurant_id = ? AND active = 1`),
 			cfg.MenuID, restaurantID).Scan(&title) == nil {
 			out.Href = out.WebsiteBase + "/menu/" + strconv.FormatInt(cfg.MenuID, 10) + "/" + buildPublicMenuSlug(title, cfg.MenuID)
 		}
@@ -138,7 +138,7 @@ func (s *Server) resolveSpecialMenuCta(ctx context.Context, restaurantID int, cf
 		if cfg.SpecialDateID > 0 {
 			var date string
 			if s.db.QueryRowContext(ctx,
-				`SELECT DATE_FORMAT(date, '%Y-%m-%d') FROM special_dates WHERE id = ? AND restaurant_id = ?`,
+				nativeSQL(`SELECT DATE_FORMAT(date, '%Y-%m-%d') FROM special_dates WHERE id = ? AND restaurant_id = ?`, `SELECT to_char(date, 'YYYY-MM-DD') FROM special_dates WHERE id = ? AND restaurant_id = ?`),
 				cfg.SpecialDateID, restaurantID).Scan(&date) == nil {
 				out.TargetDate = date
 				out.Href += "?date=" + url.QueryEscape(date)
@@ -181,7 +181,7 @@ func (s *Server) handleBOGroupMenusV2PutSpecialMenuCta(w http.ResponseWriter, r 
 	cfg := normalizeSpecialMenuCtaConfig(req)
 	encoded, _ := json.Marshal(cfg)
 	if _, err := s.db.ExecContext(r.Context(),
-		`UPDATE menus SET special_cta = ? WHERE id = ? AND restaurant_id = ?`,
+		nativeSQL(`UPDATE menus SET special_cta = ? WHERE id = ? AND restaurant_id = ?`, `UPDATE menus SET special_cta = CAST(? AS jsonb) WHERE id = ? AND restaurant_id = ?`),
 		string(encoded), menuID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando boton reservar")
 		return

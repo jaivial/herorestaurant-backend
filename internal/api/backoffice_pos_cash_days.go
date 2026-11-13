@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"strconv"
 	"strings"
 	"time"
@@ -62,6 +63,11 @@ const posCashDaySelect = `SELECT d.id,d.business_date,d.status,d.opened_by,COALE
 	LEFT JOIN bo_users ou ON ou.id=d.opened_by
 	LEFT JOIN bo_users cu ON cu.id=d.closed_by`
 
+// posCashDaySelectSQL is posCashDaySelect per dialect (status enum as text).
+func posCashDaySelectSQL() string {
+	return sqlFragment(posCashDaySelect, strings.Replace(posCashDaySelect, "d.status,", "CAST(d.status AS text),", 1))
+}
+
 func scanPOSCashDay(scan func(dest ...any) error) (posCashDay, error) {
 	var d posCashDay
 	var businessDate time.Time
@@ -115,7 +121,7 @@ func (s *Server) currentPOSCashDayID(ctx context.Context, restaurantID int) (any
 		return nil, err
 	}
 	var id int64
-	err = s.db.QueryRowContext(ctx, `SELECT id FROM pos_cash_days WHERE restaurant_id=? AND business_date=? AND status='OPEN'`, restaurantID, date).Scan(&id)
+	err = s.db.QueryRowContext(ctx, portableSQL(`SELECT id FROM pos_cash_days WHERE restaurant_id=? AND business_date=? AND status='OPEN'`), restaurantID, date).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -126,18 +132,18 @@ func (s *Server) currentPOSCashDayID(ctx context.Context, restaurantID int) (any
 }
 
 func (s *Server) loadPOSCashDayByDate(ctx context.Context, q posCashQueryer, restaurantID int, date string) (posCashDay, error) {
-	return scanPOSCashDay(q.QueryRowContext(ctx, posCashDaySelect+` WHERE d.restaurant_id=? AND d.business_date=?`, restaurantID, date).Scan)
+	return scanPOSCashDay(q.QueryRowContext(ctx, portableSQL(posCashDaySelectSQL()+` WHERE d.restaurant_id=? AND d.business_date=?`), restaurantID, date).Scan)
 }
 
 func (s *Server) loadPOSCashDayByID(ctx context.Context, q posCashQueryer, restaurantID int, id int64) (posCashDay, error) {
-	return scanPOSCashDay(q.QueryRowContext(ctx, posCashDaySelect+` WHERE d.restaurant_id=? AND d.id=?`, restaurantID, id).Scan)
+	return scanPOSCashDay(q.QueryRowContext(ctx, portableSQL(posCashDaySelectSQL()+` WHERE d.restaurant_id=? AND d.id=?`), restaurantID, id).Scan)
 }
 
 // loadPOSUnclosedPreviousDays lists cash days before `date` that are still OPEN,
 // oldest first, each with its takings and covers so the UI can render the alert
 // cards without a second round trip.
 func (s *Server) loadPOSUnclosedPreviousDays(ctx context.Context, restaurantID int, date string) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, posCashDaySelect+` WHERE d.restaurant_id=? AND d.status='OPEN' AND d.business_date<? ORDER BY d.business_date ASC LIMIT 60`, restaurantID, date)
+	rows, err := s.db.QueryContext(ctx, portableSQL(posCashDaySelectSQL()+` WHERE d.restaurant_id=? AND d.status='OPEN' AND d.business_date<? ORDER BY d.business_date ASC LIMIT 60`), restaurantID, date)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +208,7 @@ func (s *Server) loadPOSCashDayTotals(ctx context.Context, restaurantID int, dat
 	covers := map[string]int64{}
 
 	collect := func(query string, apply func(date string, a, b int64)) error {
-		rows, err := s.db.QueryContext(ctx, query, args...)
+		rows, err := s.db.QueryContext(ctx, portableSQL(query), args...) // fixed literals + generated ? list, rebound once
 		if err != nil {
 			return err
 		}
@@ -339,7 +345,7 @@ func (s *Server) handleBOPOSCashDayOpen(w http.ResponseWriter, r *http.Request) 
 	}
 	// uq_pos_cash_days_date makes this insert the arbiter between terminals
 	// racing to open the same day: exactly one wins, the rest get 409.
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_cash_days (restaurant_id,business_date,opened_by,opening_cash_cents,forced_open,notes) VALUES (?,?,?,?,?,?)`, a.ActiveRestaurantID, date, a.User.ID, in.OpeningCashCents, forced, stockNullableString(in.Notes))
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_cash_days (restaurant_id,business_date,opened_by,opening_cash_cents,forced_open,notes) VALUES (?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, date, a.User.ID, in.OpeningCashCents, forced, stockNullableString(in.Notes))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "code": "CASH_DAY_ALREADY_OPEN", "message": "This day already has a cash day"})
@@ -348,15 +354,14 @@ func (s *Server) handleBOPOSCashDayOpen(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusInternalServerError, "Error opening cash day")
 		return
 	}
-	id, _ := res.LastInsertId()
 	// A terminal that claimed its drawer before anyone opened the day has a shift
 	// with no cash day, and its movements would be invisible to the close. Adopt
 	// those orphans now, otherwise the link can never be established.
-	if _, err = s.db.ExecContext(r.Context(), `UPDATE pos_shifts SET cash_day_id=? WHERE restaurant_id=? AND cash_day_id IS NULL AND status='OPEN'`, id, a.ActiveRestaurantID); err != nil {
+	if _, err = s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_shifts SET cash_day_id=? WHERE restaurant_id=? AND cash_day_id IS NULL AND status='OPEN'`), id, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error linking open shifts to the cash day")
 		return
 	}
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',?,'OPEN',JSON_OBJECT('date',?,'openingCashCents',?,'forced',?),?)`, a.ActiveRestaurantID, id, date, in.OpeningCashCents, forced, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',?,'OPEN',JSON_OBJECT('date',?,'openingCashCents',?,'forced',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',?,'OPEN',jsonb_build_object('date',CAST(? AS text),'openingCashCents',CAST(? AS bigint),'forced',CAST(? AS integer)),?)`), a.ActiveRestaurantID, id, date, in.OpeningCashCents, forced, a.User.ID)
 	day, err := s.loadPOSCashDayByID(r.Context(), s.db, a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash day")
@@ -400,7 +405,7 @@ func (s *Server) handleBOPOSCashDayClose(w http.ResponseWriter, r *http.Request)
 	var status string
 	var openingCash int64
 	var openedAt time.Time
-	if err = tx.QueryRowContext(r.Context(), `SELECT business_date,status,opening_cash_cents,opened_at FROM pos_cash_days WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, id).Scan(&businessDate, &status, &openingCash, &openedAt); err != nil {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT business_date,status,opening_cash_cents,opened_at FROM pos_cash_days WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT business_date,CAST(status AS text),opening_cash_cents,opened_at FROM pos_cash_days WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, id).Scan(&businessDate, &status, &openingCash, &openedAt); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Cash day not found")
 		return
 	}
@@ -427,8 +432,7 @@ func (s *Server) handleBOPOSCashDayClose(w http.ResponseWriter, r *http.Request)
 	}
 	closedAt := time.Now()
 	idempotencyKey := "cash-day-close:" + strconv.FormatInt(id, 10)
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO pos_cash_closures (restaurant_id,cash_day_id,shift_id,terminal_key,closure_type,opened_at,closed_at,opening_cash_cents,sales_gross_cents,refunds_cents,discounts_cents,surcharges_cents,tips_cents,cash_sales_cents,cash_tips_cents,card_sales_cents,card_tips_cents,bank_sales_cents,bank_tips_cents,other_sales_cents,other_tips_cents,cash_refunds_cents,cash_in_cents,cash_out_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,voided_ticket_count,covers,open_visit_count,open_ticket_count,note,discrepancy_reason,idempotency_key,created_by) VALUES (?,?,NULL,?,'Z',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		a.ActiveRestaurantID, id, summary.TerminalKey, summary.OpenedAt, closedAt, summary.OpeningCash, summary.SalesGross, summary.Refunds, summary.Discounts, summary.Surcharges, summary.Tips, summary.CashSales, summary.CashTips, summary.CardSales, summary.CardTips, summary.BankSales, summary.BankTips, summary.OtherSales, summary.OtherTips, summary.CashRefunds, summary.CashIn, summary.CashOut, summary.ExpectedCash, *in.CountedCashCents, difference, summary.TicketCount, summary.VoidedTicketCount, summary.Covers, summary.OpenVisitCount, summary.OpenTicketCount, stockNullableString(in.Notes), stockNullableString(in.DiscrepancyReason), idempotencyKey, a.User.ID)
+	closureID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_cash_closures (restaurant_id,cash_day_id,shift_id,terminal_key,closure_type,opened_at,closed_at,opening_cash_cents,sales_gross_cents,refunds_cents,discounts_cents,surcharges_cents,tips_cents,cash_sales_cents,cash_tips_cents,card_sales_cents,card_tips_cents,bank_sales_cents,bank_tips_cents,other_sales_cents,other_tips_cents,cash_refunds_cents,cash_in_cents,cash_out_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,voided_ticket_count,covers,open_visit_count,open_ticket_count,note,discrepancy_reason,idempotency_key,created_by) VALUES (?,?,NULL,?,'Z',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, id, summary.TerminalKey, sqldb.NaiveUTCArg(sqlDialect, summary.OpenedAt), sqldb.NaiveUTCArg(sqlDialect, closedAt), summary.OpeningCash, summary.SalesGross, summary.Refunds, summary.Discounts, summary.Surcharges, summary.Tips, summary.CashSales, summary.CashTips, summary.CardSales, summary.CardTips, summary.BankSales, summary.BankTips, summary.OtherSales, summary.OtherTips, summary.CashRefunds, summary.CashIn, summary.CashOut, summary.ExpectedCash, *in.CountedCashCents, difference, summary.TicketCount, summary.VoidedTicketCount, summary.Covers, summary.OpenVisitCount, summary.OpenTicketCount, stockNullableString(in.Notes), stockNullableString(in.DiscrepancyReason), idempotencyKey, a.User.ID)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "code": "CASH_DAY_ALREADY_CLOSED", "message": "This cash day is already closed"})
@@ -437,18 +441,21 @@ func (s *Server) handleBOPOSCashDayClose(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error recording cash day closure")
 		return
 	}
-	closureID, _ := res.LastInsertId()
-	if _, err = tx.ExecContext(r.Context(), `UPDATE pos_cash_days SET status='CLOSED',closed_by=?,closed_at=?,notes=COALESCE(?,notes) WHERE restaurant_id=? AND id=?`, a.User.ID, closedAt, stockNullableString(in.Notes), a.ActiveRestaurantID, id); err != nil {
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_cash_days SET status='CLOSED',closed_by=?,closed_at=?,notes=COALESCE(?,notes) WHERE restaurant_id=? AND id=?`, `UPDATE pos_cash_days SET status='CLOSED',closed_by=?,closed_at=?,notes=COALESCE(CAST(? AS text),notes) WHERE restaurant_id=? AND id=?`), a.User.ID, sqldb.NaiveUTCArg(sqlDialect, closedAt), stockNullableString(in.Notes), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error closing cash day")
 		return
 	}
 	// Terminal shifts belonging to this day cannot outlive it, otherwise the next
 	// day would inherit an open drawer.
-	if _, err = tx.ExecContext(r.Context(), `UPDATE pos_shifts SET status='CLOSED',closed_by=?,closed_at=? WHERE restaurant_id=? AND cash_day_id=? AND status='OPEN'`, a.User.ID, closedAt, a.ActiveRestaurantID, id); err != nil {
+	if _, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE pos_shifts SET status='CLOSED',closed_by=?,closed_at=? WHERE restaurant_id=? AND cash_day_id=? AND status='OPEN'`), a.User.ID, sqldb.NaiveUTCArg(sqlDialect, closedAt), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error closing cash day shifts")
 		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',?,'CLOSE',JSON_OBJECT('date',?,'expectedCashCents',?,'countedCashCents',?,'differenceCents',?),?)`, a.ActiveRestaurantID, id, date, summary.ExpectedCash, *in.CountedCashCents, difference, a.User.ID)
+	// Ignored audit insert inside the tx: savepoint on PG.
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',?,'CLOSE',JSON_OBJECT('date',?,'expectedCashCents',?,'countedCashCents',?,'differenceCents',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_day',?,'CLOSE',jsonb_build_object('date',CAST(? AS text),'expectedCashCents',CAST(? AS bigint),'countedCashCents',CAST(? AS bigint),'differenceCents',CAST(? AS bigint)),?)`), a.ActiveRestaurantID, id, date, summary.ExpectedCash, *in.CountedCashCents, difference, a.User.ID)
+		return e
+	})
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error closing cash day")
 		return
@@ -482,7 +489,7 @@ var errPOSCashDayClosed = errors.New("cash day closed")
 // visit is still open.
 func (s *Server) posCashDayIsClosed(ctx context.Context, restaurantID int, date string) (bool, error) {
 	var status string
-	err := s.db.QueryRowContext(ctx, `SELECT status FROM pos_cash_days WHERE restaurant_id=? AND business_date=?`, restaurantID, date).Scan(&status)
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT status FROM pos_cash_days WHERE restaurant_id=? AND business_date=?`, `SELECT CAST(status AS text) FROM pos_cash_days WHERE restaurant_id=? AND business_date=?`), restaurantID, date).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -507,7 +514,7 @@ func (s *Server) requireOpenCashDayForDate(ctx context.Context, restaurantID int
 // requireOpenCashDayForVisit guards a mutation addressed by visit id.
 func (s *Server) requireOpenCashDayForVisit(ctx context.Context, restaurantID int, visitID int64) error {
 	var date time.Time
-	err := s.db.QueryRowContext(ctx, `SELECT service_date FROM pos_visits WHERE restaurant_id=? AND id=?`, restaurantID, visitID).Scan(&date)
+	err := s.db.QueryRowContext(ctx, portableSQL(`SELECT service_date FROM pos_visits WHERE restaurant_id=? AND id=?`), restaurantID, visitID).Scan(&date)
 	if errors.Is(err, sql.ErrNoRows) {
 		// A missing visit is not this guard's business; the handler's own lookup
 		// reports the 404 with its proper message.
@@ -522,7 +529,7 @@ func (s *Server) requireOpenCashDayForVisit(ctx context.Context, restaurantID in
 // requireOpenCashDayForTicket guards a mutation addressed by ticket id.
 func (s *Server) requireOpenCashDayForTicket(ctx context.Context, restaurantID int, ticketID int64) error {
 	var date time.Time
-	err := s.db.QueryRowContext(ctx, `SELECT v.service_date FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND t.id=?`, restaurantID, ticketID).Scan(&date)
+	err := s.db.QueryRowContext(ctx, portableSQL(`SELECT v.service_date FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND t.id=?`), restaurantID, ticketID).Scan(&date)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -586,7 +593,7 @@ func (s *Server) broadcastPOSCashDayTotals(restaurantID int, date string) {
 // posTicketServiceDate resolves the business date a ticket belongs to.
 func (s *Server) posTicketServiceDate(ctx context.Context, restaurantID int, ticketID int64) string {
 	var date time.Time
-	if err := s.db.QueryRowContext(ctx, `SELECT v.service_date FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND t.id=?`, restaurantID, ticketID).Scan(&date); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT v.service_date FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND t.id=?`), restaurantID, ticketID).Scan(&date); err != nil {
 		return ""
 	}
 	return date.Format("2006-01-02")
@@ -596,7 +603,7 @@ func (s *Server) posTicketServiceDate(ctx context.Context, restaurantID int, tic
 // broadcast that follows a mutation on it.
 func (s *Server) posVisitServiceDate(ctx context.Context, restaurantID int, visitID int64) string {
 	var date time.Time
-	if err := s.db.QueryRowContext(ctx, `SELECT service_date FROM pos_visits WHERE restaurant_id=? AND id=?`, restaurantID, visitID).Scan(&date); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT service_date FROM pos_visits WHERE restaurant_id=? AND id=?`), restaurantID, visitID).Scan(&date); err != nil {
 		return ""
 	}
 	return date.Format("2006-01-02")

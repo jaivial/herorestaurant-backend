@@ -195,7 +195,7 @@ func affluenceBucketedSeries(rows []affluenceDailyRow, from, to time.Time, bucke
 func affluenceDailyRows(ctx context.Context, db *sql.DB, restaurantID int, from, to time.Time) ([]affluenceDailyRow, error) {
 	// DATE_FORMAT is required: the DSN sets parseTime=true, so a raw DATE column
 	// scanned into a string arrives as RFC3339 and would not parse below.
-	rows, err := db.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, nativeSQL(`
 		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'), COUNT(*), COALESCE(SUM(party_size), 0)
 		FROM bookings
 		WHERE restaurant_id = ?
@@ -204,7 +204,7 @@ func affluenceDailyRows(ctx context.Context, db *sql.DB, restaurantID int, from,
 		  AND reservation_date BETWEEN ? AND ?
 		GROUP BY reservation_date
 		ORDER BY reservation_date ASC
-	`, restaurantID, affluenceMinReservation, affluenceFormatDate(from), affluenceFormatDate(to))
+	`, `SELECT to_char(reservation_date, 'YYYY-MM-DD'), COUNT(*), COALESCE(SUM(party_size), 0) FROM bookings WHERE restaurant_id = ? AND status <> 'cancelled' AND reservation_date >= ? AND reservation_date BETWEEN ? AND ? GROUP BY reservation_date ORDER BY reservation_date ASC`), restaurantID, affluenceMinReservation, affluenceFormatDate(from), affluenceFormatDate(to))
 	if err != nil {
 		return nil, err
 	}
@@ -236,11 +236,11 @@ func scanAffluenceDailyRows(rows *sql.Rows) ([]affluenceDailyRow, error) {
 func affluenceHistory(ctx context.Context, db *sql.DB, restaurantID int) (string, string, error) {
 	var first, last sql.NullString
 	// DATE_FORMAT for the same parseTime=true reason as affluenceDailyRows.
-	err := db.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, nativeSQL(`
 		SELECT DATE_FORMAT(MIN(reservation_date), '%Y-%m-%d'), DATE_FORMAT(MAX(reservation_date), '%Y-%m-%d')
 		FROM bookings
 		WHERE restaurant_id = ? AND status <> 'cancelled' AND reservation_date >= ?
-	`, restaurantID, affluenceMinReservation).Scan(&first, &last)
+	`, `SELECT to_char(MIN(reservation_date), 'YYYY-MM-DD'), to_char(MAX(reservation_date), 'YYYY-MM-DD') FROM bookings WHERE restaurant_id = ? AND status <> 'cancelled' AND reservation_date >= ?`), restaurantID, affluenceMinReservation).Scan(&first, &last)
 	if err != nil {
 		return "", "", err
 	}
@@ -426,7 +426,8 @@ func affluenceSeasonalRows(ctx context.Context, db *sql.DB, restaurantID int, mo
 		args = append(args, month)
 	}
 	// '%%Y-%%m-%%d' because this template goes through fmt.Sprintf (placeholders).
-	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+	// PG twin: to_char / EXTRACT(MONTH) (integer months 1..12, same values).
+	rows, err := db.QueryContext(ctx, nativeSQL(fmt.Sprintf(`
 		SELECT DATE_FORMAT(reservation_date, '%%Y-%%m-%%d'), COUNT(*), COALESCE(SUM(party_size), 0)
 		FROM bookings
 		WHERE restaurant_id = ?
@@ -435,7 +436,16 @@ func affluenceSeasonalRows(ctx context.Context, db *sql.DB, restaurantID int, mo
 		  AND MONTH(reservation_date) IN (%s)
 		GROUP BY reservation_date
 		ORDER BY reservation_date ASC
-	`, placeholders), args...)
+	`, placeholders), fmt.Sprintf(`
+		SELECT to_char(reservation_date, 'YYYY-MM-DD'), COUNT(*), COALESCE(SUM(party_size), 0)
+		FROM bookings
+		WHERE restaurant_id = ?
+		  AND status <> 'cancelled'
+		  AND reservation_date >= ?
+		  AND CAST(EXTRACT(MONTH FROM reservation_date) AS integer) IN (%s)
+		GROUP BY reservation_date
+		ORDER BY reservation_date ASC
+	`, placeholders)), args...)
 	if err != nil {
 		return nil, err
 	}

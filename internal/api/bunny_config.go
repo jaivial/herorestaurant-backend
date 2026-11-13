@@ -134,12 +134,12 @@ func (s *Server) loadBunnyStorageRow(ctx context.Context, restaurantID int) (bun
 		zone, key, pull sql.NullString
 		isActiveInt     int
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT storage_zone, storage_access_key, pull_base_url, is_active
 		FROM bunny_storage_config
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&zone, &key, &pull, &isActiveInt)
+	`), restaurantID).Scan(&zone, &key, &pull, &isActiveInt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, false, nil

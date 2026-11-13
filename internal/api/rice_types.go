@@ -18,7 +18,7 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT d.id AS NUM,
 			  CONCAT(TRIM(d.title_snapshot),
 			    IF(d.supplement_price > 0, CONCAT(' (+', FORMAT(d.supplement_price, 0), '€)'), '')) AS rice_name
@@ -29,7 +29,18 @@ func (s *Server) handleGetAvailableRiceTypes(w http.ResponseWriter, r *http.Requ
 		  AND s.section_kind = 'arroces'
 		  AND d.menu_id = 42
 		ORDER BY d.title_snapshot
-	`, restaurantID)
+	`, `
+		SELECT d.id AS "NUM",
+			  TRIM(d.title_snapshot) ||
+			    CASE WHEN d.supplement_price > 0 THEN ' (+' || to_char(ROUND(d.supplement_price, 0), 'FM999,999,990') || '€)' ELSE '' END AS rice_name
+		FROM group_menu_section_dishes_v2 d
+		JOIN group_menu_sections_v2 s ON s.id = d.section_id
+		WHERE d.restaurant_id = ?
+		  AND d.active = 1
+		  AND s.section_kind = 'arroces'
+		  AND d.menu_id = 42
+		ORDER BY d.title_snapshot
+	`), restaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success":   false,

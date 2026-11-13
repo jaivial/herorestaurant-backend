@@ -378,12 +378,12 @@ func (s *Server) loadReservationDefaults(ctx context.Context, restaurantID int) 
 		allowSalonRaw     sql.NullInt64
 		mobilityRaw       sql.NullInt64
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit, hour_split_enabled, default_hour_percentages_json, allow_floor_reservation, allow_salon_reservation, mobility_enabled
 		FROM restaurant_reservation_defaults
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&modeRaw, &morningRaw, &nightRaw, &weekdayRaw, &dailyLimitRaw, &mesas2Raw, &mesas3Raw, &hourSplitRaw, &defaultPercentRaw, &allowFloorRaw, &allowSalonRaw, &mobilityRaw)
+	`), restaurantID).Scan(&modeRaw, &morningRaw, &nightRaw, &weekdayRaw, &dailyLimitRaw, &mesas2Raw, &mesas3Raw, &hourSplitRaw, &defaultPercentRaw, &allowFloorRaw, &allowSalonRaw, &mobilityRaw)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return out, nil
@@ -463,7 +463,18 @@ func (s *Server) upsertReservationDefaults(ctx context.Context, restaurantID int
 	// Coordination id: mobility_day_override_v1
 	mobilityFlag := boolToInt(next.MobilityEnabled)
 
-	_, err := s.db.ExecContext(ctx, `
+	// booking_day_lock_v1: the default daily_limit is a capacity input:
+	// written under the restaurant row FOR UPDATE, which excludes every day
+	// writer and the bot recheck (they lock that row first).
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockRestaurantCapacityConfig(ctx, tx, restaurantID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_reservation_defaults (
 			restaurant_id, opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit, hour_split_enabled, default_hour_percentages_json, allow_floor_reservation, allow_salon_reservation, mobility_enabled
 		)
@@ -481,28 +492,36 @@ func (s *Server) upsertReservationDefaults(ctx context.Context, restaurantID int
 			allow_floor_reservation = VALUES(allow_floor_reservation),
 			allow_salon_reservation = VALUES(allow_salon_reservation),
 			mobility_enabled = VALUES(mobility_enabled)
-	`, restaurantID, mode, string(morningJSON), string(nightJSON), string(weekdayJSON), dailyLimit, mesas2, mesas3, hourSplitFlag, defaultPercentJSON, allowFloorFlag, allowSalonFlag, mobilityFlag)
-	return err
+	`, `INSERT INTO restaurant_reservation_defaults (
+			restaurant_id, opening_mode, morning_hours_json, night_hours_json, weekday_open_json, daily_limit, mesas_de_dos_limit, mesas_de_tres_limit,
+			hour_split_enabled, default_hour_percentages_json, allow_floor_reservation, allow_salon_reservation, mobility_enabled
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET opening_mode = EXCLUDED.opening_mode, morning_hours_json = EXCLUDED.morning_hours_json, night_hours_json = EXCLUDED.night_hours_json, weekday_open_json = EXCLUDED.weekday_open_json, daily_limit = EXCLUDED.daily_limit, mesas_de_dos_limit = EXCLUDED.mesas_de_dos_limit, mesas_de_tres_limit = EXCLUDED.mesas_de_tres_limit, hour_split_enabled = EXCLUDED.hour_split_enabled, default_hour_percentages_json = EXCLUDED.default_hour_percentages_json, allow_floor_reservation = EXCLUDED.allow_floor_reservation, allow_salon_reservation = EXCLUDED.allow_salon_reservation, mobility_enabled = EXCLUDED.mobility_enabled`), restaurantID, mode, string(morningJSON), string(nightJSON), string(weekdayJSON), dailyLimit, mesas2, mesas3, hourSplitFlag, defaultPercentJSON, allowFloorFlag, allowSalonFlag, mobilityFlag)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Server) loadDefaultFloors(ctx context.Context, restaurantID int) ([]boConfigFloor, error) {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_floors (restaurant_id, floor_number, floor_name, is_ground, is_active)
 		VALUES (?, 0, 'Planta baja', 1, 1)
 		ON DUPLICATE KEY UPDATE
 			floor_name = VALUES(floor_name),
 			is_ground = VALUES(is_ground)
-	`, restaurantID)
+	`, `INSERT INTO restaurant_floors (restaurant_id, floor_number, floor_name, is_ground, is_active) VALUES (?, 0, 'Planta baja', 1, 1)
+		ON CONFLICT (restaurant_id, floor_number, app.norm_ascii(scope_key)) DO UPDATE SET floor_name = EXCLUDED.floor_name, is_ground = EXCLUDED.is_ground`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, floor_number, floor_name, is_ground, is_active, max_aforo
 		FROM restaurant_floors
 		WHERE restaurant_id = ? AND specific_date IS NULL
 		ORDER BY floor_number ASC
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -546,12 +565,12 @@ func (s *Server) loadDefaultFloors(ctx context.Context, restaurantID int) ([]boC
 // salons (global only, has_capacity_limit=1), used to validate a floor's
 // max_aforo against the salons it already owns.
 func (s *Server) floorSalonAforoSums(ctx context.Context, restaurantID int) (map[int]int, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT floor_id, COALESCE(SUM(capacity_limit), 0)
 		FROM restaurant_salons
 		WHERE restaurant_id = ? AND specific_date IS NULL AND has_capacity_limit = 1
 		GROUP BY floor_id
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -578,23 +597,24 @@ func (s *Server) ensureFloorCount(ctx context.Context, restaurantID int, count i
 		if i == 0 {
 			isGround = 1
 		}
-		if _, err := s.db.ExecContext(ctx, `
+		if _, err := s.db.ExecContext(ctx, nativeSQL(`
 			INSERT INTO restaurant_floors (restaurant_id, floor_number, floor_name, is_ground, is_active)
 			VALUES (?, ?, ?, ?, 1)
 			ON DUPLICATE KEY UPDATE
 				floor_name = VALUES(floor_name),
 				is_ground = VALUES(is_ground),
 				is_active = is_active
-		`, restaurantID, i, name, isGround); err != nil {
+		`, `INSERT INTO restaurant_floors (restaurant_id, floor_number, floor_name, is_ground, is_active) VALUES (?, ?, ?, ?, 1)
+		ON CONFLICT (restaurant_id, floor_number, app.norm_ascii(scope_key)) DO UPDATE SET floor_name = EXCLUDED.floor_name, is_ground = EXCLUDED.is_ground`), restaurantID, i, name, isGround); err != nil {
 			return err
 		}
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id
 		FROM restaurant_floors
 		WHERE restaurant_id = ? AND floor_number >= ? AND specific_date IS NULL
-	`, restaurantID, count)
+	`), restaurantID, count)
 	if err != nil {
 		return err
 	}
@@ -613,18 +633,18 @@ func (s *Server) ensureFloorCount(ctx context.Context, restaurantID int, count i
 	}
 
 	for _, floorID := range removeIDs {
-		if _, err := s.db.ExecContext(ctx, `
+		if _, err := s.db.ExecContext(ctx, portableSQL(`
 			DELETE FROM restaurant_floor_overrides
 			WHERE restaurant_id = ? AND floor_id = ?
-		`, restaurantID, floorID); err != nil {
+		`), restaurantID, floorID); err != nil {
 			return err
 		}
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		DELETE FROM restaurant_floors
 		WHERE restaurant_id = ? AND floor_number >= ? AND specific_date IS NULL
-	`, restaurantID, count)
+	`), restaurantID, count)
 	return err
 }
 
@@ -636,12 +656,12 @@ func (s *Server) loadDateFloors(ctx context.Context, restaurantID int, date stri
 
 	// Date-scoped floors exist only on `+"`date`"+`; a date-scoped floor with
 	// the same floor_number shadows the global one on that date.
-	dateRows, err := s.db.QueryContext(ctx, `
+	dateRows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, floor_number, floor_name, is_ground, is_active, max_aforo
 		FROM restaurant_floors
 		WHERE restaurant_id = ? AND specific_date = ?
 		ORDER BY floor_number ASC
-	`, restaurantID, date)
+	`), restaurantID, date)
 	if err != nil {
 		return nil, err
 	}
@@ -689,11 +709,11 @@ func (s *Server) loadDateFloors(ctx context.Context, restaurantID int, date stri
 		floors = merged
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT floor_id, is_active
 		FROM restaurant_floor_overrides
 		WHERE restaurant_id = ? AND date = ?
-	`, restaurantID, date)
+	`), restaurantID, date)
 	if err != nil {
 		return nil, err
 	}
@@ -719,11 +739,11 @@ func (s *Server) loadDateFloors(ctx context.Context, restaurantID int, date stri
 	}
 
 	// Per-date max_aforo override (NULL column = inherit the floor's value).
-	aforoRows, err := s.db.QueryContext(ctx, `
+	aforoRows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT floor_id, max_aforo
 		FROM restaurant_floor_aforo_overrides
 		WHERE restaurant_id = ? AND date = ?
-	`, restaurantID, date)
+	`), restaurantID, date)
 	if err != nil {
 		return nil, err
 	}
@@ -777,12 +797,12 @@ func (s *Server) handleBOConfigDayGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var isOpenInt sql.NullInt64
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT is_open
 		FROM restaurant_days
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
-	`, a.ActiveRestaurantID, date).Scan(&isOpenInt)
+	`), a.ActiveRestaurantID, date).Scan(&isOpenInt)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando restaurant_days")
 		return
@@ -856,10 +876,13 @@ func (s *Server) handleBOConfigDaySet(w http.ResponseWriter, r *http.Request) {
 			placeholders = append(placeholders, "(?, ?, ?)")
 			args = append(args, a.ActiveRestaurantID, d, isOpenInt)
 		}
-		query := "INSERT INTO restaurant_days (restaurant_id, date, is_open) VALUES " +
-			strings.Join(placeholders, ", ") +
-			" ON DUPLICATE KEY UPDATE is_open = VALUES(is_open)"
-		if _, err := s.db.ExecContext(r.Context(), query, args...); err != nil {
+		values := strings.Join(placeholders, ", ")
+		query := nativeSQL(
+			"INSERT INTO restaurant_days (restaurant_id, date, is_open) VALUES "+values+" ON DUPLICATE KEY UPDATE is_open = VALUES(is_open)",
+			// uniq_restaurant_days_restaurant_date; dates are de-duplicated above, so one
+			// statement never touches the same row twice (PG would reject that).
+			"INSERT INTO restaurant_days (restaurant_id, date, is_open) VALUES "+values+" ON CONFLICT (restaurant_id, date) DO UPDATE SET is_open = EXCLUDED.is_open")
+		if _, err := s.db.ExecContext(r.Context(), selectedSQL(query), args...); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando restaurant_days")
 			return
 		}
@@ -882,11 +905,11 @@ func (s *Server) handleBOConfigDaySet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Upsert by (restaurant_id, date).
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO restaurant_days (restaurant_id, date, is_open)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE is_open = VALUES(is_open)
-	`, a.ActiveRestaurantID, date, isOpenInt)
+	`, `INSERT INTO restaurant_days (restaurant_id, date, is_open) VALUES (?, ?, ?) ON CONFLICT (restaurant_id, date) DO UPDATE SET is_open = EXCLUDED.is_open`), a.ActiveRestaurantID, date, isOpenInt)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando restaurant_days")
 		return
@@ -931,12 +954,12 @@ func (s *Server) handleBOConfigOpeningHoursGet(w http.ResponseWriter, r *http.Re
 
 	var hoursRaw sql.NullString
 	var modeRaw sql.NullString
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT hoursarray, opening_mode
 		FROM openinghours
 		WHERE restaurant_id = ? AND dateselected = ?
 		LIMIT 1
-	`, a.ActiveRestaurantID, date).Scan(&hoursRaw, &modeRaw)
+	`), a.ActiveRestaurantID, date).Scan(&hoursRaw, &modeRaw)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando openinghours")
 		return
@@ -1008,11 +1031,11 @@ func (s *Server) handleBOConfigOpeningHoursSet(w http.ResponseWriter, r *http.Re
 	normalized := mergeHoursByMode(openingMode, morningHours, nightHours)
 	hoursJSON, _ := json.Marshal(normalized)
 
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO openinghours (restaurant_id, dateselected, hoursarray, opening_mode)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE hoursarray = VALUES(hoursarray), opening_mode = VALUES(opening_mode)
-	`, a.ActiveRestaurantID, date, string(hoursJSON), openingMode)
+	`, `INSERT INTO openinghours (restaurant_id, dateselected, hoursarray, opening_mode) VALUES (?, ?, ?, ?) ON CONFLICT (restaurant_id, dateselected) DO UPDATE SET hoursarray = EXCLUDED.hoursarray, opening_mode = EXCLUDED.opening_mode`), a.ActiveRestaurantID, date, string(hoursJSON), openingMode)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando openinghours")
 		return
@@ -1054,12 +1077,12 @@ func (s *Server) handleBOConfigMesasDeDosGet(w http.ResponseWriter, r *http.Requ
 	}
 
 	var limit sql.NullString
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT dailyLimit
 		FROM mesas_de_dos
 		WHERE restaurant_id = ? AND reservationDate = ?
 		LIMIT 1
-	`, a.ActiveRestaurantID, date).Scan(&limit)
+	`, `SELECT "dailyLimit" FROM mesas_de_dos WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), a.ActiveRestaurantID, date).Scan(&limit)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando mesas_de_dos")
 		return
@@ -1122,11 +1145,11 @@ func (s *Server) handleBOConfigMesasDeDosSet(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO mesas_de_dos (restaurant_id, reservationDate, dailyLimit)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE dailyLimit = VALUES(dailyLimit)
-	`, a.ActiveRestaurantID, date, limit)
+	`, `INSERT INTO mesas_de_dos (restaurant_id, "reservationDate", "dailyLimit") VALUES (?, ?, ?) ON CONFLICT (restaurant_id, "reservationDate") DO UPDATE SET "dailyLimit" = EXCLUDED."dailyLimit"`), a.ActiveRestaurantID, date, limit)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando mesas_de_dos")
 		return
@@ -1165,12 +1188,12 @@ func (s *Server) handleBOConfigMesasDeTresGet(w http.ResponseWriter, r *http.Req
 	}
 
 	var limit sql.NullString
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT dailyLimit
 		FROM mesas_de_tres
 		WHERE restaurant_id = ? AND reservationDate = ?
 		LIMIT 1
-	`, a.ActiveRestaurantID, date).Scan(&limit)
+	`, `SELECT "dailyLimit" FROM mesas_de_tres WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), a.ActiveRestaurantID, date).Scan(&limit)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando mesas_de_tres")
 		return
@@ -1233,11 +1256,11 @@ func (s *Server) handleBOConfigMesasDeTresSet(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO mesas_de_tres (restaurant_id, reservationDate, dailyLimit)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE dailyLimit = VALUES(dailyLimit)
-	`, a.ActiveRestaurantID, date, limit)
+	`, `INSERT INTO mesas_de_tres (restaurant_id, "reservationDate", "dailyLimit") VALUES (?, ?, ?) ON CONFLICT (restaurant_id, "reservationDate") DO UPDATE SET "dailyLimit" = EXCLUDED."dailyLimit"`), a.ActiveRestaurantID, date, limit)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando mesas_de_tres")
 		return
@@ -1276,12 +1299,12 @@ func (s *Server) handleBOConfigSalonCondesaGet(w http.ResponseWriter, r *http.Re
 	}
 
 	var state sql.NullInt64
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT state
 		FROM salon_condesa
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
-	`, a.ActiveRestaurantID, date).Scan(&state)
+	`), a.ActiveRestaurantID, date).Scan(&state)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando salon_condesa")
 		return
@@ -1327,11 +1350,11 @@ func (s *Server) handleBOConfigSalonCondesaSet(w http.ResponseWriter, r *http.Re
 		stateInt = 1
 	}
 
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO salon_condesa (restaurant_id, date, state)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE state = VALUES(state)
-	`, a.ActiveRestaurantID, date, stateInt)
+	`, `INSERT INTO salon_condesa (restaurant_id, date, state) VALUES (?, ?, ?) ON CONFLICT (restaurant_id, date) DO UPDATE SET state = EXCLUDED.state`), a.ActiveRestaurantID, date, stateInt)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando salon_condesa")
 		return
@@ -1377,13 +1400,13 @@ func (s *Server) handleBOConfigDailyLimitGet(w http.ResponseWriter, r *http.Requ
 
 	// Best-effort daily limit (reservation_manager schema is legacy).
 	var dailyLimit sql.NullInt64
-	_ = s.db.QueryRowContext(r.Context(), `
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT dailyLimit
 		FROM reservation_manager
 		WHERE restaurant_id = ? AND reservationDate = ?
 		ORDER BY id DESC
 		LIMIT 1
-	`, restaurantID, date).Scan(&dailyLimit)
+	`, `SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? ORDER BY id DESC LIMIT 1`), restaurantID, date).Scan(&dailyLimit)
 
 	source := "default"
 	limit := int64(defaults.DailyLimit)
@@ -1393,11 +1416,11 @@ func (s *Server) handleBOConfigDailyLimitGet(w http.ResponseWriter, r *http.Requ
 	}
 
 	var totalPeople int64
-	_ = s.db.QueryRowContext(r.Context(), `
+	_ = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT COALESCE(SUM(party_size), 0)
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
-	`, restaurantID, date).Scan(&totalPeople)
+	`), restaurantID, date).Scan(&totalPeople)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":          true,
@@ -1443,11 +1466,21 @@ func (s *Server) handleBOConfigDailyLimitSet(w http.ResponseWriter, r *http.Requ
 
 	// Keep a single row per (restaurant_id, date): reservation_manager lacks a unique key in dumps.
 	restaurantID := a.ActiveRestaurantID
-	_, _ = s.db.ExecContext(r.Context(), "DELETE FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ?", restaurantID, date)
-	_, err := s.db.ExecContext(r.Context(), `
+	// booking_day_lock_v1: atomic replacement under the day lock (the source
+	// autocommit DELETE+INSERT left a window with no override row).
+	err := withTx(r.Context(), s.db, func(ctx context.Context, tx *sql.Tx) error {
+		if err := lockBookingDays(ctx, tx, restaurantID, date); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, nativeSQL("DELETE FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ?", `DELETE FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ?`), restaurantID, date); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, nativeSQL(`
 		INSERT INTO reservation_manager (restaurant_id, reservationDate, dailyLimit)
 		VALUES (?, ?, ?)
-	`, restaurantID, date, req.Limit)
+	`, `INSERT INTO reservation_manager (restaurant_id, "reservationDate", "dailyLimit") VALUES (?, ?, ?)`), restaurantID, date, req.Limit)
+		return err
+	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando reservation_manager")
 		return
@@ -1732,22 +1765,22 @@ func (s *Server) handleBOConfigFloorsDefaultsSet(w http.ResponseWriter, r *http.
 			if *req.MaxAforo > 0 {
 				maxAforoVal = sql.NullInt64{Int64: int64(*req.MaxAforo), Valid: true}
 			}
-			if _, err := s.db.ExecContext(r.Context(), `
+			if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 				UPDATE restaurant_floors
 				SET max_aforo = ?
 				WHERE restaurant_id = ? AND floor_number = ?
-			`, maxAforoVal, a.ActiveRestaurantID, floorNumber); err != nil {
+			`), maxAforoVal, a.ActiveRestaurantID, floorNumber); err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando aforo de planta")
 				return
 			}
 			if *req.MaxAforo > 0 {
 				// Obligar límite: los salones ya existentes pasan a tener límite
 				// (conservando su capacity_limit, que por defecto es 45).
-				if _, err := s.db.ExecContext(r.Context(), `
+				if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 					UPDATE restaurant_salons
 					SET has_capacity_limit = 1
 					WHERE restaurant_id = ? AND floor_id = ? AND has_capacity_limit = 0
-				`, a.ActiveRestaurantID, target.ID); err != nil {
+				`), a.ActiveRestaurantID, target.ID); err != nil {
 					httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando salones de la planta")
 					return
 				}
@@ -1771,22 +1804,22 @@ func (s *Server) handleBOConfigFloorsDefaultsSet(w http.ResponseWriter, r *http.
 				})
 				return
 			}
-			_, err = s.db.ExecContext(r.Context(), `
+			_, err = s.db.ExecContext(r.Context(), portableSQL(`
 				UPDATE restaurant_floors
 				SET is_active = ?
 				WHERE restaurant_id = ? AND floor_number = ?
-			`, boolToInt(nextActive), a.ActiveRestaurantID, floorNumber)
+			`), boolToInt(nextActive), a.ActiveRestaurantID, floorNumber)
 			if err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando planta")
 				return
 			}
 			// Disabling a floor disables its salons (global default); re-enabling
 			// restores them so the two states never drift apart.
-			if _, err := s.db.ExecContext(r.Context(), `
+			if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 				UPDATE restaurant_salons
 				SET is_active = ?
 				WHERE restaurant_id = ? AND floor_id = ?
-			`, boolToInt(nextActive), a.ActiveRestaurantID, target.ID); err != nil {
+			`), boolToInt(nextActive), a.ActiveRestaurantID, target.ID); err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando salones de la planta")
 				return
 			}
@@ -1915,16 +1948,16 @@ func (s *Server) handleBOConfigFloorsSet(w http.ResponseWriter, r *http.Request)
 	}
 
 	if req.Active == target.Active {
-		_, _ = s.db.ExecContext(r.Context(), `
+		_, _ = s.db.ExecContext(r.Context(), portableSQL(`
 			DELETE FROM restaurant_floor_overrides
 			WHERE restaurant_id = ? AND date = ? AND floor_id = ?
-		`, a.ActiveRestaurantID, date, target.ID)
+		`), a.ActiveRestaurantID, date, target.ID)
 	} else {
-		_, err = s.db.ExecContext(r.Context(), `
+		_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 			INSERT INTO restaurant_floor_overrides (restaurant_id, date, floor_id, is_active)
 			VALUES (?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE is_active = VALUES(is_active)
-		`, a.ActiveRestaurantID, date, target.ID, boolToInt(req.Active))
+		`, `INSERT INTO restaurant_floor_overrides (restaurant_id, date, floor_id, is_active) VALUES (?, ?, ?, ?) ON CONFLICT (restaurant_id, date, floor_id) DO UPDATE SET is_active = EXCLUDED.is_active`), a.ActiveRestaurantID, date, target.ID, boolToInt(req.Active))
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando planta del dia")
 			return
@@ -1954,16 +1987,16 @@ func (s *Server) handleBOConfigFloorsSet(w http.ResponseWriter, r *http.Request)
 			aforoVal = sql.NullInt64{Int64: int64(*req.MaxAforo), Valid: true}
 		}
 		if *req.MaxAforo > 0 {
-			_, err = s.db.ExecContext(r.Context(), `
+			_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 				INSERT INTO restaurant_floor_aforo_overrides (restaurant_id, date, floor_id, max_aforo)
 				VALUES (?, ?, ?, ?)
 				ON DUPLICATE KEY UPDATE max_aforo = VALUES(max_aforo)
-			`, a.ActiveRestaurantID, date, target.ID, aforoVal)
+			`, `INSERT INTO restaurant_floor_aforo_overrides (restaurant_id, date, floor_id, max_aforo) VALUES (?, ?, ?, ?) ON CONFLICT (restaurant_id, date, floor_id) DO UPDATE SET max_aforo = EXCLUDED.max_aforo`), a.ActiveRestaurantID, date, target.ID, aforoVal)
 		} else {
-			_, err = s.db.ExecContext(r.Context(), `
+			_, err = s.db.ExecContext(r.Context(), portableSQL(`
 				DELETE FROM restaurant_floor_aforo_overrides
 				WHERE restaurant_id = ? AND date = ? AND floor_id = ?
-			`, a.ActiveRestaurantID, date, target.ID)
+			`), a.ActiveRestaurantID, date, target.ID)
 		}
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando aforo de planta del dia")
@@ -2123,7 +2156,7 @@ func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRe
 	// The settings form saves the site into restaurant_info.website; the legacy
 	// restaurants.website_url (and menu_url) stay as fallback so the effective
 	// website matches what Admin shows (see loadRestaurantBranding).
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT
 			ri.direccion, ri.telefono, ri.telefono_gestion, ri.email, ri.cif, ri.direccion_facturacion, ri.clasificacion, ri.tipo_empresa,
 			COALESCE(NULLIF(TRIM(ri.website), ''), NULLIF(TRIM(r.website_url), '')) AS website,
@@ -2132,7 +2165,7 @@ func (s *Server) loadRestaurantInfo(ctx context.Context, restaurantID int) (boRe
 		LEFT JOIN restaurant_info ri ON ri.restaurant_id = r.id
 		WHERE r.id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&direccion, &telefono, &managementPhone, &email, &cif, &direccionFacturacion, &clasificacion, &tipoEmpresa, &website, &menuURL)
+	`), restaurantID).Scan(&direccion, &telefono, &managementPhone, &email, &cif, &direccionFacturacion, &clasificacion, &tipoEmpresa, &website, &menuURL)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, nil
@@ -2296,7 +2329,7 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 		current.MenuURL = strings.TrimSpace(*req.MenuURL)
 	}
 
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO restaurant_info (
 			restaurant_id, direccion, telefono, telefono_gestion, email, cif, direccion_facturacion, clasificacion, tipo_empresa, website, menu_url
 		)
@@ -2312,7 +2345,9 @@ func (s *Server) handleBORestaurantInfoSet(w http.ResponseWriter, r *http.Reques
 			tipo_empresa = VALUES(tipo_empresa),
 			website = VALUES(website),
 			menu_url = VALUES(menu_url)
-	`, a.ActiveRestaurantID, current.Direccion, current.Telefono, current.ManagementPhone, current.Email, current.CIF, current.DireccionFacturacion, current.Clasificacion, current.TipoEmpresa, current.Website, current.MenuURL)
+	`, `INSERT INTO restaurant_info (restaurant_id, direccion, telefono, telefono_gestion, email, cif, direccion_facturacion, clasificacion, tipo_empresa, website, menu_url)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET direccion = EXCLUDED.direccion, telefono = EXCLUDED.telefono, telefono_gestion = EXCLUDED.telefono_gestion, email = EXCLUDED.email, cif = EXCLUDED.cif, direccion_facturacion = EXCLUDED.direccion_facturacion, clasificacion = EXCLUDED.clasificacion, tipo_empresa = EXCLUDED.tipo_empresa, website = EXCLUDED.website, menu_url = EXCLUDED.menu_url`), a.ActiveRestaurantID, current.Direccion, current.Telefono, current.ManagementPhone, current.Email, current.CIF, current.DireccionFacturacion, current.Clasificacion, current.TipoEmpresa, current.Website, current.MenuURL)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando informacion del restaurante")
 		return
@@ -2354,12 +2389,12 @@ func (s *Server) handleBOMandatoryMenusGet(w http.ResponseWriter, r *http.Reques
 	var statusInt, mandatoryInt int
 	var menuIDRaw, menuChooseMainRaw sql.NullString
 
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT id, status, mandatory, menu_id, menu_choose_main
 		FROM mandatory_menus
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
-	`, a.ActiveRestaurantID, date).Scan(&id, &statusInt, &mandatoryInt, &menuIDRaw, &menuChooseMainRaw)
+	`), a.ActiveRestaurantID, date).Scan(&id, &statusInt, &mandatoryInt, &menuIDRaw, &menuChooseMainRaw)
 
 	if err == sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -2441,7 +2476,7 @@ func (s *Server) handleBOMandatoryMenusSave(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Upsert by (restaurant_id, date)
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO mandatory_menus (restaurant_id, date, status, mandatory, menu_id, menu_choose_main)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
@@ -2449,7 +2484,8 @@ func (s *Server) handleBOMandatoryMenusSave(w http.ResponseWriter, r *http.Reque
 			mandatory = VALUES(mandatory),
 			menu_id = VALUES(menu_id),
 			menu_choose_main = VALUES(menu_choose_main)
-	`, a.ActiveRestaurantID, date, statusInt, mandatoryInt, string(menuIDsJSON), string(menuChooseMainJSON))
+	`, `INSERT INTO mandatory_menus (restaurant_id, date, status, mandatory, menu_id, menu_choose_main) VALUES (?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb))
+		ON CONFLICT (restaurant_id, date) DO UPDATE SET status = EXCLUDED.status, mandatory = EXCLUDED.mandatory, menu_id = EXCLUDED.menu_id, menu_choose_main = EXCLUDED.menu_choose_main`), a.ActiveRestaurantID, date, statusInt, mandatoryInt, string(menuIDsJSON), string(menuChooseMainJSON))
 
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando mandatory_menus")
@@ -2475,12 +2511,12 @@ func (s *Server) handleBOMenuSelectorGet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, menu_title, COALESCE(menu_type, 1) AS menu_type
 		FROM menus
 		WHERE restaurant_id = ? AND is_draft = 0 AND active = 1
 		ORDER BY menu_type ASC, menu_title ASC
-	`, a.ActiveRestaurantID)
+	`), a.ActiveRestaurantID)
 
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando menus")
@@ -2577,13 +2613,13 @@ func (s *Server) loadEmailProviderConfig(ctx context.Context, restaurantID int) 
 	out := defaultEmailProviderConfig()
 	var id, smtpPort, isActiveInt int
 	var provider, smtpHost, smtpUsername, smtpPassword, smtpFromEmail, smtpEncryption, gmailAppPassword, gmailFromEmail sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT id, provider, smtp_host, smtp_port, smtp_username, smtp_password, smtp_from_email, smtp_encryption,
 			gmail_app_password, gmail_from_email, is_active
 		FROM email_provider_config
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&id, &provider, &smtpHost, &smtpPort, &smtpUsername, &smtpPassword, &smtpFromEmail, &smtpEncryption, &gmailAppPassword, &gmailFromEmail, &isActiveInt)
+	`), restaurantID).Scan(&id, &provider, &smtpHost, &smtpPort, &smtpUsername, &smtpPassword, &smtpFromEmail, &smtpEncryption, &gmailAppPassword, &gmailFromEmail, &isActiveInt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, nil
@@ -2676,7 +2712,7 @@ func (s *Server) handleBOEmailProviderGet(w http.ResponseWriter, r *http.Request
 func normalizeEncryption(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "none", "tls", "ssl":
-		return v
+		return mysqlLowerEnumArg(v) // repair-enums2: stored label (was raw v; PG native enum is exact)
 	default:
 		return "tls"
 	}
@@ -2685,7 +2721,7 @@ func normalizeEncryption(v string) string {
 func normalizeProvider(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "smtp", "gmail":
-		return v
+		return mysqlLowerEnumArg(v) // repair-enums2
 	default:
 		return "smtp"
 	}
@@ -2758,23 +2794,23 @@ func (s *Server) handleBOEmailProviderSet(w http.ResponseWriter, r *http.Request
 	}
 
 	if current.ID > 0 {
-		_, err = s.db.ExecContext(r.Context(), `
+		_, err = s.db.ExecContext(r.Context(), portableSQL(`
 			UPDATE email_provider_config SET
 				provider = ?, smtp_host = ?, smtp_port = ?, smtp_username = ?, smtp_password = ?,
 				smtp_from_email = ?, smtp_encryption = ?, gmail_app_password = ?, gmail_from_email = ?,
 				is_active = ?
 			WHERE id = ? AND restaurant_id = ?
-		`, current.Provider, current.SMTPHost, current.SMTPPort, current.SMTPUsername, current.SMTPPassword,
+		`), current.Provider, current.SMTPHost, current.SMTPPort, current.SMTPUsername, current.SMTPPassword,
 			current.SMTPFromEmail, current.SMTEncryption, current.GmailAppPassword, current.GmailFromEmail,
 			activeInt, current.ID, a.ActiveRestaurantID)
 	} else {
-		_, err = s.db.ExecContext(r.Context(), `
+		_, err = s.db.ExecContext(r.Context(), portableSQL(`
 			INSERT INTO email_provider_config (
 				restaurant_id, provider, smtp_host, smtp_port, smtp_username, smtp_password,
 				smtp_from_email, smtp_encryption, gmail_app_password, gmail_from_email, is_active
 			)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, a.ActiveRestaurantID, current.Provider, current.SMTPHost, current.SMTPPort, current.SMTPUsername,
+		`), a.ActiveRestaurantID, current.Provider, current.SMTPHost, current.SMTPPort, current.SMTPUsername,
 			current.SMTPPassword, current.SMTPFromEmail, current.SMTEncryption, current.GmailAppPassword,
 			current.GmailFromEmail, activeInt)
 	}

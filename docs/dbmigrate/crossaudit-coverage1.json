@@ -1,0 +1,1313 @@
+{
+  "audit": "crossaudit1 (tx error continuation + time.Time naive-column binding)",
+  "basis": "go/packages+go/types AST over ported files; tool /tmp/vc-txaudit (not in repo)",
+  "inventory": "sql-inventory-r37.json",
+  "calls_audited": 1219,
+  "begins": 74,
+  "tx_param_funcs": [
+    "internal/api/backoffice_comida_categories.go:513 lockComidaCategoryNamespace",
+    "internal/api/backoffice_comida_categories.go:523 comidaCategorySlugTaken",
+    "internal/api/backoffice_comida_categories.go:870 deleteComidaCategoryLegacyTwins",
+    "internal/api/backoffice_comida_categories.go:931 deleteComidaCategoryMarginScope",
+    "internal/api/backoffice_comida_categories.go:969 countComidaCategoryUsages",
+    "internal/api/backoffice_comida_categories.go:1014 renameComidaCategoryUsages",
+    "internal/api/backoffice_comida_categories.go:1074 reconcileComidaCategoryLegacyTwin",
+    "internal/api/backoffice_group_menus_v2.go:1862 propagateSectionDishToCatalog",
+    "internal/api/backoffice_labour_cost.go:332 loadStockRecipeLabourCosts",
+    "internal/api/backoffice_member_access_flows.go:345 ensureBOUserForMemberTx",
+    "internal/api/backoffice_member_access_flows.go:522 ensureUniqueUsernameTx",
+    "internal/api/backoffice_member_access_flows.go:604 createMemberInvitationTokenTx",
+    "internal/api/backoffice_member_access_flows.go:645 createPasswordResetTokenTx",
+    "internal/api/backoffice_production_labour.go:85 refreshProductionActualLabour",
+    "internal/api/backoffice_stock_recipes.go:105 loadStockBOM",
+    "internal/api/bookings_admin.go:1190 withTx",
+    "internal/api/special_date_menu_sections.go:127 saveSpecialDateMenuSections"
+  ],
+  "prepares": [
+    "internal/api/backoffice_group_menus_v2_special_sections.go:357 handleBOGroupMenusV2ReorderSpecialSections PrepareContext on *database/sql.Tx",
+    "internal/api/backoffice_group_menus_v2_special_sections.go:833 repackSpecialMenuSections PrepareContext on *database/sql.Tx"
+  ],
+  "by_file": [
+    {
+      "file": "internal/api/ad_tools.go",
+      "domain": "core_backoffice",
+      "sites": 8,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/admin_menus.go",
+      "domain": "catalog_stock",
+      "sites": 8,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/admin_vinos.go",
+      "domain": "catalog_stock",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_accounting_exports.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_affluence.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_auth.go",
+      "domain": "core_backoffice",
+      "sites": 14,
+      "tx_or_iface_or_stmt": 3,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 2,
+        "checked-terminates": 1
+      },
+      "time_args": [
+        "179: time.Time:expiresAt.UTC()"
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_booking_documents_ws.go",
+      "domain": "bookings",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_booking_mutations.go",
+      "domain": "bookings",
+      "sites": 11,
+      "tx_or_iface_or_stmt": 1,
+      "tx_err_classes": {
+        "checked-terminates": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_bookings.go",
+      "domain": "bookings",
+      "sites": 11,
+      "tx_or_iface_or_stmt": 7,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 2,
+        "checked-terminates": 4,
+        "returned": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_bookings_search.go",
+      "domain": "bookings",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_branding_logo.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_calendar.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_campaigns.go",
+      "domain": "campaigns_messaging",
+      "sites": 29,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_comida_ai.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_comida_categories.go",
+      "domain": "catalog_stock",
+      "sites": 22,
+      "tx_or_iface_or_stmt": 19,
+      "tx_err_classes": {
+        "INSPECT": 2,
+        "UNCHECKED-NEXT": 2,
+        "checked-terminates": 14,
+        "returned": 1
+      },
+      "time_args": [
+        "886: SPREAD-PARAM:args",
+        "916: SPREAD-PARAM:args"
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_comida_counts.go",
+      "domain": "catalog_stock",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_comida_upload.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_config.go",
+      "domain": "core_backoffice",
+      "sites": 43,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_config_ai_image.go",
+      "domain": "core_backoffice",
+      "sites": 8,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_config_bunny.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_config_chatgpt_plugin.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_config_minimax.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_dashboard.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_dish_same_day_booking.go",
+      "domain": "catalog_stock",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_fichaje.go",
+      "domain": "members_staff",
+      "sites": 27,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_fichaje_realtime.go",
+      "domain": "members_staff",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus.go",
+      "domain": "catalog_stock",
+      "sites": 10,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2.go",
+      "domain": "catalog_stock",
+      "sites": 70,
+      "tx_or_iface_or_stmt": 21,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 2,
+        "checked-terminates": 18,
+        "returned": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2_items.go",
+      "domain": "catalog_stock",
+      "sites": 8,
+      "tx_or_iface_or_stmt": 4,
+      "tx_err_classes": {
+        "INSPECT": 1,
+        "checked-terminates": 3
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2_special_sections.go",
+      "domain": "catalog_stock",
+      "sites": 17,
+      "tx_or_iface_or_stmt": 2,
+      "tx_err_classes": {
+        "checked-terminates": 2
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2_ws.go",
+      "domain": "catalog_stock",
+      "sites": 10,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_labour_cost.go",
+      "domain": "core_backoffice",
+      "sites": 12,
+      "tx_or_iface_or_stmt": 9,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 1,
+        "checked-terminates": 8
+      },
+      "time_args": [
+        "146: *time.Time:to | time.Time:from"
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_member_access_flows.go",
+      "domain": "members_staff",
+      "sites": 34,
+      "tx_or_iface_or_stmt": 24,
+      "tx_err_classes": {
+        "INSPECT": 2,
+        "UNCHECKED-NEXT": 5,
+        "checked-terminates": 17
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_members.go",
+      "domain": "members_staff",
+      "sites": 13,
+      "tx_or_iface_or_stmt": 7,
+      "tx_err_classes": {
+        "checked-terminates": 7
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_members_avatar.go",
+      "domain": "members_staff",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_menu_visibility.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_menus.go",
+      "domain": "catalog_stock",
+      "sites": 6,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_middleware.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": [
+        "61: time.Time:movingExpiresAt.UTC()"
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_platform.go",
+      "domain": "core_backoffice",
+      "sites": 33,
+      "tx_or_iface_or_stmt": 2,
+      "tx_err_classes": {
+        "checked-terminates": 2
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_preferences.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_production_labour.go",
+      "domain": "core_backoffice",
+      "sites": 16,
+      "tx_or_iface_or_stmt": 12,
+      "tx_err_classes": {
+        "INSPECT": 1,
+        "UNCHECKED-NEXT": 1,
+        "checked-terminates": 10
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_provision.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_rbac.go",
+      "domain": "core_backoffice",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_roles.go",
+      "domain": "core_backoffice",
+      "sites": 14,
+      "tx_or_iface_or_stmt": 3,
+      "tx_err_classes": {
+        "checked-terminates": 3
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_salons.go",
+      "domain": "core_backoffice",
+      "sites": 10,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_settings.go",
+      "domain": "core_backoffice",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_special_dates.go",
+      "domain": "bookings",
+      "sites": 13,
+      "tx_or_iface_or_stmt": 6,
+      "tx_err_classes": {
+        "checked-terminates": 6
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_stock.go",
+      "domain": "catalog_stock",
+      "sites": 69,
+      "tx_or_iface_or_stmt": 35,
+      "tx_err_classes": {
+        "checked-terminates": 33,
+        "returned": 2
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_analytics.go",
+      "domain": "catalog_stock",
+      "sites": 26,
+      "tx_or_iface_or_stmt": 10,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 2,
+        "checked-terminates": 7,
+        "returned": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_documents.go",
+      "domain": "catalog_stock",
+      "sites": 34,
+      "tx_or_iface_or_stmt": 26,
+      "tx_err_classes": {
+        "IF-INIT-INSPECT": 4,
+        "UNCHECKED-NEXT": 2,
+        "checked-terminates": 19,
+        "returned": 1
+      },
+      "time_args": [
+        "149: ANYCALL:stockNullableString(objectPath) | ANYCALL:stockNullableString(s.bunnyCreds(r.Context(), restaurantID).PrivateStorageZone) | ANYCALL:stockNullableString(contentType) | ANYCALL:stockNullableInt64(size) | ANYCALL:stockNullableString(filename) | ANY-PARAM:retentionUntil | ANYCALL:stockNullableString(fileHash) | ANYCALL:stockNullableString(rawText) | ANYCALL:stockNullableString(extraction.SupplierName) | ANYCALL:stockNullableString(extraction.DocumentNumber)"
+      ]
+    },
+    {
+      "file": "internal/api/backoffice_stock_import.go",
+      "domain": "catalog_stock",
+      "sites": 6,
+      "tx_or_iface_or_stmt": 4,
+      "tx_err_classes": {
+        "checked-terminates": 4
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_margin_scopes.go",
+      "domain": "catalog_stock",
+      "sites": 9,
+      "tx_or_iface_or_stmt": 5,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 1,
+        "checked-terminates": 4
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_margin_targets.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_permissions.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 1,
+      "tx_err_classes": {
+        "checked-terminates": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_recipes.go",
+      "domain": "catalog_stock",
+      "sites": 29,
+      "tx_or_iface_or_stmt": 22,
+      "tx_err_classes": {
+        "IF-INIT-INSPECT": 1,
+        "checked-terminates": 20,
+        "returned": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_reconciliation.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 2,
+      "tx_err_classes": {
+        "checked-terminates": 2
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_suppliers.go",
+      "domain": "catalog_stock",
+      "sites": 17,
+      "tx_or_iface_or_stmt": 7,
+      "tx_err_classes": {
+        "checked-terminates": 7
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_bulk.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 2,
+      "tx_err_classes": {
+        "checked-terminates": 2
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_components.go",
+      "domain": "core_backoffice",
+      "sites": 11,
+      "tx_or_iface_or_stmt": 1,
+      "tx_err_classes": {
+        "checked-terminates": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_cost.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_duplicate.go",
+      "domain": "core_backoffice",
+      "sites": 6,
+      "tx_or_iface_or_stmt": 6,
+      "tx_err_classes": {
+        "checked-terminates": 6
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_ensure.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 5,
+      "tx_err_classes": {
+        "checked-terminates": 5
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_image_worker.go",
+      "domain": "core_backoffice",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 2,
+      "tx_err_classes": {
+        "checked-terminates": 2
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_images.go",
+      "domain": "core_backoffice",
+      "sites": 9,
+      "tx_or_iface_or_stmt": 6,
+      "tx_err_classes": {
+        "checked-terminates": 6
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_link.go",
+      "domain": "core_backoffice",
+      "sites": 20,
+      "tx_or_iface_or_stmt": 4,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 2,
+        "checked-terminates": 1,
+        "returned": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_step_upload.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheet_steps.go",
+      "domain": "core_backoffice",
+      "sites": 12,
+      "tx_or_iface_or_stmt": 8,
+      "tx_err_classes": {
+        "checked-terminates": 8
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheets.go",
+      "domain": "core_backoffice",
+      "sites": 13,
+      "tx_or_iface_or_stmt": 3,
+      "tx_err_classes": {
+        "checked-terminates": 3
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_technical_sheets_ws.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_vinos.go",
+      "domain": "catalog_stock",
+      "sites": 7,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_vinos_cutout.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/backoffice_vinos_ws.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/beverage_options.go",
+      "domain": "core_backoffice",
+      "sites": 6,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/bo_app_version.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/booking_availability_context.go",
+      "domain": "bookings",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/booking_checkout.go",
+      "domain": "bookings",
+      "sites": 15,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": [
+        "195: time.Time:expires"
+      ]
+    },
+    {
+      "file": "internal/api/booking_documents.go",
+      "domain": "bookings",
+      "sites": 12,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/booking_extras.go",
+      "domain": "bookings",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/booking_insert.go",
+      "domain": "bookings",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 1,
+      "tx_err_classes": {
+        "checked-terminates": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/booking_notification_settings.go",
+      "domain": "bookings",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/booking_reminders.go",
+      "domain": "bookings",
+      "sites": 6,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/bookings_admin.go",
+      "domain": "bookings",
+      "sites": 14,
+      "tx_or_iface_or_stmt": 6,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 1,
+        "checked-terminates": 5
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/bunny_config.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/calendar_data.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/campaign_auto_retake.go",
+      "domain": "campaigns_messaging",
+      "sites": 6,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/campaign_bounce_sync.go",
+      "domain": "campaigns_messaging",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/campaign_email_guard.go",
+      "domain": "campaigns_messaging",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/campaign_email_retry.go",
+      "domain": "campaigns_messaging",
+      "sites": 13,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/campaign_email_validation.go",
+      "domain": "campaigns_messaging",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/campaign_tools.go",
+      "domain": "campaigns_messaging",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/chatgpt_plugin_tokens.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/checkcancel.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/comida.go",
+      "domain": "catalog_stock",
+      "sites": 31,
+      "tx_or_iface_or_stmt": 10,
+      "tx_err_classes": {
+        "INSPECT": 3,
+        "checked-terminates": 7
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/events.go",
+      "domain": "core_backoffice",
+      "sites": 6,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/floors_date.go",
+      "domain": "bookings",
+      "sites": 6,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/group_menus.go",
+      "domain": "catalog_stock",
+      "sites": 14,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/group_menus_party_size.go",
+      "domain": "catalog_stock",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/guest_count_flags.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/hour_percentages.go",
+      "domain": "core_backoffice",
+      "sites": 8,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/hour_split.go",
+      "domain": "core_backoffice",
+      "sites": 8,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/hours.go",
+      "domain": "core_backoffice",
+      "sites": 9,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/location_booking.go",
+      "domain": "bookings",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/marketing_advertising.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/mcp_oauth_routes.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/mcp_oauth_store.go",
+      "domain": "core_backoffice",
+      "sites": 10,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": [
+        "112: ANYCALL:nullString(c.Scope) | time.Time:time.Now().Add(mcpCodeTTL)",
+        "171: ANYCALL:nullString(scope) | time.Time:expires",
+        "184: time.Time:expires.UTC()"
+      ]
+    },
+    {
+      "file": "internal/api/menu_public_seo.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/menu_public_seo_handlers.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/menu_section_cta.go",
+      "domain": "catalog_stock",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/menu_section_dessert_source.go",
+      "domain": "catalog_stock",
+      "sites": 11,
+      "tx_or_iface_or_stmt": 2,
+      "tx_err_classes": {
+        "checked-terminates": 2
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/menu_visibility_admin.go",
+      "domain": "catalog_stock",
+      "sites": 8,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/menu_weekday_availability.go",
+      "domain": "catalog_stock",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/mobility_config.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/modification_checker.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/modification_history.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/modifications_api.go",
+      "domain": "core_backoffice",
+      "sites": 12,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/n8n_reminder.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/occupancy.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 3,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 2,
+        "checked-terminates": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/opening_hours.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/pre_shift_reminders.go",
+      "domain": "members_staff",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/public_booking_api.go",
+      "domain": "bookings",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 2,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 1,
+        "checked-terminates": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/public_menus.go",
+      "domain": "catalog_stock",
+      "sites": 18,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/public_reservation_pages.go",
+      "domain": "bookings",
+      "sites": 6,
+      "tx_or_iface_or_stmt": 2,
+      "tx_err_classes": {
+        "UNCHECKED-NEXT": 1,
+        "checked-terminates": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/public_unsubscribe.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/reservation_day_context.go",
+      "domain": "bookings",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/reservation_self_service.go",
+      "domain": "bookings",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/reservation_special_dates_public.go",
+      "domain": "bookings",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/reservations_availability.go",
+      "domain": "bookings",
+      "sites": 17,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/restaurant_profile.go",
+      "domain": "core_backoffice",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/rice_types.go",
+      "domain": "core_backoffice",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/salon_condesa.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/schedule_notifications.go",
+      "domain": "members_staff",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/server.go",
+      "domain": "core_backoffice",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/special_booking_qr.go",
+      "domain": "bookings",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/special_booking_snapshot.go",
+      "domain": "bookings",
+      "sites": 8,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/special_date_menu_sections.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 1,
+      "tx_err_classes": {
+        "checked-terminates": 1
+      },
+      "time_args": []
+    },
+    {
+      "file": "internal/api/special_date_stats.go",
+      "domain": "bookings",
+      "sites": 1,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/special_menu_cta.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/special_menu_group_booking.go",
+      "domain": "catalog_stock",
+      "sites": 3,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/special_menu_principales.go",
+      "domain": "catalog_stock",
+      "sites": 7,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/stock_digest.go",
+      "domain": "catalog_stock",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/tenant.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/translations.go",
+      "domain": "core_backoffice",
+      "sites": 4,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/widget_routes.go",
+      "domain": "core_backoffice",
+      "sites": 2,
+      "tx_or_iface_or_stmt": 0,
+      "tx_err_classes": {},
+      "time_args": []
+    },
+    {
+      "file": "internal/api/wines_v2.go",
+      "domain": "catalog_stock",
+      "sites": 5,
+      "tx_or_iface_or_stmt": 5,
+      "tx_err_classes": {
+        "checked-terminates": 5
+      },
+      "time_args": []
+    }
+  ]
+}

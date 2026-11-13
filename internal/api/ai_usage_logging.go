@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"preactvillacarmen/internal/aiusage"
+
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Feature labels stored in ai_usage_logs.feature. They are stable identifiers
@@ -31,19 +33,20 @@ func (s *Server) recordAIUsage(ctx context.Context, restaurantID int, feature, p
 	cost, priced := aiusage.Cost(provider, model, tokens, now)
 	canonicalProvider, _ := aiusage.Normalize(provider, model)
 	writeCtx := context.WithoutCancel(ctx)
-	res, err := s.db.ExecContext(writeCtx, `INSERT INTO ai_usage_logs
+	// created_at is a naive DATETIME(3): bound as the UTC wall clock like the
+	// MySQL driver (loc=UTC) - pgx would keep the local wall clock.
+	id, err := sqldb.InsertID(writeCtx, sqlDialect, s.db, portableSQL(`INSERT INTO ai_usage_logs
         (restaurant_id,feature,provider,model,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cost_usd,priced,is_fallback,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`), "id",
 		restaurantID, feature, canonicalProvider, model,
 		tokens.Input, tokens.Output, tokens.CacheRead, tokens.CacheWrite,
-		cost, boolInt(priced), boolInt(fallback), now)
+		cost, boolInt(priced), boolInt(fallback), sqldb.NaiveUTCArg(sqlDialect, now))
 	if err != nil {
 		if !isSQLSchemaError(err) {
 			log.Printf("[ai_usage_logs_v1] insert failed restaurant_id=%d feature=%s model=%s err=%v", restaurantID, feature, model, err)
 		}
 		return
 	}
-	id, _ := res.LastInsertId()
 	s.broadcastBOGlobal(restaurantID, "ai_usage", map[string]any{
 		"type":          "ai_usage_recorded",
 		"id":            id,
@@ -93,17 +96,26 @@ func (s *Server) logWhatsAppMessage(ctx context.Context, restaurantID int, userP
 	}
 	now := time.Now()
 	writeCtx := context.WithoutCancel(ctx)
-	res, err := s.db.ExecContext(writeCtx, `INSERT INTO whatsapp_message_logs
+	// wa_bot_store_pg_mysql_v1: on PG the UTC wall clock is bound as text, the
+	// same value the MySQL driver stores for a time.Time (loc=UTC).
+	st := s.botStateDB()
+	var at any = now
+	tsExpr := "?"
+	if st.Postgres {
+		at, tsExpr = now.UTC().Format("2006-01-02 15:04:05.000"), "CAST(CAST(? AS text) AS timestamp(3))"
+	}
+	// The bot store picks its own dialect (st.Postgres) and rebinds: the text
+	// above is already dialect-selected.
+	id, err := st.InsertID(writeCtx, selectedSQL(`INSERT INTO whatsapp_message_logs
         (restaurant_id,direction,message_type,user_phone,content,source,status,tool_name,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?)`,
-		restaurantID, direction, messageType, userPhone, content, source, status, toolName, now)
+        VALUES (?,?,?,?,?,?,?,?,`+tsExpr+`)`),
+		restaurantID, direction, messageType, userPhone, content, source, status, toolName, at)
 	if err != nil {
 		if !isSQLSchemaError(err) {
 			log.Printf("[whatsapp_message_logs_v1] insert failed restaurant_id=%d direction=%s source=%s err=%v", restaurantID, direction, source, err)
 		}
 		return
 	}
-	id, _ := res.LastInsertId()
 	s.broadcastBOGlobal(restaurantID, "whatsapp_log", map[string]any{
 		"type":          "whatsapp_message_recorded",
 		"id":            id,

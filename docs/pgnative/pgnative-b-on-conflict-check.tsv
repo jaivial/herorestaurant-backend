@@ -1,0 +1,162 @@
+internal/analytics/service.go	675	analytics_customers	restaurant_id, app.norm_ascii(identity_key)	ux
+internal/analytics/service.go	699	analytics_customer_sources	restaurant_id, app.norm(source_type), app.norm(source_ref)	ux
+internal/analytics/service.go	716	analytics_sales_documents	restaurant_id, source_type, source_id	raw-unique/pk
+internal/analytics/service.go	734	analytics_sales_lines	restaurant_id, sales_document_id, source_line_id	raw-unique/pk
+internal/analytics/service.go	957	analytics_stock_facts	restaurant_id, app.norm(source_type), source_id	ux
+internal/api/assistant_memory.go	112	assistant_memory_edges	from_node, to_node, app.norm(rel)	ux
+internal/api/assistant_memory.go	125	assistant_memory_nodes	restaurant_id, user_id, app.norm(label)	ux
+internal/api/backoffice_accounting_exports.go	352	accounting_exports	restaurant_id, export_type, period_from, period_to, app.norm_ascii(payload_hash)	ux
+internal/api/backoffice_auth.go	541	bo_user_restaurants	user_id, restaurant_id	raw-unique/pk
+internal/api/backoffice_branding_logo.go	97	restaurant_branding	restaurant_id	raw-unique/pk
+internal/api/backoffice_campaigns.go	1296	campaign_recipients	campaign_id, app.norm(channel), app.norm(target)	ux
+internal/api/backoffice_config.go	499	restaurant_reservation_defaults	restaurant_id	raw-unique/pk
+internal/api/backoffice_config.go	514	restaurant_floors	restaurant_id, floor_number, app.norm_ascii(scope_key)	ux
+internal/api/backoffice_config.go	608	restaurant_floors	restaurant_id, floor_number, app.norm_ascii(scope_key)	ux
+internal/api/backoffice_config.go	884	restaurant_days	restaurant_id, date	raw-unique/pk
+internal/api/backoffice_config.go	912	restaurant_days	restaurant_id, date	raw-unique/pk
+internal/api/backoffice_config.go	1038	openinghours	restaurant_id, dateselected	raw-unique/pk
+internal/api/backoffice_config.go	1152	mesas_de_dos	restaurant_id, "reservationDate"	NO-MATCH
+internal/api/backoffice_config.go	1263	mesas_de_tres	restaurant_id, "reservationDate"	NO-MATCH
+internal/api/backoffice_config.go	1357	salon_condesa	restaurant_id, date	raw-unique/pk
+internal/api/backoffice_config.go	1960	restaurant_floor_overrides	restaurant_id, date, floor_id	raw-unique/pk
+internal/api/backoffice_config.go	1994	restaurant_floor_aforo_overrides	restaurant_id, date, floor_id	raw-unique/pk
+internal/api/backoffice_config.go	2350	restaurant_info	restaurant_id	raw-unique/pk
+internal/api/backoffice_config.go	2488	mandatory_menus	restaurant_id, date	raw-unique/pk
+internal/api/backoffice_config_ai_image.go	336	ai_image_provider_config	restaurant_id	raw-unique/pk
+internal/api/backoffice_config_bunny.go	167	bunny_storage_config	restaurant_id	raw-unique/pk
+internal/api/backoffice_config_minimax.go	268	restaurant_minimax_config	restaurant_id	raw-unique/pk
+internal/api/backoffice_dish_same_day_booking.go	114	dish_same_day_booking	dish_id, menu_id	raw-unique/pk
+internal/api/backoffice_member_access_flows.go	201	member_contracts	restaurant_member_id	raw-unique/pk
+internal/api/backoffice_member_access_flows.go	256	bo_user_restaurants	user_id, restaurant_id	raw-unique/pk
+internal/api/backoffice_member_access_flows.go	1039	bo_user_restaurants	user_id, restaurant_id	raw-unique/pk
+internal/api/backoffice_members.go	372	member_contracts	restaurant_member_id	raw-unique/pk
+internal/api/backoffice_menu_visibility.go	59	menu_visibility	restaurant_id, app.norm_ascii(menu_key)	ux
+internal/api/backoffice_platform.go	520	bo_user_restaurants	user_id, restaurant_id	raw-unique/pk
+internal/api/backoffice_platform.go	685	bo_user_restaurants	user_id, restaurant_id	raw-unique/pk
+internal/api/backoffice_pos_admin.go	220	pos_role_permissions	restaurant_id, role_slug, permission_key	raw-unique/pk
+internal/api/backoffice_pos_pin.go	157	pos_pin_attempts	restaurant_id, attempted_by	raw-unique/pk
+internal/api/backoffice_pos_rail.go	288	pos_ticket_tags	restaurant_id,ticket_id,tag_id	raw-unique/pk
+internal/api/backoffice_pos_rail.go	827	pos_ticket_line_tags	restaurant_id,ticket_line_id,tag_id	raw-unique/pk
+internal/api/backoffice_pos_rail.go	831	pos_ticket_tags	restaurant_id,ticket_id,tag_id	raw-unique/pk
+internal/api/backoffice_pos_reports.go	268	pos_ticket_line_stock	restaurant_id,ticket_line_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/backoffice_pos_stock_realtime.go	151	stock_levels	restaurant_id, stock_item_id, warehouse_id	raw-unique/pk
+internal/api/backoffice_pos_stock_realtime.go	224	pos_stock_anomalies	restaurant_id, ticket_line_stock_id	raw-unique/pk
+internal/api/backoffice_pos_stock_realtime.go	362	stock_levels	restaurant_id, stock_item_id, warehouse_id	raw-unique/pk
+internal/api/backoffice_pos_stock_realtime.go	443	pos_stock_anomalies	restaurant_id, ticket_line_stock_id	raw-unique/pk
+internal/api/backoffice_preferences.go	161	user_preferences	user_id, restaurant_id, app.norm_ascii(pref_key)	ux
+internal/api/backoffice_preferences.go	199	user_menu_preferences	user_id, restaurant_id, menu_id, app.norm_ascii(pref_key)	ux
+internal/api/backoffice_provision.go	28	restaurant_branding	restaurant_id	raw-unique/pk
+internal/api/backoffice_provision.go	30	restaurant_reservation_defaults	restaurant_id	raw-unique/pk
+internal/api/backoffice_provision.go	32	restaurant_info	restaurant_id	raw-unique/pk
+internal/api/backoffice_provision.go	34	restaurant_bot_ai_config	restaurant_id	raw-unique/pk
+internal/api/backoffice_provision.go	36	restaurant_page_visibility	restaurant_id	raw-unique/pk
+internal/api/backoffice_provision.go	56	bo_user_restaurants	user_id, restaurant_id	raw-unique/pk
+internal/api/backoffice_roles.go	553	bo_role_permissions	role_slug, section_key	raw-unique/pk
+internal/api/backoffice_roles.go	905	bo_user_restaurants	user_id, restaurant_id	raw-unique/pk
+internal/api/backoffice_salons.go	489	restaurant_salons_overrides	restaurant_id, date, salon_id	raw-unique/pk
+internal/api/backoffice_settings.go	131	restaurant_integrations	restaurant_id	raw-unique/pk
+internal/api/backoffice_settings.go	232	restaurant_branding	restaurant_id	raw-unique/pk
+internal/api/backoffice_special_dates.go	775	special_dates	restaurant_id, date	raw-unique/pk
+internal/api/backoffice_special_dates.go	816	mobility_day_override	restaurant_id, "reservationDate"	NO-MATCH
+internal/api/backoffice_stock_analytics.go	150	stock_ai_entitlements	restaurant_id	raw-unique/pk
+internal/api/backoffice_stock_analytics.go	221	stock_affluence_daily	restaurant_id,service_date,service_type	raw-unique/pk
+internal/api/backoffice_stock_documents.go	653	stock_levels	restaurant_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/backoffice_stock_documents.go	698	stock_supplier_aliases	restaurant_id, app.norm(supplier_name), app.norm(supplier_code), app.norm(normalized_description)	ux
+internal/api/backoffice_stock_import.go	384	stock_categories	restaurant_id, app.norm(name)	ux
+internal/api/backoffice_stock_permissions.go	108	stock_role_permissions	restaurant_id, role_slug, permission_key	raw-unique/pk
+internal/api/backoffice_stock_recipes.go	526	stock_levels	restaurant_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/backoffice_stock_recipes.go	548	stock_levels	restaurant_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/beverage_options.go	125	menu_beverage_options	menu_id, beverage_option_id	raw-unique/pk
+internal/api/beverage_options.go	146	restaurant_beverage_options	restaurant_id, app.norm_ascii(slug)	ux
+internal/api/bo_app_version.go	285	bo_user_restaurants	user_id, restaurant_id	raw-unique/pk
+internal/api/booking_extras.go	75	restaurant_booking_extras	restaurant_id, app.norm_ascii(slug)	ux
+internal/api/booking_notification_settings.go	73	booking_notification_settings	restaurant_id	raw-unique/pk
+internal/api/booking_reminders.go	349	booking_reminder_deliveries	app.norm_ascii(delivery_key)	ux
+internal/api/cafes_page_seo.go	136	restaurant_page_visibility	restaurant_id	raw-unique/pk
+internal/api/campaign_bounce_sync.go	300	campaign_suppressions	restaurant_id, app.norm(channel), app.norm(target)	ux
+internal/api/campaign_bounce_sync.go	314	campaign_suppressions	restaurant_id, app.norm(channel), app.norm(target)	ux
+internal/api/campaign_bounce_sync.go	352	campaign_bounce_events	restaurant_id, app.norm_ascii(event_key)	ux
+internal/api/campaign_email_retry.go	53	campaign_email_retries	recipient_id	raw-unique/pk
+internal/api/domain_ownership.go	16	?	domain	NO-MATCH
+internal/api/floors_date.go	179	restaurant_floor_overrides	restaurant_id, date, floor_id	raw-unique/pk
+internal/api/hour_split.go	308	hour_split_override	restaurant_id, "reservationDate"	NO-MATCH
+internal/api/instatic_manager.go	189	instatic_instances	restaurant_id	raw-unique/pk
+internal/api/instatic_manager.go	950	site_builder_domain_mappings	app.norm_ascii(domain)	ux
+internal/api/instatic_manager.go	960	restaurant_domains	app.norm_ascii(domain)	ux
+internal/api/invoice_numbering.go	239	restaurant_invoice_settings	restaurant_id, year	raw-unique/pk
+internal/api/invoice_numbering.go	470	restaurant_invoice_settings	restaurant_id, year	raw-unique/pk
+internal/api/legal_pages.go	200	legal_pages	restaurant_id, app.norm_ascii(slug)	ux
+internal/api/menu_weekday_availability.go	123	menu_weekday_availability	restaurant_id, menu_id, app.norm(weekday)	ux
+internal/api/mobility_config.go	146	mobility_day_override	restaurant_id, "reservationDate"	NO-MATCH
+internal/api/occupancy.go	27	reservation_location_occupancy	restaurant_id, date, scope, target_id	raw-unique/pk
+internal/api/opening_hours.go	107	openinghours	restaurant_id, dateselected	raw-unique/pk
+internal/api/pre_shift_reminders.go	53	message_deliveries	app.norm_ascii(delivery_key)	ux
+internal/api/public_menus.go	449	restaurant_page_visibility	restaurant_id	raw-unique/pk
+internal/api/public_unsubscribe.go	177	campaign_suppressions	restaurant_id, app.norm(channel), app.norm(target)	ux
+internal/api/reservations_availability.go	307	mesas_de_dos	restaurant_id, "reservationDate"	NO-MATCH
+internal/api/reservations_availability.go	562	restaurant_days	restaurant_id, date	raw-unique/pk
+internal/api/salon_condesa.go	96	salon_condesa	restaurant_id, date	raw-unique/pk
+internal/api/seo_item_routes.go	710	seo_item_routes	route key	NO-MATCH
+internal/api/seo_item_routes.go	727	seo_item_routes	restaurant_id, app.norm(entity_type), entity_id	ux
+internal/api/site_builder_registrar.go	305	site_builder_domain_mappings	app.norm_ascii(domain)	ux
+internal/api/special_menu_principales.go	203	special_menu_section_principales	section_id, dish_id	raw-unique/pk
+internal/api/stripe_connect.go	132	restaurant_stripe_connect	restaurant_id	raw-unique/pk
+internal/api/stripe_connect_fees.go	198	platform_settings	setting_key	raw-unique/pk
+internal/api/stripe_connect_fees.go	233	restaurant_stripe_fee_overrides	restaurant_id	raw-unique/pk
+internal/api/stripe_event_claim.go	65	stripe_events	app.norm_ascii(event_id)	ux
+internal/api/whatsapp_bot_admin.go	168	whatsapp_bot_config	restaurant_id	raw-unique/pk
+internal/api/whatsapp_bot_admin.go	331	whatsapp_bot_config	restaurant_id	raw-unique/pk
+internal/api/whatsapp_bot_ai_config.go	221	restaurant_ai_provider_keys	restaurant_id, provider	raw-unique/pk
+internal/api/whatsapp_bot_ai_config.go	231	restaurant_bot_ai_config	restaurant_id	raw-unique/pk
+internal/api/whatsapp_bot_catalog_extras.go	203	restaurant_booking_extras	restaurant_id, app.norm_ascii(slug)	ux
+internal/api/whatsapp_bot_config_admin.go	327	restaurant_days	restaurant_id, date	raw-unique/pk
+internal/api/whatsapp_bot_config_admin.go	584	?	restaurant_id, "reservationDate"	NO-MATCH
+internal/api/whatsapp_bot_config_admin.go	697	salon_condesa	restaurant_id, date	raw-unique/pk
+internal/api/whatsapp_bot_context_sqlite.go	352	handoff_state	restaurant_id,user_phone	NO-MATCH
+internal/api/whatsapp_bot_history.go	55	whatsapp_bot_sessions	restaurant_id, user_phone	raw-unique/pk
+internal/api/whatsapp_bot_inbound_queue.go	60	bot_inbound_queue	restaurant_id, message_id	raw-unique/pk
+internal/api/whatsapp_bot_notif_settings.go	138	booking_notification_settings	restaurant_id	raw-unique/pk
+internal/api/whatsapp_bot_privileged_contacts.go	118	whatsapp_bot_config	restaurant_id	raw-unique/pk
+internal/api/whatsapp_bot_privileged_control_tools.go	353	whatsapp_bot_config	restaurant_id	raw-unique/pk
+internal/api/whatsapp_bot_privileged_control_tools.go	507	whatsapp_bot_config	restaurant_id	raw-unique/pk
+internal/api/whatsapp_bot_special_date_adelanto.go	98	special_date_menu_sections	special_date_menu_id, section_id	raw-unique/pk
+internal/api/whatsapp_bot_unsubscribe.go	119	campaign_suppressions	restaurant_id, app.norm(channel), app.norm(target)	ux
+internal/api/whatsapp_outbox.go	100	message_deliveries	app.norm_ascii(delivery_key)	ux
+internal/api/whatsapp_unreachable.go	78	campaign_suppressions	restaurant_id, app.norm(channel), app.norm(target)	ux
+internal/api/widget_routes.go	262	widget_settings	restaurant_id	raw-unique/pk
+internal/api/backoffice_stock.go	784	stock_levels	restaurant_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/backoffice_stock.go	947	stock_levels	restaurant_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/backoffice_stock.go	1126	stock_levels	restaurant_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/backoffice_stock.go	1338	stock_settings	restaurant_id	raw-unique/pk
+internal/api/backoffice_stock.go	1439	stock_levels	restaurant_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/backoffice_uazapi_provisioning.go	668	restaurant_uazapi_instances	restaurant_id	raw-unique/pk
+internal/api/backoffice_uazapi_provisioning.go	1025	restaurant_integrations	restaurant_id	raw-unique/pk
+internal/api/backoffice_uazapi_provisioning.go	1047	restaurant_integrations	restaurant_id	raw-unique/pk
+internal/api/comida.go	341	comida_plato_categories	restaurant_id, app.norm_ascii(slug)	ux
+internal/api/comida.go	365	comida_bebida_categories	restaurant_id, app.norm_ascii(slug)	ux
+internal/api/comida.go	445	comida_plato_categories	restaurant_id, app.norm_ascii(slug)	ux
+internal/api/comida.go	707	comida_plato_categories	restaurant_id, app.norm_ascii(slug)	ux
+internal/api/comida.go	2390	comida_bebida_categories	restaurant_id, app.norm_ascii(slug)	ux
+internal/api/backoffice_pos_catalog.go	213	pos_product_categories	restaurant_id, app.norm(name)	ux
+internal/api/backoffice_pos_catalog.go	226	pos_product_categories	restaurant_id, app.norm(name)	ux
+internal/api/backoffice_pos_catalog.go	235	pos_product_categories	restaurant_id, source_type, source_id	NO-MATCH
+internal/api/backoffice_pos_fiscal.go	107	pos_fiscal_series	restaurant_id, app.norm_ascii(terminal_key), series_type	ux
+internal/api/campaign_email_validation.go	119	campaign_suppressions	restaurant_id, app.norm(channel), app.norm(target)	ux
+internal/api/domain_reservation.go	60	restaurant_domains	app.norm_ascii(domain)	ux
+internal/api/backoffice_stock_suppliers.go	308	stock_supplier_aliases	restaurant_id, app.norm(supplier_name), app.norm(supplier_code), app.norm(normalized_description)	ux
+internal/api/backoffice_pos_checkout.go	65	stock_affluence_daily	restaurant_id,service_date,service_type	raw-unique/pk
+internal/api/backoffice_pos_checkout.go	233	stock_levels	restaurant_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/backoffice_pos_checkout.go	258	pos_stock_anomalies	restaurant_id,ticket_line_stock_id	raw-unique/pk
+internal/api/backoffice_pos_checkout.go	774	stock_levels	restaurant_id,stock_item_id,warehouse_id	raw-unique/pk
+internal/api/mcp_oauth_store.go	66	mcp_oauth_clients	app.norm_ascii(client_id)	ux
+internal/api/translations.go	275	dish_translations	restaurant_id, app.norm(entity_type), entity_id, app.norm(field_name), app.norm(lang)	ux
+internal/api/whatsapp_bot_human_takeover.go	92	whatsapp_bot_sessions	restaurant_id, user_phone	raw-unique/pk
+internal/api/backoffice_premium.go	1146	restaurant_domains	app.norm_ascii(domain)	ux
+internal/api/backoffice_premium.go	1154	restaurant_domains	app.norm_ascii(domain)	ux
+internal/api/backoffice_premium.go	3131	restaurant_table_layouts	restaurant_id, layout_date, floor_number	raw-unique/pk
+internal/api/backoffice_premium.go	3254	restaurant_table_layout_templates	restaurant_id, floor_number	raw-unique/pk
+internal/api/backoffice_pos.go	457	pos_settings	restaurant_id	raw-unique/pk
+internal/api/backoffice_pos.go	664	pos_daily_sequences	restaurant_id, business_date, sequence_type	raw-unique/pk
+internal/botstore/migrate.go	272	bot_store_meta	key	NO-MATCH
+cmd/backfill-translations/main.go	389	dish_translations	restaurant_id, app.norm(entity_type), entity_id, app.norm(field_name), app.norm(lang)	ux
+cmd/update-restaurant-info/main.go	106	restaurant_info	restaurant_id	raw-unique/pk

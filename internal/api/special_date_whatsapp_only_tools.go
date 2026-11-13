@@ -36,11 +36,15 @@ type specialDateWhatsAppOnlyRow struct {
 // specialDateWhatsAppOnlyRows lists one date (any state) or, with an empty
 // date, the special dates from today on.
 func (s *Server) specialDateWhatsAppOnlyRows(ctx context.Context, rid int, date string) ([]specialDateWhatsAppOnlyRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT DATE_FORMAT(date, '%Y-%m-%d'), title, is_active, prereserva_enabled, whatsapp_only
 		FROM special_dates
 		WHERE restaurant_id = ? AND ((? <> '' AND date = ?) OR (? = '' AND date >= CURDATE()))
-		ORDER BY date LIMIT 24`, rid, date, date, date)
+		ORDER BY date LIMIT 24`, `
+		SELECT to_char(date, 'YYYY-MM-DD'), title, is_active, prereserva_enabled, whatsapp_only
+		FROM special_dates
+		WHERE restaurant_id = ? AND ((CAST(? AS text) <> '' AND date = CAST(NULLIF(CAST(? AS text), '') AS date)) OR (CAST(? AS text) = '' AND date >= CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date)))
+		ORDER BY date LIMIT 24`), rid, date, date, date)
 	if err != nil {
 		return nil, errors.New("no se pudieron leer las fechas especiales")
 	}

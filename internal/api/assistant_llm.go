@@ -696,7 +696,9 @@ func (s *Server) buildAssistantSystemPrompt(ctx context.Context, restaurantID in
 		return base
 	}
 	var name, phone string
-	if err := s.db.QueryRowContext(ctx, `SELECT name, phone FROM restaurants WHERE id = ?`, restaurantID).Scan(&name, &phone); err != nil {
+	// SOURCE ANOMALY (restored dump only, not production-validated):
+	// restaurants has no "phone" column; both dialects fail -> base prompt.
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT name, phone FROM restaurants WHERE id = ?`), restaurantID).Scan(&name, &phone); err != nil {
 		return base
 	}
 	var sb strings.Builder

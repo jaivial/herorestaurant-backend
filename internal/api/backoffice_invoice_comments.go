@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -40,7 +41,7 @@ func (s *Server) handleBOInvoiceCommentsList(w http.ResponseWriter, r *http.Requ
 	// Tenant ownership: only comments of invoices owned by the session
 	// restaurant. A foreign or nonexistent invoice yields an empty list
 	// (uniform outcome, no existence leak across tenants).
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT c.id, c.invoice_id, c.content, c.user_id, COALESCE(u.name, u.email, '') as user_name,
 		       c.created_at, c.updated_at
 		FROM bo_invoice_comments c
@@ -48,7 +49,7 @@ func (s *Server) handleBOInvoiceCommentsList(w http.ResponseWriter, r *http.Requ
 		LEFT JOIN bo_users u ON u.id = c.user_id
 		WHERE c.invoice_id = ?
 		ORDER BY c.created_at ASC
-	`, a.ActiveRestaurantID, invoiceID)
+	`), a.ActiveRestaurantID, invoiceID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error fetching comments")
 		return
@@ -115,9 +116,9 @@ func (s *Server) handleBOInvoiceCommentCreate(w http.ResponseWriter, r *http.Req
 	// does not own. Foreign and nonexistent invoices get the same 404 (no
 	// existence leak across tenants).
 	var owned int
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT 1 FROM invoices WHERE id = ? AND restaurant_id = ?
-	`, invoiceID, a.ActiveRestaurantID).Scan(&owned)
+	`), invoiceID, a.ActiveRestaurantID).Scan(&owned)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusNotFound, "Invoice not found")
@@ -128,16 +129,15 @@ func (s *Server) handleBOInvoiceCommentCreate(w http.ResponseWriter, r *http.Req
 	}
 
 	now := time.Now()
-	res, err := s.db.ExecContext(r.Context(), `
+	// created_at is timestamptz(0): the instant binds unchanged (rounded like MySQL TIMESTAMP).
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 		INSERT INTO bo_invoice_comments (invoice_id, content, user_id, created_at)
 		VALUES (?, ?, ?, ?)
-	`, invoiceID, content, a.User.ID, now)
+	`), "id", invoiceID, content, a.User.ID, now)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creating comment")
 		return
 	}
-
-	id, _ := res.LastInsertId()
 
 	comment := boInvoiceComment{
 		ID:        id,
@@ -194,12 +194,20 @@ func (s *Server) handleBOInvoiceCommentUpdate(w http.ResponseWriter, r *http.Req
 	// Tenant ownership: the invoice must belong to the session restaurant.
 	// A foreign invoice yields the same "Comment not found" outcome as a
 	// nonexistent one (uniform, no existence leak).
-	result, err := s.db.ExecContext(r.Context(), `
+	// rows==0 -> "not found" also for an identical save in the same second on
+	// MySQL (changed rows): the PG twin keeps it with IS DISTINCT FROM.
+	result, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE bo_invoice_comments
 		SET content = ?, updated_at = NOW()
 		WHERE id = ? AND invoice_id = ?
 		  AND invoice_id IN (SELECT id FROM invoices WHERE restaurant_id = ?)
-	`, content, commentID, invoiceID, a.ActiveRestaurantID)
+	`, `
+		UPDATE bo_invoice_comments
+		SET content = ?, updated_at = date_trunc('second', statement_timestamp())
+		WHERE id = ? AND invoice_id = ?
+		  AND invoice_id IN (SELECT id FROM invoices WHERE restaurant_id = ?)
+		  AND ROW(content COLLATE "C", updated_at) IS DISTINCT FROM ROW(CAST(? AS text) COLLATE "C", date_trunc('second', statement_timestamp()))
+	`), posChangedRowArgs([]any{content}, commentID, invoiceID, a.ActiveRestaurantID)...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error updating comment")
 		return
@@ -216,13 +224,13 @@ func (s *Server) handleBOInvoiceCommentUpdate(w http.ResponseWriter, r *http.Req
 
 	var c boInvoiceComment
 	var updatedAt sql.NullTime
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT c.id, c.invoice_id, c.content, c.user_id, COALESCE(u.name, u.email, '') as user_name,
 		       c.created_at, c.updated_at
 		FROM bo_invoice_comments c
 		LEFT JOIN bo_users u ON u.id = c.user_id
 		WHERE c.id = ?
-	`, commentID).Scan(&c.ID, &c.InvoiceID, &c.Content, &c.UserID, &c.UserName, &c.CreatedAt, &updatedAt)
+	`), commentID).Scan(&c.ID, &c.InvoiceID, &c.Content, &c.UserID, &c.UserName, &c.CreatedAt, &updatedAt)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error fetching updated comment")
 		return
@@ -258,11 +266,11 @@ func (s *Server) handleBOInvoiceCommentDelete(w http.ResponseWriter, r *http.Req
 	}
 
 	// Tenant ownership: same uniform outcome as Update.
-	result, err := s.db.ExecContext(r.Context(), `
+	result, err := s.db.ExecContext(r.Context(), portableSQL(`
 		DELETE FROM bo_invoice_comments
 		WHERE id = ? AND invoice_id = ?
 		  AND invoice_id IN (SELECT id FROM invoices WHERE restaurant_id = ?)
-	`, commentID, invoiceID, a.ActiveRestaurantID)
+	`), commentID, invoiceID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error deleting comment")
 		return

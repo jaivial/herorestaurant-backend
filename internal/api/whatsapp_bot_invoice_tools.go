@@ -478,7 +478,7 @@ func (s *Server) botInvoiceLoad(ctx context.Context, rid, invoiceID int) (*Invoi
 func (s *Server) botInvoiceIDByNumber(ctx context.Context, rid int, number string) (int, error) {
 	number = strings.TrimSpace(number)
 	var id int
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM invoices WHERE restaurant_id = ? AND invoice_number = ? ORDER BY id DESC LIMIT 1`, rid, number).Scan(&id)
+	err := s.db.QueryRowContext(ctx, portableSQL(`SELECT id FROM invoices WHERE restaurant_id = ? AND invoice_number = ? ORDER BY id DESC LIMIT 1`), rid, number).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("no existe la factura %s en este restaurante", number)
 	}

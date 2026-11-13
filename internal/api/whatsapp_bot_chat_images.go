@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"preactvillacarmen/internal/botstore"
 )
 
 // Coordination id: campaign_tools_v1 (images from a WhatsApp chat)
@@ -52,7 +54,7 @@ type botChatImageRegistry struct {
 	mu     sync.Mutex
 	chats  map[string][]botChatImage
 	inline int
-	db     *sql.DB // bot context SQLite; nil keeps the registry in memory only
+	db     *botstore.DB // bot context store (wa_bot_store_pg_v1); nil keeps the registry in memory only
 }
 
 var botChatImages = &botChatImageRegistry{chats: map[string][]botChatImage{}}
@@ -63,25 +65,14 @@ func botChatImageKey(rid int, chatJID string) string {
 
 // attach makes the registry durable in db: it creates the table, drops what
 // is past the TTL and loads the rest (with their readings) into memory.
-func (r *botChatImageRegistry) attach(db *sql.DB) error {
+func (r *botChatImageRegistry) attach(db *botstore.DB) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS chat_images (
-            restaurant_id INTEGER NOT NULL,
-            chat_jid TEXT NOT NULL,
-            message_id TEXT NOT NULL,
-            mime TEXT NOT NULL DEFAULT '',
-            at_ms INTEGER NOT NULL,
-            reading_source TEXT,
-            reading_text TEXT,
-            PRIMARY KEY (restaurant_id, chat_jid, message_id)
-        )`); err != nil {
+	// The chat_images table is created by botstore.Init with the rest of the schema.
+	if _, err := db.ExecContext(ctx, selectedSQL(`DELETE FROM chat_images WHERE at_ms < ?`), time.Now().Add(-botChatImageTTL).UnixMilli()); err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM chat_images WHERE at_ms < ?`, time.Now().Add(-botChatImageTTL).UnixMilli()); err != nil {
-		return err
-	}
-	rows, err := db.QueryContext(ctx, `SELECT restaurant_id, chat_jid, message_id, mime, at_ms, reading_source, reading_text FROM chat_images ORDER BY at_ms`)
+	rows, err := db.QueryContext(ctx, selectedSQL(`SELECT restaurant_id, chat_jid, message_id, mime, at_ms, reading_source, reading_text FROM chat_images ORDER BY at_ms`))
 	if err != nil {
 		return err
 	}
@@ -115,7 +106,7 @@ func (r *botChatImageRegistry) persist(query string, args ...any) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+	if _, err := r.db.ExecContext(ctx, selectedSQL(query), args...); err != nil { // botstore dialect; callers pass portable literals
 		log.Printf("[bot] chat_images persist error: %v", err)
 	}
 }
@@ -161,7 +152,7 @@ func (r *botChatImageRegistry) remember(rid int, chatJID string, img botChatImag
 		return
 	}
 	r.prune(img.At)
-	r.persist(`INSERT OR IGNORE INTO chat_images (restaurant_id, chat_jid, message_id, mime, at_ms) VALUES (?,?,?,?,?)`,
+	r.persist(`INSERT INTO chat_images (restaurant_id, chat_jid, message_id, mime, at_ms) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`,
 		rid, strings.TrimSpace(chatJID), img.MessageID, img.Mime, img.At.UnixMilli())
 	r.persist(`DELETE FROM chat_images WHERE at_ms < ?`, img.At.Add(-botChatImageTTL).UnixMilli())
 }

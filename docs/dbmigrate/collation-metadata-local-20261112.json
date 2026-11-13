@@ -1,0 +1,34 @@
+{
+  "label": "LOCAL restored source metadata (not production proof, not a new export)",
+  "observed_by": "coordinator read-only",
+  "observed_at": "2026-11-12T07:16+01:00",
+  "database": "villacarmen_source",
+  "server_version": "8.0.45",
+  "query": "information_schema.COLUMNS joined information_schema.COLLATIONS",
+  "collations": [
+    {
+      "name": "utf8mb4_0900_ai_ci",
+      "charset": "utf8mb4",
+      "pad_attribute": "NO PAD"
+    },
+    {
+      "name": "utf8mb4_bin",
+      "charset": "utf8mb4",
+      "pad_attribute": "PAD SPACE"
+    },
+    {
+      "name": "utf8mb4_general_ci",
+      "charset": "utf8mb4",
+      "pad_attribute": "PAD SPACE"
+    },
+    {
+      "name": "utf8mb4_unicode_ci",
+      "charset": "utf8mb4",
+      "pad_attribute": "PAD SPACE"
+    }
+  ],
+  "caveats": [
+    "general_ci/unicode_ci vs ICU und-u-ks-level1 equivalence unresolved",
+    "production metadata not observed"
+  ]
+}

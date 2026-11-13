@@ -109,7 +109,7 @@ func (s *Service) OverviewWithBreakdowns(ctx context.Context, tenantID int, date
 // loadTopItems aggregates the best selling POS products in the period.
 // Refunded quantities/amounts are netted out so the list stays honest.
 func (s *Service) loadTopItems(ctx context.Context, tenantID int, dateRange DateRange) ([]TopItemEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT l.product_name_snapshot,
 		       SUM(l.quantity) - COALESCE(SUM(CASE WHEN r.status='COMPLETED' THEN rl.quantity ELSE 0 END),0) AS quantity,
 		       SUM(l.line_total_gross_cents) - COALESCE(SUM(CASE WHEN r.status='COMPLETED' THEN rl.amount_cents ELSE 0 END),0) AS revenue
@@ -124,7 +124,7 @@ func (s *Service) loadTopItems(ctx context.Context, tenantID int, dateRange Date
 		GROUP BY l.product_name_snapshot
 		ORDER BY revenue DESC
 		LIMIT 10
-	`, tenantID, dateRange.From, dateRange.To)
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +150,7 @@ func (s *Service) loadTopItems(ctx context.Context, tenantID int, dateRange Date
 
 // loadPaymentMethods aggregates captured POS payments by method.
 func (s *Service) loadPaymentMethods(ctx context.Context, tenantID int, dateRange DateRange) ([]PaymentMethodEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT p.method, COALESCE(SUM(p.amount_cents),0), COUNT(*)
 		FROM pos_payments p
 		JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id
@@ -159,7 +159,16 @@ func (s *Service) loadPaymentMethods(ctx context.Context, tenantID int, dateRang
 		  AND v.service_date BETWEEN ? AND ?
 		GROUP BY p.method
 		ORDER BY 2 DESC
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT CAST(p.method AS text), COALESCE(SUM(p.amount_cents),0), COUNT(*)
+		FROM pos_payments p
+		JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id
+		JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id
+		WHERE p.restaurant_id=? AND p.status='CAPTURED'
+		  AND v.service_date BETWEEN ? AND ?
+		GROUP BY p.method
+		ORDER BY 2 DESC
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return nil, err
 	}
@@ -185,12 +194,17 @@ func (s *Service) loadPaymentMethods(ctx context.Context, tenantID int, dateRang
 // from POS visits that were actually settled in the period.
 func (s *Service) loadDayOfWeek(ctx context.Context, tenantID int, dateRange DateRange) ([]DayOfWeekEntry, error) {
 	revenueByDay := make(map[int]float64)
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT WEEKDAY(rollup_date), SUM(invoiced_revenue_cents+pos_revenue_cents)
 		FROM analytics_daily_rollups
 		WHERE restaurant_id=? AND rollup_date BETWEEN ? AND ?
 		GROUP BY WEEKDAY(rollup_date)
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT CAST(EXTRACT(ISODOW FROM rollup_date) AS integer) - 1, SUM(invoiced_revenue_cents+pos_revenue_cents)
+		FROM analytics_daily_rollups
+		WHERE restaurant_id=? AND rollup_date BETWEEN ? AND ?
+		GROUP BY 1
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +224,7 @@ func (s *Service) loadDayOfWeek(ctx context.Context, tenantID int, dateRange Dat
 	rows.Close()
 
 	coversByDay := make(map[int]int)
-	coversRows, err := s.db.QueryContext(ctx, `
+	coversRows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT WEEKDAY(v.service_date), SUM(v.covers)
 		FROM pos_visits v
 		WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ?
@@ -221,7 +235,18 @@ func (s *Service) loadDayOfWeek(ctx context.Context, tenantID int, dateRange Dat
 			  AND t.status IN (`+paidTicketStatusList+`)
 		  )
 		GROUP BY WEEKDAY(v.service_date)
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT CAST(EXTRACT(ISODOW FROM v.service_date) AS integer) - 1, SUM(v.covers)
+		FROM pos_visits v
+		WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ?
+		  AND v.status <> 'CANCELLED'
+		  AND EXISTS (
+			SELECT 1 FROM pos_tickets t
+			WHERE t.restaurant_id=v.restaurant_id AND t.visit_id=v.id
+			  AND t.status IN (`+paidTicketStatusList+`)
+		  )
+		GROUP BY 1
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +285,7 @@ func (s *Service) loadDayOfWeek(ctx context.Context, tenantID int, dateRange Dat
 // paid ticket. Each visit contributes its covers once, so a visit with several
 // tickets is not double counted.
 func (s *Service) loadHourlyDistribution(ctx context.Context, tenantID int, dateRange DateRange) ([]HourlyEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT v.id, v.covers, HOUR(MIN(t.paid_at)), COALESCE(SUM(t.total_gross_cents),0)
 		FROM pos_visits v
 		JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id
@@ -269,7 +294,16 @@ func (s *Service) loadHourlyDistribution(ctx context.Context, tenantID int, date
 		  AND t.status IN (`+paidTicketStatusList+`)
 		  AND t.paid_at IS NOT NULL
 		GROUP BY v.id
-	`, tenantID, dateRange.From, dateRange.To)
+	`, `
+		SELECT v.id, v.covers, CAST(EXTRACT(HOUR FROM MIN(t.paid_at)) AS integer), COALESCE(SUM(t.total_gross_cents),0)
+		FROM pos_visits v
+		JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id
+		WHERE v.restaurant_id=? AND v.service_date BETWEEN ? AND ?
+		  AND v.status <> 'CANCELLED'
+		  AND t.status IN (`+paidTicketStatusList+`)
+		  AND t.paid_at IS NOT NULL
+		GROUP BY v.id
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +343,7 @@ func (s *Service) loadHourlyDistribution(ctx context.Context, tenantID int, date
 // loadRevenueByCategory groups POS revenue by the product category assigned in
 // the catalog. Lines without a catalog product fall under "Sin categoría".
 func (s *Service) loadRevenueByCategory(ctx context.Context, tenantID int, dateRange DateRange) ([]CategoryRevenueEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT COALESCE(pc.name,'Sin categoría'),
 		       SUM(l.line_total_gross_cents) - COALESCE(SUM(CASE WHEN r.status='COMPLETED' THEN rl.amount_cents ELSE 0 END),0) AS revenue
 		FROM pos_ticket_lines l
@@ -324,7 +358,7 @@ func (s *Service) loadRevenueByCategory(ctx context.Context, tenantID int, dateR
 		  AND v.service_date BETWEEN ? AND ?
 		GROUP BY pc.name
 		ORDER BY revenue DESC
-	`, tenantID, dateRange.From, dateRange.To)
+	`), tenantID, dateRange.From, dateRange.To)
 	if err != nil {
 		return nil, err
 	}

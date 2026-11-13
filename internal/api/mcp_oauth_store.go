@@ -58,10 +58,13 @@ const mcpRedirectURISentinel = "SELF"
 // callbacks are stored so the authorization step can refuse to redirect a code
 // to a URI the client never declared.
 func (s *Server) mcpEnsureClient(ctx context.Context, clientID, name string, redirectURIs []string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO mcp_oauth_clients (client_id, name, redirect_uris) VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE name = VALUES(name), redirect_uris = VALUES(redirect_uris)
-	`, clientID, nullString(name), nullString(strings.Join(redirectURIs, " ")))
+	`, `
+		INSERT INTO mcp_oauth_clients (client_id, name, redirect_uris) VALUES (?, ?, ?)
+		ON CONFLICT (app.norm_ascii(client_id)) DO UPDATE SET name = EXCLUDED.name, redirect_uris = EXCLUDED.redirect_uris
+	`), clientID, nullString(name), nullString(strings.Join(redirectURIs, " ")))
 	return err
 }
 
@@ -76,7 +79,7 @@ func (s *Server) mcpRedirectURIAllowed(ctx context.Context, clientID, redirectUR
 	}
 	var registered sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT redirect_uris FROM mcp_oauth_clients WHERE client_id = ? LIMIT 1`, clientID).Scan(&registered)
+		nativeSQL(`SELECT redirect_uris FROM mcp_oauth_clients WHERE client_id = ? LIMIT 1`, `SELECT redirect_uris FROM mcp_oauth_clients WHERE app.norm_ascii(client_id) = app.norm_ascii(?) LIMIT 1`), clientID).Scan(&registered)
 	// A failed lookup is not a rejection: the client may still be legitimate,
 	// and PKCE already binds the code to the client that started the flow, so
 	// breaking an approval the user is in the middle of granting helps nobody.
@@ -106,11 +109,11 @@ func (s *Server) mcpStoreCode(ctx context.Context, c mcpOAuthCode) (string, erro
 	if err != nil {
 		return "", err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		INSERT INTO mcp_oauth_codes
 			(code_hash, client_id, user_id, restaurant_id, redirect_uri, code_challenge, scope, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, sha256Hex(code), c.ClientID, c.UserID, c.RestaurantID, c.RedirectURI, c.Challenge, nullString(c.Scope), time.Now().Add(mcpCodeTTL))
+	`), sha256Hex(code), c.ClientID, c.UserID, c.RestaurantID, c.RedirectURI, c.Challenge, nullString(c.Scope), time.Now().Add(mcpCodeTTL))
 	if err != nil {
 		return "", err
 	}
@@ -125,15 +128,23 @@ func (s *Server) mcpRedeemCode(ctx context.Context, code, clientID, verifier str
 	var expires time.Time
 	var used sql.NullTime
 
-	err := s.db.QueryRowContext(ctx, `
-		SELECT client_id, user_id, restaurant_id, redirect_uri, code_challenge, code_challenge_method, scope, expires_at, used_at
+	// padding_batch2_v1: the code->client binding is decided by the DB key
+	// comparison (column collation utf8mb4_unicode_ci PAD SPACE / PG app.norm ux__
+	// expression), matching the unique client_id identity; was Go ==, stricter
+	// than the key (authorize trims client_id, token passes it raw).
+	var sameClient bool
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
+		SELECT client_id, user_id, restaurant_id, redirect_uri, code_challenge, code_challenge_method, scope, expires_at, used_at, COALESCE(client_id = ?, 0)
 		FROM mcp_oauth_codes WHERE code_hash = ?
-	`, sha256Hex(strings.TrimSpace(code))).Scan(
-		&out.ClientID, &out.UserID, &out.RestaurantID, &out.RedirectURI, &challenge, &method, &out.Scope, &expires, &used)
+	`, `
+		SELECT client_id, user_id, restaurant_id, redirect_uri, code_challenge, code_challenge_method, scope, expires_at, used_at, COALESCE(app.norm_ascii(client_id) = app.norm_ascii(?), false)
+		FROM mcp_oauth_codes WHERE app.norm_ascii(code_hash) = app.norm_ascii(?)
+	`), clientID, sha256Hex(strings.TrimSpace(code))).Scan(
+		&out.ClientID, &out.UserID, &out.RestaurantID, &out.RedirectURI, &challenge, &method, &out.Scope, &expires, &used, &sameClient)
 	if err != nil {
 		return out, errMCPInvalidGrant
 	}
-	if out.ClientID != clientID {
+	if !sameClient {
 		return out, errMCPInvalidGrant
 	}
 	if used.Valid || time.Now().After(expires) {
@@ -143,9 +154,11 @@ func (s *Server) mcpRedeemCode(ctx context.Context, code, clientID, verifier str
 	if !mcpVerifyPKCE(verifier, challenge) {
 		return out, errMCPInvalidGrant
 	}
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE mcp_oauth_codes SET used_at = NOW() WHERE code_hash = ? AND used_at IS NULL
-	`, sha256Hex(strings.TrimSpace(code)))
+	`, `
+		UPDATE mcp_oauth_codes SET used_at = date_trunc('second', statement_timestamp()) WHERE app.norm_ascii(code_hash) = app.norm_ascii(?) AND used_at IS NULL
+	`), sha256Hex(strings.TrimSpace(code)))
 	if err != nil {
 		return out, err
 	}
@@ -163,10 +176,10 @@ func (s *Server) mcpIssueToken(ctx context.Context, clientID string, userID, res
 		return "", err
 	}
 	expires := time.Now().Add(mcpTokenTTL)
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, portableSQL(`
 		INSERT INTO mcp_oauth_tokens (token_hash, client_id, user_id, restaurant_id, scope, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, tokenSHA, clientID, userID, restaurantID, nullString(scope), expires)
+	`), tokenSHA, clientID, userID, restaurantID, nullString(scope), expires)
 	if err != nil {
 		return "", err
 	}
@@ -176,10 +189,10 @@ func (s *Server) mcpIssueToken(ctx context.Context, clientID string, userID, res
 	// admin catalogue would be unreachable over MCP. It is bound to the same
 	// user and restaurant, carries the same expiry, and is removed whenever the
 	// access token is revoked, so it can never outlive the grant.
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, portableSQL(`
 		INSERT INTO bo_sessions (token_sha256, user_id, active_restaurant_id, expires_at)
 		VALUES (?, ?, ?, ?)
-	`, tokenSHA, userID, restaurantID, expires); err != nil {
+	`), tokenSHA, userID, restaurantID, expires.UTC()); err != nil { // bo_sessions.expires_at: naive UTC datetime
 		return "", err
 	}
 	return token, nil
@@ -202,7 +215,7 @@ func (s *Server) mcpResolveToken(ctx context.Context, token string) (boAuth, err
 		revoked sql.NullTime
 		expires time.Time
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			t.id, t.user_id, t.restaurant_id, t.scope, t.expires_at, t.revoked_at,
 			u.name, u.email, u.is_superadmin,
@@ -213,7 +226,18 @@ func (s *Server) mcpResolveToken(ctx context.Context, token string) (boAuth, err
 			ON ur.user_id = t.user_id AND ur.restaurant_id = t.restaurant_id
 		WHERE t.token_hash = ?
 		LIMIT 1
-	`, tokenSHA).Scan(
+	`, `
+		SELECT
+			t.id, t.user_id, t.restaurant_id, t.scope, t.expires_at, t.revoked_at,
+			u.name, u.email, u.is_superadmin,
+			COALESCE(ur.role, ''), COALESCE(ur.app_version, '')
+		FROM mcp_oauth_tokens t
+		JOIN bo_users u ON u.id = t.user_id
+		LEFT JOIN bo_user_restaurants ur
+			ON ur.user_id = t.user_id AND ur.restaurant_id = t.restaurant_id
+		WHERE app.norm_ascii(t.token_hash) = app.norm_ascii(?)
+		LIMIT 1
+	`), tokenSHA).Scan(
 		&row.ID, &row.UserID, &row.RestaurantID, &scope, &expires, &revoked,
 		&row.UserName, &row.UserEmail, &row.IsSuperadmin,
 		&row.Role, &row.AppVersion,
@@ -245,7 +269,7 @@ func (s *Server) mcpResolveToken(ctx context.Context, token string) (boAuth, err
 	}
 
 	// Best-effort usage stamp; never fail the request on it.
-	_, _ = s.db.ExecContext(ctx, `UPDATE mcp_oauth_tokens SET expires_at = expires_at WHERE id = ?`, row.ID)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE mcp_oauth_tokens SET expires_at = expires_at WHERE id = ?`), row.ID)
 
 	auth := boAuth{
 		TokenSHA256:        tokenSHA,
@@ -268,9 +292,11 @@ func (s *Server) mcpResolveToken(ctx context.Context, token string) (boAuth, err
 
 // mcpRevokeClientTokens kills every live token for a client (logout / reset).
 func (s *Server) mcpRevokeClientTokens(ctx context.Context, clientID string) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE mcp_oauth_tokens SET revoked_at = NOW() WHERE client_id = ? AND revoked_at IS NULL
-	`, clientID)
+	`, `
+		UPDATE mcp_oauth_tokens SET revoked_at = date_trunc('second', statement_timestamp()) WHERE app.norm_ascii(client_id) = app.norm_ascii(?) AND revoked_at IS NULL
+	`), clientID)
 	if err != nil {
 		return 0, err
 	}

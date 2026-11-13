@@ -21,6 +21,7 @@ import (
 
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/lib/specialmenuimage"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // =============================================================================
@@ -385,12 +386,36 @@ func (s *Server) insertBookingDocument(ctx context.Context, doc bookingDocument)
 		// it waits for any in-flight cancel of that booking and then inserts
 		// nothing if the booking is gone (no document is left pointing at a
 		// deleted booking, which the orphan sweep would delete for good).
-		res, err := s.db.ExecContext(ctx, `
+		if sqlDialect == sqldb.Postgres {
+			// InnoDB INSERT ... SELECT takes a shared lock on the source booking
+			// row; FOR SHARE reproduces the wait-for-cancel. 0 rows -> no RETURNING
+			// row -> same "la reserva ya no existe" outcome as RowsAffected != 1.
+			var id int64
+			err := s.db.QueryRowContext(ctx, pgOnlySQL(`
 		INSERT INTO booking_documents
 			(restaurant_id, booking_id, uploaded_by, title, original_filename,
 			 content_type, size_bytes, storage_path)
 		SELECT b.restaurant_id, b.id, ?, ?, ?, ?, ?, ?
-		FROM bookings b WHERE b.restaurant_id = ? AND b.id = ?`,
+		FROM bookings b WHERE b.restaurant_id = ? AND b.id = ?
+		FOR SHARE OF b
+		RETURNING id`),
+				doc.UploadedBy, doc.Title, doc.OriginalFilename, doc.ContentType, doc.SizeBytes, doc.StoragePath,
+				doc.RestaurantID, *doc.BookingID).Scan(&id)
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, errors.New("la reserva ya no existe")
+			}
+			if err != nil {
+				log.Printf("[booking_documents_v1] insert_failed restaurant=%d err=%v", doc.RestaurantID, err)
+				return 0, err
+			}
+			return id, nil
+		}
+		res, err := s.db.ExecContext(ctx, mysqlOnlySQL(`
+		INSERT INTO booking_documents
+			(restaurant_id, booking_id, uploaded_by, title, original_filename,
+			 content_type, size_bytes, storage_path)
+		SELECT b.restaurant_id, b.id, ?, ?, ?, ?, ?, ?
+		FROM bookings b WHERE b.restaurant_id = ? AND b.id = ?`),
 			doc.UploadedBy, doc.Title, doc.OriginalFilename, doc.ContentType, doc.SizeBytes, doc.StoragePath,
 			doc.RestaurantID, *doc.BookingID)
 		if err != nil {
@@ -402,27 +427,32 @@ func (s *Server) insertBookingDocument(ctx context.Context, doc bookingDocument)
 		}
 		return res.LastInsertId()
 	}
-	res, err := s.db.ExecContext(ctx, `
+	id, err := sqldb.InsertID(ctx, sqlDialect, s.db, portableSQL(`
 		INSERT INTO booking_documents
 			(restaurant_id, booking_id, uploaded_by, title, original_filename,
 			 content_type, size_bytes, storage_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`), "id",
 		doc.RestaurantID, doc.BookingID, doc.UploadedBy, doc.Title,
 		doc.OriginalFilename, doc.ContentType, doc.SizeBytes, doc.StoragePath)
 	if err != nil {
 		log.Printf("[booking_documents_v1] insert_failed restaurant=%d err=%v", doc.RestaurantID, err)
 		return 0, err
 	}
-	return res.LastInsertId()
+	return id, nil
 }
 
 func (s *Server) listBookingDocuments(ctx context.Context, restaurantID int, bookingID int64) ([]bookingDocument, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, restaurant_id, booking_id, uploaded_by, title, original_filename,
 		       content_type, size_bytes, storage_path, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')
 		FROM booking_documents
 		WHERE restaurant_id = ? AND booking_id = ? AND deleted_at IS NULL
-		ORDER BY id ASC`, restaurantID, bookingID)
+		ORDER BY id ASC`, `
+		SELECT id, restaurant_id, booking_id, uploaded_by, title, original_filename,
+		       content_type, size_bytes, storage_path, to_char(created_at, 'YYYY-MM-DD HH24:MI:SS')
+		FROM booking_documents
+		WHERE restaurant_id = ? AND booking_id = ? AND deleted_at IS NULL
+		ORDER BY id ASC`), restaurantID, bookingID)
 	if err != nil {
 		return nil, err
 	}
@@ -470,24 +500,34 @@ func (s *Server) withCDNURL(ctx context.Context, restaurantID int, doc bookingDo
 
 // loadBookingDocument fetches one live document owned by the tenant.
 func (s *Server) loadBookingDocument(ctx context.Context, restaurantID int, id int64) (bookingDocument, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT id, restaurant_id, booking_id, uploaded_by, title, original_filename,
 		       content_type, size_bytes, storage_path, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')
 		FROM booking_documents
 		WHERE restaurant_id = ? AND id = ? AND deleted_at IS NULL
-		LIMIT 1`, restaurantID, id)
+		LIMIT 1`, `
+		SELECT id, restaurant_id, booking_id, uploaded_by, title, original_filename,
+		       content_type, size_bytes, storage_path, to_char(created_at, 'YYYY-MM-DD HH24:MI:SS')
+		FROM booking_documents
+		WHERE restaurant_id = ? AND id = ? AND deleted_at IS NULL
+		LIMIT 1`), restaurantID, id)
 	return scanBookingDocument(row)
 }
 
 // listBookingDocumentDrafts returns the caller's own unbound uploads, the
 // pending attachments of an editor whose booking does not exist yet.
 func (s *Server) listBookingDocumentDrafts(ctx context.Context, restaurantID int, userID int) ([]bookingDocument, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, restaurant_id, booking_id, uploaded_by, title, original_filename,
 		       content_type, size_bytes, storage_path, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')
 		FROM booking_documents
 		WHERE restaurant_id = ? AND uploaded_by = ? AND booking_id IS NULL AND deleted_at IS NULL
-		ORDER BY id ASC`, restaurantID, userID)
+		ORDER BY id ASC`, `
+		SELECT id, restaurant_id, booking_id, uploaded_by, title, original_filename,
+		       content_type, size_bytes, storage_path, to_char(created_at, 'YYYY-MM-DD HH24:MI:SS')
+		FROM booking_documents
+		WHERE restaurant_id = ? AND uploaded_by = ? AND booking_id IS NULL AND deleted_at IS NULL
+		ORDER BY id ASC`), restaurantID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -506,13 +546,19 @@ func (s *Server) listBookingDocumentDrafts(ctx context.Context, restaurantID int
 // loadOwnedBookingDocument fetches a document the caller is allowed to delete:
 // its own draft, or any document of a booking of the same restaurant.
 func (s *Server) loadOwnedBookingDocument(ctx context.Context, restaurantID int, userID int, id int64) (bookingDocument, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT id, restaurant_id, booking_id, uploaded_by, title, original_filename,
 		       content_type, size_bytes, storage_path, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')
 		FROM booking_documents
 		WHERE restaurant_id = ? AND id = ? AND deleted_at IS NULL
 		  AND (booking_id IS NOT NULL OR uploaded_by = ?)
-		LIMIT 1`, restaurantID, id, userID)
+		LIMIT 1`, `
+		SELECT id, restaurant_id, booking_id, uploaded_by, title, original_filename,
+		       content_type, size_bytes, storage_path, to_char(created_at, 'YYYY-MM-DD HH24:MI:SS')
+		FROM booking_documents
+		WHERE restaurant_id = ? AND id = ? AND deleted_at IS NULL
+		  AND (booking_id IS NOT NULL OR uploaded_by = ?)
+		LIMIT 1`), restaurantID, id, userID)
 	return scanBookingDocument(row)
 }
 
@@ -530,9 +576,11 @@ func (s *Server) deleteBookingDocument(ctx context.Context, restaurantID int, id
 			return err
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE booking_documents SET deleted_at = NOW(), storage_path = ''
-		WHERE restaurant_id = ? AND id = ? AND deleted_at IS NULL`, restaurantID, id); err != nil {
+		WHERE restaurant_id = ? AND id = ? AND deleted_at IS NULL`, `
+		UPDATE booking_documents SET deleted_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), storage_path = ''
+		WHERE restaurant_id = ? AND id = ? AND deleted_at IS NULL`), restaurantID, id); err != nil {
 		return err
 	}
 	return nil
@@ -574,11 +622,11 @@ func (s *Server) purgeOrphanedBookingDocuments(ctx context.Context, restaurantID
 	if restaurantID <= 0 {
 		return
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id FROM booking_documents
 		WHERE restaurant_id = ? AND deleted_at IS NULL AND booking_id IS NOT NULL
 		  AND booking_id NOT IN (SELECT id FROM bookings WHERE restaurant_id = ?)
-		LIMIT 200`, restaurantID, restaurantID)
+		LIMIT 200`), restaurantID, restaurantID)
 	if err != nil {
 		return
 	}
@@ -610,10 +658,10 @@ func (s *Server) bindDraftDocumentsToBooking(ctx context.Context, restaurantID i
 	}
 	claimed := 0
 	for _, id := range ids {
-		res, err := s.db.ExecContext(ctx, `
+		res, err := s.db.ExecContext(ctx, portableSQL(`
 			UPDATE booking_documents SET booking_id = ?
 			WHERE restaurant_id = ? AND id = ? AND uploaded_by = ?
-			  AND booking_id IS NULL AND deleted_at IS NULL`,
+			  AND booking_id IS NULL AND deleted_at IS NULL`),
 			bookingID, restaurantID, id, userID)
 		if err != nil {
 			log.Printf("[booking_documents_v1] restaurant=%d bind_failed document=%d err=%v", restaurantID, id, err)
@@ -632,13 +680,13 @@ func (s *Server) countBookingDocuments(ctx context.Context, restaurantID int, bo
 	var total int
 	var err error
 	if bookingID != nil && *bookingID > 0 {
-		err = s.db.QueryRowContext(ctx, `
+		err = s.db.QueryRowContext(ctx, portableSQL(`
 			SELECT COUNT(*) FROM booking_documents
-			WHERE restaurant_id = ? AND booking_id = ? AND deleted_at IS NULL`, restaurantID, *bookingID).Scan(&total)
+			WHERE restaurant_id = ? AND booking_id = ? AND deleted_at IS NULL`), restaurantID, *bookingID).Scan(&total)
 	} else {
-		err = s.db.QueryRowContext(ctx, `
+		err = s.db.QueryRowContext(ctx, portableSQL(`
 			SELECT COUNT(*) FROM booking_documents
-			WHERE restaurant_id = ? AND uploaded_by = ? AND booking_id IS NULL AND deleted_at IS NULL`, restaurantID, userID).Scan(&total)
+			WHERE restaurant_id = ? AND uploaded_by = ? AND booking_id IS NULL AND deleted_at IS NULL`), restaurantID, userID).Scan(&total)
 	}
 	return total, err
 }

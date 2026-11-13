@@ -81,7 +81,7 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, menu_title, price, included_coffee,
 		       COALESCE(menu_type, 1) AS menu_type,
 		       menu_subtitle,
@@ -97,7 +97,7 @@ func (s *Server) handleGetValidMenusForPartySize(w http.ResponseWriter, r *http.
 		        OR COALESCE(special_group_menu_enabled, 0) = 1
 		      )
 		ORDER BY min_party_size ASC, price ASC
-	`, restaurantID, partySize)
+	`), restaurantID, partySize)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,

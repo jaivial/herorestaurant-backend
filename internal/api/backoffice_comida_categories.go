@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-sql-driver/mysql"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Unified comida category catalogue.
@@ -138,9 +138,10 @@ func comidaCategoryKey(origin string, foodType string, id int) string {
 }
 
 // isDuplicateKeyErr reports whether err is a MySQL unique-constraint violation.
+// isDuplicateKeyErr: MySQL 1062 (unchanged) or PG SQLSTATE 23505, any unique key
+// (same breadth as the source check).
 func isDuplicateKeyErr(err error) bool {
-	var mysqlErr *mysql.MySQLError
-	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
+	return sqldb.IsUniqueViolation(err)
 }
 
 // validateComidaCategoryName trims and bounds a category name, returning the name and
@@ -306,19 +307,24 @@ func (s *Server) handleBOComidaCategoriesList(w http.ResponseWriter, r *http.Req
 	)
 	if scoped {
 		// Type-scoped request: the type's own rows plus every global row.
-		rows, err = s.db.QueryContext(r.Context(), `
+		rows, err = s.db.QueryContext(r.Context(), nativeSQL(`
 			SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(food_type, ''), active
 			FROM comida_categories
 			WHERE restaurant_id = ? AND active = 1 AND (food_type = ? OR food_type = '')
 			ORDER BY name ASC
-		`, restaurantID, foodType)
+		`, `
+			SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(food_type, ''), active
+			FROM comida_categories
+			WHERE restaurant_id = ? AND active = 1 AND (app.norm(food_type) = app.norm(?) OR app.norm(food_type) = '')
+			ORDER BY name COLLATE "es-x-icu" ASC
+		`), restaurantID, foodType)
 	} else {
-		rows, err = s.db.QueryContext(r.Context(), `
+		rows, err = s.db.QueryContext(r.Context(), portableSQL(`
 			SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(food_type, ''), active
 			FROM comida_categories
 			WHERE restaurant_id = ?
 			ORDER BY food_type ASC, name ASC
-		`, restaurantID)
+		`), restaurantID)
 	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando categorias")
@@ -364,14 +370,14 @@ func (s *Server) listLegacyComidaCategories(r *http.Request, restaurantID int, f
 	}
 
 	// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never from input.
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(source, 'custom'), active
 		FROM `+table+`
 		WHERE restaurant_id = ? AND active = 1
 		ORDER BY
 			CASE WHEN source = 'base' THEN 0 ELSE 1 END,
 			name ASC
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -441,20 +447,15 @@ func (s *Server) handleBOComidaCategoryCreate(w http.ResponseWriter, r *http.Req
 	// resolving to the existing row: an ON DUPLICATE KEY UPDATE here would answer 200
 	// with a different category's name and would reactivate one an operator had
 	// deliberately switched off.
-	res, err := tx.ExecContext(r.Context(), `
+	id64, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`
 		INSERT INTO comida_categories (restaurant_id, food_type, name, slug, active)
 		VALUES (?, ?, ?, ?, 1)
-	`, restaurantID, foodType, name, slug)
+	`), "id", restaurantID, foodType, name, slug)
 	if err != nil {
 		if isDuplicateKeyErr(err) {
 			httpx.WriteError(w, http.StatusConflict, "Ya existe una categoria con ese nombre")
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
-		return
-	}
-	id64, err := res.LastInsertId()
-	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando categoria")
 		return
 	}
@@ -516,9 +517,9 @@ func comidaCategoryBaseSlugs(foodType string) []string {
 // left by the (restaurant_id, food_type, slug) UNIQUE index without a schema change.
 func lockComidaCategoryNamespace(r *http.Request, tx *sql.Tx, restaurantID int) error {
 	var id int
-	return tx.QueryRowContext(r.Context(), `
+	return tx.QueryRowContext(r.Context(), portableSQL(`
 		SELECT id FROM restaurants WHERE id = ? FOR UPDATE
-	`, restaurantID).Scan(&id)
+	`), restaurantID).Scan(&id)
 }
 
 // comidaCategorySlugTaken reports whether the slug is already used by a category the
@@ -536,12 +537,16 @@ func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurant
 	// listing shows them and they can be switched back on, so the name is still spoken
 	// for. An inactive legacy row is shown nowhere and can be reactivated from nowhere.
 	// #nosec G202 -- placeholders is a generated list of "?", never input.
-	if err := tx.QueryRowContext(r.Context(), `
+	if err := tx.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT COUNT(*)
 		FROM comida_categories
 		WHERE restaurant_id = ? AND slug = ? AND id <> ?
-		  AND COALESCE(food_type, '') IN (`+placeholders+`)
-	`, args...).Scan(&n); err != nil {
+		  AND COALESCE(food_type, '') IN (`+placeholders+`)`, `
+		SELECT COUNT(*)
+		FROM comida_categories
+		WHERE restaurant_id = ? AND app.norm_ascii(slug) = app.norm_ascii(?) AND id <> ?
+		  AND app.norm(COALESCE(food_type, '')) IN (`+strings.TrimSuffix(strings.Repeat("app.norm(?),", len(scopes)), ",")+`)
+	`), args...).Scan(&n); err != nil {
 		return false, err
 	}
 	if n > 0 {
@@ -572,10 +577,10 @@ func (s *Server) comidaCategorySlugTaken(r *http.Request, tx *sql.Tx, restaurant
 		// blocking on one would refuse a name with a duplicate the operator cannot
 		// find anywhere in the app.
 		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
-		if err := tx.QueryRowContext(r.Context(), `
+		if err := tx.QueryRowContext(r.Context(), portableSQL(`
 			SELECT COUNT(*) FROM `+table+`
 			WHERE restaurant_id = ? AND slug = ? AND active = 1
-		`, restaurantID, slug).Scan(&n); err != nil {
+		`), restaurantID, slug).Scan(&n); err != nil {
 			return false, err
 		}
 		if n > 0 {
@@ -655,12 +660,12 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 		current   comidaUnifiedCategoryResponse
 		activeInt int
 	)
-	err = tx.QueryRowContext(r.Context(), `
+	err = tx.QueryRowContext(r.Context(), portableSQL(`
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(food_type, ''), active
 		FROM comida_categories
 		WHERE restaurant_id = ? AND id = ?
 		FOR UPDATE
-	`, restaurantID, id).Scan(&current.ID, &current.Name, &current.Slug, &current.FoodType, &activeInt)
+	`), restaurantID, id).Scan(&current.ID, &current.Name, &current.Slug, &current.FoodType, &activeInt)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, http.StatusNotFound, "Categoria no encontrada")
 		return
@@ -735,11 +740,11 @@ func (s *Server) handleBOComidaCategoryPatch(w http.ResponseWriter, r *http.Requ
 	if next.Active {
 		nextActiveInt = 1
 	}
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`
 		UPDATE comida_categories
 		SET name = ?, slug = ?, food_type = ?, active = ?
 		WHERE restaurant_id = ? AND id = ?
-	`, next.Name, next.Slug, next.FoodType, nextActiveInt, restaurantID, id); err != nil {
+	`), []any{next.Name, next.Slug, next.FoodType, nextActiveInt, restaurantID, id}...); err != nil {
 		if isDuplicateKeyErr(err) {
 			httpx.WriteError(w, http.StatusConflict, "Ya existe una categoria con ese nombre")
 			return
@@ -803,12 +808,12 @@ func (s *Server) handleBOComidaCategoryDelete(w http.ResponseWriter, r *http.Req
 	// products pointing at a name with no catalogue entry, which the next save
 	// recreates, not a corrupt row.
 	var current comidaUnifiedCategoryResponse
-	err = tx.QueryRowContext(r.Context(), `
+	err = tx.QueryRowContext(r.Context(), portableSQL(`
 		SELECT id, COALESCE(name, ''), COALESCE(slug, ''), COALESCE(food_type, '')
 		FROM comida_categories
 		WHERE restaurant_id = ? AND id = ?
 		FOR UPDATE
-	`, restaurantID, id).Scan(&current.ID, &current.Name, &current.Slug, &current.FoodType)
+	`), restaurantID, id).Scan(&current.ID, &current.Name, &current.Slug, &current.FoodType)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, http.StatusNotFound, "Categoria no encontrada")
 		return
@@ -828,9 +833,9 @@ func (s *Server) handleBOComidaCategoryDelete(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`
 		DELETE FROM comida_categories WHERE restaurant_id = ? AND id = ?
-	`, restaurantID, id); err != nil {
+	`), restaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando categoria")
 		return
 	}
@@ -887,7 +892,7 @@ func (s *Server) deleteComidaCategoryLegacyTwins(r *http.Request, tx *sql.Tx, re
 		// whose margin scope this pass never saw, leaving exactly the orphan the
 		// margin cleanup exists to prevent.
 		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
-		rows, err := tx.QueryContext(r.Context(), `SELECT id FROM `+table+` WHERE `+where+` FOR UPDATE`, args...)
+		rows, err := tx.QueryContext(r.Context(), portableSQL(`SELECT id FROM `+table+` WHERE `+where+` FOR UPDATE`), args...)
 		if err != nil {
 			return err
 		}
@@ -917,7 +922,7 @@ func (s *Server) deleteComidaCategoryLegacyTwins(r *http.Request, tx *sql.Tx, re
 		// rather than failing. The product keeps its categoria name, and saving it again
 		// re-resolves the id, so there is nothing to repair.
 		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
-		if _, err := tx.ExecContext(r.Context(), `DELETE FROM `+table+` WHERE `+where, args...); err != nil {
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`DELETE FROM `+table+` WHERE `+where), args...); err != nil {
 			return err
 		}
 	}
@@ -933,10 +938,13 @@ func (s *Server) deleteComidaCategoryLegacyTwins(r *http.Request, tx *sql.Tx, re
 // would silently inherit a target somebody set for a different category. The bands
 // cascade from the scope row.
 func (s *Server) deleteComidaCategoryMarginScope(r *http.Request, tx *sql.Tx, restaurantID int, foodType string, categoryID int64) error {
-	_, err := tx.ExecContext(r.Context(), `
+	_, err := tx.ExecContext(r.Context(), nativeSQL(`
 		DELETE FROM stock_margin_scopes
 		WHERE restaurant_id = ? AND scope_kind = 'COMIDA_CATEGORY' AND scope_key = ?
-	`, restaurantID, marginScopeKeyForCategory(foodType, categoryID))
+	`, `
+		DELETE FROM stock_margin_scopes
+		WHERE restaurant_id = ? AND scope_kind = 'COMIDA_CATEGORY' AND app.norm_ascii(scope_key) = app.norm_ascii(?)
+	`), restaurantID, marginScopeKeyForCategory(foodType, categoryID))
 	return err
 }
 
@@ -981,13 +989,13 @@ func (s *Server) countComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaura
 		}
 		var n int
 		// #nosec G202 -- placeholders is a generated list of "?", never input.
-		if err := tx.QueryRowContext(r.Context(), `
+		if err := tx.QueryRowContext(r.Context(), portableSQL(`
 			SELECT COUNT(*)
 			FROM comida_items
 			WHERE restaurant_id = ?
 			  AND COALESCE(categoria, '') = ?
 			  AND COALESCE(source_type, '') IN (`+placeholders+`)
-		`, args...).Scan(&n); err != nil {
+		`), args...).Scan(&n); err != nil {
 			return 0, err
 		}
 		total += n
@@ -995,11 +1003,11 @@ func (s *Server) countComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaura
 
 	if comidaCategoryTouchesVinos(category.FoodType) {
 		var n int
-		if err := tx.QueryRowContext(r.Context(), `
+		if err := tx.QueryRowContext(r.Context(), portableSQL(`
 			SELECT COUNT(*)
 			FROM group_menu_wines_v2
 			WHERE restaurant_id = ? AND COALESCE(tipo, '') = ?
-		`, restaurantID, category.Name).Scan(&n); err != nil {
+		`), restaurantID, category.Name).Scan(&n); err != nil {
 			return 0, err
 		}
 		total += n
@@ -1023,23 +1031,23 @@ func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaur
 			args = append(args, src)
 		}
 		// #nosec G202 -- placeholders is a generated list of "?", never input.
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`
 			UPDATE comida_items
 			SET categoria = ?
 			WHERE restaurant_id = ?
 			  AND COALESCE(categoria, '') = ?
 			  AND COALESCE(source_type, '') IN (`+placeholders+`)
-		`, args...); err != nil {
+		`), args...); err != nil {
 			return err
 		}
 	}
 
 	if comidaCategoryTouchesVinos(current.FoodType) {
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`
 			UPDATE group_menu_wines_v2
 			SET tipo = ?
 			WHERE restaurant_id = ? AND COALESCE(tipo, '') = ?
-		`, newName, restaurantID, current.Name); err != nil {
+		`), newName, restaurantID, current.Name); err != nil {
 			return err
 		}
 	}
@@ -1063,8 +1071,8 @@ func (s *Server) renameComidaCategoryUsages(r *http.Request, tx *sql.Tx, restaur
 			return err
 		}
 		// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
-		if _, err := tx.ExecContext(r.Context(), `
-			UPDATE `+table+` SET name = ?, slug = ? WHERE `+where, args...); err != nil {
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`
+			UPDATE `+table+` SET name = ?, slug = ? WHERE `+where), args...); err != nil {
 			return err
 		}
 	}
@@ -1079,11 +1087,11 @@ func (s *Server) reconcileComidaCategoryLegacyTwin(r *http.Request, tx *sql.Tx, 
 	queryArgs := append([]any{}, twinArgs...)
 	queryArgs = append(queryArgs, restaurantID, newSlug)
 	// #nosec G202 -- table and twinWhere are internal, parameterized query fragments.
-	rows, err := tx.QueryContext(r.Context(), `
+	rows, err := tx.QueryContext(r.Context(), portableSQL(`
 		SELECT id, active FROM `+table+`
 		WHERE (`+twinWhere+`) OR (restaurant_id = ? AND slug = ? AND active = 0)
 		ORDER BY active DESC, id FOR UPDATE
-	`, queryArgs...)
+	`), queryArgs...)
 	if err != nil {
 		return err
 	}
@@ -1113,10 +1121,10 @@ func (s *Server) reconcileComidaCategoryLegacyTwin(r *http.Request, tx *sql.Tx, 
 	// category_id only references the platos table. Keeping this guard explicit
 	// prevents a future legacy-table addition from silently creating a wrong FK.
 	if table == "comida_plato_categories" {
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`
 			UPDATE comida_items SET category_id = ?
 			WHERE restaurant_id = ? AND category_id = ?
-		`, twinID, restaurantID, inactiveID); err != nil {
+		`), twinID, restaurantID, inactiveID); err != nil {
 			return err
 		}
 	}
@@ -1126,8 +1134,8 @@ func (s *Server) reconcileComidaCategoryLegacyTwin(r *http.Request, tx *sql.Tx, 
 		return err
 	}
 	// #nosec G202 -- table is resolved from comidaCategoryLegacyTables, never input.
-	_, err = tx.ExecContext(r.Context(), `
+	_, err = tx.ExecContext(r.Context(), portableSQL(`
 		DELETE FROM `+table+` WHERE restaurant_id = ? AND id = ? AND active = 0
-	`, restaurantID, inactiveID)
+	`), restaurantID, inactiveID)
 	return err
 }

@@ -29,7 +29,7 @@ func (s *Server) handleSalonCondesaGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var state sql.NullInt64
-	err := s.db.QueryRowContext(r.Context(), "SELECT state FROM salon_condesa WHERE restaurant_id = ? AND date = ? LIMIT 1", restaurantID, date).Scan(&state)
+	err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT state FROM salon_condesa WHERE restaurant_id = ? AND date = ? LIMIT 1"), restaurantID, date).Scan(&state)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -86,11 +86,15 @@ func (s *Server) handleSalonCondesaSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Upsert
-	_, err = s.db.ExecContext(r.Context(), `
+	_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO salon_condesa (restaurant_id, date, state)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE state = VALUES(state)
-	`, restaurantID, date, state)
+	`, `
+		INSERT INTO salon_condesa (restaurant_id, date, state)
+		VALUES (?, ?, ?)
+		ON CONFLICT (restaurant_id, date) DO UPDATE SET state = EXCLUDED.state
+	`), restaurantID, date, state)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,

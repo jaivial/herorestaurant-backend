@@ -156,8 +156,8 @@ type widgetSettings struct {
 func (s *Server) getWidgetSettings(r *http.Request, restaurantID int) (widgetSettings, error) {
 	var ws widgetSettings
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT primary_color, success_color, border_color, surface_color, text_color, muted_color, font_stack
-		 FROM widget_settings WHERE restaurant_id = ?`, restaurantID,
+		portableSQL(`SELECT primary_color, success_color, border_color, surface_color, text_color, muted_color, font_stack
+		 FROM widget_settings WHERE restaurant_id = ?`), restaurantID,
 	).Scan(&ws.PrimaryColor, &ws.SuccessColor, &ws.BorderColor, &ws.SurfaceColor, &ws.TextColor, &ws.MutedColor, &ws.FontStack)
 
 	if err != nil {
@@ -252,16 +252,17 @@ func (s *Server) upsertWidgetSettings(r *http.Request, restaurantID int, body *w
 			if updateCols != "" {
 				updateCols += ", "
 			}
-			updateCols += col + " = VALUES(" + col + ")"
+			// col comes from the fixed lowercase list above.
+			updateCols += col + " = " + nativeSQL("VALUES("+col+")", "EXCLUDED."+col)
 		}
 	}
 
 	query := "INSERT INTO widget_settings (" + colNames + ") VALUES (" + placeHolders + ")"
 	if updateCols != "" {
-		query += " ON DUPLICATE KEY UPDATE " + updateCols
+		query += nativeSQL(" ON DUPLICATE KEY UPDATE ", " ON CONFLICT (restaurant_id) DO UPDATE SET ") + updateCols
 	}
 
-	_, err = s.db.ExecContext(r.Context(), query, args...)
+	_, err = s.db.ExecContext(r.Context(), portableSQL(query), args...)
 	return err
 }
 

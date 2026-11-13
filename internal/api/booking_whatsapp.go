@@ -388,7 +388,8 @@ func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	// Byte budget kept, never mid-character (a split rune is 22021 on PG).
+	return utf8BytePrefix(s, maxLen) + "..."
 }
 
 func toBool(v any) bool {

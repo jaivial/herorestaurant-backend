@@ -83,14 +83,21 @@ func (s *Server) handlePublicSpecialDatesList(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT DATE_FORMAT(date, '%Y-%m-%d'), is_active, prereserva_enabled, whatsapp_only, title,
 		       max_per_table_enabled, max_per_table,
 		       ask_adults, ask_high_chairs, ask_baby_strollers
 		FROM special_dates
 		WHERE restaurant_id = ? AND is_active = 1 AND date BETWEEN ? AND ?
 		ORDER BY date ASC
-	`, restaurantID, from, to)
+	`, `
+		SELECT to_char(date, 'YYYY-MM-DD'), is_active, prereserva_enabled, whatsapp_only, title,
+		       max_per_table_enabled, max_per_table,
+		       ask_adults, ask_high_chairs, ask_baby_strollers
+		FROM special_dates
+		WHERE restaurant_id = ? AND is_active = 1 AND date BETWEEN ? AND ?
+		ORDER BY date ASC
+	`), restaurantID, from, to)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando special_dates")
 		return
@@ -186,7 +193,7 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 	var adelantoMethodsRaw sql.NullString
 	var adelantoUnifiedAmount sql.NullFloat64
 
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT id, is_active, title, description, custom_notice, prereserva_enabled, whatsapp_only,
 		       max_per_table_enabled, max_per_table, requires_adelanto,
 		       ask_adults, ask_high_chairs, ask_baby_strollers,
@@ -194,7 +201,15 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
-	`, restaurantID, date).Scan(
+	`, `
+		SELECT id, is_active, title, description, custom_notice, prereserva_enabled, whatsapp_only,
+		       max_per_table_enabled, max_per_table, requires_adelanto,
+		       ask_adults, ask_high_chairs, ask_baby_strollers,
+		       CAST(adelanto_payment_methods AS text), adelanto_unified, adelanto_unified_amount
+		FROM special_dates
+		WHERE restaurant_id = ? AND date = ?
+		LIMIT 1
+	`), restaurantID, date).Scan(
 		&id, &isActive, &title, &description, &customNotice, &prereservaEnabled, &whatsAppOnly,
 		&maxPerTableEnabled, &maxPerTable, &requiresAdelanto,
 		&askAdults, &askHighChairs, &askBabyStrollers,
@@ -273,7 +288,7 @@ func (s *Server) handlePublicSpecialDateGet(w http.ResponseWriter, r *http.Reque
 // loadPublicSpecialDateMenus reads the child rows for one special date and
 // enriches each one with the menu's title/price when it references a real menu.
 func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID int, specialDateID int64) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url, sdm.adelanto_amount, sdm.price,
 		       COALESCE(m.menu_title, '') AS menu_title,
 		       COALESCE(m.price, 0) AS menu_price
@@ -283,7 +298,7 @@ func (s *Server) loadPublicSpecialDateMenus(ctx context.Context, restaurantID in
 		  AND m.active = 1 AND m.is_draft = 0
 		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?
 		ORDER BY sdm.position ASC, sdm.id ASC
-	`, restaurantID, specialDateID)
+	`), restaurantID, specialDateID)
 	if err != nil {
 		return nil, err
 	}

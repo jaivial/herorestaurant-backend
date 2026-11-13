@@ -16,7 +16,7 @@ import (
 
 func (s *Server) stockPermissionsCatalogue(ctx context.Context, restaurantID int, role string) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT permission_key,is_allowed FROM stock_role_permissions WHERE restaurant_id=? AND role_slug=?`,
+		nativeSQL(`SELECT permission_key,is_allowed FROM stock_role_permissions WHERE restaurant_id=? AND role_slug=?`, `SELECT permission_key,is_allowed FROM stock_role_permissions WHERE restaurant_id=? AND app.norm_ascii(role_slug) = app.norm_ascii(?)`),
 		restaurantID, role)
 	if err != nil {
 		return nil, err
@@ -102,8 +102,10 @@ func (s *Server) handleBOStockRolePermissionsPut(w http.ResponseWriter, r *http.
 	// rows that no handler will ever check.
 	for _, key := range stockPermissionKeys {
 		if _, err = tx.ExecContext(r.Context(),
-			`INSERT INTO stock_role_permissions (restaurant_id,role_slug,permission_key,is_allowed) VALUES (?,?,?,?)
-			 ON DUPLICATE KEY UPDATE is_allowed=VALUES(is_allowed)`,
+			// PRIMARY (restaurant_id,role_slug,permission_key) is the only unique key.
+			nativeSQL(`INSERT INTO stock_role_permissions (restaurant_id,role_slug,permission_key,is_allowed) VALUES (?,?,?,?)
+			 ON DUPLICATE KEY UPDATE is_allowed=VALUES(is_allowed)`, `INSERT INTO stock_role_permissions (restaurant_id,role_slug,permission_key,is_allowed) VALUES (?,?,?,?)
+			 ON CONFLICT (restaurant_id, role_slug, permission_key) DO UPDATE SET is_allowed=EXCLUDED.is_allowed`),
 			a.ActiveRestaurantID, role, key, stockBoolInt(selected[key])); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error saving stock permissions")
 			return
