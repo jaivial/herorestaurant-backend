@@ -331,6 +331,8 @@ func BotIndexedKnowledge(raw string) [][4]string {
 // RAG chunks. restaurantID is the bot session's restaurant; the graph
 // instance is resolved only from the server-side registry. Any graph error
 // yields no snippets (existing RAG unchanged). Only lengths/counts are logged.
+// Graph snippets carry the botGraphChunkPrefix id: the prompt renders them
+// apart, after the rules, as reference data (graphrag_rules_precedence_v1).
 func (s *Server) botRetrieveKnowledge(ctx context.Context, restaurantID int, routing botAIRouting, routes []string, text string) []botKnowledgeChunk {
 	base := s.botRetrieveKnowledgeBase(ctx, restaurantID, routing, routes, text)
 	if !graphrag.Enabled() {
@@ -339,7 +341,7 @@ func (s *Server) botRetrieveKnowledge(ctx context.Context, restaurantID int, rou
 	snippets, _ := graphrag.BotSnippets(ctx, restaurantID, text)
 	var out []botKnowledgeChunk
 	for _, sn := range snippets {
-		out = append(out, botKnowledgeChunk{ID: "graph:" + sn.UID, Title: sn.Title, Body: sn.Body})
+		out = append(out, botKnowledgeChunk{ID: botGraphChunkPrefix + sn.UID, Title: sn.Title, Body: sn.Body})
 	}
 	botCheckpoint("wa_bot_graphrag_v1", "restaurant_id=%d text_len=%d graph_hits=%d", restaurantID, len(text), len(out))
 	return append(out, base...)
