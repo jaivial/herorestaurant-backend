@@ -9,7 +9,9 @@ run bash -c "${MAINT_ON_CMD:-echo 'MAINT_ON_CMD not set: maintenance page switch
 # (/var/www/newvillacarmen/backend/deploy/docker-compose.prod.yml); docker stop
 # is enough for the window (restart policies apply again on docker start).
 for c in $CONTAINERS_STOP_ORDER; do run docker stop -t 30 "$c"; done
-for t in villacarmen-ops-check.timer villacarmen-cdn-sweep.timer; do run systemctl stop "$t"; done   # host timers that write the DB
+for t in villacarmen-ops-check.timer villacarmen-cdn-sweep.timer; do   # host timers that write the DB (absent on kraken 2026-11-15)
+	if systemctl cat "$t" >/dev/null 2>&1; then run sudo -n systemctl stop "$t"; else say "INFO timer $t not installed on this host"; fi
+done
 say "MySQL must now have no client writing:"
 run bash -c "${MYSQL_CLI:=mysql --defaults-extra-file=$CUTOVER_DIR/mysql-ro.cnf} -N -B -e \"SELECT USER, SUBSTRING_INDEX(HOST,':',1), COMMAND, TIME FROM information_schema.PROCESSLIST WHERE ID<>CONNECTION_ID()\""
 # read_only blocks any forgotten writer (reverted by 90-rollback)

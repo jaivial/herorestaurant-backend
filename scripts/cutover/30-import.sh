@@ -8,6 +8,8 @@
 # HARD STOP on any difference (exit != 0 of any check).
 source "$(dirname "$0")/lib.sh"
 guard "GO import"
+# MYSQL_DSN: from the environment, else from $CUTOVER_DIR/mysql-dsn.env (0600, MYSQL_DSN=...; never printed)
+if [[ -z "${MYSQL_DSN:-}" && -r "$CUTOVER_DIR/mysql-dsn.env" ]]; then set -a; source "$CUTOVER_DIR/mysql-dsn.env"; set +a; say "MYSQL_DSN loaded from $CUTOVER_DIR/mysql-dsn.env"; fi
 : "${MYSQL_DSN:?unix-socket DSN, e.g. villacarmen:<pw>@unix(/var/run/mysqld/mysqld.sock)/newvillacarmen?information_schema_stats_expiry=0 (REQUIRED param: else MySQL 8 stats cache gives NULL AUTO_INCREMENT; from a 0600 file, never argv history)}"
 DB=${MYSQL_DB:-newvillacarmen}
 PG_C=${PG_CONTAINER:-newvillacarmen-pg-prod}; PG_V=${PG_VOLUME:-newvillacarmen-pg-prod-data}; PG_PORT=${PG_PORT:-55432}
@@ -55,10 +57,15 @@ say "== 7 exact row counts: freeze (MySQL) vs PG"
 run bash -c "python3 '$W/scripts/cutover/gensql.py' '$R/schema.json' count-pg | docker exec -i -u postgres $PG_C psql -d $PGDB -At | sort > '$R/counts-pg.tsv'"
 stop_if bash -c "diff <(sort '$CUTOVER_DIR/freeze-rowcounts.tsv') '$R/counts-pg.tsv'"
 say "== 8 bot context store: SQLite (volume newvillacarmen-prod_whatsapp-bot-context at /var/lib/herorestaurant) -> schema bot_context"
-# copy the SQLite file out of the (stopped) backend volume, read-only mount
-run bash -c "docker run --rm --network none -v newvillacarmen-prod_whatsapp-bot-context:/src:ro -v '$R':/dst alpine cp /src/whatsapp-bot-context.sqlite /dst/bot-context.sqlite && chmod 600 '$R/bot-context.sqlite'"
+# Copy the SQLite store consistently out of the (stopped) backend volume:
+# main file + -wal + -shm together (WAL mode: committed rows may live only in
+# -wal). Plain alpine cp, no network needed; root in the container reads the
+# volume and hands the copies to the operator uid (0600).
+BOTDIR="$R/bot-context"; BOTDB="$BOTDIR/whatsapp-bot-context.sqlite"
+run install -d -m 700 "$BOTDIR"
+run docker run --rm --network none -v newvillacarmen-prod_whatsapp-bot-context:/src:ro -v "$BOTDIR":/dst alpine sh -c "set -e; cd /src; test -e whatsapp-bot-context.sqlite; for f in whatsapp-bot-context.sqlite whatsapp-bot-context.sqlite-wal whatsapp-bot-context.sqlite-shm; do [ -e \$f ] || continue; cp -p \$f /dst/\$f; chown $(id -u):$(id -g) /dst/\$f; chmod 600 /dst/\$f; echo copied \$f; done; ls -l /dst"
 BOTDSN="host=$CUTOVER_DIR/pgsock user=postgres dbname=$PGDB sslmode=disable"
-run env BOT_CONTEXT_POSTGRES_DSN="$BOTDSN" BOT_CONTEXT_POSTGRES_SCHEMA=bot_context "$BIN_DIR/botstore-migrate" -mode inspect -sqlite "$R/bot-context.sqlite"
-stop_if env BOT_CONTEXT_POSTGRES_DSN="$BOTDSN" BOT_CONTEXT_POSTGRES_SCHEMA=bot_context "$BIN_DIR/botstore-migrate" -mode copy -sqlite "$R/bot-context.sqlite"
-stop_if env BOT_CONTEXT_POSTGRES_DSN="$BOTDSN" BOT_CONTEXT_POSTGRES_SCHEMA=bot_context "$BIN_DIR/botstore-migrate" -mode verify -sqlite "$R/bot-context.sqlite"
+run env BOT_CONTEXT_POSTGRES_DSN="$BOTDSN" BOT_CONTEXT_POSTGRES_SCHEMA=bot_context "$BIN_DIR/botstore-migrate" -mode inspect -sqlite "$BOTDB"
+stop_if env BOT_CONTEXT_POSTGRES_DSN="$BOTDSN" BOT_CONTEXT_POSTGRES_SCHEMA=bot_context "$BIN_DIR/botstore-migrate" -mode copy -sqlite "$BOTDB"
+stop_if env BOT_CONTEXT_POSTGRES_DSN="$BOTDSN" BOT_CONTEXT_POSTGRES_SCHEMA=bot_context "$BIN_DIR/botstore-migrate" -mode verify -sqlite "$BOTDB"
 say "import OK (IMPORT_OK_AT=$(date -Iseconds)); results in $R"

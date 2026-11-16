@@ -50,7 +50,7 @@ if [[ -n "${MYSQL_CLI:-}" ]]; then
 	o3=$(q "SELECT COUNT(*) FROM site_builder_domain_mappings c LEFT JOIN site_builder_sites s ON s.id=c.site_id WHERE c.site_id IS NOT NULL AND s.id IS NULL")
 	o4=$(q "SELECT COUNT(*) FROM site_builder_pages c LEFT JOIN site_builder_sites s ON s.id=c.site_id WHERE c.site_id IS NOT NULL AND s.id IS NULL")
 	[[ "$o1/$o2/$o3/$o4" == "1/726/3/1" ]] && pass "orphans 1/726/3/1 = 731" || failc "orphans $o1/$o2/$o3/$o4 (expected 1/726/3/1): STOP for a decision, regenerate the allowlist"
-	nul=$(q "SELECT COUNT(*) FROM assistant_messages WHERE LOCATE(BINARY UNHEX('00'), content) > 0")
+	nul=$(q "SELECT COUNT(*) FROM assistant_messages WHERE INSTR(CAST(content AS BINARY), 0x00) > 0")
 	[[ "$nul" == "${EXPECTED_NUL:-1}" ]] && pass "NUL rows assistant_messages.content=$nul" || failc "NUL rows=$nul (expected ${EXPECTED_NUL:-1}): bytea storage override decision"
 else
 	failc "MYSQL_CLI not set: MySQL checks skipped"
