@@ -81,7 +81,7 @@ func ensureDatabaseExists(cfg config.MySQLConfig) error {
 		"CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
 		strings.ReplaceAll(dbName, "`", "``"),
 	)
-	_, createErr := adminDB.ExecContext(ctx, stmt)
+	_, createErr := adminDB.ExecContext(ctx, mysqlOnlySQL(stmt))
 	if createErr == nil {
 		return nil
 	}

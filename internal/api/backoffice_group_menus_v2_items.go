@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Coordination id: wa_bot_menu_item_crud_v1
@@ -85,11 +86,11 @@ func (s *Server) handleBOGroupMenusV2CreateSectionDish(w http.ResponseWriter, r 
 	// Lock the section row: concurrent single-dish creates (panel + bot) would
 	// otherwise read the same MAX(position) and collide.
 	var lockedID int64
-	err = tx.QueryRowContext(r.Context(), `
+	err = tx.QueryRowContext(r.Context(), portableSQL(`
 		SELECT id FROM group_menu_sections_v2
 		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
 		FOR UPDATE
-	`, sectionID, menuID, a.ActiveRestaurantID).Scan(&lockedID)
+	`), sectionID, menuID, a.ActiveRestaurantID).Scan(&lockedID)
 	if err == sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
 		return
@@ -99,38 +100,42 @@ func (s *Server) handleBOGroupMenusV2CreateSectionDish(w http.ResponseWriter, r 
 		return
 	}
 	var nextPos int
-	if err := tx.QueryRowContext(r.Context(), `
+	if err := tx.QueryRowContext(r.Context(), portableSQL(`
 		SELECT COALESCE(MAX(position), -1) + 1 FROM group_menu_section_dishes_v2
 		WHERE section_id = ? AND menu_id = ? AND restaurant_id = ?
-	`, sectionID, menuID, a.ActiveRestaurantID).Scan(&nextPos); err != nil {
+	`), sectionID, menuID, a.ActiveRestaurantID).Scan(&nextPos); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error ordenando platos")
 		return
 	}
 	position := nextPos
 	if req.Position != nil && *req.Position >= 0 && *req.Position < nextPos {
 		position = *req.Position
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`
 			UPDATE group_menu_section_dishes_v2 SET position = position + 1
 			WHERE section_id = ? AND menu_id = ? AND restaurant_id = ? AND position >= ?
-		`, sectionID, menuID, a.ActiveRestaurantID, position); err != nil {
+		`), sectionID, menuID, a.ActiveRestaurantID, position); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error ordenando platos")
 			return
 		}
 	}
 
-	res, err := tx.ExecContext(r.Context(), `
+	dishID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, nativeSQL(`
 		INSERT INTO group_menu_section_dishes_v2
 			(restaurant_id, menu_id, section_id, catalog_dish_id, title_snapshot, description_snapshot,
 			 description_enabled, allergens_json, supplement_enabled, supplement_price, price, active, position)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, a.ActiveRestaurantID, menuID, sectionID, req.CatalogDishID, title, description,
+	`, `
+		INSERT INTO group_menu_section_dishes_v2
+			(restaurant_id, menu_id, section_id, catalog_dish_id, title_snapshot, description_snapshot,
+			 description_enabled, allergens_json, supplement_enabled, supplement_price, price, active, position)
+		VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?, ?)
+	`), "id", a.ActiveRestaurantID, menuID, sectionID, req.CatalogDishID, title, description,
 		boolToTinyint(descEnabled), mustJSON(allergens, []any{}), boolToTinyint(req.SupplementEnabled),
 		req.SupplementPrice, req.Price, boolToTinyint(active), position)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando plato")
 		return
 	}
-	dishID, _ := res.LastInsertId()
 	if req.ApplyToCatalog {
 		if err := propagateSectionDishToCatalog(r.Context(), tx, a.ActiveRestaurantID, req.CatalogDishID, title, description, allergens, req.SupplementEnabled, req.SupplementPrice); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando la ficha general del plato")
@@ -184,10 +189,10 @@ func (s *Server) handleBOGroupMenusV2DeleteSectionDish(w http.ResponseWriter, r 
 	if s.guardGeneralDessertSection(w, r, a.ActiveRestaurantID, menuID, sectionID) {
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`
 		DELETE FROM group_menu_section_dishes_v2
 		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?
-	`, dishID, sectionID, menuID, a.ActiveRestaurantID)
+	`), dishID, sectionID, menuID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando plato")
 		return
@@ -258,19 +263,23 @@ func (s *Server) handleBOGroupMenusV2CreateSection(w http.ResponseWriter, r *htt
 	kind := normalizeV2SectionKind(firstNonEmpty(derefString(req.Kind), "custom"))
 	dessertSource := normalizeV2SectionDessertSource(kind, derefString(req.DessertSource))
 	annotations := normalizeV2SectionAnnotations(req.Annotations)
-	res, err := s.db.ExecContext(r.Context(), `
+	sectionID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, nativeSQL(`
 		INSERT INTO group_menu_sections_v2
 			(restaurant_id, menu_id, title, display_title, subtitle, tab_label, section_kind, dessert_source, position, annotations_json)
 		SELECT ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(MAX(position), -1) + 1, ?
 		FROM group_menu_sections_v2 WHERE restaurant_id = ? AND menu_id = ?
-	`, a.ActiveRestaurantID, menuID, title, clipSectionText(derefString(req.DisplayTitle), 255),
+	`, `
+		INSERT INTO group_menu_sections_v2
+			(restaurant_id, menu_id, title, display_title, subtitle, tab_label, section_kind, dessert_source, position, annotations_json)
+		SELECT CAST(? AS integer), CAST(? AS integer), CAST(? AS text), CAST(? AS text), CAST(? AS text), CAST(? AS text), CAST(? AS text), CAST(? AS text), COALESCE(MAX(position), -1) + 1, CAST(? AS text)
+		FROM group_menu_sections_v2 WHERE restaurant_id = ? AND menu_id = ?
+	`), "id", a.ActiveRestaurantID, menuID, title, clipSectionText(derefString(req.DisplayTitle), 255),
 		clipSectionText(derefString(req.Subtitle), 500), clipSectionText(derefString(req.TabLabel), 255),
 		kind, dessertSource, mustJSON(annotations, []any{}), a.ActiveRestaurantID, menuID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando seccion")
 		return
 	}
-	sectionID, _ := res.LastInsertId()
 	if err := s.syncBOMenuV2LegacySnapshot(r, a.ActiveRestaurantID, menuID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error sincronizando snapshot")
 		return
@@ -304,10 +313,10 @@ func (s *Server) handleBOGroupMenusV2PatchSection(w http.ResponseWriter, r *http
 		return
 	}
 	var curTitle, curKind, curSource, curAnnotations string
-	err = s.db.QueryRowContext(r.Context(), `
+	err = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT COALESCE(title,''), COALESCE(section_kind,'custom'), COALESCE(dessert_source,'custom'), COALESCE(annotations_json,'')
 		FROM group_menu_sections_v2 WHERE id = ? AND menu_id = ? AND restaurant_id = ?
-	`, sectionID, menuID, a.ActiveRestaurantID).Scan(&curTitle, &curKind, &curSource, &curAnnotations)
+	`), sectionID, menuID, a.ActiveRestaurantID).Scan(&curTitle, &curKind, &curSource, &curAnnotations)
 	if err == sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
 		return
@@ -356,7 +365,8 @@ func (s *Server) handleBOGroupMenusV2PatchSection(w http.ResponseWriter, r *http
 		return
 	}
 	args = append(args, sectionID, menuID, a.ActiveRestaurantID)
-	if _, err := s.db.ExecContext(r.Context(), "UPDATE group_menu_sections_v2 SET "+strings.Join(sets, ", ")+" WHERE id = ? AND menu_id = ? AND restaurant_id = ?", args...); err != nil {
+	// Composed from fixed lowercase SET items (title/display_title/subtitle/tab_label/section_kind/dessert_source/annotations_json); rebound once, RowsAffected unused.
+	if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE group_menu_sections_v2 SET "+strings.Join(sets, ", ")+" WHERE id = ? AND menu_id = ? AND restaurant_id = ?"), args...); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando seccion")
 		return
 	}

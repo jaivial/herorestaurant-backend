@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"strconv"
 	"strings"
 	"time"
@@ -63,10 +64,12 @@ func posCashShiftScope(shiftID int64) posCashScope {
 // Coordination id: pos_cash_closure_y_period_v1
 func posCashShiftPeriodScope(shiftID int64, since time.Time) posCashScope {
 	return posCashScope{
-		ticketWhere:   "t.shift_id=? AND COALESCE(t.paid_at,t.voided_at,NOW())>?",
-		ticketArgs:    []any{shiftID, since},
+		// paid_at/voided_at/created_at are naive UTC DATETIMEs: NOW() -> UTC
+		// statement time; since bound as naive UTC (sqldb_native_pg_v1).
+		ticketWhere:   sqlFragment("t.shift_id=? AND COALESCE(t.paid_at,t.voided_at,NOW())>?", "t.shift_id=? AND COALESCE(t.paid_at,t.voided_at,date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'))>?"),
+		ticketArgs:    []any{shiftID, sqldb.NaiveUTCArg(sqlDialect, since)},
 		movementWhere: "m.shift_id=? AND m.created_at>?",
-		movementArgs:  []any{shiftID, since},
+		movementArgs:  []any{shiftID, sqldb.NaiveUTCArg(sqlDialect, since)},
 		refundShiftID: shiftID,
 		refundSince:   &since,
 	}
@@ -144,7 +147,7 @@ func (s posCashSummary) asMap() map[string]any {
 func (s *Server) loadPOSCashSummary(ctx context.Context, q posCashQueryer, restaurantID int, shiftID int64) (posCashSummary, error) {
 	var out posCashSummary
 	out.ShiftID = shiftID
-	if err := q.QueryRowContext(ctx, `SELECT terminal_key,status,opening_cash_cents,opened_at,closed_at FROM pos_shifts WHERE restaurant_id=? AND id=?`, restaurantID, shiftID).Scan(&out.TerminalKey, &out.Status, &out.OpeningCash, &out.OpenedAt, &out.ClosedAt); err != nil {
+	if err := q.QueryRowContext(ctx, nativeSQL(`SELECT terminal_key,status,opening_cash_cents,opened_at,closed_at FROM pos_shifts WHERE restaurant_id=? AND id=?`, `SELECT terminal_key,CAST(status AS text),opening_cash_cents,opened_at,closed_at FROM pos_shifts WHERE restaurant_id=? AND id=?`), restaurantID, shiftID).Scan(&out.TerminalKey, &out.Status, &out.OpeningCash, &out.OpenedAt, &out.ClosedAt); err != nil {
 		return out, err
 	}
 	return s.loadPOSCashSummaryScoped(ctx, q, restaurantID, posCashShiftScope(shiftID), out)
@@ -163,12 +166,12 @@ func (s *Server) loadPOSCashClosureSummary(ctx context.Context, q posCashQueryer
 	}
 	var out posCashSummary
 	out.ShiftID = shiftID
-	if err := q.QueryRowContext(ctx, `SELECT terminal_key,status,opening_cash_cents,opened_at,closed_at FROM pos_shifts WHERE restaurant_id=? AND id=?`, restaurantID, shiftID).Scan(&out.TerminalKey, &out.Status, &out.OpeningCash, &out.OpenedAt, &out.ClosedAt); err != nil {
+	if err := q.QueryRowContext(ctx, nativeSQL(`SELECT terminal_key,status,opening_cash_cents,opened_at,closed_at FROM pos_shifts WHERE restaurant_id=? AND id=?`, `SELECT terminal_key,CAST(status AS text),opening_cash_cents,opened_at,closed_at FROM pos_shifts WHERE restaurant_id=? AND id=?`), restaurantID, shiftID).Scan(&out.TerminalKey, &out.Status, &out.OpeningCash, &out.OpenedAt, &out.ClosedAt); err != nil {
 		return out, err
 	}
 	var lastAt time.Time
 	var lastFloat int64
-	err := q.QueryRowContext(ctx, `SELECT generated_at,COALESCE(counted_cash_cents,expected_cash_cents) FROM pos_cash_closures WHERE restaurant_id=? AND shift_id=? AND closure_type='Y' ORDER BY generated_at DESC,id DESC LIMIT 1`, restaurantID, shiftID).Scan(&lastAt, &lastFloat)
+	err := q.QueryRowContext(ctx, portableSQL(`SELECT generated_at,COALESCE(counted_cash_cents,expected_cash_cents) FROM pos_cash_closures WHERE restaurant_id=? AND shift_id=? AND closure_type='Y' ORDER BY generated_at DESC,id DESC LIMIT 1`), restaurantID, shiftID).Scan(&lastAt, &lastFloat)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return out, err
 	}
@@ -182,7 +185,7 @@ func (s *Server) loadPOSCashSummaryScoped(ctx context.Context, q posCashQueryer,
 	// Every ticket belongs to a visit (pos_tickets.visit_id is NOT NULL), so the
 	// join is lossless and lets a scope filter on either side.
 	ticketFrom := `FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE t.restaurant_id=? AND ` + scope.ticketWhere
-	if err := q.QueryRowContext(ctx, `
+	if err := q.QueryRowContext(ctx, portableSQL(`
 		SELECT
 			COUNT(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN 1 END),
 			COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.total_gross_cents ELSE 0 END),0),
@@ -191,7 +194,7 @@ func (s *Server) loadPOSCashSummaryScoped(ctx context.Context, q posCashQueryer,
 			COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.surcharge_cents ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.tip_cents ELSE 0 END),0),
 			COUNT(CASE WHEN t.status='VOIDED' THEN 1 END)
-		`+ticketFrom, scope.ticketQueryArgs(restaurantID)...).
+		`+ticketFrom), scope.ticketQueryArgs(restaurantID)...).
 		Scan(&out.TicketCount, &out.SalesGross, &out.Refunds, &out.Discounts, &out.Surcharges, &out.Tips, &out.VoidedTicketCount); err != nil {
 		return out, err
 	}
@@ -199,7 +202,7 @@ func (s *Server) loadPOSCashSummaryScoped(ctx context.Context, q posCashQueryer,
 	// scope arguments.
 	scopedTicketIDs := `SELECT t.id ` + ticketFrom
 	subqueryArgs := append([]any{restaurantID}, scope.ticketQueryArgs(restaurantID)...)
-	rows, err := q.QueryContext(ctx, `SELECT method,COALESCE(SUM(amount_cents),0),COALESCE(SUM(tip_cents),0) FROM pos_payments WHERE restaurant_id=? AND status='CAPTURED' AND ticket_id IN (`+scopedTicketIDs+`) GROUP BY method`, subqueryArgs...)
+	rows, err := q.QueryContext(ctx, portableSQL(`SELECT `+sqlFragment("method", "CAST(method AS text)")+`,COALESCE(SUM(amount_cents),0),COALESCE(SUM(tip_cents),0) FROM pos_payments WHERE restaurant_id=? AND status='CAPTURED' AND ticket_id IN (`+scopedTicketIDs+`) GROUP BY method`), subqueryArgs...)
 	if err != nil {
 		return out, err
 	}
@@ -232,20 +235,20 @@ func (s *Server) loadPOSCashSummaryScoped(ctx context.Context, q posCashQueryer,
 	refundSQL, refundArgs := `SELECT COALESCE(SUM(CASE WHEN payment_method='CASH' THEN amount_cents ELSE 0 END),0),COALESCE(SUM(amount_cents),0) FROM pos_refunds WHERE restaurant_id=? AND status='COMPLETED' AND ticket_id IN (`+scopedTicketIDs+`)`, subqueryArgs
 	if scope.refundSince != nil {
 		refundSQL = `SELECT COALESCE(SUM(CASE WHEN r.payment_method='CASH' THEN r.amount_cents ELSE 0 END),0),COALESCE(SUM(r.amount_cents),0) FROM pos_refunds r JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id WHERE r.restaurant_id=? AND r.status='COMPLETED' AND t.shift_id=? AND r.created_at>?`
-		refundArgs = []any{restaurantID, scope.refundShiftID, *scope.refundSince}
+		refundArgs = []any{restaurantID, scope.refundShiftID, sqldb.NaiveUTCArg(sqlDialect, *scope.refundSince)}
 	}
 	var periodRefunds int64
-	if err = q.QueryRowContext(ctx, refundSQL, refundArgs...).Scan(&out.CashRefunds, &periodRefunds); err != nil {
+	if err = q.QueryRowContext(ctx, portableSQL(refundSQL), refundArgs...).Scan(&out.CashRefunds, &periodRefunds); err != nil {
 		return out, err
 	}
 	if scope.refundSince != nil {
 		out.Refunds = periodRefunds
 	}
 	movementArgs := append([]any{restaurantID}, scope.movementArgs...)
-	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN m.movement_type='IN' THEN m.amount_cents ELSE 0 END),0),COALESCE(SUM(CASE WHEN m.movement_type='OUT' THEN m.amount_cents ELSE 0 END),0) FROM pos_cash_movements m JOIN pos_shifts sh ON sh.restaurant_id=m.restaurant_id AND sh.id=m.shift_id WHERE m.restaurant_id=? AND `+scope.movementWhere, movementArgs...).Scan(&out.CashIn, &out.CashOut); err != nil {
+	if err = q.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(SUM(CASE WHEN m.movement_type='IN' THEN m.amount_cents ELSE 0 END),0),COALESCE(SUM(CASE WHEN m.movement_type='OUT' THEN m.amount_cents ELSE 0 END),0) FROM pos_cash_movements m JOIN pos_shifts sh ON sh.restaurant_id=m.restaurant_id AND sh.id=m.shift_id WHERE m.restaurant_id=? AND `+scope.movementWhere), movementArgs...).Scan(&out.CashIn, &out.CashOut); err != nil {
 		return out, err
 	}
-	if err = q.QueryRowContext(ctx, `SELECT COALESCE(SUM(x.covers),0) FROM (SELECT DISTINCT v.id,v.covers `+ticketFrom+` AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')) x`, scope.ticketQueryArgs(restaurantID)...).Scan(&out.Covers); err != nil {
+	if err = q.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(SUM(x.covers),0) FROM (SELECT DISTINCT v.id,v.covers `+ticketFrom+` AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')) x`), scope.ticketQueryArgs(restaurantID)...).Scan(&out.Covers); err != nil {
 		return out, err
 	}
 	visitWhere, visitArgs := "", []any{restaurantID}
@@ -253,10 +256,10 @@ func (s *Server) loadPOSCashSummaryScoped(ctx context.Context, q posCashQueryer,
 		visitWhere = " AND " + scope.visitWhere
 		visitArgs = append(visitArgs, scope.visitArgs...)
 	}
-	if err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM pos_visits v WHERE v.restaurant_id=? AND v.status='OPEN'`+visitWhere, visitArgs...).Scan(&out.OpenVisitCount); err != nil {
+	if err = q.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM pos_visits v WHERE v.restaurant_id=? AND v.status='OPEN'`+visitWhere), visitArgs...).Scan(&out.OpenVisitCount); err != nil {
 		return out, err
 	}
-	if err = q.QueryRowContext(ctx, `SELECT COUNT(*) `+ticketFrom+` AND t.status='OPEN'`, scope.ticketQueryArgs(restaurantID)...).Scan(&out.OpenTicketCount); err != nil {
+	if err = q.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) `+ticketFrom+` AND t.status='OPEN'`), scope.ticketQueryArgs(restaurantID)...).Scan(&out.OpenTicketCount); err != nil {
 		return out, err
 	}
 	// Tips are collected on top of the sale. Cash tips therefore remain in the
@@ -271,7 +274,7 @@ func (s *Server) posCashShiftID(r *http.Request, requested int64) (int64, error)
 		return requested, nil
 	}
 	var id int64
-	err := s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`, a.ActiveRestaurantID).Scan(&id)
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT id FROM pos_shifts WHERE restaurant_id=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1`), a.ActiveRestaurantID).Scan(&id)
 	return id, err
 }
 
@@ -304,7 +307,7 @@ func (s *Server) handleBOPOSCashMovements(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusNotFound, "Shift not found")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by,created_at,COALESCE(approved_by,'') FROM pos_cash_movements WHERE restaurant_id=? AND shift_id=? ORDER BY created_at DESC,id DESC LIMIT 501`, a.ActiveRestaurantID, shiftID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by,created_at,COALESCE(approved_by,'') FROM pos_cash_movements WHERE restaurant_id=? AND shift_id=? ORDER BY created_at DESC,id DESC LIMIT 501`, `SELECT id,terminal_key,CAST(movement_type AS text),amount_cents,reason,idempotency_key,created_by,created_at,COALESCE(approved_by,'') FROM pos_cash_movements WHERE restaurant_id=? AND shift_id=? ORDER BY created_at DESC,id DESC LIMIT 501`), a.ActiveRestaurantID, shiftID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash movements")
 		return
@@ -363,7 +366,7 @@ func (s *Server) handleBOPOSCashMovementCreate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var shiftTerminal, status string
-	if err = s.db.QueryRowContext(r.Context(), `SELECT terminal_key,status FROM pos_shifts WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, shiftID).Scan(&shiftTerminal, &status); err != nil || status != "OPEN" {
+	if err = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT terminal_key,status FROM pos_shifts WHERE restaurant_id=? AND id=?`, `SELECT terminal_key,CAST(status AS text) FROM pos_shifts WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, shiftID).Scan(&shiftTerminal, &status); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Only an open shift accepts cash movements")
 		return
 	}
@@ -385,25 +388,24 @@ func (s *Server) handleBOPOSCashMovementCreate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var existing int64
-	if err = s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_cash_movements WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existing); err == nil {
+	if err = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM pos_cash_movements WHERE restaurant_id=? AND idempotency_key=?`, `SELECT id FROM pos_cash_movements WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`), a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existing); err == nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "movementId": existing, "shiftId": shiftID})
 		return
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error checking cash movement")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_cash_movements (restaurant_id,shift_id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by,approved_by) VALUES (?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, shiftID, in.TerminalKey, in.Type, in.AmountCents, in.Reason, in.IdempotencyKey, a.User.ID, nullIfEmpty(approvedBy))
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_cash_movements (restaurant_id,shift_id,terminal_key,movement_type,amount_cents,reason,idempotency_key,created_by,approved_by) VALUES (?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, shiftID, in.TerminalKey, in.Type, in.AmountCents, in.Reason, in.IdempotencyKey, a.User.ID, nullIfEmpty(approvedBy))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-			_ = s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_cash_movements WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existing)
+			_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM pos_cash_movements WHERE restaurant_id=? AND idempotency_key=?`, `SELECT id FROM pos_cash_movements WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`), a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existing)
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "movementId": existing, "shiftId": shiftID})
 			return
 		}
 		httpx.WriteError(w, http.StatusInternalServerError, "Error recording cash movement")
 		return
 	}
-	id, _ := res.LastInsertId()
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_movement',?,'CREATE',JSON_OBJECT('shiftId',?,'type',?,'amountCents',?,'reason',?,'approvedBy',?),?)`, a.ActiveRestaurantID, id, shiftID, in.Type, in.AmountCents, in.Reason, approvedBy, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_movement',?,'CREATE',JSON_OBJECT('shiftId',?,'type',?,'amountCents',?,'reason',?,'approvedBy',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_movement',?,'CREATE',jsonb_build_object('shiftId',CAST(? AS bigint),'type',CAST(? AS text),'amountCents',CAST(? AS bigint),'reason',CAST(? AS text),'approvedBy',CAST(? AS text)),?)`), a.ActiveRestaurantID, id, shiftID, in.Type, in.AmountCents, in.Reason, approvedBy, a.User.ID)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "movementId": id, "shiftId": shiftID, "type": in.Type, "amountCents": in.AmountCents, "approvedBy": approvedBy})
 }
 
@@ -416,7 +418,7 @@ func (s *Server) handleBOPOSCashClosures(w http.ResponseWriter, r *http.Request)
 		where += " AND shift_id=?"
 		args = append(args, requested)
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,shift_id,terminal_key,closure_type,generated_at,opening_cash_cents,sales_gross_cents,refunds_cents,tips_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,covers,note,created_by FROM pos_cash_closures WHERE `+where+` ORDER BY generated_at DESC,id DESC LIMIT 201`, args...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT id,shift_id,terminal_key,`+sqlFragment("closure_type", "CAST(closure_type AS text)")+`,generated_at,opening_cash_cents,sales_gross_cents,refunds_cents,tips_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,covers,note,created_by FROM pos_cash_closures WHERE `+where+` ORDER BY generated_at DESC,id DESC LIMIT 201`), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading cash closures")
 		return
@@ -483,7 +485,7 @@ func (s *Server) handleBOPOSCashClosureCreate(w http.ResponseWriter, r *http.Req
 	}
 	defer tx.Rollback()
 	var existingID int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_cash_closures WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existingID); err == nil {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM pos_cash_closures WHERE restaurant_id=? AND idempotency_key=?`, `SELECT id FROM pos_cash_closures WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`), a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existingID); err == nil {
 		tx.Rollback()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "closureId": existingID, "shiftId": shiftID})
 		return
@@ -492,7 +494,7 @@ func (s *Server) handleBOPOSCashClosureCreate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var status string
-	if err = tx.QueryRowContext(r.Context(), `SELECT status FROM pos_shifts WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, shiftID).Scan(&status); err != nil {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status FROM pos_shifts WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text) FROM pos_shifts WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, shiftID).Scan(&status); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Shift not found")
 		return
 	}
@@ -527,10 +529,16 @@ func (s *Server) handleBOPOSCashClosureCreate(w http.ResponseWriter, r *http.Req
 	if in.ClosureType == "Z" {
 		closedAt = time.Now()
 	}
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO pos_cash_closures (restaurant_id,shift_id,terminal_key,closure_type,opened_at,closed_at,opening_cash_cents,sales_gross_cents,refunds_cents,discounts_cents,surcharges_cents,tips_cents,cash_sales_cents,cash_tips_cents,card_sales_cents,card_tips_cents,bank_sales_cents,bank_tips_cents,other_sales_cents,other_tips_cents,cash_refunds_cents,cash_in_cents,cash_out_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,voided_ticket_count,covers,open_visit_count,open_ticket_count,note,discrepancy_reason,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, shiftID, summary.TerminalKey, in.ClosureType, summary.OpenedAt, closedAt, summary.OpeningCash, summary.SalesGross, summary.Refunds, summary.Discounts, summary.Surcharges, summary.Tips, summary.CashSales, summary.CashTips, summary.CardSales, summary.CardTips, summary.BankSales, summary.BankTips, summary.OtherSales, summary.OtherTips, summary.CashRefunds, summary.CashIn, summary.CashOut, summary.ExpectedCash, counted, difference, summary.TicketCount, summary.VoidedTicketCount, summary.Covers, summary.OpenVisitCount, summary.OpenTicketCount, stockNullableString(in.Note), stockNullableString(in.DiscrepancyReason), in.IdempotencyKey, a.User.ID)
+	// Duplicate branch reads inside the tx after the failed insert: savepoint on PG.
+	var closureID int64
+	err = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		var e error
+		closureID, e = sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_cash_closures (restaurant_id,shift_id,terminal_key,closure_type,opened_at,closed_at,opening_cash_cents,sales_gross_cents,refunds_cents,discounts_cents,surcharges_cents,tips_cents,cash_sales_cents,cash_tips_cents,card_sales_cents,card_tips_cents,bank_sales_cents,bank_tips_cents,other_sales_cents,other_tips_cents,cash_refunds_cents,cash_in_cents,cash_out_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,voided_ticket_count,covers,open_visit_count,open_ticket_count,note,discrepancy_reason,idempotency_key,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, shiftID, summary.TerminalKey, in.ClosureType, sqldb.NaiveUTCArg(sqlDialect, summary.OpenedAt), posNaiveAny(closedAt), summary.OpeningCash, summary.SalesGross, summary.Refunds, summary.Discounts, summary.Surcharges, summary.Tips, summary.CashSales, summary.CashTips, summary.CardSales, summary.CardTips, summary.BankSales, summary.BankTips, summary.OtherSales, summary.OtherTips, summary.CashRefunds, summary.CashIn, summary.CashOut, summary.ExpectedCash, counted, difference, summary.TicketCount, summary.VoidedTicketCount, summary.Covers, summary.OpenVisitCount, summary.OpenTicketCount, stockNullableString(in.Note), stockNullableString(in.DiscrepancyReason), in.IdempotencyKey, a.User.ID)
+		return e
+	})
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-			_ = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_cash_closures WHERE restaurant_id=? AND idempotency_key=?`, a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existingID)
+			_ = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM pos_cash_closures WHERE restaurant_id=? AND idempotency_key=?`, `SELECT id FROM pos_cash_closures WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`), a.ActiveRestaurantID, in.IdempotencyKey).Scan(&existingID)
 			tx.Rollback()
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true, "closureId": existingID, "shiftId": shiftID})
 			return
@@ -538,14 +546,17 @@ func (s *Server) handleBOPOSCashClosureCreate(w http.ResponseWriter, r *http.Req
 		httpx.WriteError(w, http.StatusInternalServerError, "Error recording cash closure")
 		return
 	}
-	closureID, _ := res.LastInsertId()
 	if in.ClosureType == "Z" {
-		if _, err = tx.ExecContext(r.Context(), `UPDATE pos_shifts SET status='CLOSED',closed_by=?,closing_cash_counted_cents=?,expected_cash_cents=?,closed_at=NOW(),notes=COALESCE(?,notes) WHERE restaurant_id=? AND id=?`, a.User.ID, *in.CountedCashCents, summary.ExpectedCash, stockNullableString(in.Note), a.ActiveRestaurantID, shiftID); err != nil {
+		if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_shifts SET status='CLOSED',closed_by=?,closing_cash_counted_cents=?,expected_cash_cents=?,closed_at=NOW(),notes=COALESCE(?,notes) WHERE restaurant_id=? AND id=?`, `UPDATE pos_shifts SET status='CLOSED',closed_by=?,closing_cash_counted_cents=?,expected_cash_cents=?,closed_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),notes=COALESCE(CAST(? AS text),notes) WHERE restaurant_id=? AND id=?`), a.User.ID, *in.CountedCashCents, summary.ExpectedCash, stockNullableString(in.Note), a.ActiveRestaurantID, shiftID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error closing shift")
 			return
 		}
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_closure',?,'CREATE',JSON_OBJECT('shiftId',?,'closureType',?,'expectedCashCents',?,'countedCashCents',?),?)`, a.ActiveRestaurantID, closureID, shiftID, in.ClosureType, summary.ExpectedCash, counted, a.User.ID)
+	// Ignored audit insert inside the tx: savepoint on PG.
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_closure',?,'CREATE',JSON_OBJECT('shiftId',?,'closureType',?,'expectedCashCents',?,'countedCashCents',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'cash_closure',?,'CREATE',jsonb_build_object('shiftId',CAST(? AS bigint),'closureType',CAST(? AS text),'expectedCashCents',CAST(? AS bigint),'countedCashCents',CAST(? AS bigint)),?)`), a.ActiveRestaurantID, closureID, shiftID, in.ClosureType, summary.ExpectedCash, counted, a.User.ID)
+		return e
+	})
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creating cash closure")
 		return
@@ -576,7 +587,7 @@ func (s *Server) handleBOPOSCashClosureGet(w http.ResponseWriter, r *http.Reques
 	var counted, difference sql.NullInt64
 	var opening, gross, refunds, discounts, surcharges, tips, cashSales, cashTips, cardSales, cardTips, bankSales, bankTips, otherSales, otherTips, cashRefunds, cashIn, cashOut, expected int64
 	var ticketCount, voidedCount, covers, openVisits, openTickets int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT shift_id,closure_type,terminal_key,generated_at,opening_cash_cents,sales_gross_cents,refunds_cents,discounts_cents,surcharges_cents,tips_cents,cash_sales_cents,cash_tips_cents,card_sales_cents,card_tips_cents,bank_sales_cents,bank_tips_cents,other_sales_cents,other_tips_cents,cash_refunds_cents,cash_in_cents,cash_out_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,voided_ticket_count,covers,open_visit_count,open_ticket_count FROM pos_cash_closures WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id).Scan(&shiftID, &kind, &terminal, &generated, &opening, &gross, &refunds, &discounts, &surcharges, &tips, &cashSales, &cashTips, &cardSales, &cardTips, &bankSales, &bankTips, &otherSales, &otherTips, &cashRefunds, &cashIn, &cashOut, &expected, &counted, &difference, &ticketCount, &voidedCount, &covers, &openVisits, &openTickets); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT shift_id,closure_type,terminal_key,generated_at,opening_cash_cents,sales_gross_cents,refunds_cents,discounts_cents,surcharges_cents,tips_cents,cash_sales_cents,cash_tips_cents,card_sales_cents,card_tips_cents,bank_sales_cents,bank_tips_cents,other_sales_cents,other_tips_cents,cash_refunds_cents,cash_in_cents,cash_out_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,voided_ticket_count,covers,open_visit_count,open_ticket_count FROM pos_cash_closures WHERE restaurant_id=? AND id=?`, `SELECT shift_id,CAST(closure_type AS text),terminal_key,generated_at,opening_cash_cents,sales_gross_cents,refunds_cents,discounts_cents,surcharges_cents,tips_cents,cash_sales_cents,cash_tips_cents,card_sales_cents,card_tips_cents,bank_sales_cents,bank_tips_cents,other_sales_cents,other_tips_cents,cash_refunds_cents,cash_in_cents,cash_out_cents,expected_cash_cents,counted_cash_cents,difference_cents,ticket_count,voided_ticket_count,covers,open_visit_count,open_ticket_count FROM pos_cash_closures WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id).Scan(&shiftID, &kind, &terminal, &generated, &opening, &gross, &refunds, &discounts, &surcharges, &tips, &cashSales, &cashTips, &cardSales, &cardTips, &bankSales, &bankTips, &otherSales, &otherTips, &cashRefunds, &cashIn, &cashOut, &expected, &counted, &difference, &ticketCount, &voidedCount, &covers, &openVisits, &openTickets); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Cash closure not found")
 		return
 	}
@@ -592,4 +603,13 @@ func (s *Server) handleBOPOSCashClosureGet(w http.ResponseWriter, r *http.Reques
 	snapshot["countedCashCents"] = nullableInt64(counted)
 	snapshot["differenceCents"] = nullableInt64(difference)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "closure": map[string]any{"id": id, "shiftId": shiftID, "closureType": kind, "terminalKey": terminal, "generatedAt": generated, "summary": snapshot}})
+}
+
+// posNaiveAny binds an optional time (nil or time.Time) for a naive UTC
+// DATETIME column; nil stays NULL. MySQL path: unchanged value.
+func posNaiveAny(v any) any {
+	if t, ok := v.(time.Time); ok {
+		return sqldb.NaiveUTCArg(sqlDialect, t)
+	}
+	return v
 }

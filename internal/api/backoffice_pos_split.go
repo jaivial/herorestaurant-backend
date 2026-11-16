@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 
 func (s *Server) handleBOPOSCategoriesList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,name,sort_order,is_active FROM pos_product_categories WHERE restaurant_id=? ORDER BY sort_order,name`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT id,name,sort_order,is_active FROM pos_product_categories WHERE restaurant_id=? ORDER BY sort_order,name`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading POS categories")
 		return
@@ -43,16 +44,17 @@ func (s *Server) saveBOPOSCategory(w http.ResponseWriter, r *http.Request, id in
 		return
 	}
 	if id == 0 {
-		res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_product_categories (restaurant_id,name,sort_order,is_active) VALUES (?,?,?,?)`, a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive))
+		newID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_product_categories (restaurant_id,name,sort_order,is_active) VALUES (?,?,?,?)`), "id", a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive))
 		if err != nil {
 			httpx.WriteError(w, 400, "POS category could not be created")
 			return
 		}
-		id, _ = res.LastInsertId()
+		id = newID
 		httpx.WriteJSON(w, 201, map[string]any{"success": true, "id": id})
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `UPDATE pos_product_categories SET name=?,sort_order=?,is_active=? WHERE restaurant_id=? AND id=?`, strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive), a.ActiveRestaurantID, id)
+	// Unchanged save -> 404 on MySQL (changed rows); PG twin keeps it.
+	res, err := s.db.ExecContext(r.Context(), nativeSQL(`UPDATE pos_product_categories SET name=?,sort_order=?,is_active=? WHERE restaurant_id=? AND id=?`, `UPDATE pos_product_categories SET name=?,sort_order=?,is_active=? WHERE restaurant_id=? AND id=? AND ROW(name COLLATE "C",sort_order,is_active) IS DISTINCT FROM ROW(CAST(? AS text) COLLATE "C",CAST(? AS integer),CAST(? AS smallint))`), posChangedRowArgs([]any{strings.TrimSpace(in.Name), in.SortOrder, stockBoolInt(in.IsActive)}, a.ActiveRestaurantID, id)...)
 	if err != nil {
 		httpx.WriteError(w, 400, "POS category could not be updated")
 		return
@@ -74,12 +76,12 @@ func (s *Server) handleBOPOSCategoryDelete(w http.ResponseWriter, r *http.Reques
 	a, _ := boAuthFromContext(r.Context())
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var used int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM pos_products WHERE restaurant_id=? AND category_id=?)`, a.ActiveRestaurantID, id).Scan(&used)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT EXISTS(SELECT 1 FROM pos_products WHERE restaurant_id=? AND category_id=?)`, `SELECT CAST(EXISTS(SELECT 1 FROM pos_products WHERE restaurant_id=? AND category_id=?) AS integer)`), a.ActiveRestaurantID, id).Scan(&used)
 	if used != 0 {
 		httpx.WriteError(w, 409, "POS category is in use")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_product_categories WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_product_categories WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error deleting POS category")
 		return
@@ -113,11 +115,11 @@ func (s *Server) handleBOPOSTicketVoid(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var activeLines int
-	if err = tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE'`, a.ActiveRestaurantID, ticketID).Scan(&activeLines); err != nil || activeLines > 0 {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE'`), a.ActiveRestaurantID, ticketID).Scan(&activeLines); err != nil || activeLines > 0 {
 		httpx.WriteError(w, 409, "Only empty tickets can be voided")
 		return
 	}
-	res, err := tx.ExecContext(r.Context(), `UPDATE pos_tickets SET status='VOIDED',voided_at=NOW(),closed_by=?,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, a.User.ID, a.ActiveRestaurantID, ticketID)
+	res, err := tx.ExecContext(r.Context(), nativeSQL(`UPDATE pos_tickets SET status='VOIDED',voided_at=NOW(),closed_by=?,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`, `UPDATE pos_tickets SET status='VOIDED',voided_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),closed_by=?,version=version+1 WHERE restaurant_id=? AND id=? AND status='OPEN'`), a.User.ID, a.ActiveRestaurantID, ticketID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error voiding ticket")
 		return
@@ -126,7 +128,11 @@ func (s *Server) handleBOPOSTicketVoid(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 409, "Ticket is not open")
 		return
 	}
-	_, _ = tx.ExecContext(r.Context(), `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'VOID',JSON_OBJECT('reason',?),?)`, a.ActiveRestaurantID, ticketID, strings.TrimSpace(in.Reason), a.User.ID)
+	// Ignored audit insert inside the tx: savepoint on PG.
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'VOID',JSON_OBJECT('reason',?),?)`, `INSERT INTO pos_audit_events (restaurant_id,entity_type,entity_id,action,after_json,actor_user_id) VALUES (?,'ticket',?,'VOID',jsonb_build_object('reason',CAST(? AS text)),?)`), a.ActiveRestaurantID, ticketID, strings.TrimSpace(in.Reason), a.User.ID)
+		return e
+	})
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, 500, "Error voiding ticket")
 		return

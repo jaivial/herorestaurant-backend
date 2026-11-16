@@ -45,7 +45,7 @@ func Apply(ctx context.Context, db *sql.DB) error {
 			continue
 		}
 
-		if _, err := db.ExecContext(ctx, sqlText); err != nil {
+		if _, err := db.ExecContext(ctx, mysqlOnlySQL(sqlText)); err != nil {
 			return fmt.Errorf("migration %s failed: %w", name, err)
 		}
 		if err := markApplied(ctx, db, name); err != nil {
@@ -57,19 +57,19 @@ func Apply(ctx context.Context, db *sql.DB) error {
 }
 
 func ensureMigrationsTable(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, mysqlOnlySQL(`
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			id VARCHAR(255) NOT NULL,
 			applied_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (id)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-	`)
+	`))
 	return err
 }
 
 func isApplied(ctx context.Context, db *sql.DB, id string) (bool, error) {
 	var tmp string
-	err := db.QueryRowContext(ctx, "SELECT id FROM schema_migrations WHERE id = ? LIMIT 1", id).Scan(&tmp)
+	err := db.QueryRowContext(ctx, mysqlOnlySQL("SELECT id FROM schema_migrations WHERE id = ? LIMIT 1"), id).Scan(&tmp)
 	if err == nil {
 		return true, nil
 	}
@@ -80,6 +80,6 @@ func isApplied(ctx context.Context, db *sql.DB, id string) (bool, error) {
 }
 
 func markApplied(ctx context.Context, db *sql.DB, id string) error {
-	_, err := db.ExecContext(ctx, "INSERT INTO schema_migrations (id) VALUES (?)", id)
+	_, err := db.ExecContext(ctx, mysqlOnlySQL("INSERT INTO schema_migrations (id) VALUES (?)"), id)
 	return err
 }

@@ -13,11 +13,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 const stockDocumentMaxBytes = 10 << 20
@@ -70,6 +72,14 @@ func stockDocumentMediaType(payload []byte) (string, bool) {
 func stockAliasDescription(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if len(value) > 255 {
+		// padding_contact_key_v1 (revises padmixed1): keep the source 255-BYTE
+		// cut byte-exact. When byte 255 falls inside a UTF-8 sequence the source
+		// produced invalid UTF-8 (rejected by MySQL strict mode / PG); a shorter
+		// rune-safe key would be a NEW identity that may collide with another
+		// alias, so fail closed: "" = not storable / not matchable.
+		if !utf8.RuneStart(value[255]) {
+			return ""
+		}
 		value = value[:255]
 	}
 	return value
@@ -145,25 +155,26 @@ func (s *Server) saveBOStockDocumentExtractionWithFileModel(r *http.Request, res
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_document_scans (restaurant_id,document_type,source,file_path,storage_provider,storage_bucket,content_type,size_bytes,original_filename,retention_until,file_hash,raw_text,status,supplier_name,document_number,document_date,raw_extraction,model,confidence,uploaded_by) VALUES (?,?,?,IF(?='',NULL,?),IF(?='',NULL,'BUNNY_PRIVATE'),IF(?='',NULL,?),?,?,?,?,?,?,'NEEDS_REVIEW',?,?,NULLIF(?,''),?,?,?,?)`, restaurantID, documentType, source, objectPath, stockNullableString(objectPath), objectPath, objectPath, stockNullableString(s.bunnyCreds(r.Context(), restaurantID).PrivateStorageZone), stockNullableString(contentType), stockNullableInt64(size), stockNullableString(filename), retentionUntil, stockNullableString(fileHash), stockNullableString(rawText), stockNullableString(extraction.SupplierName), stockNullableString(extraction.DocumentNumber), extraction.DocumentDate, raw, model, extraction.Confidence, userID)
+	scanID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, nativeSQL(`INSERT INTO stock_document_scans (restaurant_id,document_type,source,file_path,storage_provider,storage_bucket,content_type,size_bytes,original_filename,retention_until,file_hash,raw_text,status,supplier_name,document_number,document_date,raw_extraction,model,confidence,uploaded_by) VALUES (?,?,?,IF(?='',NULL,?),IF(?='',NULL,'BUNNY_PRIVATE'),IF(?='',NULL,?),?,?,?,?,?,?,'NEEDS_REVIEW',?,?,NULLIF(?,''),?,?,?,?)`, `INSERT INTO stock_document_scans (restaurant_id,document_type,source,file_path,storage_provider,storage_bucket,content_type,size_bytes,original_filename,retention_until,file_hash,raw_text,status,supplier_name,document_number,document_date,raw_extraction,model,confidence,uploaded_by) VALUES (?,?,?,CASE WHEN CAST(? AS text)='' THEN NULL ELSE ? END,CASE WHEN CAST(? AS text)='' THEN NULL ELSE 'BUNNY_PRIVATE' END,CASE WHEN CAST(? AS text)='' THEN NULL ELSE ? END,?,?,?,?,?,?,'NEEDS_REVIEW',?,?,CAST(NULLIF(CAST(? AS text),'') AS date),CAST(? AS jsonb),?,?,?)`), "id", restaurantID, documentType, source, objectPath, stockNullableString(objectPath), objectPath, objectPath, stockNullableString(s.bunnyCreds(r.Context(), restaurantID).PrivateStorageZone), stockNullableString(contentType), stockNullableInt64(size), stockNullableString(filename), retentionUntil, stockNullableString(fileHash), stockNullableString(rawText), stockNullableString(extraction.SupplierName), stockNullableString(extraction.DocumentNumber), extraction.DocumentDate, raw, model, extraction.Confidence, userID)
 	if err != nil {
 		return 0, err
 	}
-	scanID, _ := res.LastInsertId()
 	for index, line := range stockDocumentLines(extraction) {
 		description := strings.TrimSpace(line.Description)
 		if description == "" {
 			continue
 		}
 		var matchedItemID, matchedUnitID sql.NullInt64
-		if extraction.SupplierName != "" {
-			_ = tx.QueryRowContext(r.Context(), `SELECT stock_item_id,stock_unit_id FROM stock_supplier_aliases WHERE restaurant_id=? AND supplier_name=? AND (supplier_code=? OR (?='' AND normalized_description=?)) ORDER BY supplier_code=? DESC LIMIT 1`, restaurantID, extraction.SupplierName, line.Code, line.Code, stockAliasDescription(description), line.Code).Scan(&matchedItemID, &matchedUnitID)
+		if extraction.SupplierName != "" && stockAliasDescription(description) != "" {
+			_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+				return tx.QueryRowContext(r.Context(), nativeSQL(`SELECT stock_item_id,stock_unit_id FROM stock_supplier_aliases WHERE restaurant_id=? AND supplier_name=? AND (supplier_code=? OR (?='' AND normalized_description=?)) ORDER BY supplier_code=? DESC LIMIT 1`, `SELECT stock_item_id,stock_unit_id FROM stock_supplier_aliases WHERE restaurant_id=? AND app.norm(supplier_name) = app.norm(?) AND (app.norm(supplier_code) = app.norm(?) OR (CAST(? AS text)='' AND app.norm(normalized_description) = app.norm(?))) ORDER BY (app.norm(supplier_code) = app.norm(?)) DESC NULLS LAST LIMIT 1`), restaurantID, extraction.SupplierName, line.Code, line.Code, stockAliasDescription(description), line.Code).Scan(&matchedItemID, &matchedUnitID)
+			})
 		}
 		status := "NEEDS_MATCH"
 		if matchedItemID.Valid && matchedUnitID.Valid {
 			status = "OK"
 		}
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_document_lines (restaurant_id,document_scan_id,line_no,raw_description,raw_code,raw_qty,raw_unit,raw_unit_price,raw_total,matched_stock_item_id,matched_unit_id,match_confidence,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, restaurantID, scanID, index+1, description, stockNullableString(line.Code), stockNullableFloat(line.Quantity), stockNullableString(line.Unit), stockNullableFloat(line.UnitPrice), stockNullableFloat(line.Total), matchedItemID, matchedUnitID, stockNullableFloat(line.Confidence), status)
+		_, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_document_lines (restaurant_id,document_scan_id,line_no,raw_description,raw_code,raw_qty,raw_unit,raw_unit_price,raw_total,matched_stock_item_id,matched_unit_id,match_confidence,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`), restaurantID, scanID, index+1, description, stockNullableString(line.Code), stockNullableFloat(line.Quantity), stockNullableString(line.Unit), stockNullableFloat(line.UnitPrice), stockNullableFloat(line.Total), matchedItemID, matchedUnitID, stockNullableFloat(line.Confidence), status)
 		if err != nil {
 			return 0, err
 		}
@@ -226,7 +237,7 @@ func (s *Server) handleBOStockDocumentUpload(w http.ResponseWriter, r *http.Requ
 	}
 	fileHash := stockDocumentHash(payload)
 	var existingID int64
-	err = s.db.QueryRowContext(r.Context(), `SELECT id FROM stock_document_scans WHERE restaurant_id=? AND file_hash=? LIMIT 1`, a.ActiveRestaurantID, fileHash).Scan(&existingID)
+	err = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM stock_document_scans WHERE restaurant_id=? AND file_hash=? LIMIT 1`, `SELECT id FROM stock_document_scans WHERE restaurant_id=? AND app.norm_ascii(file_hash) = app.norm_ascii(?) LIMIT 1`), a.ActiveRestaurantID, fileHash).Scan(&existingID)
 	if err == nil {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Document already uploaded", "id": existingID})
 		return
@@ -295,7 +306,7 @@ func (s *Server) handleBOStockDocumentsList(w http.ResponseWriter, r *http.Reque
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,document_type,source,status,COALESCE(supplier_name,''),COALESCE(document_number,''),COALESCE(DATE_FORMAT(document_date,'%Y-%m-%d'),''),COALESCE(confidence,0),COALESCE(model,''),created_at,file_path IS NOT NULL AND original_deleted_at IS NULL FROM stock_document_scans WHERE restaurant_id=? ORDER BY created_at DESC,id DESC LIMIT 100`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id,document_type,source,status,COALESCE(supplier_name,''),COALESCE(document_number,''),COALESCE(DATE_FORMAT(document_date,'%Y-%m-%d'),''),COALESCE(confidence,0),COALESCE(model,''),created_at,file_path IS NOT NULL AND original_deleted_at IS NULL FROM stock_document_scans WHERE restaurant_id=? ORDER BY created_at DESC,id DESC LIMIT 100`, `SELECT id,document_type,source,status,COALESCE(supplier_name,''),COALESCE(document_number,''),COALESCE(to_char(document_date,'YYYY-MM-DD'),''),COALESCE(confidence,0),COALESCE(model,''),created_at,CASE WHEN file_path IS NOT NULL AND original_deleted_at IS NULL THEN 1 ELSE 0 END FROM stock_document_scans WHERE restaurant_id=? ORDER BY created_at DESC,id DESC LIMIT 100`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading documents")
 		return
@@ -328,7 +339,7 @@ func (s *Server) handleBOStockDocumentGet(w http.ResponseWriter, r *http.Request
 	var confidence float64
 	var extraction json.RawMessage
 	var originalAvailable int
-	err := s.db.QueryRowContext(r.Context(), `SELECT document_type,source,status,COALESCE(supplier_name,''),COALESCE(document_number,''),COALESCE(DATE_FORMAT(document_date,'%Y-%m-%d'),''),COALESCE(confidence,0),COALESCE(model,''),COALESCE(raw_extraction,JSON_OBJECT()),file_path IS NOT NULL AND original_deleted_at IS NULL FROM stock_document_scans WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id).Scan(&documentType, &source, &status, &supplier, &number, &date, &confidence, &model, &extraction, &originalAvailable)
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT document_type,source,status,COALESCE(supplier_name,''),COALESCE(document_number,''),COALESCE(DATE_FORMAT(document_date,'%Y-%m-%d'),''),COALESCE(confidence,0),COALESCE(model,''),COALESCE(raw_extraction,JSON_OBJECT()),file_path IS NOT NULL AND original_deleted_at IS NULL FROM stock_document_scans WHERE restaurant_id=? AND id=?`, `SELECT document_type,source,status,COALESCE(supplier_name,''),COALESCE(document_number,''),COALESCE(to_char(document_date,'YYYY-MM-DD'),''),COALESCE(confidence,0),COALESCE(model,''),CAST(COALESCE(raw_extraction,'{}'::jsonb) AS text),CASE WHEN file_path IS NOT NULL AND original_deleted_at IS NULL THEN 1 ELSE 0 END FROM stock_document_scans WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id).Scan(&documentType, &source, &status, &supplier, &number, &date, &confidence, &model, &extraction, &originalAvailable)
 	if err == sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusNotFound, "Document not found")
 		return
@@ -337,7 +348,7 @@ func (s *Server) handleBOStockDocumentGet(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading document")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT l.id,l.line_no,l.raw_description,COALESCE(l.raw_code,''),COALESCE(l.raw_qty,0),COALESCE(l.raw_unit,''),COALESCE(l.raw_unit_price,0),COALESCE(l.raw_total,0),l.matched_stock_item_id,l.matched_unit_id,COALESCE(l.match_confidence,0),l.status,COALESCE(i.name,'') FROM stock_document_lines l LEFT JOIN stock_items i ON i.restaurant_id=l.restaurant_id AND i.id=l.matched_stock_item_id WHERE l.restaurant_id=? AND l.document_scan_id=? ORDER BY l.line_no`, a.ActiveRestaurantID, id)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT l.id,l.line_no,l.raw_description,COALESCE(l.raw_code,''),COALESCE(l.raw_qty,0),COALESCE(l.raw_unit,''),COALESCE(l.raw_unit_price,0),COALESCE(l.raw_total,0),l.matched_stock_item_id,l.matched_unit_id,COALESCE(l.match_confidence,0),l.status,COALESCE(i.name,'') FROM stock_document_lines l LEFT JOIN stock_items i ON i.restaurant_id=l.restaurant_id AND i.id=l.matched_stock_item_id WHERE l.restaurant_id=? AND l.document_scan_id=? ORDER BY l.line_no`), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading document lines")
 		return
@@ -395,7 +406,7 @@ func (s *Server) handleBOStockDocumentReview(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(r.Context(), `UPDATE stock_document_scans SET supplier_name=?,document_number=?,document_date=NULLIF(?,''),status='NEEDS_REVIEW' WHERE restaurant_id=? AND id=? AND status='NEEDS_REVIEW'`, stockNullableString(in.SupplierName), stockNullableString(in.DocumentNumber), in.DocumentDate, a.ActiveRestaurantID, id)
+	res, err := tx.ExecContext(r.Context(), nativeSQL(`UPDATE stock_document_scans SET supplier_name=?,document_number=?,document_date=NULLIF(?,''),status='NEEDS_REVIEW' WHERE restaurant_id=? AND id=? AND status='NEEDS_REVIEW'`, `UPDATE stock_document_scans SET supplier_name=$1,document_number=$2,document_date=CAST(NULLIF(CAST($3 AS text),'') AS date),status='NEEDS_REVIEW' WHERE restaurant_id=$4 AND id=$5 AND status='NEEDS_REVIEW' AND (supplier_name COLLATE "C", document_number COLLATE "C", document_date) IS DISTINCT FROM ($1, $2, CAST(NULLIF(CAST($3 AS text),'') AS date))`), stockNullableString(in.SupplierName), stockNullableString(in.DocumentNumber), in.DocumentDate, a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Review could not be saved")
 		return
@@ -415,7 +426,7 @@ func (s *Server) handleBOStockDocumentReview(w http.ResponseWriter, r *http.Requ
 			httpx.WriteError(w, http.StatusBadRequest, "Matched lines require item, unit and quantity")
 			return
 		}
-		result, err := tx.ExecContext(r.Context(), `UPDATE stock_document_lines SET raw_description=?,raw_code=?,raw_qty=?,raw_unit=?,raw_unit_price=?,raw_total=?,matched_stock_item_id=?,matched_unit_id=?,status=? WHERE restaurant_id=? AND document_scan_id=? AND id=?`, strings.TrimSpace(line.Description), stockNullableString(line.Code), stockNullableFloat(line.Quantity), stockNullableString(line.Unit), stockNullableFloat(line.UnitPrice), stockNullableFloat(line.Total), line.MatchedStockItemID, line.MatchedUnitID, status, a.ActiveRestaurantID, id, line.ID)
+		result, err := tx.ExecContext(r.Context(), nativeSQL(`UPDATE stock_document_lines SET raw_description=?,raw_code=?,raw_qty=?,raw_unit=?,raw_unit_price=?,raw_total=?,matched_stock_item_id=?,matched_unit_id=?,status=? WHERE restaurant_id=? AND document_scan_id=? AND id=?`, `UPDATE stock_document_lines SET raw_description=$1,raw_code=$2,raw_qty=$3,raw_unit=$4,raw_unit_price=$5,raw_total=$6,matched_stock_item_id=$7,matched_unit_id=$8,status=$9 WHERE restaurant_id=$10 AND document_scan_id=$11 AND id=$12 AND (raw_description COLLATE "C", raw_code COLLATE "C", raw_qty, raw_unit COLLATE "C", raw_unit_price, raw_total, matched_stock_item_id, matched_unit_id, status) IS DISTINCT FROM ($1, $2, CAST($3 AS numeric(18,4)), $4, CAST($5 AS numeric(18,6)), CAST($6 AS numeric(18,2)), $7, $8, CAST($9 AS "enum__stock_document_lines__status"))`), strings.TrimSpace(line.Description), stockNullableString(line.Code), stockNullableFloat(line.Quantity), stockNullableString(line.Unit), stockNullableFloat(line.UnitPrice), stockNullableFloat(line.Total), line.MatchedStockItemID, line.MatchedUnitID, status, a.ActiveRestaurantID, id, line.ID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Document line could not be saved")
 			return
@@ -440,7 +451,7 @@ func (s *Server) handleBOStockDocumentReject(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	res, err := s.db.ExecContext(r.Context(), `UPDATE stock_document_scans SET status='REJECTED' WHERE restaurant_id=? AND id=? AND status='NEEDS_REVIEW'`, a.ActiveRestaurantID, id)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE stock_document_scans SET status='REJECTED' WHERE restaurant_id=? AND id=? AND status='NEEDS_REVIEW'`), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error rejecting document")
 		return
@@ -478,7 +489,7 @@ func (s *Server) handleBOStockRecipeDocumentConfirm(w http.ResponseWriter, r *ht
 	defer tx.Rollback()
 	var status, documentType string
 	var extractionRaw json.RawMessage
-	if err := tx.QueryRowContext(r.Context(), `SELECT status,document_type,COALESCE(raw_extraction,JSON_OBJECT()) FROM stock_document_scans WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, scanID).Scan(&status, &documentType, &extractionRaw); err != nil {
+	if err := tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status,document_type,COALESCE(raw_extraction,JSON_OBJECT()) FROM stock_document_scans WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT status,document_type,CAST(COALESCE(raw_extraction,'{}'::jsonb) AS text) FROM stock_document_scans WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, scanID).Scan(&status, &documentType, &extractionRaw); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Document not found")
 		return
 	}
@@ -487,28 +498,27 @@ func (s *Server) handleBOStockRecipeDocumentConfirm(w http.ResponseWriter, r *ht
 		return
 	}
 	var outputFactor float64
-	if err := tx.QueryRowContext(r.Context(), `SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND id=?`, a.ActiveRestaurantID, in.OutputItemID, in.OutputUnitID).Scan(&outputFactor); err != nil {
+	if err := tx.QueryRowContext(r.Context(), portableSQL(`SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND id=?`), a.ActiveRestaurantID, in.OutputItemID, in.OutputUnitID).Scan(&outputFactor); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid output unit")
 		return
 	}
 	var pending int
-	if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM stock_document_lines WHERE restaurant_id=? AND document_scan_id=? AND status='NEEDS_MATCH'`, a.ActiveRestaurantID, scanID).Scan(&pending); err != nil || pending > 0 {
+	if err := tx.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM stock_document_lines WHERE restaurant_id=? AND document_scan_id=? AND status='NEEDS_MATCH'`), a.ActiveRestaurantID, scanID).Scan(&pending); err != nil || pending > 0 {
 		httpx.WriteError(w, http.StatusConflict, "Review every recipe component first")
 		return
 	}
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_recipes (restaurant_id,name,output_item_id,output_qty_base,source) VALUES (?,?,?,?,'OCR')`, a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.OutputItemID, in.OutputQuantity*outputFactor)
+	recipeID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO stock_recipes (restaurant_id,name,output_item_id,output_qty_base,source) VALUES (?,?,?,?,'OCR')`), "id", a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.OutputItemID, in.OutputQuantity*outputFactor)
 	if err != nil {
 		httpx.WriteError(w, http.StatusConflict, "Output item already has an active recipe")
 		return
 	}
-	recipeID, _ := res.LastInsertId()
 	var extraction stockDocumentExtraction
 	_ = json.Unmarshal(extractionRaw, &extraction)
 	wasteByLine := map[int]float64{}
 	for index, line := range extraction.Components {
 		wasteByLine[index+1] = line.WastePct
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT line_no,raw_description,raw_qty,matched_stock_item_id,matched_unit_id FROM stock_document_lines WHERE restaurant_id=? AND document_scan_id=? AND status='OK' ORDER BY line_no`, a.ActiveRestaurantID, scanID)
+	rows, err := tx.QueryContext(r.Context(), portableSQL(`SELECT line_no,raw_description,raw_qty,matched_stock_item_id,matched_unit_id FROM stock_document_lines WHERE restaurant_id=? AND document_scan_id=? AND status='OK' ORDER BY line_no`), a.ActiveRestaurantID, scanID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading recipe lines")
 		return
@@ -540,7 +550,7 @@ func (s *Server) handleBOStockRecipeDocumentConfirm(w http.ResponseWriter, r *ht
 			httpx.WriteError(w, http.StatusBadRequest, "Recipe output cannot be its own component")
 			return
 		}
-		if err := tx.QueryRowContext(r.Context(), `SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND id=?`, a.ActiveRestaurantID, component.itemID, component.unitID).Scan(&factor); err != nil || component.quantity <= 0 {
+		if err := tx.QueryRowContext(r.Context(), portableSQL(`SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND id=?`), a.ActiveRestaurantID, component.itemID, component.unitID).Scan(&factor); err != nil || component.quantity <= 0 {
 			httpx.WriteError(w, http.StatusBadRequest, "Recipe component mapping is invalid")
 			return
 		}
@@ -548,12 +558,12 @@ func (s *Server) handleBOStockRecipeDocumentConfirm(w http.ResponseWriter, r *ht
 		if waste < 0 || waste >= 100 {
 			waste = 0
 		}
-		if _, err := tx.ExecContext(r.Context(), `INSERT INTO stock_recipe_components (restaurant_id,recipe_id,stock_item_id,entered_qty,entered_unit_id,qty_base,waste_pct,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, recipeID, component.itemID, component.quantity, component.unitID, component.quantity*factor, waste, stockNullableString("OCR: "+component.description), index); err != nil {
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_recipe_components (restaurant_id,recipe_id,stock_item_id,entered_qty,entered_unit_id,qty_base,waste_pct,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?)`), a.ActiveRestaurantID, recipeID, component.itemID, component.quantity, component.unitID, component.quantity*factor, waste, stockNullableString("OCR: "+component.description), index); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Recipe component could not be created")
 			return
 		}
 	}
-	if _, err := tx.ExecContext(r.Context(), `UPDATE stock_document_scans SET status='CONFIRMED' WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, scanID); err != nil {
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_document_scans SET status='CONFIRMED' WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, scanID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error confirming recipe")
 		return
 	}
@@ -587,7 +597,7 @@ func (s *Server) handleBOStockInvoiceConfirm(w http.ResponseWriter, r *http.Requ
 	}
 	defer tx.Rollback()
 	var status, documentType, supplier string
-	if err := tx.QueryRowContext(r.Context(), `SELECT status,document_type,COALESCE(supplier_name,'') FROM stock_document_scans WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, scanID).Scan(&status, &documentType, &supplier); err != nil {
+	if err := tx.QueryRowContext(r.Context(), portableSQL(`SELECT status,document_type,COALESCE(supplier_name,'') FROM stock_document_scans WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, scanID).Scan(&status, &documentType, &supplier); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Document not found")
 		return
 	}
@@ -600,11 +610,11 @@ func (s *Server) handleBOStockInvoiceConfirm(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var pending int
-	if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM stock_document_lines WHERE restaurant_id=? AND document_scan_id=? AND status='NEEDS_MATCH'`, a.ActiveRestaurantID, scanID).Scan(&pending); err != nil || pending > 0 {
+	if err := tx.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM stock_document_lines WHERE restaurant_id=? AND document_scan_id=? AND status='NEEDS_MATCH'`), a.ActiveRestaurantID, scanID).Scan(&pending); err != nil || pending > 0 {
 		httpx.WriteError(w, http.StatusConflict, "Review every invoice line first")
 		return
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT id,raw_description,COALESCE(raw_code,''),raw_qty,COALESCE(raw_unit_price,0),matched_stock_item_id,matched_unit_id FROM stock_document_lines WHERE restaurant_id=? AND document_scan_id=? AND status='OK' ORDER BY line_no`, a.ActiveRestaurantID, scanID)
+	rows, err := tx.QueryContext(r.Context(), portableSQL(`SELECT id,raw_description,COALESCE(raw_code,''),raw_qty,COALESCE(raw_unit_price,0),matched_stock_item_id,matched_unit_id FROM stock_document_lines WHERE restaurant_id=? AND document_scan_id=? AND status='OK' ORDER BY line_no`), a.ActiveRestaurantID, scanID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading invoice lines")
 		return
@@ -631,7 +641,7 @@ func (s *Server) handleBOStockInvoiceConfirm(w http.ResponseWriter, r *http.Requ
 	}
 	for _, line := range lines {
 		var factor float64
-		if err := tx.QueryRowContext(r.Context(), `SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND id=?`, a.ActiveRestaurantID, line.itemID, line.unitID).Scan(&factor); err != nil || factor <= 0 || line.quantity <= 0 {
+		if err := tx.QueryRowContext(r.Context(), portableSQL(`SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND id=?`), a.ActiveRestaurantID, line.itemID, line.unitID).Scan(&factor); err != nil || factor <= 0 || line.quantity <= 0 {
 			httpx.WriteError(w, http.StatusBadRequest, "Invoice line mapping is invalid")
 			return
 		}
@@ -640,12 +650,12 @@ func (s *Server) handleBOStockInvoiceConfirm(w http.ResponseWriter, r *http.Requ
 		if line.unitPrice > 0 {
 			unitCostBase = line.unitPrice / factor
 		}
-		if _, err := tx.ExecContext(r.Context(), `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, a.ActiveRestaurantID, line.itemID, in.WarehouseID); err != nil {
+		if _, err := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON CONFLICT (restaurant_id,stock_item_id,warehouse_id) DO UPDATE SET stock_item_id=EXCLUDED.stock_item_id`), a.ActiveRestaurantID, line.itemID, in.WarehouseID); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Invalid warehouse or item")
 			return
 		}
 		var currentQty, currentCost float64
-		if err := tx.QueryRowContext(r.Context(), `SELECT qty_base,avg_unit_cost FROM stock_levels WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=? FOR UPDATE`, a.ActiveRestaurantID, line.itemID, in.WarehouseID).Scan(&currentQty, &currentCost); err != nil {
+		if err := tx.QueryRowContext(r.Context(), portableSQL(`SELECT qty_base,avg_unit_cost FROM stock_levels WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=? FOR UPDATE`), a.ActiveRestaurantID, line.itemID, in.WarehouseID).Scan(&currentQty, &currentCost); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error locking stock")
 			return
 		}
@@ -667,20 +677,29 @@ func (s *Server) handleBOStockInvoiceConfirm(w http.ResponseWriter, r *http.Requ
 			}
 			lineExpiresAt = sql.NullTime{Time: parsed, Valid: true}
 		}
-		if _, err := tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,unit_cost,total_cost,expires_at,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,'PURCHASE',?,?,?,?,?,?, 'stock_document',?,?,?)`, a.ActiveRestaurantID, line.itemID, in.WarehouseID, qtyBase, line.quantity, line.unitID, stockNullableFloat(unitCostBase), stockNullableFloat(line.quantity*line.unitPrice), lineExpiresAt, scanID, key, a.User.ID); err != nil {
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,unit_cost,total_cost,expires_at,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,'PURCHASE',?,?,?,?,?,?, 'stock_document',?,?,?)`), a.ActiveRestaurantID, line.itemID, in.WarehouseID, qtyBase, line.quantity, line.unitID, stockNullableFloat(unitCostBase), stockNullableFloat(line.quantity*line.unitPrice), sqldb.NaiveUTCNullArg(sqlDialect, lineExpiresAt), scanID, key, a.User.ID); err != nil {
 			httpx.WriteError(w, http.StatusConflict, "Invoice was already applied")
 			return
 		}
-		if _, err := tx.ExecContext(r.Context(), `UPDATE stock_levels SET qty_base=qty_base+?,avg_unit_cost=?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`, qtyBase, newCost, a.ActiveRestaurantID, line.itemID, in.WarehouseID); err != nil {
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_levels SET qty_base=qty_base+?,avg_unit_cost=?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`), qtyBase, newCost, a.ActiveRestaurantID, line.itemID, in.WarehouseID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error updating stock")
 			return
 		}
 		if unitCostBase > 0 {
-			_, _ = tx.ExecContext(r.Context(), `INSERT INTO stock_item_prices (restaurant_id,stock_item_id,supplier_name,unit_cost_base,source) VALUES (?,?,?,?,'OCR')`, a.ActiveRestaurantID, line.itemID, stockNullableString(supplier), unitCostBase)
+			_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+				_, e := tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_item_prices (restaurant_id,stock_item_id,supplier_name,unit_cost_base,source) VALUES (?,?,?,?,'OCR')`), a.ActiveRestaurantID, line.itemID, stockNullableString(supplier), unitCostBase)
+				return e
+			})
 		}
-		_, _ = tx.ExecContext(r.Context(), `INSERT INTO stock_supplier_aliases (restaurant_id,supplier_name,supplier_code,normalized_description,stock_item_id,stock_unit_id) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id),stock_unit_id=VALUES(stock_unit_id)`, a.ActiveRestaurantID, supplier, line.code, stockAliasDescription(line.description), line.itemID, line.unitID)
+		_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			if stockAliasDescription(line.description) == "" {
+				return nil // not storable as an alias key (see stockAliasDescription); line still confirmed
+			}
+			_, e := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_supplier_aliases (restaurant_id,supplier_name,supplier_code,normalized_description,stock_item_id,stock_unit_id) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id),stock_unit_id=VALUES(stock_unit_id)`, `INSERT INTO stock_supplier_aliases (restaurant_id,supplier_name,supplier_code,normalized_description,stock_item_id,stock_unit_id) VALUES (?,?,?,?,?,?) ON CONFLICT (restaurant_id, app.norm(supplier_name), app.norm(supplier_code), app.norm(normalized_description)) DO UPDATE SET stock_item_id=EXCLUDED.stock_item_id,stock_unit_id=EXCLUDED.stock_unit_id`), a.ActiveRestaurantID, supplier, line.code, stockAliasDescription(line.description), line.itemID, line.unitID)
+			return e
+		})
 	}
-	if _, err := tx.ExecContext(r.Context(), `UPDATE stock_document_scans SET status='CONFIRMED' WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, scanID); err != nil {
+	if _, err := tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_document_scans SET status='CONFIRMED' WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, scanID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error confirming invoice")
 		return
 	}
@@ -695,7 +714,7 @@ func (s *Server) handleBOStockDocumentOriginalGet(w http.ResponseWriter, r *http
 	a, _ := boAuthFromContext(r.Context())
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var objectPath, contentType, filename string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(file_path,''),COALESCE(content_type,'application/octet-stream'),COALESCE(original_filename,'document') FROM stock_document_scans WHERE restaurant_id=? AND id=? AND file_path IS NOT NULL AND original_deleted_at IS NULL`, a.ActiveRestaurantID, id).Scan(&objectPath, &contentType, &filename); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COALESCE(file_path,''),COALESCE(content_type,'application/octet-stream'),COALESCE(original_filename,'document') FROM stock_document_scans WHERE restaurant_id=? AND id=? AND file_path IS NOT NULL AND original_deleted_at IS NULL`), a.ActiveRestaurantID, id).Scan(&objectPath, &contentType, &filename); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Original document not found")
 		return
 	}
@@ -707,7 +726,7 @@ func (s *Server) handleBOStockDocumentOriginalGet(w http.ResponseWriter, r *http
 	if storedType != "" {
 		contentType = storedType
 	}
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO stock_document_access_audit (restaurant_id,document_scan_id,action,actor_user_id) VALUES (?,?,'DOWNLOAD',?)`, a.ActiveRestaurantID, id, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_document_access_audit (restaurant_id,document_scan_id,action,actor_user_id) VALUES (?,?,'DOWNLOAD',?)`), a.ActiveRestaurantID, id, a.User.ID)
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(filename, `"`, ``)+`"`)
 	w.Header().Set("Cache-Control", "private, no-store")
@@ -719,7 +738,7 @@ func (s *Server) handleBOStockDocumentOriginalDelete(w http.ResponseWriter, r *h
 	a, _ := boAuthFromContext(r.Context())
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var objectPath string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(file_path,'') FROM stock_document_scans WHERE restaurant_id=? AND id=? AND file_path IS NOT NULL AND original_deleted_at IS NULL`, a.ActiveRestaurantID, id).Scan(&objectPath); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COALESCE(file_path,'') FROM stock_document_scans WHERE restaurant_id=? AND id=? AND file_path IS NOT NULL AND original_deleted_at IS NULL`), a.ActiveRestaurantID, id).Scan(&objectPath); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Original document not found")
 		return
 	}
@@ -733,11 +752,11 @@ func (s *Server) handleBOStockDocumentOriginalDelete(w http.ResponseWriter, r *h
 		return
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(r.Context(), `UPDATE stock_document_scans SET original_deleted_at=NOW(),file_path=NULL WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id); err != nil {
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE stock_document_scans SET original_deleted_at=NOW(),file_path=NULL WHERE restaurant_id=? AND id=?`, `UPDATE stock_document_scans SET original_deleted_at=date_trunc('second', statement_timestamp()),file_path=NULL WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, 500, "Error deleting original document")
 		return
 	}
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO stock_document_access_audit (restaurant_id,document_scan_id,action,actor_user_id) VALUES (?,?,'DELETE',?)`, a.ActiveRestaurantID, id, a.User.ID); err != nil {
+	if _, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_document_access_audit (restaurant_id,document_scan_id,action,actor_user_id) VALUES (?,?,'DELETE',?)`), a.ActiveRestaurantID, id, a.User.ID); err != nil {
 		httpx.WriteError(w, 500, "Error auditing original document")
 		return
 	}

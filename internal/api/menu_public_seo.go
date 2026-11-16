@@ -26,7 +26,7 @@ func menuSEOScanTargets(seo *publicMenuSEO, prefix ...any) []any {
 
 func (s *Server) loadPublicMenuSEO(ctx context.Context, restaurantID int, menuID int64) publicMenuSEO {
 	var seo publicMenuSEO
-	err := scanMenuSEO(s.db.QueryRowContext(ctx, `SELECT `+menuSEOSelect+` FROM menus WHERE id = ? AND restaurant_id = ?`, menuID, restaurantID), &seo)
+	err := scanMenuSEO(s.db.QueryRowContext(ctx, portableSQL(`SELECT `+menuSEOSelect+` FROM menus WHERE id = ? AND restaurant_id = ?`), menuID, restaurantID), &seo)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		log.Printf("menu_public_seo_load_failed restaurant_id=%d menu_id=%d error=%v", restaurantID, menuID, err)
 	}
@@ -35,7 +35,7 @@ func (s *Server) loadPublicMenuSEO(ctx context.Context, restaurantID int, menuID
 
 func (s *Server) loadPublicMenuSEOMap(ctx context.Context, restaurantID int) map[int64]publicMenuSEO {
 	out := make(map[int64]publicMenuSEO)
-	rows, err := s.db.QueryContext(ctx, `SELECT id, `+menuSEOSelect+` FROM menus WHERE restaurant_id = ?`, restaurantID)
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT id, `+menuSEOSelect+` FROM menus WHERE restaurant_id = ?`), restaurantID)
 	if err != nil {
 		log.Printf("menu_public_seo_list_load_failed restaurant_id=%d error=%v", restaurantID, err)
 		return out

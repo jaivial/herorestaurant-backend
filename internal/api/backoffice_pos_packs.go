@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // POS packs ("menú del día", "combinado"): a fixed-price bundle that expands
@@ -75,7 +76,7 @@ func (s *Server) loadPOSPacks(ctx context.Context, q posModifierGroupQueryer, re
 	if activeOnly {
 		where += " AND p.is_active=1"
 	}
-	rows, err := q.QueryContext(ctx, `SELECT p.id,p.name,COALESCE(p.description,''),p.price_gross_cents,`+posProductVATRateSQL+`,p.is_active,p.sort_order FROM pos_packs p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE `+where+` ORDER BY p.sort_order,p.name`, restaurantID)
+	rows, err := q.QueryContext(ctx, portableSQL(`SELECT p.id,p.name,COALESCE(p.description,''),p.price_gross_cents,`+posProductVATRateSQL+`,p.is_active,p.sort_order FROM pos_packs p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE `+where+` ORDER BY p.sort_order,p.name`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +127,7 @@ type posPackRowQueryer interface {
 // resolves each component's VAT rate. It is shared by the list and single
 // loaders so both derive the same component shape.
 func (s *Server) scanPOSPackComponents(ctx context.Context, q posModifierGroupQueryer, restaurantID int, packs []*posPack) error {
-	rows, err := q.QueryContext(ctx, `SELECT c.pack_id,c.pos_product_id,p.name,c.quantity,COALESCE(c.slot_group,''),c.is_default,c.sort_order,`+posProductVATRateSQL+` FROM pos_pack_components c JOIN pos_products p ON p.restaurant_id=c.restaurant_id AND p.id=c.pos_product_id LEFT JOIN stock_vat_rates v ON v.restaurant_id=c.restaurant_id AND v.id=p.vat_rate_id WHERE c.restaurant_id=? ORDER BY c.sort_order,p.name`, restaurantID)
+	rows, err := q.QueryContext(ctx, portableSQL(`SELECT c.pack_id,c.pos_product_id,p.name,c.quantity,COALESCE(c.slot_group,''),c.is_default,c.sort_order,`+posProductVATRateSQL+` FROM pos_pack_components c JOIN pos_products p ON p.restaurant_id=c.restaurant_id AND p.id=c.pos_product_id LEFT JOIN stock_vat_rates v ON v.restaurant_id=c.restaurant_id AND v.id=p.vat_rate_id WHERE c.restaurant_id=? ORDER BY c.sort_order,p.name`), restaurantID)
 	if err != nil {
 		return err
 	}
@@ -168,7 +169,7 @@ func (s *Server) scanPOSPackComponents(ctx context.Context, q posModifierGroupQu
 func (s *Server) loadPOSPack(ctx context.Context, q posPackRowQueryer, restaurantID int, packID int64) (*posPack, error) {
 	var p posPack
 	var active int
-	if err := q.QueryRowContext(ctx, `SELECT p.id,p.name,COALESCE(p.description,''),p.price_gross_cents,`+posProductVATRateSQL+`,p.is_active,p.sort_order FROM pos_packs p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE p.restaurant_id=? AND p.id=?`, restaurantID, packID).Scan(&p.ID, &p.Name, &p.Description, &p.PriceGrossCents, &p.VATRate, &active, &p.SortOrder); err != nil {
+	if err := q.QueryRowContext(ctx, portableSQL(`SELECT p.id,p.name,COALESCE(p.description,''),p.price_gross_cents,`+posProductVATRateSQL+`,p.is_active,p.sort_order FROM pos_packs p LEFT JOIN stock_vat_rates v ON v.restaurant_id=p.restaurant_id AND v.id=p.vat_rate_id WHERE p.restaurant_id=? AND p.id=?`), restaurantID, packID).Scan(&p.ID, &p.Name, &p.Description, &p.PriceGrossCents, &p.VATRate, &active, &p.SortOrder); err != nil {
 		return nil, err
 	}
 	p.IsActive = active != 0
@@ -319,12 +320,11 @@ func (s *Server) handleBOPOSPackCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid pack price")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_packs (restaurant_id,name,description,price_gross_cents,vat_rate_id,sort_order) VALUES (?,?,?,?,?,?)`, a.ActiveRestaurantID, name, stockNullableString(in.Description), in.PriceGrossCents, in.VATRateID, in.SortOrder)
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_packs (restaurant_id,name,description,price_gross_cents,vat_rate_id,sort_order) VALUES (?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, name, stockNullableString(in.Description), in.PriceGrossCents, in.VATRateID, in.SortOrder)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Pack could not be created")
 		return
 	}
-	id, _ := res.LastInsertId()
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "id": id})
 }
 
@@ -351,7 +351,7 @@ func (s *Server) handleBOPOSPackPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var exists int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_packs WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_packs WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id).Scan(&exists); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Pack not found")
 		return
 	}
@@ -364,13 +364,13 @@ func (s *Server) handleBOPOSPackPatch(w http.ResponseWriter, r *http.Request) {
 		if len(n) > 180 {
 			n = n[:180]
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_packs SET name=? WHERE restaurant_id=? AND id=?`, n, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_packs SET name=? WHERE restaurant_id=? AND id=?`), []any{n, a.ActiveRestaurantID, id}...); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack could not be updated")
 			return
 		}
 	}
 	if in.Description != nil {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_packs SET description=? WHERE restaurant_id=? AND id=?`, stockNullableString(*in.Description), a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_packs SET description=? WHERE restaurant_id=? AND id=?`), stockNullableString(*in.Description), a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack could not be updated")
 			return
 		}
@@ -380,19 +380,19 @@ func (s *Server) handleBOPOSPackPatch(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, "Invalid pack price")
 			return
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_packs SET price_gross_cents=? WHERE restaurant_id=? AND id=?`, *in.PriceGrossCents, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_packs SET price_gross_cents=? WHERE restaurant_id=? AND id=?`), *in.PriceGrossCents, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack could not be updated")
 			return
 		}
 	}
 	if in.VATRateID != nil {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_packs SET vat_rate_id=? WHERE restaurant_id=? AND id=?`, in.VATRateID, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_packs SET vat_rate_id=? WHERE restaurant_id=? AND id=?`), in.VATRateID, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack could not be updated")
 			return
 		}
 	}
 	if in.SortOrder != nil {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_packs SET sort_order=? WHERE restaurant_id=? AND id=?`, *in.SortOrder, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_packs SET sort_order=? WHERE restaurant_id=? AND id=?`), *in.SortOrder, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack could not be updated")
 			return
 		}
@@ -402,7 +402,7 @@ func (s *Server) handleBOPOSPackPatch(w http.ResponseWriter, r *http.Request) {
 		if *in.IsActive {
 			v = 1
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_packs SET is_active=? WHERE restaurant_id=? AND id=?`, v, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_packs SET is_active=? WHERE restaurant_id=? AND id=?`), v, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack could not be updated")
 			return
 		}
@@ -423,19 +423,19 @@ func (s *Server) handleBOPOSPackDelete(w http.ResponseWriter, r *http.Request) {
 	// Sold lines keep pack_id, so the pack can only be deactivated once it has
 	// been sold: deleting it would orphan paid tickets.
 	var sold int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_ticket_lines WHERE restaurant_id=? AND pack_id=? LIMIT 1`, a.ActiveRestaurantID, id).Scan(&sold); err == nil {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_packs SET is_active=0 WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_ticket_lines WHERE restaurant_id=? AND pack_id=? LIMIT 1`), a.ActiveRestaurantID, id).Scan(&sold); err == nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_packs SET is_active=0 WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack could not be removed")
 			return
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "deactivated": true})
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_pack_components WHERE restaurant_id=? AND pack_id=?`, a.ActiveRestaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_pack_components WHERE restaurant_id=? AND pack_id=?`), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Pack could not be removed")
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_packs WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_packs WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Pack could not be removed")
 		return
 	}
@@ -471,7 +471,7 @@ func (s *Server) handleBOPOSPackComponentCreate(w http.ResponseWriter, r *http.R
 		slot = slot[:80]
 	}
 	var prodExists int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_products WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, in.ProductID).Scan(&prodExists); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_products WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, in.ProductID).Scan(&prodExists); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "POS product not found")
 		return
 	}
@@ -479,12 +479,11 @@ func (s *Server) handleBOPOSPackComponentCreate(w http.ResponseWriter, r *http.R
 	if in.IsDefault {
 		def = 1
 	}
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO pos_pack_components (restaurant_id,pack_id,pos_product_id,quantity,slot_group,is_default,sort_order) VALUES (?,?,?,?,?,?,?)`, a.ActiveRestaurantID, packID, in.ProductID, in.Quantity, stockNullableString(slot), def, in.SortOrder)
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO pos_pack_components (restaurant_id,pack_id,pos_product_id,quantity,slot_group,is_default,sort_order) VALUES (?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, packID, in.ProductID, in.Quantity, stockNullableString(slot), def, in.SortOrder)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Pack component could not be created")
 		return
 	}
-	id, _ := res.LastInsertId()
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "id": id})
 }
 
@@ -509,7 +508,7 @@ func (s *Server) handleBOPOSPackComponentPatch(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var exists int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT 1 FROM pos_pack_components WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT 1 FROM pos_pack_components WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id).Scan(&exists); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Pack component not found")
 		return
 	}
@@ -518,7 +517,7 @@ func (s *Server) handleBOPOSPackComponentPatch(w http.ResponseWriter, r *http.Re
 			httpx.WriteError(w, http.StatusBadRequest, "Invalid pack component quantity")
 			return
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_pack_components SET quantity=? WHERE restaurant_id=? AND id=?`, *in.Quantity, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_pack_components SET quantity=? WHERE restaurant_id=? AND id=?`), *in.Quantity, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack component could not be updated")
 			return
 		}
@@ -528,7 +527,7 @@ func (s *Server) handleBOPOSPackComponentPatch(w http.ResponseWriter, r *http.Re
 		if len(slot) > 80 {
 			slot = slot[:80]
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_pack_components SET slot_group=? WHERE restaurant_id=? AND id=?`, stockNullableString(slot), a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_pack_components SET slot_group=? WHERE restaurant_id=? AND id=?`), stockNullableString(slot), a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack component could not be updated")
 			return
 		}
@@ -538,13 +537,13 @@ func (s *Server) handleBOPOSPackComponentPatch(w http.ResponseWriter, r *http.Re
 		if *in.IsDefault {
 			def = 1
 		}
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_pack_components SET is_default=? WHERE restaurant_id=? AND id=?`, def, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_pack_components SET is_default=? WHERE restaurant_id=? AND id=?`), def, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack component could not be updated")
 			return
 		}
 	}
 	if in.SortOrder != nil {
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE pos_pack_components SET sort_order=? WHERE restaurant_id=? AND id=?`, *in.SortOrder, a.ActiveRestaurantID, id); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE pos_pack_components SET sort_order=? WHERE restaurant_id=? AND id=?`), *in.SortOrder, a.ActiveRestaurantID, id); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Pack component could not be updated")
 			return
 		}
@@ -562,7 +561,7 @@ func (s *Server) handleBOPOSPackComponentDelete(w http.ResponseWriter, r *http.R
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid pack component")
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM pos_pack_components WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_pack_components WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Pack component could not be removed")
 		return
 	}

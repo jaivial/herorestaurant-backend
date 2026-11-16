@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Date-scoped floor count: POST /api/admin/config/floors/date sets how many
@@ -80,16 +81,16 @@ func (s *Server) setFloorsForDate(ctx context.Context, restaurantID int, date st
 		active = active[:len(active)-1]
 		if top.DateScoped != "" {
 			// Date-scoped rows only exist for this date: remove outright.
-			if _, err := s.db.ExecContext(ctx, `
+			if _, err := s.db.ExecContext(ctx, portableSQL(`
 				DELETE FROM restaurant_floors
 				WHERE id = ? AND restaurant_id = ? AND specific_date = ?
-			`, top.ID, restaurantID, date); err != nil {
+			`), top.ID, restaurantID, date); err != nil {
 				return err
 			}
-			if _, err := s.db.ExecContext(ctx, `
+			if _, err := s.db.ExecContext(ctx, portableSQL(`
 				DELETE FROM restaurant_floor_overrides
 				WHERE restaurant_id = ? AND date = ? AND floor_id = ?
-			`, restaurantID, date, top.ID); err != nil {
+			`), restaurantID, date, top.ID); err != nil {
 				return err
 			}
 			continue
@@ -129,14 +130,13 @@ func (s *Server) setFloorsForDate(ctx context.Context, restaurantID int, date st
 		if maxNumber+1 >= maxRestaurantFloors {
 			break
 		}
-		res, err := s.db.ExecContext(ctx, `
+		newID, err := sqldb.InsertID(ctx, sqlDialect, s.db, portableSQL(`
 			INSERT INTO restaurant_floors (restaurant_id, floor_number, floor_name, is_ground, is_active, specific_date)
 			VALUES (?, ?, ?, 0, 1, ?)
-		`, restaurantID, maxNumber+1, floorNameForNumber(maxNumber+1), date)
+		`), "id", restaurantID, maxNumber+1, floorNameForNumber(maxNumber+1), date)
 		if err != nil {
 			return err
 		}
-		newID, _ := res.LastInsertId()
 		created := boConfigFloor{
 			ID:          int(newID),
 			FloorNumber: maxNumber + 1,
@@ -154,25 +154,29 @@ func (s *Server) setFloorsForDate(ctx context.Context, restaurantID int, date st
 // one floor (same inherit semantics as handleBOConfigFloorsSet).
 func (s *Server) setFloorOverrideForDate(ctx context.Context, restaurantID int, date string, floorID int, active bool) error {
 	var defaultActive int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT is_active FROM restaurant_floors WHERE id = ? AND restaurant_id = ?
-	`, floorID, restaurantID).Scan(&defaultActive)
+	`), floorID, restaurantID).Scan(&defaultActive)
 	if err != nil {
 		return err
 	}
 
 	if (defaultActive != 0) == active {
-		_, err = s.db.ExecContext(ctx, `
+		_, err = s.db.ExecContext(ctx, portableSQL(`
 			DELETE FROM restaurant_floor_overrides
 			WHERE restaurant_id = ? AND date = ? AND floor_id = ?
-		`, restaurantID, date, floorID)
+		`), restaurantID, date, floorID)
 		return err
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_floor_overrides (restaurant_id, date, floor_id, is_active)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE is_active = VALUES(is_active)
-	`, restaurantID, date, floorID, boolToInt(active))
+	`, `
+		INSERT INTO restaurant_floor_overrides (restaurant_id, date, floor_id, is_active)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (restaurant_id, date, floor_id) DO UPDATE SET is_active = EXCLUDED.is_active
+	`), restaurantID, date, floorID, boolToInt(active))
 	return err
 }

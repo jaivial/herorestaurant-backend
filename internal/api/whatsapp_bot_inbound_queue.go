@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"preactvillacarmen/internal/botstore"
 )
 
 // Coordination id: wa_bot_inbound_queue_v1
@@ -34,25 +37,44 @@ const (
 
 // botInboundEnqueue persists one accepted inbound message. Best effort: a
 // failure must never block the live turn, it is logged instead.
+// botInboundEnqueuePG is the PG twin of the enqueue (pg_runtime_sql_audit_v1).
+const botInboundEnqueuePG = `INSERT INTO bot_inbound_queue (restaurant_id, chat_key, message_id, payload_json) VALUES (?, ?, ?, ?) ON CONFLICT (restaurant_id, app.norm_ascii(message_id::text)) DO NOTHING`
+
 func (s *Server) botInboundEnqueue(ctx context.Context, restaurantID int, chatKey string, msg botWebhookMessage) {
-	if s.db == nil || strings.TrimSpace(msg.MessageID) == "" {
+	st := s.botStateDB()
+	if st.DB == nil || strings.TrimSpace(msg.MessageID) == "" {
 		return
 	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return
 	}
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT IGNORE INTO bot_inbound_queue (restaurant_id, chat_key, message_id, payload_json)
-		VALUES (?, ?, ?, ?)
-	`, restaurantID, chatKey, msg.MessageID, string(payload)); err != nil {
+	// repair-ignore3: duplicate (restaurant_id, message_id) is the only no-op.
+	// MySQL columns are chat_key varchar(190) / message_id varchar(120): IGNORE
+	// cut an over-wide id, so two ids sharing a prefix collided and the second
+	// message was never queued for replay. Refused (logged) instead; the PG
+	// bot store columns are TEXT (no width).
+	q := `INSERT INTO bot_inbound_queue (restaurant_id, chat_key, message_id, payload_json) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE message_id = message_id`
+	if utf8.RuneCountInString(msg.MessageID) > 120 || utf8.RuneCountInString(chatKey) > 190 {
+		botCheckpoint("wa_bot_inbound_queue_v1", "restaurant_id=%d enqueue_refused width message_id/chat_key", restaurantID)
+		return
+	}
+	if st.Postgres {
+		// The conflict target must repeat the expression of the PG unique
+		// index ux__bot_inbound_queue__uq_inbound_msg (restaurant_id,
+		// app.norm_ascii(message_id::text)); a plain (restaurant_id,
+		// message_id) target fails arbiter inference with SQLSTATE 42P10.
+		q = botInboundEnqueuePG
+	}
+	if _, err := st.ExecContext(ctx, selectedSQL(q), restaurantID, chatKey, msg.MessageID, string(payload)); /* q chosen by st.Postgres */ err != nil {
 		botCheckpoint("wa_bot_inbound_queue_v1", "restaurant_id=%d enqueue_error err=%v", restaurantID, err)
 	}
 }
 
 // botInboundFinish closes the queue rows of one processed burst.
 func (s *Server) botInboundFinish(restaurantID int, messageIDs []string, state string) {
-	if s.db == nil || len(messageIDs) == 0 {
+	st := s.botStateDB()
+	if st.DB == nil || len(messageIDs) == 0 {
 		return
 	}
 	ph := strings.Repeat("?,", len(messageIDs)-1) + "?"
@@ -66,17 +88,19 @@ func (s *Server) botInboundFinish(restaurantID int, messageIDs []string, state s
 	// freeze the conversation (PR review iter 1).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx, `
+	// Imported (quarantined) rows are history, never touched (wa_bot_store_pg_mysql_v1).
+	if _, err := st.ExecContext(ctx, selectedSQL(`
 		UPDATE bot_inbound_queue SET state = ?
-		WHERE message_id IN (`+ph+`) AND restaurant_id = ? AND state <> 'done'
-	`, args...); err != nil {
+		WHERE message_id IN (`+ph+`) AND restaurant_id = ? AND state <> 'done'`+botQueueLive(st)+`
+	`), args...); err != nil {
 		botCheckpoint("wa_bot_inbound_queue_v1", "restaurant_id=%d finish_error state=%s err=%v", restaurantID, state, err)
 	}
 }
 
 // botInboundClaim marks the rows of a burst as running (observability).
 func (s *Server) botInboundClaim(restaurantID int, messageIDs []string) {
-	if s.db == nil || len(messageIDs) == 0 {
+	st := s.botStateDB()
+	if st.DB == nil || len(messageIDs) == 0 {
 		return
 	}
 	ph := strings.Repeat("?,", len(messageIDs)-1) + "?"
@@ -88,10 +112,10 @@ func (s *Server) botInboundClaim(restaurantID int, messageIDs []string) {
 	// Bounded (PR review iter 1): the claim runs inline in the worker.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := s.db.ExecContext(ctx, `
-		UPDATE bot_inbound_queue SET state = 'running', started_at = NOW()
-		WHERE message_id IN (`+ph+`) AND restaurant_id = ? AND state = 'pending'
-	`, args...); err != nil {
+	if _, err := st.ExecContext(ctx, selectedSQL(`
+		UPDATE bot_inbound_queue SET state = 'running', started_at = `+botSQLNow(st, 0)+`
+		WHERE message_id IN (`+ph+`) AND restaurant_id = ? AND state = 'pending'`+botQueueLive(st)+`
+	`), args...); err != nil {
 		botCheckpoint("wa_bot_inbound_queue_v1", "restaurant_id=%d claim_error err=%v", restaurantID, err)
 	}
 }
@@ -113,7 +137,7 @@ func botBurstIDs(burst []botWebhookMessage) []string {
 // (PR review iter 1); migrations.Apply already ran before NewServer, so the
 // table exists.
 func (s *Server) botInboundRecover() {
-	if s.db == nil {
+	if s.botStateDB().DB == nil {
 		return
 	}
 	var found []struct {
@@ -180,21 +204,22 @@ func (s *Server) botInboundRecoverScan(ctx context.Context) ([]struct {
 }, error) {
 	// Too old to answer: close them instead of surprising a customer hours
 	// later with a reply to a conversation that has moved on.
-	if res, err := s.db.ExecContext(ctx, `
+	st := s.botStateDB()
+	if res, err := st.ExecContext(ctx, selectedSQL(`
 		UPDATE bot_inbound_queue SET state = 'expired'
-		WHERE state IN ('pending','running') AND created_at < (NOW() - INTERVAL 6 HOUR)
-	`); err == nil {
+		WHERE state IN ('pending','running') AND created_at < `+botSQLAgo(st, "6 HOUR")+botQueueLive(st)+`
+	`)); err == nil {
 		if n, _ := res.RowsAffected(); n > 0 {
 			botCheckpoint("wa_bot_inbound_queue_v1", "expired=%d", n)
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := st.QueryContext(ctx, selectedSQL(`
 		SELECT restaurant_id, chat_key, message_id, payload_json
 		FROM bot_inbound_queue
-		WHERE state IN ('pending','running') AND created_at < (NOW() - INTERVAL 15 SECOND)
-		  AND created_at >= (NOW() - INTERVAL 6 HOUR)
+		WHERE state IN ('pending','running') AND created_at < `+botSQLAgo(st, "15 SECOND")+`
+		  AND created_at >= `+botSQLAgo(st, "6 HOUR")+botQueueLive(st)+`
 		ORDER BY id ASC LIMIT ?
-	`, botInboundReplayLimit)
+	`), botInboundReplayLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -218,4 +243,14 @@ func (s *Server) botInboundRecoverScan(ctx context.Context) ([]struct {
 		found = append(found, r)
 	}
 	return found, rows.Err()
+}
+
+// botQueueLive excludes imported history rows on PG: a copied queue may carry
+// payloads to foreign numbers and must never be replayed (wa_bot_store_pg_mysql_v1).
+func botQueueLive(st *botstore.DB) string {
+	// repair-wiring2: the queue is the business table (public on PG), which has
+	// no "quarantined" column (that existed only in the retired bot-store copy).
+	// Rows are the original MySQL rows of the same unified DB: the source replay
+	// window (15s..6h) applies as on MySQL; staging must keep workers disabled.
+	return ""
 }

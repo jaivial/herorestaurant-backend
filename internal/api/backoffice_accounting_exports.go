@@ -141,7 +141,8 @@ func accountingCSVCell(value string) string {
 }
 
 func (s *Server) accountingSalesVATCSV(ctx context.Context, restaurantID int, from, to string) (string, int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT t.id,t.ticket_number,v.service_date,l.id,ROUND(l.quantity*l.unit_price_gross_cents)-l.discount_cents,l.vat_rate_snapshot,t.ticket_discount_cents,t.surcharge_cents FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id JOIN pos_ticket_lines l ON l.restaurant_id=t.restaurant_id AND l.ticket_id=t.id AND l.status='ACTIVE' WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') ORDER BY t.id,l.id`, restaurantID, from, to)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT t.id,t.ticket_number,v.service_date,l.id,ROUND(l.quantity*l.unit_price_gross_cents)-l.discount_cents,l.vat_rate_snapshot,t.ticket_discount_cents,t.surcharge_cents FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id JOIN pos_ticket_lines l ON l.restaurant_id=t.restaurant_id AND l.ticket_id=t.id AND l.status='ACTIVE' WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') ORDER BY t.id,l.id`,
+		`SELECT t.id,t.ticket_number,to_char(v.service_date,'YYYY-MM-DD'),l.id,CAST(ROUND(l.quantity*l.unit_price_gross_cents)-l.discount_cents AS bigint),l.vat_rate_snapshot,t.ticket_discount_cents,t.surcharge_cents FROM pos_tickets t JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id JOIN pos_ticket_lines l ON l.restaurant_id=t.restaurant_id AND l.ticket_id=t.id AND l.status='ACTIVE' WHERE t.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') ORDER BY t.id,l.id`), restaurantID, from, to)
 	if err != nil {
 		return "", 0, err
 	}
@@ -185,10 +186,12 @@ func (s *Server) accountingSalesVATCSV(ctx context.Context, restaurantID int, fr
 }
 
 func (s *Server) accountingPaymentsCSV(ctx context.Context, restaurantID int, from, to string) (string, int, error) {
-	return s.accountingSimpleCSV(ctx, `SELECT t.ticket_number,v.service_date,p.method,p.amount_cents,COALESCE(p.provider,''),COALESCE(p.provider_reference,'') FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE p.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND p.status='CAPTURED' ORDER BY v.service_date,p.id`, []string{"ticket", "date", "method", "amount_cents", "provider", "provider_reference"}, restaurantID, from, to)
+	return s.accountingSimpleCSV(ctx, nativeSQL(`SELECT t.ticket_number,v.service_date,p.method,p.amount_cents,COALESCE(p.provider,''),COALESCE(p.provider_reference,'') FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE p.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND p.status='CAPTURED' ORDER BY v.service_date,p.id`,
+		`SELECT t.ticket_number,v.service_date,CAST(p.method AS text),p.amount_cents,COALESCE(p.provider,''),COALESCE(p.provider_reference,'') FROM pos_payments p JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id WHERE p.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND p.status='CAPTURED' ORDER BY v.service_date,p.id`), []string{"ticket", "date", "method", "amount_cents", "provider", "provider_reference"}, restaurantID, from, to)
 }
 func (s *Server) accountingRefundsCSV(ctx context.Context, restaurantID int, from, to string) (string, int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.ticket_id,t.ticket_number,v.service_date,r.amount_cents,r.payment_method,r.reason,t.ticket_discount_cents,t.surcharge_cents,rl.id,rl.amount_cents,l.vat_rate_snapshot FROM pos_refunds r JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN pos_refund_lines rl ON rl.restaurant_id=r.restaurant_id AND rl.refund_id=r.id LEFT JOIN pos_ticket_lines l ON l.restaurant_id=rl.restaurant_id AND l.id=rl.ticket_line_id WHERE r.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND r.status='COMPLETED' ORDER BY r.id,rl.id`, restaurantID, from, to)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT r.id,r.ticket_id,t.ticket_number,v.service_date,r.amount_cents,r.payment_method,r.reason,t.ticket_discount_cents,t.surcharge_cents,rl.id,rl.amount_cents,l.vat_rate_snapshot FROM pos_refunds r JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN pos_refund_lines rl ON rl.restaurant_id=r.restaurant_id AND rl.refund_id=r.id LEFT JOIN pos_ticket_lines l ON l.restaurant_id=rl.restaurant_id AND l.id=rl.ticket_line_id WHERE r.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND r.status='COMPLETED' ORDER BY r.id,rl.id`,
+		`SELECT r.id,r.ticket_id,t.ticket_number,to_char(v.service_date,'YYYY-MM-DD'),r.amount_cents,CAST(r.payment_method AS text),r.reason,t.ticket_discount_cents,t.surcharge_cents,rl.id,rl.amount_cents,l.vat_rate_snapshot FROM pos_refunds r JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id LEFT JOIN pos_refund_lines rl ON rl.restaurant_id=r.restaurant_id AND rl.refund_id=r.id LEFT JOIN pos_ticket_lines l ON l.restaurant_id=rl.restaurant_id AND l.id=rl.ticket_line_id WHERE r.restaurant_id=? AND v.service_date BETWEEN ? AND ? AND r.status='COMPLETED' ORDER BY r.id,rl.id NULLS FIRST`), restaurantID, from, to)
 	if err != nil {
 		return "", 0, err
 	}
@@ -222,7 +225,8 @@ func (s *Server) accountingRefundsCSV(ctx context.Context, restaurantID int, fro
 	for _, item := range items {
 		lines := item.lines
 		if len(lines) == 0 {
-			lineRows, queryErr := s.db.QueryContext(ctx, `SELECT id,ROUND(quantity*unit_price_gross_cents)-discount_cents,vat_rate_snapshot FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`, restaurantID, item.ticketID)
+			lineRows, queryErr := s.db.QueryContext(ctx, nativeSQL(`SELECT id,ROUND(quantity*unit_price_gross_cents)-discount_cents,vat_rate_snapshot FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`,
+				`SELECT id,CAST(ROUND(quantity*unit_price_gross_cents)-discount_cents AS bigint),vat_rate_snapshot FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`), restaurantID, item.ticketID)
 			if queryErr != nil {
 				return "", 0, queryErr
 			}
@@ -258,11 +262,15 @@ func (s *Server) accountingRefundsCSV(ctx context.Context, restaurantID int, fro
 	return b.String(), count, rows.Err()
 }
 func (s *Server) accountingStockCSV(ctx context.Context, restaurantID int, from, to string) (string, int, error) {
-	return s.accountingSimpleCSV(ctx, `SELECT m.id,DATE(m.occurred_at),m.type,i.name,w.name,m.qty_base,COALESCE(m.unit_cost,0),COALESCE(m.ref_type,''),COALESCE(m.ref_id,0) FROM stock_movements m JOIN stock_items i ON i.restaurant_id=m.restaurant_id AND i.id=m.stock_item_id JOIN stock_warehouses w ON w.restaurant_id=m.restaurant_id AND w.id=m.warehouse_id WHERE m.restaurant_id=? AND DATE(m.occurred_at) BETWEEN ? AND ? ORDER BY m.occurred_at,m.id`, []string{"movement_id", "date", "type", "item", "warehouse", "quantity_base", "unit_cost_base", "ref_type", "ref_id"}, restaurantID, from, to)
+	// PG: COALESCE default keeps the decimal(18,6) scale MySQL renders ("0.000000");
+	// numeric values are cast to text so the CSV renders the exact scaled digits.
+	return s.accountingSimpleCSV(ctx, nativeSQL(`SELECT m.id,DATE(m.occurred_at),m.type,i.name,w.name,m.qty_base,COALESCE(m.unit_cost,0),COALESCE(m.ref_type,''),COALESCE(m.ref_id,0) FROM stock_movements m JOIN stock_items i ON i.restaurant_id=m.restaurant_id AND i.id=m.stock_item_id JOIN stock_warehouses w ON w.restaurant_id=m.restaurant_id AND w.id=m.warehouse_id WHERE m.restaurant_id=? AND DATE(m.occurred_at) BETWEEN ? AND ? ORDER BY m.occurred_at,m.id`,
+		`SELECT m.id,CAST(m.occurred_at AS date),CAST(m.type AS text),i.name,w.name,CAST(m.qty_base AS text),CAST(COALESCE(m.unit_cost,CAST(0 AS numeric(18,6))) AS text),COALESCE(m.ref_type,''),CAST(COALESCE(m.ref_id,0) AS text) FROM stock_movements m JOIN stock_items i ON i.restaurant_id=m.restaurant_id AND i.id=m.stock_item_id JOIN stock_warehouses w ON w.restaurant_id=m.restaurant_id AND w.id=m.warehouse_id WHERE m.restaurant_id=? AND CAST(m.occurred_at AS date) BETWEEN ? AND ? ORDER BY m.occurred_at,m.id`), []string{"movement_id", "date", "type", "item", "warehouse", "quantity_base", "unit_cost_base", "ref_type", "ref_id"}, restaurantID, from, to)
 }
 
+// query must come from nativeSQL/portableSQL at the caller (fixed statements above).
 func (s *Server) accountingSimpleCSV(ctx context.Context, query string, headers []string, restaurantID int, from, to string) (string, int, error) {
-	rows, err := s.db.QueryContext(ctx, query, restaurantID, from, to)
+	rows, err := s.db.QueryContext(ctx, selectedSQL(query), restaurantID, from, to)
 	if err != nil {
 		return "", 0, err
 	}
@@ -332,7 +340,16 @@ func (s *Server) handleBOAccountingExport(w http.ResponseWriter, r *http.Request
 	}
 	hash := sha256.Sum256([]byte(payload))
 	hashText := hex.EncodeToString(hash[:])
-	_, err = s.db.ExecContext(r.Context(), `INSERT IGNORE INTO accounting_exports (restaurant_id,export_type,period_from,period_to,payload_hash,row_count,generated_by) VALUES (?,?,?,?,?,?,?)`, a.ActiveRestaurantID, kind, from, to, hashText, count, a.User.ID)
+	// INSERT IGNORE scope: duplicate on uq(restaurant_id,export_type,period_from,period_to,payload_hash)
+	// and the restaurants FK are skipped; kind is whitelisted to enum labels and
+	// payload_hash is 64 hex chars, so no IGNORE truncation/enum coercion path.
+	// repair-ignore3: duplicate-only no-op (MySQL ODKU no-op); an FK failure is
+	// no longer skipped (the export would be served unaudited) -> 500.
+	_, err = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO accounting_exports (restaurant_id,export_type,period_from,period_to,payload_hash,row_count,generated_by) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE payload_hash = payload_hash`,
+		`WITH v(restaurant_id,export_type,period_from,period_to,payload_hash,row_count,generated_by) AS (VALUES (CAST(? AS integer),CAST(? AS "enum__accounting_exports__export_type"),CAST(? AS date),CAST(? AS date),CAST(? AS char(64)),CAST(? AS integer),CAST(? AS integer)))
+		INSERT INTO accounting_exports (restaurant_id,export_type,period_from,period_to,payload_hash,row_count,generated_by)
+		SELECT v.restaurant_id,v.export_type,v.period_from,v.period_to,v.payload_hash,v.row_count,v.generated_by FROM v
+		ON CONFLICT (restaurant_id, export_type, period_from, period_to, app.norm_ascii(payload_hash)) DO NOTHING`), a.ActiveRestaurantID, kind, from, to, hashText, count, a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error auditing accounting export")
 		return

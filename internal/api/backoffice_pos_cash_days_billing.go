@@ -33,7 +33,7 @@ func (s *Server) handleBOPOSCashDayBilling(w http.ResponseWriter, r *http.Reques
 	ctx := r.Context()
 	restaurantID := a.ActiveRestaurantID
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT v.table_id,COALESCE(rt.name,''),v.channel,
 		       COALESCE(SUM(CASE WHEN t.status='OPEN' THEN t.total_gross_cents ELSE 0 END),0),
 		       COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.total_gross_cents-t.refunded_cents ELSE 0 END),0),
@@ -45,7 +45,19 @@ func (s *Server) handleBOPOSCashDayBilling(w http.ResponseWriter, r *http.Reques
 		LEFT JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id
 		WHERE v.restaurant_id=? AND v.service_date=? AND v.status<>'CANCELLED'
 		GROUP BY v.table_id,rt.name,v.channel,rt.display_order
-		ORDER BY v.table_id IS NULL,COALESCE(rt.display_order,0),v.table_id,v.channel`, restaurantID, date)
+		ORDER BY v.table_id IS NULL,COALESCE(rt.display_order,0),v.table_id,v.channel`, `
+		SELECT v.table_id,COALESCE(rt.name,''),CAST(v.channel AS text),
+		       COALESCE(SUM(CASE WHEN t.status='OPEN' THEN t.total_gross_cents ELSE 0 END),0),
+		       COALESCE(SUM(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN t.total_gross_cents-t.refunded_cents ELSE 0 END),0),
+		       COUNT(CASE WHEN t.status='OPEN' THEN 1 END),
+		       COUNT(CASE WHEN t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED') THEN 1 END),
+		       MAX(CASE WHEN v.status='OPEN' THEN 1 ELSE 0 END)
+		FROM pos_visits v
+		LEFT JOIN restaurant_tables rt ON rt.restaurant_id=v.restaurant_id AND rt.id=v.table_id
+		LEFT JOIN pos_tickets t ON t.restaurant_id=v.restaurant_id AND t.visit_id=v.id
+		WHERE v.restaurant_id=? AND v.service_date=? AND v.status<>'CANCELLED'
+		GROUP BY v.table_id,rt.name,v.channel,rt.display_order
+		ORDER BY v.table_id IS NULL,COALESCE(rt.display_order,0),v.table_id,v.channel`), restaurantID, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading day billing")
 		return
@@ -91,14 +103,21 @@ func (s *Server) handleBOPOSCashDayBilling(w http.ResponseWriter, r *http.Reques
 	// Same visit/ticket scope as closedCents, so the four tenders always add up
 	// to it: payments on a still-OPEN ticket stay under openCents, and a
 	// cancelled visit never counts on either side.
-	payRows, err := s.db.QueryContext(ctx, `
+	payRows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT p.method,COALESCE(SUM(p.amount_cents),0),COALESCE(SUM(p.tip_cents),0)
 		FROM pos_payments p
 		JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id
 		JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id
 		WHERE p.restaurant_id=? AND v.service_date=? AND v.status<>'CANCELLED' AND p.status='CAPTURED'
 		  AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')
-		GROUP BY p.method`, restaurantID, date)
+		GROUP BY p.method`, `
+		SELECT CAST(p.method AS text),COALESCE(SUM(p.amount_cents),0),COALESCE(SUM(p.tip_cents),0)
+		FROM pos_payments p
+		JOIN pos_tickets t ON t.restaurant_id=p.restaurant_id AND t.id=p.ticket_id
+		JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id
+		WHERE p.restaurant_id=? AND v.service_date=? AND v.status<>'CANCELLED' AND p.status='CAPTURED'
+		  AND t.status IN ('PAID','PARTIALLY_REFUNDED','REFUNDED')
+		GROUP BY p.method`), restaurantID, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading day payments")
 		return
@@ -119,13 +138,19 @@ func (s *Server) handleBOPOSCashDayBilling(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	refundRows, err := s.db.QueryContext(ctx, `
+	refundRows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT r.payment_method,COALESCE(SUM(r.amount_cents),0)
 		FROM pos_refunds r
 		JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id
 		JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id
 		WHERE r.restaurant_id=? AND v.service_date=? AND v.status<>'CANCELLED' AND r.status='COMPLETED'
-		GROUP BY r.payment_method`, restaurantID, date)
+		GROUP BY r.payment_method`, `
+		SELECT CAST(r.payment_method AS text),COALESCE(SUM(r.amount_cents),0)
+		FROM pos_refunds r
+		JOIN pos_tickets t ON t.restaurant_id=r.restaurant_id AND t.id=r.ticket_id
+		JOIN pos_visits v ON v.restaurant_id=t.restaurant_id AND v.id=t.visit_id
+		WHERE r.restaurant_id=? AND v.service_date=? AND v.status<>'CANCELLED' AND r.status='COMPLETED'
+		GROUP BY r.payment_method`), restaurantID, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading day refunds")
 		return

@@ -1,0 +1,26 @@
+# file:line<TAB>reason. Known failures of pg-prepare-all.sh that are NOT
+# PostgreSQL regressions: the same SQL runs on both dialects (portableSQL /
+# identical twin) and the object is missing in the production MySQL schema
+# too (plan.sql mirrors it byte-for-byte), or the string is SQLite-only and
+# is mis-attributed by the static collector. Review on every rehearsal.
+cmd/botstore-migrate/main.go:283	SQLite source read (rowid/bot_knowledge_fts FTS5), never sent to PG
+cmd/migrate-wine-images/main.go:113	one-off legacy tool; VINOS table absent from prod schema
+internal/api/assistant_llm.go:701	documented source anomaly: restaurants.phone absent on both dialects (falls back to base prompt)
+internal/api/backoffice_bookings.go:980	closed_days absent from prod schema (both dialects)
+internal/api/backoffice_pos.go:448	restaurant_members.pos_pin_hash absent from prod schema (both dialects)
+internal/api/backoffice_pos_pin.go:62	pos_pin_hash absent from prod schema (both dialects)
+internal/api/backoffice_pos_pin.go:78	pos_pin_hash absent from prod schema (both dialects)
+internal/api/backoffice_pos_pin.go:182	pos_pin_hash absent from prod schema (both dialects)
+internal/api/backoffice_pos_pin.go:189	pos_pin_hash absent from prod schema (both dialects)
+internal/api/backoffice_pos_pin.go:245	pos_pin_hash absent from prod schema (both dialects)
+internal/api/backoffice_stock_documents.go:680	pre-existing bug on both dialects: 14 columns, 15 values (MySQL 1136 too)
+internal/api/modifications_api.go:603	modification_history has no created_at/restaurant_id in prod schema (both dialects)
+internal/api/modifications_api.go:684	modification_history has no restaurant_id in prod schema (both dialects)
+internal/api/modifications_api.go:757	modification_history has no restaurant_id in prod schema (both dialects)
+internal/api/special_booking_snapshot.go:678	menu_dishes_catalog has no name column in prod schema (both dialects)
+internal/api/website_builder_generator.go	website builder tables/columns (026a) not applied in prod (both dialects)
+internal/api/website_builder_handlers.go	website builder tables/columns (026a) not applied in prod (both dialects)
+internal/botstore/migrate.go:159	SQLite source read (sqlite_master)
+internal/botstore/migrate.go:365	SQLite source read (sqlite_sequence)
+internal/botstore/migrate.go:381	SQLite source read (sqlite_sequence)
+internal/botstore/migrate.go:384	SQLite source read (sqlite_sequence)

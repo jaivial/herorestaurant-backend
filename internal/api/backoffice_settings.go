@@ -41,12 +41,12 @@ func (s *Server) handleBOIntegrationsGet(w http.ResponseWriter, r *http.Request)
 	var uazURL sql.NullString
 	var uazToken sql.NullString
 	var numbersRaw sql.NullString
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT n8n_webhook_url, enabled_events_json, uazapi_url, uazapi_token, restaurant_whatsapp_numbers_json
 		FROM restaurant_integrations
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&webhook, &enabledRaw, &uazURL, &uazToken, &numbersRaw)
+	`), restaurantID).Scan(&webhook, &enabledRaw, &uazURL, &uazToken, &numbersRaw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando integraciones")
 		return
@@ -115,7 +115,7 @@ func (s *Server) handleBOIntegrationsSet(w http.ResponseWriter, r *http.Request)
 	uazToken := strings.TrimSpace(input.UazapiToken)
 	numbersJSON, _ := json.Marshal(input.RestaurantWhatsappNumbers)
 
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO restaurant_integrations
 			(restaurant_id, n8n_webhook_url, enabled_events_json, uazapi_url, uazapi_token, restaurant_whatsapp_numbers_json)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -125,7 +125,12 @@ func (s *Server) handleBOIntegrationsSet(w http.ResponseWriter, r *http.Request)
 			uazapi_url = VALUES(uazapi_url),
 			uazapi_token = VALUES(uazapi_token),
 			restaurant_whatsapp_numbers_json = VALUES(restaurant_whatsapp_numbers_json)
-	`, restaurantID, webhook, string(enabledJSON), uazURL, uazToken, string(numbersJSON))
+	`, `
+		INSERT INTO restaurant_integrations (restaurant_id, n8n_webhook_url, enabled_events_json, uazapi_url, uazapi_token, restaurant_whatsapp_numbers_json)
+		VALUES (?, ?, CAST(? AS jsonb), ?, ?, CAST(? AS jsonb))
+		ON CONFLICT (restaurant_id) DO UPDATE SET n8n_webhook_url = EXCLUDED.n8n_webhook_url, enabled_events_json = EXCLUDED.enabled_events_json,
+			uazapi_url = EXCLUDED.uazapi_url, uazapi_token = EXCLUDED.uazapi_token, restaurant_whatsapp_numbers_json = EXCLUDED.restaurant_whatsapp_numbers_json
+	`), restaurantID, webhook, string(enabledJSON), uazURL, uazToken, string(numbersJSON))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando integraciones")
 		return
@@ -159,12 +164,12 @@ func (s *Server) handleBOBrandingGet(w http.ResponseWriter, r *http.Request) {
 		emailFromName    sql.NullString
 		emailFromAddress sql.NullString
 	)
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT brand_name, logo_url, primary_color, accent_color, email_from_name, email_from_address
 		FROM restaurant_branding
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&brandName, &logoURL, &primaryColor, &accentColor, &emailFromName, &emailFromAddress)
+	`), restaurantID).Scan(&brandName, &logoURL, &primaryColor, &accentColor, &emailFromName, &emailFromAddress)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando branding")
 		return
@@ -210,7 +215,7 @@ func (s *Server) handleBOBrandingSet(w http.ResponseWriter, r *http.Request) {
 	input.EmailFromName = strings.TrimSpace(input.EmailFromName)
 	input.EmailFromAddress = strings.TrimSpace(input.EmailFromAddress)
 
-	_, err := s.db.ExecContext(r.Context(), `
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO restaurant_branding
 			(restaurant_id, brand_name, logo_url, primary_color, accent_color, email_from_name, email_from_address)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -221,7 +226,12 @@ func (s *Server) handleBOBrandingSet(w http.ResponseWriter, r *http.Request) {
 			accent_color = VALUES(accent_color),
 			email_from_name = VALUES(email_from_name),
 			email_from_address = VALUES(email_from_address)
-	`, restaurantID, input.BrandName, input.LogoURL, input.PrimaryColor, input.AccentColor, input.EmailFromName, input.EmailFromAddress)
+	`, `
+		INSERT INTO restaurant_branding (restaurant_id, brand_name, logo_url, primary_color, accent_color, email_from_name, email_from_address)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET brand_name = EXCLUDED.brand_name, logo_url = EXCLUDED.logo_url, primary_color = EXCLUDED.primary_color,
+			accent_color = EXCLUDED.accent_color, email_from_name = EXCLUDED.email_from_name, email_from_address = EXCLUDED.email_from_address
+	`), restaurantID, input.BrandName, input.LogoURL, input.PrimaryColor, input.AccentColor, input.EmailFromName, input.EmailFromAddress)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando branding")
 		return

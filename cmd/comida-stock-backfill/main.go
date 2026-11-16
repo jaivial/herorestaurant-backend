@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"preactvillacarmen/internal/sqldb"
 	"time"
 
 	"preactvillacarmen/internal/config"
@@ -32,6 +33,9 @@ type catalogueSource struct {
 	IDColumn  string
 	NameExpr  string
 	Predicate string
+	// PG twins: quoted identifiers (uppercase source names) and PAD SPACE
+	// NULLIF (MySQL NULLIF(x,'') also nulls a space-only value).
+	TablePG, IDColumnPG, NameExprPG string
 }
 
 func catalogueSources() []catalogueSource {
@@ -39,40 +43,56 @@ func catalogueSources() []catalogueSource {
 		// comida_items holds platos (including arroces), bebidas and cafes,
 		// separated by source_type rather than by table.
 		{Name: "platos", Table: "comida_items", IDColumn: "id",
-			NameExpr: "COALESCE(NULLIF(titulo,''),nombre)", Predicate: "source_type='platos'"},
+			NameExpr: "COALESCE(NULLIF(titulo,''),nombre)", Predicate: "source_type='platos'",
+			TablePG: "comida_items", IDColumnPG: "id", NameExprPG: pgPadNullIfTitulo},
 		{Name: "bebidas", Table: "comida_items", IDColumn: "id",
-			NameExpr: "COALESCE(NULLIF(titulo,''),nombre)", Predicate: "source_type='bebidas'"},
+			NameExpr: "COALESCE(NULLIF(titulo,''),nombre)", Predicate: "source_type='bebidas'",
+			TablePG: "comida_items", IDColumnPG: "id", NameExprPG: pgPadNullIfTitulo},
 		{Name: "cafes", Table: "comida_items", IDColumn: "id",
-			NameExpr: "COALESCE(NULLIF(titulo,''),nombre)", Predicate: "source_type='cafes'"},
-		{Name: "vinos", Table: "VINOS", IDColumn: "num", NameExpr: "nombre", Predicate: "1=1"},
-		{Name: "postres", Table: "POSTRES", IDColumn: "NUM", NameExpr: "DESCRIPCION", Predicate: "1=1"},
+			NameExpr: "COALESCE(NULLIF(titulo,''),nombre)", Predicate: "source_type='cafes'",
+			TablePG: "comida_items", IDColumnPG: "id", NameExprPG: pgPadNullIfTitulo},
+		// SOURCE ANOMALY kept: VINOS is absent from the source schema (dump);
+		// the query fails on both engines exactly as in the source.
+		{Name: "vinos", Table: "VINOS", IDColumn: "num", NameExpr: "nombre", Predicate: "1=1",
+			TablePG: `"VINOS"`, IDColumnPG: "num", NameExprPG: "nombre"},
+		{Name: "postres", Table: "POSTRES", IDColumn: "NUM", NameExpr: "DESCRIPCION", Predicate: "1=1",
+			TablePG: `"POSTRES"`, IDColumnPG: `"NUM"`, NameExprPG: `"DESCRIPCION"`},
 	}
 }
+
+// pgPadNullIfTitulo is MySQL NULLIF(titulo,”) under PAD SPACE (a
+// space-only titulo counts as empty) on PG.
+const pgPadNullIfTitulo = "COALESCE(CASE WHEN rtrim(titulo, ' ') = '' THEN NULL ELSE titulo END,nombre)"
 
 func main() {
 	apply := flag.Bool("apply", false, "actually create and link stock items (default: report only)")
 	flag.Parse()
 
 	cfg := config.Load()
-	database, err := db.OpenMySQL(cfg.MySQL)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	// db_dialect_selection_v1: MySQL unchanged; PG fails closed until
+	// QA-approved and import-verified (no MySQL fallback, no migrations).
+	database, d, err := db.OpenBusinessForTool(ctx, cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer database.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
+	dialect = d
+	if dialect == sqldb.Postgres && *apply {
+		log.Fatal("comida-stock-backfill: --apply refused on PostgreSQL until runtime QA; run without --apply (report only)")
+	}
 
 	// Two concurrent runs could both see a product as unlinked and create two
 	// stock items for it.
-	var locked int
-	if err := database.QueryRowContext(ctx,
-		`SELECT GET_LOCK('villacarmen:comida-stock-backfill',0)`).Scan(&locked); err != nil || locked != 1 {
-		log.Print("backfill skipped: lock held")
+	// Session lock pinned to one connection (MySQL-only tool).
+	release, locked, err := sqldb.TryNamedLock(ctx, dialect, database, "villacarmen:comida-stock-backfill")
+	if err != nil || !locked {
+		log.Printf("backfill skipped: lock held (err=%v)", err)
 		return
 	}
-	defer database.ExecContext(context.Background(),
-		`SELECT RELEASE_LOCK('villacarmen:comida-stock-backfill')`)
+	defer release()
 
 	restaurants, err := tenantIDs(ctx, database)
 	if err != nil {
@@ -102,7 +122,7 @@ func main() {
 }
 
 func tenantIDs(ctx context.Context, database *sql.DB) ([]int, error) {
-	rows, err := database.QueryContext(ctx, `SELECT id FROM restaurants ORDER BY id`)
+	rows, err := database.QueryContext(ctx, portableSQL(`SELECT id FROM restaurants ORDER BY id`))
 	if err != nil {
 		return nil, err
 	}
@@ -131,8 +151,13 @@ func loadCatalogueRows(ctx context.Context, database *sql.DB, restaurantID int, 
 		`SELECT %s, COALESCE(%s,''), stock_item_id IS NOT NULL
 		   FROM %s WHERE restaurant_id=? AND %s ORDER BY %s`,
 		source.IDColumn, source.NameExpr, source.Table, source.Predicate, source.IDColumn)
+	queryPG := fmt.Sprintf(
+		`SELECT %s, COALESCE(%s,''), stock_item_id IS NOT NULL
+		   FROM %s WHERE restaurant_id=? AND %s ORDER BY %s`,
+		source.IDColumnPG, source.NameExprPG, source.TablePG, source.Predicate, source.IDColumnPG)
 
-	rows, err := database.QueryContext(ctx, query, restaurantID)
+	// Fixed identifiers per dialect; rebound once.
+	rows, err := database.QueryContext(ctx, nativeSQL(query, queryPG), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -197,24 +222,25 @@ func linkProduct(ctx context.Context, database *sql.DB, restaurantID int,
 	// sku is what makes that recoverable rather than duplicating.
 	var itemID int64
 	err = tx.QueryRowContext(ctx,
-		`SELECT id FROM stock_items WHERE restaurant_id=? AND sku=?`, restaurantID, spec.SKU).Scan(&itemID)
+		nativeSQL(`SELECT id FROM stock_items WHERE restaurant_id=? AND sku=?`, `SELECT id FROM stock_items WHERE restaurant_id=? AND app.norm(sku) = app.norm(?)`), restaurantID, spec.SKU).Scan(&itemID)
 	if errors.Is(err, sql.ErrNoRows) {
-		res, insertErr := tx.ExecContext(ctx, `
+		// InsertID: MySQL LastInsertId unchanged; PG RETURNING id.
+		var insertErr error
+		itemID, insertErr = sqldb.InsertID(ctx, dialect, tx, portableSQL(`
 			INSERT INTO stock_items
 				(restaurant_id,sku,name,kind,base_dimension,base_unit,is_tracked,deduction_source)
-			VALUES (?,?,?,?,?,?,1,?)`,
+			VALUES (?,?,?,?,?,?,1,?)`), "id",
 			restaurantID, spec.SKU, spec.Name, spec.Kind,
 			spec.BaseDimension, spec.BaseUnit, spec.DeductionSource)
 		if insertErr != nil {
 			return insertErr
 		}
-		itemID, _ = res.LastInsertId()
 
 		// Without a unit the item cannot be counted or used in a recipe.
-		if _, err = tx.ExecContext(ctx, `
+		if _, err = tx.ExecContext(ctx, portableSQL(`
 			INSERT INTO stock_item_units
 				(restaurant_id,stock_item_id,code,label,factor_to_base,is_default_display,can_recipe,can_count)
-			VALUES (?,?,'ud','ud',1,1,1,1)`, restaurantID, itemID); err != nil {
+			VALUES (?,?,'ud','ud',1,1,1,1)`), restaurantID, itemID); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -224,7 +250,11 @@ func linkProduct(ctx context.Context, database *sql.DB, restaurantID int,
 	update := fmt.Sprintf(
 		`UPDATE %s SET stock_item_id=? WHERE restaurant_id=? AND %s=?`,
 		source.Table, source.IDColumn)
-	if _, err = tx.ExecContext(ctx, update, itemID, restaurantID, productID); err != nil {
+	updatePG := fmt.Sprintf(
+		`UPDATE %s SET stock_item_id=? WHERE restaurant_id=? AND %s=?`,
+		source.TablePG, source.IDColumnPG)
+	// Fixed identifiers per dialect; rebound once.
+	if _, err = tx.ExecContext(ctx, nativeSQL(update, updatePG), itemID, restaurantID, productID); err != nil {
 		return err
 	}
 	return tx.Commit()

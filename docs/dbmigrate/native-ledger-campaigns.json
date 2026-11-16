@@ -1,0 +1,162 @@
+{
+  "domain": "campaigns_messaging",
+  "inventory": "sql-inventory-r34.json (dbmigrate-r12 canonical basis)",
+  "repo_call_sites": 2472,
+  "repo_native_sites": 1135,
+  "repo_dynamic": 193,
+  "helper_internal_excluded": 5,
+  "prepared_stmt_calls_excluded": 3,
+  "audit_failures": 0,
+  "ledger": [
+    {
+      "file": "internal/api/backoffice_campaigns.go",
+      "sites": 29,
+      "native": 29,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/campaign_auto_retake.go",
+      "sites": 6,
+      "native": 6,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/campaign_bounce_sync.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/campaign_email_guard.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/campaign_email_retry.go",
+      "sites": 13,
+      "native": 13,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/campaign_email_validation.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/campaign_tools.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    }
+  ],
+  "semantic_open": [
+    {
+      "site": "campaign_email_retry.go claim UPDATE done=2 WHERE done=0",
+      "note": "0->2 always changes: MySQL changed rows == PG matched rows. Concurrent claimers: InnoDB locking read re-check vs PG READ COMMITTED EvalPlanQual re-check -> loser 0 rows on both (reasoned from engine semantics, not runtime-verified; concurrency QA pending)."
+    },
+    {
+      "site": "campaign send runner (runCampaignSend)",
+      "note": "Source has NO DB claim (no FOR UPDATE/SKIP LOCKED); exclusivity is in-process campaignRunners only. Preserved unchanged on PG: multi-process double-send risk identical on both engines, not introduced or fixed."
+    },
+    {
+      "site": "backoffice_campaigns.go INSERT IGNORE campaign_recipients",
+      "note": "Breadth = uq_campaign_target duplicate + over-width target/name (varchar(190), MySQL truncates chars and inserts). PG: LEFT(CAST(? AS text),190) on those two columns + ON CONFLICT (campaign_id,channel,target) DO NOTHING. Truncation-then-CI-uniqueness interplay and any OTHER ignorable error (now surfacing as insert_errors) are OPEN behaviour deltas pending QA."
+    },
+    {
+      "site": "campaign_email_retry.go INSERT IGNORE retries",
+      "note": "Only PRIMARY recipient_id duplicate reachable -> ON CONFLICT (recipient_id) DO NOTHING; byte-cut invalid UTF-8 from truncate() errors on both (MySQL strict 1366 / PG 22021)."
+    },
+    {
+      "site": "backoff/time windows",
+      "note": "next_at/sent_at naive UTC DATETIME: NOW() -> date_trunc('second',statement_timestamp()) AT TIME ZONE 'UTC'; DATE_ADD INTERVAL ? MINUTE -> + CAST(? AS integer)*INTERVAL '1 minute'; 30 MINUTE literal kept. Backoff schedule 30m/2h/6h and LIMIT 20/5-per-tick unchanged. Statement-time vs MySQL per-statement NOW equivalent by prior NOW ledger; runtime QA pending."
+    },
+    {
+      "site": "campaignSuppressionQuery",
+      "note": "Safety-critical do-not-contact list: MySQL CONVERT/COLLATE only reconciles union collations; PG COLLATE \"C\" per branch, no SQL comparison on result. Filters TRIM(...)<>'' and s.source IN (...) run under CI collations (CI/PAD SPACE gap). LOWER non-ASCII mapping may differ (Go re-lowercases). OPEN QA."
+    },
+    {
+      "site": "campaignBookingsAudienceQuery",
+      "note": "CURDATE() UTC -> CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date) - ?. GROUP BY customer_name,contact_email,contact_phone under general_ci: CI/PAD SPACE folding decides audience dedupe and representative spelling is arbitrary on both - OPEN (CI/PAD SPACE)."
+    },
+    {
+      "site": "campaignStats",
+      "note": "SUM(bool) -> SUM(CASE..1/0); status CI equality pending CI gap."
+    },
+    {
+      "site": "handleBOCampaignUnsubscribed",
+      "note": "DATE(timestamp) -> CAST(AT TIME ZONE 'UTC' AS date); ORDER BY nullable created_at DESC NULLS LAST (MySQL order)."
+    },
+    {
+      "site": "boCampaignColumns",
+      "note": "DATE_FORMAT -> to_char; sent_at naive, created_at/updated_at timestamptz AT TIME ZONE 'UTC'."
+    },
+    {
+      "site": "campaigns ON UPDATE updated_at",
+      "note": "Status updates bump updated_at only on real change in MySQL; PG generic trigger same contract (136 ON UPDATE gap pending)."
+    },
+    {
+      "site": "backoffice_campaigns.go recipient INSERT IGNORE - surfaced-error classification",
+      "note": "Columns: campaign_id bigint NN, restaurant_id int NN, channel varchar(16) NN ('email'/'whatsapp' constants), target/name varchar(190) (LEFT 190 chars mirrors MySQL char truncation), booking_id bigint NULL, status literal; no FK, no CHECK on inserted cols, identity sequences reset by verified r4 import. IMPOSSIBLE given that: NOT NULL/range/FK/over-width. IMPLAUSIBLE: invalid UTF-8 (json.Unmarshal/DB-sourced strings), NUL (email syntax regex ^[a-z0-9...]$ and digits-only WhatsApp normalization; booking names from PG already NUL-free). RESIDUAL OPEN: any other PG failure is surfaced as insert_errors instead of hidden; truncation->CI-unique interplay not QA'd."
+    },
+    {
+      "site": "campaign_bounce_sync.go bounce events INSERT IGNORE",
+      "note": "OPEN, safety-relevant: Diag is cut at 300 BYTES (can split a rune) and IMAP text may be non-UTF-8. MySQL IGNORE downgrades 'Incorrect string value' to a warning and stores something (exact stored value unproven); PG raises 22021, the event is skipped (continue) and NO suppression is applied for that notice. Not reproduced or sanitized: needs a source-grounded decision. Duplicate (uq_bounce_event) + width truncation mirrored."
+    },
+    {
+      "site": "campaign_bounce_sync.go invalid_emails INSERT..SELECT",
+      "note": "Source quirk preserved: aggregate without GROUP BY always yields a row, so NOT EXISTS in WHERE never prevents the insert (duplicates, id_booking 0). Identical on PG."
+    },
+    {
+      "site": "campaign_bounce_sync.go suppression ODKU",
+      "note": "ON CONFLICT (restaurant_id,channel,target) DO UPDATE with CASE on old row: equals MySQL left-to-right assignment (reason uses old source; source condition reads old source). pending_verify comparison under ci_ai."
+    },
+    {
+      "site": "campaign_bounce_sync.go pending_verify INSERT IGNORE",
+      "note": "Duplicate + LEFT(target,190)/LEFT(reason,255) mirrored; no FK."
+    },
+    {
+      "site": "campaign_email_guard.go systemic breaker",
+      "note": "LIKE/REGEXP on ci_ai rejected by PG17 -> LOWER(col) COLLATE \"C\" LIKE / ~. Case-insensitive via full lowercasing vs MySQL ICU simple case folding: rare non-ASCII foldings (U+017F etc.) differ - OPEN QA; not an ASCII-only approximation but not proven identical. '(is )?' -> '(is ){0,1}' because Rebind rewrites every '?'."
+    },
+    {
+      "site": "campaign_auto_retake.go frozen clause",
+      "note": "LIKE 'pausa bounce%' on ci_ai error -> LOWER(error) COLLATE \"C\" LIKE: keeps CI, loses MySQL accent-insensitivity for that branch (OPEN, CI/accent gap). Quiescence window created_at >= statement second - ? hours (timestamptz). Orphan-runner restart = in-process map only, as source (multi-process double-runner risk unchanged)."
+    },
+    {
+      "site": "campaign_email_validation.go",
+      "note": "GROUP BY LOWER(TRIM(contact_email)) under ci_ai folds case/accent variants; representative arbitrary (CI/PAD SPACE gap). INSERT IGNORE breadth duplicate-only (Go guards len<=190). Calls campaignEmailLooksDeliverable (DNS MX lookups) - not run."
+    },
+    {
+      "site": "campaign_bounce_sync.go provider list",
+      "note": "smtp_host <> '' : MySQL PAD SPACE treats all-blank host as ''; PG does not (PAD SPACE gap)."
+    },
+    {
+      "site": "backoffice_bookings.go:943 (prior bookings checkpoint) FIXED",
+      "note": "PG regex literal contained '?' which sqldb.Rebind would have turned into $n placeholders (latent runtime failure); rewritten with {0,1}. Repo scan of PG literals for '?' found no other case (line-based scan, not proof)."
+    }
+  ],
+  "pg_ready": false,
+  "runtime_verified": false,
+  "syntax_complete": true,
+  "sites": 64,
+  "native": 64,
+  "remaining": 0,
+  "remaining_dynamic": 0,
+  "done_files": 7
+}

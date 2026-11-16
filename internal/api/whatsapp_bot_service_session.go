@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"preactvillacarmen/internal/sqldb"
 	"strings"
 	"sync"
 	"time"
@@ -100,10 +101,10 @@ func (s *Server) mintBotServiceSession(ctx context.Context, restaurantID int) (s
 		return "", err
 	}
 	expires := time.Now().Add(botServiceSessionTTL)
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, portableSQL(`
 		INSERT INTO bo_sessions (token_sha256, user_id, active_restaurant_id, expires_at, user_agent)
 		VALUES (?, ?, ?, ?, ?)
-	`, tokenSHA, userID, restaurantID, expires, "bot-privileged-session"); err != nil {
+	`), tokenSHA, userID, restaurantID, sqldb.NaiveUTCArg(sqlDialect, expires), "bot-privileged-session"); err != nil {
 		return "", err
 	}
 	return token, nil
@@ -113,9 +114,9 @@ func (s *Server) mintBotServiceSession(ctx context.Context, restaurantID int) (s
 // first superadmin, who can open every admin route.
 func (s *Server) botServiceSessionUser(ctx context.Context) (int, error) {
 	var userID int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT id FROM bo_users WHERE is_superadmin = 1 ORDER BY id LIMIT 1
-	`).Scan(&userID)
+	`)).Scan(&userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, errors.New("bot service session: no hay superadmin para la sesion de servicio")

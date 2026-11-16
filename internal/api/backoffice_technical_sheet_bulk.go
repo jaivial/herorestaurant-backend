@@ -47,8 +47,8 @@ func (s *Server) validateBulkLinks(ctx context.Context, restaurantID int, links 
 		var itemName string
 		var currentSheet sql.NullInt64
 		err := s.db.QueryRowContext(ctx,
-			`SELECT COALESCE(NULLIF(titulo,''),nombre), stock_recipe_id FROM comida_items
-			  WHERE restaurant_id=? AND id=?`,
+			portableSQL(`SELECT COALESCE(NULLIF(titulo,''),nombre), stock_recipe_id FROM comida_items
+			  WHERE restaurant_id=? AND id=?`),
 			restaurantID, link.ItemID).Scan(&itemName, &currentSheet)
 		if errors.Is(err, sql.ErrNoRows) {
 			result.Message = "El producto no existe"
@@ -68,7 +68,7 @@ func (s *Server) validateBulkLinks(ctx context.Context, restaurantID int, links 
 		var sheetName string
 		var outputItemID int64
 		err = s.db.QueryRowContext(ctx,
-			`SELECT name, output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=?`,
+			portableSQL(`SELECT name, output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=?`),
 			restaurantID, link.StockRecipeID).Scan(&sheetName, &outputItemID)
 		if errors.Is(err, sql.ErrNoRows) {
 			result.Message = "La ficha tecnica no existe"
@@ -140,7 +140,7 @@ func (s *Server) handleBOComidaBulkLinkApply(w http.ResponseWriter, r *http.Requ
 	// of being applied again.
 	var existingCount int
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT linked_count FROM comida_bulk_link_batches WHERE restaurant_id=? AND idempotency_key=?`,
+		nativeSQL(`SELECT linked_count FROM comida_bulk_link_batches WHERE restaurant_id=? AND idempotency_key=?`, `SELECT linked_count FROM comida_bulk_link_batches WHERE restaurant_id=? AND app.norm_ascii(idempotency_key) = app.norm_ascii(?)`),
 		a.ActiveRestaurantID, key).Scan(&existingCount)
 	if err == nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -174,10 +174,10 @@ func (s *Server) handleBOComidaBulkLinkApply(w http.ResponseWriter, r *http.Requ
 	defer tx.Rollback()
 
 	for _, row := range rows {
-		if _, err := tx.ExecContext(r.Context(), `
+		if _, err := tx.ExecContext(r.Context(), portableSQL(`
 			UPDATE comida_items
 			   SET production_type='MANUFACTURED', stock_recipe_id=?, stock_item_id=?
-			 WHERE restaurant_id=? AND id=?`,
+			 WHERE restaurant_id=? AND id=?`),
 			row.StockRecipeID, row.OutputItemID, a.ActiveRestaurantID, row.ItemID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error aplicando el lote")
 			return
@@ -187,9 +187,9 @@ func (s *Server) handleBOComidaBulkLinkApply(w http.ResponseWriter, r *http.Requ
 	linksJSON, _ := json.Marshal(in.Links)
 	// The audit row is written inside the same transaction, so the record and
 	// the change can never disagree.
-	if _, err := tx.ExecContext(r.Context(), `
+	if _, err := tx.ExecContext(r.Context(), nativeSQL(`
 		INSERT INTO comida_bulk_link_batches (restaurant_id,idempotency_key,links_json,linked_count,actor_user_id)
-		VALUES (?,?,?,?,?)`,
+		VALUES (?,?,?,?,?)`, `INSERT INTO comida_bulk_link_batches (restaurant_id,idempotency_key,links_json,linked_count,actor_user_id) VALUES (?,?,CAST(? AS jsonb),?,?)`),
 		a.ActiveRestaurantID, key, string(linksJSON), len(rows), a.User.ID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error registrando el lote")
 		return

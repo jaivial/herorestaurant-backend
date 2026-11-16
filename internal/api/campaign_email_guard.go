@@ -301,11 +301,11 @@ func (s *Server) campaignEmailBreakerTripped(ctx context.Context, restaurantID i
 		// the sync (idempotent). Only events recorded after this point trip it,
 		// whoever (this breaker, the endpoint or the background loop) applied them.
 		st.started = true
-		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM campaign_bounce_events WHERE restaurant_id = ?`, restaurantID).Scan(&st.baseID)
+		_ = s.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(MAX(id), 0) FROM campaign_bounce_events WHERE restaurant_id = ?`), restaurantID).Scan(&st.baseID)
 		return false
 	}
 	newTotal := 0
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaign_bounce_events WHERE restaurant_id = ? AND id > ?`, restaurantID, st.baseID).Scan(&newTotal)
+	_ = s.db.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM campaign_bounce_events WHERE restaurant_id = ? AND id > ?`), restaurantID, st.baseID).Scan(&newTotal)
 	if newTotal > 0 {
 		slog.Default().Warn("campaign.bounce.new", "coord_id", coordID, "campaign_id", campaignID, "events", newTotal, "hard", res.FreshHard, "soft", res.FreshSoft)
 	}
@@ -317,13 +317,23 @@ func (s *Server) campaignEmailBreakerTripped(ctx context.Context, restaurantID i
 	// STOREDRV QuotaExceededException) concerns only that address, not the sending
 	// account, so it is not a systemic signal (it still counts in a series of notices).
 	systemic := 0
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaign_bounce_events WHERE restaurant_id = ? AND id > ? AND (
+	// PG17: LIKE/regex reject the nondeterministic old-nondeterministic-collation collation, so both
+	// run on LOWER(col) COLLATE "C". MySQL REGEXP on a _ci column is ICU
+	// case-insensitive (simple case folding); LOWER is full lowercasing, so
+	// rare non-ASCII foldings (e.g. U+017F long s) differ - OPEN QA. NULL
+	// three-valued logic is identical.
+	// "(is )?" is written "(is ){0,1}" on PG: sqldb.Rebind turns every '?'
+	// (even inside a literal) into a placeholder.
+	_ = s.db.QueryRowContext(ctx, nativeSQL(`SELECT COUNT(*) FROM campaign_bounce_events WHERE restaurant_id = ? AND id > ? AND (
 		status_code LIKE '4.%' OR status_code LIKE '5.3.%' OR status_code LIKE '5.4.%' OR status_code LIKE '5.7.%'
 		OR diagnostic REGEXP 'rate limit|throttl|too many|spam|block|reputation|policy|authenticat|denied|quota|try again|temporar')
-		AND NOT (status_code IN ('4.2.2', '5.2.2') AND diagnostic REGEXP 'recipient.s (inbox|mailbox)|mailbox (is )?full|out of storage space')`, restaurantID, st.baseID).Scan(&systemic)
+		AND NOT (status_code IN ('4.2.2', '5.2.2') AND diagnostic REGEXP 'recipient.s (inbox|mailbox)|mailbox (is )?full|out of storage space')`, `SELECT COUNT(*) FROM campaign_bounce_events WHERE restaurant_id = ? AND id > ? AND (
+		LOWER(status_code) COLLATE "C" LIKE '4.%' OR LOWER(status_code) COLLATE "C" LIKE '5.3.%' OR LOWER(status_code) COLLATE "C" LIKE '5.4.%' OR LOWER(status_code) COLLATE "C" LIKE '5.7.%'
+		OR LOWER(diagnostic) COLLATE "C" ~ 'rate limit|throttl|too many|spam|block|reputation|policy|authenticat|denied|quota|try again|temporar')
+		AND NOT (status_code IN ('4.2.2', '5.2.2') AND LOWER(diagnostic) COLLATE "C" ~ 'recipient.s (inbox|mailbox)|mailbox (is ){0,1}full|out of storage space')`), restaurantID, st.baseID).Scan(&systemic)
 	if systemic > 0 || newTotal >= campaignBounceTripAfter {
 		st.tripped = true
-		_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'paused', error = 'corte por rebotes' WHERE campaign_id = ? AND channel = 'email' AND status = 'pending'`, campaignID)
+		_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_recipients SET status = 'paused', error = 'corte por rebotes' WHERE campaign_id = ? AND channel = 'email' AND status = 'pending'`), campaignID)
 		slog.Default().Error("campaign.bounce.tripped", "coord_id", coordID, "campaign_id", campaignID, "new_bounces", newTotal, "systemic", systemic)
 		return true
 	}

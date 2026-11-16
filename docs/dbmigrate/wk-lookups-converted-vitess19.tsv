@@ -1,0 +1,12 @@
+file	line	converted
+internal/api/backoffice_stock_documents.go	170	stock_supplier_aliases.supplier_code;stock_supplier_aliases.normalized_description;stock_supplier_aliases.supplier_code
+internal/api/public_unsubscribe.go	207	campaign_suppressions.target
+internal/api/backoffice_rbac.go	236	bo_role_permissions.section_key
+internal/api/backoffice_config_ai_image.go	359	ai_image_models.slug
+internal/api/translations.go	542	dish_translations.lang
+internal/api/seo_item_routes.go	954	seo_item_routes.entity_type
+internal/api/backoffice_stock.go	96	stock_role_permissions.role_slug
+internal/api/backoffice_pos_customers.go	86	pos_customers.phone
+internal/api/backoffice_stock_suppliers.go	36	stock_supplier_aliases.supplier_name=stock_suppliers.name (col-to-col)
+internal/api/backoffice_stock_suppliers.go	37	same
+internal/api/backoffice_menu_visibility.go	163	menu_visibility.menu_key

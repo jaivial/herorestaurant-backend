@@ -132,10 +132,10 @@ func (s *Server) campaignUnsubscribeBookingTarget(ctx context.Context, restauran
 		return campaignUnsubscribeTarget{}, false
 	}
 	var t campaignUnsubscribeTarget
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COALESCE(NULLIF(TRIM(contact_email), ''), ''), COALESCE(NULLIF(TRIM(contact_phone), ''), '')
 		FROM bookings WHERE restaurant_id = ? AND id = ? LIMIT 1
-	`, restaurantID, bookingID).Scan(&t.Email, &t.Phone)
+	`), restaurantID, bookingID).Scan(&t.Email, &t.Phone)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Default().Warn("campaign.unsubscribe.lookup_failed", "coord_id", campaignUnsubscribeCoordID,
@@ -162,13 +162,20 @@ func (s *Server) campaignUnsubscribeStore(r *http.Request, restaurantID int, boo
 
 	stored := 0
 	for _, p := range pairs {
-		if p.target == "" || len(p.target) > 190 {
+		if _, fits := campaignSuppressionKey(p.channel, p.target); !fits {
 			continue
 		}
-		if _, err := s.db.ExecContext(ctx, `
+		// INSERT IGNORE scope: campaign_suppressions has no FK; duplicates on
+		// uq(restaurant_id, channel, target) are skipped; target is <=190 bytes
+		// above; reason is cast to varchar(255) = IGNORE's character truncation.
+		if _, err := s.db.ExecContext(ctx, nativeSQL(`
 			INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
 			VALUES (?, ?, ?, ?, ?, 'unsubscribe')
-		`, restaurantID, p.channel, p.target, bookingID, reason); err != nil {
+		`, `
+			INSERT INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
+			VALUES (?, ?, ?, ?, CAST(? AS varchar(255)), 'unsubscribe')
+			ON CONFLICT (restaurant_id, app.norm(channel), app.norm(target)) DO NOTHING
+		`), restaurantID, p.channel, p.target, bookingID, campaignSuppressionReason(reason)); err != nil {
 			slog.Default().Warn("campaign.unsubscribe.insert_failed", "coord_id", campaignUnsubscribeCoordID,
 				"restaurant_id", restaurantID, "channel", p.channel, "err", err.Error())
 			continue
@@ -190,9 +197,11 @@ func (s *Server) campaignUnsubscribeAlready(ctx context.Context, restaurantID in
 			continue
 		}
 		var one int
-		if err := s.db.QueryRowContext(ctx, `
+		if err := s.db.QueryRowContext(ctx, nativeSQL(`
 			SELECT 1 FROM campaign_suppressions WHERE restaurant_id = ? AND channel = ? AND target = ? LIMIT 1
-		`, restaurantID, p.channel, p.target).Scan(&one); err == nil {
+		`, `
+			SELECT 1 FROM campaign_suppressions WHERE restaurant_id = ? AND app.norm(channel) = app.norm(?) AND app.norm(target) = app.norm(?) LIMIT 1
+		`), restaurantID, p.channel, p.target).Scan(&one); err == nil {
 			return true
 		}
 	}
@@ -303,20 +312,24 @@ func (s *Server) campaignUnsubscribeExpand(ctx context.Context, restaurantID int
 	var email, phone string
 	var err error
 	if t.Email != "" {
-		err = s.db.QueryRowContext(ctx, `
+		err = s.db.QueryRowContext(ctx, portableSQL(`
 			SELECT COALESCE(TRIM(contact_phone), '') FROM bookings
 			WHERE restaurant_id = ? AND LOWER(TRIM(contact_email)) = ? AND TRIM(COALESCE(contact_phone, '')) <> ''
-			ORDER BY id DESC LIMIT 1`, restaurantID, strings.ToLower(t.Email)).Scan(&phone)
+			ORDER BY id DESC LIMIT 1`), restaurantID, strings.ToLower(t.Email)).Scan(&phone)
 		if err == nil {
 			t.Phone = normalizeWhatsAppNumber(phone)
 		}
 	} else if t.Phone != "" {
 		national, digits := botPhoneVariants(t.Phone)
-		err = s.db.QueryRowContext(ctx, `
+		err = s.db.QueryRowContext(ctx, nativeSQL(`
 			SELECT LOWER(COALESCE(TRIM(contact_email), '')) FROM bookings
 			WHERE restaurant_id = ? AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
 			  AND TRIM(COALESCE(contact_email, '')) LIKE '%@%'
-			ORDER BY id DESC LIMIT 1`, restaurantID, national, digits, digits).Scan(&email)
+			ORDER BY id DESC LIMIT 1`, `
+			SELECT LOWER(COALESCE(TRIM(contact_email), '')) FROM bookings
+			WHERE restaurant_id = ? AND (contact_phone = ? OR contact_phone = ? OR (COALESCE(contact_phone_country_code,'') || contact_phone) = ?)
+			  AND TRIM(COALESCE(contact_email, '')) COLLATE "C" LIKE '%@%'
+			ORDER BY id DESC LIMIT 1`), restaurantID, national, digits, digits).Scan(&email)
 		if err == nil {
 			t.Email = email
 		}

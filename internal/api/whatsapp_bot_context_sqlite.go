@@ -6,100 +6,75 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"preactvillacarmen/internal/botstore"
+	"preactvillacarmen/internal/config"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type botConversationStore struct {
-	db *sql.DB
+	db *botstore.DB
+}
+
+// newBotConversationStoreFor opens the configured backend (wa_bot_store_pg_v1).
+// Postgres never falls back to SQLite and refuses an unmigrated database, so
+// a cutover is all-or-nothing.
+func newBotConversationStoreFor(cfg config.Config) (*botConversationStore, error) {
+	// repair-v21 (all-PostgreSQL requirement): with DB_DRIVER=postgres the
+	// bot context store is PostgreSQL too, in the unified DB's bot_context
+	// schema (the SQLite-origin tables; MySQL-origin bot tables live in public).
+	// An explicit non-postgres BOT_CONTEXT_DRIVER is refused (no silent SQLite).
+	if strings.EqualFold(strings.TrimSpace(cfg.DBDriver), "postgres") {
+		if drv := strings.TrimSpace(os.Getenv("BOT_CONTEXT_DRIVER")); drv != "" && !strings.EqualFold(drv, botstore.DriverPostgres) {
+			return nil, fmt.Errorf("DB_DRIVER=postgres requires the bot context store on PostgreSQL: BOT_CONTEXT_DRIVER=%q refused (no SQLite fallback)", drv)
+		}
+		dsn := cfg.BotContextPostgresDSN
+		if dsn == "" {
+			dsn = cfg.DatabaseURL
+		}
+		schema := cfg.BotContextPostgresSchema
+		if schema == "" {
+			schema = sqldb.SchemaBotContext
+		}
+		return openBotConversationStoreSchema(botstore.DriverPostgres, dsn, schema, cfg.BotContextPostgresAllowEmpty)
+	}
+	if cfg.BotContextDriver == botstore.DriverPostgres {
+		return openBotConversationStoreSchema(botstore.DriverPostgres, cfg.BotContextPostgresDSN, cfg.BotContextPostgresSchema, cfg.BotContextPostgresAllowEmpty)
+	}
+	return openBotConversationStore(cfg.BotContextDriver, cfg.BotContextSQLitePath, false)
 }
 
 func newBotConversationStore(path string) (*botConversationStore, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		path = ":memory:"
-	} else if path != ":memory:" {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, fmt.Errorf("create bot context dir: %w", err)
-		}
-	}
-	db, err := sql.Open("sqlite", path)
+	return openBotConversationStore(botstore.DriverSQLite, path, false)
+}
+
+func openBotConversationStore(driver, dsn string, allowEmpty bool) (*botConversationStore, error) {
+	return openBotConversationStoreSchema(driver, dsn, "", allowEmpty)
+}
+
+func openBotConversationStoreSchema(driver, dsn, schema string, allowEmpty bool) (*botConversationStore, error) {
+	db, err := botstore.OpenSchema(driver, dsn, schema)
 	if err != nil {
-		return nil, fmt.Errorf("open bot context sqlite: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	for _, stmt := range []string{
-		`PRAGMA busy_timeout = 5000`,
-		`PRAGMA journal_mode = WAL`,
-		`CREATE TABLE IF NOT EXISTS conversation_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            restaurant_id INTEGER NOT NULL,
-            user_phone TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('user','assistant')),
-            content TEXT NOT NULL,
-            tool_name TEXT NOT NULL DEFAULT '',
-            source TEXT NOT NULL DEFAULT '',
-            include_in_context INTEGER NOT NULL DEFAULT 1,
-            created_at_ms INTEGER NOT NULL
-        )`,
-		`CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread
-            ON conversation_messages(restaurant_id, user_phone, id)`,
-		// Pipeline decision trace per turn (wa_bot_dspy_pipeline_v1).
-		`CREATE TABLE IF NOT EXISTS pipeline_decisions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            restaurant_id INTEGER NOT NULL,
-            user_phone TEXT NOT NULL,
-            message TEXT NOT NULL,
-            decision_json TEXT NOT NULL,
-            model_used TEXT NOT NULL DEFAULT '',
-            created_at_ms INTEGER NOT NULL
-        )`,
-		`CREATE INDEX IF NOT EXISTS idx_pipeline_decisions_restaurant
-            ON pipeline_decisions(restaurant_id, id)`,
-		// Requests forwarded to the management WhatsApp group
-		// (wa_bot_management_group_v1): one row per customer issue.
-		`CREATE TABLE IF NOT EXISTS management_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            restaurant_id INTEGER NOT NULL,
-            user_phone TEXT NOT NULL,
-            reason TEXT NOT NULL,
-            summary TEXT NOT NULL,
-            group_sent INTEGER NOT NULL DEFAULT 0,
-            created_at_ms INTEGER NOT NULL
-        )`,
-		`CREATE INDEX IF NOT EXISTS idx_management_requests_thread
-            ON management_requests(restaurant_id, user_phone, id)`,
-		// Sticky human handoff per conversation (wa_bot_sticky_handoff_v1).
-		`CREATE TABLE IF NOT EXISTS handoff_state (
-            restaurant_id INTEGER NOT NULL,
-            user_phone TEXT NOT NULL,
-            topic TEXT NOT NULL,
-            reason TEXT NOT NULL DEFAULT '',
-            repeats INTEGER NOT NULL DEFAULT 0,
-            updated_at_ms INTEGER NOT NULL,
-            PRIMARY KEY (restaurant_id, user_phone)
-        )`,
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("init bot context sqlite: %w", err)
-		}
-	}
-	// Forward-compatible migration for databases created by early builds of
-	// this feature before include_in_context existed.
-	if _, err := db.Exec(`ALTER TABLE conversation_messages ADD COLUMN include_in_context INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+	if err := db.Init(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("migrate bot context sqlite: %w", err)
+		return nil, err
 	}
+	if err := db.RequireMigrated(allowEmpty); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	botCheckpoint("wa_bot_store_pg_v1", "driver=%s postgres=%t", driver, db.Postgres)
 	return &botConversationStore{db: db}, nil
 }
 
-// DB exposes the shared SQLite handle (knowledge FTS index lives beside the
-// transcript). Nil-safe.
-func (s *botConversationStore) DB() *sql.DB {
+// DB exposes the shared store handle (knowledge index and chat images live
+// beside the transcript). Nil-safe.
+func (s *botConversationStore) DB() *botstore.DB {
 	if s == nil {
 		return nil
 	}
@@ -113,6 +88,40 @@ func (s *botConversationStore) Close() error {
 	return s.db.Close()
 }
 
+// botStateDB is where the bot-owned runtime state lives (inbound queue,
+// sessions, message log): the PG bot store when BOT_CONTEXT_DRIVER=postgres,
+// otherwise the shared MySQL as before (wa_bot_store_pg_mysql_v1). Never nil.
+func (s *Server) botStateDB() *botstore.DB {
+	// repair-wiring2: the MySQL-origin bot tables (botstore.MySQLTables:
+	// bot_inbound_queue, whatsapp_bot_sessions, whatsapp_message_logs,
+	// bot_conversation_messages, whatsapp_bot_messages) are imported with the
+	// full business migration into the business schema ("public"); the bot
+	// context schema holds only the SQLite-origin tables (botstore.Init unified
+	// mode). They are always read/written on the business pool in the business
+	// dialect, never on the bot context pool (verified scratch 09:05:
+	// bot_context has no whatsapp_bot_sessions).
+	return &botstore.DB{DB: s.db, Postgres: sqlDialect == sqldb.Postgres, Schema: sqldb.SchemaBusiness}
+}
+
+// botSQLNow is the server clock at 0 or 3 fractional digits per dialect.
+func botSQLNow(st *botstore.DB, frac int) string {
+	if st.Postgres {
+		return fmt.Sprintf("LOCALTIMESTAMP(%d)", frac)
+	}
+	if frac > 0 {
+		return fmt.Sprintf("NOW(%d)", frac)
+	}
+	return "NOW()"
+}
+
+// botSQLAgo is "now minus N UNIT" (UNIT = SECOND|MINUTE|HOUR) per dialect.
+func botSQLAgo(st *botstore.DB, interval string) string {
+	if st.Postgres {
+		return "(LOCALTIMESTAMP - INTERVAL '" + strings.ToLower(interval) + "')"
+	}
+	return "(NOW() - INTERVAL " + interval + ")"
+}
+
 func (s *botConversationStore) Append(ctx context.Context, restaurantID int, userPhone, role, content, toolName, source string) error {
 	if s == nil || s.db == nil || restaurantID <= 0 || strings.TrimSpace(userPhone) == "" || strings.TrimSpace(content) == "" {
 		return nil
@@ -124,9 +133,9 @@ func (s *botConversationStore) Append(ctx context.Context, restaurantID int, use
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(source)), "security_") {
 		includeInContext = 0
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO conversation_messages
+	_, err := s.db.ExecContext(ctx, selectedSQL(`INSERT INTO conversation_messages
         (restaurant_id,user_phone,role,content,tool_name,source,include_in_context,created_at_ms)
-        VALUES (?,?,?,?,?,?,?,?)`, restaurantID, botConversationKey(userPhone), role, content, toolName, source, includeInContext, time.Now().UnixMilli())
+        VALUES (?,?,?,?,?,?,?,?)`), restaurantID, botConversationKey(userPhone), role, content, toolName, source, includeInContext, time.Now().UnixMilli())
 	return err
 }
 
@@ -140,10 +149,10 @@ func (s *botConversationStore) History(ctx context.Context, restaurantID int, us
 	// get_bookings. Ordered by send time, not id, so a message recorded late
 	// (a backfilled campaign: wa_bot_campaign_context_v1) sits where the
 	// customer saw it.
-	rows, err := s.db.QueryContext(ctx, `SELECT role, content, source, tool_name FROM (
+	rows, err := s.db.QueryContext(ctx, selectedSQL(`SELECT role, content, source, tool_name FROM (
             SELECT id, role, content, source, tool_name, created_at_ms FROM conversation_messages
             WHERE restaurant_id=? AND user_phone=? AND include_in_context=1
-            ORDER BY created_at_ms DESC, id DESC LIMIT 40) ORDER BY created_at_ms ASC, id ASC`, restaurantID, botConversationKey(userPhone))
+            ORDER BY created_at_ms DESC, id DESC LIMIT 40) AS recent ORDER BY created_at_ms ASC, id ASC`), restaurantID, botConversationKey(userPhone))
 	if err != nil {
 		return nil, err
 	}
@@ -259,12 +268,8 @@ func (s *botConversationStore) AppendDecision(ctx context.Context, restaurantID 
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO pipeline_decisions (restaurant_id,user_phone,message,decision_json,model_used,created_at_ms) VALUES (?,?,?,?,?,?)`,
+	return s.db.InsertID(ctx, selectedSQL(`INSERT INTO pipeline_decisions (restaurant_id,user_phone,message,decision_json,model_used,created_at_ms) VALUES (?,?,?,?,?,?)`),
 		restaurantID, digitsOnly(userPhone), truncate(message, 500), string(raw), modelUsed, time.Now().UnixMilli())
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
 }
 
 // SetDecisionModel records which provider/model answered the turn plus the
@@ -273,10 +278,14 @@ func (s *botConversationStore) SetDecisionModel(ctx context.Context, id int64, m
 	if s == nil || s.db == nil || id <= 0 {
 		return
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE pipeline_decisions SET model_used = ? WHERE id = ?`, modelUsed, id)
+	_, _ = s.db.ExecContext(ctx, selectedSQL(`UPDATE pipeline_decisions SET model_used = ? WHERE id = ?`), modelUsed, id)
 	if len(metrics) > 0 && metrics[0] != nil {
 		if raw, err := json.Marshal(metrics[0]); err == nil {
-			_, _ = s.db.ExecContext(ctx, `UPDATE pipeline_decisions SET decision_json = json_set(decision_json, '$.turn', json(?)) WHERE id = ?`, string(raw), id)
+			q := `UPDATE pipeline_decisions SET decision_json = json_set(decision_json, '$.turn', json(?)) WHERE id = ?`
+			if s.db.Postgres {
+				q = `UPDATE pipeline_decisions SET decision_json = jsonb_set(decision_json::jsonb, '{turn}', ?::jsonb)::text WHERE id = ?`
+			}
+			_, _ = s.db.ExecContext(ctx, selectedSQL(q), string(raw), id) // q chosen by s.db.Postgres above
 		}
 	}
 }
@@ -286,7 +295,7 @@ func (s *botConversationStore) RecentDecisions(ctx context.Context, restaurantID
 	if s == nil || s.db == nil {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,user_phone,message,decision_json,model_used,created_at_ms FROM pipeline_decisions WHERE restaurant_id=? ORDER BY id DESC LIMIT ?`, restaurantID, limit)
+	rows, err := s.db.QueryContext(ctx, selectedSQL(`SELECT id,user_phone,message,decision_json,model_used,created_at_ms FROM pipeline_decisions WHERE restaurant_id=? ORDER BY id DESC LIMIT ?`), restaurantID, limit)
 	if err != nil {
 		return out, err
 	}
@@ -317,7 +326,7 @@ func (s *botConversationStore) GetHandoff(ctx context.Context, restaurantID int,
 		return nil, nil
 	}
 	var h botHandoffState
-	err := s.db.QueryRowContext(ctx, `SELECT topic, reason, repeats, updated_at_ms FROM handoff_state WHERE restaurant_id=? AND user_phone=?`,
+	err := s.db.QueryRowContext(ctx, selectedSQL(`SELECT topic, reason, repeats, updated_at_ms FROM handoff_state WHERE restaurant_id=? AND user_phone=?`),
 		restaurantID, digitsOnly(userPhone)).Scan(&h.Topic, &h.Reason, &h.Repeats, &h.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -336,11 +345,11 @@ func (s *botConversationStore) SetHandoff(ctx context.Context, restaurantID int,
 	}
 	now := time.Now().UnixMilli()
 	if repeat {
-		_, err := s.db.ExecContext(ctx, `UPDATE handoff_state SET repeats = repeats + 1, updated_at_ms = ? WHERE restaurant_id=? AND user_phone=?`, now, restaurantID, digitsOnly(userPhone))
+		_, err := s.db.ExecContext(ctx, selectedSQL(`UPDATE handoff_state SET repeats = repeats + 1, updated_at_ms = ? WHERE restaurant_id=? AND user_phone=?`), now, restaurantID, digitsOnly(userPhone))
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO handoff_state (restaurant_id,user_phone,topic,reason,repeats,updated_at_ms) VALUES (?,?,?,?,0,?)
-		ON CONFLICT(restaurant_id,user_phone) DO UPDATE SET topic=excluded.topic, reason=excluded.reason, repeats=0, updated_at_ms=excluded.updated_at_ms`,
+	_, err := s.db.ExecContext(ctx, selectedSQL(`INSERT INTO handoff_state (restaurant_id,user_phone,topic,reason,repeats,updated_at_ms) VALUES (?,?,?,?,0,?)
+		ON CONFLICT(restaurant_id,user_phone) DO UPDATE SET topic=excluded.topic, reason=excluded.reason, repeats=0, updated_at_ms=excluded.updated_at_ms`),
 		restaurantID, digitsOnly(userPhone), truncate(topic, 300), reason, now)
 	return err
 }
@@ -349,7 +358,7 @@ func (s *botConversationStore) ClearHandoff(ctx context.Context, restaurantID in
 	if s == nil || s.db == nil {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM handoff_state WHERE restaurant_id=? AND user_phone=?`, restaurantID, digitsOnly(userPhone))
+	_, err := s.db.ExecContext(ctx, selectedSQL(`DELETE FROM handoff_state WHERE restaurant_id=? AND user_phone=?`), restaurantID, digitsOnly(userPhone))
 	return err
 }
 
@@ -369,8 +378,8 @@ func (s *botConversationStore) RecentManagementRequests(ctx context.Context, res
 	if s == nil || s.db == nil {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, reason, summary, group_sent, created_at_ms FROM management_requests
-		WHERE restaurant_id=? AND user_phone=? AND created_at_ms>=? ORDER BY id DESC LIMIT 10`, restaurantID, digitsOnly(userPhone), since.UnixMilli())
+	rows, err := s.db.QueryContext(ctx, selectedSQL(`SELECT id, reason, summary, group_sent, created_at_ms FROM management_requests
+		WHERE restaurant_id=? AND user_phone=? AND created_at_ms>=? ORDER BY id DESC LIMIT 10`), restaurantID, digitsOnly(userPhone), since.UnixMilli())
 	if err != nil {
 		return out, err
 	}
@@ -395,7 +404,7 @@ func (s *botConversationStore) AddManagementRequest(ctx context.Context, restaur
 	if groupSent {
 		sent = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO management_requests (restaurant_id,user_phone,reason,summary,group_sent,created_at_ms) VALUES (?,?,?,?,?,?)`,
+	_, err := s.db.ExecContext(ctx, selectedSQL(`INSERT INTO management_requests (restaurant_id,user_phone,reason,summary,group_sent,created_at_ms) VALUES (?,?,?,?,?,?)`),
 		restaurantID, digitsOnly(userPhone), reason, truncate(summary, 500), sent, time.Now().UnixMilli())
 	return err
 }
@@ -410,7 +419,7 @@ func (s *botConversationStore) ManagementRequestStats(ctx context.Context, resta
 	since := time.Now().Add(-30 * 24 * time.Hour).UnixMilli()
 	byReason := map[string]int{}
 	total := 0
-	if rows, err := s.db.QueryContext(ctx, `SELECT reason, COUNT(*) FROM management_requests WHERE restaurant_id=? AND created_at_ms>=? GROUP BY reason`, restaurantID, since); err == nil {
+	if rows, err := s.db.QueryContext(ctx, selectedSQL(`SELECT reason, COUNT(*) FROM management_requests WHERE restaurant_id=? AND created_at_ms>=? GROUP BY reason`), restaurantID, since); err == nil {
 		for rows.Next() {
 			var r string
 			var n int
@@ -422,7 +431,7 @@ func (s *botConversationStore) ManagementRequestStats(ctx context.Context, resta
 		rows.Close()
 	}
 	recent := []map[string]any{}
-	if rows, err := s.db.QueryContext(ctx, `SELECT user_phone, reason, summary, group_sent, created_at_ms FROM management_requests WHERE restaurant_id=? ORDER BY id DESC LIMIT 10`, restaurantID); err == nil {
+	if rows, err := s.db.QueryContext(ctx, selectedSQL(`SELECT user_phone, reason, summary, group_sent, created_at_ms FROM management_requests WHERE restaurant_id=? ORDER BY id DESC LIMIT 10`), restaurantID); err == nil {
 		for rows.Next() {
 			var phone, reason, summary string
 			var sent int
@@ -446,11 +455,21 @@ func (s *botConversationStore) DSPyDemoCandidates(ctx context.Context, restauran
 	if s == nil || s.db == nil {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT message, json_extract(decision_json,'$.intent') FROM pipeline_decisions
+	q := `SELECT message, json_extract(decision_json,'$.intent') FROM pipeline_decisions
 		WHERE restaurant_id = ? AND json_extract(decision_json,'$.classifier')='jev' AND json_extract(decision_json,'$.confidence') >= ?
 		  AND length(message) BETWEEN 2 AND 240
 		  AND id IN (SELECT MAX(id) FROM pipeline_decisions WHERE restaurant_id = ? GROUP BY message)
-		ORDER BY id DESC LIMIT ?`, restaurantID, minConfidence, restaurantID, limit)
+		ORDER BY id DESC LIMIT ?`
+	if s.db.Postgres {
+		// jsonb_typeof guards keep a non-numeric confidence from failing the cast.
+		q = `SELECT message, COALESCE(decision_json::jsonb->>'intent','') FROM pipeline_decisions
+		WHERE restaurant_id = ? AND decision_json::jsonb->>'classifier'='jev'
+		  AND jsonb_typeof(decision_json::jsonb->'confidence')='number' AND (decision_json::jsonb->>'confidence')::float8 >= ?
+		  AND char_length(message) BETWEEN 2 AND 240
+		  AND id IN (SELECT MAX(id) FROM pipeline_decisions WHERE restaurant_id = ? GROUP BY message)
+		ORDER BY id DESC LIMIT ?`
+	}
+	rows, err := s.db.QueryContext(ctx, selectedSQL(q), restaurantID, minConfidence, restaurantID, limit) // q chosen by s.db.Postgres above
 	if err != nil {
 		return out, err
 	}
@@ -471,7 +490,7 @@ func (s *botConversationStore) DecisionRestaurants(ctx context.Context) ([]int, 
 	if s == nil || s.db == nil {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT restaurant_id FROM pipeline_decisions`)
+	rows, err := s.db.QueryContext(ctx, selectedSQL(`SELECT DISTINCT restaurant_id FROM pipeline_decisions`))
 	if err != nil {
 		return out, err
 	}

@@ -229,7 +229,7 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 	endTime := end.Format("15:04:05")
 	appendReminderLog(ts + " - Checking bookings from " + currentDate + " " + currentTime + " to " + endDate + " " + endTime + "\n")
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT b.id, b.customer_name, b.contact_phone_country_code, b.contact_phone,
 		       DATE_FORMAT(b.reservation_date, '%Y-%m-%d') AS reservation_date,
 		       TIME_FORMAT(b.reservation_time, '%H:%i:%s') AS reservation_time,
@@ -247,7 +247,25 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 		    OR (b.reservation_date = ? AND b.reservation_time <= ?)
 		  )
 		ORDER BY b.reservation_date, b.reservation_time
-	`, restaurantID, currentDate, endDate, currentDate, currentTime, endDate, endTime)
+	`, `
+		SELECT b.id, b.customer_name, b.contact_phone_country_code, b.contact_phone,
+		       to_char(b.reservation_date, 'YYYY-MM-DD') AS reservation_date,
+		       to_char(b.reservation_time, 'HH24:MI:SS') AS reservation_time,
+		       b.party_size, b.arroz_type, b.arroz_servings, b."highChairs", b."babyStrollers",
+		       b.preferred_floor_number, sal.name,
+		       COALESCE(b.is_special_booking, 0), COALESCE(b.is_prereserva, 0), COALESCE(b.special_json, '')
+		FROM bookings b
+		LEFT JOIN restaurant_salons sal ON sal.id = b.preferred_salon_id AND sal.restaurant_id = b.restaurant_id
+		WHERE b.restaurant_id = ?
+		  AND (b.reminder_sent = 0 OR b.reminder_sent IS NULL)
+		  AND (b.status = 'pending' OR b.status = 'confirmed' OR b.status IS NULL OR b.status = '')
+		  AND (
+		    (b.reservation_date > CAST(? AS date) AND b.reservation_date < CAST(? AS date))
+		    OR (b.reservation_date = CAST(? AS date) AND b.reservation_time >= CAST(? AS time))
+		    OR (b.reservation_date = CAST(? AS date) AND b.reservation_time <= CAST(? AS time))
+		  )
+		ORDER BY b.reservation_date, b.reservation_time
+	`), restaurantID, currentDate, endDate, currentDate, currentTime, endDate, endTime)
 	if err != nil {
 		results["error"] = err.Error()
 		appendReminderLog(ts + " - ERROR: " + err.Error() + "\n")
@@ -435,7 +453,7 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 
 		// Mark reminder_sent and update conversation state if at least one outbound message was sent.
 		if confirmOK || (needsRice && riceOK) {
-			if _, err := s.db.ExecContext(r.Context(), "UPDATE bookings SET reminder_sent = 1 WHERE restaurant_id = ? AND id = ?", restaurantID, bookingID); err == nil {
+			if _, err := s.db.ExecContext(r.Context(), portableSQL("UPDATE bookings SET reminder_sent = 1 WHERE restaurant_id = ? AND id = ?"), restaurantID, bookingID); err == nil {
 				appendReminderLog(ts + " - ✅ Marked booking #" + strconv.Itoa(bookingID) + " as reminder_sent\n")
 			} else {
 				appendReminderLog(ts + " - ⚠️ Failed to mark reminder_sent for booking #" + strconv.Itoa(bookingID) + ": " + err.Error() + "\n")
@@ -454,9 +472,11 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 			expiresAt := time.Now().Add(48 * time.Hour).Format("2006-01-02 15:04:05")
 
 			var existingID int
-			err := s.db.QueryRowContext(r.Context(), "SELECT id FROM conversation_states WHERE restaurant_id = ? AND sender_number = ? LIMIT 1", restaurantID, phoneWithPrefix).Scan(&existingID)
+			err := s.db.QueryRowContext(r.Context(), portableSQL("SELECT id FROM conversation_states WHERE restaurant_id = ? AND sender_number = ? LIMIT 1"), restaurantID, phoneWithPrefix).Scan(&existingID)
 			if err == nil {
-				_, err = s.db.ExecContext(r.Context(), `
+				// expiresAt is a zoneless string that MySQL (session UTC) reads as UTC;
+				// PG reads it explicitly as UTC instead of the PG session TimeZone.
+				_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 					UPDATE conversation_states
 					SET conversation_state = ?,
 					    context_data = ?,
@@ -464,12 +484,23 @@ func (s *Server) handleN8nReminder(w http.ResponseWriter, r *http.Request) {
 					    updated_at = NOW()
 					WHERE restaurant_id = ?
 					  AND sender_number = ?
-				`, "reminder_sent", string(ctxData), expiresAt, restaurantID, phoneWithPrefix)
+				`, `
+					UPDATE conversation_states
+					SET conversation_state = ?,
+					    context_data = ?,
+					    expires_at = CAST(? AS timestamp) AT TIME ZONE 'UTC',
+					    updated_at = date_trunc('second', statement_timestamp())
+					WHERE restaurant_id = ?
+					  AND sender_number = ?
+				`), "reminder_sent", string(ctxData), expiresAt, restaurantID, phoneWithPrefix)
 			} else if err == sql.ErrNoRows {
-				_, err = s.db.ExecContext(r.Context(), `
+				_, err = s.db.ExecContext(r.Context(), nativeSQL(`
 					INSERT INTO conversation_states (restaurant_id, sender_number, conversation_state, context_data, expires_at)
 					VALUES (?, ?, ?, ?, ?)
-				`, restaurantID, phoneWithPrefix, "reminder_sent", string(ctxData), expiresAt)
+				`, `
+					INSERT INTO conversation_states (restaurant_id, sender_number, conversation_state, context_data, expires_at)
+					VALUES (?, ?, ?, ?, CAST(? AS timestamp) AT TIME ZONE 'UTC')
+				`), restaurantID, phoneWithPrefix, "reminder_sent", string(ctxData), expiresAt)
 			}
 			if err != nil {
 				appendReminderLog(ts + " - ⚠️ Failed to update conversation_state: " + err.Error() + "\n")

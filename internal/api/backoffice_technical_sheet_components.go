@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Component rows are the ingredients of a technical sheet. Quantity is stored
@@ -28,8 +29,8 @@ func (s *Server) sheetComponentWouldCycle(ctx context.Context, q interface {
 		return true, nil
 	}
 	rows, err := q.QueryContext(ctx,
-		`SELECT recipe_id, sub_recipe_id FROM stock_recipe_components
-		  WHERE restaurant_id=? AND sub_recipe_id IS NOT NULL`, restaurantID)
+		portableSQL(`SELECT recipe_id, sub_recipe_id FROM stock_recipe_components
+		  WHERE restaurant_id=? AND sub_recipe_id IS NOT NULL`), restaurantID)
 	if err != nil {
 		return false, err
 	}
@@ -67,7 +68,7 @@ func (s *Server) sheetComponentWouldCycle(ctx context.Context, q interface {
 // sheetOwnedByTenant resolves the sheet's output item and confirms ownership.
 func (s *Server) sheetOwnedByTenant(ctx context.Context, restaurantID int, sheetID int64) (outputItemID int64, err error) {
 	err = s.db.QueryRowContext(ctx,
-		`SELECT output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=?`, restaurantID, sheetID).
+		portableSQL(`SELECT output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=?`), restaurantID, sheetID).
 		Scan(&outputItemID)
 	return outputItemID, err
 }
@@ -117,7 +118,7 @@ func (s *Server) handleBOTechnicalSheetComponentCreate(w http.ResponseWriter, r 
 	// silently produce a wrong base quantity.
 	var factor float64
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND id=? AND stock_item_id=?`,
+		portableSQL(`SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND id=? AND stock_item_id=?`),
 		a.ActiveRestaurantID, in.UnitID, in.StockItemID).Scan(&factor); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "La unidad no pertenece a este articulo")
 		return
@@ -126,7 +127,7 @@ func (s *Server) handleBOTechnicalSheetComponentCreate(w http.ResponseWriter, r 
 	if in.SubRecipeID != nil {
 		var subOutputItemID int64
 		if err := s.db.QueryRowContext(r.Context(),
-			`SELECT output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=?`,
+			portableSQL(`SELECT output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=?`),
 			a.ActiveRestaurantID, *in.SubRecipeID).Scan(&subOutputItemID); err != nil || subOutputItemID != in.StockItemID {
 			httpx.WriteError(w, http.StatusBadRequest, "La sub-receta no produce el articulo seleccionado")
 			return
@@ -144,20 +145,19 @@ func (s *Server) handleBOTechnicalSheetComponentCreate(w http.ResponseWriter, r 
 
 	var nextSort int
 	s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(MAX(sort_order)+1,0) FROM stock_recipe_components WHERE restaurant_id=? AND recipe_id=?`,
+		portableSQL(`SELECT COALESCE(MAX(sort_order)+1,0) FROM stock_recipe_components WHERE restaurant_id=? AND recipe_id=?`),
 		a.ActiveRestaurantID, sheetID).Scan(&nextSort)
 
-	res, err := s.db.ExecContext(r.Context(), `
+	componentID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 		INSERT INTO stock_recipe_components
 			(restaurant_id,recipe_id,stock_item_id,sub_recipe_id,entered_qty,entered_unit_id,qty_base,waste_pct,is_optional,notes,sort_order)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`), "id",
 		a.ActiveRestaurantID, sheetID, in.StockItemID, in.SubRecipeID, in.Quantity, in.UnitID,
 		in.Quantity*factor, in.WastePct, stockBoolInt(in.IsOptional), stockNullableString(derefString(in.Notes)), nextSort)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "No se pudo guardar el ingrediente")
 		return
 	}
-	componentID, _ := res.LastInsertId()
 
 	// What the dish contains just changed, so the cached allergen set is stale.
 	if err := s.refreshSheetDerivedAllergens(r.Context(), a.ActiveRestaurantID, sheetID); err != nil {
@@ -187,8 +187,8 @@ func (s *Server) handleBOTechnicalSheetComponentPatch(w http.ResponseWriter, r *
 	var stockItemID, currentUnitID int64
 	var currentQty float64
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT stock_item_id,entered_unit_id,entered_qty FROM stock_recipe_components
-		  WHERE restaurant_id=? AND id=? AND recipe_id=?`,
+		portableSQL(`SELECT stock_item_id,entered_unit_id,entered_qty FROM stock_recipe_components
+		  WHERE restaurant_id=? AND id=? AND recipe_id=?`),
 		a.ActiveRestaurantID, componentID, sheetID).Scan(&stockItemID, &currentUnitID, &currentQty); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Ingrediente no encontrado")
 		return
@@ -208,7 +208,7 @@ func (s *Server) handleBOTechnicalSheetComponentPatch(w http.ResponseWriter, r *
 	}
 	var factor float64
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND id=? AND stock_item_id=?`,
+		portableSQL(`SELECT factor_to_base FROM stock_item_units WHERE restaurant_id=? AND id=? AND stock_item_id=?`),
 		a.ActiveRestaurantID, unitID, stockItemID).Scan(&factor); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "La unidad no pertenece a este articulo")
 		return
@@ -235,8 +235,9 @@ func (s *Server) handleBOTechnicalSheetComponentPatch(w http.ResponseWriter, r *
 	args = append(args, a.ActiveRestaurantID, componentID, sheetID)
 
 	if _, err := s.db.ExecContext(r.Context(),
-		`UPDATE stock_recipe_components SET `+strings.Join(sets, ",")+
-			` WHERE restaurant_id=? AND id=? AND recipe_id=?`, args...); err != nil {
+		// SET fragments: fixed lowercase columns (entered_qty/unit, qty_base, waste_pct, is_optional, notes): portable.
+		portableSQL(`UPDATE stock_recipe_components SET `+strings.Join(sets, ",")+
+			` WHERE restaurant_id=? AND id=? AND recipe_id=?`), args...); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando el ingrediente")
 		return
 	}
@@ -249,7 +250,7 @@ func (s *Server) handleBOTechnicalSheetComponentDelete(w http.ResponseWriter, r 
 	componentID, _ := strconv.ParseInt(chi.URLParam(r, "componentId"), 10, 64)
 
 	res, err := s.db.ExecContext(r.Context(),
-		`DELETE FROM stock_recipe_components WHERE restaurant_id=? AND id=? AND recipe_id=?`,
+		portableSQL(`DELETE FROM stock_recipe_components WHERE restaurant_id=? AND id=? AND recipe_id=?`),
 		a.ActiveRestaurantID, componentID, sheetID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando el ingrediente")
@@ -270,7 +271,7 @@ func (s *Server) handleBOTechnicalSheetComponentDelete(w http.ResponseWriter, r 
 func (s *Server) handleBOTechnicalSheetComponentsList(w http.ResponseWriter, r *http.Request) {
 	a, _ := boAuthFromContext(r.Context())
 	sheetID := sheetIDParam(r)
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT c.id, c.stock_item_id, i.name, c.sub_recipe_id, c.entered_qty, c.entered_unit_id,
 		       u.code, c.qty_base, c.waste_pct, c.is_optional, c.notes, c.sort_order, i.base_unit,
 		       COALESCE(i.image_url,'')
@@ -278,7 +279,7 @@ func (s *Server) handleBOTechnicalSheetComponentsList(w http.ResponseWriter, r *
 		  JOIN stock_items i ON i.restaurant_id=c.restaurant_id AND i.id=c.stock_item_id
 		  JOIN stock_item_units u ON u.restaurant_id=c.restaurant_id AND u.id=c.entered_unit_id
 		 WHERE c.restaurant_id=? AND c.recipe_id=?
-		 ORDER BY c.sort_order, c.id`, a.ActiveRestaurantID, sheetID)
+		 ORDER BY c.sort_order, c.id`), a.ActiveRestaurantID, sheetID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error cargando ingredientes")
 		return

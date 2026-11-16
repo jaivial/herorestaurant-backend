@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"strconv"
 	"strings"
 
@@ -62,7 +63,7 @@ type posRecallModifier struct {
 // loadPOSRecallLines reads the active lines of a finished ticket plus their
 // modifiers, in two queries regardless of how many lines there are.
 func (s *Server) loadPOSRecallLines(ctx context.Context, tx *sql.Tx, restaurantID int, sourceTicketID int64) ([]posRecallLine, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,pack_id,parent_line_id,COALESCE(NULLIF(course,''),'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`, restaurantID, sourceTicketID)
+	rows, err := tx.QueryContext(ctx, nativeSQL(`SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,pack_id,parent_line_id,COALESCE(NULLIF(course,''),'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`, `SELECT id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,pack_id,parent_line_id,COALESCE(CASE WHEN rtrim(course, ' ') COLLATE "C" = '' THEN NULL ELSE course END,'1') FROM pos_ticket_lines WHERE restaurant_id=? AND ticket_id=? AND status='ACTIVE' ORDER BY id`), restaurantID, sourceTicketID)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +86,7 @@ func (s *Server) loadPOSRecallLines(ctx context.Context, tx *sql.Tx, restaurantI
 	if len(lines) == 0 {
 		return lines, nil
 	}
-	modRows, err := tx.QueryContext(ctx, `SELECT m.ticket_line_id,m.modifier_option_id,m.name_snapshot,m.price_delta_cents,m.quantity FROM pos_ticket_line_modifiers m JOIN pos_ticket_lines l ON l.restaurant_id=m.restaurant_id AND l.id=m.ticket_line_id WHERE m.restaurant_id=? AND l.ticket_id=? ORDER BY m.ticket_line_id,m.id`, restaurantID, sourceTicketID)
+	modRows, err := tx.QueryContext(ctx, portableSQL(`SELECT m.ticket_line_id,m.modifier_option_id,m.name_snapshot,m.price_delta_cents,m.quantity FROM pos_ticket_line_modifiers m JOIN pos_ticket_lines l ON l.restaurant_id=m.restaurant_id AND l.id=m.ticket_line_id WHERE m.restaurant_id=? AND l.ticket_id=? ORDER BY m.ticket_line_id,m.id`), restaurantID, sourceTicketID)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +127,7 @@ func (s *Server) handleBOPOSRecall(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	var status string
 	var ticketDiscount int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT status,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, a.ActiveRestaurantID, targetID).Scan(&status, &ticketDiscount); err != nil || status != "OPEN" {
+	if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT status,ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`, `SELECT CAST(status AS text),ticket_discount_cents FROM pos_tickets WHERE restaurant_id=? AND id=? FOR UPDATE`), a.ActiveRestaurantID, targetID).Scan(&status, &ticketDiscount); err != nil || status != "OPEN" {
 		httpx.WriteError(w, http.StatusConflict, "Ticket is not open")
 		return
 	}
@@ -134,7 +135,7 @@ func (s *Server) handleBOPOSRecall(w http.ResponseWriter, r *http.Request) {
 	// prove ownership; recalling from another restaurant's ticket must 404, not
 	// silently copy nothing.
 	var sourceExists int64
-	if err = tx.QueryRowContext(r.Context(), `SELECT id FROM pos_tickets WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, in.SourceTicketID).Scan(&sourceExists); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT id FROM pos_tickets WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, in.SourceTicketID).Scan(&sourceExists); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Source ticket not found")
 		return
 	}
@@ -174,7 +175,14 @@ func (s *Server) handleBOPOSRecall(w http.ResponseWriter, r *http.Request) {
 		if line.notes.Valid {
 			notes = line.notes.String
 		}
-		res, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, targetID, productID, line.name, line.quantity, line.unitPrice, line.vatRate, line.lineTotal, notes, key, packID, line.course, a.User.ID)
+		// A duplicate idempotency key is skipped and the tx continues: on PG the
+		// insert runs in a savepoint scope so the skip does not abort the tx.
+		var newID int64
+		insErr := sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			var e error
+			newID, e = sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,pack_id,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, targetID, productID, line.name, line.quantity, line.unitPrice, line.vatRate, line.lineTotal, notes, key, packID, line.course, a.User.ID)
+			return e
+		})
 		if insErr != nil {
 			if strings.Contains(strings.ToLower(insErr.Error()), "duplicate") {
 				// This recall already applied: skip rather than charge twice.
@@ -183,14 +191,13 @@ func (s *Server) handleBOPOSRecall(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be recalled")
 			return
 		}
-		newID, _ := res.LastInsertId()
 		idRemap[line.id] = newID
 		for _, mod := range line.modifiers {
 			var optionID any
 			if mod.optionID.Valid {
 				optionID = mod.optionID.Int64
 			}
-			if _, modErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_line_modifiers (restaurant_id,ticket_line_id,modifier_option_id,name_snapshot,price_delta_cents,quantity) VALUES (?,?,?,?,?,?)`, a.ActiveRestaurantID, newID, optionID, mod.name, mod.delta, mod.quantity); modErr != nil {
+			if _, modErr := tx.ExecContext(r.Context(), portableSQL(`INSERT INTO pos_ticket_line_modifiers (restaurant_id,ticket_line_id,modifier_option_id,name_snapshot,price_delta_cents,quantity) VALUES (?,?,?,?,?,?)`), a.ActiveRestaurantID, newID, optionID, mod.name, mod.delta, mod.quantity); modErr != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error recalling modifiers")
 				return
 			}
@@ -220,7 +227,14 @@ func (s *Server) handleBOPOSRecall(w http.ResponseWriter, r *http.Request) {
 		if line.notes.Valid {
 			notes = line.notes.String
 		}
-		res, insErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,parent_line_id,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, targetID, productID, line.name, line.quantity, line.unitPrice, line.vatRate, line.lineTotal, notes, key, newParent, line.course, a.User.ID)
+		// A duplicate idempotency key is skipped and the tx continues: on PG the
+		// insert runs in a savepoint scope so the skip does not abort the tx.
+		var newID int64
+		insErr := sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			var e error
+			newID, e = sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO pos_ticket_lines (restaurant_id,ticket_id,pos_product_id,product_name_snapshot,quantity,unit_price_gross_cents,vat_rate_snapshot,line_total_gross_cents,notes,idempotency_key,parent_line_id,course,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, targetID, productID, line.name, line.quantity, line.unitPrice, line.vatRate, line.lineTotal, notes, key, newParent, line.course, a.User.ID)
+			return e
+		})
 		if insErr != nil {
 			if strings.Contains(strings.ToLower(insErr.Error()), "duplicate") {
 				continue
@@ -228,13 +242,12 @@ func (s *Server) handleBOPOSRecall(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, "Ticket line could not be recalled")
 			return
 		}
-		newID, _ := res.LastInsertId()
 		for _, mod := range line.modifiers {
 			var optionID any
 			if mod.optionID.Valid {
 				optionID = mod.optionID.Int64
 			}
-			if _, modErr := tx.ExecContext(r.Context(), `INSERT INTO pos_ticket_line_modifiers (restaurant_id,ticket_line_id,modifier_option_id,name_snapshot,price_delta_cents,quantity) VALUES (?,?,?,?,?,?)`, a.ActiveRestaurantID, newID, optionID, mod.name, mod.delta, mod.quantity); modErr != nil {
+			if _, modErr := tx.ExecContext(r.Context(), portableSQL(`INSERT INTO pos_ticket_line_modifiers (restaurant_id,ticket_line_id,modifier_option_id,name_snapshot,price_delta_cents,quantity) VALUES (?,?,?,?,?,?)`), a.ActiveRestaurantID, newID, optionID, mod.name, mod.delta, mod.quantity); modErr != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error recalling modifiers")
 				return
 			}

@@ -6,16 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"preactvillacarmen/internal/reminders"
+	"preactvillacarmen/internal/sqldb"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type sqlPreShiftStore struct{ db *sql.DB }
 
 func (s sqlPreShiftStore) DueShifts(ctx context.Context, now time.Time, lead time.Duration) ([]reminders.Shift, error) {
 	end := now.Add(lead)
-	rows, e := s.db.QueryContext(ctx, `SELECT w.id,w.restaurant_id,w.restaurant_member_id,TRIM(CONCAT(COALESCE(m.first_name,''),' ',COALESCE(m.last_name,''))),m.whatsapp_number, TIMESTAMP(w.work_date,w.start_time) FROM member_work_schedules w JOIN restaurant_members m ON m.id=w.restaurant_member_id AND m.restaurant_id=w.restaurant_id WHERE m.whatsapp_verified_at IS NOT NULL AND m.whatsapp_number IS NOT NULL AND m.whatsapp_number<>'' AND TIMESTAMP(w.work_date,w.start_time)>=? AND TIMESTAMP(w.work_date,w.start_time)<?`, now, end)
+	rows, e := s.db.QueryContext(ctx, nativeSQL(`SELECT w.id,w.restaurant_id,w.restaurant_member_id,TRIM(CONCAT(COALESCE(m.first_name,''),' ',COALESCE(m.last_name,''))),m.whatsapp_number, TIMESTAMP(w.work_date,w.start_time) FROM member_work_schedules w JOIN restaurant_members m ON m.id=w.restaurant_member_id AND m.restaurant_id=w.restaurant_id WHERE m.whatsapp_verified_at IS NOT NULL AND m.whatsapp_number IS NOT NULL AND m.whatsapp_number<>'' AND TIMESTAMP(w.work_date,w.start_time)>=? AND TIMESTAMP(w.work_date,w.start_time)<?`, `SELECT w.id,w.restaurant_id,w.restaurant_member_id,TRIM(CONCAT(COALESCE(m.first_name,''),' ',COALESCE(m.last_name,''))),m.whatsapp_number, (w.work_date + w.start_time) FROM member_work_schedules w JOIN restaurant_members m ON m.id=w.restaurant_member_id AND m.restaurant_id=w.restaurant_id WHERE m.whatsapp_verified_at IS NOT NULL AND m.whatsapp_number IS NOT NULL AND m.whatsapp_number<>'' AND (w.work_date + w.start_time)>=? AND (w.work_date + w.start_time)<?`), sqldb.NaiveUTCArg(sqlDialect, now), sqldb.NaiveUTCArg(sqlDialect, end))
 	if e != nil {
 		return nil, e
 	}
@@ -40,17 +42,23 @@ func (s sqlPreShiftStore) Claim(ctx context.Context, key string) (bool, error) {
 	if restaurantID <= 0 {
 		return false, fmt.Errorf("invalid reminder key")
 	}
-	r, e := s.db.ExecContext(ctx, `INSERT IGNORE INTO message_deliveries (restaurant_id,channel,event,delivery_key,recipient,payload_json,status) VALUES (?,'whatsapp',?,?,'pre-shift',?,'pending')`, restaurantID, key, key, payload)
-	if e == nil {
-		n, _ := r.RowsAffected()
-		return n == 1, nil
-	} // tolerate duplicate/legacy rows
-	var n int
-	e2 := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_deliveries WHERE event=? AND status IN ('pending','sent')`, key).Scan(&n)
-	return n == 0, e2
+	// repair-ignore3: key is both event (varchar(64)) and delivery_key (191).
+	// A cut event made Release (WHERE event = key) miss its row. Over-width
+	// keys are refused; only the delivery_key duplicate is a no-op. Any other
+	// insert error is RETURNED: the source fallback answered "claimed" when no
+	// row existed, i.e. it could send without a durable claim.
+	if utf8.RuneCountInString(key) > 64 {
+		return false, fmt.Errorf("pre-shift reminder key exceeds 64 characters")
+	}
+	r, e := s.db.ExecContext(ctx, nativeSQL(`INSERT INTO message_deliveries (restaurant_id,channel,event,delivery_key,recipient,payload_json,status) VALUES (?,'whatsapp',?,?,'pre-shift',?,'pending') ON DUPLICATE KEY UPDATE delivery_key = delivery_key`, `INSERT INTO message_deliveries (restaurant_id,channel,event,delivery_key,recipient,payload_json,status) VALUES (?,'whatsapp',CAST(? AS text),CAST(? AS text),'pre-shift',CAST(? AS jsonb),'pending') ON CONFLICT (app.norm_ascii(delivery_key)) DO NOTHING`), restaurantID, key, key, payload)
+	if e != nil {
+		return false, e
+	}
+	n, _ := r.RowsAffected()
+	return n == 1, nil
 }
 func (s sqlPreShiftStore) Release(ctx context.Context, key string) error {
-	_, e := s.db.ExecContext(ctx, `DELETE FROM message_deliveries WHERE event=? AND status='pending'`, key)
+	_, e := s.db.ExecContext(ctx, portableSQL(`DELETE FROM message_deliveries WHERE event=? AND status='pending'`), key)
 	return e
 }
 

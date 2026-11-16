@@ -82,7 +82,7 @@ func (s *Server) botBookingResendExecute(ctx context.Context, tx *sql.Tx, rid in
 	// The turn reply IS the group notice: record the result and close the
 	// proposal's notify state so the flusher does not repeat it.
 	rj, _ := json.Marshal(map[string]any{"booking_id": in.BookingID, "op": p.Op, "result": out})
-	_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='sent' WHERE id=?`, string(rj), p.ID)
+	_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='sent' WHERE id=?`), string(rj), p.ID)
 	if aerr != nil {
 		botCheckpoint(bookingResendCoordinationID, "restaurant_id=%d booking_id=%d apply_failed err=%v", rid, in.BookingID, aerr)
 		return "", aerr

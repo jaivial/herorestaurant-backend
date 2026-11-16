@@ -43,7 +43,7 @@ func (s *Server) posPINApproval(w http.ResponseWriter, r *http.Request, restaura
 	// be walked around one void at a time.
 	a, _ := boAuthFromContext(r.Context())
 	var lockedUntil sql.NullTime
-	if err = s.db.QueryRowContext(r.Context(), `SELECT locked_until FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`, restaurantID, a.User.ID).Scan(&lockedUntil); err != nil && err != sql.ErrNoRows {
+	if err = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT locked_until FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`), restaurantID, a.User.ID).Scan(&lockedUntil); err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reading PIN attempts")
 		return "", false
 	}
@@ -60,6 +60,6 @@ func (s *Server) posPINApproval(w http.ResponseWriter, r *http.Request, restaura
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"success": false, "code": "PIN_INVALID", "message": "PIN de aprobación incorrecto"})
 		return "", false
 	}
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`, restaurantID, a.User.ID)
+	_, _ = s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`), restaurantID, a.User.ID)
 	return name, true
 }

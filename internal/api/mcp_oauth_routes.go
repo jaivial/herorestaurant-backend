@@ -303,9 +303,9 @@ func (s *Server) HandleMCPRevoke(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	if raw := r.PostFormValue("token"); raw != "" {
 		hash := sha256Hex(raw)
-		_, _ = s.db.ExecContext(r.Context(), `UPDATE mcp_oauth_tokens SET revoked_at = NOW() WHERE token_hash = ?`, hash)
+		_, _ = s.db.ExecContext(r.Context(), nativeSQL(`UPDATE mcp_oauth_tokens SET revoked_at = NOW() WHERE token_hash = ?`, `UPDATE mcp_oauth_tokens SET revoked_at = date_trunc('second', statement_timestamp()) WHERE app.norm_ascii(token_hash) = app.norm_ascii(?)`), hash)
 		// The panel session shares the token hash, so it dies with it.
-		_, _ = s.db.ExecContext(r.Context(), `DELETE FROM bo_sessions WHERE token_sha256 = ?`, hash)
+		_, _ = s.db.ExecContext(r.Context(), nativeSQL(`DELETE FROM bo_sessions WHERE token_sha256 = ?`, `DELETE FROM bo_sessions WHERE app.norm_ascii(token_sha256) = app.norm_ascii(?)`), hash)
 	}
 	// RFC 7009 requires 200 even for an unknown token.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": true})

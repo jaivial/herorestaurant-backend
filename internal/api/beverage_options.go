@@ -32,7 +32,7 @@ func defaultBeverageSlug(slug string) bool {
 }
 
 func (s *Server) loadMenuBeverageOptions(restaurantID int, menuID int64) ([]beverageOption, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.db.Query(portableSQL(`
 		SELECT o.id, o.slug, o.name, o.is_custom,
 		       COALESCE(m.selected, CASE WHEN o.slug IN ('agua', 'refrescos', 'cerveza-de-barril', 'vino') THEN 1 ELSE 0 END)
 		FROM restaurant_beverage_options o
@@ -42,7 +42,7 @@ func (s *Server) loadMenuBeverageOptions(restaurantID int, menuID int64) ([]beve
 		 AND m.beverage_option_id = o.id
 		WHERE o.restaurant_id = ? AND o.active = 1
 		ORDER BY o.is_custom ASC, o.id ASC
-	`, menuID, restaurantID)
+	`), menuID, restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -114,11 +114,16 @@ func beverageOptionSlug(raw string) string {
 }
 
 func (s *Server) upsertMenuBeverageSelection(restaurantID int, menuID, optionID int64, selected bool) error {
-	_, err := s.db.Exec(`
+	// updated_at is assigned explicitly on both dialects (no ON UPDATE reliance).
+	_, err := s.db.Exec(nativeSQL(`
 		INSERT INTO menu_beverage_options (menu_id, restaurant_id, beverage_option_id, selected)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE selected = VALUES(selected), updated_at = CURRENT_TIMESTAMP
-	`, menuID, restaurantID, optionID, boolToTinyint(selected))
+	`, `
+		INSERT INTO menu_beverage_options (menu_id, restaurant_id, beverage_option_id, selected)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (menu_id, beverage_option_id) DO UPDATE SET selected = EXCLUDED.selected, updated_at = date_trunc('second', statement_timestamp())
+	`), menuID, restaurantID, optionID, boolToTinyint(selected))
 	return err
 }
 
@@ -131,32 +136,40 @@ func (s *Server) createRestaurantBeverageOption(restaurantID int, name string) (
 	if slug == "" {
 		return beverageOption{}, sql.ErrNoRows
 	}
-	_, err := s.db.Exec(`
+	_, err := s.db.Exec(nativeSQL(`
 		INSERT INTO restaurant_beverage_options (restaurant_id, slug, name, is_custom, active)
 		VALUES (?, ?, ?, 1, 1)
 		ON DUPLICATE KEY UPDATE name = VALUES(name), active = 1
-	`, restaurantID, slug, name)
+	`, `
+		INSERT INTO restaurant_beverage_options (restaurant_id, slug, name, is_custom, active)
+		VALUES (?, ?, ?, 1, 1)
+		ON CONFLICT (restaurant_id, app.norm_ascii(slug)) DO UPDATE SET name = EXCLUDED.name, active = 1
+	`), restaurantID, slug, name)
 	if err != nil {
 		return beverageOption{}, err
 	}
 	var option beverageOption
 	var custom, selected int
-	err = s.db.QueryRow(`
+	err = s.db.QueryRow(nativeSQL(`
 		SELECT id, slug, name, is_custom, 0
 		FROM restaurant_beverage_options
 		WHERE restaurant_id = ? AND slug = ? LIMIT 1
-	`, restaurantID, slug).Scan(&option.ID, &option.Slug, &option.Name, &custom, &selected)
+	`, `
+		SELECT id, slug, name, is_custom, 0
+		FROM restaurant_beverage_options
+		WHERE restaurant_id = ? AND app.norm_ascii(slug) = app.norm_ascii(?) LIMIT 1
+	`), restaurantID, slug).Scan(&option.ID, &option.Slug, &option.Name, &custom, &selected)
 	option.Custom = custom != 0
 	option.Selected = selected != 0
 	return option, err
 }
 
 func (s *Server) deleteRestaurantBeverageOption(restaurantID int, optionID int64) error {
-	_, err := s.db.Exec(`
+	_, err := s.db.Exec(portableSQL(`
 		UPDATE restaurant_beverage_options
 		SET active = 0
 		WHERE id = ? AND restaurant_id = ? AND is_custom = 1
-	`, optionID, restaurantID)
+	`), optionID, restaurantID)
 	return err
 }
 
@@ -268,7 +281,7 @@ func (s *Server) handleBOBeverageOptionsWSMessage(r *http.Request, restaurantID 
 
 func (s *Server) beverageOptionBelongs(restaurantID int, optionID int64) bool {
 	var found int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM restaurant_beverage_options WHERE id = ? AND restaurant_id = ? AND active = 1`, optionID, restaurantID).Scan(&found); err != nil {
+	if err := s.db.QueryRow(portableSQL(`SELECT COUNT(*) FROM restaurant_beverage_options WHERE id = ? AND restaurant_id = ? AND active = 1`), optionID, restaurantID).Scan(&found); err != nil {
 		return false
 	}
 	return found > 0

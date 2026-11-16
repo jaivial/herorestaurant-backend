@@ -38,7 +38,7 @@ func (s *Server) handleBOChatGPTPluginTokensGet(w http.ResponseWriter, r *http.R
 	}
 	// Scoped to the caller's own credentials on the active restaurant: a root
 	// user must not be able to mint or inspect another user's tokens.
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT id, COALESCE(label, ''), restaurant_id,
 		       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i'),
 		       COALESCE(DATE_FORMAT(last_used_at, '%Y-%m-%d %H:%i'), ''),
@@ -47,7 +47,9 @@ func (s *Server) handleBOChatGPTPluginTokensGet(w http.ResponseWriter, r *http.R
 		WHERE user_id = ? AND restaurant_id = ?
 		ORDER BY id DESC
 		LIMIT 200
-	`, a.User.ID, a.ActiveRestaurantID)
+	`, `SELECT id, COALESCE(label, ''), restaurant_id, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'),
+			COALESCE(to_char(last_used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'), ''), COALESCE(to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'), '')
+		FROM chatgpt_plugin_tokens WHERE user_id = ? AND restaurant_id = ? ORDER BY id DESC LIMIT 200`), a.User.ID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error cargando los tokens"})
 		return

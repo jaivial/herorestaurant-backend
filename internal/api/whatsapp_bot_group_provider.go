@@ -46,6 +46,9 @@ func botProviderFetchAllGroupsWithError(ctx context.Context, baseURL, apiKey, in
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	endpoint := baseURL + "/group/fetchAllGroups/" + instanceName + "?getParticipants=true"
+	if err := waOutboundCheck(endpoint, nil); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -101,6 +104,9 @@ func botProviderInstanceOwnerPhone(ctx context.Context, baseURL, apiKey, instanc
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	if waOutboundCheck(baseURL+"/instance/fetchInstances", nil) != nil {
+		return ""
+	}
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL+"/instance/fetchInstances", nil)
 	if err != nil {
 		return ""
@@ -149,6 +155,9 @@ func botProviderFindChats(ctx context.Context, baseURL, apiKey, instanceName str
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	endpoint := baseURL + "/chat/findChats/" + instanceName
+	if err := waOutboundCheck(endpoint, nil); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, strings.NewReader("{}"))
 	if err != nil {
 		return nil, err

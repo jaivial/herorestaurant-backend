@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"strings"
 	"time"
 
@@ -157,7 +158,7 @@ func (s *Server) handleBOMembersWhatsAppDisconnect(w http.ResponseWriter, r *htt
 	}
 
 	if req.DeleteInstance {
-		if _, err := s.db.ExecContext(r.Context(), `DELETE FROM restaurant_uazapi_instances WHERE restaurant_id = ?`, a.ActiveRestaurantID); err != nil && !isSQLSchemaError(err) {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM restaurant_uazapi_instances WHERE restaurant_id = ?`), a.ActiveRestaurantID); err != nil && !isSQLSchemaError(err) {
 			writeBOPremiumError(w, http.StatusInternalServerError, "WHATSAPP_DISCONNECT_FAILED", "No se pudo limpiar la instancia local")
 			return
 		}
@@ -215,10 +216,10 @@ func (s *Server) handleBOMembersWhatsAppFlushQueue(w http.ResponseWriter, r *htt
 	// re-armed to pending so we surface the *prior* count via the same
 	// query for transparency.
 	var failed int
-	if r2, qErr := s.db.QueryContext(r.Context(), `
+	if r2, qErr := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT COUNT(*) FROM message_deliveries
 		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'pending'
-	`, a.ActiveRestaurantID); qErr == nil {
+	`), a.ActiveRestaurantID); qErr == nil {
 		defer r2.Close()
 		if r2.Next() {
 			var p int
@@ -226,10 +227,10 @@ func (s *Server) handleBOMembersWhatsAppFlushQueue(w http.ResponseWriter, r *htt
 			rearmed = p
 		}
 	}
-	_ = s.db.QueryRowContext(r.Context(), `
+	_ = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT COUNT(*) FROM message_deliveries
 		WHERE restaurant_id = ? AND channel = 'whatsapp' AND status = 'failed'
-	`, a.ActiveRestaurantID).Scan(&failed)
+	`), a.ActiveRestaurantID).Scan(&failed)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -241,12 +242,17 @@ func (s *Server) handleBOMembersWhatsAppFlushQueue(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) markRestaurantWhatsAppDisconnected(ctx context.Context, restaurantID int) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE restaurant_uazapi_instances
 		SET status = 'disconnected', is_active = 0, connected_phone = NULL,
 			qr_payload = NULL, pair_code = NULL, updated_at = NOW()
 		WHERE restaurant_id = ?
-	`, restaurantID)
+	`, `
+		UPDATE restaurant_uazapi_instances
+		SET status = 'disconnected', is_active = 0, connected_phone = NULL,
+			qr_payload = NULL, pair_code = NULL, updated_at = date_trunc('second', statement_timestamp())
+		WHERE restaurant_id = ?
+	`), restaurantID)
 	return err
 }
 
@@ -313,12 +319,17 @@ func (s *Server) recordUAZAPIWebhookState(ctx context.Context, restaurantID int,
 		"webhook_applied":   applied,
 		"webhook_synced_at": time.Now().UTC().Format(time.RFC3339),
 	})
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE restaurant_uazapi_instances
 		SET metadata_json = JSON_MERGE_PATCH(COALESCE(metadata_json, JSON_OBJECT()), CAST(? AS JSON)),
 			updated_at = NOW()
 		WHERE restaurant_id = ?
-	`, string(meta), restaurantID)
+	`, `
+		UPDATE restaurant_uazapi_instances
+		SET metadata_json = CASE WHEN jsonb_typeof(metadata_json) = 'object' THEN metadata_json || CAST(? AS jsonb) ELSE CAST(? AS jsonb) END,
+			updated_at = date_trunc('second', statement_timestamp())
+		WHERE restaurant_id = ?
+	`), recordWebhookArgs(string(meta), restaurantID)...)
 	if err != nil && isSQLSchemaError(err) {
 		return
 	}
@@ -609,6 +620,15 @@ func (s *Server) ensureRestaurantUAZAPIInstance(ctx context.Context, restaurantI
 		return uazapiInstanceRecord{}, errors.New("proveedor no devolvio token/hash de instancia")
 	}
 	if prov.InstanceName != "" {
+		// padding_provider_identity_v1: the provider's exact instance name is
+		// kept (it is what the provider looks instances up by). A trailing
+		// ASCII space would be PAD-equal to another row on MySQL but distinct
+		// on PG's global uniq index, so it is refused (fail closed), never
+		// trimmed. The already-created provider instance stays an orphan
+		// resource (existing provisioning gate; no cleanup call here).
+		if strings.TrimRight(prov.InstanceName, " ") != prov.InstanceName {
+			return uazapiInstanceRecord{}, errors.New("el proveedor devolvio un nombre de instancia con espacios finales; no se registra")
+		}
 		instanceName = prov.InstanceName
 	}
 	providerInstanceID := prov.ProviderInstanceID
@@ -619,25 +639,59 @@ func (s *Server) ensureRestaurantUAZAPIInstance(ctx context.Context, restaurantI
 		"provider":       server.Provider,
 	})
 
-	_, err = s.db.ExecContext(ctx, `
+	// shared_identity_isolation_v1 (reviewed tenant-isolation fix, both
+	// dialects; intentionally NOT the source behaviour): unique keys are
+	// restaurant_id and instance_name. MySQL ODKU on an instance_name collision
+	// rewrote ANOTHER restaurant's row (server, instance_token). Now every
+	// MySQL assignment only applies to this restaurant's own row; PG targets
+	// restaurant_id only. A foreign instance_name ends as a guarded no-op
+	// (owner re-read below) or 1062/23505 on instance_name -> errUAZAPIInstanceTaken;
+	// no foreign row is modified.
+	provArgs := []any{restaurantID, server.ID, instanceName, instanceToken, nullableString(providerInstanceID), nullableString(string(metadataRaw))}
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_uazapi_instances
 			(restaurant_id, server_id, instance_name, instance_token, provider_instance_id, status, is_active, metadata_json, last_seen_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, 'provisioned', 1, ?, NOW(), NOW(), NOW())
 		ON DUPLICATE KEY UPDATE
-			server_id = VALUES(server_id),
-			instance_name = VALUES(instance_name),
-			instance_token = VALUES(instance_token),
-			provider_instance_id = VALUES(provider_instance_id),
+			server_id = IF(restaurant_id = VALUES(restaurant_id), VALUES(server_id), server_id),
+			instance_name = IF(restaurant_id = VALUES(restaurant_id), VALUES(instance_name), instance_name),
+			instance_token = IF(restaurant_id = VALUES(restaurant_id), VALUES(instance_token), instance_token),
+			provider_instance_id = IF(restaurant_id = VALUES(restaurant_id), VALUES(provider_instance_id), provider_instance_id),
+			status = IF(restaurant_id = VALUES(restaurant_id), 'provisioned', status),
+			is_active = IF(restaurant_id = VALUES(restaurant_id), 1, is_active),
+			metadata_json = IF(restaurant_id = VALUES(restaurant_id), VALUES(metadata_json), metadata_json),
+			updated_at = IF(restaurant_id = VALUES(restaurant_id), NOW(), updated_at)
+	`, `
+		INSERT INTO restaurant_uazapi_instances
+			(restaurant_id, server_id, instance_name, instance_token, provider_instance_id, status, is_active, metadata_json, last_seen_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'provisioned', 1, CAST(? AS jsonb), date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'), date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))
+		ON CONFLICT (restaurant_id) DO UPDATE SET
+			server_id = EXCLUDED.server_id,
+			instance_name = EXCLUDED.instance_name,
+			instance_token = EXCLUDED.instance_token,
+			provider_instance_id = EXCLUDED.provider_instance_id,
 			status = 'provisioned',
 			is_active = 1,
-			metadata_json = VALUES(metadata_json),
-			updated_at = NOW()
-	`, restaurantID, server.ID, instanceName, instanceToken, nullableString(providerInstanceID), nullableString(string(metadataRaw)))
+			metadata_json = EXCLUDED.metadata_json,
+			updated_at = date_trunc('second', statement_timestamp())
+	`), provArgs...)
+	if sqldb.IsUniqueViolationOn(err, "uniq_restaurant_uazapi_instances_name", "ix__restaurant_uazapi_instances__uniq_restaurant_uazap_496278c3") {
+		log.Printf("[shared_identity_isolation_v1] restaurant=%d provisioned instance name already assigned to another restaurant", restaurantID)
+		return uazapiInstanceRecord{}, errUAZAPIInstanceTaken
+	}
 	if err != nil {
 		if isSQLSchemaError(err) {
 			return uazapiInstanceRecord{}, errors.New("tablas de provisionamiento UAZAPI no disponibles")
 		}
 		return uazapiInstanceRecord{}, err
+	}
+	var instanceOwner int
+	if err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT restaurant_id FROM restaurant_uazapi_instances WHERE instance_name = ?`, `SELECT restaurant_id FROM restaurant_uazapi_instances WHERE app.norm(instance_name) = app.norm(?)`), instanceName).Scan(&instanceOwner); err != nil {
+		return uazapiInstanceRecord{}, err
+	}
+	if instanceOwner != restaurantID {
+		log.Printf("[shared_identity_isolation_v1] restaurant=%d provisioned instance name already assigned to another restaurant", restaurantID)
+		return uazapiInstanceRecord{}, errUAZAPIInstanceTaken
 	}
 
 	_ = s.refreshUAZAPIServerUsedCount(ctx, server.ID)
@@ -656,10 +710,14 @@ func (s *Server) ensureRestaurantUAZAPIInstance(ctx context.Context, restaurantI
 	return created, nil
 }
 
+// errUAZAPIInstanceTaken: the provider instance name belongs to another
+// restaurant's row; nothing of that row was changed.
+var errUAZAPIInstanceTaken = errors.New("la instancia de WhatsApp ya está asignada a otro restaurante")
+
 func (s *Server) pickWhatsAppServer(ctx context.Context, provider string) (uazapiServerRecord, error) {
 	var rec uazapiServerRecord
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT id, name, provider, base_url, admin_token, capacity, used_count
 		FROM uazapi_servers
 		WHERE is_active = 1
@@ -673,7 +731,21 @@ func (s *Server) pickWhatsAppServer(ctx context.Context, provider string) (uazap
 			priority ASC,
 			id ASC
 		LIMIT 1
-	`, provider).Scan(&rec.ID, &rec.Name, &rec.Provider, &rec.BaseURL, &rec.AdminToken, &rec.Capacity, &rec.UsedCount)
+	`, `
+		SELECT id, name, provider, base_url, admin_token, capacity, used_count
+		FROM uazapi_servers
+		WHERE is_active = 1
+		  AND provider = ?
+		  AND (capacity <= 0 OR used_count < capacity)
+		ORDER BY
+			CASE
+				WHEN capacity <= 0 THEN 1
+				ELSE ROUND(CAST(used_count AS numeric(18,4)) / CAST(capacity AS numeric(18,4)), 8)
+			END ASC,
+			priority ASC,
+			id ASC
+		LIMIT 1
+	`), provider).Scan(&rec.ID, &rec.Name, &rec.Provider, &rec.BaseURL, &rec.AdminToken, &rec.Capacity, &rec.UsedCount)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return rec, errUAZAPINoCapacity
@@ -726,13 +798,20 @@ func (s *Server) adoptRestaurantUAZAPIInstance(ctx context.Context, restaurantID
 		"source":     "restaurant_integrations",
 		"provider":   "uazapi",
 	})
-	_, err = s.db.ExecContext(ctx, `
+	legacyName := fmt.Sprintf("legacy-%d", restaurantID)
+	adoptArgs := []any{restaurantID, server.ID, legacyName, token, status,
+		st.ConnectedPhone, nullableString(st.QR), nullableString(st.PairCode), nullableString(string(metadata))}
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_uazapi_instances
 			(restaurant_id, server_id, instance_name, instance_token, status, connected_phone,
 			 qr_payload, pair_code, is_active, metadata_json, last_seen_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, 1, ?, NOW(), NOW(), NOW())
-	`, restaurantID, server.ID, fmt.Sprintf("legacy-%d", restaurantID), token, status,
-		st.ConnectedPhone, nullableString(st.QR), nullableString(st.PairCode), nullableString(string(metadata)))
+	`, `
+		INSERT INTO restaurant_uazapi_instances
+			(restaurant_id, server_id, instance_name, instance_token, status, connected_phone,
+			 qr_payload, pair_code, is_active, metadata_json, last_seen_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, NULLIF(CAST(? AS text), ''), ?, ?, 1, CAST(? AS jsonb), date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'), date_trunc('second', statement_timestamp()), date_trunc('second', statement_timestamp()))
+	`), adoptArgs...)
 	if err != nil {
 		return uazapiInstanceRecord{}, false, err
 	}
@@ -759,7 +838,7 @@ func (s *Server) loadRestaurantUAZAPIInstance(ctx context.Context, restaurantID 
 	)
 	rec.RestaurantID = restaurantID
 
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT
 			i.id,
 			i.restaurant_id,
@@ -780,7 +859,28 @@ func (s *Server) loadRestaurantUAZAPIInstance(ctx context.Context, restaurantID 
 		JOIN uazapi_servers s ON s.id = i.server_id
 		WHERE i.restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(
+	`, `
+		SELECT
+			i.id,
+			i.restaurant_id,
+			i.server_id,
+			i.instance_name,
+			i.instance_token,
+			i.provider_instance_id,
+			i.connected_phone,
+			i.status,
+			i.qr_payload,
+			i.pair_code,
+			i.is_active,
+			to_char(i.updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at,
+			s.base_url,
+			s.provider,
+			s.admin_token
+		FROM restaurant_uazapi_instances i
+		JOIN uazapi_servers s ON s.id = i.server_id
+		WHERE i.restaurant_id = ?
+		LIMIT 1
+	`), restaurantID).Scan(
 		&rec.ID,
 		&rec.RestaurantID,
 		&rec.ServerID,
@@ -841,7 +941,7 @@ func (s *Server) whatsappConnectionPayload(rec uazapiInstanceRecord) map[string]
 // clearRestaurantWhatsAppPairing forgets the stored pair code and QR of the
 // previous device-link attempt (coord id wa_pair_code_fresh_v1).
 func (s *Server) clearRestaurantWhatsAppPairing(ctx context.Context, restaurantID int) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE restaurant_uazapi_instances SET pair_code = NULL, qr_payload = NULL WHERE restaurant_id = ?`, restaurantID)
+	_, err := s.db.ExecContext(ctx, portableSQL(`UPDATE restaurant_uazapi_instances SET pair_code = NULL, qr_payload = NULL WHERE restaurant_id = ?`), restaurantID)
 	return err
 }
 
@@ -858,7 +958,7 @@ func (s *Server) updateRestaurantUAZAPIInstanceRuntime(ctx context.Context, rest
 		pairCode = ""
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE restaurant_uazapi_instances
 		SET
 			status = ?,
@@ -869,7 +969,18 @@ func (s *Server) updateRestaurantUAZAPIInstanceRuntime(ctx context.Context, rest
 			connected_at = CASE WHEN ? = 1 THEN COALESCE(connected_at, NOW()) ELSE connected_at END,
 			updated_at = NOW()
 		WHERE restaurant_id = ?
-	`, status, connectedPhone, connectedPhone, status, qrPayload, qrPayload, status, pairCode, pairCode, status, boolToTinyInt(isUAZAPIConnected(status)), restaurantID)
+	`, `
+		UPDATE restaurant_uazapi_instances
+		SET
+			status = ?,
+			connected_phone = CASE WHEN CAST(? AS text) <> '' THEN CAST(? AS text) WHEN CAST(? AS text) = 'disconnected' THEN NULL ELSE connected_phone END,
+			qr_payload = CASE WHEN CAST(? AS text) <> '' THEN CAST(? AS text) WHEN CAST(? AS text) IN ('connected', 'disconnected') THEN NULL ELSE qr_payload END,
+			pair_code = CASE WHEN CAST(? AS text) <> '' THEN CAST(? AS text) WHEN CAST(? AS text) IN ('connected', 'disconnected') THEN NULL ELSE pair_code END,
+			last_seen_at = date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),
+			connected_at = CASE WHEN CAST(? AS integer) = 1 THEN COALESCE(connected_at, date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')) ELSE connected_at END,
+			updated_at = date_trunc('second', statement_timestamp())
+		WHERE restaurant_id = ?
+	`), status, connectedPhone, connectedPhone, status, qrPayload, qrPayload, status, pairCode, pairCode, status, boolToTinyInt(isUAZAPIConnected(status)), restaurantID)
 	if err != nil && isSQLSchemaError(err) {
 		return errors.New("tablas de provisionamiento UAZAPI no disponibles")
 	}
@@ -881,17 +992,17 @@ func (s *Server) refreshUAZAPIServerUsedCount(ctx context.Context, serverID int6
 		return nil
 	}
 	var used int
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COUNT(*)
 		FROM restaurant_uazapi_instances
 		WHERE server_id = ? AND is_active = 1
-	`, serverID).Scan(&used); err != nil {
+	`), serverID).Scan(&used); err != nil {
 		if isSQLSchemaError(err) {
 			return nil
 		}
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE uazapi_servers SET used_count = ?, updated_at = NOW() WHERE id = ?`, used, serverID)
+	_, err := s.db.ExecContext(ctx, nativeSQL(`UPDATE uazapi_servers SET used_count = ?, updated_at = NOW() WHERE id = ?`, `UPDATE uazapi_servers SET used_count = ?, updated_at = date_trunc('second', statement_timestamp()) WHERE id = ?`), used, serverID)
 	if err != nil && isSQLSchemaError(err) {
 		return nil
 	}
@@ -901,14 +1012,21 @@ func (s *Server) refreshUAZAPIServerUsedCount(ctx context.Context, serverID int6
 func (s *Server) syncRestaurantUAZAPIIntegration(ctx context.Context, restaurantID int, baseURL string, instanceToken string) error {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	instanceToken = strings.TrimSpace(instanceToken)
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_integrations (restaurant_id, uazapi_url, uazapi_token)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			uazapi_url = VALUES(uazapi_url),
 			uazapi_token = VALUES(uazapi_token),
 			updated_at = NOW()
-	`, restaurantID, nullableString(baseURL), nullableString(instanceToken))
+	`, `
+		INSERT INTO restaurant_integrations (restaurant_id, uazapi_url, uazapi_token)
+		VALUES (?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET
+			uazapi_url = EXCLUDED.uazapi_url,
+			uazapi_token = EXCLUDED.uazapi_token,
+			updated_at = date_trunc('second', statement_timestamp())
+	`), restaurantID, nullableString(baseURL), nullableString(instanceToken))
 	if err != nil && isSQLSchemaError(err) {
 		return nil
 	}
@@ -916,14 +1034,21 @@ func (s *Server) syncRestaurantUAZAPIIntegration(ctx context.Context, restaurant
 }
 
 func (s *Server) clearRestaurantUAZAPIIntegration(ctx context.Context, restaurantID int) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO restaurant_integrations (restaurant_id, uazapi_url, uazapi_token)
 		VALUES (?, NULL, NULL)
 		ON DUPLICATE KEY UPDATE
 			uazapi_url = NULL,
 			uazapi_token = NULL,
 			updated_at = NOW()
-	`, restaurantID)
+	`, `
+		INSERT INTO restaurant_integrations (restaurant_id, uazapi_url, uazapi_token)
+		VALUES (?, NULL, NULL)
+		ON CONFLICT (restaurant_id) DO UPDATE SET
+			uazapi_url = NULL,
+			uazapi_token = NULL,
+			updated_at = date_trunc('second', statement_timestamp())
+	`), restaurantID)
 	if err != nil && isSQLSchemaError(err) {
 		return nil
 	}
@@ -945,6 +1070,9 @@ func (s *Server) uazapiInstanceRequest(ctx context.Context, baseURL string, inst
 }
 
 func (s *Server) uazapiJSONRequest(ctx context.Context, endpoint string, method string, headers map[string]string, payload any) (map[string]any, int, string, error) {
+	if err := waOutboundCheck(endpoint, payload); err != nil {
+		return nil, 0, "", err
+	}
 	var bodyReader io.Reader
 	if payload != nil {
 		b, _ := json.Marshal(payload)
@@ -1111,7 +1239,7 @@ func (s *Server) suspendRestaurantUAZAPIInstance(ctx context.Context, restaurant
 	// Best-effort remote disconnect; ignore provider errors.
 	_ = s.gatewayForInstance(rec).Disconnect(ctx)
 
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE restaurant_uazapi_instances
 		SET status = 'suspended',
 			is_active = 0,
@@ -1119,7 +1247,15 @@ func (s *Server) suspendRestaurantUAZAPIInstance(ctx context.Context, restaurant
 			pair_code = NULL,
 			updated_at = NOW()
 		WHERE restaurant_id = ?
-	`, restaurantID)
+	`, `
+		UPDATE restaurant_uazapi_instances
+		SET status = 'suspended',
+			is_active = 0,
+			qr_payload = NULL,
+			pair_code = NULL,
+			updated_at = date_trunc('second', statement_timestamp())
+		WHERE restaurant_id = ?
+	`), restaurantID)
 	if err != nil && isSQLSchemaError(err) {
 		return nil
 	}
@@ -1133,13 +1269,20 @@ func (s *Server) suspendRestaurantUAZAPIInstance(ctx context.Context, restaurant
 // reactivateRestaurantUAZAPIInstance flips a suspended row back to active so it
 // can be reconnected. Returns found=false if there is no row to reactivate.
 func (s *Server) reactivateRestaurantUAZAPIInstance(ctx context.Context, restaurantID int) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE restaurant_uazapi_instances
 		SET is_active = 1,
 			status = CASE WHEN status = 'suspended' THEN 'provisioned' ELSE status END,
 			updated_at = NOW()
 		WHERE restaurant_id = ?
-	`, restaurantID)
+	`, `
+		UPDATE restaurant_uazapi_instances
+		SET is_active = 1,
+			status = CASE WHEN status = 'suspended' THEN 'provisioned' ELSE status END,
+			updated_at = date_trunc('second', statement_timestamp())
+		WHERE restaurant_id = ?
+		  AND ROW(is_active, status COLLATE "C", updated_at) IS DISTINCT FROM ROW(1, CASE WHEN status = 'suspended' THEN 'provisioned' ELSE status END COLLATE "C", date_trunc('second', statement_timestamp()))
+	`), restaurantID)
 	if err != nil {
 		if isSQLSchemaError(err) {
 			return false, nil
@@ -1148,4 +1291,13 @@ func (s *Server) reactivateRestaurantUAZAPIInstance(ctx context.Context, restaur
 	}
 	affected, _ := res.RowsAffected()
 	return affected > 0, nil
+}
+
+// recordWebhookArgs: the PG twin binds the merge patch twice (object merge
+// branch and non-object replacement branch of JSON_MERGE_PATCH).
+func recordWebhookArgs(meta string, restaurantID int) []any {
+	if sqlDialect == sqldb.Postgres {
+		return []any{meta, meta, restaurantID}
+	}
+	return []any{meta, restaurantID}
 }

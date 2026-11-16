@@ -21,6 +21,7 @@ import (
 
 	"preactvillacarmen/internal/config"
 	"preactvillacarmen/internal/db"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func main() {
@@ -34,23 +35,32 @@ func main() {
 		log.Fatal("cdn-sweep: public storage zone is not configured")
 	}
 
-	database, err := db.OpenMySQL(cfg.MySQL)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	// db_dialect_selection_v1: DB_DRIVER selects the engine; PG fails closed
+	// until QA-approved and import-verified (no MySQL fallback).
+	database, d, err := db.OpenBusinessForTool(ctx, cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer database.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
+	dialect = d
+	if dialect == sqldb.Postgres && *apply {
+		// Deleting objects needs a QA'd PG registry/schema match first: a wrong
+		// match would delete live images. Dry-run only on PG.
+		log.Fatal("cdn-sweep: --apply refused on PostgreSQL (registry/schema match not QA-approved); run without --apply")
+	}
 
 	// Two sweeps running at once could both see an object as unreferenced and
-	// race on deletion, so only one may run at a time.
-	var locked int
-	if err = database.QueryRowContext(ctx, `SELECT GET_LOCK('villacarmen:cdn-sweep',0)`).Scan(&locked); err != nil || locked != 1 {
-		log.Print("cdn-sweep skipped: lock held")
+	// race on deletion, so only one may run at a time. Session lock pinned to
+	// one connection.
+	release, locked, err := sqldb.TryNamedLock(ctx, dialect, database, "villacarmen:cdn-sweep")
+	if err != nil || !locked {
+		log.Printf("cdn-sweep skipped: lock held (err=%v)", err)
 		return
 	}
-	defer database.ExecContext(context.Background(), `SELECT RELEASE_LOCK('villacarmen:cdn-sweep')`)
+	defer release()
 
 	sweepID := startSweep(ctx, database, !*apply)
 	if err := run(ctx, database, cfg, sweepID, *apply, time.Duration(*graceHours)*time.Hour, *maxRatio); err != nil {
@@ -62,6 +72,10 @@ func main() {
 func run(ctx context.Context, database *sql.DB, cfg config.Config, sweepID int64,
 	apply bool, grace time.Duration, maxRatio float64) error {
 	schema := cfg.MySQL.DBName
+	if dialect == sqldb.Postgres {
+		// PG business schema (sqldb.OpenPostgres pins search_path to it).
+		schema = sqldb.SchemaBusiness
+	}
 
 	// The registry defines what "referenced" means. If the schema grew an image
 	// column nobody registered, those images would look orphaned, so this is a
@@ -128,13 +142,12 @@ func run(ctx context.Context, database *sql.DB, cfg config.Config, sweepID int64
 }
 
 func startSweep(ctx context.Context, database *sql.DB, dryRun bool) int64 {
-	res, err := database.ExecContext(ctx,
-		`INSERT INTO cdn_object_sweeps (started_at,status,dry_run) VALUES (NOW(),'RUNNING',?)`,
+	id, err := sqldb.InsertID(ctx, dialect, database,
+		nativeSQL(`INSERT INTO cdn_object_sweeps (started_at,status,dry_run) VALUES (NOW(),'RUNNING',?)`, `INSERT INTO cdn_object_sweeps (started_at,status,dry_run) VALUES (date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'),'RUNNING',?)`), "id",
 		boolToInt(dryRun))
 	if err != nil {
 		log.Fatalf("cdn-sweep: could not record the run: %v", err)
 	}
-	id, _ := res.LastInsertId()
 	return id
 }
 
@@ -143,24 +156,31 @@ func finishSweep(ctx context.Context, database *sql.DB, id int64, status, messag
 	for range plan.Delete {
 		deleted++
 	}
-	if _, err := database.ExecContext(ctx, `
+	if _, err := database.ExecContext(ctx, nativeSQL(`
 		UPDATE cdn_object_sweeps
 		   SET finished_at=NOW(), status=?, objects_listed=?, objects_referenced=?,
 		       objects_deleted=?, objects_skipped=?, error_message=NULLIF(?,'')
-		 WHERE id=?`,
+		 WHERE id=?`, `
+		UPDATE cdn_object_sweeps
+		   SET finished_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'), status=?, objects_listed=?, objects_referenced=?,
+		       objects_deleted=?, objects_skipped=?, error_message=NULLIF(CAST(? AS text),'')
+		 WHERE id=?`),
 		status, plan.Referenced+plan.Skipped+deleted, plan.Referenced, deleted, plan.Skipped,
-		truncate(message, 500), id); err != nil {
+		padSpaceNullIfArg(truncate(message, 500)), id); err != nil {
 		log.Printf("cdn-sweep: could not finalise the run: %v", err)
 	}
 }
 
 func recordDeletion(ctx context.Context, database *sql.DB, sweepID int64, object storageObject, deleted bool, errMessage string) {
-	if _, err := database.ExecContext(ctx, `
+	if _, err := database.ExecContext(ctx, nativeSQL(`
 		INSERT INTO cdn_object_sweep_deletions
 			(sweep_id,object_path,size_bytes,last_modified_at,deleted,error_message)
-		VALUES (?,?,?,?,?,NULLIF(?,''))`,
-		sweepID, truncate(object.Path, 1000), object.SizeBytes, object.LastModified,
-		boolToInt(deleted), truncate(errMessage, 500)); err != nil {
+		VALUES (?,?,?,?,?,NULLIF(?,''))`, `
+		INSERT INTO cdn_object_sweep_deletions
+			(sweep_id,object_path,size_bytes,last_modified_at,deleted,error_message)
+		VALUES (?,?,?,?,?,NULLIF(CAST(? AS text),''))`),
+		sweepID, truncate(object.Path, 1000), object.SizeBytes, sqldb.NaiveUTCArg(dialect, object.LastModified),
+		boolToInt(deleted), padSpaceNullIfArg(truncate(errMessage, 500))); err != nil {
 		log.Printf("cdn-sweep: could not record deletion of %s: %v", object.Path, err)
 	}
 }

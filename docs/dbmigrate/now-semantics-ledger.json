@@ -1,0 +1,32 @@
+{
+ "coordination_id": "now_semantics_v1",
+ "source_semantics": "MySQL NOW()/CURRENT_TIMESTAMP (no fsp) = time at start of the executing STATEMENT, second precision (fractional part 0); SYSDATE() = execution time (none in ported sites); NOW(3)/CURRENT_TIMESTAMP(3) keep ms (only in unported whatsapp_bot sites and 2 source column defaults)",
+ "pg_rule_applied_in_DML": "date_trunc('second', statement_timestamp()) for timestamptz targets/compares; (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') for naive datetime targets/compares. statement_timestamp() = start of current client statement (matches MySQL per-statement NOW within multi-statement transactions; PG now()/CURRENT_TIMESTAMP are transaction start and were wrong inside txs). Truncation matches MySQL fsp 0 instead of PG rounding into (0) columns.",
+ "dml_sites_rewritten": "35 occurrences in 20 files (all lowercase now() in PG variants) + beverage_options CURRENT_TIMESTAMP upsert = 36; 0 remaining bare now() in internal/api SQL (only Go h.now()/JS Date.now() remain)",
+ "not_changed_pending": [
+  {
+   "what": "plan.sql column DEFAULTs",
+   "exact": "287 x timestamptz(0) DEFAULT CURRENT_TIMESTAMP; 64 x timestamp(0) DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'); 2 x timestamp(3) DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') (= source 351 CURRENT_TIMESTAMP + 2 CURRENT_TIMESTAMP(3))",
+   "delta": "PG CURRENT_TIMESTAMP = transaction start (not statement) and ROUNDS into (0)/(3) precision; MySQL truncates at statement start",
+   "fix_candidate": "DEFAULT date_trunc('second', statement_timestamp()) (and date_trunc('milliseconds', ...) for (3)) in a reviewed new schema revision; imported r4/r5 proof schema NOT modified"
+  },
+  {
+   "what": "ON UPDATE trigger function (internal/dbmigrate/plan.go, applied to 136 tables)",
+   "exact": "to_jsonb(now()) for tz kind; to_jsonb(now() AT TIME ZONE 'UTC') for naive",
+   "delta": "transaction time + rounding vs MySQL statement time truncated; plus the known ON UPDATE explicit-assignment gap",
+   "fix_candidate": "date_trunc('second'|'milliseconds', statement_timestamp()) per column precision; part of the pending ON UPDATE review"
+  },
+  {
+   "what": "modification_history runtime PG DDL",
+   "exact": "\"modification_date\" timestamptz(0) DEFAULT CURRENT_TIMESTAMP (mirrors plan.sql)",
+   "delta": "same as plan defaults",
+   "fix_candidate": "follow the plan revision decision"
+  },
+  {
+   "what": "dbmigrate.marker.at DEFAULT now()",
+   "exact": "internal/dbmigrate/pgimport.go",
+   "delta": "tooling only, no MySQL counterpart",
+   "fix_candidate": "none needed"
+  }
+ ]
+}

@@ -417,9 +417,9 @@ func (s *Server) botSpecialBookingIsOwned(ctx context.Context, restaurantID int,
 	}
 	// Only special bookings are manageable through these tools.
 	var isSpecial int
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COALESCE(is_special_booking, 0) FROM bookings WHERE restaurant_id = ? AND id = ?
-	`, restaurantID, bookingID).Scan(&isSpecial); err != nil {
+	`), restaurantID, bookingID).Scan(&isSpecial); err != nil {
 		return false, err
 	}
 	return isSpecial != 0, nil

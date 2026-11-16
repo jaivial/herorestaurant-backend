@@ -69,6 +69,9 @@ func clientIP(r *http.Request) string {
 }
 
 func sendUazAPI(ctx context.Context, endpoint string, payload any) (body string, status int, err error) {
+	if err := waOutboundCheck(endpoint, payload); err != nil {
+		return "", 0, err
+	}
 	b, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
 	if err != nil {

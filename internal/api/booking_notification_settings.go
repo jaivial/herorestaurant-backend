@@ -41,12 +41,12 @@ func clampReconfirmationDays(days int) int {
 // behaviour is unchanged for restaurants that never opened the panel.
 func (s *Server) loadBookingNotificationSettings(ctx context.Context, restaurantID int) (bookingNotificationSettings, error) {
 	out := bookingNotificationSettings{SendConfirmation: true, ReconfirmationDaysBefore: bookingNotifDefaultDaysBefo}
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT send_confirmation, send_reconfirmation, reconfirmation_days_before
 		FROM booking_notification_settings
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&out.SendConfirmation, &out.SendReconfirmation, &out.ReconfirmationDaysBefore)
+	`), restaurantID).Scan(&out.SendConfirmation, &out.SendReconfirmation, &out.ReconfirmationDaysBefore)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
 	}
@@ -58,7 +58,7 @@ func (s *Server) loadBookingNotificationSettings(ctx context.Context, restaurant
 }
 
 func (s *Server) saveBookingNotificationSettings(ctx context.Context, restaurantID int, in bookingNotificationSettings) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO booking_notification_settings
 			(restaurant_id, send_confirmation, send_reconfirmation, reconfirmation_days_before)
 		VALUES (?, ?, ?, ?)
@@ -66,7 +66,15 @@ func (s *Server) saveBookingNotificationSettings(ctx context.Context, restaurant
 			send_confirmation = VALUES(send_confirmation),
 			send_reconfirmation = VALUES(send_reconfirmation),
 			reconfirmation_days_before = VALUES(reconfirmation_days_before)
-	`, restaurantID, in.SendConfirmation, in.SendReconfirmation, in.ReconfirmationDaysBefore)
+	`, `
+		INSERT INTO booking_notification_settings
+			(restaurant_id, send_confirmation, send_reconfirmation, reconfirmation_days_before)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET
+			send_confirmation = EXCLUDED.send_confirmation,
+			send_reconfirmation = EXCLUDED.send_reconfirmation,
+			reconfirmation_days_before = EXCLUDED.reconfirmation_days_before
+	`), restaurantID, boolToInt(in.SendConfirmation), boolToInt(in.SendReconfirmation), in.ReconfirmationDaysBefore)
 	return err
 }
 
@@ -99,6 +107,7 @@ func (s *Server) handleBOBookingNotificationsPut(w http.ResponseWriter, r *http.
 	}
 	input.ReconfirmationDaysBefore = clampReconfirmationDays(input.ReconfirmationDaysBefore)
 	if err := s.saveBookingNotificationSettings(r.Context(), a.ActiveRestaurantID, input); err != nil {
+		log.Printf("%s.settings.save_failed restaurant=%d err=%v", bookingNotifCoordinationID, a.ActiveRestaurantID, err)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando notificaciones de reserva")
 		return
 	}

@@ -45,7 +45,7 @@ func (s *Server) handlePublicAdsEmbed(w http.ResponseWriter, r *http.Request) {
 		date = time.Now().Format("2006-01-02")
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND (canvas_json IS NOT NULL OR layout_json IS NOT NULL OR design_json IS NOT NULL) ORDER BY updated_at DESC, id DESC`, restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND (canvas_json IS NOT NULL OR layout_json IS NOT NULL OR design_json IS NOT NULL) ORDER BY updated_at DESC, id DESC`, `SELECT id FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND (canvas_json IS NOT NULL OR layout_json IS NOT NULL OR design_json IS NOT NULL) ORDER BY updated_at DESC NULLS LAST, id DESC`), restaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ads")
 		return

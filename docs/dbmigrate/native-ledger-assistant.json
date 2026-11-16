@@ -1,0 +1,208 @@
+{
+  "domain": "assistant",
+  "inventory": "sql-inventory-r46.json (dbmigrate-r14)",
+  "repo_call_sites": 2475,
+  "repo_native_sites": 1475,
+  "repo_dynamic": 147,
+  "helper_internal_excluded": 9,
+  "prepared_stmt_calls_excluded": 3,
+  "audit_failures": 0,
+  "repo_blocked_on_pg": 3,
+  "repo_unwrapped": 997,
+  "repo_provisional_gate_list": [
+    "internal/api/seo_item_routes.go:707",
+    "internal/api/seo_item_routes.go:715",
+    "internal/api/site_builder_registrar.go:169"
+  ],
+  "repo_runtime_verified": 0,
+  "runtime_verified": 0,
+  "pg_ready": false,
+  "sites": 56,
+  "native_syntax_ported": 55,
+  "blocked_on_pg": 1,
+  "remaining": 0,
+  "remaining_dynamic": 0,
+  "done_files": 8,
+  "files": 8,
+  "syntax_complete": false,
+  "ledger": [
+    {
+      "file": "internal/api/assistant_analytics_tools.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/assistant_catalog_tools.go",
+      "sites": 16,
+      "native_syntax_ported": 16,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/assistant_confirmation.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/assistant_llm.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/assistant_memory.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/assistant_pos_tools.go",
+      "sites": 5,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/assistant_tools.go",
+      "sites": 12,
+      "native_syntax_ported": 12,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/assistant_ws.go",
+      "sites": 10,
+      "native_syntax_ported": 10,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    }
+  ],
+  "semantic_open": [
+    {
+      "site": "catalog_list/postres/vinos/typed lists LIKE",
+      "note": "PG17 cannot LIKE on nondeterministic ci_ai: LOWER(col) COLLATE \"C\" LIKE lowered pattern. Case-insensitive only; MySQL accent folding (general/unicode_ci) and PAD SPACE are NOT reproduced - open search gap, not accepted."
+    },
+    {
+      "site": "catalog_update (generic + vinos) RowsAffected",
+      "note": "MySQL changed-rows contract (updated: n==1) reproduced with ROW(...) IS DISTINCT FROM ROW(new values), text compared COLLATE \"C\" (byte record compare). Compile-only."
+    },
+    {
+      "site": "catalog_create/update price float64",
+      "note": "PG binds CAST(CAST(? AS double precision) AS numeric(10,2)) / AS bigint (pos_products cents). Half-way rounding (MySQL decimal/bigint conversion vs PG numeric round-half-away / float8->int8 rint half-even) unverified QA gap."
+    },
+    {
+      "site": "catalog_create InsertID",
+      "note": "PG RETURNING id via sqldb.InsertID; MySQL path keeps source ExecContext + ignored LastInsertId error. Exec errors propagate identically; PG RETURNING scan failure surfaces where MySQL id retrieval error was ignored (not realistic for go-sql-driver)."
+    },
+    {
+      "site": "customers_list NULLIF(display_name,'')",
+      "note": "display_name utf8mb4_unicode_ci PAD SPACE: PG twin uses CASE WHEN rtrim(display_name,' ') COLLATE \"C\" = '' THEN NULL. UCA zero-weight (ignorable) characters equal '' in MySQL but not in PG: residual PAD/CI gap."
+    },
+    {
+      "site": "pos_visits_list status filter",
+      "note": "CAST(status AS text) COLLATE dbmigrate.ci_ai = ? (unknown text -> no match, no enum cast error). Accent/PAD SPACE delta vs MySQL enum string compare open."
+    },
+    {
+      "site": "date filters (bookings/pos_visits/schedules/revenue)",
+      "note": "String date params: invalid text -> PG raises invalid datetime; MySQL warns/NULL and returns no/other rows. Open; valid YYYY-MM-DD equivalent. revenue DateTo: CAST(? AS timestamp)+1 day mirrors DATE_ADD on date or datetime text."
+    },
+    {
+      "site": "bookings status NOT IN ('cancelled','canceled')",
+      "note": "bookings.status utf8mb4_general_ci: PG ci_ai matches case-insensitively; PAD SPACE ('cancelled ') and accent deltas open."
+    },
+    {
+      "site": "delete_booking changed rows",
+      "note": "PG adds status COLLATE \"C\" IS DISTINCT FROM 'cancelled' so an already-cancelled booking returns n==0 like MySQL; 'Cancelled' (different bytes) still counts as change, as in MySQL."
+    },
+    {
+      "site": "audit inserts jsonb",
+      "note": "assistant_tool_audit.result_summary / audit_log.after_json CAST(? AS jsonb); errors ignored outside any transaction (no savepoint needed). jsonb rejects \\u0000 escapes MySQL JSON accepts -> audit row silently lost on PG in that case; key-order/number normalisation JSON text QA open."
+    },
+    {
+      "site": "whatsapp_bot_config_get / site_published_content_get",
+      "note": "config_json read CAST AS text (jsonb text normalisation vs MySQL JSON text QA open). site ORDER BY id DESC on varchar ci_ai (ICU vs unicode_ci order) open CI ordering gap."
+    },
+    {
+      "site": "assistantColumnExists",
+      "note": "PG uses table_schema=current_schema() (search_path of sqldb.OpenPostgres); bot_context schema not in scope. Compile-only."
+    },
+    {
+      "site": "products ORDER BY COUNT(*) DESC LIMIT 20",
+      "note": "Tie order nondeterministic on both engines; not equivalent-proven."
+    },
+    {
+      "site": "typed list scan into any",
+      "note": "PG: enums/time CAST AS text, numeric->string, int->int64, date/timestamp->time.Time UTC (ScanLocation UTC) vs MySQL parseTime/loc UTC. JSON timestamp QA open."
+    },
+    {
+      "site": "vinos precio FLOAT(10,2) text (RESOLVED by source grounding, compile-only)",
+      "note": "go-sql-driver v1.9.3 packets.go returns float32 for FLOAT on BOTH text (ParseFloat 32) and binary protocol; database/sql asString formats float32 with FormatFloat('g',-1,32). pgx Float4Codec returns float64(float32). Both dialects now scan into any and float32SQLText reproduces the source text exactly. DSN interpolateParams is irrelevant. Storage D=2 rounding gap (proposal-only) unchanged."
+    },
+    {
+      "site": "NULLIF(?,'') space-only (grounded, PG adapted)",
+      "note": "internal/db/mysql.go DSN sets collation=utf8mb4_unicode_ci (PAD SPACE, not driver default general_ci): space-only param equals '' -> NULL -> column kept / audio_url NULL. PG branch binds '' for space-only via padSpaceNullIfArg (catalog_update generic+vinos, assistant_messages.audio_url). Residual: UCA 4.0 zero-weight characters equal '' in MySQL only. Compile-only."
+    },
+    {
+      "site": "SOURCE ANOMALY assistantCount group_menus/wines; restaurants.phone",
+      "note": "group_menus, wines tables and restaurants.phone column absent in the restored dump schema (sha 4cbbdea1...8578830) only - NOT production-validated. Failures preserved on both dialects (restaurant_query menus/wines error; system prompt falls back to base)."
+    },
+    {
+      "site": "confirmation tokens single-use",
+      "note": "DELETE ... RETURNING-free single-use kept; PG row lock makes a concurrent DELETE re-evaluate after commit -> 0 rows (same outcome as InnoDB). expires_at naive UTC: NaiveUTCArg for time.Now().Add(ttl); NOW() -> date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'). MySQL DATETIME(0) and PG timestamp(0) both ROUND fractional seconds of the bound value. Code review only; no isolation-level dependency (single statement)."
+    },
+    {
+      "site": "memory ODKU",
+      "note": "nodes: ON CONFLICT (restaurant_id,user_id,label) = uq_memory_scope_label, the only unique key besides identity PK; edges: ON CONFLICT (from_node,to_node,rel) = uq_edge. label/rel ci_ai nondeterministic unique index keeps CI collision (accent/PAD delta open). loadAssistantMemories NULLS LAST added for updated_at DESC."
+    },
+    {
+      "site": "POS tool inserts",
+      "note": "pos_visit_create CURDATE() -> CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date); InsertID: go-sql-driver v1.9.3 mysqlResult.LastInsertId never returns an error, so the MySQL path is identical. payment/refund INSERT..SELECT: InsertSelectID (no ticket -> id 0 like MySQL OK packet); PG select-list params explicitly cast (no text->enum/bigint assignment cast). pos_ticket_create BLOCKED_ON_PG (SQL UUID() v1): PG returns an explicit error, cutover gate."
+    },
+    {
+      "site": "assistant_messages NUL bytea adapter",
+      "note": "All application callers are in assistant_ws.go (loadHistory read []byte, user + assistant inserts []byte). PG reads role CAST AS text; content bytea exact bytes. No other non-test caller in internal/ or cmd/. Runtime NUL QA still pending; audit jsonb CAST rejects \u0000 (gap kept explicit)."
+    },
+    {
+      "site": "tx/interface audit (all 8 assistant files)",
+      "note": "txaudit: no BeginTx, no tx params, no interface querier params in assistant_*.go. Tx-interface callers found in whatsapp_bot_config_admin.go (botConfigMesasBefore/SalonCondesaBefore), whatsapp_bot_groupmenu_admin.go (botGMenuQuerier), whatsapp_bot_special_admin_tools.go (botRestoreSource*), plus BeginTx in whatsapp_bot_rag/special_admin_tools/special_date_adelanto: WhatsApp domain, not covered yet."
+    }
+  ],
+  "cutover_gates": [
+    "seo_item_routes two-step ODKU emulation (non-atomic, assumed key priority)",
+    "registrar LIMIT 1 first-site choice unproven",
+    "registrar UUID v1->v4 unaccepted",
+    "instatic_instances multi-key upsert BLOCKED_ON_PG",
+    "instatic domain mapping UUID() BLOCKED_ON_PG",
+    "bounce invalid UTF-8 suppression",
+    "analytics.SetSQLDialect cutover wiring",
+    "assistant LIKE CI/accent/PAD SPACE search gap",
+    "pos_ticket_create SQL UUID() BLOCKED_ON_PG"
+  ],
+  "count_basis": "canonical AST call sites; +1 vs r44 = generic catalog_update split into explicit mysqlOnlySQL(2)+pgOnlySQL(1) branch",
+  "syntax_complete_excluding_blocked": true,
+  "blocked_on_pg_list": [
+    "internal/api/assistant_pos_tools.go:68"
+  ]
+}

@@ -16,6 +16,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"preactvillacarmen/internal/sqldb"
 	"regexp"
 	"sort"
 	"strconv"
@@ -299,7 +300,13 @@ var botSpecialColumns = []string{"is_special_booking", "is_prereserva", "special
 // except the excluded ones. It does not depend on a column list in code, so a
 // column added later is covered too.
 func botFullRowHash(ctx context.Context, q botRowQuerier, rid int, id int64, exclude ...string) (string, error) {
-	rows, err := q.QueryContext(ctx, "SELECT * FROM bookings WHERE restaurant_id = ? AND id = ?", rid, id)
+	// Byte format (code-grounded, runtime QA pending): MySQL binary protocol
+	// + parseTime(UTC) and pgx stdlib yield the same RawBytes per column for
+	// bookings' types (ints -> decimal text, DATE/TIMESTAMP -> time.Time ->
+	// RFC3339Nano UTC, TIME -> "HH:MM:SS", text -> bytes, NULL -> nil) in the
+	// imported column order. Hashes are only compared within one engine;
+	// proposals pending across the cutover may fail closed as stale.
+	rows, err := q.QueryContext(ctx, portableSQL("SELECT * FROM bookings WHERE restaurant_id = ? AND id = ?"), rid, id)
 	if err != nil {
 		return "", err
 	}
@@ -342,6 +349,12 @@ func botFullRowHash(ctx context.Context, q botRowQuerier, rid int, id int64, exc
 
 const botSpecialRowSelect = `SELECT DATE_FORMAT(reservation_date,'%Y-%m-%d'), COALESCE(TIME_FORMAT(reservation_time,'%H:%i'),''), party_size, COALESCE(status,''), COALESCE(is_special_booking,0), COALESCE(is_prereserva,0), COALESCE(special_json,'') FROM bookings WHERE restaurant_id = ? AND id = ?`
 
+// botSpecialRowSelectSQL is botSpecialRowSelect per dialect (the MySQL const
+// stays for the not-yet-ported callers in other files).
+func botSpecialRowSelectSQL() string {
+	return nativeSQL(botSpecialRowSelect, `SELECT to_char(reservation_date,'YYYY-MM-DD'), COALESCE(to_char(reservation_time,'HH24:MI'),''), party_size, COALESCE(status,''), COALESCE(is_special_booking,0), COALESCE(is_prereserva,0), COALESCE(special_json,'') FROM bookings WHERE restaurant_id = ? AND id = ?`)
+}
+
 func botScanSpecialRow(row *sql.Row) (*botSpecialRow, error) {
 	var r botSpecialRow
 	var isSpecial int
@@ -353,7 +366,7 @@ func botScanSpecialRow(row *sql.Row) (*botSpecialRow, error) {
 }
 
 func (s *Server) botLoadSpecialRow(ctx context.Context, rid int, id int64) (*botSpecialRow, error) {
-	return botScanSpecialRow(s.db.QueryRowContext(ctx, botSpecialRowSelect, rid, id))
+	return botScanSpecialRow(s.db.QueryRowContext(ctx, selectedSQL(botSpecialRowSelectSQL()), rid, id))
 }
 
 // botSnapshotToReq rebuilds the full `special` request from a stored snapshot.
@@ -587,7 +600,19 @@ func botSpecialApplyArgs(op string, snap specialBookingSnapshot, a botSpecialPro
 
 func (s *Server) botSpecialAdminEvent(ctx context.Context, ex execQueryer, rid int, proposalID int64, event, actor, group string, detail map[string]any) {
 	d, _ := json.Marshal(detail)
-	if _, err := ex.ExecContext(ctx, `INSERT INTO wa_bot_op_events (proposal_id, restaurant_id, event, actor_jid, group_jid, detail_json) VALUES (?,?,?,?,?,?)`, proposalID, rid, event, actor, group, string(d)); err != nil {
+	insert := func() error {
+		_, err := ex.ExecContext(ctx, portableSQL(`INSERT INTO wa_bot_op_events (proposal_id, restaurant_id, event, actor_jid, group_jid, detail_json) VALUES (?,?,?,?,?,?)`), proposalID, rid, event, actor, group, string(d))
+		return err
+	}
+	// The failure is logged and the caller's transaction continues: inside a
+	// tx the PG insert runs in a savepoint scope so it cannot abort the tx.
+	var err error
+	if tx, ok := ex.(*sql.Tx); ok {
+		err = sqldb.TxStatementScope(ctx, sqlDialect, tx, insert)
+	} else {
+		err = insert()
+	}
+	if err != nil {
 		log.Printf("[bot] wa_bot_special_admin_v2 event_insert_failed rid=%d event=%s err=%v", rid, event, err)
 	}
 }
@@ -823,7 +848,12 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 	chatsQ := `SELECT DISTINCT origin_chat_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=? AND active=1`
 	supQ := `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=? AND active=1`
 	supArgs := []any{rid, in.BookingID}
-	if rs, qerr := tx.QueryContext(ctx, chatsQ, supArgs...); qerr == nil {
+	// Source ignores a failed lookup and continues the tx: savepoint on PG.
+	_ = sqldb.TxStatementScope(ctx, sqlDialect, tx, func() error {
+		rs, qerr := tx.QueryContext(ctx, portableSQL(chatsQ), supArgs...)
+		if qerr != nil {
+			return qerr
+		}
 		for rs.Next() {
 			var c string
 			if rs.Scan(&c) == nil {
@@ -831,18 +861,20 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 			}
 		}
 		rs.Close()
-	}
-	if res, err := tx.ExecContext(ctx, supQ, supArgs...); err == nil {
+		return rs.Err()
+	})
+	if res, err := tx.ExecContext(ctx, portableSQL(supQ), supArgs...); err == nil {
 		superseded, _ = res.RowsAffected()
 	} else {
 		return botJSON(map[string]any{"error": "no se pudo guardar la propuesta"}), nil
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO wa_bot_op_proposals (restaurant_id, scope_group_jid, origin_chat_jid, actor_jid, source_message_id, op, booking_id, args_json, before_hash, after_hash, preview_text, code_hash, state, active, expires_at, notify_state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending',1,?, 'none')`,
+	// go-sql-driver v1.9.3 LastInsertId never errors: InsertID keeps MySQL
+	// identical. expires_at: formatted UTC wall clock (naive column), unchanged.
+	pid, err := sqldb.InsertID(ctx, sqlDialect, tx, portableSQL(`INSERT INTO wa_bot_op_proposals (restaurant_id, scope_group_jid, origin_chat_jid, actor_jid, source_message_id, op, booking_id, args_json, before_hash, after_hash, preview_text, code_hash, state, active, expires_at, notify_state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'pending',1,?, 'none')`), "id",
 		rid, botSpecialAdminScopeGroup(rid), origin, actor, msg.MessageID, op, in.BookingID, string(argsJSON), beforeHash, afterHash, preview, botSha(code), time.Now().UTC().Add(botSpecialAdminTTL).Format("2006-01-02 15:04:05"))
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo guardar la propuesta"}), nil
 	}
-	pid, _ := res.LastInsertId()
 	s.botSpecialAdminEvent(ctx, tx, rid, pid, "proposed", actor, origin, map[string]any{"op": op, "booking_id": in.BookingID, "before_hash": beforeHash, "after_hash": afterHash, "superseded": superseded})
 	if err := tx.Commit(); err != nil {
 		return botJSON(map[string]any{"error": "no se pudo guardar la propuesta"}), nil
@@ -854,8 +886,8 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 	// proposal of the same kind is superseded first (a new direct apply makes
 	// its code meaningless).
 	if s.loadBotTenantConfig(ctx, rid).PrivilegedDirectWrites {
-		_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=? AND active=1 AND id<>?`, rid, in.BookingID, pid)
-		if r, err := s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='sent' WHERE id=? AND state='pending' AND active=1`, pid); err == nil {
+		_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE restaurant_id=? AND booking_id=? AND active=1 AND id<>?`), rid, in.BookingID, pid)
+		if r, err := s.db.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET state='sent' WHERE id=? AND state='pending' AND active=1`), pid); err == nil {
 			if n, _ := r.RowsAffected(); n == 1 {
 				s.botSpecialAdminEvent(ctx, s.db, rid, pid, "preview_accepted", actor, origin, map[string]any{"direct": true})
 				out, err := s.botSpecialAdminExecute(ctx, rid, msg, botSpecialProposalRow{
@@ -864,7 +896,7 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 				})
 				if err != nil {
 					botCheckpoint("wa_bot_privileged_direct_writes_v1", "restaurant_id=%d op=%s error=%v", rid, op, err)
-					_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE id=? AND active=1`, pid)
+					_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET state='superseded', active=NULL WHERE id=? AND active=1`), pid)
 					return botJSON(map[string]any{"ok": false, "error": "no se pudo aplicar: " + err.Error()}), nil
 				}
 				botCheckpoint("wa_bot_privileged_direct_writes_v1", "restaurant_id=%d op=%s applied", rid, op)
@@ -911,7 +943,7 @@ func (s *Server) botProposalPersist(ctx context.Context, rid int, msg botWebhook
 		return botJSON(map[string]any{"ok": false, "error": "no se pudo enviar la vista previa al grupo; la propuesta queda inactiva y no se aplicará. Pide al usuario que lo repita."}), nil
 	}
 	// accepted by the provider (NOT proven delivered): the proposal becomes live.
-	if r, err := s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='sent' WHERE id=? AND state='pending' AND active=1`, pid); err != nil {
+	if r, err := s.db.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET state='sent' WHERE id=? AND state='pending' AND active=1`), pid); err != nil {
 		return botJSON(map[string]any{"ok": false, "error": "la propuesta no pudo activarse"}), nil
 	} else if n, _ := r.RowsAffected(); n != 1 {
 		return botJSON(map[string]any{"ok": false, "error": "la propuesta fue sustituida por otra más reciente"}), nil
@@ -934,12 +966,14 @@ func botSpecialNormalizeOK(text string) (string, bool) {
 }
 
 func (s *Server) botSpecialAdminRateOK(ctx context.Context, rid int, actor string) bool {
-	const bad = `event IN ('bad_code','approve_rejected_other_actor') AND created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)`
+	// created_at is a TIMESTAMP (instant): PG compares timestamptz with the
+	// second-truncated statement time minus 10 minutes.
+	bad := sqlFragment(`event IN ('bad_code','approve_rejected_other_actor') AND created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)`, `event IN ('bad_code','approve_rejected_other_actor') AND created_at >= date_trunc('second', statement_timestamp()) - INTERVAL '10 minutes'`)
 	var a, t int
-	if s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wa_bot_op_events WHERE restaurant_id=? AND actor_jid=? AND `+bad, rid, actor).Scan(&a) != nil {
+	if s.db.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM wa_bot_op_events WHERE restaurant_id=? AND actor_jid=? AND `+bad), rid, actor).Scan(&a) != nil {
 		return false
 	}
-	if s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM wa_bot_op_events WHERE restaurant_id=? AND `+bad, rid).Scan(&t) != nil {
+	if s.db.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM wa_bot_op_events WHERE restaurant_id=? AND `+bad), rid).Scan(&t) != nil {
 		return false
 	}
 	return a < botSpecialAdminRateActr && t < botSpecialAdminRateRest
@@ -1001,7 +1035,7 @@ func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg bot
 		s.botSpecialAdminEvent(ctx, s.db, rid, 0, "approve_rate_limited", actor, origin, nil)
 		return true
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, op, booking_id, args_json, before_hash, after_hash, code_hash, actor_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND scope_group_jid=? AND origin_chat_jid=? AND state='sent' AND active=1 AND expires_at > UTC_TIMESTAMP()`, rid, scope, origin)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT id, op, booking_id, args_json, before_hash, after_hash, code_hash, actor_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND scope_group_jid=? AND origin_chat_jid=? AND state='sent' AND active=1 AND expires_at > UTC_TIMESTAMP()`, `SELECT id, op, booking_id, args_json, before_hash, after_hash, code_hash, actor_jid FROM wa_bot_op_proposals WHERE restaurant_id=? AND scope_group_jid=? AND origin_chat_jid=? AND state='sent' AND active=1 AND expires_at > date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')`), rid, scope, origin)
 	if err != nil {
 		return true
 	}
@@ -1037,7 +1071,7 @@ func (s *Server) botSpecialAdminTryApprove(ctx context.Context, rid int, msg bot
 	}
 	// The notice stays 'pending' until the provider accepts it.
 	if gw, okGw := s.botGatewayFor(ctx, rid); okGw && gw.SendText(ctx, origin, out) == nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET notify_state='sent' WHERE id=? AND notify_state='pending'`, match.ID)
+		_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET notify_state='sent' WHERE id=? AND notify_state='pending'`), match.ID)
 	}
 	return true
 }
@@ -1054,7 +1088,10 @@ func botSpecialLockRefs(ctx context.Context, tx *sql.Tx, rid int, date string) e
 		`SELECT m.id FROM special_date_menus m JOIN special_dates d ON d.id = m.special_date_id WHERE d.restaurant_id = ? AND d.date = ? ORDER BY m.id FOR SHARE`,
 		`SELECT sec.id FROM special_date_menu_sections sec JOIN special_date_menus m ON m.id = sec.special_date_menu_id JOIN special_dates d ON d.id = m.special_date_id WHERE d.restaurant_id = ? AND d.date = ? ORDER BY sec.id FOR SHARE`,
 	} {
-		rs, err := tx.QueryContext(ctx, q, rid, date)
+		// FOR SHARE locks the matched rows of every joined table on both
+		// engines; MySQL RR next-key/gap locks (blocking new reference rows)
+		// have no PG equivalent - locking gap recorded.
+		rs, err := tx.QueryContext(ctx, portableSQL(q), rid, date)
 		if err != nil {
 			return err
 		}
@@ -1081,7 +1118,7 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 		return "", errors.New(why)
 	}
 	// Claim: atomic, single use. It commits (or not) together with the write.
-	res, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET state='done', active=NULL, done_at=UTC_TIMESTAMP() WHERE id=? AND state='sent' AND active=1 AND expires_at > UTC_TIMESTAMP()`, p.ID)
+	res, err := tx.ExecContext(ctx, nativeSQL(`UPDATE wa_bot_op_proposals SET state='done', active=NULL, done_at=UTC_TIMESTAMP() WHERE id=? AND state='sent' AND active=1 AND expires_at > UTC_TIMESTAMP()`, `UPDATE wa_bot_op_proposals SET state='done', active=NULL, done_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') WHERE id=? AND state='sent' AND active=1 AND expires_at > date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')`), p.ID)
 	if err != nil {
 		return "", errors.New("error interno")
 	}
@@ -1175,7 +1212,7 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	if p.Op == "restore" {
 		return s.botRestoreExecute(ctx, tx, rid, msg, p)
 	}
-	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, botSpecialRowSelect+" FOR UPDATE", rid, p.BookingID))
+	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, selectedSQL(botSpecialRowSelectSQL()+" FOR UPDATE"), rid, p.BookingID))
 	if err != nil {
 		return "", errors.New("la reserva ya no existe")
 	}
@@ -1240,7 +1277,7 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 		if err := s.botSpecialRescheduleWrite(ctx, tx, rid, p, row, next, spJSON); err != nil {
 			return "", err
 		}
-	} else if _, err := tx.ExecContext(ctx, `UPDATE bookings SET is_special_booking = ?, is_prereserva = ?, special_json = ? WHERE restaurant_id = ? AND id = ?`,
+	} else if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE bookings SET is_special_booking = ?, is_prereserva = ?, special_json = ? WHERE restaurant_id = ? AND id = ?`),
 		boolToTinyint(next.IsSpecialBooking), boolToTinyint(next.IsPrereserva), spJSON, rid, p.BookingID); err != nil {
 		return "", errors.New("error al guardar")
 	}
@@ -1257,7 +1294,7 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 	totals := botSnapTotals(after)
 	notice := fmt.Sprintf("Aplicado en la reserva #%d. Abonado: %s. Adelanto requerido: %s. Total: %s.", p.BookingID, botEUR(totals["abonado_eur"].(float64)), botEUR(totals["adelanto_requerido_eur"].(float64)), botEUR(totals["total_eur"].(float64)))
 	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
@@ -1272,7 +1309,7 @@ func (s *Server) botSpecialAdminExecute(ctx context.Context, rid int, msg botWeb
 
 func (s *Server) markStale(ctx context.Context, rid int, p botSpecialProposalRow, msg botWebhookMessage) {
 	// Runs outside the (rolled back) tx: the claim did not commit.
-	_, _ = s.db.ExecContext(context.Background(), `UPDATE wa_bot_op_proposals SET state='stale', active=NULL WHERE id=? AND state='sent'`, p.ID)
+	_, _ = s.db.ExecContext(context.Background(), portableSQL(`UPDATE wa_bot_op_proposals SET state='stale', active=NULL WHERE id=? AND state='sent'`), p.ID)
 	s.botSpecialAdminEvent(context.Background(), s.db, rid, p.ID, "stale", p.Actor, strings.TrimSpace(msg.ChatJID), nil)
 }
 
@@ -1292,7 +1329,7 @@ func (s *Server) botSpecialAdminFlushNotifyThrottled(ctx context.Context, rid in
 // runs when a message arrives in an authorised chat or a proposal is made
 // (there is no background worker), so a notice can wait for the next such event.
 func (s *Server) botSpecialAdminFlushNotify(ctx context.Context, rid int) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, origin_chat_jid, result_json FROM wa_bot_op_proposals WHERE restaurant_id=? AND state='done' AND notify_state='pending' AND done_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 DAY) LIMIT 5`, rid)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT id, origin_chat_jid, result_json FROM wa_bot_op_proposals WHERE restaurant_id=? AND state='done' AND notify_state='pending' AND done_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 DAY) LIMIT 5`, `SELECT id, origin_chat_jid, result_json FROM wa_bot_op_proposals WHERE restaurant_id=? AND state='done' AND notify_state='pending' AND done_at > date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') - INTERVAL '1 day' LIMIT 5`), rid)
 	if err != nil {
 		return
 	}
@@ -1325,7 +1362,7 @@ func (s *Server) botSpecialAdminFlushNotify(ctx context.Context, rid int) {
 		if !ok || gw.SendText(ctx, x.chat, x.notes) != nil {
 			continue
 		}
-		_, _ = s.db.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET notify_state='sent' WHERE id=? AND notify_state='pending'`, x.id)
+		_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET notify_state='sent' WHERE id=? AND notify_state='pending'`), x.id)
 	}
 }
 
@@ -1336,18 +1373,26 @@ func (s *Server) botSpecialAdminFlushNotify(ctx context.Context, rid int) {
 // same side effects the backoffice PATCH has. The caller verifies afterwards
 // that no other column of the row moved.
 func (s *Server) botSpecialRescheduleWrite(ctx context.Context, tx *sql.Tx, rid int, p botSpecialProposalRow, old *botSpecialRow, next boNormalizedBooking, spJSON string) error {
+	// booking_day_lock_v1: old and new day (after the claim row lock).
+	oldDay := ""
+	if old != nil {
+		oldDay = old.Date
+	}
+	if err := lockBookingDays(ctx, tx, rid, oldDay, next.ReservationDate); err != nil {
+		return errors.New("error interno")
+	}
 	var floor, salon sql.NullInt64
 	var custName, phone string
 	var oldChildren, oldMobPeople int
-	if err := tx.QueryRowContext(ctx, `SELECT preferred_floor_number, preferred_salon_id, customer_name, COALESCE(contact_phone,''), COALESCE(children,0), COALESCE(mobility_people,0) FROM bookings WHERE restaurant_id = ? AND id = ?`, rid, p.BookingID).Scan(&floor, &salon, &custName, &phone, &oldChildren, &oldMobPeople); err != nil {
+	if err := tx.QueryRowContext(ctx, portableSQL(`SELECT preferred_floor_number, preferred_salon_id, customer_name, COALESCE(contact_phone,''), COALESCE(children,0), COALESCE(mobility_people,0) FROM bookings WHERE restaurant_id = ? AND id = ?`), rid, p.BookingID).Scan(&floor, &salon, &custName, &phone, &oldChildren, &oldMobPeople); err != nil {
 		return errors.New("error interno")
 	}
 	if p.Op == "reschedule_normal" {
-		if _, err := tx.ExecContext(ctx, `UPDATE bookings SET reservation_date = ?, reservation_time = ?, party_size = ?, children = ?, has_mobility_issues = ?, mobility_people = ? WHERE restaurant_id = ? AND id = ?`,
+		if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE bookings SET reservation_date = ?, reservation_time = ?, party_size = ?, children = ?, has_mobility_issues = ?, mobility_people = ? WHERE restaurant_id = ? AND id = ?`),
 			next.ReservationDate, next.ReservationTime, next.PartySize, next.Children, boolToTinyint(next.HasMobilityIssues), next.MobilityPeople, rid, p.BookingID); err != nil {
 			return errors.New("error al guardar")
 		}
-	} else if _, err := tx.ExecContext(ctx, `UPDATE bookings SET reservation_date = ?, reservation_time = ?, party_size = ?, children = ?, has_mobility_issues = ?, mobility_people = ?, is_special_booking = ?, is_prereserva = ?, special_json = ? WHERE restaurant_id = ? AND id = ?`,
+	} else if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE bookings SET reservation_date = ?, reservation_time = ?, party_size = ?, children = ?, has_mobility_issues = ?, mobility_people = ?, is_special_booking = ?, is_prereserva = ?, special_json = ? WHERE restaurant_id = ? AND id = ?`),
 		next.ReservationDate, next.ReservationTime, next.PartySize, next.Children, boolToTinyint(next.HasMobilityIssues), next.MobilityPeople,
 		boolToTinyint(next.IsSpecialBooking), boolToTinyint(next.IsPrereserva), spJSON, rid, p.BookingID); err != nil {
 		return errors.New("error al guardar")
@@ -1368,7 +1413,7 @@ func (s *Server) botSpecialRescheduleWrite(ctx context.Context, tx *sql.Tx, rid 
 		if oldV == newV {
 			return nil
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, ?, ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`,
+		_, err := tx.ExecContext(ctx, nativeSQL(`INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, ?, ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, ?, ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'))`),
 			rid, p.BookingID, old.Date, field, oldV, newV, custName, phone)
 		return err
 	}
@@ -1495,7 +1540,10 @@ func (s *Server) botCancelExecute(ctx context.Context, tx *sql.Tx, rid int, msg 
 		return "", berr
 	}
 	// Full copy of the row (every column) for restoration.
-	rows, err := tx.QueryContext(ctx, "SELECT * FROM bookings WHERE restaurant_id = ? AND id = ?", rid, p.BookingID)
+	// Backup values are the driver RawBytes as text (DATE/TIMESTAMP via
+	// time.Time -> RFC3339Nano). Per-engine byte forms are a source-code review
+	// claim only; a backup written on MySQL and restored on PG is a cutover gate.
+	rows, err := tx.QueryContext(ctx, portableSQL("SELECT * FROM bookings WHERE restaurant_id = ? AND id = ?"), rid, p.BookingID)
 	if err != nil {
 		return "", errors.New("error interno")
 	}
@@ -1523,7 +1571,7 @@ func (s *Server) botCancelExecute(ctx context.Context, tx *sql.Tx, rid int, msg 
 	if len(backup) == 0 {
 		return "", errors.New("la reserva ya no existe")
 	}
-	mhRows, merr := tx.QueryContext(ctx, "SELECT * FROM modification_history WHERE booking_id = ? ORDER BY id", p.BookingID)
+	mhRows, merr := tx.QueryContext(ctx, portableSQL("SELECT * FROM modification_history WHERE booking_id = ? ORDER BY id"), p.BookingID)
 	if merr != nil {
 		return "", errors.New("error interno")
 	}
@@ -1536,23 +1584,24 @@ func (s *Server) botCancelExecute(ctx context.Context, tx *sql.Tx, rid int, msg 
 	var strollers, chairs, specialMenu, groupMenu sql.NullInt64
 	var date, tm string
 	var party int
-	if err := tx.QueryRowContext(ctx, `SELECT DATE_FORMAT(reservation_date,'%Y-%m-%d'), TIME_FORMAT(reservation_time,'%H:%i:%s'), party_size, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, babyStrollers, highChairs, special_menu, menu_de_grupo_id, principales_json, preferred_floor_number, preferred_salon_id FROM bookings WHERE restaurant_id = ? AND id = ?`, rid, p.BookingID).
+	if err := tx.QueryRowContext(ctx, nativeSQL(`SELECT DATE_FORMAT(reservation_date,'%Y-%m-%d'), TIME_FORMAT(reservation_time,'%H:%i:%s'), party_size, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, babyStrollers, highChairs, special_menu, menu_de_grupo_id, principales_json, preferred_floor_number, preferred_salon_id FROM bookings WHERE restaurant_id = ? AND id = ?`, `SELECT to_char(reservation_date,'YYYY-MM-DD'), to_char(reservation_time,'HH24:MI:SS'), party_size, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, "babyStrollers", "highChairs", special_menu, menu_de_grupo_id, principales_json, preferred_floor_number, preferred_salon_id FROM bookings WHERE restaurant_id = ? AND id = ?`), rid, p.BookingID).
 		Scan(&date, &tm, &party, &custName, &phone, &email, &commentary, &arroz, &arrozServ, &strollers, &chairs, &specialMenu, &groupMenu, &principales, &floor, &salon); err != nil {
 		return "", errors.New("error interno")
 	}
-	cres, err := tx.ExecContext(ctx, `INSERT INTO cancelled_bookings (restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, babyStrollers, highChairs, cancellation_date, cancelled_by, cancelled_by_user_id, cancelled_by_name, special_menu, menu_de_grupo_id, principales_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'whatsapp', 0, 'Bot WhatsApp (dirección)', ?, ?, ?)`,
+	// go-sql-driver v1.9.3 LastInsertId never errors: InsertID keeps the
+	// MySQL path identical (both failures keep the same message).
+	cancelledID, err := sqldb.InsertID(ctx, sqlDialect, tx, nativeSQL(`INSERT INTO cancelled_bookings (restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, babyStrollers, highChairs, cancellation_date, cancelled_by, cancelled_by_user_id, cancelled_by_name, special_menu, menu_de_grupo_id, principales_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'whatsapp', 0, 'Bot WhatsApp (dirección)', ?, ?, ?)`, `INSERT INTO cancelled_bookings (restaurant_id, booking_id, reservation_date, party_size, reservation_time, customer_name, contact_phone, contact_email, commentary, arroz_type, arroz_servings, "babyStrollers", "highChairs", cancellation_date, cancelled_by, cancelled_by_user_id, cancelled_by_name, special_menu, menu_de_grupo_id, principales_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'), 'whatsapp', 0, 'Bot WhatsApp (dirección)', ?, ?, ?)`), "id",
 		rid, p.BookingID, date, party, tm, custName.String, phone.String, email.String, commentary.String, nullStringOrNil(arroz), nullStringOrNil(arrozServ), nullIntToInt(strollers), nullIntToInt(chairs), int64OrZero(specialMenu), nullInt64OrNil(groupMenu), nullStringOrNil(principales))
 	if err != nil {
 		return "", errors.New("no se pudo archivar la reserva; no se aplicó nada")
 	}
-	cancelledID, cerr := cres.LastInsertId()
-	if cerr != nil || cancelledID <= 0 {
+	if cancelledID <= 0 {
 		return "", errors.New("no se pudo archivar la reserva; no se aplicó nada")
 	}
 	if err := s.applyBookingLocationOccupancy(ctx, tx, rid, date, floor, salon, party, -1); err != nil {
 		return "", errors.New("no se pudo liberar la ocupación; no se aplicó nada")
 	}
-	res, err := tx.ExecContext(ctx, "DELETE FROM bookings WHERE id = ? AND restaurant_id = ?", p.BookingID, rid)
+	res, err := tx.ExecContext(ctx, portableSQL("DELETE FROM bookings WHERE id = ? AND restaurant_id = ?"), p.BookingID, rid)
 	if err != nil {
 		return "", errors.New("error al cancelar; no se aplicó nada")
 	}
@@ -1561,7 +1610,7 @@ func (s *Server) botCancelExecute(ctx context.Context, tx *sql.Tx, rid int, msg 
 	}
 	notice := fmt.Sprintf("Reserva #%d cancelada (%s %s, %d comensales). Archivada en Canceladas. No se ha avisado al cliente ni se ha hecho ningún reembolso o cobro.", p.BookingID, date, strings.TrimSuffix(tm, ":00"), party)
 	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice, "row_backup": backup, "modification_history_backup": modHist, "cancelled_id": cancelledID})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
@@ -1595,7 +1644,9 @@ func (s *Server) botRestoreSourceFull(ctx context.Context, q interface {
 		suffix = " FOR UPDATE"
 	}
 	var rj sql.NullString
-	if err = q.QueryRowContext(ctx, `SELECT id, result_json FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=? AND op='cancel' AND state='done' ORDER BY id DESC LIMIT 1`+suffix, rid, bookingID).Scan(&proposalID, &rj); err != nil {
+	// q is *sql.Tx (execute, lock=true) or *sql.DB (propose, lock=false);
+	// errors fail the caller (stale + rollback), never continue the tx.
+	if err = q.QueryRowContext(ctx, portableSQL(`SELECT id, result_json FROM wa_bot_op_proposals WHERE restaurant_id=? AND booking_id=? AND op='cancel' AND state='done' ORDER BY id DESC LIMIT 1`+suffix), rid, bookingID).Scan(&proposalID, &rj); err != nil {
 		return nil, nil, 0, 0, errors.New("no hay una cancelación hecha por el bot con copia completa de esa reserva (las canceladas desde el panel se reactivan allí y pierden datos)")
 	}
 	var r struct {
@@ -1611,11 +1662,11 @@ func (s *Server) botRestoreSourceFull(ctx context.Context, q interface {
 	}
 	// The archive row must be the exact one this cancel created (same id), not
 	// merely the latest for the booking.
-	if err = q.QueryRowContext(ctx, `SELECT id FROM cancelled_bookings WHERE id=? AND restaurant_id=? AND booking_id=?`+suffix, r.CID, rid, bookingID).Scan(&cancelledID); err != nil {
+	if err = q.QueryRowContext(ctx, portableSQL(`SELECT id FROM cancelled_bookings WHERE id=? AND restaurant_id=? AND booking_id=?`+suffix), r.CID, rid, bookingID).Scan(&cancelledID); err != nil {
 		return nil, nil, 0, 0, errors.New("la reserva ya no figura en Canceladas")
 	}
 	var n int
-	if err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM bookings WHERE restaurant_id=? AND id=?`, rid, bookingID).Scan(&n); err != nil || n != 0 {
+	if err = q.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM bookings WHERE restaurant_id=? AND id=?`), rid, bookingID).Scan(&n); err != nil || n != 0 {
 		return nil, nil, 0, 0, errors.New("ya existe una reserva con ese id")
 	}
 	return r.Backup, r.ModHist, cancelledID, proposalID, nil
@@ -1654,7 +1705,7 @@ func (s *Server) botRestoreDateOK(ctx context.Context, q interface {
 	// table is restaurant_days (is_open = 0 means closed); the legacy
 	// closed_days table no longer exists and this query errored into "day
 	// closed", blocking every special-date restore from the chat.
-	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM restaurant_days WHERE restaurant_id = ? AND date = ? AND is_open = 0", rid, date).Scan(&closed); err != nil || closed > 0 {
+	if err := q.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM restaurant_days WHERE restaurant_id = ? AND date = ? AND is_open = 0"), rid, date).Scan(&closed); err != nil || closed > 0 {
 		return errors.New("el día " + date + " está cerrado (o no se pudo comprobar): no se restaura")
 	}
 	return nil
@@ -1714,10 +1765,16 @@ func (s *Server) botRestoreExecute(ctx context.Context, tx *sql.Tx, rid int, msg
 	names := make([]string, len(cols))
 	for i, c := range cols {
 		q[i] = "?"
-		names[i] = "`" + c + "`"
+		names[i] = sqlFragment("`", `"`) + c + sqlFragment("`", `"`)
 		args[i] = backup[c]
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO bookings ("+strings.Join(names, ",")+") VALUES ("+strings.Join(q, ",")+")", args...); err != nil {
+	// Backup column names quoted per dialect (case kept: babyStrollers...);
+	// values bound as Go strings (pgx sends strings in text format and the
+	// server parses them per column type). Rebound once.
+	if err := lockBookingDays(ctx, tx, rid, fmt.Sprint(backup["reservation_date"])); err != nil {
+		return "", errors.New("no se pudo restaurar la reserva; no se aplicó nada")
+	}
+	if _, err := tx.ExecContext(ctx, portableSQL("INSERT INTO bookings ("+strings.Join(names, ",")+") VALUES ("+strings.Join(q, ",")+")"), args...); err != nil {
 		return "", errors.New("no se pudo restaurar la reserva; no se aplicó nada")
 	}
 	for _, mh := range modHist {
@@ -1733,9 +1790,9 @@ func (s *Server) botRestoreExecute(ctx context.Context, tx *sql.Tx, rid int, msg
 		mn := make([]string, len(mcols))
 		ma := make([]any, len(mcols))
 		for i, c := range mcols {
-			mq[i], mn[i], ma[i] = "?", "`"+c+"`", mh[c]
+			mq[i], mn[i], ma[i] = "?", sqlFragment("`", `"`)+c+sqlFragment("`", `"`), mh[c]
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO modification_history ("+strings.Join(mn, ",")+") VALUES ("+strings.Join(mq, ",")+")", ma...); err != nil {
+		if _, err := tx.ExecContext(ctx, portableSQL("INSERT INTO modification_history ("+strings.Join(mn, ",")+") VALUES ("+strings.Join(mq, ",")+")"), ma...); err != nil {
 			return "", errors.New("no se pudo restaurar el historial; no se aplicó nada")
 		}
 	}
@@ -1754,7 +1811,7 @@ func (s *Server) botRestoreExecute(ctx context.Context, tx *sql.Tx, rid int, msg
 	if err := s.applyBookingLocationOccupancy(ctx, tx, rid, date, floor, salon, party, 1); err != nil {
 		return "", errors.New("no se pudo recuperar la ocupación; no se aplicó nada")
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM cancelled_bookings WHERE id = ? AND restaurant_id = ?", cancelledID, rid); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL("DELETE FROM cancelled_bookings WHERE id = ? AND restaurant_id = ?"), cancelledID, rid); err != nil {
 		return "", errors.New("no se pudo quitar de Canceladas; no se aplicó nada")
 	}
 	hashAfter, herr := botFullRowHash(ctx, tx, rid, p.BookingID)
@@ -1763,7 +1820,7 @@ func (s *Server) botRestoreExecute(ctx context.Context, tx *sql.Tx, rid int, msg
 	}
 	notice := fmt.Sprintf("Reserva #%d restaurada tal como estaba. Quitada de Canceladas. No se ha avisado al cliente ni se ha hecho ningún cobro o reembolso.", p.BookingID)
 	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
@@ -1854,7 +1911,7 @@ func (s *Server) botCreateValidate(ctx context.Context, q interface {
 	}
 	var closed int
 	// wa_bot_restaurant_days_fix_v1: see the restore gate above.
-	if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM restaurant_days WHERE restaurant_id = ? AND date = ? AND is_open = 0", rid, date).Scan(&closed); err != nil || closed > 0 {
+	if err := q.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM restaurant_days WHERE restaurant_id = ? AND date = ? AND is_open = 0"), rid, date).Scan(&closed); err != nil || closed > 0 {
 		return out, errors.New("el día " + date + " está cerrado (o no se pudo comprobar): no se crea desde aquí")
 	}
 	if st, _, err := s.loadSpecialDateSettings(ctx, rid, date); err != nil || st != nil {
@@ -1896,7 +1953,10 @@ func botCreateFindDuplicates(ctx context.Context, q interface {
 	if lock {
 		sfx = " FOR UPDATE"
 	}
-	rows, err := q.QueryContext(ctx, `SELECT id, contact_phone_country_code, contact_phone, party_size FROM bookings WHERE restaurant_id = ? AND reservation_date = ? AND reservation_time = ?`+sfx, rid, b.ReservationDate, b.ReservationTime)
+	// LOCKING GAP: on MySQL RR this FOR UPDATE also next-key locks the
+	// (restaurant, date, time) range so a twin INSERT waits; PG locks only the
+	// rows found (no gap locks) - the duplicate-create race stays open.
+	rows, err := q.QueryContext(ctx, portableSQL(`SELECT id, contact_phone_country_code, contact_phone, party_size FROM bookings WHERE restaurant_id = ? AND reservation_date = ? AND reservation_time = ?`+sfx), rid, b.ReservationDate, b.ReservationTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2014,9 +2074,13 @@ func (s *Server) botCreateExecute(ctx context.Context, tx *sql.Tx, rid int, msg 
 	if after := botCreateAfterKey(rid, b, in.AllowDuplicateOf); after != p.After {
 		return stale("los datos resueltos cambiaron desde la vista previa; pide una propuesta nueva")
 	}
+	if err := lockBookingDays(ctx, tx, rid, b.ReservationDate); err != nil {
+		return "", errors.New("error interno; no se aplicó nada")
+	}
 	// Same column list and values the panel create writes (boInsertBooking),
 	// but inside the claim transaction.
-	res, err := tx.ExecContext(ctx, `
+	// go-sql-driver v1.9.3 LastInsertId never errors: InsertID keeps MySQL identical.
+	id64, err := sqldb.InsertID(ctx, sqlDialect, tx, nativeSQL(`
 		INSERT INTO bookings (
 			restaurant_id,
 			reservation_date,
@@ -2045,7 +2109,36 @@ func (s *Server) botCreateExecute(ctx context.Context, tx *sql.Tx, rid int, msg 
 			has_mobility_issues,
 			mobility_people
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
+	`, `
+		INSERT INTO bookings (
+			restaurant_id,
+			reservation_date,
+			party_size,
+			children,
+			reservation_time,
+			customer_name,
+			contact_phone,
+			contact_phone_country_code,
+			commentary,
+			arroz_type,
+			arroz_servings,
+			"babyStrollers",
+			"highChairs",
+			contact_email,
+			special_menu,
+			menu_de_grupo_id,
+			menu_de_grupo_assigned,
+			principales_json,
+			extras_json,
+			table_number,
+			preferred_floor_number,
+			is_special_booking,
+			is_prereserva,
+			special_json,
+			has_mobility_issues,
+			mobility_people
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`), "id",
 		rid,
 		b.ReservationDate,
 		b.PartySize,
@@ -2076,8 +2169,7 @@ func (s *Server) botCreateExecute(ctx context.Context, tx *sql.Tx, rid int, msg 
 	if err != nil {
 		return "", errors.New("no se pudo crear la reserva; no se aplicó nada")
 	}
-	id64, err := res.LastInsertId()
-	if err != nil || id64 <= 0 {
+	if id64 <= 0 {
 		return "", errors.New("no se pudo crear la reserva; no se aplicó nada")
 	}
 	if err := s.applyBookingLocationOccupancy(ctx, tx, rid, b.ReservationDate, b.PreferredFloorNumber, nil, b.PartySize, +1); err != nil {
@@ -2090,7 +2182,7 @@ func (s *Server) botCreateExecute(ctx context.Context, tx *sql.Tx, rid int, msg 
 	}
 	notice := fmt.Sprintf("Reserva #%d creada: %s %s, %d comensales, a nombre de %s. No se ha avisado al cliente ni se ha emitido ningún aviso externo.", id64, b.ReservationDate, strings.TrimSuffix(b.ReservationTime, ":00"), b.PartySize, b.CustomerName)
 	rj, _ := json.Marshal(map[string]any{"booking_id": id64, "op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": id64, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})
@@ -2157,6 +2249,11 @@ func botEditScanCurrent(row *sql.Row) (*botEditCurrent, error) {
 }
 
 const botEditCurrentSelect = `SELECT customer_name, contact_phone, contact_phone_country_code, contact_email, table_number, commentary, children, babyStrollers, highChairs, special_menu, party_size FROM bookings WHERE restaurant_id = ? AND id = ?`
+
+// botEditCurrentSelectSQL is botEditCurrentSelect per dialect (camelCase quoted).
+func botEditCurrentSelectSQL() string {
+	return nativeSQL(botEditCurrentSelect, `SELECT customer_name, contact_phone, contact_phone_country_code, contact_email, table_number, commentary, children, "babyStrollers", "highChairs", special_menu, party_size FROM bookings WHERE restaurant_id = ? AND id = ?`)
+}
 
 // botEditResolve computes the exact resolved writes for the requested fields,
 // mirroring the panel validation rules (phone normalization, email fallback,
@@ -2327,7 +2424,7 @@ func (s *Server) botEditPropose(ctx context.Context, rid int, msg botWebhookMess
 	if rerr := botSpecialRowAllowedFor(row, "editan", "edita"); rerr != nil {
 		return botJSON(map[string]any{"error": rerr.Error()}), nil
 	}
-	cur, cerr := botEditScanCurrent(s.db.QueryRowContext(ctx, botEditCurrentSelect, rid, bookingID))
+	cur, cerr := botEditScanCurrent(s.db.QueryRowContext(ctx, selectedSQL(botEditCurrentSelectSQL()), rid, bookingID))
 	if cerr != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer la reserva"}), nil
 	}
@@ -2373,7 +2470,7 @@ func (s *Server) botEditExecute(ctx context.Context, tx *sql.Tx, rid int, msg bo
 	if json.Unmarshal([]byte(p.Args), &in) != nil {
 		return "", errors.New("propuesta ilegible")
 	}
-	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, botSpecialRowSelect+" FOR UPDATE", rid, p.BookingID))
+	row, err := botScanSpecialRow(tx.QueryRowContext(ctx, selectedSQL(botSpecialRowSelectSQL()+" FOR UPDATE"), rid, p.BookingID))
 	if err != nil {
 		return "", errors.New("la reserva ya no existe")
 	}
@@ -2387,7 +2484,7 @@ func (s *Server) botEditExecute(ctx context.Context, tx *sql.Tx, rid int, msg bo
 	if full != p.Before {
 		return stale(errBotSpecialStale.Error())
 	}
-	cur, cerr := botEditScanCurrent(tx.QueryRowContext(ctx, botEditCurrentSelect, rid, p.BookingID))
+	cur, cerr := botEditScanCurrent(tx.QueryRowContext(ctx, selectedSQL(botEditCurrentSelectSQL()), rid, p.BookingID))
 	if cerr != nil {
 		return "", errors.New("error interno")
 	}
@@ -2415,11 +2512,12 @@ func (s *Server) botEditExecute(ctx context.Context, tx *sql.Tx, rid int, msg bo
 	sets := make([]string, len(cols))
 	vals := make([]any, len(cols))
 	for i, c := range changes {
-		sets[i] = "`" + c.Col + "` = ?"
+		sets[i] = sqlFragment("`", `"`) + c.Col + sqlFragment("`", `"`) + " = ?"
 		vals[i] = c.Val
 	}
 	vals = append(vals, rid, p.BookingID)
-	if _, err := tx.ExecContext(ctx, "UPDATE bookings SET "+strings.Join(sets, ", ")+" WHERE restaurant_id = ? AND id = ?", vals...); err != nil {
+	// botEditColumns-whitelisted names quoted per dialect; rebound once.
+	if _, err := tx.ExecContext(ctx, portableSQL("UPDATE bookings SET "+strings.Join(sets, ", ")+" WHERE restaurant_id = ? AND id = ?"), vals...); err != nil {
 		return "", errors.New("error al guardar; no se aplicó nada")
 	}
 	postOthers, err := botFullRowHash(ctx, tx, rid, p.BookingID, cols...)
@@ -2435,7 +2533,7 @@ func (s *Server) botEditExecute(ctx context.Context, tx *sql.Tx, rid int, msg bo
 		if c.Col == "highChairs" {
 			field = "high_chairs"
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, ?, ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`,
+		if _, err := tx.ExecContext(ctx, nativeSQL(`INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, ?, ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, NOW())`, `INSERT INTO booking_modifications (restaurant_id, booking_id, original_reservation_date, field_modified, old_value, new_value, modified_by, modified_by_name, customer_name, contact_phone, modification_date) VALUES (?, ?, ?, ?, ?, ?, 'whatsapp', 'Bot WhatsApp (dirección)', ?, ?, date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'))`),
 			rid, p.BookingID, row.Date, field, c.Old, c.New, cur.Name, cur.Phone); err != nil {
 			return "", errors.New("no se pudo registrar el historial; no se aplicó nada")
 		}
@@ -2451,7 +2549,7 @@ func (s *Server) botEditExecute(ctx context.Context, tx *sql.Tx, rid int, msg bo
 	}
 	notice := fmt.Sprintf("Reserva #%d editada: %s. No se ha avisado al cliente.", p.BookingID, strings.Join(parts, "; "))
 	rj, _ := json.Marshal(map[string]any{"booking_id": p.BookingID, "op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "booking_id": p.BookingID, "before_hash": p.Before, "after_hash": p.After, "changed_columns": cols, "approval_message_id": msg.MessageID})
@@ -2477,13 +2575,15 @@ func botCancelBlockers(ctx context.Context, q interface {
 	if lock {
 		sfx = " FOR UPDATE"
 	}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM booking_documents WHERE restaurant_id = ? AND booking_id = ? AND deleted_at IS NULL`+sfx, rid, bookingID).Scan(&docs); err != nil {
+	// PG rejects FOR UPDATE with aggregates: the PG twin locks the counted
+	// rows in a subquery (no gap locks: see ledger).
+	if err := q.QueryRowContext(ctx, portableSQL(sqlFragment(`SELECT COUNT(*) FROM booking_documents WHERE restaurant_id = ? AND booking_id = ? AND deleted_at IS NULL`+sfx, `SELECT COUNT(*) FROM (SELECT 1 FROM booking_documents WHERE restaurant_id = ? AND booking_id = ? AND deleted_at IS NULL`+sfx+") t")), rid, bookingID).Scan(&docs); err != nil {
 		return errors.New("no se pudo comprobar los documentos de la reserva; no se cancela")
 	}
 	if docs > 0 {
 		return errors.New("la reserva tiene documentos adjuntos: la limpieza automática los borraría para siempre; cancélala desde el panel")
 	}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM invoices WHERE reservation_id = ?`+sfx, bookingID).Scan(&inv); err != nil {
+	if err := q.QueryRowContext(ctx, portableSQL(sqlFragment(`SELECT COUNT(*) FROM invoices WHERE reservation_id = ?`+sfx, `SELECT COUNT(*) FROM (SELECT 1 FROM invoices WHERE reservation_id = ?`+sfx+") t")), bookingID).Scan(&inv); err != nil {
 		return errors.New("no se pudo comprobar las facturas de la reserva; no se cancela")
 	}
 	if inv > 0 {

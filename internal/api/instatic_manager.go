@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,6 +22,7 @@ import (
 
 	"preactvillacarmen/internal/config"
 	"preactvillacarmen/internal/integrations"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // bookingWidgetJS is the vanilla booking widget, injected into every generated
@@ -89,7 +91,7 @@ func newInstaticManager(db *sql.DB, cfg config.Config) *instaticManager {
 // loadPortAssignments reads existing instatic_instances rows so port mapping
 // survives process restarts.
 func (m *instaticManager) loadPortAssignments() {
-	rows, err := m.db.Query(`SELECT restaurant_id, port FROM instatic_instances`)
+	rows, err := m.db.Query(portableSQL(`SELECT restaurant_id, port FROM instatic_instances`))
 	if err != nil {
 		return
 	}
@@ -168,6 +170,41 @@ func (m *instaticManager) start(ctx context.Context, restaurantID int) error {
 	sub := m.subdomainFor(restaurantID)
 	origin := fmt.Sprintf("https://%s", sub)
 
+	// instatic_port_claim_v1: claim the port in the DB BEFORE starting the
+	// process. The unique port key makes the claim atomic across processes:
+	// MySQL assignments only apply to this restaurant's own row and PG targets
+	// restaurant_id only, so a foreign port ends as a guarded no-op or a
+	// unique error; the owner re-read then decides. Only the confirmed owner
+	// starts, so no window exists where this process listens on a port that
+	// another restaurant's row holds. The row starts as 'provisioning'.
+	_, claimErr := m.db.Exec(nativeSQL(`
+		INSERT INTO instatic_instances (restaurant_id, port, status, data_dir, sqlite_path, uploads_dir, public_origin)
+		VALUES (?, ?, 'provisioning', ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			port = IF(restaurant_id = VALUES(restaurant_id), VALUES(port), port), data_dir = IF(restaurant_id = VALUES(restaurant_id), VALUES(data_dir), data_dir), sqlite_path = IF(restaurant_id = VALUES(restaurant_id), VALUES(sqlite_path), sqlite_path), uploads_dir = IF(restaurant_id = VALUES(restaurant_id), VALUES(uploads_dir), uploads_dir), public_origin = IF(restaurant_id = VALUES(restaurant_id), VALUES(public_origin), public_origin),
+			status = IF(restaurant_id = VALUES(restaurant_id), 'provisioning', status)
+	`, `
+		INSERT INTO instatic_instances (restaurant_id, port, status, data_dir, sqlite_path, uploads_dir, public_origin)
+		VALUES (?, ?, 'provisioning', ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET
+			port = EXCLUDED.port, status = 'provisioning', data_dir = EXCLUDED.data_dir,
+			sqlite_path = EXCLUDED.sqlite_path, uploads_dir = EXCLUDED.uploads_dir,
+			public_origin = EXCLUDED.public_origin
+	`), restaurantID, port, dir, sqlitePath, uploadsDir, origin)
+	var portOwner int
+	if err := m.db.QueryRow(portableSQL(`SELECT restaurant_id FROM instatic_instances WHERE port = ?`), port).Scan(&portOwner); err != nil || portOwner != restaurantID {
+		m.forgetPort(restaurantID, port)
+		if err == nil && portOwner != 0 {
+			// Remember the foreign owner so the next allocation skips this port.
+			m.mu.Lock()
+			if _, known := m.portByRestaurant[portOwner]; !known {
+				m.portByRestaurant[portOwner] = port
+			}
+			m.mu.Unlock()
+		}
+		return fmt.Errorf("instatic port %d not claimed for restaurant %d (owner=%d claim=%v read=%v)", port, restaurantID, portOwner, claimErr, err)
+	}
+
 	// Detached from the request ctx: the reaper/Stop own the lifetime (a request-
 	// scoped ctx would kill the instance on HTTP response, racing the next start's
 	// port bind). No `--watch` — the watch wrapper re-runs Bun.serve() on reload
@@ -188,6 +225,8 @@ func (m *instaticManager) start(ctx context.Context, restaurantID int) error {
 		cmd.Stderr = logf
 	}
 	if err := cmd.Start(); err != nil {
+		// Keep the own claim (the port stays this restaurant's); mark it error.
+		_, _ = m.db.Exec(portableSQL(`UPDATE instatic_instances SET status='error' WHERE restaurant_id=? AND port=?`), restaurantID, port)
 		return fmt.Errorf("instatic start: %w", err)
 	}
 
@@ -195,16 +234,21 @@ func (m *instaticManager) start(ctx context.Context, restaurantID int) error {
 	m.proc[restaurantID] = cmd
 	m.mu.Unlock()
 
-	// Record the instance row (upsert).
-	_, _ = m.db.Exec(`
-		INSERT INTO instatic_instances (restaurant_id, port, status, data_dir, sqlite_path, uploads_dir, public_origin)
-		VALUES (?, ?, 'running', ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			port = VALUES(port), status = 'running', data_dir = VALUES(data_dir),
-			sqlite_path = VALUES(sqlite_path), uploads_dir = VALUES(uploads_dir),
-			public_origin = VALUES(public_origin), last_health_at = NOW()
-	`, restaurantID, port, dir, sqlitePath, uploadsDir, origin)
+	// Mark the claimed row running only after the process started (own row).
+	if _, err := m.db.Exec(nativeSQL(`UPDATE instatic_instances SET status='running', last_health_at=NOW() WHERE restaurant_id=? AND port=?`, `UPDATE instatic_instances SET status='running', last_health_at=date_trunc('second', statement_timestamp()) WHERE restaurant_id=? AND port=?`), restaurantID, port); err != nil {
+		log.Printf("[instatic_port_claim_v1] mark running restaurant=%d port=%d: %v", restaurantID, port, err)
+	}
 	return nil
+}
+
+// forgetPort drops a port assignment that turned out to be foreign, so the
+// next start allocates again instead of reusing it.
+func (m *instaticManager) forgetPort(restaurantID, port int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.portByRestaurant[restaurantID] == port {
+		delete(m.portByRestaurant, restaurantID)
+	}
 }
 
 // waitReady polls the instance health endpoint until it responds, then ensures
@@ -220,7 +264,7 @@ func (m *instaticManager) waitReady(ctx context.Context, restaurantID int) (stri
 			m.ready[restaurantID] = base
 			m.mu.Unlock()
 			_ = m.ensureBootstrapped(ctx, restaurantID, base)
-			_, _ = m.db.Exec(`UPDATE instatic_instances SET status='running', last_health_at=NOW() WHERE restaurant_id=?`, restaurantID)
+			_, _ = m.db.Exec(nativeSQL(`UPDATE instatic_instances SET status='running', last_health_at=NOW() WHERE restaurant_id=?`, `UPDATE instatic_instances SET status='running', last_health_at=date_trunc('second', statement_timestamp()) WHERE restaurant_id=?`), restaurantID)
 			return base, nil
 		}
 		select {
@@ -250,7 +294,7 @@ func (m *instaticManager) health(ctx context.Context, base string) bool {
 func (m *instaticManager) ensureBootstrapped(ctx context.Context, restaurantID int, base string) error {
 	// Already bootstrapped (session token present)?
 	var token string
-	err := m.db.QueryRow(`SELECT instatic_session_token FROM instatic_instances WHERE restaurant_id=?`, restaurantID).Scan(&token)
+	err := m.db.QueryRow(portableSQL(`SELECT instatic_session_token FROM instatic_instances WHERE restaurant_id=?`), restaurantID).Scan(&token)
 	if err == nil && token != "" {
 		return nil
 	}
@@ -305,7 +349,7 @@ func (m *instaticManager) ensureBootstrapped(ctx context.Context, restaurantID i
 	// Disable step-up so headless publish works. SQLite is instance-owned.
 	_ = m.disableStepUp(ctx, restaurantID)
 
-	_, _ = m.db.Exec(`UPDATE instatic_instances SET instatic_session_token=? WHERE restaurant_id=?`, sessionCookie, restaurantID)
+	_, _ = m.db.Exec(portableSQL(`UPDATE instatic_instances SET instatic_session_token=? WHERE restaurant_id=?`), sessionCookie, restaurantID)
 	return nil
 }
 
@@ -313,7 +357,7 @@ func (m *instaticManager) ensureBootstrapped(ctx context.Context, restaurantID i
 // restaurant (empty if not bootstrapped).
 func (m *instaticManager) sessionToken(restaurantID int) string {
 	var token string
-	_ = m.db.QueryRow(`SELECT instatic_session_token FROM instatic_instances WHERE restaurant_id=?`, restaurantID).Scan(&token)
+	_ = m.db.QueryRow(portableSQL(`SELECT instatic_session_token FROM instatic_instances WHERE restaurant_id=?`), restaurantID).Scan(&token)
 	return token
 }
 
@@ -335,7 +379,7 @@ func (m *instaticManager) disableStepUp(ctx context.Context, restaurantID int) e
 func (m *instaticManager) subdomainFor(restaurantID int) string {
 	baseURL := m.appBaseURL()
 	var slug string
-	_ = m.db.QueryRow(`SELECT slug FROM restaurants WHERE id=?`, restaurantID).Scan(&slug)
+	_ = m.db.QueryRow(portableSQL(`SELECT slug FROM restaurants WHERE id=?`), restaurantID).Scan(&slug)
 	if slug == "" {
 		slug = fmt.Sprintf("restaurant-%d", restaurantID)
 	}
@@ -346,7 +390,7 @@ func (m *instaticManager) subdomainFor(restaurantID int) string {
 // default if missing/unreadable).
 func (m *instaticManager) appBaseURL() string {
 	var v string
-	if err := m.db.QueryRow(`SELECT v FROM app_settings WHERE k='app_base_url'`).Scan(&v); err == nil && v != "" {
+	if err := m.db.QueryRow(nativeSQL(`SELECT v FROM app_settings WHERE k='app_base_url'`, `SELECT v FROM app_settings WHERE app.norm_ascii(k) = 'app_base_url'`)).Scan(&v); err == nil && v != "" {
 		return v
 	}
 	return "backoffice-dev.menustudioai.com"
@@ -401,7 +445,7 @@ func (m *instaticManager) do(ctx context.Context, base, method, path string, bod
 	var token string
 	var rid int
 	// The manager doesn't know the restaurant id from base; look it up.
-	_ = m.db.QueryRow(`SELECT restaurant_id, instatic_session_token FROM instatic_instances WHERE public_origin=?`, base).Scan(&rid, &token)
+	_ = m.db.QueryRow(portableSQL(`SELECT restaurant_id, instatic_session_token FROM instatic_instances WHERE public_origin=?`), base).Scan(&rid, &token)
 	if rid == 0 {
 		for rid2, b := range m.readySnapshot() {
 			if b == base {
@@ -411,7 +455,7 @@ func (m *instaticManager) do(ctx context.Context, base, method, path string, bod
 		}
 	}
 	if rid != 0 && token == "" {
-		_ = m.db.QueryRow(`SELECT instatic_session_token FROM instatic_instances WHERE restaurant_id=?`, rid).Scan(&token)
+		_ = m.db.QueryRow(portableSQL(`SELECT instatic_session_token FROM instatic_instances WHERE restaurant_id=?`), rid).Scan(&token)
 	}
 	if token != "" {
 		req.AddCookie(&http.Cookie{Name: "instatic_admin_session", Value: token})
@@ -443,7 +487,7 @@ func (m *instaticManager) Stop(restaurantID int) {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	}
-	_, _ = m.db.Exec(`UPDATE instatic_instances SET status='stopped' WHERE restaurant_id=?`, restaurantID)
+	_, _ = m.db.Exec(portableSQL(`UPDATE instatic_instances SET status='stopped' WHERE restaurant_id=?`), restaurantID)
 }
 
 // StartSupervisor runs the periodic idle-reaper loop in the background.
@@ -532,7 +576,7 @@ func (m *instaticManager) handleEnsure(w http.ResponseWriter, r *http.Request) {
 func (m *instaticManager) handleSeed(w http.ResponseWriter, r *http.Request) {
 	restaurantID := chiURLInt(r, "restaurantId")
 	var templateID string
-	_ = m.db.QueryRowContext(r.Context(), `SELECT template_id FROM restaurant_websites WHERE restaurant_id=? LIMIT 1`, restaurantID).Scan(&templateID)
+	_ = m.db.QueryRowContext(r.Context(), portableSQL(`SELECT template_id FROM restaurant_websites WHERE restaurant_id=? LIMIT 1`), restaurantID).Scan(&templateID)
 	if strings.TrimSpace(templateID) == "" {
 		templateID = "villa-carmen"
 	}
@@ -583,7 +627,7 @@ func (m *instaticManager) seedSite(ctx context.Context, restaurantID int, templa
 
 	// Session cookie for this restaurant's instance.
 	var cookie string
-	if err := m.db.QueryRow(`SELECT instatic_session_token FROM instatic_instances WHERE restaurant_id=?`, restaurantID).Scan(&cookie); err != nil {
+	if err := m.db.QueryRow(portableSQL(`SELECT instatic_session_token FROM instatic_instances WHERE restaurant_id=?`), restaurantID).Scan(&cookie); err != nil {
 		return fmt.Errorf("seed: no session for restaurant %d: %w", restaurantID, err)
 	}
 
@@ -619,8 +663,8 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 	payload["widgetScript"] = bookingWidgetJS
 
 	var name, address, phone, email string
-	_ = m.db.QueryRowContext(ctx, `SELECT name FROM restaurants WHERE id=?`, restaurantID).Scan(&name)
-	_ = m.db.QueryRowContext(ctx, `SELECT direccion, telefono, email FROM restaurant_info WHERE restaurant_id=?`, restaurantID).Scan(&address, &phone, &email)
+	_ = m.db.QueryRowContext(ctx, portableSQL(`SELECT name FROM restaurants WHERE id=?`), restaurantID).Scan(&name)
+	_ = m.db.QueryRowContext(ctx, portableSQL(`SELECT direccion, telefono, email FROM restaurant_info WHERE restaurant_id=?`), restaurantID).Scan(&address, &phone, &email)
 	payload["name"] = name
 	payload["address"] = address
 	payload["phone"] = phone
@@ -628,7 +672,7 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 
 	// Branding: brand name overrides the plain restaurant name; logo + colors.
 	var brandName, logo, brandPrimary, brandAccent sql.NullString
-	_ = m.db.QueryRowContext(ctx, `SELECT brand_name, logo_url, primary_color, accent_color FROM restaurant_branding WHERE restaurant_id=?`, restaurantID).
+	_ = m.db.QueryRowContext(ctx, portableSQL(`SELECT brand_name, logo_url, primary_color, accent_color FROM restaurant_branding WHERE restaurant_id=?`), restaurantID).
 		Scan(&brandName, &logo, &brandPrimary, &brandAccent)
 	if brandName.Valid && brandName.String != "" {
 		payload["name"] = brandName.String
@@ -639,7 +683,7 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 
 	// Widget colors (booking form theming) from widget_settings.
 	var wc struct{ p, s, b, sf, t, mu, font sql.NullString }
-	_ = m.db.QueryRowContext(ctx, `SELECT primary_color, success_color, border_color, surface_color, text_color, muted_color, font_stack FROM widget_settings WHERE restaurant_id=?`, restaurantID).
+	_ = m.db.QueryRowContext(ctx, portableSQL(`SELECT primary_color, success_color, border_color, surface_color, text_color, muted_color, font_stack FROM widget_settings WHERE restaurant_id=?`), restaurantID).
 		Scan(&wc.p, &wc.s, &wc.b, &wc.sf, &wc.t, &wc.mu, &wc.font)
 	payload["widgetColors"] = map[string]any{
 		"primary": nullStringValue(wc.p), "success": nullStringValue(wc.s), "border": nullStringValue(wc.b),
@@ -657,7 +701,7 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 
 	// Gallery images (menu_slider_images.image_path, in position order).
 	var gallery []string
-	if grows, gerr := m.db.QueryContext(ctx, `SELECT image_path FROM menu_slider_images WHERE restaurant_id=? ORDER BY position, id`, restaurantID); gerr == nil {
+	if grows, gerr := m.db.QueryContext(ctx, portableSQL(`SELECT image_path FROM menu_slider_images WHERE restaurant_id=? ORDER BY position, id`), restaurantID); gerr == nil {
 		defer grows.Close()
 		for grows.Next() {
 			var p string
@@ -670,7 +714,7 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 
 	// Wines (VINOS, active) grouped for a cellar section.
 	var wines []map[string]any
-	if wrows, werr := m.db.QueryContext(ctx, `SELECT nombre, precio, tipo, bodega, descripcion FROM group_menu_wines_v2 WHERE restaurant_id=? AND active=1 ORDER BY tipo, nombre`, restaurantID); werr == nil {
+	if wrows, werr := m.db.QueryContext(ctx, portableSQL(`SELECT nombre, precio, tipo, bodega, descripcion FROM group_menu_wines_v2 WHERE restaurant_id=? AND active=1 ORDER BY tipo, nombre`), restaurantID); werr == nil {
 		defer wrows.Close()
 		for wrows.Next() {
 			var nombre, tipo, bodega, desc sql.NullString
@@ -693,7 +737,7 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 		Hours string
 	}
 	var hours []map[string]any
-	hourRows, err := m.db.QueryContext(ctx, `SELECT hoursarray FROM openinghours WHERE restaurant_id=? ORDER BY dateselected DESC LIMIT 7`, restaurantID)
+	hourRows, err := m.db.QueryContext(ctx, portableSQL(`SELECT hoursarray FROM openinghours WHERE restaurant_id=? ORDER BY dateselected DESC LIMIT 7`), restaurantID)
 	if err == nil {
 		defer hourRows.Close()
 		for hourRows.Next() {
@@ -716,7 +760,7 @@ func (m *instaticManager) buildRestaurantPayload(ctx context.Context, restaurant
 // comidaSections builds rich menu sections from the live comida_items table,
 // grouped by categoria in DB order (preserves first-seen category order).
 func (m *instaticManager) comidaSections(ctx context.Context, restaurantID int) []map[string]any {
-	rows, err := m.db.QueryContext(ctx, `SELECT nombre, precio, suplemento, descripcion, alergenos_json, categoria FROM comida_items WHERE restaurant_id=? AND active=1 ORDER BY category_id, id`, restaurantID)
+	rows, err := m.db.QueryContext(ctx, nativeSQL(`SELECT nombre, precio, suplemento, descripcion, alergenos_json, categoria FROM comida_items WHERE restaurant_id=? AND active=1 ORDER BY category_id, id`, `SELECT nombre, precio, suplemento, descripcion, CAST(alergenos_json AS text), categoria FROM comida_items WHERE restaurant_id=? AND active=1 ORDER BY category_id NULLS FIRST, id`), restaurantID)
 	if err != nil {
 		return nil
 	}
@@ -762,7 +806,7 @@ func (m *instaticManager) comidaSections(ctx context.Context, restaurantID int) 
 // ponytail: dead once all restaurants use comida_items — delete then.
 func (m *instaticManager) legacyMenuSections(ctx context.Context, restaurantID int) []map[string]any {
 	var sections []map[string]any
-	rows, err := m.db.QueryContext(ctx, `SELECT menu_title, entrantes, principales, postre FROM menus WHERE restaurant_id=? AND active=1 ORDER BY id`, restaurantID)
+	rows, err := m.db.QueryContext(ctx, portableSQL(`SELECT menu_title, entrantes, principales, postre FROM menus WHERE restaurant_id=? AND active=1 ORDER BY id`), restaurantID)
 	if err != nil {
 		return nil
 	}
@@ -870,6 +914,13 @@ func (m *instaticManager) ProvisionSubdomain(ctx context.Context, restaurantID i
 	cf := m.cfClient()
 	base := m.appBaseURL()
 	sub := m.subdomainFor(restaurantID) // slug.base
+	// domain_owner_isolation_v1: never provision DNS for, or write, a domain
+	// row owned by another restaurant.
+	if foreign, err := domainOwnedByOther(ctx, m.db, sub, restaurantID, false); err != nil {
+		return "", fmt.Errorf("check owner of %s: %w", sub, err)
+	} else if foreign {
+		return "", fmt.Errorf("domain %s unavailable: owned by another restaurant", sub)
+	}
 
 	zone, err := m.cfZoneFor(ctx, cf, base)
 	if err != nil {
@@ -878,17 +929,41 @@ func (m *instaticManager) ProvisionSubdomain(ctx context.Context, restaurantID i
 	if _, err := cf.EnsureDNSRecord(ctx, zone.ID, "A", sub, m.hostPublicIP(), true); err != nil {
 		return "", fmt.Errorf("ensure A record %s: %w", sub, err)
 	}
-	// Record the domain mapping.
-	_, _ = m.db.Exec(`
+	// Record the domain mapping. id = MySQL UUID() (v1); PG binds a Go v1 UUID
+	// (sql_uuid_v1_pg_v1). subdomain is uk_subdomain-unique, so at most one
+	// site row and one generated id. Errors ignored as in the source.
+	mapArgs := []any{sub, restaurantID, strings.SplitN(sub, ".", 2)[0]}
+	if sqlDialect == sqldb.Postgres {
+		u, ue := sqlUUIDv1()
+		if ue != nil {
+			return "", fmt.Errorf("domain mapping uuid: %w", ue)
+		}
+		mapArgs = append([]any{u}, mapArgs...)
+	}
+	_, _ = m.db.Exec(nativeSQL(`
 		INSERT INTO site_builder_domain_mappings (id, site_id, domain, is_primary, status, ssl_status)
 		SELECT UUID(), id, ?, 1, 'active', 'active' FROM site_builder_sites WHERE restaurant_id = ? AND subdomain = ?
-		ON DUPLICATE KEY UPDATE status='active', ssl_status='active'
-	`, sub, restaurantID, strings.SplitN(sub, ".", 2)[0])
-	_, _ = m.db.Exec(`
+		ON DUPLICATE KEY UPDATE status = IF(site_id = VALUES(site_id), 'active', status), ssl_status = IF(site_id = VALUES(site_id), 'active', ssl_status)
+	`, `
+		INSERT INTO site_builder_domain_mappings (id, site_id, domain, is_primary, status, ssl_status)
+		SELECT CAST(? AS text), id, CAST(? AS text), 1, 'active', 'active' FROM site_builder_sites WHERE restaurant_id = ? AND app.norm_ascii(subdomain) = app.norm_ascii(?)
+		ON CONFLICT (app.norm_ascii(domain)) DO UPDATE SET status='active', ssl_status='active' WHERE site_builder_domain_mappings.site_id = EXCLUDED.site_id
+	`), mapArgs...)
+	rdArgs := []any{restaurantID, sub, zone.ID, zone.ID}
+	_, _ = m.db.Exec(nativeSQL(`
 		INSERT INTO restaurant_domains (restaurant_id, domain, is_primary, registration_status, cf_zone_id)
 		VALUES (?, ?, 1, 'provisioned', ?)
-		ON DUPLICATE KEY UPDATE registration_status='provisioned', cf_zone_id=?
-	`, restaurantID, sub, zone.ID, zone.ID)
+		ON DUPLICATE KEY UPDATE cf_zone_id = IF(restaurant_id = VALUES(restaurant_id), ?, cf_zone_id), registration_status = IF(restaurant_id = VALUES(restaurant_id), 'provisioned', registration_status)
+	`, `
+		INSERT INTO restaurant_domains (restaurant_id, domain, is_primary, registration_status, cf_zone_id)
+		VALUES (?, ?, 1, 'provisioned', ?)
+		ON CONFLICT (app.norm_ascii(domain)) DO UPDATE SET registration_status='provisioned', cf_zone_id=? WHERE restaurant_domains.restaurant_id = EXCLUDED.restaurant_id
+	`), rdArgs...)
+	// Concurrent first insert by another restaurant: the guarded upsert left
+	// its row untouched; report it instead of claiming success.
+	if foreign, err := domainOwnedByOther(ctx, m.db, sub, restaurantID, false); err == nil && foreign {
+		return "", fmt.Errorf("domain %s unavailable: owned by another restaurant", sub)
+	}
 	return sub, nil
 }
 

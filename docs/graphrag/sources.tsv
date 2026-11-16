@@ -1,0 +1,12 @@
+# kind<TAB>scope<TAB>path  (scope: global = plantilla común; tenant-specific comes from PG, see design.md)
+prompt	global	internal/api/whatsapp_bot_prompt.go
+policy	global	internal/api/whatsapp_bot_hard_policy.go
+policy	global	internal/api/whatsapp_bot_special_policy.go
+faq	global	internal/api/whatsapp_bot_rag.go
+policy	global	internal/api/whatsapp_bot_privileged.go
+rule	global	internal/api/whatsapp_bot_engine.go
+prompt	global	internal/api/assistant_llm.go
+prompt	global	internal/api/assistant_memory.go
+edgecase	global	docs/whatsapp-bot-phase1-policy-postgres.md
+edgecase	global	docs/wa-bot-backoffice-coverage.md
+rule	global	docs/AI_USAGE_AND_WHATSAPP_LOGS.md

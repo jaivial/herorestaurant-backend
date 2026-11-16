@@ -297,11 +297,11 @@ func (s *Server) botSeenBefore(sender string, messageID string) bool {
 func (s *Server) resolveBotRestaurant(ctx context.Context, instanceToken string, owner string) (int, bool) {
 	if instanceToken != "" {
 		var rid int
-		err := s.db.QueryRowContext(ctx, `
+		err := s.db.QueryRowContext(ctx, portableSQL(`
 			SELECT restaurant_id FROM restaurant_uazapi_instances
 			WHERE instance_token = ? AND is_active = 1
 			LIMIT 1
-		`, instanceToken).Scan(&rid)
+		`), instanceToken).Scan(&rid)
 		if err == nil {
 			return rid, true
 		}
@@ -311,11 +311,11 @@ func (s *Server) resolveBotRestaurant(ctx context.Context, instanceToken string,
 	}
 	if owner != "" {
 		var rid int
-		err := s.db.QueryRowContext(ctx, `
+		err := s.db.QueryRowContext(ctx, portableSQL(`
 			SELECT restaurant_id FROM restaurant_uazapi_instances
 			WHERE connected_phone = ? AND is_active = 1
 			LIMIT 1
-		`, digitsOnly(owner)).Scan(&rid)
+		`), digitsOnly(owner)).Scan(&rid)
 		if err == nil {
 			return rid, true
 		}
@@ -326,9 +326,11 @@ func (s *Server) resolveBotRestaurant(ctx context.Context, instanceToken string,
 // loadBotTenantConfig reads whatsapp_bot_config for the restaurant.
 func (s *Server) loadBotTenantConfig(ctx context.Context, restaurantID int) botTenantConfig {
 	var raw sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT config_json FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
-	`, restaurantID).Scan(&raw)
+	`, `
+		SELECT CAST(config_json AS text) FROM whatsapp_bot_config WHERE restaurant_id = ? LIMIT 1
+	`), restaurantID).Scan(&raw)
 	if err != nil {
 		return parseBotTenantConfig("")
 	}
@@ -599,6 +601,13 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 	// applies upstream in processInboundBotMessage.
 	var decision botPipelineDecision
 	pipelineOK := false
+	// Coordination id: wa_bot_hard_policy_v1 - deterministic horizon and
+	// special-event policies run before the pipeline and the agent, so neither
+	// a route nor retrieved knowledge can answer them.
+	if s.botHardPolicyGuard(ctx, restaurantID, msg, tenant, messages) {
+		botCheckpointCtx(ctx, "wa_bot_turn_end_v1", "restaurant_id=%d sender=%s message_id=%s reason=hard_policy ms=%d", restaurantID, msg.Sender, msg.MessageID, time.Since(turnStarted).Milliseconds())
+		return nil
+	}
 	if !msg.PrivilegedGroup {
 		facts := s.botPipelineFacts(ctx, restaurantID, msg)
 		decision, pipelineOK = s.botRunPipeline(ctx, restaurantID, msg, routing, messages, facts)
@@ -632,7 +641,9 @@ func (s *Server) botProcessMessage(ctx context.Context, restaurantID int, msg bo
 			botCheckpointCtx(ctx, "wa_bot_dup_decision_v1", "derive=%t confidence=%.2f threshold=%.2f node=%s intent=%s",
 				derive, decision.Confidence, botRepeatHandoffMinConfidence, decision.Node, decision.Intent)
 		}
-		if decision.HandoffCleared {
+		// The pipeline may not clear an open event loop: only botEventExit does
+		// (wa_bot_event_menu_sticky_v1).
+		if decision.HandoffCleared && s.botActiveHandoffReason(ctx, restaurantID, msg.Sender) != botReasonEvent {
 			_ = s.botConversation.ClearHandoff(ctx, restaurantID, msg.Sender)
 			botCheckpoint("wa_bot_sticky_handoff_v1", "restaurant_id=%d sender=%s cleared new_topic", restaurantID, msg.Sender)
 		}

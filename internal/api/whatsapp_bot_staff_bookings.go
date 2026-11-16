@@ -74,7 +74,7 @@ func (s *Server) adminBookingDetail(ctx context.Context, restaurantID int, booki
 	// iterations (prod 2026-10-23 18:15).
 	var menuID int64
 	var principales, extras string
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(menu_de_grupo_id,0), COALESCE(principales_json,''), COALESCE(extras_json,'') FROM bookings WHERE restaurant_id = ? AND id = ?`, restaurantID, bookingID).Scan(&menuID, &principales, &extras); err == nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT COALESCE(menu_de_grupo_id,0), COALESCE(principales_json,''), COALESCE(extras_json,'') FROM bookings WHERE restaurant_id = ? AND id = ?`), restaurantID, bookingID).Scan(&menuID, &principales, &extras); err == nil {
 		if menuID > 0 {
 			out["menu_de_grupo_id"] = menuID
 			out["menu_hint"] = "Platos y principales elegibles: get_menu_details(menu_id). Cambiar principales: booking_propose_set_group_menu."
@@ -139,19 +139,21 @@ func (s *Server) adminBookingsByDate(ctx context.Context, restaurantID int, date
 // botBookingRow, with the event / special-date flags the staff questions need.
 // The extra WHERE/ORDER clause and its args are supplied by the caller.
 func (s *Server) adminQueryBookings(ctx context.Context, restaurantID int, extra string, args ...any) ([]botBookingRow, error) {
-	q := `SELECT id,
+	q := sqlFragment(`SELECT id,
 		DATE_FORMAT(reservation_date, '%Y-%m-%d'),
-		TIME_FORMAT(reservation_time, '%H:%i'),
+		TIME_FORMAT(reservation_time, '%H:%i'),`, `SELECT id,
+		to_char(reservation_date, 'YYYY-MM-DD'),
+		to_char(reservation_time, 'HH24:MI'),`) + `
 		party_size, customer_name, COALESCE(contact_phone,''), COALESCE(status,''),
 		COALESCE(arroz_type, ''), COALESCE(arroz_servings, ''),
-		COALESCE(highChairs, 0), COALESCE(babyStrollers, 0),
+		` + sqlFragment("COALESCE(highChairs, 0), COALESCE(babyStrollers, 0),", `COALESCE("highChairs", 0), COALESCE("babyStrollers", 0),`) + `
 		COALESCE(commentary, ''), COALESCE(is_event, 0),
 		COALESCE(is_special_booking, 0), COALESCE(is_prereserva, 0),
 		COALESCE((SELECT sd.title FROM special_dates sd WHERE sd.restaurant_id = bookings.restaurant_id AND sd.date = bookings.reservation_date AND sd.is_active = 1 LIMIT 1), ''),
 		COALESCE(children, 0), COALESCE(has_mobility_issues, 0)
 	FROM bookings WHERE restaurant_id = ?` + extra
 	full := append([]any{restaurantID}, args...)
-	rows, err := s.db.QueryContext(ctx, q, full...)
+	rows, err := s.db.QueryContext(ctx, portableSQL(q), full...) // extra fragments are fixed, portable literals
 	if err != nil {
 		return nil, err
 	}

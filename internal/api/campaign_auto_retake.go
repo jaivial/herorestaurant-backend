@@ -41,6 +41,13 @@ const campaignBounceFreezeDefaultHours = 6
 // earlier builds, which must retake too instead of staying stranded.
 const campaignBounceFrozenClause = `(error = 'corte por rebotes' OR error LIKE 'pausa bounce%')`
 
+// campaignBounceFrozenClausePG: error has the nondeterministic old-nondeterministic-collation
+// collation, which PG17 LIKE rejects; the prefix test runs on LOWER(error)
+// in "C". This keeps MySQL's case-insensitivity but NOT its accent
+// insensitivity for the LIKE branch (CI/accent gap pending); the equality
+// branch keeps the old-nondeterministic-collation column comparison.
+const campaignBounceFrozenClausePG = `(error = 'corte por rebotes' OR LOWER(error) COLLATE "C" LIKE 'pausa bounce%')`
+
 // campaignBounceFreezeHours is the prevention window: how long the freeze
 // lasts WITHOUT new bounce notices before the campaign retakes by itself.
 func campaignBounceFreezeHours() int {
@@ -60,12 +67,12 @@ func (s *Server) runCampaignAutoRetake(ctx context.Context) {
 	hours := campaignBounceFreezeHours()
 
 	// ---- B: expired bounce freezes -> pending (quiescence per restaurant) ----
-	frozen, err := s.db.QueryContext(ctx, `
+	frozen, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT DISTINCT r.campaign_id, r.restaurant_id, c.coord_id
 		FROM campaign_recipients r
 		JOIN campaigns c ON c.id = r.campaign_id
-		WHERE r.status = 'paused' AND `+campaignBounceFrozenClause+`
-		  AND c.status IN ('draft', 'sending')`)
+		WHERE r.status = 'paused' AND `+sqlFragment(campaignBounceFrozenClause, campaignBounceFrozenClausePG)+`
+		  AND c.status IN ('draft', 'sending')`))
 	if err != nil {
 		slog.Default().Warn("campaign.auto_retake.scan_failed", "coord_id", "camp_auto_retake_v1", "err", err.Error())
 		return
@@ -97,9 +104,12 @@ func (s *Server) runCampaignAutoRetake(ctx context.Context) {
 				continue
 			}
 			var fresh int
-			_ = s.db.QueryRowContext(ctx, `
+			// created_at is a TIMESTAMP (timestamptz): window = statement second minus ? hours.
+			_ = s.db.QueryRowContext(ctx, nativeSQL(`
 				SELECT COUNT(*) FROM campaign_bounce_events
-				WHERE restaurant_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)`,
+				WHERE restaurant_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)`, `
+				SELECT COUNT(*) FROM campaign_bounce_events
+				WHERE restaurant_id = ? AND created_at >= (date_trunc('second', statement_timestamp())) - CAST(? AS integer) * INTERVAL '1 hour'`),
 				f.rid, hours).Scan(&fresh)
 			quiescent[f.rid] = fresh == 0
 		}
@@ -114,11 +124,13 @@ func (s *Server) runCampaignAutoRetake(ctx context.Context) {
 	}
 
 	// ---- A: orphaned drains -> runner back ('sending' + pending + no runner) ----
-	rows, err := s.db.QueryContext(ctx, `
+	// No DB claim: the orphan restart relies on the in-process campaignRunners
+	// map only (as in source); several processes could each start a runner.
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, restaurant_id, coord_id FROM campaigns
 		WHERE status = 'sending'
 		  AND EXISTS (SELECT 1 FROM campaign_recipients r
-		              WHERE r.campaign_id = campaigns.id AND r.status = 'pending')`)
+		              WHERE r.campaign_id = campaigns.id AND r.status = 'pending')`))
 	if err != nil {
 		return
 	}
@@ -156,15 +168,9 @@ func (s *Server) runCampaignAutoRetake(ctx context.Context) {
 // pending (or to 'skipped' when the target is now suppressed) and restarts the
 // drain if it moved anything.
 func (s *Server) requeueFrozenCampaign(ctx context.Context, campaignID int64, restaurantID int, coordID string) {
-	sup, err := s.loadCampaignSuppressionFilter(ctx, restaurantID)
-	if err != nil {
-		slog.Default().Warn("campaign.auto_retake.suppression_read_failed", "coord_id", coordID,
-			"campaign_id", campaignID, "err", err.Error())
-		return
-	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id, channel, target FROM campaign_recipients
-		WHERE campaign_id = ? AND status = 'paused' AND `+campaignBounceFrozenClause, campaignID)
+		WHERE campaign_id = ? AND status = 'paused' AND `+sqlFragment(campaignBounceFrozenClause, campaignBounceFrozenClausePG)), campaignID)
 	if err != nil {
 		return
 	}
@@ -181,14 +187,25 @@ func (s *Server) requeueFrozenCampaign(ctx context.Context, campaignID int64, re
 		}
 	}
 	rows.Close()
+	probes := make([]campaignProbe, 0, len(list))
+	for _, r := range list {
+		probes = append(probes, campaignProbe{r.channel, r.target})
+	}
+	sup, err := s.loadCampaignSuppressionFilterFor(ctx, restaurantID, probes)
+	if err != nil {
+		slog.Default().Warn("campaign.auto_retake.suppression_read_failed", "coord_id", coordID,
+			"campaign_id", campaignID, "err", err.Error())
+		return
+	}
 	requeued, skipped := 0, 0
 	for _, r := range list {
 		// Exact counters: RowsAffected, never err == nil (a concurrent update
 		// can leave a statement succeeding on zero rows).
 		if sup.blocked(r.channel, r.target) {
-			res, err := s.db.ExecContext(ctx, `
+			// paused -> skipped/pending always changes the row: matched == changed.
+			res, err := s.db.ExecContext(ctx, portableSQL(`
 				UPDATE campaign_recipients SET status = 'skipped', error = 'baja comprobada al retomar automatico'
-				WHERE id = ? AND status = 'paused'`, r.id)
+				WHERE id = ? AND status = 'paused'`), r.id)
 			if err == nil {
 				if n, _ := res.RowsAffected(); n > 0 {
 					skipped++
@@ -196,9 +213,9 @@ func (s *Server) requeueFrozenCampaign(ctx context.Context, campaignID int64, re
 			}
 			continue
 		}
-		res, err := s.db.ExecContext(ctx, `
+		res, err := s.db.ExecContext(ctx, portableSQL(`
 			UPDATE campaign_recipients SET status = 'pending', error = NULL
-			WHERE id = ? AND status = 'paused'`, r.id)
+			WHERE id = ? AND status = 'paused'`), r.id)
 		if err == nil {
 			if n, _ := res.RowsAffected(); n > 0 {
 				requeued++

@@ -73,7 +73,7 @@ func (s *Server) botRestaurantPhone(ctx context.Context, restaurantID int) strin
 		}
 	}
 	var phone sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT contact_phone FROM restaurants WHERE id = ? LIMIT 1`, restaurantID).Scan(&phone); err == nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT contact_phone FROM restaurants WHERE id = ? LIMIT 1`), restaurantID).Scan(&phone); err == nil {
 		return strings.TrimSpace(phone.String)
 	}
 	return ""
@@ -163,13 +163,19 @@ func (s *Server) botSendContactCardWith(ctx context.Context, restaurantID int, m
 func (s *Server) botOwnedBookingDate(ctx context.Context, restaurantID int, bookingID int64, phone string) (string, bool, error) {
 	national, digits := botPhoneVariants(phone)
 	var dateISO string
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d')
 		FROM bookings
 		WHERE id = ? AND restaurant_id = ?
 			AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
 		LIMIT 1
-	`, bookingID, restaurantID, national, digits, digits).Scan(&dateISO)
+	`, `
+		SELECT to_char(reservation_date, 'YYYY-MM-DD')
+		FROM bookings
+		WHERE id = ? AND restaurant_id = ?
+			AND (contact_phone = ? OR contact_phone = ? OR (COALESCE(contact_phone_country_code,'') || contact_phone) = ?)
+		LIMIT 1
+	`), bookingID, restaurantID, national, digits, digits).Scan(&dateISO)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -327,12 +333,17 @@ func botTextClockTimes(text string) []string {
 // normalization as every other booking lookup.
 func (s *Server) botSenderUpcomingBookingStats(ctx context.Context, restaurantID int, phone string) (today bool, upcoming int) {
 	national, digits := botPhoneVariants(phone)
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d')
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date >= ?
 			AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
-	`, restaurantID, botTodayISO(), national, digits, digits)
+	`, `
+		SELECT to_char(reservation_date, 'YYYY-MM-DD')
+		FROM bookings
+		WHERE restaurant_id = ? AND reservation_date >= ?
+			AND (contact_phone = ? OR contact_phone = ? OR (COALESCE(contact_phone_country_code,'') || contact_phone) = ?)
+	`), restaurantID, botTodayISO(), national, digits, digits)
 	if err != nil {
 		return false, 0
 	}
@@ -356,13 +367,19 @@ func (s *Server) botSenderUpcomingBookingStats(ctx context.Context, restaurantID
 func (s *Server) botSenderTodayBookingTime(ctx context.Context, restaurantID int, phone string) string {
 	national, digits := botPhoneVariants(phone)
 	var timeHHMM string
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT TIME_FORMAT(reservation_time, '%H:%i')
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date = ?
 			AND (contact_phone = ? OR contact_phone = ? OR CONCAT(COALESCE(contact_phone_country_code,''), contact_phone) = ?)
 		ORDER BY reservation_time ASC LIMIT 1
-	`, restaurantID, botTodayISO(), national, digits, digits).Scan(&timeHHMM)
+	`, `
+		SELECT to_char(reservation_time, 'HH24:MI')
+		FROM bookings
+		WHERE restaurant_id = ? AND reservation_date = ?
+			AND (contact_phone = ? OR contact_phone = ? OR (COALESCE(contact_phone_country_code,'') || contact_phone) = ?)
+		ORDER BY reservation_time ASC LIMIT 1
+	`), restaurantID, botTodayISO(), national, digits, digits).Scan(&timeHHMM)
 	if err != nil {
 		return ""
 	}

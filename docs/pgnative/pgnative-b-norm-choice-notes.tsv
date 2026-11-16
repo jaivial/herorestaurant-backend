@@ -1,0 +1,7 @@
+internal/api/backoffice_comida_categories.go:544	COALESCE(food_type, '')	expr->app.norm
+internal/api/backoffice_middleware.go:138	CASE WHEN u.is_superadmin <> 0 THEN 'roo	expr->app.norm
+internal/api/campaign_suppression_target.go:125	probe	unknown->app.norm
+internal/api/backoffice_technical_sheet_link.go:202	text	unknown->app.norm
+internal/api/backoffice_technical_sheet_link.go:205	text	unknown->app.norm
+internal/api/backoffice_technical_sheet_link.go:206	text	unknown->app.norm
+internal/api/backoffice_invoices.go:243	status	ambiguous:app.norm,app.norm_ascii

@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 type stockRecipeInput struct {
@@ -102,7 +103,7 @@ func expandStockRecipeRequirements(recipeID int64, batches float64, recipes map[
 }
 
 func loadStockBOM(ctx context.Context, tx *sql.Tx, restaurantID int) (map[int64]stockBOMRecipe, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT r.id,r.output_qty_base,c.stock_item_id,c.sub_recipe_id,c.qty_base,c.waste_pct FROM stock_recipes r LEFT JOIN stock_recipe_components c ON c.restaurant_id=r.restaurant_id AND c.recipe_id=r.id WHERE r.restaurant_id=? AND r.is_active=1 ORDER BY r.id,c.sort_order,c.id`, restaurantID)
+	rows, err := tx.QueryContext(ctx, portableSQL(`SELECT r.id,r.output_qty_base,c.stock_item_id,c.sub_recipe_id,c.qty_base,c.waste_pct FROM stock_recipes r LEFT JOIN stock_recipe_components c ON c.restaurant_id=r.restaurant_id AND c.recipe_id=r.id WHERE r.restaurant_id=? AND r.is_active=1 ORDER BY r.id,c.sort_order,c.id`), restaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +138,7 @@ func (s *Server) handleBOStockRecipesList(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT r.id,r.name,r.output_item_id,i.name,r.output_qty_base,r.waste_pct,r.prep_time_min,r.version,r.source,r.is_active,r.selling_price_gross,r.vat_rate_id,r.overhead_pct,r.is_protected FROM stock_recipes r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.output_item_id WHERE r.restaurant_id=? AND r.is_active=1 ORDER BY r.name`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT r.id,r.name,r.output_item_id,i.name,r.output_qty_base,r.waste_pct,r.prep_time_min,r.version,r.source,r.is_active,r.selling_price_gross,r.vat_rate_id,r.overhead_pct,r.is_protected FROM stock_recipes r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.output_item_id WHERE r.restaurant_id=? AND r.is_active=1 ORDER BY r.name`, `SELECT r.id,r.name,r.output_item_id,i.name,r.output_qty_base,r.waste_pct,r.prep_time_min,r.version,CAST(r.source AS text),r.is_active,r.selling_price_gross,r.vat_rate_id,r.overhead_pct,r.is_protected FROM stock_recipes r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.output_item_id WHERE r.restaurant_id=? AND r.is_active=1 ORDER BY r.name COLLATE "es-x-icu"`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading recipes")
 		return
@@ -184,7 +185,7 @@ func (s *Server) handleBOStockRecipeGet(w http.ResponseWriter, r *http.Request) 
 		Overhead         float64
 		Protected        int
 	}
-	err := s.db.QueryRowContext(r.Context(), `SELECT r.id,r.name,r.output_item_id,i.name,r.output_qty_base,r.waste_pct,r.prep_time_min,COALESCE(r.instructions,''),r.version,r.source,r.selling_price_gross,r.vat_rate_id,r.overhead_pct,r.is_protected FROM stock_recipes r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.output_item_id WHERE r.id=? AND r.restaurant_id=? AND r.is_active=1`, recipeID, a.ActiveRestaurantID).Scan(&recipe.ID, &recipe.Name, &recipe.OutputItemID, &recipe.OutputItemName, &recipe.OutputQty, &recipe.Waste, &recipe.Prep, &recipe.Instructions, &recipe.Version, &recipe.Source, &recipe.SellingPrice, &recipe.VATRateID, &recipe.Overhead, &recipe.Protected)
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT r.id,r.name,r.output_item_id,i.name,r.output_qty_base,r.waste_pct,r.prep_time_min,COALESCE(r.instructions,''),r.version,r.source,r.selling_price_gross,r.vat_rate_id,r.overhead_pct,r.is_protected FROM stock_recipes r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.output_item_id WHERE r.id=? AND r.restaurant_id=? AND r.is_active=1`, `SELECT r.id,r.name,r.output_item_id,i.name,r.output_qty_base,r.waste_pct,r.prep_time_min,COALESCE(r.instructions,''),r.version,CAST(r.source AS text),r.selling_price_gross,r.vat_rate_id,r.overhead_pct,r.is_protected FROM stock_recipes r JOIN stock_items i ON i.restaurant_id=r.restaurant_id AND i.id=r.output_item_id WHERE r.id=? AND r.restaurant_id=? AND r.is_active=1`), recipeID, a.ActiveRestaurantID).Scan(&recipe.ID, &recipe.Name, &recipe.OutputItemID, &recipe.OutputItemName, &recipe.OutputQty, &recipe.Waste, &recipe.Prep, &recipe.Instructions, &recipe.Version, &recipe.Source, &recipe.SellingPrice, &recipe.VATRateID, &recipe.Overhead, &recipe.Protected)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusNotFound, "Recipe not found")
@@ -193,7 +194,7 @@ func (s *Server) handleBOStockRecipeGet(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading recipe")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT c.id,c.stock_item_id,i.name,c.sub_recipe_id,c.entered_qty,c.entered_unit_id,u.label,c.qty_base,c.waste_pct,c.is_optional,COALESCE(c.notes,'') FROM stock_recipe_components c JOIN stock_items i ON i.restaurant_id=c.restaurant_id AND i.id=c.stock_item_id JOIN stock_item_units u ON u.restaurant_id=c.restaurant_id AND u.id=c.entered_unit_id WHERE c.restaurant_id=? AND c.recipe_id=? ORDER BY c.sort_order,c.id`, a.ActiveRestaurantID, recipeID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT c.id,c.stock_item_id,i.name,c.sub_recipe_id,c.entered_qty,c.entered_unit_id,u.label,c.qty_base,c.waste_pct,c.is_optional,COALESCE(c.notes,'') FROM stock_recipe_components c JOIN stock_items i ON i.restaurant_id=c.restaurant_id AND i.id=c.stock_item_id JOIN stock_item_units u ON u.restaurant_id=c.restaurant_id AND u.id=c.entered_unit_id WHERE c.restaurant_id=? AND c.recipe_id=? ORDER BY c.sort_order,c.id`), a.ActiveRestaurantID, recipeID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading components")
 		return
@@ -212,7 +213,7 @@ func (s *Server) handleBOStockRecipeGet(w http.ResponseWriter, r *http.Request) 
 		}
 		components = append(components, map[string]any{"id": id, "stockItemId": itemID, "stockItemName": itemName, "subRecipeId": stockNullableDBInt(sub), "enteredQuantity": entered, "unitId": unitID, "unitLabel": unitLabel, "quantityBase": base, "wastePct": waste, "isOptional": optional != 0, "notes": notes})
 	}
-	labourRows, err := s.db.QueryContext(r.Context(), `SELECT l.restaurant_member_id,CONCAT(m.first_name,' ',m.last_name),l.minutes_per_batch,COALESCE(l.notes,'') FROM stock_recipe_labour l JOIN restaurant_members m ON m.restaurant_id=l.restaurant_id AND m.id=l.restaurant_member_id WHERE l.restaurant_id=? AND l.recipe_id=? ORDER BY l.sort_order,l.id`, a.ActiveRestaurantID, recipeID)
+	labourRows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT l.restaurant_member_id,CONCAT(m.first_name,' ',m.last_name),l.minutes_per_batch,COALESCE(l.notes,'') FROM stock_recipe_labour l JOIN restaurant_members m ON m.restaurant_id=l.restaurant_id AND m.id=l.restaurant_member_id WHERE l.restaurant_id=? AND l.recipe_id=? ORDER BY l.sort_order,l.id`, `SELECT l.restaurant_member_id,(m.first_name || ' ' || m.last_name),l.minutes_per_batch,COALESCE(l.notes,'') FROM stock_recipe_labour l JOIN restaurant_members m ON m.restaurant_id=l.restaurant_id AND m.id=l.restaurant_member_id WHERE l.restaurant_id=? AND l.recipe_id=? ORDER BY l.sort_order,l.id`), a.ActiveRestaurantID, recipeID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading recipe labour")
 		return
@@ -250,20 +251,20 @@ func (s *Server) saveBOStockRecipe(w http.ResponseWriter, r *http.Request, recip
 	}
 	defer tx.Rollback()
 	var outputFactor float64
-	if err = tx.QueryRowContext(r.Context(), `SELECT factor_to_base FROM stock_item_units WHERE id=? AND stock_item_id=? AND restaurant_id=?`, in.OutputUnitID, in.OutputItemID, a.ActiveRestaurantID).Scan(&outputFactor); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT factor_to_base FROM stock_item_units WHERE id=? AND stock_item_id=? AND restaurant_id=?`), in.OutputUnitID, in.OutputItemID, a.ActiveRestaurantID).Scan(&outputFactor); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Invalid output unit")
 		return
 	}
 	outputBase := in.OutputQuantity * outputFactor
 	if recipeID == 0 {
-		res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_recipes (restaurant_id,name,output_item_id,output_qty_base,waste_pct,prep_time_min,instructions,selling_price_gross,vat_rate_id,overhead_pct,is_protected) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.OutputItemID, outputBase, in.WastePct, in.PrepTimeMin, stockNullableString(in.Instructions), in.SellingPriceGross, in.VATRateID, in.OverheadPct, stockBoolInt(in.IsProtected))
+		id, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO stock_recipes (restaurant_id,name,output_item_id,output_qty_base,waste_pct,prep_time_min,instructions,selling_price_gross,vat_rate_id,overhead_pct,is_protected) VALUES (?,?,?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.OutputItemID, outputBase, in.WastePct, in.PrepTimeMin, stockNullableString(in.Instructions), in.SellingPriceGross, in.VATRateID, in.OverheadPct, stockBoolInt(in.IsProtected))
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Recipe could not be created")
 			return
 		}
-		recipeID, _ = res.LastInsertId()
+		recipeID = id
 	} else {
-		res, err := tx.ExecContext(r.Context(), `UPDATE stock_recipes SET name=?,output_item_id=?,output_qty_base=?,waste_pct=?,prep_time_min=?,instructions=?,selling_price_gross=?,vat_rate_id=?,overhead_pct=?,is_protected=?,version=version+1 WHERE id=? AND restaurant_id=? AND is_active=1`, strings.TrimSpace(in.Name), in.OutputItemID, outputBase, in.WastePct, in.PrepTimeMin, stockNullableString(in.Instructions), in.SellingPriceGross, in.VATRateID, in.OverheadPct, stockBoolInt(in.IsProtected), recipeID, a.ActiveRestaurantID)
+		res, err := tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_recipes SET name=?,output_item_id=?,output_qty_base=?,waste_pct=?,prep_time_min=?,instructions=?,selling_price_gross=?,vat_rate_id=?,overhead_pct=?,is_protected=?,version=version+1 WHERE id=? AND restaurant_id=? AND is_active=1`), []any{strings.TrimSpace(in.Name), in.OutputItemID, outputBase, in.WastePct, in.PrepTimeMin, stockNullableString(in.Instructions), in.SellingPriceGross, in.VATRateID, in.OverheadPct, stockBoolInt(in.IsProtected), recipeID, a.ActiveRestaurantID}...)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Recipe could not be updated")
 			return
@@ -273,11 +274,11 @@ func (s *Server) saveBOStockRecipe(w http.ResponseWriter, r *http.Request, recip
 			httpx.WriteError(w, http.StatusNotFound, "Recipe not found")
 			return
 		}
-		if _, err = tx.ExecContext(r.Context(), `DELETE FROM stock_recipe_components WHERE recipe_id=? AND restaurant_id=?`, recipeID, a.ActiveRestaurantID); err != nil {
+		if _, err = tx.ExecContext(r.Context(), portableSQL(`DELETE FROM stock_recipe_components WHERE recipe_id=? AND restaurant_id=?`), recipeID, a.ActiveRestaurantID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error saving recipe")
 			return
 		}
-		if _, err = tx.ExecContext(r.Context(), `DELETE FROM stock_recipe_labour WHERE recipe_id=? AND restaurant_id=?`, recipeID, a.ActiveRestaurantID); err != nil {
+		if _, err = tx.ExecContext(r.Context(), portableSQL(`DELETE FROM stock_recipe_labour WHERE recipe_id=? AND restaurant_id=?`), recipeID, a.ActiveRestaurantID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error saving recipe labour")
 			return
 		}
@@ -288,7 +289,7 @@ func (s *Server) saveBOStockRecipe(w http.ResponseWriter, r *http.Request, recip
 			return
 		}
 		var factor float64
-		if err = tx.QueryRowContext(r.Context(), `SELECT factor_to_base FROM stock_item_units WHERE id=? AND stock_item_id=? AND restaurant_id=?`, component.UnitID, component.StockItemID, a.ActiveRestaurantID).Scan(&factor); err != nil {
+		if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT factor_to_base FROM stock_item_units WHERE id=? AND stock_item_id=? AND restaurant_id=?`), component.UnitID, component.StockItemID, a.ActiveRestaurantID).Scan(&factor); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Invalid component unit")
 			return
 		}
@@ -298,12 +299,12 @@ func (s *Server) saveBOStockRecipe(w http.ResponseWriter, r *http.Request, recip
 				return
 			}
 			var subOutputItemID int64
-			if err = tx.QueryRowContext(r.Context(), `SELECT output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=? AND is_active=1`, a.ActiveRestaurantID, *component.SubRecipeID).Scan(&subOutputItemID); err != nil || subOutputItemID != component.StockItemID {
+			if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT output_item_id FROM stock_recipes WHERE restaurant_id=? AND id=? AND is_active=1`), a.ActiveRestaurantID, *component.SubRecipeID).Scan(&subOutputItemID); err != nil || subOutputItemID != component.StockItemID {
 				httpx.WriteError(w, http.StatusBadRequest, "Sub-recipe must produce selected component item")
 				return
 			}
 		}
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_recipe_components (restaurant_id,recipe_id,stock_item_id,sub_recipe_id,entered_qty,entered_unit_id,qty_base,waste_pct,is_optional,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, recipeID, component.StockItemID, component.SubRecipeID, component.Quantity, component.UnitID, component.Quantity*factor, component.WastePct, stockBoolInt(component.IsOptional), stockNullableString(component.Notes), index)
+		_, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_recipe_components (restaurant_id,recipe_id,stock_item_id,sub_recipe_id,entered_qty,entered_unit_id,qty_base,waste_pct,is_optional,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)`), a.ActiveRestaurantID, recipeID, component.StockItemID, component.SubRecipeID, component.Quantity, component.UnitID, component.Quantity*factor, component.WastePct, stockBoolInt(component.IsOptional), stockNullableString(component.Notes), index)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Recipe component could not be saved")
 			return
@@ -314,7 +315,7 @@ func (s *Server) saveBOStockRecipe(w http.ResponseWriter, r *http.Request, recip
 			httpx.WriteError(w, http.StatusBadRequest, "Invalid recipe labour")
 			return
 		}
-		res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_recipe_labour (restaurant_id,recipe_id,restaurant_member_id,minutes_per_batch,notes,sort_order) SELECT ?,?,?,?,?,? FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1`, a.ActiveRestaurantID, recipeID, labour.MemberID, labour.MinutesPerBatch, stockNullableString(labour.Notes), index, a.ActiveRestaurantID, labour.MemberID)
+		res, err := tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_recipe_labour (restaurant_id,recipe_id,restaurant_member_id,minutes_per_batch,notes,sort_order) SELECT ?,?,?,?,?,? FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1`, `INSERT INTO stock_recipe_labour (restaurant_id,recipe_id,restaurant_member_id,minutes_per_batch,notes,sort_order) SELECT CAST(? AS integer),CAST(? AS bigint),CAST(? AS integer),CAST(? AS numeric),CAST(? AS text),CAST(? AS integer) FROM restaurant_members WHERE restaurant_id=? AND id=? AND is_active=1`), a.ActiveRestaurantID, recipeID, labour.MemberID, labour.MinutesPerBatch, stockNullableString(labour.Notes), index, a.ActiveRestaurantID, labour.MemberID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Recipe labour could not be saved")
 			return
@@ -374,12 +375,12 @@ func (s *Server) handleBOStockRecipePricingPatch(w http.ResponseWriter, r *http.
 	}
 	if in.VATRateID != nil {
 		var exists int
-		if err := s.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM stock_vat_rates WHERE restaurant_id=? AND id=? AND is_active=1)`, a.ActiveRestaurantID, *in.VATRateID).Scan(&exists); err != nil || exists == 0 {
+		if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT EXISTS(SELECT 1 FROM stock_vat_rates WHERE restaurant_id=? AND id=? AND is_active=1)`, `SELECT CASE WHEN EXISTS(SELECT 1 FROM stock_vat_rates WHERE restaurant_id=? AND id=? AND is_active=1) THEN 1 ELSE 0 END`), a.ActiveRestaurantID, *in.VATRateID).Scan(&exists); err != nil || exists == 0 {
 			httpx.WriteError(w, http.StatusBadRequest, "Invalid VAT rate")
 			return
 		}
 	}
-	res, err := s.db.ExecContext(r.Context(), `UPDATE stock_recipes SET selling_price_gross=?,vat_rate_id=?,overhead_pct=?,is_protected=?,version=version+1 WHERE restaurant_id=? AND id=? AND is_active=1`, in.SellingPriceGross, in.VATRateID, in.OverheadPct, stockBoolInt(in.IsProtected), a.ActiveRestaurantID, id)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE stock_recipes SET selling_price_gross=?,vat_rate_id=?,overhead_pct=?,is_protected=?,version=version+1 WHERE restaurant_id=? AND id=? AND is_active=1`), in.SellingPriceGross, in.VATRateID, in.OverheadPct, stockBoolInt(in.IsProtected), a.ActiveRestaurantID, id)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Recipe pricing could not be saved")
 		return
@@ -399,7 +400,7 @@ func (s *Server) handleBOStockRecipeDelete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	res, err := s.db.ExecContext(r.Context(), `UPDATE stock_recipes SET is_active=0,version=version+1 WHERE id=? AND restaurant_id=?`, id, a.ActiveRestaurantID)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE stock_recipes SET is_active=0,version=version+1 WHERE id=? AND restaurant_id=?`), id, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error deleting recipe")
 		return
@@ -443,7 +444,7 @@ func (s *Server) handleBOStockProduction(w http.ResponseWriter, r *http.Request,
 	var outputItemID int64
 	var outputQty float64
 	var version int
-	if err = tx.QueryRowContext(r.Context(), `SELECT output_item_id,output_qty_base,version FROM stock_recipes WHERE id=? AND restaurant_id=? AND is_active=1`, recipeID, a.ActiveRestaurantID).Scan(&outputItemID, &outputQty, &version); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT output_item_id,output_qty_base,version FROM stock_recipes WHERE id=? AND restaurant_id=? AND is_active=1`), recipeID, a.ActiveRestaurantID).Scan(&outputItemID, &outputQty, &version); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "Recipe not found")
 		return
 	}
@@ -479,7 +480,7 @@ func (s *Server) handleBOStockProduction(w http.ResponseWriter, r *http.Request,
 		var x line
 		var tracked int
 		x.ItemID, x.Needed = itemID, needed
-		if err = tx.QueryRowContext(r.Context(), `SELECT i.name,i.is_tracked,COALESCE(l.qty_base,0),u.id,u.factor_to_base FROM stock_items i JOIN stock_item_units u ON u.restaurant_id=i.restaurant_id AND u.stock_item_id=i.id AND u.is_default_display=1 LEFT JOIN stock_levels l ON l.restaurant_id=i.restaurant_id AND l.stock_item_id=i.id AND l.warehouse_id=? WHERE i.restaurant_id=? AND i.id=? AND i.deleted_at IS NULL`, in.WarehouseID, a.ActiveRestaurantID, itemID).Scan(&x.Name, &tracked, &x.Available, &x.UnitID, &x.UnitFactor); err != nil {
+		if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT i.name,i.is_tracked,COALESCE(l.qty_base,0),u.id,u.factor_to_base FROM stock_items i JOIN stock_item_units u ON u.restaurant_id=i.restaurant_id AND u.stock_item_id=i.id AND u.is_default_display=1 LEFT JOIN stock_levels l ON l.restaurant_id=i.restaurant_id AND l.stock_item_id=i.id AND l.warehouse_id=? WHERE i.restaurant_id=? AND i.id=? AND i.deleted_at IS NULL`), in.WarehouseID, a.ActiveRestaurantID, itemID).Scan(&x.Name, &tracked, &x.Available, &x.UnitID, &x.UnitFactor); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Recipe component is unavailable")
 			return
 		}
@@ -495,20 +496,22 @@ func (s *Server) handleBOStockProduction(w http.ResponseWriter, r *http.Request,
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "outputItemId": outputItemID, "outputQuantityBase": outputQty * in.Batches, "standardLabourCost": round2(standardLabourCost), "missingLabourMembers": missingMembers, "components": payload})
 		return
 	}
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_production_orders (restaurant_id,recipe_id,recipe_version,warehouse_id,batches,qty_produced_base,standard_labour_cost,labour_cost_complete,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, recipeID, version, in.WarehouseID, in.Batches, outputQty*in.Batches, standardLabourCost, stockBoolInt(len(missingMembers) == 0), in.IdempotencyKey, a.User.ID)
+	orderID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO stock_production_orders (restaurant_id,recipe_id,recipe_version,warehouse_id,batches,qty_produced_base,standard_labour_cost,labour_cost_complete,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, recipeID, version, in.WarehouseID, in.Batches, outputQty*in.Batches, standardLabourCost, stockBoolInt(len(missingMembers) == 0), in.IdempotencyKey, a.User.ID)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		// Idempotent replay: only the (restaurant_id, idempotency_key) unique key.
+		if sqldb.IsUniqueViolationOn(err, "uq_stock_production_idempotency", "ix__stock_production_orders__uq_stock_production_idempotency") {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "duplicate": true})
 			return
 		}
 		httpx.WriteError(w, http.StatusBadRequest, "Production could not be created")
 		return
 	}
-	orderID, _ := res.LastInsertId()
 	var allowNegative int
-	_ = tx.QueryRowContext(r.Context(), `SELECT COALESCE((SELECT allow_negative_stock FROM stock_settings WHERE restaurant_id=?),1)`, a.ActiveRestaurantID).Scan(&allowNegative)
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		return tx.QueryRowContext(r.Context(), portableSQL(`SELECT COALESCE((SELECT allow_negative_stock FROM stock_settings WHERE restaurant_id=?),1)`), a.ActiveRestaurantID).Scan(&allowNegative)
+	})
 	for index, x := range lines {
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_production_order_lines (restaurant_id,production_order_id,stock_item_id,planned_qty_base,actual_qty_base,was_untracked) VALUES (?,?,?,?,?,?)`, a.ActiveRestaurantID, orderID, x.ItemID, x.Needed, x.Needed, stockBoolInt(!x.Tracked))
+		_, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_production_order_lines (restaurant_id,production_order_id,stock_item_id,planned_qty_base,actual_qty_base,was_untracked) VALUES (?,?,?,?,?,?)`), a.ActiveRestaurantID, orderID, x.ItemID, x.Needed, x.Needed, stockBoolInt(!x.Tracked))
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error saving production")
 			return
@@ -520,17 +523,17 @@ func (s *Server) handleBOStockProduction(w http.ResponseWriter, r *http.Request,
 			httpx.WriteError(w, http.StatusConflict, "Insufficient component stock")
 			return
 		}
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, a.ActiveRestaurantID, x.ItemID, in.WarehouseID)
+		_, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON CONFLICT (restaurant_id,stock_item_id,warehouse_id) DO UPDATE SET stock_item_id=EXCLUDED.stock_item_id`), a.ActiveRestaurantID, x.ItemID, in.WarehouseID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error saving production")
 			return
 		}
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, x.ItemID, in.WarehouseID, -x.Needed, "PRODUCTION_OUT", x.Needed/x.UnitFactor, x.UnitID, "production_order", orderID, in.IdempotencyKey+"-component-"+strconv.Itoa(index), a.User.ID)
+		_, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`), a.ActiveRestaurantID, x.ItemID, in.WarehouseID, -x.Needed, "PRODUCTION_OUT", x.Needed/x.UnitFactor, x.UnitID, "production_order", orderID, in.IdempotencyKey+"-component-"+strconv.Itoa(index), a.User.ID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error saving production")
 			return
 		}
-		_, err = tx.ExecContext(r.Context(), `UPDATE stock_levels SET qty_base=qty_base-?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`, x.Needed, a.ActiveRestaurantID, x.ItemID, in.WarehouseID)
+		_, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_levels SET qty_base=qty_base-?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`), x.Needed, a.ActiveRestaurantID, x.ItemID, in.WarehouseID)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error saving production")
 			return
@@ -538,21 +541,21 @@ func (s *Server) handleBOStockProduction(w http.ResponseWriter, r *http.Request,
 	}
 	var outputUnitID int64
 	var outputUnitFactor float64
-	if err = tx.QueryRowContext(r.Context(), `SELECT id,factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND is_default_display=1`, a.ActiveRestaurantID, outputItemID).Scan(&outputUnitID, &outputUnitFactor); err != nil {
+	if err = tx.QueryRowContext(r.Context(), portableSQL(`SELECT id,factor_to_base FROM stock_item_units WHERE restaurant_id=? AND stock_item_id=? AND is_default_display=1`), a.ActiveRestaurantID, outputItemID).Scan(&outputUnitID, &outputUnitFactor); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Output item needs a default unit")
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, a.ActiveRestaurantID, outputItemID, in.WarehouseID)
+	_, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id)`, `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) VALUES (?,?,?,0) ON CONFLICT (restaurant_id,stock_item_id,warehouse_id) DO UPDATE SET stock_item_id=EXCLUDED.stock_item_id`), a.ActiveRestaurantID, outputItemID, in.WarehouseID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving production")
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, outputItemID, in.WarehouseID, outputQty*in.Batches, "PRODUCTION_IN", outputQty*in.Batches/outputUnitFactor, outputUnitID, "production_order", orderID, in.IdempotencyKey+"-output", a.User.ID)
+	_, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_movements (restaurant_id,stock_item_id,warehouse_id,qty_base,type,entered_qty,entered_unit_id,ref_type,ref_id,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`), a.ActiveRestaurantID, outputItemID, in.WarehouseID, outputQty*in.Batches, "PRODUCTION_IN", outputQty*in.Batches/outputUnitFactor, outputUnitID, "production_order", orderID, in.IdempotencyKey+"-output", a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving production")
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `UPDATE stock_levels SET qty_base=qty_base+?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`, outputQty*in.Batches, a.ActiveRestaurantID, outputItemID, in.WarehouseID)
+	_, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_levels SET qty_base=qty_base+?,version=version+1 WHERE restaurant_id=? AND stock_item_id=? AND warehouse_id=?`), outputQty*in.Batches, a.ActiveRestaurantID, outputItemID, in.WarehouseID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving production")
 		return

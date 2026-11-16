@@ -173,13 +173,19 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 		adelantoMethodsRaw                                             sql.NullString
 		adelantoUnifiedAmount                                          sql.NullFloat64
 	)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT id, is_active, title, prereserva_enabled, whatsapp_only, requires_adelanto,
 		       adelanto_payment_methods, adelanto_unified, adelanto_unified_amount
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ?
 		LIMIT 1
-	`, restaurantID, date).Scan(
+	`, `
+		SELECT id, is_active, title, prereserva_enabled, whatsapp_only, requires_adelanto,
+		       CAST(adelanto_payment_methods AS text), adelanto_unified, adelanto_unified_amount
+		FROM special_dates
+		WHERE restaurant_id = ? AND date = ?
+		LIMIT 1
+	`), restaurantID, date).Scan(
 		&id, &isActive, &title, &prereservaEnabled, &whatsAppOnly, &requiresAdelanto,
 		&adelantoMethodsRaw, &adelantoUnified, &adelantoUnifiedAmount,
 	)
@@ -200,7 +206,7 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 		adelantoMethods = []string{}
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT sdm.id, sdm.menu_id, sdm.custom_title, sdm.custom_image_url,
 		       sdm.adelanto_amount, sdm.price, sdm.position,
 		       COALESCE(m.menu_title, '') AS menu_title,
@@ -212,7 +218,7 @@ func (s *Server) loadSpecialDateSettings(ctx context.Context, restaurantID int, 
 		  AND m.active = 1 AND m.is_draft = 0
 		WHERE sdm.restaurant_id = ? AND sdm.special_date_id = ?
 		ORDER BY sdm.position ASC, sdm.id ASC
-	`, restaurantID, id)
+	`), restaurantID, id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -656,22 +662,22 @@ func (s *Server) loadDishNameForTenant(ctx context.Context, restaurantID int, di
 func (s *Server) scanDishName(ctx context.Context, restaurantID int, dishID int64, dst *sql.NullString) error {
 	// Las tablas legacy DIA/FINDE ya no existen: se resolv���n via legacy_dish_map,
 	// que guarda tanto el plato v2 equivalente como el nombre original.
-	row := s.db.QueryRowContext(ctx, `
+	row := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COALESCE(d.title_snapshot, m.legacy_desc)
 		FROM legacy_dish_map m
 		LEFT JOIN group_menu_section_dishes_v2 d ON d.id = m.v2_dish_id
 		WHERE m.restaurant_id = ? AND m.legacy_table IN ('DIA', 'FINDE') AND m.legacy_num = ?
 		ORDER BY CASE m.legacy_table WHEN 'DIA' THEN 0 ELSE 1 END
 		LIMIT 1
-	`, restaurantID, dishID)
+	`), restaurantID, dishID)
 	if err := row.Scan(dst); err == nil {
 		return nil
 	} else if err != sql.ErrNoRows {
 		return err
 	}
-	row = s.db.QueryRowContext(ctx, `
+	row = s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT name FROM menu_dishes_catalog WHERE restaurant_id = ? AND id = ? LIMIT 1
-	`, restaurantID, dishID)
+	`), restaurantID, dishID)
 	if err := row.Scan(dst); err == nil {
 		return nil
 	} else if err != sql.ErrNoRows {
@@ -696,7 +702,11 @@ func (s *Server) allDishesExistForTenant(ctx context.Context, restaurantID int, 
 	combined := make(map[int64]struct{}, len(ids))
 	lookup := func(table, col string) error {
 		rows, err := s.db.QueryContext(ctx,
-			"SELECT "+col+" FROM "+table+" WHERE restaurant_id = ? AND "+col+" IN ("+placeholders+")",
+			// table/col are fixed literals at the three call sites below; PG quotes
+			// them to keep MySQL's case-insensitive DIA/FINDE/NUM spelling exact.
+			// Source anomaly: DIA and FINDE do not exist in the exported schema,
+			// so these lookups fail on MySQL and PG alike (kept, not invented).
+			portableSQL("SELECT "+sqlFragment(col, `"`+col+`"`)+" FROM "+sqlFragment(table, `"`+table+`"`)+" WHERE restaurant_id = ? AND "+sqlFragment(col, `"`+col+`"`)+" IN ("+placeholders+")"),
 			append([]any{restaurantID}, toAnySlice(ids)...)...)
 		if err != nil {
 			return err
@@ -727,21 +737,21 @@ func (s *Server) allDishesExistForTenant(ctx context.Context, restaurantID int, 
 // Falls back to the catalog title when the snapshot is empty.
 func (s *Server) loadMenuDishName(ctx context.Context, restaurantID int, menuID int64, dishID int64) (string, error) {
 	var name sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT d.title_snapshot
 		FROM group_menu_section_dishes_v2 d
 		WHERE d.restaurant_id = ? AND d.menu_id = ? AND d.id = ?
 		LIMIT 1
-	`, restaurantID, menuID, dishID).Scan(&name)
+	`), restaurantID, menuID, dishID).Scan(&name)
 	if err == nil && name.Valid && strings.TrimSpace(name.String) != "" {
 		return strings.TrimSpace(name.String), nil
 	}
-	row := s.db.QueryRowContext(ctx, `
+	row := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT c.title FROM menu_dishes_catalog c
 		INNER JOIN group_menu_section_dishes_v2 d ON d.catalog_dish_id = c.id
 		WHERE c.restaurant_id = ? AND d.restaurant_id = ? AND d.menu_id = ? AND d.id = ?
 		LIMIT 1
-	`, restaurantID, restaurantID, menuID, dishID)
+	`), restaurantID, restaurantID, menuID, dishID)
 	if err := row.Scan(&name); err == nil && name.Valid {
 		return strings.TrimSpace(name.String), nil
 	}
@@ -758,10 +768,10 @@ func (s *Server) allMenuDishesExist(ctx context.Context, restaurantID int, menuI
 	placeholders = strings.TrimRight(placeholders, ",")
 	args := append([]any{restaurantID, menuID}, toAnySlice(ids)...)
 	var n int
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COUNT(*) FROM group_menu_section_dishes_v2
 		WHERE restaurant_id = ? AND menu_id = ? AND id IN (`+placeholders+`)
-	`, args...).Scan(&n); err != nil {
+	`), args...).Scan(&n); err != nil {
 		return false
 	}
 	return n >= len(ids)

@@ -1,0 +1,62 @@
+{
+  "coordination_id": "booking_fulltext_evidence_v1",
+  "status": "open - settings known; tokenizer/accent/stopword equivalence NOT solved by settings; needs implementation + manual QA",
+  "source_sites": [
+    {
+      "file": "internal/api/backoffice_bookings.go",
+      "func": "buildBookingSearchFulltextClause / bookingSearchBooleanQuery",
+      "only_match_site": true
+    }
+  ],
+  "source_index": {
+    "table": "bookings",
+    "name": "ft_bookings_customer_contact_commentary",
+    "columns": [
+      "customer_name",
+      "contact_email",
+      "commentary"
+    ],
+    "created_by": "internal/db/migrations/025_backend_query_perf_indexes.sql:28",
+    "parser": "default (no WITH PARSER clause in migration; production SHOW CREATE TABLE not captured)",
+    "column_collation": "utf8mb4_general_ci"
+  },
+  "query_builder_contract": {
+    "normalisation": "strings.Fields(lower(trim(raw))); per token keep only a-z, 0-9 and runes >= 128; drop tokens with < 3 runes",
+    "operators": "user cannot inject operators: every kept token becomes +token* (required, prefix); tokens joined with space; BOOLEAN MODE",
+    "combination": "WHERE ... AND ((MATCH ...) OR (prefix LIKE clause)); on query error the handler re-runs prefix-only",
+    "emails_punctuation": "punctuation inside a token is deleted and the parts concatenated (ana@x.com -> anaxcom, garcia-lopez -> garcialopez); InnoDB indexes ana / x / com separately, so such concatenated tokens cannot match via FT on MySQL either; the prefix LIKE branch is what finds emails",
+    "accents": "tokens keep accented runes (>=128)"
+  },
+  "source_settings_needed_readonly_production": [
+    "SELECT @@innodb_ft_min_token_size, @@innodb_ft_max_token_size, @@innodb_ft_enable_stopword, @@innodb_ft_server_stopword_table, @@innodb_ft_user_stopword_table, @@ft_boolean_syntax, @@ngram_token_size",
+    "SHOW CREATE TABLE bookings  -- confirm FULLTEXT parser and column collations",
+    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.INNODB_FT_DEFAULT_STOPWORD  -- and the list itself if a custom stopword table is configured"
+  ],
+  "known_from_restored_source": "not captured: villacarmen-full-mysql-source-settings-20261111.json contains only version/time_zone/sql_mode; restored-container defaults are NOT production evidence",
+  "pg_current_variant": "to_tsvector('simple', plan GIN expression) @@ to_tsquery('simple', 'tok:* & ...')",
+  "known_differences": [
+    "accent folding: InnoDB compares via utf8mb4_general_ci (accent/case-insensitive), PG 'simple' only lowercases -> 'garcia' does not match 'García' on PG",
+    "stopwords: InnoDB default stopword list (if innodb_ft_enable_stopword=ON) drops words like 'the','for','with','com','www' from the index; PG 'simple' has none -> a query token that is an InnoDB stopword behaves differently (exact InnoDB behaviour for +stopword* in BOOLEAN MODE to be confirmed with production settings)",
+    "tokenisation: PG default parser recognises emails/URLs/hosts as single tokens (ana@x.com) and splits hyphenated words differently; InnoDB splits on non-word characters",
+    "token length: InnoDB innodb_ft_min_token_size (default 3) excludes short stored words from the index; PG indexes all lengths (query side already drops <3)",
+    "relevance/ordering: not used (ORDER BY is explicit), no difference"
+  ],
+  "candidate_equivalent_approach_not_implemented": "custom PG text search configuration: parser splitting on the InnoDB delimiter set, unaccent + lower dictionary chain matching utf8mb4_general_ci folding, stopword file equal to the production InnoDB stopword list, min-length filter equal to innodb_ft_min_token_size, and a matching GIN index expression; requires production settings above, the unaccent extension availability in the target PG, and a manual QA comparison on the real restored data before acceptance",
+  "decision": "pending - coordinator/user review; current PG fragment must not be treated as final",
+  "production_readonly_settings_20261111": {
+    "source": "orq/production-readonly-metadata-20261111.tsv (coordinator 16:38, metadata only)",
+    "innodb_ft_min_token_size": 3,
+    "innodb_ft_max_token_size": 84,
+    "innodb_ft_enable_stopword": 1,
+    "server_stopword_table": null,
+    "user_stopword_table": null,
+    "default_stopword_count": 36,
+    "ft_boolean_syntax": "+ -><()~*:\"\"&|",
+    "ngram_token_size": 2,
+    "bookings_fulltext_parser": "default (not ngram)",
+    "columns_collation": "utf8mb4_general_ci"
+  },
+  "still_needed": [
+    "actual default stopword WORDS (INFORMATION_SCHEMA.INNODB_FT_DEFAULT_STOPWORD value column); count 36 does not define the list"
+  ]
+}

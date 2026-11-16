@@ -84,7 +84,7 @@ func (s *Server) botToolNotifSettingsPropose(ctx context.Context, rid int, msg b
 	if dec.Decode(&in) != nil || in.SendConfirmation == nil {
 		return botJSON(map[string]any{"error": "argumentos inválidos: send_confirmation (obligatorio)"}), nil
 	}
-	cur, err := botScanNotifSettings(s.db.QueryRowContext(ctx, `SELECT send_confirmation, send_reconfirmation, reconfirmation_days_before FROM booking_notification_settings WHERE restaurant_id = ? LIMIT 1`, rid))
+	cur, err := botScanNotifSettings(s.db.QueryRowContext(ctx, portableSQL(`SELECT send_confirmation, send_reconfirmation, reconfirmation_days_before FROM booking_notification_settings WHERE restaurant_id = ? LIMIT 1`), rid))
 	if err != nil {
 		return botJSON(map[string]any{"error": "no se pudo leer la configuración"}), nil
 	}
@@ -121,7 +121,7 @@ func (s *Server) botNotifSettingsExecute(ctx context.Context, tx *sql.Tx, rid in
 	if json.Unmarshal([]byte(p.Args), &in) != nil {
 		return "", errors.New("propuesta ilegible")
 	}
-	cur, err := botScanNotifSettings(tx.QueryRowContext(ctx, `SELECT send_confirmation, send_reconfirmation, reconfirmation_days_before FROM booking_notification_settings WHERE restaurant_id = ? LIMIT 1 FOR UPDATE`, rid))
+	cur, err := botScanNotifSettings(tx.QueryRowContext(ctx, portableSQL(`SELECT send_confirmation, send_reconfirmation, reconfirmation_days_before FROM booking_notification_settings WHERE restaurant_id = ? LIMIT 1 FOR UPDATE`), rid))
 	if err != nil {
 		return "", errors.New("error interno")
 	}
@@ -135,10 +135,10 @@ func (s *Server) botNotifSettingsExecute(ctx context.Context, tx *sql.Tx, rid in
 	}
 	// Mirror saveBookingNotificationSettings, preserving the stored
 	// reconfirmation fields verbatim (never written by the bot).
-	if _, err := tx.ExecContext(ctx, `INSERT INTO booking_notification_settings (restaurant_id, send_confirmation, send_reconfirmation, reconfirmation_days_before) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE send_confirmation = VALUES(send_confirmation), send_reconfirmation = VALUES(send_reconfirmation), reconfirmation_days_before = VALUES(reconfirmation_days_before)`, rid, next.Confirmation, next.Reconfirm, next.Days); err != nil {
+	if _, err := tx.ExecContext(ctx, nativeSQL(`INSERT INTO booking_notification_settings (restaurant_id, send_confirmation, send_reconfirmation, reconfirmation_days_before) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE send_confirmation = VALUES(send_confirmation), send_reconfirmation = VALUES(send_reconfirmation), reconfirmation_days_before = VALUES(reconfirmation_days_before)`, `INSERT INTO booking_notification_settings (restaurant_id, send_confirmation, send_reconfirmation, reconfirmation_days_before) VALUES (?, CAST(CAST(? AS boolean) AS integer), CAST(CAST(? AS boolean) AS integer), ?) ON CONFLICT (restaurant_id) DO UPDATE SET send_confirmation = EXCLUDED.send_confirmation, send_reconfirmation = EXCLUDED.send_reconfirmation, reconfirmation_days_before = EXCLUDED.reconfirmation_days_before`), rid, next.Confirmation, next.Reconfirm, next.Days); err != nil {
 		return "", errors.New("error al guardar; no se aplicó nada")
 	}
-	final, err := botScanNotifSettings(tx.QueryRowContext(ctx, `SELECT send_confirmation, send_reconfirmation, reconfirmation_days_before FROM booking_notification_settings WHERE restaurant_id = ? LIMIT 1`, rid))
+	final, err := botScanNotifSettings(tx.QueryRowContext(ctx, portableSQL(`SELECT send_confirmation, send_reconfirmation, reconfirmation_days_before FROM booking_notification_settings WHERE restaurant_id = ? LIMIT 1`), rid))
 	if err != nil {
 		return "", errors.New("error interno")
 	}
@@ -151,7 +151,7 @@ func (s *Server) botNotifSettingsExecute(ctx context.Context, tx *sql.Tx, rid in
 	}
 	notice := fmt.Sprintf("Notificaciones de reserva: WhatsApp de confirmación %s. Los emails de confirmación no cambian; la reconfirmación programada no se ha tocado.", estado)
 	rj, _ := json.Marshal(map[string]any{"op": p.Op, "notice": notice})
-	if _, err := tx.ExecContext(ctx, `UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`, string(rj), p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, portableSQL(`UPDATE wa_bot_op_proposals SET result_json=?, notify_state='pending' WHERE id=?`), string(rj), p.ID); err != nil {
 		return "", errors.New("error interno")
 	}
 	s.botSpecialAdminEvent(ctx, tx, rid, p.ID, "executed", p.Actor, strings.TrimSpace(msg.ChatJID), map[string]any{"op": p.Op, "send_confirmation": in.SendConfirmation, "before_hash": p.Before, "after_hash": p.After, "approval_message_id": msg.MessageID})

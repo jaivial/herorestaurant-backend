@@ -94,6 +94,39 @@ const selfServiceBookingSelect = `
 	 AND sd.date = b.reservation_date
 	 AND sd.is_active = 1`
 
+// selfServiceBookingSelectPG is the PG twin (same column order).
+const selfServiceBookingSelectPG = `
+	SELECT
+		b.id,
+		to_char(b.reservation_date, 'YYYY-MM-DD'),
+		to_char(b.reservation_time, 'HH24:MI:SS'),
+		b.party_size,
+		COALESCE(b.children, 0),
+		b.customer_name,
+		COALESCE(b.contact_email, ''),
+		COALESCE(b.contact_phone, ''),
+		COALESCE(b.contact_phone_country_code, ''),
+		COALESCE(b."highChairs", 0),
+		COALESCE(b."babyStrollers", 0),
+		COALESCE(b.status, ''),
+		COALESCE(sd.title, ''),
+		COALESCE(b.is_special_booking, 0),
+		COALESCE(b.arroz_type, ''),
+		COALESCE(b.arroz_servings, ''),
+		COALESCE(b.has_mobility_issues, 0),
+		COALESCE(b.mobility_people, 0)
+	FROM bookings b
+	LEFT JOIN special_dates sd
+	  ON sd.restaurant_id = b.restaurant_id
+	 AND sd.date = b.reservation_date
+	 AND sd.is_active = 1`
+
+// selfServiceBookingHead picks the projection without rebinding; callers
+// rebind the composed statement once with portableSQL.
+func selfServiceBookingHead() string {
+	return sqlFragment(selfServiceBookingSelect, selfServiceBookingSelectPG)
+}
+
 func scanSelfServiceBooking(row interface{ Scan(...any) error }) (selfServiceBooking, error) {
 	var b selfServiceBooking
 	err := row.Scan(
@@ -161,9 +194,9 @@ func (b selfServiceBooking) summaryView() map[string]any {
 }
 
 func (s *Server) fetchSelfServiceBooking(ctx context.Context, restaurantID, id int) (selfServiceBooking, error) {
-	row := s.db.QueryRowContext(ctx, selfServiceBookingSelect+`
+	row := s.db.QueryRowContext(ctx, portableSQL(selfServiceBookingHead()+`
 		WHERE b.restaurant_id = ? AND b.id = ?
-		LIMIT 1`, restaurantID, id)
+		LIMIT 1`), restaurantID, id)
 	return scanSelfServiceBooking(row)
 }
 
@@ -199,7 +232,7 @@ func (s *Server) findDuplicateContactBooking(ctx context.Context, restaurantID i
 	if email == "" && strings.TrimSpace(national) == "" {
 		return selfServiceBooking{}, false, nil
 	}
-	row := s.db.QueryRowContext(ctx, selfServiceBookingSelect+`
+	row := s.db.QueryRowContext(ctx, portableSQL(selfServiceBookingHead()+`
 		WHERE b.restaurant_id = ?
 		  AND b.reservation_date = ?
 		  AND (b.status IS NULL OR LOWER(TRIM(b.status)) NOT IN ('cancelled', 'cancelada'))
@@ -208,7 +241,7 @@ func (s *Server) findDuplicateContactBooking(ctx context.Context, restaurantID i
 		     OR (? <> '' AND b.contact_phone = ? AND COALESCE(b.contact_phone_country_code, '') = ?)
 		  )
 		ORDER BY b.id DESC
-		LIMIT 1`,
+		LIMIT 1`),
 		restaurantID, date,
 		email, email,
 		national, national, cc,
@@ -239,11 +272,11 @@ func (s *Server) evaluateSelfModifiable(ctx context.Context, restaurantID int, b
 		return false, selfModifyReasonPast
 	}
 	var isActive, allowed int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT is_active, allow_customer_modification
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ?
-		LIMIT 1`, restaurantID, b.ReservationDate).Scan(&isActive, &allowed)
+		LIMIT 1`), restaurantID, b.ReservationDate).Scan(&isActive, &allowed)
 	if err == nil && isActive == 1 && allowed == 0 {
 		return false, selfModifyReasonSpecialLocked
 	}
@@ -486,9 +519,9 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 		// Moving onto an active special date would create a special booking with
 		// no menu snapshot, so it stays a restaurant-side operation.
 		var activeSpecial int
-		if err := s.db.QueryRowContext(r.Context(), `
+		if err := s.db.QueryRowContext(r.Context(), portableSQL(`
 			SELECT COUNT(*) FROM special_dates
-			WHERE restaurant_id = ? AND date = ? AND is_active = 1`, restaurantID, date).Scan(&activeSpecial); err == nil && activeSpecial > 0 {
+			WHERE restaurant_id = ? AND date = ? AND is_active = 1`), restaurantID, date).Scan(&activeSpecial); err == nil && activeSpecial > 0 {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
 				"message": "Esa fecha es una fecha especial. Contacta con el restaurante para reservar ese dia.",
@@ -564,8 +597,8 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 		"contact_email = ?",
 		"contact_phone = ?",
 		"contact_phone_country_code = ?",
-		"highChairs = ?",
-		"babyStrollers = ?",
+		sqlFragment("highChairs = ?", `"highChairs" = ?`),
+		sqlFragment("babyStrollers = ?", `"babyStrollers" = ?`),
 	}
 	args := []any{date, resTime, party, children, name, email, national, cc, highChairs, strollers}
 	if input.ToggleArroz != nil {
@@ -581,10 +614,15 @@ func (s *Server) handleReservationModify(w http.ResponseWriter, r *http.Request)
 	// Reconcile the occupancy ledger when the date or party size changes.
 	oldDate, oldParty, oldFloor, oldSalon, locErr := s.bookingLocationSnapshot(r.Context(), restaurantID, input.BookingID)
 
-	if _, err := s.db.ExecContext(r.Context(),
-		"UPDATE bookings SET "+strings.Join(setClauses, ", ")+" WHERE restaurant_id = ? AND id = ?",
-		args...,
-	); err != nil {
+	// booking_day_lock_v1: old + new day locked; concurrent move fails closed.
+	if _, err := s.execBookingUpdateDayLocked(r.Context(), restaurantID, int64(input.BookingID), date, func(ex execQueryer) (sql.Result, error) {
+		// Composed from the fixed column list above (+ optional arroz/mobility
+		// pairs), rebound once.
+		return ex.ExecContext(r.Context(),
+			portableSQL("UPDATE bookings SET "+strings.Join(setClauses, ", ")+" WHERE restaurant_id = ? AND id = ?"),
+			args...,
+		)
+	}); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "No se pudo actualizar la reserva"})
 		return
 	}

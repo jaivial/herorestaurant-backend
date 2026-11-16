@@ -58,12 +58,12 @@ func (s *Server) handleSendEmailAndWhatsappAd(w http.ResponseWriter, r *http.Req
 
 	logs = append(logs, "Iniciando extracción de contactos únicos...")
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT DISTINCT contact_email, contact_phone_country_code, contact_phone
 		FROM bookings
 		WHERE restaurant_id = ?
 		  AND (contact_email IS NOT NULL OR contact_phone IS NOT NULL)
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		results["logs"] = append(logs, "✗ Error extrayendo contactos: "+err.Error())
 		results["error"] = err.Error()

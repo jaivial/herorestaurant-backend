@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // A technical sheet (ficha tecnica) IS a stock_recipes row (decision D2) plus
@@ -46,13 +47,13 @@ func (s *Server) loadSheet(ctx context.Context, restaurantID int, sheetID int64)
 	var prep sql.NullInt64
 	var instructions sql.NullString
 	var copiedFrom sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT r.id, r.name, r.status, r.portions, r.output_item_id, r.output_qty_base,
 		       r.waste_pct, r.prep_time_min, r.instructions, r.copied_from_recipe_id,
 		       (SELECT COUNT(*) FROM stock_recipe_components c WHERE c.restaurant_id=r.restaurant_id AND c.recipe_id=r.id),
 		       (SELECT COUNT(*) FROM stock_recipe_steps st WHERE st.restaurant_id=r.restaurant_id AND st.recipe_id=r.id)
 		  FROM stock_recipes r
-		 WHERE r.restaurant_id=? AND r.id=?`, restaurantID, sheetID).
+		 WHERE r.restaurant_id=? AND r.id=?`), restaurantID, sheetID).
 		Scan(&sheet.ID, &sheet.Name, &sheet.Status, &sheet.Portions, &sheet.OutputItemID,
 			&sheet.OutputQtyBase, &sheet.WastePct, &prep, &instructions, &copiedFrom,
 			&sheet.ComponentCount, &sheet.StepCount)
@@ -144,33 +145,30 @@ func (s *Server) handleBOTechnicalSheetCreate(w http.ResponseWriter, r *http.Req
 	// D4: the output stock item, its base unit and the recipe are created
 	// together. A sheet without an output item could never be produced, and an
 	// item created outside the transaction would survive a failed create.
-	itemRes, err := tx.ExecContext(r.Context(), `
+	outputItemID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`
 		INSERT INTO stock_items (restaurant_id,name,kind,base_dimension,base_unit,is_tracked,deduction_source,image_url)
-		VALUES (?,?,'SEMI_FINISHED',?,?,1,'SALE',NULLIF(?,''))`, a.ActiveRestaurantID, name, baseDimension, baseUnit, in.ImageURL)
+		VALUES (?,?,'SEMI_FINISHED',?,?,1,'SALE',NULLIF(?,''))`), "id", a.ActiveRestaurantID, name, baseDimension, baseUnit, in.ImageURL)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando el articulo de salida")
 		return
 	}
-	outputItemID, _ := itemRes.LastInsertId()
 
-	if _, err = tx.ExecContext(r.Context(), `
+	if _, err = tx.ExecContext(r.Context(), portableSQL(`
 		INSERT INTO stock_item_units (restaurant_id,stock_item_id,code,label,factor_to_base,is_default_display,can_recipe,can_count)
-		VALUES (?,?,?,?,?,1,1,1)`, a.ActiveRestaurantID, outputItemID, displayUnitCode, displayUnitLabel, factor); err != nil {
+		VALUES (?,?,?,?,?,1,1,1)`), a.ActiveRestaurantID, outputItemID, displayUnitCode, displayUnitLabel, factor); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando la unidad de salida")
 		return
 	}
 
 	// New sheets start as DRAFT so an unfinished sheet never reaches the menu,
 	// and so the partial-unique output key does not fire while editing.
-	recipeRes, err := tx.ExecContext(r.Context(), `
+	sheetID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`
 		INSERT INTO stock_recipes (restaurant_id,name,output_item_id,output_qty_base,waste_pct,prep_time_min,portions,status,is_active,draft_owner_user_id)
-		VALUES (?,?,?,1,?,?,?, 'DRAFT',1,?)`,
-		a.ActiveRestaurantID, name, outputItemID, in.WastePct, in.PrepTimeMin, in.Portions, a.User.ID)
+		VALUES (?,?,?,1,?,?,?, 'DRAFT',1,?)`), "id", a.ActiveRestaurantID, name, outputItemID, in.WastePct, in.PrepTimeMin, in.Portions, a.User.ID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando ficha tecnica")
 		return
 	}
-	sheetID, _ := recipeRes.LastInsertId()
 
 	if err = tx.Commit(); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando ficha tecnica")
@@ -260,7 +258,8 @@ func (s *Server) handleBOTechnicalSheetPatch(w http.ResponseWriter, r *http.Requ
 	}
 	args = append(args, a.ActiveRestaurantID, sheetID)
 	res, err := s.db.ExecContext(r.Context(),
-		`UPDATE stock_recipes SET `+strings.Join(sets, ",")+` WHERE restaurant_id=? AND id=?`, args...)
+		// SET fragments: name, portions, prep_time_min, waste_pct, instructions: portable.
+		portableSQL(`UPDATE stock_recipes SET `+strings.Join(sets, ",")+` WHERE restaurant_id=? AND id=?`), args...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando ficha tecnica")
 		return
@@ -269,7 +268,7 @@ func (s *Server) handleBOTechnicalSheetPatch(w http.ResponseWriter, r *http.Requ
 		// Either the sheet does not exist or it belongs to another tenant. Both
 		// answer 404 so the endpoint cannot be used to probe for foreign ids.
 		var exists int
-		s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM stock_recipes WHERE restaurant_id=? AND id=?`,
+		s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM stock_recipes WHERE restaurant_id=? AND id=?`),
 			a.ActiveRestaurantID, sheetID).Scan(&exists)
 		if exists == 0 {
 			httpx.WriteError(w, http.StatusNotFound, "Ficha tecnica no encontrada")
@@ -285,7 +284,7 @@ func (s *Server) handleBOTechnicalSheetPublish(w http.ResponseWriter, r *http.Re
 
 	var components int
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM stock_recipe_components WHERE restaurant_id=? AND recipe_id=?`,
+		portableSQL(`SELECT COUNT(*) FROM stock_recipe_components WHERE restaurant_id=? AND recipe_id=?`),
 		a.ActiveRestaurantID, sheetID).Scan(&components)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error validando ficha tecnica")
@@ -298,8 +297,8 @@ func (s *Server) handleBOTechnicalSheetPublish(w http.ResponseWriter, r *http.Re
 	}
 
 	res, err := s.db.ExecContext(r.Context(),
-		`UPDATE stock_recipes SET status='ACTIVE', is_active=1, draft_owner_user_id=NULL, draft_expires_at=NULL
-		  WHERE restaurant_id=? AND id=? AND status='DRAFT'`, a.ActiveRestaurantID, sheetID)
+		portableSQL(`UPDATE stock_recipes SET status='ACTIVE', is_active=1, draft_owner_user_id=NULL, draft_expires_at=NULL
+		  WHERE restaurant_id=? AND id=? AND status='DRAFT'`), a.ActiveRestaurantID, sheetID)
 	if err != nil {
 		// uq_stock_recipe_output rejects a second ACTIVE recipe for one output
 		// item; surface that as a conflict rather than a generic failure.
@@ -324,11 +323,11 @@ func (s *Server) sheetAllergens(ctx context.Context, restaurantID int, sheetID i
 ) {
 	// Load every component row for the tenant once. Recipes are small and this
 	// avoids issuing one query per nesting level inside the walk.
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT c.recipe_id, c.stock_item_id, c.sub_recipe_id, i.name, i.allergens_json
 		  FROM stock_recipe_components c
 		  JOIN stock_items i ON i.restaurant_id=c.restaurant_id AND i.id=c.stock_item_id
-		 WHERE c.restaurant_id=?`, restaurantID)
+		 WHERE c.restaurant_id=?`), restaurantID)
 	if err != nil {
 		return nil, nil, manual, err
 	}
@@ -368,7 +367,7 @@ func (s *Server) sheetAllergens(ctx context.Context, restaurantID int, sheetID i
 
 	var manualJSON sql.NullString
 	if err = s.db.QueryRowContext(ctx,
-		`SELECT manual_allergens_json FROM stock_recipes WHERE restaurant_id=? AND id=?`,
+		portableSQL(`SELECT manual_allergens_json FROM stock_recipes WHERE restaurant_id=? AND id=?`),
 		restaurantID, sheetID).Scan(&manualJSON); err != nil {
 		return nil, nil, manual, err
 	}
@@ -388,7 +387,7 @@ func (s *Server) refreshSheetDerivedAllergens(ctx context.Context, restaurantID 
 		return err
 	}
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE stock_recipes SET derived_allergens_json=?, derived_allergens_at=NOW() WHERE restaurant_id=? AND id=?`,
+		nativeSQL(`UPDATE stock_recipes SET derived_allergens_json=?, derived_allergens_at=NOW() WHERE restaurant_id=? AND id=?`, `UPDATE stock_recipes SET derived_allergens_json=CAST(? AS jsonb), derived_allergens_at=(date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE restaurant_id=? AND id=?`),
 		string(encoded), restaurantID, sheetID)
 	return err
 }
@@ -441,7 +440,7 @@ func (s *Server) handleBOTechnicalSheetAllergensPatch(w http.ResponseWriter, r *
 		return
 	}
 	res, err := s.db.ExecContext(r.Context(),
-		`UPDATE stock_recipes SET manual_allergens_json=? WHERE restaurant_id=? AND id=?`,
+		nativeSQL(`UPDATE stock_recipes SET manual_allergens_json=? WHERE restaurant_id=? AND id=?`, `UPDATE stock_recipes SET manual_allergens_json=CAST(? AS jsonb) WHERE restaurant_id=? AND id=?`),
 		string(encoded), a.ActiveRestaurantID, sheetID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando alergenos")
@@ -449,7 +448,7 @@ func (s *Server) handleBOTechnicalSheetAllergensPatch(w http.ResponseWriter, r *
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		var exists int
-		s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM stock_recipes WHERE restaurant_id=? AND id=?`,
+		s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM stock_recipes WHERE restaurant_id=? AND id=?`),
 			a.ActiveRestaurantID, sheetID).Scan(&exists)
 		if exists == 0 {
 			httpx.WriteError(w, http.StatusNotFound, "Ficha tecnica no encontrada")

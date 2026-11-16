@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"strconv"
 	"strings"
 	"time"
@@ -43,7 +44,7 @@ func (s *Server) handleGetConversationHistory(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT
 			id,
 			message_type,
@@ -57,7 +58,21 @@ func (s *Server) handleGetConversationHistory(w http.ResponseWriter, r *http.Req
 		  AND created_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)
 		ORDER BY created_at ASC
 		LIMIT ?
-	`, restaurantID, senderNumber, hours, limit)
+	`, `
+		SELECT
+			id,
+			CAST(message_type AS text),
+			CAST(message_role AS text),
+			message_content,
+			created_at,
+			conversation_session_id
+		FROM conversation_messages
+		WHERE restaurant_id = ?
+		  AND sender_number = ?
+		  AND created_at >= date_trunc('second', statement_timestamp()) - CAST(? AS integer) * INTERVAL '1 hour'
+		ORDER BY created_at ASC NULLS FIRST
+		LIMIT ?
+	`), restaurantID, senderNumber, hours, limit)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -97,13 +112,13 @@ func (s *Server) handleGetConversationHistory(w http.ResponseWriter, r *http.Req
 	// Current state (optional).
 	var stateRaw sql.NullString
 	var contextRaw sql.NullString
-	_ = s.db.QueryRowContext(r.Context(), `
+	_ = s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT conversation_state, context_data
 		FROM conversation_states
 		WHERE restaurant_id = ?
 		  AND sender_number = ?
 		LIMIT 1
-	`, restaurantID, senderNumber).Scan(&stateRaw, &contextRaw)
+	`), restaurantID, senderNumber).Scan(&stateRaw, &contextRaw)
 
 	var contextData any = map[string]any{}
 	if contextRaw.Valid && strings.TrimSpace(contextRaw.String) != "" {
@@ -124,13 +139,19 @@ func (s *Server) handleGetConversationHistory(w http.ResponseWriter, r *http.Req
 			messageCount    int
 			aiResponseCount int
 		)
-		if err := s.db.QueryRowContext(r.Context(), `
+		if err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 			SELECT id, status, started_at, last_activity_at, message_count, ai_response_count
 			FROM conversation_sessions
 			WHERE restaurant_id = ?
 			  AND id = ?
 			LIMIT 1
-		`, restaurantID, sessionID.String).Scan(&id, &status, &startedAt, &lastActivityAt, &messageCount, &aiResponseCount); err == nil {
+		`, `
+			SELECT id, CAST(status AS text), started_at, last_activity_at, message_count, ai_response_count
+			FROM conversation_sessions
+			WHERE restaurant_id = ?
+			  AND app.norm_ascii(id) = app.norm_ascii(?)
+			LIMIT 1
+		`), restaurantID, sessionID.String).Scan(&id, &status, &startedAt, &lastActivityAt, &messageCount, &aiResponseCount); err == nil {
 			sessionInfo = map[string]any{
 				"id":                id,
 				"status":            status,
@@ -219,7 +240,7 @@ func (s *Server) handleSaveConversationMessage(w http.ResponseWriter, r *http.Re
 
 	// Get or create active session.
 	var sessionID string
-	err := s.db.QueryRowContext(r.Context(), `
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`
 		SELECT id
 		FROM conversation_sessions
 		WHERE restaurant_id = ?
@@ -227,7 +248,15 @@ func (s *Server) handleSaveConversationMessage(w http.ResponseWriter, r *http.Re
 		  AND status = 'active'
 		ORDER BY last_activity_at DESC
 		LIMIT 1
-	`, restaurantID, senderNumber).Scan(&sessionID)
+	`, `
+		SELECT id
+		FROM conversation_sessions
+		WHERE restaurant_id = ?
+		  AND sender_number = ?
+		  AND status = 'active'
+		ORDER BY last_activity_at DESC NULLS LAST
+		LIMIT 1
+	`), restaurantID, senderNumber).Scan(&sessionID)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -241,20 +270,27 @@ func (s *Server) handleSaveConversationMessage(w http.ResponseWriter, r *http.Re
 		if msgType == "ai" {
 			aiInc = 1
 		}
-		_, _ = s.db.ExecContext(r.Context(), `
+		_, _ = s.db.ExecContext(r.Context(), nativeSQL(`
 			UPDATE conversation_sessions
 			SET last_activity_at = NOW(),
 				message_count = message_count + 1,
 				ai_response_count = ai_response_count + ?
 			WHERE restaurant_id = ?
 			  AND id = ?
-		`, aiInc, restaurantID, sessionID)
+		`, `
+			UPDATE conversation_sessions
+			SET last_activity_at = date_trunc('second', statement_timestamp()),
+				message_count = message_count + 1,
+				ai_response_count = ai_response_count + ?
+			WHERE restaurant_id = ?
+			  AND app.norm_ascii(id) = app.norm_ascii(?)
+		`), aiInc, restaurantID, sessionID)
 	} else {
 		sessionID = "sess_" + strconv.Itoa(restaurantID) + "_" + senderNumber + "_" + strconv.FormatInt(time.Now().Unix(), 10)
-		_, err := s.db.ExecContext(r.Context(), `
+		_, err := s.db.ExecContext(r.Context(), portableSQL(`
 			INSERT INTO conversation_sessions (restaurant_id, id, sender_number, message_count)
 			VALUES (?, ?, ?, 1)
-		`, restaurantID, sessionID, senderNumber)
+		`), restaurantID, sessionID, senderNumber)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -265,11 +301,16 @@ func (s *Server) handleSaveConversationMessage(w http.ResponseWriter, r *http.Re
 	}
 
 	// Save message.
-	res, err := s.db.ExecContext(r.Context(), `
+	// v1.9.3 LastInsertId never errors: InsertID keeps MySQL identical.
+	insertedID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, nativeSQL(`
 		INSERT INTO conversation_messages
 			(restaurant_id, sender_number, conversation_session_id, message_type, message_role, message_content, message_id, processed_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-	`, restaurantID, senderNumber, sessionID, msgType, role, content, strings.TrimSpace(input.MessageID))
+	`, `
+		INSERT INTO conversation_messages
+			(restaurant_id, sender_number, conversation_session_id, message_type, message_role, message_content, message_id, processed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, date_trunc('second', statement_timestamp()))
+	`), "id", restaurantID, senderNumber, sessionID, mysqlLowerEnumArg(msgType), mysqlLowerEnumArg(role), content, strings.TrimSpace(input.MessageID))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"success": false,
@@ -277,17 +318,23 @@ func (s *Server) handleSaveConversationMessage(w http.ResponseWriter, r *http.Re
 		})
 		return
 	}
-	insertedID, _ := res.LastInsertId()
 
 	// Link session to conversation_states if present.
-	_, _ = s.db.ExecContext(r.Context(), `
+	_, _ = s.db.ExecContext(r.Context(), nativeSQL(`
 		UPDATE conversation_states
 		SET conversation_session_id = ?,
 			message_count = message_count + 1,
 			last_message_at = NOW()
 		WHERE restaurant_id = ?
 		  AND sender_number = ?
-	`, sessionID, restaurantID, senderNumber)
+	`, `
+		UPDATE conversation_states
+		SET conversation_session_id = ?,
+			message_count = message_count + 1,
+			last_message_at = date_trunc('second', statement_timestamp())
+		WHERE restaurant_id = ?
+		  AND sender_number = ?
+	`), sessionID, restaurantID, senderNumber)
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":      true,

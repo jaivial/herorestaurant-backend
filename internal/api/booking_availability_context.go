@@ -27,7 +27,7 @@ func (s *Server) handleGetBookingAvailabilityContext(w http.ResponseWriter, r *h
 	dailyAvailability := map[string]any{}
 
 	// STEP 1: closed days (explicit).
-	closedRows, err := s.db.QueryContext(r.Context(), "SELECT date FROM restaurant_days WHERE restaurant_id = ? AND is_open = FALSE", restaurantID)
+	closedRows, err := s.db.QueryContext(r.Context(), nativeSQL("SELECT date FROM restaurant_days WHERE restaurant_id = ? AND is_open = FALSE", `SELECT date FROM restaurant_days WHERE restaurant_id = ? AND is_open = 0`), restaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -78,13 +78,13 @@ func (s *Server) handleGetBookingAvailabilityContext(w http.ResponseWriter, r *h
 		}
 
 		dailyLimit := 45
-		_ = s.db.QueryRowContext(r.Context(), "SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", restaurantID, dateStr).Scan(&dailyLimit)
+		_ = s.db.QueryRowContext(r.Context(), nativeSQL("SELECT dailyLimit FROM reservation_manager WHERE restaurant_id = ? AND reservationDate = ? LIMIT 1", `SELECT "dailyLimit" FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" = ? LIMIT 1`), restaurantID, dateStr).Scan(&dailyLimit)
 		if dailyLimit <= 0 {
 			dailyLimit = 45
 		}
 
 		totalPeople := 0
-		_ = s.db.QueryRowContext(r.Context(), "SELECT COALESCE(SUM(party_size), 0) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?", restaurantID, dateStr).Scan(&totalPeople)
+		_ = s.db.QueryRowContext(r.Context(), portableSQL("SELECT COALESCE(SUM(party_size), 0) FROM bookings WHERE restaurant_id = ? AND reservation_date = ?"), restaurantID, dateStr).Scan(&totalPeople)
 
 		freeSeats := dailyLimit - totalPeople
 		if freeSeats <= 0 {

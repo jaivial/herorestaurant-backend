@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"log"
 	"math"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Simple billing entries typed by hand for Estadísticas > Ventas.
@@ -281,6 +281,12 @@ const manualBillingEntrySelect = `
 	SELECT id, DATE_FORMAT(entry_date, '%Y-%m-%d'), gross_cents, net_cents, vat_cents, vat_rate_bp, includes_vat
 	FROM analytics_manual_billing_entries`
 
+// manualBillingEntrySelectPG: includes_vat smallint scans into bool via
+// database/sql ParseBool on both drivers.
+const manualBillingEntrySelectPG = `
+	SELECT id, to_char(entry_date, 'YYYY-MM-DD'), gross_cents, net_cents, vat_cents, vat_rate_bp, includes_vat
+	FROM analytics_manual_billing_entries`
+
 func scanManualBillingEntries(rows *sql.Rows) ([]manualBillingEntry, error) {
 	entries := make([]manualBillingEntry, 0, 64)
 	for rows.Next() {
@@ -301,10 +307,10 @@ func scanManualBillingEntries(rows *sql.Rows) ([]manualBillingEntry, error) {
 }
 
 func loadManualBillingEntries(ctx context.Context, db *sql.DB, restaurantID int, from, to time.Time) ([]manualBillingEntry, error) {
-	rows, err := db.QueryContext(ctx, manualBillingEntrySelect+`
+	rows, err := db.QueryContext(ctx, portableSQL(sqlFragment(manualBillingEntrySelect, manualBillingEntrySelectPG)+`
 		WHERE restaurant_id = ? AND entry_date BETWEEN ? AND ?
 		ORDER BY entry_date ASC, id ASC
-	`, restaurantID, affluenceFormatDate(from), affluenceFormatDate(to))
+	`), restaurantID, affluenceFormatDate(from), affluenceFormatDate(to))
 	if err != nil {
 		return nil, err
 	}
@@ -321,10 +327,11 @@ func loadManualBillingSeasonalEntries(ctx context.Context, db *sql.DB, restauran
 	for _, month := range months {
 		args = append(args, month)
 	}
-	rows, err := db.QueryContext(ctx, manualBillingEntrySelect+fmt.Sprintf(`
-		WHERE restaurant_id = ? AND MONTH(entry_date) IN (%s)
+	rows, err := db.QueryContext(ctx, portableSQL(sqlFragment(manualBillingEntrySelect, manualBillingEntrySelectPG)+sqlFragment(`
+		WHERE restaurant_id = ? AND MONTH(entry_date) IN (`, `
+		WHERE restaurant_id = ? AND CAST(EXTRACT(MONTH FROM entry_date) AS integer) IN (`)+placeholders+`)
 		ORDER BY entry_date ASC, id ASC
-	`, placeholders), args...)
+	`), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -334,11 +341,15 @@ func loadManualBillingSeasonalEntries(ctx context.Context, db *sql.DB, restauran
 
 func manualBillingHistory(ctx context.Context, db *sql.DB, restaurantID int) (string, string, error) {
 	var first, last sql.NullString
-	err := db.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, nativeSQL(`
 		SELECT DATE_FORMAT(MIN(entry_date), '%Y-%m-%d'), DATE_FORMAT(MAX(entry_date), '%Y-%m-%d')
 		FROM analytics_manual_billing_entries
 		WHERE restaurant_id = ?
-	`, restaurantID).Scan(&first, &last)
+	`, `
+		SELECT to_char(MIN(entry_date), 'YYYY-MM-DD'), to_char(MAX(entry_date), 'YYYY-MM-DD')
+		FROM analytics_manual_billing_entries
+		WHERE restaurant_id = ?
+	`), restaurantID).Scan(&first, &last)
 	if err != nil {
 		return "", "", err
 	}
@@ -399,19 +410,20 @@ func (s *Server) handleBOAnalyticsManualBillingCreate(w http.ResponseWriter, r *
 
 	ctx, cancel := context.WithTimeout(r.Context(), manualBillingQueryTimeout)
 	defer cancel()
-	result, err := s.db.ExecContext(ctx, `
+	// v1.9.3 LastInsertId never errors, so InsertID keeps exec-error->500 and id.
+	id, err := sqldb.InsertID(ctx, sqlDialect, s.db, nativeSQL(`
 		INSERT INTO analytics_manual_billing_entries
 			(restaurant_id, entry_date, gross_cents, net_cents, vat_cents, vat_rate_bp, includes_vat)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, auth.ActiveRestaurantID, affluenceFormatDate(date), grossCents, netCents, vatCents, vatRateBP, input.IncludesVat)
+	`, `
+		INSERT INTO analytics_manual_billing_entries
+			(restaurant_id, entry_date, gross_cents, net_cents, vat_cents, vat_rate_bp, includes_vat)
+		VALUES (?, CAST(? AS date), ?, ?, ?, ?, CAST(CAST(? AS boolean) AS integer))
+	`), "id", auth.ActiveRestaurantID, affluenceFormatDate(date), grossCents, netCents, vatCents, vatRateBP, input.IncludesVat)
 	if err != nil {
 		log.Printf("%s create failed restaurant_id=%d: %v", manualBillingTag, auth.ActiveRestaurantID, err)
 		httpx.WriteError(w, http.StatusInternalServerError, "Unable to save billing entry")
 		return
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		id = 0
 	}
 	entry := manualBillingEntryFromRow(id, date, grossCents, netCents, vatCents, vatRateBP, input.IncludesVat)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{

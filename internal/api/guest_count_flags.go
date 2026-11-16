@@ -29,12 +29,12 @@ func guestCountFlagsAllOn() guestCountFlags {
 // date: the active special_dates row wins; no row (or inactive) means all on.
 func (s *Server) resolveGuestCountFlags(ctx context.Context, restaurantID int, date string) (guestCountFlags, error) {
 	var askAdults, askHighChairs, askBabyStrollers int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT ask_adults, ask_high_chairs, ask_baby_strollers
 		FROM special_dates
 		WHERE restaurant_id = ? AND date = ? AND is_active = 1
 		LIMIT 1
-	`, restaurantID, date).Scan(&askAdults, &askHighChairs, &askBabyStrollers)
+	`), restaurantID, date).Scan(&askAdults, &askHighChairs, &askBabyStrollers)
 	if err == sql.ErrNoRows {
 		return guestCountFlagsAllOn(), nil
 	}

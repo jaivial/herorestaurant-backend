@@ -74,13 +74,13 @@ func (s *Server) loadSpecialMenuGroupBookingFlags(ctx context.Context, restauran
 		menuType      int
 	)
 	flags := specialMenuGroupBookingFlags{}
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT COALESCE(special_group_menu_enabled, 0),
 		       COALESCE(special_principales_required, 0),
 		       COALESCE(special_principales_enabled, 0),
 		       COALESCE(menu_type, 1)
 		FROM menus WHERE id = ? AND restaurant_id = ? LIMIT 1
-	`, menuID, restaurantID).Scan(&groupEnabled, &required, &principalesOn, &menuType); err != nil {
+	`), menuID, restaurantID).Scan(&groupEnabled, &required, &principalesOn, &menuType); err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("[special_menu_group_booking_v1] flags menu=%d err=%v", menuID, err)
 		}
@@ -106,13 +106,13 @@ func (s *Server) loadSpecialMenuGroupBookingFlags(ctx context.Context, restauran
 // Coordination id: special_menu_group_booking_v1
 func (s *Server) loadSpecialGroupMenuPrincipales(ctx context.Context, restaurantID int) (map[int64]map[string]any, error) {
 	out := map[int64]map[string]any{}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, portableSQL(`
 		SELECT id FROM menus
 		WHERE restaurant_id = ?
 		  AND active = 1
 		  AND COALESCE(menu_type, 1) = 6
 		  AND COALESCE(special_group_menu_enabled, 0) = 1
-	`, restaurantID)
+	`), restaurantID)
 	if err != nil {
 		return out, err
 	}
@@ -196,7 +196,8 @@ func (s *Server) handleBOSpecialMenuGroupBooking(w http.ResponseWriter, r *http.
 	}
 	groupMenuEnabled := req.GroupMenuEnabled || req.PrincipalesRequired
 	res, err := s.db.ExecContext(r.Context(),
-		`UPDATE menus SET special_group_menu_enabled = ?, special_principales_required = ? WHERE id = ? AND restaurant_id = ?`,
+		// RowsAffected==0 only triggers the ownership check: same response for matched-vs-changed.
+		portableSQL(`UPDATE menus SET special_group_menu_enabled = ?, special_principales_required = ? WHERE id = ? AND restaurant_id = ?`),
 		boolToTinyint(groupMenuEnabled), boolToTinyint(req.PrincipalesRequired), menuID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando el menu de grupo")

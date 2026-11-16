@@ -143,12 +143,13 @@ func (s *Server) serveRestaurantSiteIfHost(w http.ResponseWriter, r *http.Reques
 	resolved := false
 
 	// Custom domain lookup first (a restaurant may have bought its own domain).
-	err := s.db.QueryRowContext(r.Context(), `SELECT restaurant_id FROM restaurant_domains WHERE domain=? LIMIT 1`, host).Scan(&restaurantID)
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT restaurant_id FROM restaurant_domains WHERE domain=? LIMIT 1`, `SELECT restaurant_id FROM restaurant_domains WHERE app.norm_ascii(domain) = app.norm_ascii(?) LIMIT 1`), host).Scan(&restaurantID)
 	if err == nil && restaurantID > 0 {
 		resolved = true
 	}
 	if !resolved {
-		err = s.db.QueryRowContext(r.Context(), `SELECT restaurant_id FROM site_builder_domain_mappings WHERE domain=? LIMIT 1`, host).Scan(&restaurantID)
+		// site_builder_domain_mappings has no restaurant_id: resolve it through its site.
+		err = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT s.restaurant_id FROM site_builder_domain_mappings m JOIN site_builder_sites s ON s.id = m.site_id WHERE m.domain=? LIMIT 1`, `SELECT s.restaurant_id FROM site_builder_domain_mappings m JOIN site_builder_sites s ON s.id = m.site_id WHERE app.norm_ascii(m.domain) = app.norm_ascii(?) LIMIT 1`), host).Scan(&restaurantID)
 		if err == nil && restaurantID > 0 {
 			resolved = true
 		}
@@ -158,7 +159,7 @@ func (s *Server) serveRestaurantSiteIfHost(w http.ResponseWriter, r *http.Reques
 	if !resolved && strings.HasSuffix(host, "."+base) {
 		slug := strings.TrimSuffix(host, "."+base)
 		if slug != "" && !strings.Contains(slug, ".") {
-			err = s.db.QueryRowContext(r.Context(), `SELECT id FROM restaurants WHERE slug=?`, slug).Scan(&restaurantID)
+			err = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM restaurants WHERE slug=?`, `SELECT id FROM restaurants WHERE app.norm_ascii(slug) = app.norm_ascii(?)`), slug).Scan(&restaurantID)
 			if err == nil {
 				resolved = true
 			}

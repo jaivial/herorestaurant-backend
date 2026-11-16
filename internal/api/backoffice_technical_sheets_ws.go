@@ -192,19 +192,20 @@ func (s *Server) searchSheets(ctx context.Context, restaurantID int, query, stat
 
 	// Same filter set as the REST list: the two transports must agree on what
 	// a search matches, and the category lives on the output item.
-	from, args := sheetListFrom(restaurantID, strings.TrimSpace(query), status, categoryID)
+	from, pgFrom, args := sheetListFrom(restaurantID, strings.TrimSpace(query), status, categoryID)
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) `+from, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT COUNT(*) `+from, `SELECT COUNT(*) `+pgFrom), args...).Scan(&total); err != nil {
 		return nil, 0, page, pageSize, err
 	}
 
-	sql := `SELECT r.id, r.name, r.status, COALESCE(r.portions,1),
+	selectList := `SELECT r.id, r.name, r.status, COALESCE(r.portions,1),
 	               (SELECT COUNT(*) FROM comida_items p
 	                 WHERE p.restaurant_id=r.restaurant_id AND p.stock_recipe_id=r.id)
-	          ` + from + ` ORDER BY r.name LIMIT ? OFFSET ?`
+	          `
+	sql := nativeSQL(selectList+from+` ORDER BY r.name LIMIT ? OFFSET ?`, selectList+pgFrom+` ORDER BY r.name LIMIT ? OFFSET ?`)
 	args = append(args, pageSize, (page-1)*pageSize)
 
-	rows, err := s.db.QueryContext(ctx, sql, args...)
+	rows, err := s.db.QueryContext(ctx, selectedSQL(sql), args...)
 	if err != nil {
 		return nil, 0, page, pageSize, err
 	}

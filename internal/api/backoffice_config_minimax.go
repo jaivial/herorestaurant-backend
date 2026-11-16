@@ -73,7 +73,7 @@ func (s *Server) loadMiniMaxConfig(ctx context.Context, restaurantID int) (minim
 	var encrypted sql.NullString
 	var model sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT api_key_encrypted, model FROM restaurant_minimax_config WHERE restaurant_id = ?`,
+		portableSQL(`SELECT api_key_encrypted, model FROM restaurant_minimax_config WHERE restaurant_id = ?`),
 		restaurantID,
 	).Scan(&encrypted, &model)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -257,15 +257,15 @@ func (s *Server) handleBOMiniMaxConfigSet(w http.ResponseWriter, r *http.Request
 	// 3) Persist.
 	if !encrypted.Valid && model == "" {
 		if _, err := s.db.ExecContext(r.Context(),
-			`DELETE FROM restaurant_minimax_config WHERE restaurant_id = ?`, a.ActiveRestaurantID); err != nil {
+			portableSQL(`DELETE FROM restaurant_minimax_config WHERE restaurant_id = ?`), a.ActiveRestaurantID); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error guardando configuración"})
 			return
 		}
 	} else {
 		if _, err := s.db.ExecContext(r.Context(),
-			`INSERT INTO restaurant_minimax_config (restaurant_id, api_key_encrypted, model)
+			nativeSQL(`INSERT INTO restaurant_minimax_config (restaurant_id, api_key_encrypted, model)
 			 VALUES (?, ?, ?)
-			 ON DUPLICATE KEY UPDATE api_key_encrypted = VALUES(api_key_encrypted), model = VALUES(model)`,
+			 ON DUPLICATE KEY UPDATE api_key_encrypted = VALUES(api_key_encrypted), model = VALUES(model)`, `INSERT INTO restaurant_minimax_config (restaurant_id, api_key_encrypted, model) VALUES (?, ?, ?) ON CONFLICT (restaurant_id) DO UPDATE SET api_key_encrypted = EXCLUDED.api_key_encrypted, model = EXCLUDED.model`),
 			a.ActiveRestaurantID, encrypted, model); err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Error guardando configuración"})
 			return

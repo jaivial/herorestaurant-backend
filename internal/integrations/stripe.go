@@ -90,6 +90,26 @@ func (s *StripeClient) CreateCheckoutSession(ctx context.Context, amountCents in
 	return &out, err
 }
 
+// CreateCheckoutSessionKeyed is CreateCheckoutSession with an Idempotency-Key:
+// a retry with the same key and parameters returns the session Stripe already
+// created (within Stripe's idempotency window) instead of a second one.
+func (s *StripeClient) CreateCheckoutSessionKeyed(ctx context.Context, key string, amountCents int64, currency, description, successURL, cancelURL string, metadata map[string]string) (*CheckoutSession, error) {
+	form := url.Values{}
+	form.Set("mode", "payment")
+	form.Set("success_url", successURL)
+	form.Set("cancel_url", cancelURL)
+	form.Set("line_items[0][quantity]", "1")
+	form.Set("line_items[0][price_data][currency]", currency)
+	form.Set("line_items[0][price_data][unit_amount]", fmt.Sprintf("%d", amountCents))
+	form.Set("line_items[0][price_data][product_data][name]", description)
+	for k, v := range metadata {
+		form.Set("metadata["+k+"]", v)
+	}
+	var out CheckoutSession
+	err := s.doIdempotent(ctx, http.MethodPost, "/checkout/sessions", form, &out, key)
+	return &out, err
+}
+
 // Event is a Stripe webhook event (subset).
 type Event struct {
 	ID   string    `json:"id"`

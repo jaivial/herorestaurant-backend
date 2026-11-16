@@ -73,7 +73,7 @@ func (s *Server) loadCafesPageSEO(ctx context.Context, restaurantID int) cafesPa
 		cols += f.column
 		targets[i] = &raw[i]
 	}
-	err := s.db.QueryRowContext(ctx, "SELECT "+cols+" FROM restaurant_page_visibility WHERE restaurant_id = ?", restaurantID).Scan(targets...)
+	err := s.db.QueryRowContext(ctx, portableSQL("SELECT "+cols+" FROM restaurant_page_visibility WHERE restaurant_id = ?"), restaurantID).Scan(targets...)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("cafes_page_seo_v1 load_failed restaurant_id=%d err=%v", restaurantID, err)
@@ -123,7 +123,7 @@ func (s *Server) handleBOCafesSEOPut(w http.ResponseWriter, r *http.Request) {
 			sets += ", "
 		}
 		cols += f.column
-		sets += f.column + " = VALUES(" + f.column + ")"
+		sets += f.column + sqlFragment(" = VALUES("+f.column+")", " = EXCLUDED."+f.column)
 		values = append(values, clean)
 	}
 	placeholders := ""
@@ -132,7 +132,8 @@ func (s *Server) handleBOCafesSEOPut(w http.ResponseWriter, r *http.Request) {
 	}
 	args := append([]any{a.ActiveRestaurantID}, values...)
 	if _, err := s.db.ExecContext(r.Context(),
-		"INSERT INTO restaurant_page_visibility (restaurant_id, "+cols+") VALUES (?"+placeholders+") ON DUPLICATE KEY UPDATE "+sets,
+		// Single collidable key: uniq_rest_page_vis_restaurant (id is generated).
+		portableSQL("INSERT INTO restaurant_page_visibility (restaurant_id, "+cols+") VALUES (?"+placeholders+") "+sqlFragment("ON DUPLICATE KEY UPDATE ", "ON CONFLICT (restaurant_id) DO UPDATE SET ")+sets),
 		args...); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando el SEO de cafés")
 		return

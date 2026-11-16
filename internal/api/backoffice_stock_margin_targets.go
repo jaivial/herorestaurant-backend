@@ -72,7 +72,7 @@ func (s *Server) validateMarginScopeKey(restaurantID int, kind, key string) stri
 		// The table name comes from a fixed internal mapping, never from user
 		// input, so it cannot be used for injection.
 		if err := s.db.QueryRow(
-			`SELECT COUNT(*) FROM `+table+` WHERE restaurant_id=? AND id=?`,
+			portableSQL(`SELECT COUNT(*) FROM `+table+` WHERE restaurant_id=? AND id=?`),
 			restaurantID, categoryID).Scan(&exists); err != nil || exists == 0 {
 			return "La categoria indicada no existe"
 		}
@@ -84,7 +84,7 @@ func (s *Server) validateMarginScopeKey(restaurantID int, kind, key string) stri
 		}
 		var exists int
 		if err := s.db.QueryRow(
-			`SELECT COUNT(*) FROM stock_categories WHERE restaurant_id=? AND id=?`,
+			portableSQL(`SELECT COUNT(*) FROM stock_categories WHERE restaurant_id=? AND id=?`),
 			restaurantID, categoryID).Scan(&exists); err != nil || exists == 0 {
 			return "La categoria de stock indicada no existe"
 		}
@@ -150,8 +150,9 @@ func (s *Server) handleBOStockMarginTargets(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) loadMarginScopeTargets(ctx context.Context, restaurantID int) (map[string]*float64, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT scope_kind, scope_key, target_food_cost_pct
-		   FROM stock_margin_scopes WHERE restaurant_id=? AND is_active=1`, restaurantID)
+		nativeSQL(`SELECT scope_kind, scope_key, target_food_cost_pct
+		   FROM stock_margin_scopes WHERE restaurant_id=? AND is_active=1`, `SELECT CAST(scope_kind AS text), scope_key, target_food_cost_pct
+		   FROM stock_margin_scopes WHERE restaurant_id=? AND is_active=1`), restaurantID)
 	if err != nil {
 		return nil, err
 	}

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 const stockImportMaxBytes = 8 << 20
@@ -345,9 +346,10 @@ func (s *Server) handleBOStockItemsImport(w http.ResponseWriter, r *http.Request
 		}
 		var exists int
 		if rows[index].SKU != "" {
-			_ = s.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM stock_items WHERE restaurant_id=? AND sku=? AND deleted_at IS NULL)`, a.ActiveRestaurantID, rows[index].SKU).Scan(&exists)
+			// PG EXISTS is boolean; the CASE keeps the int Scan (errors stay ignored as in source).
+			_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT EXISTS(SELECT 1 FROM stock_items WHERE restaurant_id=? AND sku=? AND deleted_at IS NULL)`, `SELECT CASE WHEN EXISTS(SELECT 1 FROM stock_items WHERE restaurant_id=? AND app.norm(sku) = app.norm(?) AND deleted_at IS NULL) THEN 1 ELSE 0 END`), a.ActiveRestaurantID, rows[index].SKU).Scan(&exists)
 		} else {
-			_ = s.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM stock_items WHERE restaurant_id=? AND LOWER(name)=LOWER(?) AND deleted_at IS NULL)`, a.ActiveRestaurantID, rows[index].Name).Scan(&exists)
+			_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT EXISTS(SELECT 1 FROM stock_items WHERE restaurant_id=? AND LOWER(name)=LOWER(?) AND deleted_at IS NULL)`, `SELECT CASE WHEN EXISTS(SELECT 1 FROM stock_items WHERE restaurant_id=? AND app.norm(name) = app.norm(?) AND deleted_at IS NULL) THEN 1 ELSE 0 END`), a.ActiveRestaurantID, rows[index].Name).Scan(&exists)
 		}
 		if exists != 0 {
 			rows[index].Errors = append(rows[index].Errors, "item already exists")
@@ -378,25 +380,25 @@ func (s *Server) handleBOStockItemsImport(w http.ResponseWriter, r *http.Request
 		baseUnit, _ := stockBaseUnitForDimension(row.Dimension)
 		var categoryID any
 		if row.Category != "" {
-			_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_categories (restaurant_id,name) VALUES (?,?) ON DUPLICATE KEY UPDATE name=VALUES(name)`, a.ActiveRestaurantID, row.Category)
+			// Only uq_stock_category_name (restaurant_id,name) can collide (id is generated).
+			_, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_categories (restaurant_id,name) VALUES (?,?) ON DUPLICATE KEY UPDATE name=VALUES(name)`, `INSERT INTO stock_categories (restaurant_id,name) VALUES (?,?) ON CONFLICT (restaurant_id, app.norm(name)) DO UPDATE SET name=EXCLUDED.name`), a.ActiveRestaurantID, row.Category)
 			if err != nil {
 				httpx.WriteError(w, http.StatusBadRequest, "Category import failed")
 				return
 			}
 			var id int64
-			if err = tx.QueryRowContext(r.Context(), `SELECT id FROM stock_categories WHERE restaurant_id=? AND name=?`, a.ActiveRestaurantID, row.Category).Scan(&id); err != nil {
+			if err = tx.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM stock_categories WHERE restaurant_id=? AND name=?`, `SELECT id FROM stock_categories WHERE restaurant_id=? AND app.norm(name) = app.norm(?)`), a.ActiveRestaurantID, row.Category).Scan(&id); err != nil {
 				httpx.WriteError(w, http.StatusBadRequest, "Category import failed")
 				return
 			}
 			categoryID = id
 		}
-		res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_items (restaurant_id,category_id,sku,name,kind,base_dimension,base_unit,is_tracked,deduction_source) VALUES (?,?,?,?,?,?,?,?,?)`, a.ActiveRestaurantID, categoryID, stockNullableString(row.SKU), row.Name, row.Kind, row.Dimension, baseUnit, stockBoolInt(row.IsTracked), row.DeductionSource)
+		itemID, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO stock_items (restaurant_id,category_id,sku,name,kind,base_dimension,base_unit,is_tracked,deduction_source) VALUES (?,?,?,?,?,?,?,?,?)`), "id", a.ActiveRestaurantID, categoryID, stockNullableString(row.SKU), row.Name, mysqlUpperEnumArg(row.Kind), mysqlUpperEnumArg(row.Dimension), baseUnit, stockBoolInt(row.IsTracked), mysqlUpperEnumArg(row.DeductionSource))
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Item import failed")
 			return
 		}
-		itemID, _ := res.LastInsertId()
-		if _, err = tx.ExecContext(r.Context(), `INSERT INTO stock_item_units (restaurant_id,stock_item_id,code,label,factor_to_base,is_default_purchase,is_default_display,can_purchase,can_recipe,can_count) VALUES (?,?,?,?,?,1,1,1,1,1)`, a.ActiveRestaurantID, itemID, row.UnitCode, row.UnitLabel, row.UnitFactor); err != nil {
+		if _, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_item_units (restaurant_id,stock_item_id,code,label,factor_to_base,is_default_purchase,is_default_display,can_purchase,can_recipe,can_count) VALUES (?,?,?,?,?,1,1,1,1,1)`), a.ActiveRestaurantID, itemID, row.UnitCode, row.UnitLabel, row.UnitFactor); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "Unit import failed")
 			return
 		}

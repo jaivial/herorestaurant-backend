@@ -1,0 +1,794 @@
+{
+  "domain": "whatsapp_bot",
+  "inventory": "sql-inventory-r55.json (dbmigrate-r14)",
+  "repo_call_sites": 2475,
+  "repo_native_sites": 1791,
+  "repo_blocked_on_pg": 3,
+  "repo_unwrapped": 681,
+  "repo_dynamic": 95,
+  "audit_failures": 0,
+  "helper_internal_excluded": 9,
+  "prepared_stmt_calls_excluded": 3,
+  "repo_provisional_gate_list": [
+    "internal/api/backoffice_uazapi_provisioning.go:637",
+    "internal/api/seo_item_routes.go:707",
+    "internal/api/seo_item_routes.go:715",
+    "internal/api/site_builder_registrar.go:169"
+  ],
+  "runtime_verified": 0,
+  "pg_ready": false,
+  "sites": 316,
+  "native_syntax_ported": 316,
+  "blocked_on_pg": 0,
+  "remaining": 0,
+  "remaining_dynamic": 0,
+  "files": 53,
+  "done_files": 53,
+  "syntax_complete": false,
+  "ledger": [
+    {
+      "file": "internal/api/backoffice_uazapi_provisioning.go",
+      "sites": 17,
+      "native_syntax_ported": 17,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_uazapi_servers_admin.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/conversation_history.go",
+      "sites": 8,
+      "native_syntax_ported": 8,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/conversation_state.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/member_whatsapp_verification.go",
+      "sites": 6,
+      "native_syntax_ported": 6,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/special_date_whatsapp_only.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/special_date_whatsapp_only_tools.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_admin.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_admin_reads.go",
+      "sites": 15,
+      "native_syntax_ported": 15,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_ai_config.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_booking_resend_tools.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_catalog_extras.go",
+      "sites": 10,
+      "native_syntax_ported": 10,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_chat_images.go",
+      "sites": 3,
+      "native_syntax_ported": 3,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_config_admin.go",
+      "sites": 13,
+      "native_syntax_ported": 13,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_context_sqlite.go",
+      "sites": 16,
+      "native_syntax_ported": 16,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_dish_allergens_tools.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_executor.go",
+      "sites": 22,
+      "native_syntax_ported": 22,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_extras_admin.go",
+      "sites": 6,
+      "native_syntax_ported": 6,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_flags.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_floor.go",
+      "sites": 7,
+      "native_syntax_ported": 7,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_groupmenu_admin.go",
+      "sites": 8,
+      "native_syntax_ported": 8,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_groupmenu_party.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_groupmenu_remove.go",
+      "sites": 6,
+      "native_syntax_ported": 6,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_history.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_human_takeover.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_inbound_queue.go",
+      "sites": 5,
+      "native_syntax_ported": 5,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_invoice_tools.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_media_ops.go",
+      "sites": 7,
+      "native_syntax_ported": 7,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_menu_tools.go",
+      "sites": 7,
+      "native_syntax_ported": 7,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_mobility_admin.go",
+      "sites": 5,
+      "native_syntax_ported": 5,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_notif_settings.go",
+      "sites": 5,
+      "native_syntax_ported": 5,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_privileged_contacts.go",
+      "sites": 3,
+      "native_syntax_ported": 3,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_privileged_control_tools.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_prompt.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_rag.go",
+      "sites": 8,
+      "native_syntax_ported": 8,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_rice_admin.go",
+      "sites": 6,
+      "native_syntax_ported": 6,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_sameday.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_service_session.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_admin_tools.go",
+      "sites": 52,
+      "native_syntax_ported": 52,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_create.go",
+      "sites": 3,
+      "native_syntax_ported": 3,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_crud_tools.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_date_adelanto.go",
+      "sites": 5,
+      "native_syntax_ported": 5,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_policy.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_special_tools.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_staff_bookings.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_tools_v2.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_unsubscribe.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_webhook.go",
+      "sites": 3,
+      "native_syntax_ported": 3,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_webhook_evolution.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_bot_ws_ops.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_connection_watchdog.go",
+      "sites": 3,
+      "native_syntax_ported": 3,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_outbox.go",
+      "sites": 9,
+      "native_syntax_ported": 9,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/whatsapp_unreachable.go",
+      "sites": 1,
+      "native_syntax_ported": 1,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    }
+  ],
+  "semantic_open": [
+    {
+      "site": "executor botFindBookings",
+      "note": "to_char for DATE/TIME formats; CURDATE() -> UTC statement date (session UTC); MySQL CONCAT(cc, phone) is NULL when phone is NULL, so PG uses || (NULL-propagating) not concat(). special_dates title subquery LIMIT 1 without ORDER BY: arbitrary row on both engines (not equivalence-proven)."
+    },
+    {
+      "site": "executor create booking InsertID",
+      "note": "go-sql-driver v1.9.3 LastInsertId never errors, so sqldb.InsertID keeps the MySQL path identical; PG RETURNING id. Business guards (35-day horizon, day-open, capacity) are Go-side and unchanged."
+    },
+    {
+      "site": "executor cancel tx",
+      "note": "cancelled_bookings INSERT..SELECT: NOW() -> date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') (naive UTC cancellation_date); TIME -> varchar(10) explicit CAST AS text ('HH:MM:SS' both). The ignored post-insert read now runs in sqldb.TxStatementScope (savepoint) so a failed read does not abort the PG tx; ErrNoRows is not a statement error. txaudit does not see calls inside withTx closures; reviewed manually: INSERT/occupancy/DELETE errors propagate unchanged."
+    },
+    {
+      "site": "executor modify booking",
+      "note": "Dynamic UPDATE built from fixed set items; camelCase highChairs/babyStrollers quoted via sqlFragment; rebound once. RowsAffected unused. SOURCE BEHAVIOUR kept: curDate scanned from a DATE with parseTime is RFC3339 text ('...T00:00:00Z'), so curDate==effDate never holds and the own seats are not subtracted; pgx gives the same string. Preserved, documented, not fixed."
+    },
+    {
+      "site": "reservation_manager camelCase",
+      "note": "\"dailyLimit\"/\"reservationDate\" quoted on PG (imported schema keeps MySQL case)."
+    },
+    {
+      "site": "fichaje stop (WhatsApp)",
+      "note": "Madrid wall-clock strings unchanged; same PG minutes expression as the members-domain clock port (trunc = TIMESTAMPDIFF, NULL start -> NULL kept; naive subtraction ignores DST like TIMESTAMPDIFF on wall clock). fichajeMu in-process lock unchanged."
+    },
+    {
+      "site": "time entries ORDER BY start_time",
+      "note": "start_time nullable: NULLS FIRST added (MySQL ASC). work_schedules start_time NOT NULL: unchanged."
+    },
+    {
+      "site": "admin_reads enums",
+      "note": "restaurant_tables shape/status, site_builder_sites.status, site_builder_pages.page_type read CAST AS text; COALESCE(enum,'') would fail on PG ('' is not an enum label) so the cast is required."
+    },
+    {
+      "site": "admin_reads timestamps",
+      "note": "DATE_FORMAT '%Y-%m-%dT%H:%i:%sZ' -> to_char 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'. timestamptz columns render in session TimeZone, pinned UTC by sqldb (code-grounded, runtime QA pending); naive columns (sent_at, legal_pages.updated_at) render the stored UTC wall clock."
+    },
+    {
+      "site": "admin_reads cancelled ORDER BY alias",
+      "note": "ORDER BY cancellation_date resolves to the formatted output alias on both engines (minute granularity); ties arbitrary on both."
+    },
+    {
+      "site": "bookings summary LOWER(TRIM(status)) IN (...)",
+      "note": "status ci_ai vs utf8mb4_general_ci: accent delta open; TRIM covers PAD SPACE for spaces."
+    },
+    {
+      "site": "ORDER BY on ci_ai text (legal_pages slug, site pages name)",
+      "note": "ICU vs MySQL collation ordering gap open."
+    },
+    {
+      "site": "tx-interface callers (next checkpoints)",
+      "note": "whatsapp_bot_config_admin botConfigMesasBefore/SalonCondesaBefore(forUpdate), whatsapp_bot_groupmenu_admin botGMenuQuerier, whatsapp_bot_special_admin_tools botRestoreSource*(lock) + BeginTx in rag/special_admin_tools/special_date_adelanto not yet ported."
+    },
+    {
+      "site": "botFullRowHash SELECT * (special_admin_tools:309)",
+      "note": "Hash over RawBytes of every bookings column. Code-grounded: go-sql-driver v1.9.3 binary protocol + parseTime(loc UTC) and pgx v5 stdlib yield identical bytes for bookings' types (int/smallint -> decimal text; DATE and timestamptz -> time.Time UTC -> RFC3339Nano via database/sql; TIME -> text 'HH:MM:SS'; text -> raw bytes; NULL -> nil) and the plan keeps source column order/names. Not a jsonb path (special_json/arroz_* are text). Hashes are compared within one engine only; proposals pending across cutover would fail closed (stale), never mis-apply. Runtime QA pending."
+    },
+    {
+      "site": "botSpecialRowSelect",
+      "note": "MySQL const kept for 8 unported callers in other WhatsApp files; ported callers use botSpecialRowSelectSQL() (to_char). FOR UPDATE suffix kept: PG row lock + RC re-read of latest version, same outcome as InnoDB locking read."
+    },
+    {
+      "site": "botSpecialAdminEvent (execQueryer)",
+      "note": "Error logged and ignored by source while caller tx continues; when ex is *sql.Tx the PG insert runs in sqldb.TxStatementScope. Covers callers in persist and execute txs (manual review; txaudit does not see interface/closure calls)."
+    },
+    {
+      "site": "botProposalPersist tx",
+      "note": "Ignored old-chats lookup runs in savepoint scope; supersede + InsertID (RETURNING) errors propagate. Single-active invariant uq_wa_op_active (restaurant_id, booking_id, active) present in plan as ix__wa_bot_op_proposals__uq_wa_op_active; NULL active distinct on both engines."
+    },
+    {
+      "site": "approve claim / single use",
+      "note": "UPDATE ... state='sent'->'done' WHERE state='sent' AND active=1 AND expires_at > now-UTC: n==1 gate; the WHERE guarantees a changed row so matched==changed. Concurrent claims: second waits on row lock, re-evaluates WHERE on PG (state no longer 'sent') -> 0 rows, same as InnoDB. UTC_TIMESTAMP() -> date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC'). Code review only."
+    },
+    {
+      "site": "botSpecialLockRefs FOR SHARE",
+      "note": "Row share locks on special_dates/menus/sections (all joined tables) on both. GAP: MySQL REPEATABLE READ next-key/gap locks also block INSERT of new reference rows for that date; PG has no equivalent (no predicate locks under RC) - an admin could add a new menu row concurrently. Locking/isolation gap open, mitigated by the after_hash re-validation before commit."
+    },
+    {
+      "site": "rate limit created_at window",
+      "note": "created_at TIMESTAMP (instant, timestamptz on PG) >= statement time truncated - 10 min."
+    },
+    {
+      "site": "booking_modifications NOW()",
+      "note": "naive modification_date: date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')."
+    },
+    {
+      "site": "flush notify LIMIT 5 without ORDER BY",
+      "note": "arbitrary subset on both engines."
+    },
+    {
+      "site": "QUALIFICATION of row-hash/backup byte claims",
+      "note": "All 'identical bytes' statements (botFullRowHash, cancel row_backup, modification_history backup) are SOURCE-CODE REVIEW ONLY of go-sql-driver v1.9.3 and pgx v5.11 stdlib paths (DATE: MySQL binary DATE + parseTime -> time.Time; pgx DateCodec -> time.Time; both -> database/sql RFC3339Nano). No runtime QA proof exists. Not accepted as equivalent until QA."
+    },
+    {
+      "site": "CUTOVER GATE pending proposals / backups",
+      "note": "Proposals pending at cutover (before_hash computed on MySQL) and cancel row_backup/modification_history_backup JSON written on MySQL then restored on PG are NOT accepted as 'fail stale' by inference. Needs an explicit cutover handling plan (drain/expire pending proposals before switch, or replay/rehash verification of stored backups). Open gate."
+    },
+    {
+      "site": "cancel execute",
+      "note": "SELECT * backups portable; formatted read to_char + quoted camelCase; cancelled_bookings INSERT quoted, NOW() -> naive UTC statement time, id via InsertID (same failure message); DELETE n!=1 gate unchanged. TIME values: imported PG time(0) only holds 00:00-24:00; MySQL TIME range (-838..838h) differences remain unresolved (no adapter)."
+    },
+    {
+      "site": "restore source (interface querier + lock flag)",
+      "note": "Callers: botRestorePropose -> s.db lock=false; botRestoreExecute -> tx lock=true. ORDER BY id DESC LIMIT 1 FOR UPDATE and cancelled_bookings FOR UPDATE portable; errors fail closed (stale+rollback), no continued tx. Existence COUNT is a plain read: MySQL RR snapshot vs PG RC statement snapshot differ only under concurrent insert of the same id, which the PK rejects anyway."
+    },
+    {
+      "site": "restore execute dynamic INSERTs",
+      "note": "bookings / modification_history column names from the stored backup quoted per dialect (backtick vs double quote, exact case) and rebound once; values are Go strings: pgx sends string args in text format (extended_query_builder chooseParameterFormatCode) so the server parses per column type. DATE backup text 'YYYY-MM-DDT00:00:00Z' parsed by PG date input (source-review, runtime QA pending). SOURCE FACT (production-confirmed, production-readonly-metadata-20261111.tsv lines 71-77, coordinator read-only 16:38): modification_history has no restaurant_id (columns id, booking_id, customer_phone, field_modified, old_value, new_value, modification_date). Backups only contain the columns that existed when written."
+    },
+    {
+      "site": "botCancelBlockers COUNT(*) ... FOR UPDATE",
+      "note": "PG forbids FOR UPDATE with aggregates; PG twin counts a FOR UPDATE subquery (locks the existing rows). MySQL next-key locks on booking_documents are not reproduced; protection on PG relies on the booking row FOR UPDATE: invoices FK (FOR KEY SHARE) conflicts with it; booking_documents has NO FK to bookings, so a concurrent document insert is only serialized if its code path locks the booking row - unverified locking gap."
+    },
+    {
+      "site": "botCreateFindDuplicates FOR UPDATE",
+      "note": "MySQL RR next-key lock on (restaurant,date,time) makes a twin INSERT wait; PG has no gap locks -> duplicate-create race open (locking gap). Candidate faithful approach (advisory lock on the same key in every insert path) is NOT implemented: would need all panel/bot insert paths; tracked as technical work."
+    },
+    {
+      "site": "edit execute",
+      "note": "botEditCurrentSelectSQL quotes babyStrollers/highChairs; whitelisted dynamic SET quoted per dialect; booking_modifications NOW() -> naive UTC statement time. MySQL consts botSpecialRowSelect/botEditCurrentSelect kept for unported files."
+    },
+    {
+      "site": "create execute",
+      "note": "InsertID RETURNING; quoted camelCase; panel guard/second validation unchanged (botCreateValidate interface querier: tx for re-validation, errors fail closed)."
+    },
+    {
+      "site": "satellites (floor/groupmenu_admin/groupmenu_remove/rice/mobility/flags)",
+      "note": "Ported execute paths switch to botSpecialRowSelectSQL() + FOR UPDATE; botSpecialRowSelect const kept (still used by whatsapp_bot_extras_admin.go). Backtick-quoted static UPDATEs -> nativeSQL with double quotes; whitelisted dynamic SETs quoted per dialect and rebound once; result_json UPDATEs portable; booking_modifications NOW() -> naive UTC statement time; *CurrentSelect consts have no mixed-case columns -> portableSQL at the call."
+    },
+    {
+      "site": "groupmenu menus.price COALESCE(price,'')",
+      "note": "price numeric(10,2) NOT NULL: PG would coerce '' to numeric and error; PG twin COALESCE(CAST(price AS text),''); text equals MySQL DECIMAL driver bytes."
+    },
+    {
+      "site": "botGMenuQuerier (plain/tx) old-title read",
+      "note": "Callers: propose s.db, execute claim tx. Source ignores any error and falls back to a placeholder title; when q is *sql.Tx the PG read now runs in sqldb.TxStatementScope (ErrNoRows excluded). botGMenuFetchMenu errors propagate (fail closed)."
+    },
+    {
+      "site": "floor readRows (botRowQuerier plain/tx)",
+      "note": "Query composed by callers from portable literals, wrapped portableSQL at the single call; errors propagate. No ORDER BY in source: row order (and therefore merge order) engine-arbitrary - not proven equivalent."
+    },
+    {
+      "site": "extras_admin",
+      "note": "Last caller of the MySQL botSpecialRowSelect switched to botSpecialRowSelectSQL(); the const is kept as the MySQL half of that function. Whitelisted dynamic SET quoted per dialect; botLoadBookingExtras ORDER BY is_custom,id (NOT NULL) portable."
+    },
+    {
+      "site": "catalog_extras upsert",
+      "note": "ON DUPLICATE KEY -> ON CONFLICT (restaurant_id, slug): only unique besides identity PK (uq_restaurant_booking_extras). slug ci_ai unique index keeps CI collision (accent/PAD delta open). FOR UPDATE reads portable; verification reads unchanged."
+    },
+    {
+      "site": "config_admin queriers (forUpdate)",
+      "note": "botConfigDayBefore/DailyLimitBefore/MesasBefore/SalonCondesaBefore: callers propose -> s.db forUpdate=false, execute -> claim tx true (before re-read), post-write re-read tx false. Errors propagate (fail closed). camelCase reservationDate/dailyLimit quoted; mesas table fixed by botConfigMesasTable. LOCKING GAP: on MySQL RR the FOR UPDATE also next-key/gap-locks absent dates/rows so a concurrent panel insert of the same (restaurant,date) waits; PG locks existing rows only. The unique keys still stop duplicates (a concurrent insert would make the bot upsert update it), but the before-key snapshot can race - open."
+    },
+    {
+      "site": "config_admin upserts",
+      "note": "restaurant_days multi-row ON CONFLICT (restaurant_id,date) safe because botConfigValidateDates dedups (PG would error on a row touched twice). mesas_de_dos/tres ON CONFLICT (restaurant_id, reservationDate quoted); salon_condesa ON CONFLICT (restaurant_id,date); reservation_manager DELETE+INSERT quoted. Each is the single collidable unique key in the plan."
+    },
+    {
+      "site": "config_admin date scan",
+      "note": "SELECT date scanned into string: parseTime/pgx both time.Time -> RFC3339 key strings; same before-key on each engine (source-review only)."
+    },
+    {
+      "site": "notif_settings",
+      "note": "PK restaurant_id is the only unique key -> ON CONFLICT (restaurant_id). Go bool args into smallint: PG CAST(CAST(? AS boolean) AS integer); MySQL path unchanged (driver sends 1/0). Scan smallint->bool via database/sql (0/1 only) same on both."
+    },
+    {
+      "site": "special_create",
+      "note": "InsertID RETURNING (v1.9.3 LastInsertId never errors); camelCase quoted; validation querier errors fail closed."
+    },
+    {
+      "site": "PROVISIONAL backoffice_uazapi_provisioning.go:637 (restaurant_uazapi_instances ODKU)",
+      "note": "Two unique keys: uniq(restaurant_id) and uniq(instance_name). MySQL ODKU updates the first colliding row, which on an instance_name collision can be ANOTHER restaurant's row (cross-tenant overwrite); PG variant ON CONFLICT (restaurant_id) raises a unique violation on an instance_name collision instead. Counted native-provisional and listed in provisional_gate_list; not source-equivalent. Names are nv-<rid>-<unixnano> unless the provider returns its own name."
+    },
+    {
+      "site": "uazapi metadata JSON_MERGE_PATCH",
+      "note": "PG twin: CASE WHEN jsonb_typeof(metadata_json)='object' THEN metadata_json || patch ELSE patch END. Exact RFC7396 only for this patch shape (flat object of non-null scalars: webhook_url/webhook_applied/webhook_synced_at); nested-object or null-valued patches would differ. Patch bound twice on PG (recordWebhookArgs). jsonb key-order/text normalisation QA open."
+    },
+    {
+      "site": "uazapi timestamps",
+      "note": "updated_at/created_at timestamptz -> date_trunc('second', statement_timestamp()); last_seen_at/connected_at naive -> UTC wall clock. Explicit updated_at assignment preserved (trigger keeps explicit values)."
+    },
+    {
+      "site": "reactivate RowsAffected (found = affected > 0)",
+      "note": "MySQL counts changed rows: an already-active row updated within the same second (same updated_at) reports 0 -> found=false. PG twin adds ROW(is_active, status COLLATE C, updated_at) IS DISTINCT FROM the new values to keep that contract."
+    },
+    {
+      "site": "pickWhatsAppServer ordering",
+      "note": "MySQL DECIMAL division scale 4 + div_precision_increment 4 = 8 -> PG ROUND(.., 8). LIMIT 1 tie order by priority,id deterministic."
+    },
+    {
+      "site": "updateRuntime CASE params",
+      "note": "Untyped placeholders reused in CASE comparisons cast explicitly to text / integer on PG; values and branches unchanged."
+    },
+    {
+      "site": "restaurant_integrations / whatsapp_bot_config / ai keys / bot_ai_config upserts",
+      "note": "Each table's PK is its only unique key -> ON CONFLICT (pk). config_json jsonb write CAST(? AS jsonb), read CAST AS text (jsonb normalisation QA open)."
+    },
+    {
+      "site": "uazapi_servers",
+      "note": "InsertID RETURNING (v1.9.3 LastInsertId never errors; exec-error branches dup/schema unchanged). uniq(base_url) duplicate detection: isSQLDuplicateError text match covers PG 'duplicate key value violates unique constraint'. Dynamic SET metadata_json CAST(? AS jsonb) and updated_at fragment, rebound once; select base reads metadata_json as text."
+    },
+    {
+      "site": "webhook instance resolution",
+      "note": "instance_token / connected_phone lookups LIMIT 1 without ORDER BY on non-unique columns: arbitrary row on both engines; ci_ai vs source collation compare for token text (CI/PAD) open."
+    },
+    {
+      "site": "secrets",
+      "note": "No token/key/.env values read or printed; only schema and code types used."
+    },
+    {
+      "site": "whatsapp_bot_context_sqlite.go (16)",
+      "note": "All statements run on *botstore.DB (SQLite or bot_context schema in newvillacarmen_business), whose dialect is s.db.Postgres and which rebinds placeholders itself; pre-existing PG branches (json_set->jsonb_set, json_extract->->>) kept. Marked selectedSQL (store-selected), no rewrite; r5 bot_context copy/roundtrip proof untouched. conversation_messages.content is TEXT in bot_context: a future NUL byte would be rejected on PG (SQLite accepts) - NUL gap for the context store remains open (r5 data had none). FTS (bot_knowledge_fts) not in this file."
+    },
+    {
+      "site": "outbox enqueue INSERT IGNORE",
+      "note": "PG: ON CONFLICT (delivery_key) DO NOTHING - delivery_key is the only unique besides identity PK; NULL keys never collide on either engine. IGNORE's other effects (strict-mode truncation of overlength event/recipient, other errors downgraded to warnings) are NOT reproduced: PG raises. Open delta."
+    },
+    {
+      "site": "outbox claim UPDATE ... ORDER BY id LIMIT",
+      "note": "PG: UPDATE ... WHERE id IN (SELECT id ... ORDER BY id LIMIT ? FOR UPDATE), no SKIP LOCKED (source blocks too). Under concurrency PG re-checks blocked rows after wait and may claim FEWER than limit (MySQL continues scanning); never double-claims since outer WHERE re-evaluated via locked_by token. Code review only. Naive timestamps (locked_at/next_attempt_at/sent_at) -> UTC statement time; INTERVAL ? SECOND -> CAST(? AS integer)*INTERVAL '1 second'. RowsAffected n==0 gate unchanged (WHERE guarantees change)."
+    },
+    {
+      "site": "outbox reconnect flush ORDER BY LIMIT 1000",
+      "note": "PG id IN (subquery ORDER BY id LIMIT 1000); rowcount unused."
+    },
+    {
+      "site": "conversation_history",
+      "note": "Business tables (timestamptz). Enums message_type/role/status read CAST AS text; enum writes take text param (invalid label errors on both, strict). DATE_SUB(NOW(), INTERVAL ? HOUR) -> statement time - n hours; NULLS FIRST/LAST on nullable created_at/last_activity_at; InsertID RETURNING; ignored session/state UPDATEs outside any tx."
+    },
+    {
+      "site": "routing gates carried",
+      "note": "uazapi:637 provisional (instance_name collision cross-tenant behaviour unresolved); webhook token/phone LIMIT 1 on non-unique columns may route to an arbitrary tenant on both engines - must be resolved before cutover, never silently pick."
+    },
+    {
+      "site": "whatsapp_bot_rag.go (8)",
+      "note": "All on *botstore.DB (SQLite FTS5 vs bot_context PG tsvector branches already explicit by k.db.Postgres); marked selectedSQL only. Rebuild tx: errors return (no ignored-continue, no savepoint needed). FTS semantics NOT equivalent: SQLite fts5 unicode61 remove_diacritics + bm25(0,0,0.5,2,1) vs PG 'simple' tsvector with Go diacritic fold + ts_rank weights; prefix/stopword/tokenizer/rank differences open (search gate, not accepted)."
+    },
+    {
+      "site": "media_ops AI flag UPDATEs",
+      "note": "RowsAffected==0 -> 'not found'. MySQL changed-rows reports 0 for an already-flagged row; PG twins add ROW(flags) IS DISTINCT FROM ROW(1..) (comida, wines, dishes, menus preview). slider +1 always changes (portable). ON UPDATE triggers fire only on real change, consistent."
+    },
+    {
+      "site": "menu_tools",
+      "note": "COALESCE(numeric price,'') -> CAST(price AS text) on PG (avoids '' numeric cast error; text equals DECIMAL driver bytes); IF() -> CASE; DATE_FORMAT -> to_char; CONCAT -> || (NULL-propagating like MySQL CONCAT); modified_at DESC NULLS LAST. ORDER BY ci_ai text (titulo/nombre/tipo) ICU vs MySQL collation gap open."
+    },
+    {
+      "site": "member_whatsapp_verification",
+      "note": "expires time.Time -> naive whatsapp_verification_expires_at via NaiveUTCArg; NOW() -> UTC statement time. NULLIF(whatsapp_number,'') PAD SPACE: PG rtrim(' ') COLLATE C twin (UCA ignorable residual). number/phone equality on ci_ai: PAD/accent delta open. Attempt counter increment ignored-error outside tx."
+    },
+    {
+      "site": "special_date_adelanto tx",
+      "note": "PG forbids qualified SET target: 'SET adelanto_amount' with alias kept for filter. INSERT..SELECT ODKU -> ON CONFLICT (special_date_menu_id, section_id) = only unique key; pairs (sdm.id, sms.id) distinct so PG never touches a row twice. Select-list param cast to numeric(10,2) via double precision (float->decimal half-way rounding QA open). Tx errors propagate; no ignored statements."
+    },
+    {
+      "site": "botstore state paths (inbound_queue 5, human_takeover 2, history 1, chat_images 3)",
+      "note": "Run on botStateDB()/botstore (PG bot store when BOT_CONTEXT_DRIVER=postgres, else MySQL); pre-existing per-store branches (LOCALTIMESTAMP(3), ON CONFLICT, quarantined filter) kept; marked selectedSQL only. LOCALTIMESTAMP is session-zone wall clock; MySQL NOW(3) session UTC - equal only if PG session TimeZone=UTC (sqldb pins UTC; botstore pool TZ not re-verified here) - QA gate."
+    },
+    {
+      "site": "campaign_suppressions INSERT IGNORE (unsubscribe, unreachable)",
+      "note": "ON CONFLICT (restaurant_id, channel, target) DO NOTHING = only unique besides PK, same as ported campaign files; NULLIF(?,0) typed bigint. IGNORE truncation of overlength target(190)/reason(255) not reproduced: PG raises (safety-critical suppression may be LOST on PG, logged) - gate, consistent with bounce UTF-8 gate."
+    },
+    {
+      "site": "tools_v2 add note",
+      "note": "MySQL '\n' literal is a newline (backslash escapes, NO_BACKSLASH_ESCAPES not in sql_mode); PG standard string would be backslash-n, so PG uses chr(10). trim() vs MySQL TRIM both strip spaces only. RowsAffected gate: append always changes row."
+    },
+    {
+      "site": "conversation_state expires_at",
+      "note": "Go formats time.Now() (process local zone) into a string bound to a TIMESTAMP column; both engines interpret it in session UTC -> same stored instant (source quirk preserved, not fixed)."
+    },
+    {
+      "site": "special_date_whatsapp_only_tools empty-date param",
+      "note": "(? <> '' AND date = ?): MySQL compares '' to DATE with a warning; PG would fail casting ''. PG twin uses CAST(NULLIF(?, '') AS date) so the branch is simply false."
+    },
+    {
+      "site": "bo_sessions expires_at / dish allergens LIKE / NULLIF titles",
+      "note": "bot service session expiry NaiveUTCArg; stock_recipes LIKE -> LOWER COLLATE C (accent/PAD gap); special_policy custom_title NULLIF PAD rtrim twin."
+    },
+    {
+      "site": "double nativeSQL wrap bug (found and fixed)",
+      "note": "Automated wrapping produced nativeSQL(nativeSQL(..)) in privileged_contacts/control_tools (same class as wa6 bot_admin); unwrapped, repo grep shows none remaining."
+    },
+    {
+      "site": "routing",
+      "note": "webhook_evolution provider_instance_id LIMIT 1 on non-unique column joins the arbitrary-tenant routing gate."
+    }
+  ],
+  "syntax_complete_excluding_blocked": true
+}

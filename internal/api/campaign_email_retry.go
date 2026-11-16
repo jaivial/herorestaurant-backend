@@ -41,27 +41,43 @@ func (s *Server) scheduleCampaignEmailRetry(ctx context.Context, recipientID int
 		return false
 	}
 	msg := truncate(sendErr, 250)
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT IGNORE INTO campaign_email_retries (recipient_id, attempts, next_at, done, last_error)
-		VALUES (?, 1, DATE_ADD(NOW(), INTERVAL ? MINUTE), 0, ?)`,
+	// INSERT IGNORE breadth here: only the PRIMARY (recipient_id) duplicate
+	// (no FK; constants; last_error <= 253 bytes fits varchar(300)). A
+	// byte-cut invalid UTF-8 msg errors on both engines (strict mode / 22021).
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
+		INSERT INTO campaign_email_retries (recipient_id, attempts, next_at, done, last_error)
+		VALUES (?, 1, DATE_ADD(NOW(), INTERVAL ? MINUTE), 0, ?)
+		ON DUPLICATE KEY UPDATE recipient_id = recipient_id`, `
+		INSERT INTO campaign_email_retries (recipient_id, attempts, next_at, done, last_error)
+		VALUES (?, 1, (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') + CAST(? AS integer) * INTERVAL '1 minute', 0, ?)
+		ON CONFLICT (recipient_id) DO NOTHING`),
 		recipientID, int(campaignRetryBackoff[0]/time.Minute), msg); err != nil {
+		slog.Default().Warn("campaign.email_retry.schedule_failed", "recipient_id", recipientID, "err", err.Error())
 		return false
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET error = ? WHERE id = ? AND status = 'failed'`,
+	_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_recipients SET error = ? WHERE id = ? AND status = 'failed'`),
 		truncate(fmt.Sprintf("temporal Titan, reintento 1/%d en 30 min: %s", campaignRetryMax, msg), 500), recipientID)
 	return true
 }
 
 // runCampaignEmailRetries sends the due retries. Called by the background loop.
 func (s *Server) runCampaignEmailRetries(ctx context.Context) {
-	rows, err := s.db.QueryContext(ctx, `
+	// next_at is a naive UTC DATETIME -> UTC wall clock, second precision.
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT x.recipient_id, x.attempts, r.restaurant_id, r.campaign_id, r.target, COALESCE(r.name, ''), COALESCE(r.booking_id, 0)
 		FROM campaign_email_retries x
 		JOIN campaign_recipients r ON r.id = x.recipient_id
 		JOIN campaigns c ON c.id = r.campaign_id
 		WHERE x.done = 0 AND x.next_at <= NOW() AND r.status = 'failed' AND r.channel = 'email'
 		  AND c.status IN ('sending', 'sent')
-		ORDER BY x.next_at LIMIT ?`, campaignRetryTickCapN)
+		ORDER BY x.next_at LIMIT ?`, `
+		SELECT x.recipient_id, x.attempts, r.restaurant_id, r.campaign_id, r.target, COALESCE(r.name, ''), COALESCE(r.booking_id, 0)
+		FROM campaign_email_retries x
+		JOIN campaign_recipients r ON r.id = x.recipient_id
+		JOIN campaigns c ON c.id = r.campaign_id
+		WHERE x.done = 0 AND x.next_at <= (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') AND r.status = 'failed' AND r.channel = 'email'
+		  AND c.status IN ('sending', 'sent')
+		ORDER BY x.next_at LIMIT ?`), campaignRetryTickCapN)
 	if err != nil {
 		return
 	}
@@ -85,7 +101,12 @@ func (s *Server) runCampaignEmailRetries(ctx context.Context) {
 		}
 		// Claim atomically: a row left claimed by an interrupted worker is
 		// ambiguous and is never retried again.
-		res, err := s.db.ExecContext(ctx, `UPDATE campaign_email_retries SET done = 2 WHERE recipient_id = ? AND done = 0`, j.id)
+		// Claim: 0 -> 2 always changes the row, so MySQL changed-rows and PG
+		// matched-rows agree (n == 1 only for the winner). A concurrent
+		// claimer blocks on the row lock and re-checks done = 0 against the
+		// committed row on both engines (InnoDB locking read / PG READ
+		// COMMITTED re-evaluation), so the loser gets 0. Autocommit statement.
+		res, err := s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_email_retries SET done = 2 WHERE recipient_id = ? AND done = 0`), j.id)
 		if err != nil {
 			continue
 		}
@@ -93,22 +114,22 @@ func (s *Server) runCampaignEmailRetries(ctx context.Context) {
 			continue
 		}
 		finish := func(status, errText string) {
-			_, _ = s.db.ExecContext(ctx, `UPDATE campaign_email_retries SET done = 1, last_error = NULLIF(?, '') WHERE recipient_id = ?`, truncate(errText, 300), j.id)
+			_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_email_retries SET done = 1, last_error = NULLIF(?, '') WHERE recipient_id = ?`), truncate(errText, 300), j.id)
 			if status == "sent" {
-				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = NOW() WHERE id = ? AND status = 'failed'`, j.id)
+				_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = NOW() WHERE id = ? AND status = 'failed'`, `UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE id = ? AND status = 'failed'`), j.id)
 			} else if status == "skipped" {
-				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'skipped', error = ? WHERE id = ? AND status = 'failed'`, truncate(errText, 500), j.id)
+				_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_recipients SET status = 'skipped', error = ? WHERE id = ? AND status = 'failed'`), truncate(errText, 500), j.id)
 			} else {
-				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET error = ? WHERE id = ? AND status = 'failed'`, truncate(errText, 500), j.id)
+				_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_recipients SET error = ? WHERE id = ? AND status = 'failed'`), truncate(errText, 500), j.id)
 			}
 		}
 		if st := campaignBounceFor(j.campaignID); func() bool { st.mu.Lock(); defer st.mu.Unlock(); return st.tripped }() {
 			// Breaker open: put it back to waiting, retry after it is resolved.
-			_, _ = s.db.ExecContext(ctx, `UPDATE campaign_email_retries SET done = 0, next_at = DATE_ADD(NOW(), INTERVAL 30 MINUTE) WHERE recipient_id = ?`, j.id)
+			_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE campaign_email_retries SET done = 0, next_at = DATE_ADD(NOW(), INTERVAL 30 MINUTE) WHERE recipient_id = ?`, `UPDATE campaign_email_retries SET done = 0, next_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') + INTERVAL '30 minutes' WHERE recipient_id = ?`), j.id)
 			continue
 		}
-		if sup, supErr := s.loadCampaignSuppressionFilter(ctx, j.restaurantID); supErr != nil {
-			_, _ = s.db.ExecContext(ctx, `UPDATE campaign_email_retries SET done = 0, next_at = DATE_ADD(NOW(), INTERVAL 30 MINUTE) WHERE recipient_id = ?`, j.id)
+		if sup, supErr := s.loadCampaignSuppressionFilterFor(ctx, j.restaurantID, []campaignProbe{{"email", j.target}}); supErr != nil {
+			_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE campaign_email_retries SET done = 0, next_at = DATE_ADD(NOW(), INTERVAL 30 MINUTE) WHERE recipient_id = ?`, `UPDATE campaign_email_retries SET done = 0, next_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') + INTERVAL '30 minutes' WHERE recipient_id = ?`), j.id)
 			continue
 		} else if sup.blocked("email", j.target) {
 			finish("skipped", "baja o direccion bloqueada antes del reintento")
@@ -116,7 +137,7 @@ func (s *Server) runCampaignEmailRetries(ctx context.Context) {
 		}
 		c, err := s.loadBOCampaign(ctx, j.restaurantID, j.campaignID)
 		if err != nil {
-			_, _ = s.db.ExecContext(ctx, `UPDATE campaign_email_retries SET done = 0, next_at = DATE_ADD(NOW(), INTERVAL 30 MINUTE) WHERE recipient_id = ?`, j.id)
+			_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE campaign_email_retries SET done = 0, next_at = DATE_ADD(NOW(), INTERVAL 30 MINUTE) WHERE recipient_id = ?`, `UPDATE campaign_email_retries SET done = 0, next_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') + INTERVAL '30 minutes' WHERE recipient_id = ?`), j.id)
 			continue
 		}
 		sendErr := s.deliverCampaignTo(ctx, j.restaurantID, c, campaignTarget{Channel: "email", Target: j.target, Name: j.name, BookingID: j.bookingID})
@@ -129,9 +150,9 @@ func (s *Server) runCampaignEmailRetries(ctx context.Context) {
 			finish("failed", "rechazo permanente en reintento: "+truncate(sendErr.Error(), 250))
 		} else if campaignSMTPTemporary(sendErr.Error()) && j.attempts+1 <= campaignRetryMax {
 			wait := campaignRetryBackoff[min(int(j.attempts), len(campaignRetryBackoff)-1)]
-			_, _ = s.db.ExecContext(ctx, `UPDATE campaign_email_retries SET done = 0, attempts = attempts + 1, next_at = DATE_ADD(NOW(), INTERVAL ? MINUTE), last_error = ? WHERE recipient_id = ?`,
+			_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE campaign_email_retries SET done = 0, attempts = attempts + 1, next_at = DATE_ADD(NOW(), INTERVAL ? MINUTE), last_error = ? WHERE recipient_id = ?`, `UPDATE campaign_email_retries SET done = 0, attempts = attempts + 1, next_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') + CAST(? AS integer) * INTERVAL '1 minute', last_error = ? WHERE recipient_id = ?`),
 				int(wait/time.Minute), truncate(sendErr.Error(), 300), j.id)
-			_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET error = ? WHERE id = ? AND status = 'failed'`,
+			_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_recipients SET error = ? WHERE id = ? AND status = 'failed'`),
 				truncate(fmt.Sprintf("temporal Titan, reintento %d/%d en %d min: %s", j.attempts+1, campaignRetryMax, int(wait/time.Minute), truncate(sendErr.Error(), 250)), 500), j.id)
 		} else {
 			finish("failed", "reintentos agotados o respuesta ambigua, no se reenvia: "+truncate(sendErr.Error(), 250))

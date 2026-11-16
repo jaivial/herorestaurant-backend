@@ -197,7 +197,7 @@ func (s *Server) botMediaAsync(rid int, label string, timeout time.Duration, run
 func (s *Server) botMediaVinoTipo(ctx context.Context, rid int, wineNum int) (string, error) {
 	var tipo string
 	if err := s.db.QueryRowContext(ctx,
-		"SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1",
+		portableSQL("SELECT COALESCE(tipo,'') FROM group_menu_wines_v2 WHERE "+vinoV2WhereLegacyNum+" LIMIT 1"),
 		vinoV2LegacyNumArgs(rid, wineNum)...).Scan(&tipo); err != nil {
 		return "", errors.New("vino no encontrado")
 	}
@@ -207,7 +207,7 @@ func (s *Server) botMediaVinoTipo(ctx context.Context, rid int, wineNum int) (st
 // botMediaSetVinoFotoPath persists the uploaded object as the wine photo.
 func (s *Server) botMediaSetVinoFotoPath(ctx context.Context, rid int, wineNum int, objectPath string) error {
 	_, err := s.db.ExecContext(ctx,
-		"UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum,
+		portableSQL("UPDATE group_menu_wines_v2 SET foto_path = ? WHERE "+vinoV2WhereLegacyNum),
 		append([]any{objectPath}, vinoV2LegacyNumArgs(rid, wineNum)...)...)
 	return err
 }
@@ -364,7 +364,9 @@ func botMediaAIVino(s *Server, ctx context.Context, rid int, p map[string]any, p
 		return nil, err
 	}
 	res, err := s.db.ExecContext(ctx,
-		"UPDATE group_menu_wines_v2 SET ai_requested_img = 1, ai_generating_img = 1 WHERE "+vinoV2WhereLegacyNum,
+		// n==0 -> not found: MySQL changed-rows (already flagged row = 0);
+		// the PG twin keeps it with an IS DISTINCT FROM predicate.
+		portableSQL("UPDATE group_menu_wines_v2 SET ai_requested_img = 1, ai_generating_img = 1 WHERE "+vinoV2WhereLegacyNum+sqlFragment("", " AND ROW(ai_requested_img, ai_generating_img) IS DISTINCT FROM ROW(1, 1)")),
 		vinoV2LegacyNumArgs(rid, wineNum)...)
 	if err != nil {
 		return nil, errors.New("no se pudo marcar el vino para la generación")
@@ -449,7 +451,7 @@ func botMediaAIComida(s *Server, ctx context.Context, rid int, p map[string]any,
 		return nil, err
 	}
 	res, err := s.db.ExecContext(ctx,
-		"UPDATE comida_items SET ai_generating = 1 WHERE id = ? AND restaurant_id = ? AND source_type = ?",
+		nativeSQL("UPDATE comida_items SET ai_generating = 1 WHERE id = ? AND restaurant_id = ? AND source_type = ?", "UPDATE comida_items SET ai_generating = 1 WHERE id = ? AND restaurant_id = ? AND source_type = ? AND ai_generating IS DISTINCT FROM 1"),
 		itemNum, rid, string(tipo))
 	if err != nil {
 		return nil, errors.New("no se pudo marcar el elemento para la generación")
@@ -485,10 +487,13 @@ func botMediaAISectionDish(s *Server, ctx context.Context, rid int, p map[string
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE group_menu_section_dishes_v2
 		SET ai_requested_img = 1, ai_generating_img = 1
-		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?`,
+		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ?`, `
+		UPDATE group_menu_section_dishes_v2
+		SET ai_requested_img = 1, ai_generating_img = 1
+		WHERE id = ? AND section_id = ? AND menu_id = ? AND restaurant_id = ? AND ROW(ai_requested_img, ai_generating_img) IS DISTINCT FROM ROW(1, 1)`),
 		dishID, sectionID, menuID, rid)
 	if err != nil {
 		return nil, errors.New("no se pudo marcar el plato para la generación")
@@ -531,10 +536,13 @@ func botMediaAIMenuPreview(s *Server, ctx context.Context, rid int, p map[string
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE menus
 		SET show_menu_preview_image = 1, menu_preview_ai_requested = 1, menu_preview_ai_generating = 1
-		WHERE id = ? AND restaurant_id = ?`, menuID, rid)
+		WHERE id = ? AND restaurant_id = ?`, `
+		UPDATE menus
+		SET show_menu_preview_image = 1, menu_preview_ai_requested = 1, menu_preview_ai_generating = 1
+		WHERE id = ? AND restaurant_id = ? AND ROW(show_menu_preview_image, menu_preview_ai_requested, menu_preview_ai_generating) IS DISTINCT FROM ROW(1, 1, 1)`), menuID, rid)
 	if err != nil {
 		return nil, errors.New("no se pudo marcar el menú para la generación")
 	}
@@ -578,7 +586,7 @@ func botMediaAISlider(s *Server, ctx context.Context, rid int, p map[string]any,
 		generationID = fmt.Sprintf("slider-ai-%d", time.Now().UTC().UnixMilli())
 	}
 	res, err := s.db.ExecContext(ctx,
-		"UPDATE menus SET slider_ai_generating = slider_ai_generating + 1 WHERE id = ? AND restaurant_id = ?",
+		portableSQL("UPDATE menus SET slider_ai_generating = slider_ai_generating + 1 WHERE id = ? AND restaurant_id = ?"),
 		menuID, rid)
 	if err != nil {
 		return nil, errors.New("no se pudo marcar el menú para la generación")

@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"preactvillacarmen/internal/aiusage"
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 func stockRecipeIngredientCost(recipeID int64, recipes map[int64]stockBOMRecipe, unitCosts map[int64]float64) (float64, error) {
@@ -129,7 +130,7 @@ func (s *Server) requireBOStockAI(next http.Handler) http.Handler {
 		}
 		var global, module, limit, used int
 		var month sql.NullString
-		err := s.db.QueryRowContext(r.Context(), `SELECT global_ai_enabled,stock_ai_enabled,monthly_call_limit,calls_used,usage_month FROM stock_ai_entitlements WHERE restaurant_id=?`, a.ActiveRestaurantID).Scan(&global, &module, &limit, &used, &month)
+		err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT global_ai_enabled,stock_ai_enabled,monthly_call_limit,calls_used,usage_month FROM stock_ai_entitlements WHERE restaurant_id=?`), a.ActiveRestaurantID).Scan(&global, &module, &limit, &used, &month)
 		if err != nil && err != sql.ErrNoRows {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error validating AI plan")
 			return
@@ -146,14 +147,14 @@ func (s *Server) requireBOStockAI(next http.Handler) http.Handler {
 				return
 			}
 			limit = 100
-			_, err = s.db.ExecContext(r.Context(), `INSERT INTO stock_ai_entitlements (restaurant_id,global_ai_enabled,stock_ai_enabled,monthly_call_limit,usage_month) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE global_ai_enabled=VALUES(global_ai_enabled),stock_ai_enabled=VALUES(stock_ai_enabled)`, a.ActiveRestaurantID, stockBoolInt(globalPlan), stockBoolInt(stockPlan), limit, time.Now().Format("2006-01"))
+			_, err = s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_ai_entitlements (restaurant_id,global_ai_enabled,stock_ai_enabled,monthly_call_limit,usage_month) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE global_ai_enabled=VALUES(global_ai_enabled),stock_ai_enabled=VALUES(stock_ai_enabled)`, `INSERT INTO stock_ai_entitlements (restaurant_id,global_ai_enabled,stock_ai_enabled,monthly_call_limit,usage_month) VALUES (?,?,?,?,?) ON CONFLICT (restaurant_id) DO UPDATE SET global_ai_enabled=EXCLUDED.global_ai_enabled,stock_ai_enabled=EXCLUDED.stock_ai_enabled`), a.ActiveRestaurantID, stockBoolInt(globalPlan), stockBoolInt(stockPlan), limit, time.Now().Format("2006-01"))
 			if err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "Error preparing AI usage")
 				return
 			}
 		}
 		current := time.Now().Format("2006-01")
-		res, err := s.db.ExecContext(r.Context(), `UPDATE stock_ai_entitlements SET calls_used=CASE WHEN usage_month=? THEN calls_used+1 ELSE 1 END,usage_month=? WHERE restaurant_id=? AND (monthly_call_limit=0 OR usage_month<>? OR calls_used<monthly_call_limit)`, current, current, a.ActiveRestaurantID, current)
+		res, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE stock_ai_entitlements SET calls_used=CASE WHEN usage_month=? THEN calls_used+1 ELSE 1 END,usage_month=? WHERE restaurant_id=? AND (monthly_call_limit=0 OR usage_month<>? OR calls_used<monthly_call_limit)`), current, current, a.ActiveRestaurantID, current)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "Error recording AI usage")
 			return
@@ -212,12 +213,12 @@ func (s *Server) handleBOStockAffluenceUpsert(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var posOwned int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM pos_settings p JOIN stock_affluence_daily a ON a.restaurant_id=p.restaurant_id WHERE p.restaurant_id=? AND p.covers_mode='LIVE' AND a.service_date=? AND a.service_type=? AND a.source='POS')`, a.ActiveRestaurantID, in.Date, in.ServiceType).Scan(&posOwned)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT EXISTS(SELECT 1 FROM pos_settings p JOIN stock_affluence_daily a ON a.restaurant_id=p.restaurant_id WHERE p.restaurant_id=? AND p.covers_mode='LIVE' AND a.service_date=? AND a.service_type=? AND a.source='POS')`, `SELECT CASE WHEN EXISTS(SELECT 1 FROM pos_settings p JOIN stock_affluence_daily a ON a.restaurant_id=p.restaurant_id WHERE p.restaurant_id=? AND p.covers_mode='LIVE' AND a.service_date=? AND a.service_type=? AND a.source='POS') THEN 1 ELSE 0 END`), a.ActiveRestaurantID, in.Date, in.ServiceType).Scan(&posOwned)
 	if posOwned != 0 {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "POS covers are authoritative for this service", "code": "POS_COVERS_AUTHORITATIVE"})
 		return
 	}
-	_, err := s.db.ExecContext(r.Context(), `INSERT INTO stock_affluence_daily (restaurant_id,service_date,service_type,covers) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE covers=VALUES(covers),source='MANUAL'`, a.ActiveRestaurantID, in.Date, in.ServiceType, in.Covers)
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_affluence_daily (restaurant_id,service_date,service_type,covers) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE covers=VALUES(covers),source='MANUAL'`, `INSERT INTO stock_affluence_daily (restaurant_id,service_date,service_type,covers) VALUES (?,?,?,?) ON CONFLICT (restaurant_id,service_date,service_type) DO UPDATE SET covers=EXCLUDED.covers,source='MANUAL'`), a.ActiveRestaurantID, in.Date, in.ServiceType, in.Covers)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving affluence")
 		return
@@ -261,9 +262,9 @@ func (s *Server) handleBOStockForecast(w http.ResponseWriter, r *http.Request) {
 	seasonalFactor /= float64(horizon)
 	effectiveMultiplier := multiplier * seasonalFactor
 	var historyDays, totalCovers, affluenceDays int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(DATEDIFF(MAX(occurred_at),MIN(occurred_at))+1,0) FROM stock_movements WHERE restaurant_id=? AND type IN ('SALE','PRODUCTION_OUT','WASTE')`, a.ActiveRestaurantID).Scan(&historyDays)
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(covers),0),COUNT(DISTINCT service_date) FROM stock_affluence_daily WHERE restaurant_id=? AND service_date>=DATE_SUB(CURDATE(),INTERVAL 8 WEEK)`, a.ActiveRestaurantID).Scan(&totalCovers, &affluenceDays)
-	rows, err := s.db.QueryContext(r.Context(), `SELECT i.id,i.name,COALESCE(SUM(l.qty_base),0),COALESCE(item_usage.avg_daily,0),COALESCE(item_usage.total_usage,0),u.factor_to_base,u.label FROM stock_items i JOIN stock_item_units u ON u.restaurant_id=i.restaurant_id AND u.stock_item_id=i.id AND u.is_default_display=1 LEFT JOIN stock_levels l ON l.restaurant_id=i.restaurant_id AND l.stock_item_id=i.id LEFT JOIN (SELECT stock_item_id,SUM(-qty_base) total_usage,SUM(-qty_base)/GREATEST(DATEDIFF(MAX(occurred_at),MIN(occurred_at))+1,1) avg_daily FROM stock_movements WHERE restaurant_id=? AND type IN ('SALE','PRODUCTION_OUT','WASTE') AND occurred_at>=DATE_SUB(NOW(),INTERVAL 8 WEEK) GROUP BY stock_item_id) item_usage ON item_usage.stock_item_id=i.id WHERE i.restaurant_id=? AND i.is_tracked=1 AND i.is_active=1 AND i.deleted_at IS NULL GROUP BY i.id,u.id ORDER BY i.name`, a.ActiveRestaurantID, a.ActiveRestaurantID)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT COALESCE(DATEDIFF(MAX(occurred_at),MIN(occurred_at))+1,0) FROM stock_movements WHERE restaurant_id=? AND type IN ('SALE','PRODUCTION_OUT','WASTE')`, `SELECT COALESCE((CAST(MAX(occurred_at) AS date) - CAST(MIN(occurred_at) AS date))+1,0) FROM stock_movements WHERE restaurant_id=? AND type IN ('SALE','PRODUCTION_OUT','WASTE')`), a.ActiveRestaurantID).Scan(&historyDays)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT COALESCE(SUM(covers),0),COUNT(DISTINCT service_date) FROM stock_affluence_daily WHERE restaurant_id=? AND service_date>=DATE_SUB(CURDATE(),INTERVAL 8 WEEK)`, `SELECT COALESCE(SUM(covers),0),COUNT(DISTINCT service_date) FROM stock_affluence_daily WHERE restaurant_id=? AND service_date>=(CAST((date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') AS date) - 56)`), a.ActiveRestaurantID).Scan(&totalCovers, &affluenceDays)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT i.id,i.name,COALESCE(SUM(l.qty_base),0),COALESCE(item_usage.avg_daily,0),COALESCE(item_usage.total_usage,0),u.factor_to_base,u.label FROM stock_items i JOIN stock_item_units u ON u.restaurant_id=i.restaurant_id AND u.stock_item_id=i.id AND u.is_default_display=1 LEFT JOIN stock_levels l ON l.restaurant_id=i.restaurant_id AND l.stock_item_id=i.id LEFT JOIN (SELECT stock_item_id,SUM(-qty_base) total_usage,SUM(-qty_base)/GREATEST(DATEDIFF(MAX(occurred_at),MIN(occurred_at))+1,1) avg_daily FROM stock_movements WHERE restaurant_id=? AND type IN ('SALE','PRODUCTION_OUT','WASTE') AND occurred_at>=DATE_SUB(NOW(),INTERVAL 8 WEEK) GROUP BY stock_item_id) item_usage ON item_usage.stock_item_id=i.id WHERE i.restaurant_id=? AND i.is_tracked=1 AND i.is_active=1 AND i.deleted_at IS NULL GROUP BY i.id,u.id ORDER BY i.name`, `SELECT i.id,i.name,COALESCE(SUM(l.qty_base),0),COALESCE(item_usage.avg_daily,0),COALESCE(item_usage.total_usage,0),u.factor_to_base,u.label FROM stock_items i JOIN stock_item_units u ON u.restaurant_id=i.restaurant_id AND u.stock_item_id=i.id AND u.is_default_display=1 LEFT JOIN stock_levels l ON l.restaurant_id=i.restaurant_id AND l.stock_item_id=i.id LEFT JOIN (SELECT stock_item_id,SUM(-qty_base) total_usage,ROUND(SUM(-qty_base)/GREATEST((CAST(MAX(occurred_at) AS date) - CAST(MIN(occurred_at) AS date))+1,1), 8) avg_daily FROM stock_movements WHERE restaurant_id=? AND type IN ('SALE','PRODUCTION_OUT','WASTE') AND occurred_at>=((date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') - interval '56 days') GROUP BY stock_item_id) item_usage ON item_usage.stock_item_id=i.id WHERE i.restaurant_id=? AND i.is_tracked=1 AND i.is_active=1 AND i.deleted_at IS NULL GROUP BY i.id,u.id,item_usage.avg_daily,item_usage.total_usage ORDER BY i.name COLLATE "es-x-icu"`), a.ActiveRestaurantID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading forecast")
 		return
@@ -304,7 +305,7 @@ func (s *Server) handleBOStockForecast(w http.ResponseWriter, r *http.Request) {
 // A missing or unreadable profile must never fail the forecast.
 func (s *Server) stockSeasonalityProfileRaw(ctx context.Context, restaurantID int) json.RawMessage {
 	profileRaw := json.RawMessage(`{}`)
-	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(seasonality_profile,JSON_OBJECT()) FROM stock_settings WHERE restaurant_id=?`, restaurantID).Scan(&profileRaw)
+	_ = s.db.QueryRowContext(ctx, nativeSQL(`SELECT COALESCE(seasonality_profile,JSON_OBJECT()) FROM stock_settings WHERE restaurant_id=?`, `SELECT CAST(COALESCE(seasonality_profile,'{}'::jsonb) AS text) FROM stock_settings WHERE restaurant_id=?`), restaurantID).Scan(&profileRaw)
 	return profileRaw
 }
 
@@ -417,7 +418,7 @@ func (s *Server) handleBOStockVATList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,name,rate,is_default,is_active FROM stock_vat_rates WHERE restaurant_id=? ORDER BY is_default DESC,name`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT id,name,rate,is_default,is_active FROM stock_vat_rates WHERE restaurant_id=? ORDER BY is_default DESC,name`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading VAT rates")
 		return
@@ -459,9 +460,12 @@ func (s *Server) handleBOStockVATCreate(w http.ResponseWriter, r *http.Request) 
 	}
 	defer tx.Rollback()
 	if in.IsDefault {
-		_, _ = tx.ExecContext(r.Context(), `UPDATE stock_vat_rates SET is_default=0 WHERE restaurant_id=?`, a.ActiveRestaurantID)
+		_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			_, e := tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_vat_rates SET is_default=0 WHERE restaurant_id=?`), a.ActiveRestaurantID)
+			return e
+		})
 	}
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO stock_vat_rates (restaurant_id,name,rate,is_default) VALUES (?,?,?,?)`, a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.Rate, stockBoolInt(in.IsDefault))
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, tx, portableSQL(`INSERT INTO stock_vat_rates (restaurant_id,name,rate,is_default) VALUES (?,?,?,?)`), "id", a.ActiveRestaurantID, strings.TrimSpace(in.Name), in.Rate, stockBoolInt(in.IsDefault))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "VAT rate could not be created")
 		return
@@ -470,7 +474,6 @@ func (s *Server) handleBOStockVATCreate(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creating VAT rate")
 		return
 	}
-	id, _ := res.LastInsertId()
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"success": true, "id": id})
 }
 func (s *Server) handleBOStockVATPatch(w http.ResponseWriter, r *http.Request) {
@@ -497,9 +500,12 @@ func (s *Server) handleBOStockVATPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	if in.IsDefault {
-		_, _ = tx.ExecContext(r.Context(), `UPDATE stock_vat_rates SET is_default=0 WHERE restaurant_id=?`, a.ActiveRestaurantID)
+		_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+			_, e := tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_vat_rates SET is_default=0 WHERE restaurant_id=?`), a.ActiveRestaurantID)
+			return e
+		})
 	}
-	res, err := tx.ExecContext(r.Context(), `UPDATE stock_vat_rates SET name=?,rate=?,is_default=?,is_active=? WHERE id=? AND restaurant_id=?`, strings.TrimSpace(in.Name), in.Rate, stockBoolInt(in.IsDefault), stockBoolInt(in.IsActive), id, a.ActiveRestaurantID)
+	res, err := tx.ExecContext(r.Context(), nativeSQL(`UPDATE stock_vat_rates SET name=?,rate=?,is_default=?,is_active=? WHERE id=? AND restaurant_id=?`, `UPDATE stock_vat_rates SET name=$1,rate=$2,is_default=$3,is_active=$4 WHERE id=$5 AND restaurant_id=$6 AND (name COLLATE "C", rate, is_default, is_active) IS DISTINCT FROM (CAST($1 AS text), CAST($2 AS numeric(5,2)), CAST($3 AS smallint), CAST($4 AS smallint))`), []any{strings.TrimSpace(in.Name), in.Rate, stockBoolInt(in.IsDefault), stockBoolInt(in.IsActive), id, a.ActiveRestaurantID}...)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "VAT rate could not be updated")
 		return
@@ -523,7 +529,7 @@ func (s *Server) handleBOStockVATDelete(w http.ResponseWriter, r *http.Request) 
 	}
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	var used int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT (EXISTS(SELECT 1 FROM stock_recipes WHERE restaurant_id=? AND vat_rate_id=? AND is_active=1) OR EXISTS(SELECT 1 FROM pos_products WHERE restaurant_id=? AND vat_rate_id=?))`, a.ActiveRestaurantID, id, a.ActiveRestaurantID, id).Scan(&used); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT (EXISTS(SELECT 1 FROM stock_recipes WHERE restaurant_id=? AND vat_rate_id=? AND is_active=1) OR EXISTS(SELECT 1 FROM pos_products WHERE restaurant_id=? AND vat_rate_id=?))`, `SELECT CASE WHEN EXISTS(SELECT 1 FROM stock_recipes WHERE restaurant_id=? AND vat_rate_id=? AND is_active=1) OR EXISTS(SELECT 1 FROM pos_products WHERE restaurant_id=? AND vat_rate_id=?) THEN 1 ELSE 0 END`), a.ActiveRestaurantID, id, a.ActiveRestaurantID, id).Scan(&used); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error deleting VAT rate")
 		return
 	}
@@ -531,7 +537,7 @@ func (s *Server) handleBOStockVATDelete(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusConflict, "VAT rate is in use")
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `DELETE FROM stock_vat_rates WHERE id=? AND restaurant_id=? AND is_default=0`, id, a.ActiveRestaurantID)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM stock_vat_rates WHERE id=? AND restaurant_id=? AND is_default=0`), id, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error deleting VAT rate")
 		return
@@ -565,12 +571,12 @@ func (s *Server) handleBOStockItemPriceCreate(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO stock_item_prices (restaurant_id,stock_item_id,supplier_name,unit_cost_base) VALUES (?,?,?,?)`, a.ActiveRestaurantID, itemID, stockNullableString(in.SupplierName), in.UnitCostBase)
+	_, err = tx.ExecContext(r.Context(), portableSQL(`INSERT INTO stock_item_prices (restaurant_id,stock_item_id,supplier_name,unit_cost_base) VALUES (?,?,?,?)`), a.ActiveRestaurantID, itemID, stockNullableString(in.SupplierName), in.UnitCostBase)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "Price could not be saved")
 		return
 	}
-	_, err = tx.ExecContext(r.Context(), `UPDATE stock_levels SET avg_unit_cost=? WHERE restaurant_id=? AND stock_item_id=?`, in.UnitCostBase, a.ActiveRestaurantID, itemID)
+	_, err = tx.ExecContext(r.Context(), portableSQL(`UPDATE stock_levels SET avg_unit_cost=? WHERE restaurant_id=? AND stock_item_id=?`), in.UnitCostBase, a.ActiveRestaurantID, itemID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving price")
 		return
@@ -612,7 +618,7 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading recipe costs")
 		return
 	}
-	priceRows, err := tx.QueryContext(r.Context(), `SELECT i.id,COALESCE((SELECT p.unit_cost_base FROM stock_item_prices p WHERE p.restaurant_id=i.restaurant_id AND p.stock_item_id=i.id AND p.effective_at<=NOW() ORDER BY p.effective_at DESC,p.id DESC LIMIT 1),0) FROM stock_items i WHERE i.restaurant_id=?`, a.ActiveRestaurantID)
+	priceRows, err := tx.QueryContext(r.Context(), nativeSQL(`SELECT i.id,COALESCE((SELECT p.unit_cost_base FROM stock_item_prices p WHERE p.restaurant_id=i.restaurant_id AND p.stock_item_id=i.id AND p.effective_at<=NOW() ORDER BY p.effective_at DESC,p.id DESC LIMIT 1),0) FROM stock_items i WHERE i.restaurant_id=?`, `SELECT i.id,COALESCE((SELECT p.unit_cost_base FROM stock_item_prices p WHERE p.restaurant_id=i.restaurant_id AND p.stock_item_id=i.id AND p.effective_at<=(date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') ORDER BY p.effective_at DESC,p.id DESC LIMIT 1),0) FROM stock_items i WHERE i.restaurant_id=?`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading item prices")
 		return
@@ -630,7 +636,9 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 	}
 	priceRows.Close()
 	var labourEnabled int
-	_ = tx.QueryRowContext(r.Context(), `SELECT COALESCE((SELECT labour_cost_enabled FROM stock_settings WHERE restaurant_id=?),0)`, a.ActiveRestaurantID).Scan(&labourEnabled)
+	_ = sqldb.TxStatementScope(r.Context(), sqlDialect, tx, func() error {
+		return tx.QueryRowContext(r.Context(), portableSQL(`SELECT COALESCE((SELECT labour_cost_enabled FROM stock_settings WHERE restaurant_id=?),0)`), a.ActiveRestaurantID).Scan(&labourEnabled)
+	})
 	directLabour, missingLabour, err := loadStockRecipeLabourCosts(r.Context(), tx, a.ActiveRestaurantID, boTodayDate())
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading labour costs")
@@ -642,11 +650,11 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 	// pairs keep multi-warehouse rules from double counting a line.
 	soldByRecipe := map[int64]float64{}
 	ticketsByRecipe := map[int64]int{}
-	salesRows, err := tx.QueryContext(r.Context(), `SELECT rr.stock_recipe_id,COALESCE(SUM(l.quantity),0),COUNT(DISTINCT l.ticket_id)
+	salesRows, err := tx.QueryContext(r.Context(), nativeSQL(`SELECT rr.stock_recipe_id,COALESCE(SUM(l.quantity),0),COUNT(DISTINCT l.ticket_id)
 		FROM (SELECT DISTINCT pos_product_id,stock_recipe_id FROM pos_product_stock_rules WHERE restaurant_id=? AND is_active=1 AND stock_recipe_id>0) rr
 		JOIN pos_ticket_lines l ON l.restaurant_id=? AND l.pos_product_id=rr.pos_product_id AND l.status='ACTIVE' AND l.created_at>=DATE_SUB(NOW(),INTERVAL ? DAY)
 		JOIN pos_tickets t ON t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id AND t.status IN ('PAID','PARTIALLY_REFUNDED')
-		GROUP BY rr.stock_recipe_id`, a.ActiveRestaurantID, a.ActiveRestaurantID, salesDays)
+		GROUP BY rr.stock_recipe_id`, `SELECT rr.stock_recipe_id,COALESCE(SUM(l.quantity),0),COUNT(DISTINCT l.ticket_id) FROM (SELECT DISTINCT pos_product_id,stock_recipe_id FROM pos_product_stock_rules WHERE restaurant_id=? AND is_active=1 AND stock_recipe_id>0) rr JOIN pos_ticket_lines l ON l.restaurant_id=? AND l.pos_product_id=rr.pos_product_id AND l.status='ACTIVE' AND l.created_at>=(date_trunc('second', statement_timestamp()) - make_interval(days => CAST(? AS integer))) JOIN pos_tickets t ON t.restaurant_id=l.restaurant_id AND t.id=l.ticket_id AND t.status IN ('PAID','PARTIALLY_REFUNDED') GROUP BY rr.stock_recipe_id`), a.ActiveRestaurantID, a.ActiveRestaurantID, salesDays)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading sales mix")
 		return
@@ -664,7 +672,7 @@ func (s *Server) handleBOStockCosting(w http.ResponseWriter, r *http.Request) {
 		ticketsByRecipe[recipeID] = tickets
 	}
 	salesRows.Close()
-	rows, err := tx.QueryContext(r.Context(), `SELECT r.id,r.name,r.selling_price_gross,COALESCE(v.rate,0),r.overhead_pct,r.is_protected FROM stock_recipes r LEFT JOIN stock_vat_rates v ON v.restaurant_id=r.restaurant_id AND v.id=r.vat_rate_id WHERE r.restaurant_id=? AND r.is_active=1 ORDER BY r.name`, a.ActiveRestaurantID)
+	rows, err := tx.QueryContext(r.Context(), portableSQL(`SELECT r.id,r.name,r.selling_price_gross,COALESCE(v.rate,0),r.overhead_pct,r.is_protected FROM stock_recipes r LEFT JOIN stock_vat_rates v ON v.restaurant_id=r.restaurant_id AND v.id=r.vat_rate_id WHERE r.restaurant_id=? AND r.is_active=1 ORDER BY r.name`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading costs")
 		return
@@ -770,7 +778,7 @@ func (s *Server) handleBOStockAIRecommendations(w http.ResponseWriter, r *http.R
 		return
 	}
 	profileRaw := json.RawMessage(`{}`)
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(seasonality_profile,JSON_OBJECT()) FROM stock_settings WHERE restaurant_id=?`, a.ActiveRestaurantID).Scan(&profileRaw)
+	_ = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT COALESCE(seasonality_profile,JSON_OBJECT()) FROM stock_settings WHERE restaurant_id=?`, `SELECT CAST(COALESCE(seasonality_profile,'{}'::jsonb) AS text) FROM stock_settings WHERE restaurant_id=?`), a.ActiveRestaurantID).Scan(&profileRaw)
 	contextPayload, _ := json.Marshal(map[string]any{"scenario": in.Scenario, "forecast": in.Forecast, "costs": in.Costs, "seasonality": json.RawMessage(profileRaw)})
 	system := "You advise a restaurant using deterministic stock and cost metrics. Do not recalculate or change numbers. Give cautious, actionable advice. Protected/signature dishes may never receive REMOVE_DISH. Return strict JSON only."
 	prompt := `Return {"summary":"","recommendations":[{"type":"ORDER|REDUCE_ORDER|RAISE_PRICE|REDUCE_PORTION|RENEGOTIATE_SUPPLIER|REMOVE_DISH|MONITOR","priority":"HIGH|MEDIUM|LOW","item":"","reason":"","suggestedAction":""}]}. Maximum 10 recommendations. Context: ` + string(contextPayload)
@@ -783,8 +791,8 @@ func (s *Server) handleBOStockAIRecommendations(w http.ResponseWriter, r *http.R
 	reportRaw, _ := json.Marshal(result)
 	inputRaw, _ := json.Marshal(map[string]any{"scenario": in.Scenario, "forecast": in.Forecast, "costs": in.Costs, "seasonality": json.RawMessage(profileRaw)})
 	reportID := int64(0)
-	if res, saveErr := s.db.ExecContext(r.Context(), `INSERT INTO stock_ai_reports (restaurant_id,report_type,model,input_snapshot,report,created_by) VALUES (?,'COMBINED',?,?,?,?)`, a.ActiveRestaurantID, s.resolveMiniMaxModel(r.Context(), a.ActiveRestaurantID, ""), inputRaw, reportRaw, a.User.ID); saveErr == nil {
-		reportID, _ = res.LastInsertId()
+	if newReportID, saveErr := sqldb.InsertID(r.Context(), sqlDialect, s.db, nativeSQL(`INSERT INTO stock_ai_reports (restaurant_id,report_type,model,input_snapshot,report,created_by) VALUES (?,'COMBINED',?,?,?,?)`, `INSERT INTO stock_ai_reports (restaurant_id,report_type,model,input_snapshot,report,created_by) VALUES (?,'COMBINED',?,CAST(? AS jsonb),CAST(? AS jsonb),?)`), "id", a.ActiveRestaurantID, s.resolveMiniMaxModel(r.Context(), a.ActiveRestaurantID, ""), inputRaw, reportRaw, a.User.ID); saveErr == nil {
+		reportID = newReportID
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": true, "id": reportID, "report": result, "model": s.resolveMiniMaxModel(r.Context(), a.ActiveRestaurantID, "")})
 }
@@ -820,7 +828,7 @@ func (s *Server) minimaxJSONContent(ctx context.Context, restaurantID int, syste
 		if feature == "" {
 			feature = "stock"
 		}
-		_, _ = s.db.ExecContext(ctx, `INSERT INTO stock_ai_usage (restaurant_id,feature,model,input_tokens,output_tokens) VALUES (?,?,?,?,?)`, a.ActiveRestaurantID, feature, reply.Model, reply.Usage.Input, reply.Usage.Output)
+		_, _ = s.db.ExecContext(ctx, portableSQL(`INSERT INTO stock_ai_usage (restaurant_id,feature,model,input_tokens,output_tokens) VALUES (?,?,?,?,?)`), a.ActiveRestaurantID, feature, reply.Model, reply.Usage.Input, reply.Usage.Output)
 	}
 	s.recordAIUsage(ctx, restaurantID, aiFeatureStock, botProviderMiniMax, reply.Model, reply.Usage, false)
 	text := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(reply.Text), "```json"), "```"))
@@ -915,7 +923,7 @@ func (s *Server) handleBOStockDocumentTextExtract(w http.ResponseWriter, r *http
 	}
 	textHash := hashText(strings.TrimSpace(in.Text))
 	var existingID int64
-	if err := s.db.QueryRowContext(r.Context(), `SELECT id FROM stock_document_scans WHERE restaurant_id=? AND file_hash=? LIMIT 1`, a.ActiveRestaurantID, textHash).Scan(&existingID); err == nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT id FROM stock_document_scans WHERE restaurant_id=? AND file_hash=? LIMIT 1`, `SELECT id FROM stock_document_scans WHERE restaurant_id=? AND app.norm_ascii(file_hash) = app.norm_ascii(?) LIMIT 1`), a.ActiveRestaurantID, textHash).Scan(&existingID); err == nil {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"success": false, "message": "Document already extracted", "id": existingID})
 		return
 	} else if err != sql.ErrNoRows {

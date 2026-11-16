@@ -1,0 +1,736 @@
+{
+  "domain": "pos_billing",
+  "inventory": "sql-inventory-r71.json (dbmigrate-r14)",
+  "repo_call_sites": 2475,
+  "repo_native_sites": 2355,
+  "repo_blocked_on_pg": 3,
+  "repo_unwrapped": 117,
+  "repo_dynamic": 42,
+  "audit_failures": 0,
+  "repo_provisional_gate_list": [
+    "internal/api/backoffice_uazapi_provisioning.go:637",
+    "internal/api/seo_item_routes.go:707",
+    "internal/api/seo_item_routes.go:715",
+    "internal/api/site_builder_registrar.go:169"
+  ],
+  "runtime_verified": 0,
+  "pg_ready": false,
+  "sites": 564,
+  "native_syntax_ported": 564,
+  "remaining": 0,
+  "remaining_dynamic": 0,
+  "files": 35,
+  "done_files": 35,
+  "syntax_complete": false,
+  "ledger": [
+    {
+      "file": "internal/api/admin_postres.go",
+      "sites": 9,
+      "native_syntax_ported": 9,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_invoice_comments.go",
+      "sites": 6,
+      "native_syntax_ported": 6,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_invoices.go",
+      "sites": 21,
+      "native_syntax_ported": 21,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_invoices_billing.go",
+      "sites": 5,
+      "native_syntax_ported": 5,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_manual_billing.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos.go",
+      "sites": 44,
+      "native_syntax_ported": 44,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_admin.go",
+      "sites": 13,
+      "native_syntax_ported": 13,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_cash.go",
+      "sites": 25,
+      "native_syntax_ported": 25,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_cash_days.go",
+      "sites": 18,
+      "native_syntax_ported": 18,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_cash_days_billing.go",
+      "sites": 3,
+      "native_syntax_ported": 3,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_cash_days_reports.go",
+      "sites": 3,
+      "native_syntax_ported": 3,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_catalog.go",
+      "sites": 18,
+      "native_syntax_ported": 18,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_checkout.go",
+      "sites": 48,
+      "native_syntax_ported": 48,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_courses.go",
+      "sites": 3,
+      "native_syntax_ported": 3,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_customers.go",
+      "sites": 16,
+      "native_syntax_ported": 16,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_fiscal.go",
+      "sites": 23,
+      "native_syntax_ported": 23,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_kitchen.go",
+      "sites": 22,
+      "native_syntax_ported": 22,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_line_move.go",
+      "sites": 13,
+      "native_syntax_ported": 13,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_modifiers.go",
+      "sites": 30,
+      "native_syntax_ported": 30,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_operations.go",
+      "sites": 27,
+      "native_syntax_ported": 27,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_packs.go",
+      "sites": 23,
+      "native_syntax_ported": 23,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_pin.go",
+      "sites": 12,
+      "native_syntax_ported": 12,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_pin_policy.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_rail.go",
+      "sites": 53,
+      "native_syntax_ported": 53,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_recall.go",
+      "sites": 8,
+      "native_syntax_ported": 8,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_reports.go",
+      "sites": 12,
+      "native_syntax_ported": 12,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_reservations.go",
+      "sites": 2,
+      "native_syntax_ported": 2,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_split.go",
+      "sites": 8,
+      "native_syntax_ported": 8,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_pos_stock_realtime.go",
+      "sites": 25,
+      "native_syntax_ported": 25,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_postres.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_premium.go",
+      "sites": 39,
+      "native_syntax_ported": 39,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/invoice_numbering.go",
+      "sites": 10,
+      "native_syntax_ported": 10,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/site_builder_billing.go",
+      "sites": 5,
+      "native_syntax_ported": 5,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/stripe_connect.go",
+      "sites": 4,
+      "native_syntax_ported": 4,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/stripe_connect_fees.go",
+      "sites": 6,
+      "native_syntax_ported": 6,
+      "blocked_on_pg": 0,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    }
+  ],
+  "semantic_open": [
+    {
+      "site": "pos_modifiers DISTINCT + ORDER BY pmg.sort_order",
+      "note": "PG rejects ORDER BY on a non-selected column with SELECT DISTINCT. With productID>0 the pmg PK (restaurant_id,pos_product_id,group_id) gives at most one row per group, so the PG twin drops DISTINCT: identical row set/order. productID<=0 path orders by selected columns only (DISTINCT kept)."
+    },
+    {
+      "site": "pos_modifier_groups.kind enum",
+      "note": "read CAST AS text; writes take text param inferred as enum (invalid label errors on both, strict mode)."
+    },
+    {
+      "site": "inserts",
+      "note": "group/option create via sqldb.InsertID (v1.9.3 LastInsertId never errors); unique (restaurant_id,name) / (restaurant_id,group_id,name) violations -> same 400 path. Name uniqueness on ci_ai: CI collision kept, accent/PAD SPACE delta open."
+    },
+    {
+      "site": "ordering ties",
+      "note": "ORDER BY ... name on ci_ai (ICU vs MySQL collation) open; Go-side sort.SliceStable by Name uses bytes (unchanged)."
+    },
+    {
+      "site": "updated_at ON UPDATE",
+      "note": "naive updated_at maintained by dbmigrate.on_update_ts trigger; explicit-same-value / changed-row semantics follow the general 136 ON UPDATE gate. RowsAffected unused in this file."
+    },
+    {
+      "site": "ticket line modifiers insert in tx",
+      "note": "errors returned (no ignored-continue): no savepoint needed. quantity float64 into numeric(12,3): rounding QA open."
+    },
+    {
+      "site": "botstore pool timezone (investigated)",
+      "note": "botstore.OpenSchema uses sqldb.OpenPostgres (UTC pinned) when a schema is configured (unified bot_context path); with an empty schema it uses plain sql.Open('pgx') with the server default TimeZone - LOCALTIMESTAMP then follows the server zone. Gate narrows to the no-schema configuration."
+    },
+    {
+      "site": "pos_operations service period PATCH RowsAffected==0 -> 404",
+      "note": "MySQL changed-rows: saving identical values returns 404. PG twin adds typed ROW(name C, service_type enum, start/end time, sort, active) IS DISTINCT FROM predicate (args repeated). time compare '12:00' = 12:00:00 on both."
+    },
+    {
+      "site": "pos_operations line quantity PATCH RowsAffected==0 -> 404",
+      "note": "Same changed-rows contract on (quantity, recomputed line_total, notes C) via posLineChangedArgs. ROUND(? * cents): MySQL float64 param -> DOUBLE ROUND (libc rint, half-even); PG CAST(? AS double precision) round() also rint - equivalent in code reading; assignment to bigint. Without the cast PG would infer ? as bigint and truncate fractional quantities. Rounding QA open."
+    },
+    {
+      "site": "pos_operations ticket create duplicate branch",
+      "note": "Source reads the existing ticket inside the same tx after a duplicate-key insert failure; on PG the insert now runs in sqldb.TxStatementScope so the follow-up read works (otherwise 25P02 -> 500). 'duplicate' substring matches PG 'duplicate key value violates unique constraint'. InsertID RETURNING. Ticket number from nextPOSTicketNumber (not UUID)."
+    },
+    {
+      "site": "pos_operations visit cancel ignored statements",
+      "note": "Ignored SELECT table_id and UPDATE tickets VOIDED in the tx now each in a savepoint scope on PG; commit outcome kept. voided_at timestamptz statement time; pos_visits/pos_shifts closed_at naive UTC statement time."
+    },
+    {
+      "site": "pos_operations cash closure",
+      "note": "opened_at (scanned UTC) and time.Now() into naive opened_at/closed_at via NaiveUTCArg (time.Now local wall clock would otherwise be stored by pgx)."
+    },
+    {
+      "site": "SOURCE ANOMALY pos_operations guest_label update",
+      "note": "Go raw string contains NULLIF(?,\\'\\') (literal backslashes): invalid SQL on MySQL (backslash outside a string literal) and on PG. Preserved as portable failure, not fixed; candidate fix NULLIF(?,'') needs separate approval/QA."
+    },
+    {
+      "site": "pos shifts open uniqueness",
+      "note": "uq_pos_shift_open_terminal on generated open_terminal_key present in plan; any insert error -> 409 SHIFT_ALREADY_OPEN on both (source maps every error)."
+    },
+    {
+      "site": "enums read",
+      "note": "pos_visits status/channel, pos_tickets status, pos_shifts status, service_type read CAST AS text."
+    },
+    {
+      "site": "CORRECTION pos2 voided_at",
+      "note": "pos_tickets.voided_at is naive timestamp(0), not timestamptz as pos2 stated (taken from pos_ticket_lines). Visit-cancel PG twin now uses the UTC statement wall clock. Fixed in code."
+    },
+    {
+      "site": "pos2 argument-count review",
+      "note": "Re-checked: service-period PG twin 14 placeholders = 6 set + 2 where + 6 predicate; line PATCH with notes 9 = 3+3+3, without notes 7 = 2+3+2 (posLineChangedArgs). quantity numeric(12,3) bound float64; CAST(? AS double precision) only where it multiplies bigint cents (else PG infers bigint and truncates)."
+    },
+    {
+      "site": "pos_cash summary aggregates",
+      "note": "Integer-cents COUNT/SUM/COALESCE identical (bigint). method enum read CAST AS text; dynamic scopes composed then rebound once. Period scope COALESCE(paid_at,voided_at,NOW()) on naive columns -> UTC statement time; since/refundSince bound NaiveUTCArg."
+    },
+    {
+      "site": "pos_cash closures/movements idempotency",
+      "note": "Movement pre-check + insert outside tx (race -> duplicate path, same on both). Closure insert inside tx wrapped in TxStatementScope so the duplicate re-read works on PG; InsertID RETURNING; closed_at via posNaiveAny."
+    },
+    {
+      "site": "pos_audit_events JSON_OBJECT",
+      "note": "PG jsonb_build_object with typed args. jsonb key order/normalisation QA open. Closure audit ignored inside tx -> savepoint; movement audit outside tx."
+    },
+    {
+      "site": "REPAIR CANDIDATE guest_label NULLIF backslashes (technical bug)",
+      "note": "backoffice_pos_operations.go guest-label PATCH raw string NULLIF(?,\\'\\') sends literal backslash-quote: MySQL and PG both reject it -> endpoint always 500. Fix: NULLIF(?,'') on both dialects (PG with padSpaceNullIfArg). Risk: enables a currently dead write path (rename guest label on OPEN tickets only, tenant-scoped, status pre-checked). Ordinary technical fix for a dedicated repair batch with QA; parity kept now."
+    },
+    {
+      "site": "cash_days select/status",
+      "note": "posCashDaySelectSQL() casts d.status enum to text on PG; MySQL const kept. forced_open smallint -> bool via database/sql int64 conversion on both."
+    },
+    {
+      "site": "cash_days open/close",
+      "note": "Open: InsertID; uq_pos_cash_days_date duplicate -> 409 (substring 'duplicate' matches PG). Close: closure InsertID in tx (duplicate -> 409 returns without re-read, no savepoint needed); closedAt time.Now() and summary.OpenedAt bound NaiveUTCArg into naive pos_cash_days/pos_shifts/pos_cash_closures closed_at/opened_at. Close audit ignored in tx -> savepoint; open audit outside tx. jsonb_build_object typed args."
+    },
+    {
+      "site": "cash_days totals / billing / reports",
+      "note": "Integer cents SUM/COUNT bigint; enums (channel, method, payment_method, visit/ticket status) read as text; COALESCE(t.status,'') -> COALESCE(CAST(t.status AS text),'') (enum '' would error on PG); ORDER BY v.table_id IS NULL then display_order identical; enum ORDER BY follows declaration order on both engines; report ORDER BY nullable table_id NULLS FIRST. GROUP BY includes rt.display_order used in ORDER BY (valid on PG)."
+    },
+    {
+      "site": "pos_reservations search",
+      "note": "DATE/TIME_FORMAT -> to_char; LIKE on ci_ai customer_name -> LOWER COLLATE C with lowered pattern; phone LIKE COLLATE C; (?='' ...) typed text. Accent/PAD SPACE search gap open."
+    },
+    {
+      "site": "timestamp-type audit (cheap pass)",
+      "note": "grep of ported POS files: no timestamptz statement time used; NOW() twins all naive UTC; columns checked: pos_tickets paid_at/voided_at, pos_visits opened_at/closed_at, pos_shifts opened_at/closed_at, pos_cash_days, pos_cash_closures, pos_cash_movements, pos_refunds created_at all timestamp(0) naive. Only pos_ticket_lines.voided_at/created_at and pos_service_periods updated_at are timestamptz (not written by ported statements)."
+    },
+    {
+      "site": "pos_customers search/conflict",
+      "note": "LIKE on ci_ai display_name/email/tax_id -> LOWER(col) COLLATE C with lowered pattern; backslash escape for %/_ is the default on both engines; phone LIKE COLLATE C. (? <> '') typed text. Unique (restaurant_id,phone)/(restaurant_id,email) on ci_ai: CI collisions kept, accent/PAD delta open. Duplicate insert -> conflict re-read outside tx (no savepoint needed)."
+    },
+    {
+      "site": "pos_customers writes",
+      "note": "Create InsertID; PATCH n==0 then existence check (matched vs changed gives same response); anonymise NOW() -> naive UTC statement time (WHERE anonymised_at IS NULL guarantees change); audit inserts outside tx, errors ignored as source; CUSTOMER_LINK jsonb_build_object customerId bigint. Ticket status enum read as text; favourites SUM(numeric) -> float64; ORDER BY name ci_ai collation gap."
+    },
+    {
+      "site": "pos_line_move tx",
+      "note": "Line split: ROUND(CAST(? AS double precision)*cents)-CAST(? AS bigint); new line InsertID; modifier/tag copy INSERT..SELECT with typed ? in select list; kitchen sent-by-station UNION ALL of numeric(12,3) quantities -> float64. All tx errors propagate (no ignored statements)."
+    },
+    {
+      "site": "pos_line_move idempotency read",
+      "note": "MySQL CAST(JSON_UNQUOTE(JSON_EXTRACT(after_json,'$.movedLineId')) AS UNSIGNED) -> PG CAST(after_json->>'movedLineId' AS bigint) (value written by this code as an integer, so same result; CAST AS UNSIGNED edge semantics on malformed values stay the general gate). JSON_UNQUOTE(...)= ? vs ->>: a JSON null key would be 'null' string on MySQL vs NULL on PG (never written by this code)."
+    },
+    {
+      "site": "pos_line_move MOVE audit JSON",
+      "note": "jsonb_build_object typed; 'full' Go bool: go-sql-driver sends 1/0 so MySQL stores number 1/0 -> PG CAST(CAST(? AS boolean) AS integer) keeps 1/0. 'quantity' float64: MySQL JSON double vs PG jsonb numeric text rendering (e.g. 2.0 vs 2) - JSON number text QA open; idempotency lookup does not read it."
+    },
+    {
+      "site": "pos_catalog product CRUD",
+      "note": "InsertID; PATCH/DELETE n==0 -> 404 safe (version+1 / deleted_at IS NULL guarantee a change); deleted_at timestamptz statement time; ORDER BY c.sort_order,c.name NULLS FIRST (LEFT JOIN categories)."
+    },
+    {
+      "site": "pos_catalog import preview",
+      "note": "COLLATE utf8mb4_unicode_ci dropped on PG (both sides ci_ai); EXISTS -> CAST AS integer for the int scan; precio cast double precision for the float64 scan (FLOAT/real). SOURCE BUG preserved: inside the correlated EXISTS, unqualified source_type/source_id resolve to p.* (inner scope first on both engines), so imported=true whenever the restaurant has any sourced product. Repair candidate (qualify with sources.*) for the dedicated QA batch, not changed."
+    },
+    {
+      "site": "pos_catalog import confirm tx",
+      "note": "INSERT IGNORE categories -> ON CONFLICT (restaurant_id,name) DO NOTHING, ignored errors -> savepoints; IGNORE truncation of categoria varchar(140) into name varchar(120) not reproduced (gate). pos_products ODKU -> ON CONFLICT (restaurant_id,source_type,source_id) (only collidable key: sku NULL, id generated); RowsAffected>0 counting: MySQL 1 insert / 2 changed update (version+1 always changes) vs PG 1 -> same >0 outcome. Wine ROUND(precio*100): MySQL promotes FLOAT to DOUBLE, PG twin CAST(precio AS double precision) (real*int would stay float4). UPDATE..JOIN -> UPDATE..FROM with LEFT JOIN categories preserved; ignored -> savepoints."
+    },
+    {
+      "site": "pos_catalog stock rules / readiness",
+      "note": "INSERT..SELECT select-list params typed (qty float64 -> numeric(18,4) via double); RowsAffected==0 -> warehouse not found identical. deduction_source enum read as text. Readiness SUM(EXISTS) -> SUM(CAST(EXISTS AS integer))."
+    },
+    {
+      "site": "pos_pin countPINFailure ODKU",
+      "note": "MySQL applies SET left to right (locked_until reads the new failed_attempts). PG ON CONFLICT RHS reads the old row, so the PG twin repeats the new-count CASE inside locked_until. updated_at TIMESTAMP (tz) vs statement time; locked_until naive UTC. Lock window interpolated as server int constant, unchanged. Not executed (no login/attempt/counter mutation)."
+    },
+    {
+      "site": "SOURCE ANOMALY restaurant_members.pos_pin_hash/pos_pin_set_at",
+      "note": "Columns absent from the restored dump schema and from internal/db/migrations (no DDL found); PIN set/verify/count statements fail on both engines; preserved. Production existence not checked (dump-only)."
+    },
+    {
+      "site": "pos_pin other",
+      "note": "NULLIF(name,'') PAD rtrim twin; TRIM(CONCAT(first,' ',last)) -> trim(||) (both NOT NULL); member insert InsertID with race fallback outside tx."
+    },
+    {
+      "site": "pos_fiscal series ensure",
+      "note": "INSERT IGNORE -> ON CONFLICT (restaurant_id,terminal_key,series_type) DO NOTHING (only collidable key; id generated). IGNORE truncation/other-warning effects not reproduced (terminal_key varchar(64), prefix fixed). next_number numeric(20,0) (unsigned range) scanned into int64 on both."
+    },
+    {
+      "site": "pos_fiscal CHAR(64) hashes (fixed real delta)",
+      "note": "PG bpchar keeps trailing padding on output while MySQL CHAR strips it; COALESCE(previous_hash,'') stored on copies is '' on MySQL but 64 spaces on PG. All PG reads of last_hash/content_hash/previous_hash now CAST(... AS text) (strips padding) so the hash chain compares the same strings; storage expression kept source-faithful."
+    },
+    {
+      "site": "pos_fiscal document insert / duplicate copy",
+      "note": "InsertID RETURNING; issuedAtStored already UTC truncated (naive column, pgx writes the UTC wall clock). Copy INSERT..SELECT via InsertSelectID (no source row -> id 0 like MySQL), select-list params typed. Unique keys (restaurant_id,full_number,copy_number)/(series_id,series_number,copy_number) unchanged. Number consume UPDATE in same tx."
+    },
+    {
+      "site": "pos_fiscal chain verify re-hash",
+      "note": "issued_at read as time.Time UTC on both (parseTime UTC / pgx timestamp); numeric(20,0) series_number int64; lines_json/vat_breakdown_json text bytes identical; enum document_type text; hash strings de-padded. Source-review claim, runtime QA pending (fiscal chain is cutover-critical)."
+    },
+    {
+      "site": "pos_fiscal audit after_json",
+      "note": "canonical JSON string into jsonb (CAST): stored audit text is jsonb-normalised (key order/spacing) unlike MySQL JSON - audit only, not part of the hash chain; JSON text QA gate."
+    },
+    {
+      "site": "pos_fiscal ignored reads in tx",
+      "note": "visit customer read and existing-document read ignore errors inside the tx -> savepoint scopes (ErrNoRows excluded)."
+    },
+    {
+      "site": "pos_fiscal VAT breakdown",
+      "note": "vat_rate_snapshot numeric(5,2) read CAST AS text (map keys '21.00' identical to MySQL DECIMAL bytes); ORDER BY SUM DESC ties arbitrary on both."
+    },
+    {
+      "site": "pos_recall duplicate skip",
+      "note": "Source skips a duplicate-key insert and continues the tx (idempotent recall); on PG each line insert now runs in TxStatementScope so the skip does not abort the tx. InsertID; COALESCE(NULLIF(course,''),'1') PAD rtrim twin; modifiers insert errors propagate."
+    },
+    {
+      "site": "kitchen station / POS category PATCH n==0 -> 404",
+      "note": "MySQL changed-rows: an unchanged save returns 404. PG twins add typed ROW(name C, sort_order, is_active) IS DISTINCT FROM predicate via posChangedRowArgs (intentional arity flags kitchen:109, split:57)."
+    },
+    {
+      "site": "kitchen routes",
+      "note": "INSERT..SELECT with typed select-list params via InsertSelectID: no active station -> 0 rows -> 404 on both; id from RETURNING. Route lookup SELECT DISTINCT station_id ORDER BY priority,id is invalid on PG (ORDER BY non-selected with DISTINCT; MySQL accepts without ONLY_FULL_GROUP_BY and the per-row choice is undefined) -> PG GROUP BY station_id ORDER BY MIN(priority),MIN(id). Consumer appends into a per-station map keyed by station, so order does not affect the result."
+    },
+    {
+      "site": "kitchen dispatch tx",
+      "note": "Dispatch insert in TxStatementScope so the duplicate (command_key or sequence) re-read works on PG; InsertID. course filter NULLIF(course,'') PAD rtrim twin (both filters). ack/ready times naive UTC statement time; CASE ? typed text; status/action enums read as text."
+    },
+    {
+      "site": "activation readiness",
+      "note": "SUM(EXISTS) -> SUM(CAST(EXISTS AS integer)); HAVING on SELECT aliases (expected<>actual) is MySQL-only -> PG repeats the expressions. Cross-enum comparisons (stock_affluence_daily/pos_cover_adjustments service_type vs pos_visits service_type are distinct PG enum types) compared as text, matching MySQL ENUM string comparison."
+    },
+    {
+      "site": "activation acceptance",
+      "note": "snapshot_json jsonb CAST; InsertID; acceptance_type enum param."
+    },
+    {
+      "site": "ticket void (split.go)",
+      "note": "voided_at naive UTC statement time; audit ignored in tx -> savepoint; jsonb_build_object reason text. Category in-use check EXISTS -> CAST AS integer (ignored error outside tx as source)."
+    },
+    {
+      "site": "pos_courses list GROUP BY/ORDER BY",
+      "note": "MySQL resolves GROUP BY course to column l.course (FROM before alias) and ORDER BY LENGTH(course),course to the alias; PG twin spells GROUP BY l.course and orders by octet_length(label),label (LENGTH is bytes). NULL/''/' ' course rows may appear as separate '1' groups on both. PAD SPACE NULLIF rtrim twin; course =? CI/accent comparison stays collation gate."
+    },
+    {
+      "site": "POSTRES patch/insert/delete/list",
+      "note": "Quoted POSTRES/NUM/DESCRIPCION (double-quoted); changed-rows contract via pgChangedRowsPredicate(postresPGTypes); InsertID RETURNING quoted NUM."
+    },
+    {
+      "site": "manual billing",
+      "note": "to_char YYYY-MM-DD, EXTRACT MONTH integer; includes_vat Go bool -> CAST(CAST(? AS boolean) AS smallint); scan smallint->bool via ParseBool both. InsertID: v1.9.3 LastInsertId never errors so id=0 fallback unreachable on MySQL."
+    },
+    {
+      "site": "invoice comments update",
+      "note": "updated_at=NOW() timestamptz; rows==0 'not found' for identical same-second save on MySQL kept via ROW(content C, updated_at) IS DISTINCT FROM (intentional ?-arity flag line 199). created_at binds time.Now() instant into timestamptz(0) (both round fractional)."
+    },
+    {
+      "site": "invoices load",
+      "note": "status/payment_method/discount_type enums and currency char(3) read as text; DATE/TIMESTAMP scanned into string -> RFC3339 on both (parseTime=true vs pgx time.Time UTC) - runtime JSON text QA pending."
+    },
+    {
+      "site": "stripe_connect.go:117 PROVISIONAL",
+      "note": "ODKU arbiters PK restaurant_id AND unique account_hash; PG ON CONFLICT (restaurant_id) only: reused Stripe account across tenants -> 23505 on PG vs MySQL overwrite of the foreign row. Multi-key gate, not equivalent. updated_at ON UPDATE behaviour under 136-onupdate gate."
+    },
+    {
+      "site": "site_builder_billing",
+      "note": "restaurant_domains unique only domain (id identity) -> ON CONFLICT (domain) same single arbiter incl. cross-tenant row update (source behaviour, routing/tenant gate). stripe_events payload CAST jsonb (JSON normalisation gate), processed_at timestamptz statement time; recurring amount CAST(COALESCE(NULLIF(text,''),'0.00') AS numeric) + padSpaceNullIfArg, CURDATE -> UTC statement date. All errors ignored outside tx as source; invalid price text errors on both (strict)."
+    },
+    {
+      "site": "admin_postres add (explicit NUM=MAX+1)",
+      "note": "MySQL AUTO_INCREMENT advances past an explicit NUM; PG identity does not. PG twin: WITH ins AS (INSERT .. RETURNING NUM) SELECT setval(seq, GREATEST(ins.NUM, MAX(NUM), last_value)). Residual: setval is non-transactional (concurrent nextval window; rollback does not undo, like MySQL counter) and a not-yet-called sequence after deleted max rows may land lower than MySQL's counter. Per-restaurant MAX on a global PK can collide with another tenant (source bug, same 500 on both)."
+    },
+    {
+      "site": "admin_postres update/toggle",
+      "note": "'No changes' warning depends on MySQL changed rows: ROW(DESCRIPCION C, alergenos C) / active IS DISTINCT FROM twins (intentional ?-arity flags 249, 343). Search LIKE lower-case C only: accent/PAD SPACE folding open search gate; unordered result order undefined on both."
+    },
+    {
+      "site": "invoice_numbering",
+      "note": "Settings upserts on single PK (restaurant_id,year) -> ON CONFLICT faithful; GREATEST qualified to existing row. FOR UPDATE on absent row: MySQL RR gap lock (concurrent first-use -> deadlock/retry) vs PG nothing (second waits on ON CONFLICT then re-reads latest committed row under RC) -> outcome may differ for concurrent backfill (both can renumber the same un-numbered invoices; second overwrites). Gap-lock gate, not equivalent. invoice_number has no unique index (duplicates possible on both). YEAR -> EXTRACT integer; <> '' PAD SPACE rtrim twin. updated_at via onupd trigger (136 gate)."
+    },
+    {
+      "site": "stripe_connect_fees",
+      "note": "platform_settings PK setting_key and overrides PK restaurant_id: single-arbiter ON CONFLICT faithful. created_at text rendered UTC (session UTC both). List ORDER BY r.name collation gate; bool scans from IS NOT NULL / smallint OK on both."
+    },
+    {
+      "site": "pos_reports",
+      "note": "Enums read as text, ORDER BY keeps enum declaration order (same as MySQL ENUM index if PG enum labels created in source order - QA). Card reconciliation: provider_reference <>'' PAD SPACE twin; COUNT(DISTINCT ref) under ci_ai collation gate; refund sum fans out per payment row (source behaviour kept). Covers keys UNION of two distinct enum types cast to text. Replay: errors that skip an id or are ignored (remaining count, ticket stock_status) inside the tx wrapped in TxStatementScope; FOR UPDATE on join locks both tables on both engines. INSERT IGNORE -> ON CONFLICT (snapshot unique key) DO NOTHING via InsertSelectID; tenant_id unique is identity-backed so not collidable; IGNORE-downgraded range/FK errors raise on PG (IGNORE truncation gate)."
+    },
+    {
+      "site": "pos_admin tickets list (dynamic)",
+      "note": "status filter compares CAST(enum AS text) so an unknown status yields no rows (MySQL ENUM string compare) instead of a PG enum cast error; select enums as text; full statement rebound once. paid_at naive timestamp -> time.Time UTC on both."
+    },
+    {
+      "site": "pos_admin health",
+      "note": "SUM(bool) -> SUM(CASE) kept without COALESCE: with no open visits SUM is NULL and the ignored Scan error leaves both counters 0 on both engines (source quirk kept). opened_at naive UTC vs NOWN - interval."
+    },
+    {
+      "site": "pos_admin payments",
+      "note": "card_last4 char(4) read as text (bpchar padding stripped, as MySQL CHAR)."
+    },
+    {
+      "site": "pos_role_permissions upsert",
+      "note": "single PK arbiter -> ON CONFLICT faithful; updated_at onupd trigger (136 gate)."
+    },
+    {
+      "site": "stock_realtime ensure level",
+      "note": "No-op ODKU on PK -> ON CONFLICT DO NOTHING: MySQL ODKU also row-locks the existing row; PG takes the lock on the immediately following SELECT .. FOR UPDATE (no statement in between). No onupd fire on either (no value change)."
+    },
+    {
+      "site": "stock_realtime movements/snapshots",
+      "note": "InsertID RETURNING for movement and snapshot ids (v1.9.3 LastInsertId never errors). Float quantities bound to numeric(18,4)/(12,3): rounding of double->decimal assumed same, numeric/float gate. Default display unit LIMIT 1 without ORDER BY: arbitrary row on both when several defaults. Ticket/visit line iteration order unordered (movement id order may differ)."
+    },
+    {
+      "site": "stock_realtime anomalies",
+      "note": "Ignored INSERT IGNORE inside tx -> TxStatementScope + ON CONFLICT (restaurant_id,ticket_line_stock_id) DO NOTHING; MySQL IGNORE would clamp an out-of-range quantity_after_base and insert, PG skips the row (IGNORE gate). Ignored snapshot lookup also scoped."
+    },
+    {
+      "site": "invoices list/count (dynamic)",
+      "note": "Full statement from sqlFragment pieces rebound once (list + count). LIKE prefix search: PG LOWER(col) COLLATE C with lowered pattern - case-insensitive only, accent/PAD SPACE search gate. status filter compared as text (unknown -> no rows, no enum error). Invalid user date strings in date filters: MySQL compares/warns, PG raises 22007 -> 500 (new filter-validation gate, source not changed). ORDER BY invoice_date/amount ties + LIMIT/OFFSET nondeterministic on both."
+    },
+    {
+      "site": "invoices create/update",
+      "note": "is_reservation smallint <- Go bool via CAST(CAST(? AS boolean) AS smallint); enums assigned from text params; InsertID inside tx (v1.9.3 LastInsertId never errors). Update n==0 (MySQL unchanged row) -> existence check; PG counts matched rows so goes straight on: same outcome. Numbering via invoice_numbering (pos10 gap-lock gate)."
+    },
+    {
+      "site": "invoices reservation search (dynamic)",
+      "note": "reservation_time read via to_char HH24:MI:SS (MySQL TIME text); LIKE CONCAT('%',?,'%') -> LOWER .. C LIKE assistantLikeArg; invalid date/time filter strings raise on PG (filter-validation gate); TIME 838h gate n/a (time(0))."
+    },
+    {
+      "site": "invoice_wa_sends",
+      "note": "Claim UPDATE is portable (state guard makes every match a change, so RowsAffected==1 exactly-one-winner holds on both); duplicate-key insert race -> reload path unchanged (outside tx, no savepoint needed). pdf_url NULLIF PAD SPACE via padSpaceNullIfArg. No sends run."
+    },
+    {
+      "site": "pos_packs",
+      "note": "All CRUD portable; InsertID for pack/component; unique (restaurant_id,name) duplicate -> 400 on both; name byte-truncation 180 can split UTF-8 -> error on both; ORDER BY name collation gate; pos_packs updated_at naive ON UPDATE under 136 gate."
+    },
+    {
+      "site": "premium schema-fallback variants (49 literals)",
+      "note": "Each variant is an explicit sqlFragment(mysql, pg) twin (NOW -> timestamptz statement time; next_run_at naive NOWN + interval '1 month' (end-of-month clamp same rule); CURDATE -> UTC date; ODKU -> ON CONFLICT (domain); is_active = true -> = 1 since PG smallint=boolean is 42883 not a schema error); exec sites rebind once. Missing-column fallbacks (restaurant_websites draft_*, restaurant_areas metadata_json/sort_order, recurring_invoices legacy columns) rely on PG 42703 via sqldb.IsUndefinedObject - same fallback order as MySQL 1054 (source anomaly preserved, dump-only schema)."
+    },
+    {
+      "site": "premium tx variant loops",
+      "note": "Domain register tx (domain insert variants, website update variants, ensure-website variants, recurring insert via execer tx) continue after schema/duplicate errors -> per-attempt TxStatementScope on PG; MySQL path unchanged."
+    },
+    {
+      "site": "premium domain register",
+      "note": "FOR UPDATE on absent domain: MySQL RR gap lock serialises (deadlock/error for a concurrent second registrant) vs PG none: a concurrent second restaurant reaches ON CONFLICT (domain) DO UPDATE restaurant_id and takes the domain (cross-tenant, gap-lock gate; not equivalent)."
+    },
+    {
+      "site": "premium activate recurring (variant 1)",
+      "note": "affected==0 falls through to INSERT of a new recurring row on MySQL (changed rows: same-second identical re-activation). PG twin adds ROW(is_active, amount numeric(10,2), currency C, frequency text, interval_count, metadata_json jsonb, next_run_at, updated_at) IS DISTINCT FROM (intentional ?-arity flag ~3727). jsonb equality vs MySQL JSON binary compare, float->numeric rounding: numeric/JSON gate."
+    },
+    {
+      "site": "premium map helpers queryOneAsMap/queryAllAsMaps (SELECT *)",
+      "note": "Rebind once inside helper (all callers static portable SELECTs incl website_builder callers). normalizeSQLValue now treats pgx string like go-mysql []byte (JSON-suffix columns parsed). Residual: jsonb text normalisation for non-*json columns (restaurant_websites.settings), numeric text, enum/time types: JSON shape QA pending."
+    },
+    {
+      "site": "premium table delete FK",
+      "note": "MySQL 1451 detection extended with sqldb.IsForeignKeyViolation (PG 23503) on PG branch only; restaurant_menu_templates has no unique key so ODKU never fires -> PG plain INSERT."
+    },
+    {
+      "site": "premium layouts/templates/deliveries",
+      "note": "ON CONFLICT on the single unique keys; data_json/payload_json CAST jsonb; sent_at naive NOWN; delivery inserts ignore errors outside tx as source."
+    },
+    {
+      "site": "backoffice_pos UUID check",
+      "note": "No SQL UUID() in backoffice_pos.go sites (ticket UUIDv1 gate lives in other files); nothing marked blocked/provisional here."
+    },
+    {
+      "site": "ticket number sequence",
+      "note": "ODKU next_value=LAST_INSERT_ID(next_value+1) on PK (restaurant_id,business_date,sequence_type) -> ON CONFLICT DO UPDATE next_value+1; LAST_INSERT_ID value never read (re-read FOR UPDATE). Catch-up MAX(CAST(SUBSTRING_INDEX(..,'-',-1) AS UNSIGNED)): PG regexp last segment + leading-digits prefix cast (MySQL lenient cast: non-numeric -> 0, warnings only) - exotic inputs (sign, >2^64 clamp, unicode digits) unverified; LIKE lower-C with posLowerLikeArg (collation gate)."
+    },
+    {
+      "site": "visit/line/pack inserts in tx",
+      "note": "Duplicate-key paths (open idempotency, open table, line/pack/component idempotency) re-read, commit or continue in the same tx -> TxStatementScope + InsertID on PG. Re-read after duplicate under MySQL RR vs PG RC snapshot: existing duplicate-read gate (crossaudit). Duplicate detected by message substring 'duplicate' (PG 23505 text also matches) - source breadth kept (any unique key, incl. uq open table -> TABLE_OCCUPIED)."
+    },
+    {
+      "site": "ignored audits in tx",
+      "note": "LIVE_ACTIVATED/OPEN/PRICE_OVERRIDE/DISCOUNT audit inserts ignored -> savepoint; JSON_OBJECT -> jsonb_build_object typed bigint/text (jsonb key order/number text gate)."
+    },
+    {
+      "site": "settings/periods/sales screen",
+      "note": "TIME_FORMAT -> to_char HH24:MI; enums text; settings upsert single PK ON CONFLICT; EXISTS scanned into int -> CAST AS integer; LEFT JOIN area display_order NULLS FIRST (MySQL ASC); visit status IN filter compared as text; acceptance_type compared as text; consumed_at naive UTC; line voided_at timestamptz statement time."
+    },
+    {
+      "site": "PIN policy count",
+      "note": "restaurant_members.pos_pin_hash absent in restored dump schema (dump-only, not live): PG 42703 and MySQL 1054 both error -> 409 PIN_POLICY_NO_PIN path (source anomaly preserved)."
+    },
+    {
+      "site": "checkout tx (checkoutTicketInTx, shared with bulk close)",
+      "note": "Ticket FOR UPDATE + checkout_idempotency_key duplicate short-circuit unchanged; payments insert errors return (no continuation); paid_at/closed_at naive UTC statement time; enums read as text. Ignored CHECKOUT audit inside the shared tx -> savepoint (bulk loop continues the same tx on PG). Money stays integer cents in Go; SQL only stores."
+    },
+    {
+      "site": "checkout stock apply/prepare",
+      "note": "Snapshot/movement ids via InsertID RETURNING; ensure level ON CONFLICT DO NOTHING then FOR UPDATE (pos11 lock-timing gate); ignored sale_movement_id lookup -> savepoint; INSERT IGNORE anomalies -> ON CONFLICT (restaurant_id,ticket_line_stock_id) DO NOTHING (error returns; IGNORE range clamp gate); applied_at/reversed_at timestamptz statement time."
+    },
+    {
+      "site": "refunds",
+      "note": "Refund id via InsertID; duplicate -> rollback (no continuation); invalid payment_method enum errors on both (strict); ignored audit/restock-sum/REVERSED update -> savepoints; CASE WHEN CAST(? AS text)='REFUNDED'. Restock fraction float math unchanged (numeric gate)."
+    },
+    {
+      "site": "covers",
+      "note": "stock_affluence_daily unique (restaurant_id,service_date,service_type) single collidable -> ON CONFLICT; covers reconciliation compares three distinct service_type enums as text and adds v.restaurant_id to GROUP BY (correlated subquery references it; WHERE fixes it so groups identical); ORDER BY ck.service_type keeps enum order (declaration order QA)."
+    },
+    {
+      "site": "tool note",
+      "note": "lit() prefix anchor double-wrapped one pos_visits CLOSED statement during this phase (MySQL text was a prefix of the guarded variant); detected by inventory and fixed by hand; repo-wide grep for nested nativeSQL/portableSQL = 0."
+    },
+    {
+      "site": "rail merge tx",
+      "note": "Merge-key duplicate re-read inside tx -> TxStatementScope; source_visit_ids_json CAST jsonb; UPDATE..JOIN -> UPDATE..FROM (lines, line_stock, kitchen dispatches, adjustments) with same arg order; moved-lines RowsAffected: every matched row changes ticket_id (source<>target ticket) so matched==changed. Ignored line_stock re-point and MERGE audit -> savepoints. INSERT IGNORE tags INSERT..SELECT -> typed select param + ON CONFLICT (PK) DO NOTHING (intra-statement duplicates skipped on both). voided_at/closed_at naive UTC."
+    },
+    {
+      "site": "rail JSON audits",
+      "note": "Go bool bound by go-mysql as TINYINT 1/0 -> JSON number in MySQL JSON_OBJECT; PG twins emit CAST(CAST(? AS boolean) AS integer) to keep the number (parked, comped) - code-review grounded, runtime JSON QA pending. Other args typed bigint/text."
+    },
+    {
+      "site": "rail drawer/adjust/comp/operator/tags",
+      "note": "Drawer/tag ids via InsertID; drawer/tag/adjustment duplicate paths outside tx or rollback (no continuation); ignored adjustment/COMP audits in tx -> savepoints; operator dynamic statement rebound once; tag validity query rebound once; INSERT IGNORE line/ticket tags -> ON CONFLICT PK DO NOTHING (IGNORE also downgraded FK errors on MySQL -> raise on PG: IGNORE gate); enums read as text; tag ORDER BY name collation gate; parked_at/comped_at naive UTC."
+    },
+    {
+      "site": "POS domain end",
+      "note": "POS billing syntax-ported 564/564 (35/35 files) incl 1 provisional (stripe_connect multi-key); runtime-verified 0; repo-wide nested wrapper grep 0."
+    }
+  ]
+}

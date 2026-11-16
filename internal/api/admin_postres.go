@@ -96,7 +96,7 @@ func (s *Server) handleGetPostres(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activeRows, err := s.db.QueryContext(r.Context(), "SELECT NUM, DESCRIPCION, alergenos, active FROM POSTRES WHERE restaurant_id = ? AND (active = 1 OR active IS NULL) ORDER BY NUM", restaurantID)
+	activeRows, err := s.db.QueryContext(r.Context(), nativeSQL("SELECT NUM, DESCRIPCION, alergenos, active FROM POSTRES WHERE restaurant_id = ? AND (active = 1 OR active IS NULL) ORDER BY NUM", `SELECT "NUM", "DESCRIPCION", alergenos, active FROM "POSTRES" WHERE restaurant_id = ? AND (active = 1 OR active IS NULL) ORDER BY "NUM"`), restaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"status":  "error",
@@ -106,7 +106,7 @@ func (s *Server) handleGetPostres(w http.ResponseWriter, r *http.Request) {
 	}
 	defer activeRows.Close()
 
-	inactiveRows, err := s.db.QueryContext(r.Context(), "SELECT NUM, DESCRIPCION, alergenos, active FROM POSTRES WHERE restaurant_id = ? AND active = 0 ORDER BY NUM", restaurantID)
+	inactiveRows, err := s.db.QueryContext(r.Context(), nativeSQL("SELECT NUM, DESCRIPCION, alergenos, active FROM POSTRES WHERE restaurant_id = ? AND active = 0 ORDER BY NUM", `SELECT "NUM", "DESCRIPCION", alergenos, active FROM "POSTRES" WHERE restaurant_id = ? AND active = 0 ORDER BY "NUM"`), restaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"status":  "error",
@@ -185,7 +185,7 @@ func (s *Server) handleAddPostre(w http.ResponseWriter, r *http.Request, input m
 
 	// Match legacy behavior: NUM = MAX(NUM) + 1 (reuses IDs if the max was deleted).
 	var maxNum sql.NullInt64
-	if err := s.db.QueryRowContext(r.Context(), "SELECT MAX(NUM) as maxNum FROM POSTRES WHERE restaurant_id = ?", restaurantID).Scan(&maxNum); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL("SELECT MAX(NUM) as maxNum FROM POSTRES WHERE restaurant_id = ?", `SELECT MAX("NUM") as maxNum FROM "POSTRES" WHERE restaurant_id = ?`), restaurantID).Scan(&maxNum); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"status":  "error",
 			"message": "Error getting max NUM",
@@ -197,7 +197,9 @@ func (s *Server) handleAddPostre(w http.ResponseWriter, r *http.Request, input m
 		newNum = maxNum.Int64 + 1
 	}
 
-	_, err := s.db.ExecContext(r.Context(), "INSERT INTO POSTRES (restaurant_id, NUM, DESCRIPCION, alergenos, active) VALUES (?, ?, ?, ?, 1)", restaurantID, newNum, descripcion, string(alergJSON))
+	// Explicit NUM: MySQL AUTO_INCREMENT moves past it; a PG identity does not,
+	// so the PG twin advances the sequence in the same statement (never down).
+	_, err := s.db.ExecContext(r.Context(), nativeSQL("INSERT INTO POSTRES (restaurant_id, NUM, DESCRIPCION, alergenos, active) VALUES (?, ?, ?, ?, 1)", `WITH ins AS (INSERT INTO "POSTRES" (restaurant_id, "NUM", "DESCRIPCION", alergenos, active) VALUES (?, ?, ?, ?, 1) RETURNING "NUM") SELECT setval(pg_get_serial_sequence('"POSTRES"', 'NUM'), GREATEST(ins."NUM", (SELECT COALESCE(MAX("NUM"), 0) FROM "POSTRES"), COALESCE(pg_sequence_last_value(CAST(pg_get_serial_sequence('"POSTRES"', 'NUM') AS regclass)), 0))) FROM ins`), restaurantID, newNum, descripcion, string(alergJSON))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"status":  "error",
@@ -243,7 +245,8 @@ func (s *Server) handleUpdateExistingPostre(w http.ResponseWriter, r *http.Reque
 	alergenos := anyToStringSlice(input["alergenos"])
 	alergJSON, _ := json.Marshal(alergenos)
 
-	res, err := s.db.ExecContext(r.Context(), "UPDATE POSTRES SET DESCRIPCION = ?, alergenos = ? WHERE restaurant_id = ? AND NUM = ?", descripcion, string(alergJSON), restaurantID, num)
+	// affected==0 -> "no changes" on MySQL (changed rows): PG IS DISTINCT FROM.
+	res, err := s.db.ExecContext(r.Context(), nativeSQL("UPDATE POSTRES SET DESCRIPCION = ?, alergenos = ? WHERE restaurant_id = ? AND NUM = ?", `UPDATE "POSTRES" SET "DESCRIPCION" = ?, alergenos = ? WHERE restaurant_id = ? AND "NUM" = ? AND ROW("DESCRIPCION" COLLATE "C", alergenos COLLATE "C") IS DISTINCT FROM ROW(CAST(? AS text) COLLATE "C", CAST(? AS text) COLLATE "C")`), posChangedRowArgs([]any{descripcion, string(alergJSON)}, restaurantID, num)...)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"status":  "error",
@@ -284,7 +287,7 @@ func (s *Server) handleDeletePostre(w http.ResponseWriter, r *http.Request, inpu
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(), "DELETE FROM POSTRES WHERE restaurant_id = ? AND NUM = ?", restaurantID, num)
+	res, err := s.db.ExecContext(r.Context(), nativeSQL("DELETE FROM POSTRES WHERE restaurant_id = ? AND NUM = ?", `DELETE FROM "POSTRES" WHERE restaurant_id = ? AND "NUM" = ?`), restaurantID, num)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"status":  "error",
@@ -337,7 +340,7 @@ func (s *Server) handleTogglePostreActive(w http.ResponseWriter, r *http.Request
 		activeInt = 1
 	}
 
-	res, err := s.db.ExecContext(r.Context(), "UPDATE POSTRES SET active = ? WHERE restaurant_id = ? AND NUM = ?", activeInt, restaurantID, num)
+	res, err := s.db.ExecContext(r.Context(), nativeSQL("UPDATE POSTRES SET active = ? WHERE restaurant_id = ? AND NUM = ?", `UPDATE "POSTRES" SET active = ? WHERE restaurant_id = ? AND "NUM" = ? AND active IS DISTINCT FROM CAST(? AS smallint)`), posChangedRowArgs([]any{activeInt}, restaurantID, num)...)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"status":  "error",
@@ -378,7 +381,7 @@ func (s *Server) handleSearchPostres(w http.ResponseWriter, r *http.Request) {
 	searchTerm := strings.TrimSpace(r.URL.Query().Get("searchTerm"))
 
 	if searchTerm == "" {
-		rows, err := s.db.QueryContext(r.Context(), "SELECT NUM FROM POSTRES WHERE restaurant_id = ? ORDER BY NUM", restaurantID)
+		rows, err := s.db.QueryContext(r.Context(), nativeSQL("SELECT NUM FROM POSTRES WHERE restaurant_id = ? ORDER BY NUM", `SELECT "NUM" FROM "POSTRES" WHERE restaurant_id = ? ORDER BY "NUM"`), restaurantID)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 				"status":      "error",
@@ -411,8 +414,8 @@ func (s *Server) handleSearchPostres(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	likeTerm := "%" + searchTerm + "%"
-	rows, err := s.db.QueryContext(r.Context(), "SELECT NUM FROM POSTRES WHERE restaurant_id = ? AND DESCRIPCION LIKE ?", restaurantID, likeTerm)
+	// PG: case-insensitive LIKE only; accent/PAD SPACE folding stays search gate.
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL("SELECT NUM FROM POSTRES WHERE restaurant_id = ? AND DESCRIPCION LIKE ?", `SELECT "NUM" FROM "POSTRES" WHERE restaurant_id = ? AND LOWER("DESCRIPCION") COLLATE "C" LIKE ?`), restaurantID, assistantLikeArg(searchTerm))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{
 			"status":      "error",

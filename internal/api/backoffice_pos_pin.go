@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"preactvillacarmen/internal/sqldb"
 	"regexp"
 	"strconv"
 	"strings"
@@ -58,7 +59,7 @@ func (s *Server) handleBOPOSPinSet(w http.ResponseWriter, r *http.Request) {
 	// borrowed tablet cannot quietly reassign the account that the audit trail
 	// will then blame for the actions.
 	var current string
-	if err = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(pos_pin_hash,'') FROM restaurant_members WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, memberID).Scan(&current); err != nil {
+	if err = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COALESCE(pos_pin_hash,'') FROM restaurant_members WHERE restaurant_id=? AND id=?`), a.ActiveRestaurantID, memberID).Scan(&current); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reading PIN")
 		return
 	}
@@ -74,7 +75,7 @@ func (s *Server) handleBOPOSPinSet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error hashing PIN")
 		return
 	}
-	if _, err = s.db.ExecContext(r.Context(), `UPDATE restaurant_members SET pos_pin_hash=?,pos_pin_set_at=NOW() WHERE restaurant_id=? AND id=?`, string(hashed), a.ActiveRestaurantID, memberID); err != nil {
+	if _, err = s.db.ExecContext(r.Context(), nativeSQL(`UPDATE restaurant_members SET pos_pin_hash=?,pos_pin_set_at=NOW() WHERE restaurant_id=? AND id=?`, `UPDATE restaurant_members SET pos_pin_hash=?,pos_pin_set_at=date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') WHERE restaurant_id=? AND id=?`), string(hashed), a.ActiveRestaurantID, memberID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error saving PIN")
 		return
 	}
@@ -102,7 +103,7 @@ func (s *Server) handleBOPOSPinVerify(w http.ResponseWriter, r *http.Request) {
 	// Throttled per terminal first: after a few wrong guesses this session stops
 	// being allowed to try, so a PIN cannot be ground out one guess at a time.
 	var lockedUntil sql.NullTime
-	err := s.db.QueryRowContext(r.Context(), `SELECT locked_until FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`, a.ActiveRestaurantID, a.User.ID).Scan(&lockedUntil)
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT locked_until FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`), a.ActiveRestaurantID, a.User.ID).Scan(&lockedUntil)
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reading PIN attempts")
 		return
@@ -117,7 +118,7 @@ func (s *Server) handleBOPOSPinVerify(w http.ResponseWriter, r *http.Request) {
 	if nameErr == nil {
 		// Reset the terminal's counter on success: one bad guess while closing
 		// the till must not lock the waiter out of their own PIN.
-		_, _ = s.db.ExecContext(r.Context(), `DELETE FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`, a.ActiveRestaurantID, a.User.ID)
+		_, _ = s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM pos_pin_attempts WHERE restaurant_id=? AND attempted_by=?`), a.ActiveRestaurantID, a.User.ID)
 		httpx.WriteJSON(w, 200, map[string]any{"success": true, "displayName": name})
 		return
 	}
@@ -148,6 +149,14 @@ func (s *Server) countPINFailure(r *http.Request, restaurantID int64, userID int
 	// The lock is only set once the count actually reaches the threshold. Doing it
 	// in the VALUES clause would arm the lockout on the very first wrong PIN and
 	// lock the waiter out of their own PIN for a single typo.
+	// PG twin: SET right-hand sides read the OLD row, so locked_until repeats
+	// the new failed_attempts expression (MySQL reads the value just written,
+	// left to right). updated_at is TIMESTAMP (instant), locked_until naive UTC.
+	pgStatement := `INSERT INTO pos_pin_attempts (restaurant_id,attempted_by,failed_attempts,locked_until)
+		VALUES (?,?,1,CASE WHEN 1>=CAST(? AS integer) THEN date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '` + window + ` minutes' ELSE NULL END)
+		ON CONFLICT (restaurant_id, attempted_by) DO UPDATE SET
+		  failed_attempts = CASE WHEN pos_pin_attempts.updated_at < date_trunc('second', statement_timestamp()) - INTERVAL '` + window + ` minutes' OR (pos_pin_attempts.locked_until IS NOT NULL AND pos_pin_attempts.locked_until <= date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')) THEN 1 ELSE pos_pin_attempts.failed_attempts + 1 END,
+		  locked_until = CASE WHEN (CASE WHEN pos_pin_attempts.updated_at < date_trunc('second', statement_timestamp()) - INTERVAL '` + window + ` minutes' OR (pos_pin_attempts.locked_until IS NOT NULL AND pos_pin_attempts.locked_until <= date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC')) THEN 1 ELSE pos_pin_attempts.failed_attempts + 1 END) >= CAST(? AS integer) THEN date_trunc('second', statement_timestamp() AT TIME ZONE 'UTC') + INTERVAL '` + window + ` minutes' ELSE NULL END`
 	statement := `INSERT INTO pos_pin_attempts (restaurant_id,attempted_by,failed_attempts,locked_until)
 		VALUES (?,?,1,IF(1>=?,DATE_ADD(NOW(),INTERVAL ` + window + ` MINUTE),NULL))
 		ON DUPLICATE KEY UPDATE
@@ -159,7 +168,7 @@ func (s *Server) countPINFailure(r *http.Request, restaurantID int64, userID int
 	// failure instead of the 5th, and failures never expired: three typos last
 	// week plus one today locked the terminal for 15 minutes (measured on dev).
 	// Now the count restarts after an expired lock or a quiet window.
-	_, err := s.db.ExecContext(r.Context(), statement, restaurantID, userID, posPinMaxAttempts, posPinMaxAttempts)
+	_, err := s.db.ExecContext(r.Context(), nativeSQL(statement, pgStatement), restaurantID, userID, posPinMaxAttempts, posPinMaxAttempts) // window is a server constant (int), interpolated as in source
 	return err
 }
 
@@ -170,14 +179,14 @@ func (s *Server) handleBOPOSPinStatus(w http.ResponseWriter, r *http.Request) {
 	memberID, err := s.lookupPOSPinMember(r, a.ActiveRestaurantID, a.User.ID)
 	var exists int
 	if err == nil {
-		err = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND id=? AND pos_pin_hash IS NOT NULL`, a.ActiveRestaurantID, memberID).Scan(&exists)
+		err = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND id=? AND pos_pin_hash IS NOT NULL`), a.ActiveRestaurantID, memberID).Scan(&exists)
 	}
 	if err != nil && err != sql.ErrNoRows {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reading PIN")
 		return
 	}
 	var count int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`, a.ActiveRestaurantID).Scan(&count)
+	_ = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`), a.ActiveRestaurantID).Scan(&count)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true, "hasPin": exists > 0, "staffWithPin": count})
 }
 
@@ -186,7 +195,7 @@ func (s *Server) handleBOPOSPinStatus(w http.ResponseWriter, r *http.Request) {
 // asking whether you have a PIN must not create anything.
 func (s *Server) lookupPOSPinMember(r *http.Request, restaurantID int, userID int) (int64, error) {
 	var id int64
-	err := s.db.QueryRowContext(r.Context(), `SELECT id FROM restaurant_members WHERE restaurant_id=? AND bo_user_id=? AND is_active=1`, restaurantID, userID).Scan(&id)
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT id FROM restaurant_members WHERE restaurant_id=? AND bo_user_id=? AND is_active=1`), restaurantID, userID).Scan(&id)
 	return id, err
 }
 
@@ -203,16 +212,15 @@ func (s *Server) ensurePOSPinMember(r *http.Request, restaurantID int, userID in
 	// bo_users carries a single `name`, not first/last, so the name is split once
 	// here to fit the members table rather than inventing a surname.
 	var full string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(NULLIF(name,''),email) FROM bo_users WHERE id=?`, userID).Scan(&full); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT COALESCE(NULLIF(name,''),email) FROM bo_users WHERE id=?`, `SELECT COALESCE(CASE WHEN rtrim(name, ' ') COLLATE "C" = '' THEN NULL ELSE name END,email) FROM bo_users WHERE id=?`), userID).Scan(&full); err != nil {
 		return 0, err
 	}
 	first, last := splitPOSPinName(full)
-	res, err := s.db.ExecContext(r.Context(), `INSERT INTO restaurant_members (restaurant_id,bo_user_id,first_name,last_name,is_active) VALUES (?,?,?,?,1)`, restaurantID, userID, first, last)
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`INSERT INTO restaurant_members (restaurant_id,bo_user_id,first_name,last_name,is_active) VALUES (?,?,?,?,1)`), "id", restaurantID, userID, first, last)
 	if err != nil {
 		// Lost a race with another request: fall back to the row that won.
 		return s.lookupPOSPinMember(r, restaurantID, userID)
 	}
-	id, _ := res.LastInsertId()
 	return id, nil
 }
 
@@ -234,7 +242,7 @@ func splitPOSPinName(full string) (string, string) {
 // the standalone /pin/verify endpoint and by the line void, so both paths are
 // checked by exactly the same rule.
 func (s *Server) verifyPOSApprovalPIN(r *http.Request, restaurantID int, pin string) (string, error) {
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,pos_pin_hash FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`, restaurantID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT id,pos_pin_hash FROM restaurant_members WHERE restaurant_id=? AND is_active=1 AND pos_pin_hash IS NOT NULL`), restaurantID)
 	if err != nil {
 		return "", err
 	}
@@ -255,6 +263,6 @@ func (s *Server) verifyPOSApprovalPIN(r *http.Request, restaurantID int, pin str
 // posPINMemberName is the name shown next to an approved action.
 func (s *Server) posPINMemberName(r *http.Request, restaurantID int, memberID int64) (string, error) {
 	var name string
-	err := s.db.QueryRowContext(r.Context(), `SELECT TRIM(CONCAT(first_name,' ',last_name)) FROM restaurant_members WHERE restaurant_id=? AND id=?`, restaurantID, memberID).Scan(&name)
+	err := s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT TRIM(CONCAT(first_name,' ',last_name)) FROM restaurant_members WHERE restaurant_id=? AND id=?`, `SELECT trim(first_name || ' ' || last_name) FROM restaurant_members WHERE restaurant_id=? AND id=?`), restaurantID, memberID).Scan(&name)
 	return name, err
 }

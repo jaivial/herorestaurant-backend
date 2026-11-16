@@ -93,13 +93,13 @@ func (s *Server) handleBOCalendarMonth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	bookingRows, err := s.db.QueryContext(r.Context(), `
+	bookingRows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT reservation_date, COUNT(*) AS booking_count, COALESCE(SUM(party_size), 0) AS total_people
 		FROM bookings
 		WHERE restaurant_id = ? AND reservation_date BETWEEN ? AND ?
 		  AND status != 'cancelled'
 		GROUP BY reservation_date
-	`, restaurantID, firstDayStr, lastDayStr)
+	`), restaurantID, firstDayStr, lastDayStr)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"error":   "Database error",
@@ -128,11 +128,11 @@ func (s *Server) handleBOCalendarMonth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	limitRows, err := s.db.QueryContext(r.Context(), `
+	limitRows, err := s.db.QueryContext(r.Context(), nativeSQL(`
 		SELECT reservationDate AS date, dailyLimit AS reservation_limit
 		FROM reservation_manager
 		WHERE restaurant_id = ? AND reservationDate BETWEEN ? AND ?
-	`, restaurantID, firstDayStr, lastDayStr)
+	`, `SELECT "reservationDate" AS date, "dailyLimit" AS reservation_limit FROM reservation_manager WHERE restaurant_id = ? AND "reservationDate" BETWEEN ? AND ?`), restaurantID, firstDayStr, lastDayStr)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"error":   "Database error",
@@ -159,11 +159,11 @@ func (s *Server) handleBOCalendarMonth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	daysRows, err := s.db.QueryContext(r.Context(), `
+	daysRows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT date, is_open
 		FROM restaurant_days
 		WHERE restaurant_id = ? AND date BETWEEN ? AND ?
-	`, restaurantID, firstDayStr, lastDayStr)
+	`), restaurantID, firstDayStr, lastDayStr)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"error":   "Database error",

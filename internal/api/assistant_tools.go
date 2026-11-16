@@ -54,7 +54,7 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 		}
 		var summary any = result
 		if b, e := json.Marshal(summary); e == nil {
-			_, _ = s.db.ExecContext(ctx, `INSERT INTO assistant_tool_audit (user_id,restaurant_id,tool_name,tool_version,result_summary,error_message,duration_ms) VALUES (?,?,?,?,?,?,?)`, uid, restaurantID, name, "1", string(b), func() any {
+			_, _ = s.db.ExecContext(ctx, nativeSQL(`INSERT INTO assistant_tool_audit (user_id,restaurant_id,tool_name,tool_version,result_summary,error_message,duration_ms) VALUES (?,?,?,?,?,?,?)`, `INSERT INTO assistant_tool_audit (user_id,restaurant_id,tool_name,tool_version,result_summary,error_message,duration_ms) VALUES (?,?,?,?,CAST(? AS jsonb),?,?)`), uid, restaurantID, name, "1", string(b), func() any {
 				if err != nil {
 					return err.Error()
 				}
@@ -77,7 +77,7 @@ func (s *Server) assistantAuditToolDenial(ctx context.Context, restaurantID int,
 	// Best-effort structured audit (migration 015); deployments without the
 	// migration retain the legacy audit row above.
 	if b, e := json.Marshal(result); e == nil {
-		_, _ = s.db.ExecContext(ctx, `INSERT INTO assistant_tool_audit (user_id,restaurant_id,tool_name,tool_version,result_summary,error_message,duration_ms) VALUES (?,?,?,?,?,?,0)`,
+		_, _ = s.db.ExecContext(ctx, nativeSQL(`INSERT INTO assistant_tool_audit (user_id,restaurant_id,tool_name,tool_version,result_summary,error_message,duration_ms) VALUES (?,?,?,?,?,?,0)`, `INSERT INTO assistant_tool_audit (user_id,restaurant_id,tool_name,tool_version,result_summary,error_message,duration_ms) VALUES (?,?,?,?,CAST(? AS jsonb),?,0)`),
 			userID, restaurantID, name, "1", string(b), reason)
 	}
 }
@@ -108,7 +108,7 @@ func (s *Server) assistantExecuteToolUnsafe(ctx context.Context, restaurantID in
 // phone/email/address).
 func (s *Server) assistantRestaurantInfo(ctx context.Context, rid int) (string, error) {
 	var name string
-	if err := s.db.QueryRowContext(ctx, "SELECT name FROM restaurants WHERE id=?", rid).Scan(&name); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL("SELECT name FROM restaurants WHERE id=?"), rid).Scan(&name); err != nil {
 		return "", err
 	}
 	out := map[string]any{"restaurant_id": rid, "name": name}
@@ -117,7 +117,7 @@ func (s *Server) assistantRestaurantInfo(ctx context.Context, rid int) (string, 
 			continue
 		}
 		var v sql.NullString
-		if err := s.db.QueryRowContext(ctx, "SELECT "+col+" FROM restaurants WHERE id=?", rid).Scan(&v); err == nil && v.Valid {
+		if err := s.db.QueryRowContext(ctx, portableSQL("SELECT "+col+" FROM restaurants WHERE id=?"), rid).Scan(&v); err == nil && v.Valid {
 			out[key] = v.String
 		}
 	}
@@ -131,7 +131,8 @@ func (s *Server) assistantColumnExists(ctx context.Context, table, column string
 		return false
 	}
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?`, table, column).Scan(&n)
+	// PG: the business schema is the connection's current_schema() (search_path set by sqldb.OpenPostgres).
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?`, `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=? AND column_name=?`), table, column).Scan(&n)
 	return err == nil && n > 0
 }
 
@@ -160,7 +161,7 @@ func (s *Server) assistantBookingsSummary(ctx context.Context, rid int, input js
 			args = append(args, in.DateTo)
 		}
 	}
-	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&total, &people); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(q), args...).Scan(&total, &people); err != nil {
 		return "", err
 	}
 	return botJSON(map[string]any{"total": total, "people": people, "date": in.Date, "date_from": in.DateFrom, "date_to": in.DateTo}), nil
@@ -200,7 +201,9 @@ func (s *Server) assistantRestaurantQuery(ctx context.Context, rid int, input js
 }
 func (s *Server) assistantCount(ctx context.Context, rid int, table, key string) (string, error) {
 	var n int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE restaurant_id=?", rid).Scan(&n); err != nil {
+	// SOURCE ANOMALY: "group_menus" and "wines" do not exist in the source
+	// schema; both dialects fail the same way (preserved, not remapped).
+	if err := s.db.QueryRowContext(ctx, portableSQL("SELECT COUNT(*) FROM "+table+" WHERE restaurant_id=?"), rid).Scan(&n); err != nil {
 		return "", err
 	}
 	return botJSON(map[string]any{key: n}), nil
@@ -217,7 +220,7 @@ func (s *Server) assistantBookingSeries(ctx context.Context, rid int, from, to s
 		args = append(args, to)
 	}
 	q += " GROUP BY reservation_date ORDER BY reservation_date LIMIT 500"
-	rows, e := s.db.QueryContext(ctx, q, args...)
+	rows, e := s.db.QueryContext(ctx, portableSQL(q), args...)
 	if e != nil {
 		return "", e
 	}
@@ -241,7 +244,8 @@ func (s *Server) assistantBookingList(ctx context.Context, rid int, date, dateFr
 	if limit < 1 || limit > 500 {
 		limit = 100
 	}
-	q := "SELECT id, customer_name, reservation_date, reservation_time, party_size, status FROM bookings WHERE restaurant_id=?"
+	// reservation_time TIME -> MySQL driver bytes "HH:MM:SS"; PG renders it as text explicitly.
+	q := sqlFragment("SELECT id, customer_name, reservation_date, reservation_time, party_size, status FROM bookings WHERE restaurant_id=?", "SELECT id, customer_name, reservation_date, CAST(reservation_time AS text), party_size, status FROM bookings WHERE restaurant_id=?")
 	args := []any{rid}
 	if strings.TrimSpace(date) != "" {
 		q += " AND reservation_date=?"
@@ -258,7 +262,7 @@ func (s *Server) assistantBookingList(ctx context.Context, rid int, date, dateFr
 	}
 	q += " AND status NOT IN ('cancelled','canceled') ORDER BY reservation_date, reservation_time LIMIT ?"
 	args = append(args, limit)
-	rows, e := s.db.QueryContext(ctx, q, args...)
+	rows, e := s.db.QueryContext(ctx, portableSQL(q), args...)
 	if e != nil {
 		return "", e
 	}
@@ -294,7 +298,7 @@ func (s *Server) assistantAudit(ctx context.Context, restaurantID int, action, e
 			payload = string(b)
 		}
 	}
-	_, _ = s.db.ExecContext(ctx, `INSERT INTO audit_log (restaurant_id,action,entity,entity_id,after_json) VALUES (?,?,?,?,?)`, restaurantID, action, entity, fmt.Sprint(entityID), payload)
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`INSERT INTO audit_log (restaurant_id,action,entity,entity_id,after_json) VALUES (?,?,?,?,?)`, `INSERT INTO audit_log (restaurant_id,action,entity,entity_id,after_json) VALUES (?,?,?,?,CAST(? AS jsonb))`), restaurantID, action, entity, fmt.Sprint(entityID), payload)
 }
 
 // assistantCreateBooking routes booking creation through the real backoffice
@@ -370,7 +374,9 @@ func (s *Server) assistantDeleteBooking(ctx context.Context, rid int, input json
 			httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"success": false, "message": "Unauthorized"})
 			return
 		}
-		res, err := s.db.ExecContext(r.Context(), `UPDATE bookings SET status='cancelled' WHERE restaurant_id=? AND id=?`, a.ActiveRestaurantID, in.BookingID)
+		// PG: changed-rows predicate (byte compare) keeps n == 1 false for an
+		// already 'cancelled' booking exactly like MySQL's changed-rows count.
+		res, err := s.db.ExecContext(r.Context(), nativeSQL(`UPDATE bookings SET status='cancelled' WHERE restaurant_id=? AND id=?`, `UPDATE bookings SET status='cancelled' WHERE restaurant_id=? AND id=? AND status COLLATE "C" IS DISTINCT FROM 'cancelled'`), a.ActiveRestaurantID, in.BookingID)
 		if err != nil {
 			httpx.WriteJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": err.Error()})
 			return
@@ -381,10 +387,13 @@ func (s *Server) assistantDeleteBooking(ctx context.Context, rid int, input json
 			var date sql.NullString
 			var party sql.NullInt64
 			var floor, salon sql.NullInt64
-			if qErr := s.db.QueryRowContext(r.Context(), `
+			if qErr := s.db.QueryRowContext(r.Context(), nativeSQL(`
 				SELECT DATE_FORMAT(reservation_date, '%Y-%m-%d'), party_size, preferred_floor_number, preferred_salon_id
 				FROM bookings WHERE restaurant_id = ? AND id = ?
-			`, a.ActiveRestaurantID, in.BookingID).Scan(&date, &party, &floor, &salon); qErr == nil && date.Valid && party.Valid {
+			`, `
+				SELECT to_char(reservation_date, 'YYYY-MM-DD'), party_size, preferred_floor_number, preferred_salon_id
+				FROM bookings WHERE restaurant_id = ? AND id = ?
+			`), a.ActiveRestaurantID, in.BookingID).Scan(&date, &party, &floor, &salon); qErr == nil && date.Valid && party.Valid {
 				_ = s.applyBookingLocationOccupancy(r.Context(), s.db, a.ActiveRestaurantID, date.String, floor, salon, int(party.Int64), -1)
 			}
 		}

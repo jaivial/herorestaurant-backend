@@ -152,7 +152,7 @@ func (s *Server) handleBOBunnyStorageConfigSet(w http.ResponseWriter, r *http.Re
 	if isActive {
 		activeInt = 1
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO bunny_storage_config
 			(restaurant_id, storage_zone, storage_access_key, pull_base_url, is_active, updated_by_user_id)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -162,7 +162,9 @@ func (s *Server) handleBOBunnyStorageConfigSet(w http.ResponseWriter, r *http.Re
 			pull_base_url = VALUES(pull_base_url),
 			is_active = VALUES(is_active),
 			updated_by_user_id = VALUES(updated_by_user_id)
-	`,
+	`, `INSERT INTO bunny_storage_config (restaurant_id, storage_zone, storage_access_key, pull_base_url, is_active, updated_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET storage_zone = EXCLUDED.storage_zone, storage_access_key = EXCLUDED.storage_access_key, pull_base_url = EXCLUDED.pull_base_url, is_active = EXCLUDED.is_active, updated_by_user_id = EXCLUDED.updated_by_user_id`),
 		a.ActiveRestaurantID,
 		nullIfEmpty(next.StorageZone), nullIfEmpty(next.StorageKey), nullIfEmpty(next.PullBaseURL),
 		activeInt, a.User.ID,

@@ -189,12 +189,15 @@ sudo -n docker stop "$NAME" >/dev/null
 sudo -n docker rename "$NAME" "$OLD"
 
 echo "== 8) recrear con la misma especificacion =="
+# GraphRAG registry + tokens (docs/graphrag/deploy-kraken.md): read-only when present
+GRAPHRAG_DIR=${GRAPHRAG_DIR:-/home/jaime/graphrag}; GR_MOUNT=(); [[ -d "$GRAPHRAG_DIR" ]] && GR_MOUNT=(-v "$GRAPHRAG_DIR:$GRAPHRAG_DIR:ro")
 sudo -n docker run -d \
   --name "$NAME" \
   --network host \
   --restart unless-stopped \
   --env-file "$ENVFILE" \
   -v "$VOLUME:/var/lib/herorestaurant" \
+  "${GR_MOUNT[@]}" \
   "$IMAGE" >/dev/null
 
 echo "== 9) verificar el env critico del contenedor NUEVO =="

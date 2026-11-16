@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"preactvillacarmen/internal/httpx"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // rateLimitState holds sliding-window counters per (IP + restaurantID).
@@ -448,8 +449,7 @@ type receiptBuilder func(bookingID int64, qr *bookingQR) *bookingReceipt
 // go with the confirmation email and WhatsApp.
 // Coordination id: stripe_prereserva_adelanto_v1, special_booking_qr_v1
 func (s *Server) commitFrontBooking(r *http.Request, pb *preparedFrontBooking, buildReceipt receiptBuilder) (int64, int, map[string]any) {
-	p := pb.params
-	bookingID, err := s.insertBooking(r, p)
+	bookingID, err := s.insertBooking(r, pb.params)
 	if err != nil {
 		return 0, http.StatusInternalServerError, map[string]any{
 			"success":    false,
@@ -457,6 +457,16 @@ func (s *Server) commitFrontBooking(r *http.Request, pb *preparedFrontBooking, b
 			"error_code": "BOOKING_INSERT_FAILED",
 		}
 	}
+	return s.finishFrontBooking(r, pb, bookingID, buildReceipt)
+}
+
+// finishFrontBooking is the post-commit part of commitFrontBooking (QR,
+// receipt, realtime broadcast, WhatsApp + email notifications, n8n): it runs
+// only after the booking row is committed and never inside a DB tx.
+// Notifications are at-most-once from here (no exactly-once across the
+// provider ack; the WhatsApp outbox only absorbs a failed send).
+func (s *Server) finishFrontBooking(r *http.Request, pb *preparedFrontBooking, bookingID int64, buildReceipt receiptBuilder) (int64, int, map[string]any) {
+	p := pb.params
 	var qr *bookingQR
 	if p.IsSpecialBooking {
 		qr = s.ensureBookingQR(r.Context(), pb.restaurantID, bookingID, p.ReservationDate)
@@ -910,7 +920,26 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	res, err := tx.ExecContext(r.Context(), `
+	id, err := s.insertBookingTx(r.Context(), tx, restaurantID, p)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// insertBookingTx is the exact source booking insert + occupancy update in
+// the caller's transaction (same policy for every caller; the caller owns
+// commit/rollback). booking_atomic_v1.
+func (s *Server) insertBookingTx(ctx context.Context, tx *sql.Tx, restaurantID int, p bookingInsertParams) (int64, error) {
+	// booking_day_lock_v1: serialise with every day-locked writer (the front
+	// path itself has no capacity rule in the source; policy unchanged).
+	if err := lockBookingDays(ctx, tx, restaurantID, p.ReservationDate); err != nil {
+		return 0, err
+	}
+	id, err := sqldb.InsertID(ctx, sqlDialect, tx, nativeSQL(`
 		INSERT INTO bookings (
 			restaurant_id,
 			reservation_date,
@@ -938,21 +967,41 @@ func (s *Server) insertBooking(r *http.Request, p bookingInsertParams) (int64, e
 			has_mobility_issues,
 			mobility_people
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, menuDeGrupoAssignedTinyint(p.MenuDeGrupoID), p.PrincipalesJSON, p.PreferredFloorNum, p.PreferredSalonID, boolToTinyint(p.IsSpecialBooking), boolToTinyint(p.IsPrereserva), nullableStringOrNilFromAny(p.SpecialJSON), boolToTinyint(p.HasMobilityIssues), p.MobilityPeople)
-	if err != nil {
-		return 0, err
-	}
-	id, err := res.LastInsertId()
+	`, `
+		INSERT INTO bookings (
+			restaurant_id,
+			reservation_date,
+			party_size,
+			children,
+			reservation_time,
+			customer_name,
+			contact_phone,
+			contact_phone_country_code,
+			commentary,
+			arroz_type,
+			arroz_servings,
+			"babyStrollers",
+			"highChairs",
+			contact_email,
+			special_menu,
+			menu_de_grupo_id,
+			menu_de_grupo_assigned,
+			principales_json,
+			preferred_floor_number,
+			preferred_salon_id,
+			is_special_booking,
+			is_prereserva,
+			special_json,
+			has_mobility_issues,
+			mobility_people
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`), "id", restaurantID, p.ReservationDate, p.PartySize, p.Children, p.ReservationTime, p.CustomerName, p.ContactPhone, p.ContactPhoneCC, p.Commentary, p.ArrozTypeJSON, p.ArrozServingsJSON, p.BabyStrollers, p.HighChairs, p.ContactEmail, p.SpecialMenu, p.MenuDeGrupoID, menuDeGrupoAssignedTinyint(p.MenuDeGrupoID), p.PrincipalesJSON, p.PreferredFloorNum, p.PreferredSalonID, boolToTinyint(p.IsSpecialBooking), boolToTinyint(p.IsPrereserva), nullableStringOrNilFromAny(p.SpecialJSON), boolToTinyint(p.HasMobilityIssues), p.MobilityPeople)
 	if err != nil {
 		return 0, err
 	}
 
 	// Track occupancy for the selected floor/salon on the reservation date.
-	if err := s.applyBookingLocationOccupancy(r.Context(), tx, restaurantID, p.ReservationDate, p.PreferredFloorNum, p.PreferredSalonID, p.PartySize, +1); err != nil {
-		return 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
+	if err := s.applyBookingLocationOccupancy(ctx, tx, restaurantID, p.ReservationDate, p.PreferredFloorNum, p.PreferredSalonID, p.PartySize, +1); err != nil {
 		return 0, err
 	}
 	return id, nil
@@ -964,9 +1013,9 @@ func (s *Server) enrichBookingLocationForNotifications(ctx context.Context, rest
 		return
 	}
 	var salonName sql.NullString
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT name FROM restaurant_salons WHERE restaurant_id = ? AND id = ? LIMIT 1
-	`, restaurantID, salonID).Scan(&salonName); err == nil && salonName.Valid {
+	`), restaurantID, salonID).Scan(&salonName); err == nil && salonName.Valid {
 		booking["preferred_salon_name"] = strings.TrimSpace(salonName.String)
 	}
 }
@@ -1135,7 +1184,7 @@ func (s *Server) fetchActiveGroupMenuTitleAndPrincipales(r *http.Request, menuID
 
 	var t string
 	var principales sql.NullString
-	err = s.db.QueryRowContext(r.Context(), "SELECT menu_title, principales FROM menus WHERE restaurant_id = ? AND id = ? AND active = 1 LIMIT 1", restaurantID, menuID).Scan(&t, &principales)
+	err = s.db.QueryRowContext(r.Context(), portableSQL("SELECT menu_title, principales FROM menus WHERE restaurant_id = ? AND id = ? AND active = 1 LIMIT 1"), restaurantID, menuID).Scan(&t, &principales)
 	if err != nil {
 		return "", "", err
 	}

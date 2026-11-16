@@ -13,6 +13,7 @@ import (
 
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/lib/specialmenuimage"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // =============================================================================
@@ -112,20 +113,19 @@ func (s *Server) handleBOGroupMenusV2CreateSpecialSection(w http.ResponseWriter,
 
 	var nextPos int
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(MAX(position), -1) + 1 FROM special_menu_sections WHERE restaurant_id = ? AND menu_id = ?`,
+		portableSQL(`SELECT COALESCE(MAX(position), -1) + 1 FROM special_menu_sections WHERE restaurant_id = ? AND menu_id = ?`),
 		a.ActiveRestaurantID, menuID).Scan(&nextPos); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error reservando posicion")
 		return
 	}
 
-	res, err := s.db.ExecContext(r.Context(),
-		`INSERT INTO special_menu_sections (restaurant_id, menu_id, title, position) VALUES (?, ?, ?, ?)`,
+	newID, err := sqldb.InsertID(r.Context(), sqlDialect, s.db,
+		portableSQL(`INSERT INTO special_menu_sections (restaurant_id, menu_id, title, position) VALUES (?, ?, ?, ?)`), "id",
 		a.ActiveRestaurantID, menuID, title, nextPos)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error creando seccion")
 		return
 	}
-	newID, _ := res.LastInsertId()
 
 	logCheckpoint(r, "special_menu_section_created",
 		"menu_id", strconv.FormatInt(menuID, 10),
@@ -202,8 +202,9 @@ func (s *Server) handleBOGroupMenusV2PatchSpecialSection(w http.ResponseWriter, 
 		return
 	}
 	args = append(args, sectionID, menuID, a.ActiveRestaurantID)
+	// Composed from the fixed title/price SET items; rebound once (RowsAffected unused).
 	if _, err := s.db.ExecContext(r.Context(),
-		`UPDATE special_menu_sections SET `+strings.Join(sets, ", ")+` WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		portableSQL(`UPDATE special_menu_sections SET `+strings.Join(sets, ", ")+` WHERE id = ? AND menu_id = ? AND restaurant_id = ?`),
 		args...); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando seccion")
 		return
@@ -278,7 +279,7 @@ func (s *Server) handleBOGroupMenusV2DeleteSpecialSection(w http.ResponseWriter,
 
 	var imagePath string
 	err = s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(image_path, '') FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		portableSQL(`SELECT COALESCE(image_path, '') FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`),
 		sectionID, menuID, a.ActiveRestaurantID).Scan(&imagePath)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
@@ -286,7 +287,7 @@ func (s *Server) handleBOGroupMenusV2DeleteSpecialSection(w http.ResponseWriter,
 	}
 
 	if _, err := s.db.ExecContext(r.Context(),
-		`DELETE FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		portableSQL(`DELETE FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`),
 		sectionID, menuID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando seccion")
 		return
@@ -354,7 +355,7 @@ func (s *Server) handleBOGroupMenusV2ReorderSpecialSections(w http.ResponseWrite
 	}
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(r.Context(),
-		`UPDATE special_menu_sections SET position = ? WHERE id = ? AND menu_id = ? AND restaurant_id = ?`)
+		portableSQL(`UPDATE special_menu_sections SET position = ? WHERE id = ? AND menu_id = ? AND restaurant_id = ?`))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error preparando actualizacion")
 		return
@@ -466,7 +467,7 @@ func (s *Server) handleBOSpecialSectionImageWSMessage(r *http.Request, restauran
 	}
 	var count int
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		portableSQL(`SELECT COUNT(*) FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`),
 		msg.SectionID, menuID, restaurantID).Scan(&count); err != nil || count == 0 {
 		fail("Section not found")
 		return
@@ -496,11 +497,15 @@ func (s *Server) handleBOSpecialSectionImageWSMessage(r *http.Request, restauran
 // setBOSpecialSectionImageState writes the upload state the editor hydrates
 // from. Coordination id: special_menu_sections_image_state_v1
 func (s *Server) setBOSpecialSectionImageState(ctx context.Context, restaurantID int, menuID, sectionID int64, state string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE special_menu_sections
 		SET image_state = ?, image_state_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
-	`, state, sectionID, menuID, restaurantID)
+	`, `
+		UPDATE special_menu_sections
+		SET image_state = ?, image_state_at = date_trunc('second', statement_timestamp())
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`), state, sectionID, menuID, restaurantID)
 	return err
 }
 
@@ -544,7 +549,7 @@ func (s *Server) runBOSpecialSectionImageJob(job boSpecialSectionImageJob) {
 
 	var prevImagePath string
 	_ = s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(image_path, '') FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		portableSQL(`SELECT COALESCE(image_path, '') FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`),
 		job.SectionID, job.MenuID, job.RestaurantID).Scan(&prevImagePath)
 
 	// Timestamped object name: a re-upload can never keep serving the
@@ -562,11 +567,15 @@ func (s *Server) runBOSpecialSectionImageJob(job boSpecialSectionImageJob) {
 		return
 	}
 
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 		UPDATE special_menu_sections
 		SET image_path = ?, image_state = ?, image_state_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
-	`, objectPath, boSpecialSectionImageStateReady, job.SectionID, job.MenuID, job.RestaurantID); err != nil {
+	`, `
+		UPDATE special_menu_sections
+		SET image_path = ?, image_state = ?, image_state_at = date_trunc('second', statement_timestamp())
+		WHERE id = ? AND menu_id = ? AND restaurant_id = ?
+	`), objectPath, boSpecialSectionImageStateReady, job.SectionID, job.MenuID, job.RestaurantID); err != nil {
 		fail("No se pudo guardar la imagen")
 		return
 	}
@@ -620,7 +629,7 @@ func (s *Server) handleBOGroupMenusV2DeleteSpecialSectionImage(w http.ResponseWr
 
 	var imagePath string
 	err = s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(image_path, '') FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		portableSQL(`SELECT COALESCE(image_path, '') FROM special_menu_sections WHERE id = ? AND menu_id = ? AND restaurant_id = ?`),
 		sectionID, menuID, a.ActiveRestaurantID).Scan(&imagePath)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Section not found"})
@@ -628,7 +637,7 @@ func (s *Server) handleBOGroupMenusV2DeleteSpecialSectionImage(w http.ResponseWr
 	}
 
 	if _, err := s.db.ExecContext(r.Context(),
-		`UPDATE special_menu_sections SET image_path = NULL, image_state = 'empty', image_state_at = CURRENT_TIMESTAMP WHERE id = ? AND menu_id = ? AND restaurant_id = ?`,
+		nativeSQL(`UPDATE special_menu_sections SET image_path = NULL, image_state = 'empty', image_state_at = CURRENT_TIMESTAMP WHERE id = ? AND menu_id = ? AND restaurant_id = ?`, `UPDATE special_menu_sections SET image_path = NULL, image_state = 'empty', image_state_at = date_trunc('second', statement_timestamp()) WHERE id = ? AND menu_id = ? AND restaurant_id = ?`),
 		sectionID, menuID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error eliminando imagen")
 		return
@@ -704,7 +713,7 @@ func (s *Server) handleBOGroupMenusV2PatchSpecialMenuVisibility(w http.ResponseW
 		if *req.SpecialDateID > 0 {
 			var found int
 			if err := s.db.QueryRowContext(r.Context(),
-				`SELECT COUNT(*) FROM special_dates WHERE id = ? AND restaurant_id = ?`,
+				portableSQL(`SELECT COUNT(*) FROM special_dates WHERE id = ? AND restaurant_id = ?`),
 				*req.SpecialDateID, a.ActiveRestaurantID).Scan(&found); err != nil || found == 0 {
 				httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Fecha especial no encontrada"})
 				return
@@ -720,10 +729,11 @@ func (s *Server) handleBOGroupMenusV2PatchSpecialMenuVisibility(w http.ResponseW
 	}
 	args = append(args, menuID, a.ActiveRestaurantID)
 
-	if _, err := s.db.ExecContext(r.Context(), fmt.Sprintf(`
+	// Composed from fixed web_placement/menu_public_active/special_date_id SET items; rebound once.
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(fmt.Sprintf(`
 		UPDATE menus SET %s
 		WHERE id = ? AND restaurant_id = ?
-	`, strings.Join(sets, ", ")), args...); err != nil {
+	`, strings.Join(sets, ", "))), args...); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando visibilidad")
 		return
 	}
@@ -742,7 +752,7 @@ func (s *Server) handleBOGroupMenusV2PatchSpecialMenuVisibility(w http.ResponseW
 // loadSpecialMenuSections returns the sections for one menu, ordered by
 // position, with image_path resolved to the public BunnyCDN URL.
 func (s *Server) loadSpecialMenuSections(ctx context.Context, restaurantID int, menuID int64) ([]boSpecialMenuSection, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`
 		SELECT id, title, COALESCE(image_path, ''), position, COALESCE(created_at, CURRENT_TIMESTAMP), price,
 		       CASE
 		           WHEN image_state = 'uploading' AND image_state_at >= NOW() - INTERVAL 5 MINUTE THEN 'uploading'
@@ -752,7 +762,17 @@ func (s *Server) loadSpecialMenuSections(ctx context.Context, restaurantID int, 
 		FROM special_menu_sections
 		WHERE restaurant_id = ? AND menu_id = ?
 		ORDER BY position ASC, id ASC
-	`, restaurantID, menuID)
+	`, `
+		SELECT id, title, COALESCE(image_path, ''), position, COALESCE(created_at, date_trunc('second', statement_timestamp())), price,
+		       CASE
+		           WHEN image_state = 'uploading' AND image_state_at >= date_trunc('second', statement_timestamp()) - interval '5 minutes' THEN 'uploading'
+		           WHEN COALESCE(image_path, '') <> '' THEN 'ready'
+		           ELSE 'empty'
+		       END
+		FROM special_menu_sections
+		WHERE restaurant_id = ? AND menu_id = ?
+		ORDER BY position ASC, id ASC
+	`), restaurantID, menuID)
 	if err != nil {
 		return nil, err
 	}
@@ -787,7 +807,7 @@ func (s *Server) loadSpecialMenuSections(ctx context.Context, restaurantID int, 
 // holes left by a delete are closed before the next render.
 func repackSpecialMenuSections(r *http.Request, s *Server, restaurantID int, menuID int64) error {
 	rows, err := s.db.QueryContext(r.Context(),
-		`SELECT id FROM special_menu_sections WHERE restaurant_id = ? AND menu_id = ? ORDER BY position ASC, id ASC`,
+		portableSQL(`SELECT id FROM special_menu_sections WHERE restaurant_id = ? AND menu_id = ? ORDER BY position ASC, id ASC`),
 		restaurantID, menuID)
 	if err != nil {
 		return err
@@ -811,7 +831,7 @@ func repackSpecialMenuSections(r *http.Request, s *Server, restaurantID int, men
 	}
 	defer tx.Rollback()
 	stmt, err := tx.PrepareContext(r.Context(),
-		`UPDATE special_menu_sections SET position = ? WHERE id = ? AND restaurant_id = ? AND menu_id = ?`)
+		portableSQL(`UPDATE special_menu_sections SET position = ? WHERE id = ? AND restaurant_id = ? AND menu_id = ?`))
 	if err != nil {
 		return err
 	}

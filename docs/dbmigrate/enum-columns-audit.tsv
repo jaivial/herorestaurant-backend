@@ -1,0 +1,114 @@
+column	labels	status	writer_evidence
+POSTRES.production_type	RAW|MANUFACTURED	canonical	technical_sheet_link.go:37-38 ToUpper(TrimSpace)+exact; :119/123
+accounting_exports.export_type	SALES_VAT|PAYMENTS|REFUNDS|STOCK|LABOUR	canonical	accounting_exports.go:320-324 ToUpper(TrimSpace)+switch; :348/352
+accounting_exports.status	GENERATED|SUBMITTED|ACCEPTED|FAILED	no-writer	default only
+ai_image_models.mode	t2i|i2i	seed	no Go writer
+analytics_sales_documents.source_type	INVOICE|POS	canonical	analytics/service.go:709/713 literals INVOICE/POS
+analytics_sync_runs.status	RUNNING|COMPLETED|FAILED	canonical	service.go:377/441/450 SQL literals
+assistant_messages.role	user|assistant	canonical	assistant_ws.go:425/426/560 literals
+cdn_object_sweeps.status	RUNNING|SUCCEEDED|FAILED|ABORTED	canonical	cmd/cdn-sweep/main.go:136/146/159/163 constants
+comida_items.production_type	RAW|MANUFACTURED	canonical	technical_sheet_bulk.go:177 literal; link.go:102
+conversation_messages.message_role	user|assistant|system	fixed	conversation_history.go:313 mysqlLowerEnumArg
+conversation_messages.message_type	user|ai|system	fixed	conversation_history.go:313 mysqlLowerEnumArg
+conversation_sessions.status	active|idle|completed|abandoned	canonical	SQL literals
+email_provider_config.provider	smtp|gmail	fixed	backoffice_config.go normalizeProvider -> mysqlLowerEnumArg
+email_provider_config.smtp_encryption	none|tls|ssl	fixed	backoffice_config.go normalizeEncryption -> mysqlLowerEnumArg
+group_menu_wines_v2.production_type	RAW|MANUFACTURED	canonical	technical_sheet_link.go:112
+instatic_instances.status	provisioning|running|stopped|error	canonical	instatic_manager.go literals
+integration_job_runs.status	RUNNING|OK|WARNING|FAILED|SKIPPED	canonical	cmd/ops-check/main.go:90/115/130 constants
+invoices.discount_type	percentage|fixed	fixed	backoffice_invoices.go:551/677 mysqlLowerEnumPtr
+invoices.payment_method	efectivo|tarjeta|transferencia|bizum|cheque	fixed	backoffice_invoices.go:547/673 mysqlLowerEnumPtr
+invoices.status	borrador|solicitada|pendiente|enviada	canonical	backoffice_invoices.go:476/601 exact switch; literals
+member_compensation_audit.action	CREATE|UPDATE|DELETE	canonical	labour_cost.go:229/273 literals
+member_compensations.pay_type	MONTHLY|HOURLY	canonical	labour_cost.go:65 ToUpper(TrimSpace)+validation
+member_time_allocation_audit.action	CREATE|DELETE	canonical	production_labour.go:213/257 literals
+menus.slider_mode	default|custom|both|hidden	canonical	group_menus_v2.go:3255 exact map
+pos_activation_acceptances.acceptance_type	STOCK_LIVE|COVERS_LIVE	canonical	pos_kitchen.go:569-570 ToUpper+exact
+pos_cash_closures.closure_type	X|Y|Z	canonical	validPOSMode exact X/Y/Z (pos_cash.go:472)
+pos_cash_closures.status	COMPLETED	no-writer	default only
+pos_cash_days.status	OPEN|CLOSED	canonical	cash_days.go:445 literal
+pos_cash_movements.movement_type	IN|OUT	canonical	validPOSMode exact IN/OUT
+pos_cover_adjustments.service_type	LUNCH|DINNER|OTHER	canonical	checkout.go:899 validPOSMode exact
+pos_drawer_events.reason	NO_SALE|CHANGE|COUNT|OTHER	canonical	pos_rail.go:405-409 ToUpper+exact
+pos_fiscal_documents.document_type	SIMPLIFICADA|RECTIFICATIVA	canonical	pos_fiscal.go constants posFiscalType*; :503 copy
+pos_fiscal_series.series_type	SIMPLIFICADA|RECTIFICATIVA	canonical	pos_fiscal.go:107 from posFiscalType constants
+pos_kitchen_dispatch_lines.action	ADD|VOID|NOTE|FIRE	canonical	pos_kitchen.go:418 server-built deltas (literals)
+pos_kitchen_dispatches.status	PENDING|ACKNOWLEDGED|PREPARING|READY|FAILED|CANCELLED	canonical	pos_kitchen.go:501 ToUpper(TrimSpace)+validPOSKitchenTransition
+pos_modifier_groups.kind	COMBO|SUPPLEMENT|OPTION	canonical	pos_modifiers.go:424-427/501 ToUpper(TrimSpace)+allowlist default OPTION
+pos_payments.method	CASH|CARD|BIZUM|BANK|OTHER	fixed	backoffice_pos_checkout.go:362, assistant_pos_tools.go:83 mysqlUpperEnumArg
+pos_payments.status	CAPTURED|VOIDED|REFUNDED	no-writer	default only (no UPDATE found)
+pos_products.source_type	COMIDA_ITEM|VINO|POSTRE|MENU_DISH|MANUAL	canonical	pos_catalog.go:95/236 literals
+pos_refunds.payment_method	CASH|CARD|BIZUM|BANK|OTHER	fixed	backoffice_pos_checkout.go:706, assistant_pos_tools.go:92 mysqlUpperEnumArg
+pos_refunds.status	COMPLETED|VOIDED	no-writer	default only
+pos_service_periods.service_type	LUNCH|DINNER|OTHER	canonical	pos_operations.go:50 validPOSMode exact
+pos_settings.covers_mode	MANUAL|SHADOW|LIVE	canonical	pos.go:404-405 ToUpper(TrimSpace)+validPOSMode
+pos_settings.stock_mode	OFF|SHADOW|LIVE	canonical	pos.go:404-405
+pos_shifts.status	OPEN|CLOSED	canonical	literals CLOSED; default OPEN
+pos_stock_anomalies.status	OPEN|RESOLVED	canonical	pos_admin.go:278 literal
+pos_stock_exceptions.code	UNMAPPED_PRODUCT|INVALID_MAPPING|WAREHOUSE_MISSING|APPLY_FAILED	canonical	checkout.go:135/196/204 literals
+pos_stock_exceptions.status	OPEN|RESOLVED|IGNORED	canonical	pos_reports.go:285 literal
+pos_tags.scope	LINE|TICKET|BOTH	canonical	pos_rail.go:751-755 ToUpper(TrimSpace)+validPOSMode
+pos_ticket_adjustments.mode	AMOUNT|PERCENT	canonical	pos_rail.go:460 ToUpper(TrimSpace)+default (validation follows)
+pos_ticket_adjustments.status	ACTIVE|REVERSED	no-writer	default only
+pos_ticket_adjustments.type	DISCOUNT|SURCHARGE	canonical	pos_rail.go:459 ToUpper(TrimSpace)
+pos_ticket_line_stock.status	SHADOW|APPLIED|SKIPPED_UNTRACKED|ERROR|REVERSED	canonical	server constants SHADOW/ERROR/APPLIED/REVERSED (reports.go:268, checkout.go:170-180, stock_realtime.go)
+pos_ticket_lines.status	ACTIVE|VOIDED	canonical	pos.go:1332/1345 literals
+pos_tickets.status	OPEN|PAID|VOIDED|PARTIALLY_REFUNDED|REFUNDED	canonical	literals; checkout.go:820 newStatus constants
+pos_tickets.stock_status	NOT_APPLICABLE|SHADOW|COMPLETE|PARTIAL|REVERSED	canonical	checkout.go:389 server stockStatus constants; reports.go:296 literal
+pos_visits.channel	DINE_IN|TAKEAWAY|DELIVERY|BAR	canonical	backoffice_pos.go:781 ToUpper(TrimSpace)+default
+pos_visits.service_type	LUNCH|DINNER|OTHER	canonical	resolvePOSBusinessMoment: DB periods (validPOSMode exact) or literal OTHER (pos.go:247-275)
+pos_visits.status	OPEN|CLOSED|CANCELLED|MERGED	canonical	literals; assistant_pos_tools.go:48 literal OPEN
+recurring_invoices.frequency	weekly|monthly|quarterly|yearly	canonical	premium.go:3845 ToLower(TrimSpace) of server literal; site_builder_billing.go:417 literal yearly
+recurring_invoices.payment_method	efectivo|tarjeta|transferencia|bizum|cheque	no-writer	no Go writer found
+reservation_location_occupancy.scope	salon|floor	canonical	occupancy.go:48/53 literals floor/salon
+restaurant_ads.image_generation_status	idle|pending|ready|failed	canonical	backoffice_ads.go:820 typed constants boAdImageGenerationStatus
+restaurant_domains.stripe_payment_status	pending|paid|failed	canonical	site_builder_billing.go literals
+restaurant_info.clasificacion	persona_fisica|sociedad	canonical	backoffice_config.go:2296-2310 exact match or derived literal
+restaurant_tables.shape	round|square	canonical	normalizePremiumTableShape (premium.go:4365)
+restaurant_tables.status	available|occupied|reserved	canonical	normalizePremiumTableStatus (premium.go:4354)
+restaurant_websites.status	draft|published|unpublished	fixed	website_builder_handlers.go:254 mysqlLowerEnumArg; :1535/1856 literals
+site_builder_assets.type	image|video|document|font|other	fixed	site_builder.go:902 mysqlLowerEnumArg (reader :814 already CAST text ci_ai)
+site_builder_bindings.refresh_mode	publish|load|poll	fixed	site_builder.go:1369 mysqlLowerEnumArg
+site_builder_collections.source_type	internal|external	no-writer	no Go writer
+site_builder_domain_mappings.ssl_status	none|pending|active|failed	canonical	site_builder.go:1740 literal; registrar/instatic literals
+site_builder_domain_mappings.status	pending|verified|active|failed	canonical	site_builder.go:1740 literal pending; :1840/1844 literal verified; registrar.go:298-302 and instatic_manager.go:943-947 literal active
+site_builder_domain_mappings.verification_method	dns|file	canonical	site_builder.go:1740 literal dns
+site_builder_pages.page_type	static|collection_template	fixed	site_builder.go:303/306 literal static; :590 create and :699 update now mysqlLowerEnumArg (was raw input.PageType)
+site_builder_publish_queue.action	publish|unpublish|rollback|seed|verify_domain	no-writer	no Go writer (literal scan + grep)
+site_builder_publish_queue.status	pending|processing|completed|failed	no-writer	no Go writer
+site_builder_sites.status	draft|published|unpublished	canonical	site_builder.go:283/286 literal draft; :1560/1562 literal published
+site_builder_versions.status	draft|published|archived	canonical	site_builder.go:1118/1121 literal draft; :1546/1549 literal published
+stock_affluence_daily.service_type	LUNCH|DINNER|OTHER	canonical	stock_analytics.go:209-213 exact switch; checkout.go:65 rebuildPOSAffluenceKey args validated (checkout.go:899) or stored visit value
+stock_affluence_daily.source	MANUAL|POS	canonical	checkout.go:65 literal POS; analytics manual path literal
+stock_ai_reports.report_type	FORECAST|COSTING|COMBINED	canonical	stock_analytics.go:794 literal COMBINED
+stock_count_sheets.status	OPEN|CLOSED|CANCELLED	canonical	backoffice_stock.go:1161 literal CLOSED; default OPEN
+stock_document_access_audit.action	DOWNLOAD|DELETE|RETENTION_DELETE	canonical	stock_documents.go:729/759, cmd/ops-check/main.go:274 literals
+stock_document_lines.status	OK|NEEDS_MATCH|IGNORED	canonical	stock_documents.go:173 literal NEEDS_MATCH/OK; :420 ToUpper(TrimSpace)+validation before :429
+stock_document_scans.document_type	INVOICE|RECIPE	canonical	normalizeStockDocumentType ToUpper(TrimSpace)+exact (stock_documents.go:57); stock_analytics.go:920 exact
+stock_document_scans.source	UPLOAD|PHOTO|PASTE	canonical	literals UPLOAD (stock_documents.go:292) / PASTE (stock_analytics.go:939)
+stock_document_scans.status	PENDING|PROCESSING|NEEDS_REVIEW|CONFIRMED|REJECTED|FAILED	canonical	literals NEEDS_REVIEW/REJECTED/CONFIRMED
+stock_item_prices.source	MANUAL|OCR|PURCHASE	canonical	stock_documents.go:690 literal OCR
+stock_items.base_dimension	MASS|VOLUME|COUNT	fixed	backoffice_stock.go:695 mysqlUpperEnumArg (was ToUpper only); stock_import.go:396 mysqlUpperEnumArg; technical_sheets.go:148 ToUpper(TrimSpace)+stockBaseUnitForDimension; literals COUNT; backfill constants
+stock_items.base_unit	g|ml|ud	canonical	stockBaseUnitForDimension server value (g/ml/ud); literals ud
+stock_items.deduction_source	PRODUCTION|SALE|BOTH_MANUAL	fixed	backoffice_stock.go:695/746 and stock_import.go:396 mysqlUpperEnumArg (validator ToUpper(TrimSpace) but raw was bound); literals SALE
+stock_items.kind	RAW|SEMI_FINISHED|FINISHED|CONSUMABLE	fixed	backoffice_stock.go:695/746 and stock_import.go:396 mysqlUpperEnumArg; literals SEMI_FINISHED; reader filter :545 PG rtrim+ci_ai text comparison
+stock_margin_scope_bands.zone	RED|AMBER|GREEN|PURPLE	canonical	stock_margin_scopes.go:87-95 ToUpper(TrimSpace)+map, assigned back before :235
+stock_margin_scopes.scope_kind	GLOBAL|COMIDA_TYPE|COMIDA_CATEGORY|STOCK_CATEGORY	canonical	margin_scopes.go:158 ToUpper(TrimSpace)+allowlist
+stock_movements.type	PURCHASE|ADJUSTMENT|PRODUCTION_IN|PRODUCTION_OUT|SALE|WASTE|TRANSFER_IN|TRANSFER_OUT|INVENTORY_COUNT|RETURN	canonical	validStockMovementType exact (backoffice_stock.go:1887)
+stock_movements.waste_reason	SPOILAGE|BREAKAGE|OVERPRODUCTION|STAFF_MEAL|CUSTOMER_RETURN|PREP_LOSS|THEFT|OTHER	fixed	backoffice_stock.go:1460 ToUpper after stockNullableString
+stock_production_orders.status	CONFIRMED|CANCELLED	no-writer	default only
+stock_recipe_step_image_jobs.mode	AI_ENHANCE|AI_GENERATE	canonical	technical_sheet_images.go:152-153 ToUpper(TrimSpace)+exact
+stock_recipe_step_image_jobs.status	PENDING|RUNNING|SUCCEEDED|FAILED|CANCELLED	canonical	literals (image_worker.go:103, images.go:41/44/83/86/212)
+stock_recipe_steps.generation_mode	UPLOAD|AI_ENHANCE|AI_GENERATE	canonical	technical_sheet_images.go:224 validated mode; duplicate copy; upload NULL
+stock_recipe_steps.generation_status	NONE|PENDING|RUNNING|READY|FAILED	canonical	literals / CASE literals
+stock_recipes.source	MANUAL|IMPORTED|OCR	canonical	stock_documents.go:510 literal OCR
+stock_recipes.status	DRAFT|ACTIVE|ARCHIVED	canonical	literals DRAFT/ACTIVE
+stock_settings.count_cadence	DAILY|WEEKLY|BIWEEKLY|MONTHLY|NEVER	canonical	backoffice_stock.go:1322-1327 exact switch
+stock_settings.warehouse_display_mode	AGGREGATED|BY_WAREHOUSE	canonical	backoffice_stock.go:1318 exact
+stock_warehouses.type	KITCHEN|BAR|STORAGE|COLD|FREEZER|CELLAR|OTHER	fixed	backoffice_stock.go:296/345 mysqlUpperEnumArg (validStockWarehouseType ToUpper(TrimSpace) but raw bound); :224/228 literal STORAGE
+website_pages.page_type	home|menu|contact|about|custom	no-writer	no Go writer of page_type (website_pages INSERT sets slug/title only, website_builder_handlers.go:1552)
+website_pages.visibility	visible|hidden|password	no-writer	no Go writer
+website_templates.category	restaurant|cafe|bar|bakery|catering	seed	seed/migration rows only; no Go writer
+whatsapp_bot_messages.role	user|assistant|tool	no-writer	no runtime Go caller (MySQL-origin bot table, wiring2)
+whatsapp_message_logs.direction	inbound|outbound	canonical	ai_usage_logging.go:82-86 literals
+whatsapp_message_logs.status	received|sent|failed	canonical	ai_usage_logging.go:82-86 literals

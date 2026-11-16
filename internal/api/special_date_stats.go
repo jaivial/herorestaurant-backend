@@ -42,10 +42,10 @@ func (s *Server) handleBOSpecialDateStats(w http.ResponseWriter, r *http.Request
 		return
 	}
 	rid := a.ActiveRestaurantID
-	rows, err := s.db.QueryContext(r.Context(), `
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`
 		SELECT party_size, COALESCE(is_prereserva, 0), COALESCE(special_json, '')
 		FROM bookings
-		WHERE restaurant_id = ? AND reservation_date = ? AND COALESCE(is_special_booking, 0) = 1`, rid, date)
+		WHERE restaurant_id = ? AND reservation_date = ? AND COALESCE(is_special_booking, 0) = 1`), rid, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando estadísticas")
 		return

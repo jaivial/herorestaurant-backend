@@ -41,7 +41,7 @@ func (s *Server) botToolDishAllergens(ctx context.Context, restaurantID int, inp
 	q := strings.TrimSpace(in.Query)
 	switch {
 	case in.SheetID > 0:
-		rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM stock_recipes WHERE restaurant_id=? AND id=?`, restaurantID, in.SheetID)
+		rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT id, name FROM stock_recipes WHERE restaurant_id=? AND id=?`), restaurantID, in.SheetID)
 		if err != nil {
 			return botJSON(map[string]any{"error": "error consultando las fichas"}), nil
 		}
@@ -53,7 +53,8 @@ func (s *Server) botToolDishAllergens(ctx context.Context, restaurantID int, inp
 			}
 		}
 	case q != "":
-		rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM stock_recipes WHERE restaurant_id=? AND name LIKE ? ORDER BY name LIMIT 5`, restaurantID, "%"+q+"%")
+		daLike := any(assistantLikeArg(q))
+		rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT id, name FROM stock_recipes WHERE restaurant_id=? AND name LIKE ? ORDER BY name LIMIT 5`, `SELECT id, name FROM stock_recipes WHERE restaurant_id=? AND LOWER(name) COLLATE "C" LIKE ? ORDER BY name COLLATE "es-x-icu" LIMIT 5`), restaurantID, daLike)
 		if err != nil {
 			return botJSON(map[string]any{"error": "error consultando las fichas"}), nil
 		}

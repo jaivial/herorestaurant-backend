@@ -141,7 +141,8 @@ const botHandoffTTL = 7 * 24 * time.Hour
 
 func (s *Server) botPipelineHandoffFact(ctx context.Context, restaurantID int, sender string) map[string]any {
 	h, err := s.botConversation.GetHandoff(ctx, restaurantID, sender)
-	if err != nil || h == nil || time.Since(time.UnixMilli(h.UpdatedAt)) > botHandoffTTL {
+	// A cleared event loop is a marker, not an open handoff (wa_bot_event_menu_sticky_v1).
+	if err != nil || h == nil || h.Reason == botReasonEventCleared || time.Since(time.UnixMilli(h.UpdatedAt)) > botHandoffTTL {
 		return nil
 	}
 	return map[string]any{"topic": h.Topic, "reason": h.Reason, "repeats": h.Repeats}
@@ -274,7 +275,7 @@ func (s *Server) botApplyPipelineHandoff(ctx context.Context, restaurantID int, 
 		if topic == "" {
 			topic = truncate(msg.Text, 160)
 		}
-		_ = s.botConversation.SetHandoff(ctx, restaurantID, msg.Sender, topic, reason, d.HandoffReason == "repeat")
+		s.botOpenHandoff(ctx, restaurantID, msg.Sender, topic, reason, d.HandoffReason == "repeat")
 		botCheckpoint("wa_bot_sticky_handoff_v1", "restaurant_id=%d sender=%s reason=%s repeat=%t", restaurantID, msg.Sender, reason, d.HandoffReason == "repeat")
 	}
 	switch d.Action {

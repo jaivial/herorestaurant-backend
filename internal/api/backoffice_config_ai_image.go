@@ -93,7 +93,7 @@ func (s *Server) handleBOAIImageProvidersGet(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 
 	providers := []boAIImageProvider{}
-	pr, err := s.db.QueryContext(ctx, `SELECT slug, label, base_url, COALESCE(docs_url,'') FROM ai_image_providers WHERE active = 1 ORDER BY sort, label`)
+	pr, err := s.db.QueryContext(ctx, portableSQL(`SELECT slug, label, base_url, COALESCE(docs_url,'') FROM ai_image_providers WHERE active = 1 ORDER BY sort, label`))
 	if err == nil {
 		defer pr.Close()
 		for pr.Next() {
@@ -105,7 +105,7 @@ func (s *Server) handleBOAIImageProvidersGet(w http.ResponseWriter, r *http.Requ
 	}
 
 	models := []boAIImageModel{}
-	mr, err := s.db.QueryContext(ctx, `SELECT provider_slug, slug, label, mode FROM ai_image_models WHERE active = 1 ORDER BY provider_slug, mode, sort, label`)
+	mr, err := s.db.QueryContext(ctx, portableSQL(`SELECT provider_slug, slug, label, mode FROM ai_image_models WHERE active = 1 ORDER BY provider_slug, mode, sort, label`))
 	if err == nil {
 		defer mr.Close()
 		for mr.Next() {
@@ -130,12 +130,12 @@ func (s *Server) loadAIImageConfig(ctx context.Context, restaurantID int) (boAII
 	var providerSlug, t2i, i2i sql.NullString
 	var apiKey sql.NullString
 	var isActiveInt int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT provider_slug, api_key, t2i_model_slug, i2i_model_slug, is_active
 		FROM ai_image_provider_config
 		WHERE restaurant_id = ?
 		LIMIT 1
-	`, restaurantID).Scan(&providerSlug, &apiKey, &t2i, &i2i, &isActiveInt)
+	`), restaurantID).Scan(&providerSlug, &apiKey, &t2i, &i2i, &isActiveInt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, "", nil
@@ -154,7 +154,7 @@ func (s *Server) loadAIImageConfig(ctx context.Context, restaurantID int) (boAII
 			rawKey = strings.TrimSpace(plain)
 			if legacy {
 				if enc, eerr := s.encryptAIImageKey(restaurantID, rawKey); eerr == nil {
-					if _, uerr := s.db.ExecContext(ctx, `UPDATE ai_image_provider_config SET api_key = ? WHERE restaurant_id = ? AND api_key = ?`, enc, restaurantID, apiKey.String); uerr == nil {
+					if _, uerr := s.db.ExecContext(ctx, portableSQL(`UPDATE ai_image_provider_config SET api_key = ? WHERE restaurant_id = ? AND api_key = ?`), enc, restaurantID, apiKey.String); uerr == nil {
 						log.Printf("[ai_image_key_vault_v1] restaurant=%d legacy_key_encrypted", restaurantID)
 					}
 				}
@@ -320,7 +320,7 @@ func (s *Server) handleBOAIImageConfigSet(w http.ResponseWriter, r *http.Request
 		}
 		storedKey = enc
 	}
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, nativeSQL(`
 		INSERT INTO ai_image_provider_config
 			(restaurant_id, provider_slug, api_key, t2i_model_slug, i2i_model_slug, is_active, updated_by_user_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -331,7 +331,10 @@ func (s *Server) handleBOAIImageConfigSet(w http.ResponseWriter, r *http.Request
 			i2i_model_slug = VALUES(i2i_model_slug),
 			is_active = VALUES(is_active),
 			updated_by_user_id = VALUES(updated_by_user_id)
-	`, a.ActiveRestaurantID, providerSlug, nullIfEmpty(storedKey), nullIfEmpty(t2i), nullIfEmpty(i2i), activeInt, a.User.ID)
+	`, `INSERT INTO ai_image_provider_config (restaurant_id, provider_slug, api_key, t2i_model_slug, i2i_model_slug, is_active, updated_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET provider_slug = EXCLUDED.provider_slug, api_key = COALESCE(EXCLUDED.api_key, ai_image_provider_config.api_key),
+			t2i_model_slug = EXCLUDED.t2i_model_slug, i2i_model_slug = EXCLUDED.i2i_model_slug, is_active = EXCLUDED.is_active, updated_by_user_id = EXCLUDED.updated_by_user_id`), a.ActiveRestaurantID, providerSlug, nullIfEmpty(storedKey), nullIfEmpty(t2i), nullIfEmpty(i2i), activeInt, a.User.ID)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"success": false, "message": "Error guardando configuracion"})
 		return
@@ -347,13 +350,13 @@ func (s *Server) handleBOAIImageConfigSet(w http.ResponseWriter, r *http.Request
 
 func (s *Server) aiImageProviderExists(ctx context.Context, slug string) bool {
 	var one int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM ai_image_providers WHERE slug = ? AND active = 1 LIMIT 1`, slug).Scan(&one)
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT 1 FROM ai_image_providers WHERE slug = ? AND active = 1 LIMIT 1`, `SELECT 1 FROM ai_image_providers WHERE app.norm_ascii(slug) = app.norm_ascii(?) AND active = 1 LIMIT 1`), slug).Scan(&one)
 	return err == nil
 }
 
 func (s *Server) aiImageModelExists(ctx context.Context, providerSlug, modelSlug, mode string) bool {
 	var one int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM ai_image_models WHERE provider_slug = ? AND slug = ? AND mode = ? AND active = 1 LIMIT 1`, providerSlug, modelSlug, mode).Scan(&one)
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT 1 FROM ai_image_models WHERE provider_slug = ? AND slug = ? AND mode = ? AND active = 1 LIMIT 1`, `SELECT 1 FROM ai_image_models WHERE app.norm_ascii(provider_slug) = app.norm_ascii(?) AND app.norm_ascii(slug) = app.norm_ascii(?) AND mode = ? AND active = 1 LIMIT 1`), providerSlug, modelSlug, mode).Scan(&one)
 	return err == nil
 }
 
@@ -401,7 +404,7 @@ func (s *Server) resolveAIImageProvider(ctx context.Context, restaurantID int) r
 
 func (s *Server) aiImageProviderBaseURL(ctx context.Context, slug string) string {
 	var base sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT base_url FROM ai_image_providers WHERE slug = ? LIMIT 1`, slug).Scan(&base)
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT base_url FROM ai_image_providers WHERE slug = ? LIMIT 1`, `SELECT base_url FROM ai_image_providers WHERE app.norm_ascii(slug) = app.norm_ascii(?) LIMIT 1`), slug).Scan(&base)
 	if err != nil || !base.Valid {
 		return ""
 	}

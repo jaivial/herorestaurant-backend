@@ -28,7 +28,8 @@ func (s *Server) handleBOPOSReservationsEligible(w http.ResponseWriter, r *http.
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	like := "%" + q + "%"
-	rows, err := s.db.QueryContext(r.Context(), `SELECT b.id,b.customer_name,DATE_FORMAT(b.reservation_date,'%Y-%m-%d'),TIME_FORMAT(b.reservation_time,'%H:%i'),b.party_size,COALESCE(b.status,'pending'),v.id,v.status FROM bookings b LEFT JOIN pos_visits v ON v.restaurant_id=b.restaurant_id AND v.booking_id=b.id WHERE b.restaurant_id=? AND b.reservation_date=? AND (?='' OR b.customer_name LIKE ? OR COALESCE(b.contact_phone,'') LIKE ?) ORDER BY b.reservation_time,b.id LIMIT 100`, a.ActiveRestaurantID, date, q, like, like)
+	resArgs := []any{a.ActiveRestaurantID, date, q, assistantLikeArg(q), like}
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT b.id,b.customer_name,DATE_FORMAT(b.reservation_date,'%Y-%m-%d'),TIME_FORMAT(b.reservation_time,'%H:%i'),b.party_size,COALESCE(b.status,'pending'),v.id,v.status FROM bookings b LEFT JOIN pos_visits v ON v.restaurant_id=b.restaurant_id AND v.booking_id=b.id WHERE b.restaurant_id=? AND b.reservation_date=? AND (?='' OR b.customer_name LIKE ? OR COALESCE(b.contact_phone,'') LIKE ?) ORDER BY b.reservation_time,b.id LIMIT 100`, `SELECT b.id,b.customer_name,to_char(b.reservation_date,'YYYY-MM-DD'),to_char(b.reservation_time,'HH24:MI'),b.party_size,COALESCE(b.status,'pending'),v.id,CAST(v.status AS text) FROM bookings b LEFT JOIN pos_visits v ON v.restaurant_id=b.restaurant_id AND v.booking_id=b.id WHERE b.restaurant_id=? AND b.reservation_date=? AND (CAST(? AS text)='' OR LOWER(b.customer_name) COLLATE "C" LIKE ? OR COALESCE(b.contact_phone,'') COLLATE "C" LIKE ?) ORDER BY b.reservation_time,b.id LIMIT 100`), resArgs...)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error loading reservations")
 		return
@@ -62,7 +63,7 @@ func (s *Server) handleBOPOSReservationVisit(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var visitID int64
-	err := s.db.QueryRowContext(r.Context(), `SELECT id FROM pos_visits WHERE restaurant_id=? AND booking_id=?`, a.ActiveRestaurantID, bookingID).Scan(&visitID)
+	err := s.db.QueryRowContext(r.Context(), portableSQL(`SELECT id FROM pos_visits WHERE restaurant_id=? AND booking_id=?`), a.ActiveRestaurantID, bookingID).Scan(&visitID)
 	if err == sql.ErrNoRows {
 		httpx.WriteError(w, 404, "Reservation visit not found")
 		return

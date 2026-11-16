@@ -33,10 +33,10 @@ func specialDateWhatsAppOnlyCheckpoint(format string, args ...any) {
 // that can only be booked through WhatsApp.
 func (s *Server) specialDateIsWhatsAppOnly(ctx context.Context, restaurantID int, dateISO string) (bool, error) {
 	var flag int
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, portableSQL(`
 		SELECT whatsapp_only FROM special_dates
 		WHERE restaurant_id = ? AND date = ? AND is_active = 1
-		LIMIT 1`, restaurantID, dateISO).Scan(&flag)
+		LIMIT 1`), restaurantID, dateISO).Scan(&flag)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -55,10 +55,10 @@ func (s *Server) restaurantWhatsAppPhone(ctx context.Context, restaurantID int) 
 	source, phone := "management_phone", digitsOnly(s.botManagementPhone(ctx, restaurantID))
 	if phone == "" {
 		var connected sql.NullString
-		err := s.db.QueryRowContext(ctx, `
+		err := s.db.QueryRowContext(ctx, portableSQL(`
 			SELECT connected_phone FROM restaurant_uazapi_instances
 			WHERE restaurant_id = ? AND is_active = 1 AND status = 'connected'
-			LIMIT 1`, restaurantID).Scan(&connected)
+			LIMIT 1`), restaurantID).Scan(&connected)
 		if err != nil && err != sql.ErrNoRows && !isSQLSchemaError(err) {
 			specialDateWhatsAppOnlyCheckpoint("restaurant_id=%d phone_lookup_error=%v", restaurantID, err)
 		}

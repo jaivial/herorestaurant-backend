@@ -1,0 +1,103 @@
+file	line	function	column	verdict
+internal/api/backoffice_pos.go	689	regexp_match+substring	pos_tickets.ticket_number	FIXED: COLLATE "C" on regexp_match input
+cmd/ops-check/main.go	166	split_part	stock_margin_scopes.scope_key	FIXED: input COLLATE "C", result re-collated dbmigrate.ci_ai for the ='platos'/'bebidas' compare
+cmd/ops-check/main.go	173	split_part	stock_margin_scopes.scope_key	FIXED: input COLLATE "C", result re-collated dbmigrate.ci_ai for the ='platos'/'bebidas' compare
+cmd/ops-check/main.go	169	regexp_match+substring	stock_margin_scopes.scope_key	FIXED: COLLATE "C"
+cmd/ops-check/main.go	176	regexp_match+substring	stock_margin_scopes.scope_key	FIXED: COLLATE "C"
+cmd/ops-check/main.go	182	substring from	stock_margin_scopes.scope_key	FIXED: COLLATE "C"
+internal/api/campaign_email_guard.go	332-333	~	campaign_bounce_events.diagnostic	OK: LOWER() COLLATE "C"
+internal/api/backoffice_bookings.go	959	~	bookings.reservation_time	OK: COLLATE "C"
+internal/api/campaign_auto_retake.go	42	LIKE	error	n/a: MySQL constant (PG twin uses LOWER COLLATE C)
+internal/api/campaign_auto_retake.go	49	LIKE	LOWER(error) COLLATE "C"	n/a: MySQL constant (PG twin uses LOWER COLLATE C)
+internal/api/campaign_markdown.go	286	LIKE	behaves	n/a: prose comment
+internal/api/campaign_markdown.go	355	LIKE	behaves	n/a: prose comment
+internal/api/campaign_markdown.go	515	LIKE	behaves	n/a: prose comment
+internal/api/public_unsubscribe.go	333	LIKE	))	mysql-text (n/a)
+internal/api/public_unsubscribe.go	337	LIKE	)) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_group_menus.go	145	LIKE	)))	mysql-text (n/a)
+internal/api/backoffice_group_menus.go	152	LIKE	))) COLLATE "C"	ok: COLLATE "C"
+internal/api/admin_menus.go	450	LIKE	LOWER("DESCRIPCION") COLLATE "C"	ok: COLLATE "C"
+internal/api/campaign_email_guard.go	328	LIKE	status_code	mysql-text (n/a)
+internal/api/campaign_email_guard.go	328	LIKE	status_code	mysql-text (n/a)
+internal/api/campaign_email_guard.go	328	LIKE	status_code	mysql-text (n/a)
+internal/api/campaign_email_guard.go	328	LIKE	status_code	mysql-text (n/a)
+internal/api/campaign_email_guard.go	331	LIKE	LOWER(status_code) COLLATE "C"	ok: COLLATE "C"
+internal/api/campaign_email_guard.go	331	LIKE	LOWER(status_code) COLLATE "C"	ok: COLLATE "C"
+internal/api/campaign_email_guard.go	331	LIKE	LOWER(status_code) COLLATE "C"	ok: COLLATE "C"
+internal/api/campaign_email_guard.go	331	LIKE	LOWER(status_code) COLLATE "C"	ok: COLLATE "C"
+internal/api/campaign_email_guard.go	332	~	LOWER(diagnostic) COLLATE "C"	ok: COLLATE "C"
+internal/api/campaign_email_guard.go	333	~	LOWER(diagnostic) COLLATE "C"	ok: COLLATE "C"
+internal/api/admin_postres.go	438	LIKE	LOWER("DESCRIPCION") COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_stock.go	548	LIKE	(i.name	n/a: MySQL fragment (PG twin LOWER COLLATE C)
+internal/api/backoffice_stock.go	548	LIKE	i.sku	n/a: MySQL fragment (PG twin LOWER COLLATE C)
+internal/api/backoffice_stock.go	548	LIKE	i.barcode	n/a: MySQL fragment (PG twin LOWER COLLATE C)
+internal/api/backoffice_stock.go	549	LIKE	(LOWER(i.name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_stock.go	549	LIKE	LOWER(i.sku) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_stock.go	549	LIKE	LOWER(i.barcode) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_stock.go	652	LIKE	i.name	mysql-text (n/a)
+internal/api/backoffice_stock.go	652	LIKE	i.sku	mysql-text (n/a)
+internal/api/backoffice_stock.go	652	LIKE	i.barcode	mysql-text (n/a)
+internal/api/backoffice_stock.go	652	LIKE	LOWER(i.name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_stock.go	652	LIKE	LOWER(i.sku) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_stock.go	652	LIKE	LOWER(i.barcode) COLLATE "C"	ok: COLLATE "C"
+internal/api/comida.go	864	LIKE	(LOWER(ci.nombre) COLLATE "C"	ok: COLLATE "C"
+internal/api/comida.go	864	LIKE	LOWER(ci.descripcion) COLLATE "C"	ok: COLLATE "C"
+internal/api/comida.go	864	LIKE	LOWER(ci.titulo) COLLATE "C"	ok: COLLATE "C"
+internal/api/comida.go	1060	LIKE	LOWER("DESCRIPCION") COLLATE "C"	ok: COLLATE "C"
+internal/api/comida.go	1173	LIKE	(LOWER(v.nombre) COLLATE "C"	ok: COLLATE "C"
+internal/api/comida.go	1173	LIKE	LOWER(v.descripcion) COLLATE "C"	ok: COLLATE "C"
+internal/api/comida.go	1173	LIKE	LOWER(v.bodega) COLLATE "C"	ok: COLLATE "C"
+internal/api/comida.go	1173	LIKE	LOWER(v.denominacion_origen) COLLATE "C"	ok: COLLATE "C"
+internal/api/comida.go	1173	LIKE	LOWER(v.anyo) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_invoices.go	250	LIKE	LOWER(invoice_number) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_invoices.go	253	LIKE	LOWER(customer_email) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_invoices.go	256	LIKE	LOWER(customer_name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_invoices.go	259	LIKE	(LOWER(customer_name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_invoices.go	259	LIKE	LOWER(customer_email) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_invoices.go	823	LIKE	LOWER(customer_name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_invoices.go	827	LIKE	LOWER(contact_phone) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_pos_customers.go	127	LIKE	(LOWER(c.display_name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_pos_customers.go	127	LIKE	LOWER(c.email) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_pos_customers.go	127	LIKE	LOWER(c.tax_id) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_pos_customers.go	134	LIKE	c.phone COLLATE "C"	ok: COLLATE "C"
+internal/api/checkcancel.go	144	LIKE	LOWER(TRIM(customer_name))	mysql-text (n/a)
+internal/api/checkcancel.go	157	LIKE	LOWER(TRIM(customer_name)) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_group_menus_v2.go	2502	LIKE	(ci.nombre	mysql-text (n/a)
+internal/api/backoffice_group_menus_v2.go	2502	LIKE	)	mysql-text (n/a)
+internal/api/backoffice_group_menus_v2.go	2513	LIKE	(LOWER(ci.nombre) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_group_menus_v2.go	2513	LIKE	)) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_pos_reservations.go	48	LIKE	b.customer_name	mysql-text (n/a)
+internal/api/backoffice_pos_reservations.go	48	LIKE	)	mysql-text (n/a)
+internal/api/backoffice_pos_reservations.go	48	LIKE	LOWER(b.customer_name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_pos_reservations.go	48	LIKE	) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_bookings.go	388	LIKE	LOWER(customer_name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_bookings.go	388	LIKE	LOWER(contact_email) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_bookings.go	391	LIKE	contact_phone COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_bookings.go	959	~	reservation_time COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_bookings_search.go	168	LIKE	LOWER(customer_name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_bookings_search.go	168	LIKE	LOWER(contact_email) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_bookings_search.go	178	LIKE	contact_phone COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_technical_sheet_link.go	383	LIKE	r.name	n/a: MySQL from (pgFrom uses COLLATE C ILIKE)
+internal/api/backoffice_technical_sheet_link.go	384	ILIKE	r.name COLLATE "C"	n/a: MySQL from (pgFrom uses COLLATE C ILIKE)
+internal/api/backoffice_ai_usage.go	294	LIKE	(LOWER(user_phone) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_ai_usage.go	294	LIKE	LOWER(content) COLLATE "C"	ok: COLLATE "C"
+internal/api/group_menus.go	945	LIKE	d.title_snapshot COLLATE "C"	ok: COLLATE "C"
+internal/api/assistant_catalog_tools.go	615	LIKE	) COLLATE "C"	ok: COLLATE "C"
+internal/api/whatsapp_bot_dish_allergens_tools.go	65	LIKE	name	mysql-text (n/a)
+internal/api/whatsapp_bot_dish_allergens_tools.go	65	LIKE	LOWER(name) COLLATE "C"	ok: COLLATE "C"
+internal/api/backoffice_pos.go	689	LIKE	ticket_number	mysql-text (n/a)
+internal/api/backoffice_pos.go	689	LIKE	LOWER(ticket_number) COLLATE "C"	ok: COLLATE "C"
+cmd/cdn-sweep/registry.go	98	LIKE	(COLUMN_NAME	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	98	LIKE	COLUMN_NAME	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	99	LIKE	COLUMN_NAME	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	99	LIKE	COLUMN_NAME	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	100	LIKE	COLUMN_NAME	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	100	LIKE	COLUMN_NAME	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	105	LIKE	(lower(column_name)	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	105	LIKE	lower(column_name)	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	106	LIKE	lower(column_name)	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	106	LIKE	lower(column_name)	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	107	LIKE	lower(column_name)	OK: information_schema name column (deterministic)
+cmd/cdn-sweep/registry.go	107	LIKE	lower(column_name)	OK: information_schema name column (deterministic)
+cmd/group-menu-arroz-cleanup/main.go	365	LIKE	)))	mysql-text (n/a)
+cmd/group-menu-arroz-cleanup/main.go	371	LIKE	))) COLLATE "C"	ok: COLLATE "C"

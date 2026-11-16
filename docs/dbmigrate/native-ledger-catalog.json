@@ -1,0 +1,1281 @@
+{
+  "domain": "catalog_stock",
+  "inventory": "sql-inventory-r32.json (dbmigrate-r12 canonical basis)",
+  "repo_call_sites": 2472,
+  "repo_native_sites": 1071,
+  "repo_dynamic": 198,
+  "helper_internal_excluded": 5,
+  "prepared_stmt_calls_excluded": 3,
+  "audit_failures": 0,
+  "sites": 504,
+  "native": 504,
+  "remaining": 0,
+  "remaining_dynamic": 0,
+  "files": 43,
+  "done_files": 43,
+  "ledger": [
+    {
+      "file": "internal/api/admin_menus.go",
+      "sites": 8,
+      "native": 8,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/admin_vinos.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_comida_ai.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_comida_categories.go",
+      "sites": 22,
+      "native": 22,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_comida_counts.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_comida_upload.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_dish_same_day_booking.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus.go",
+      "sites": 10,
+      "native": 10,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2.go",
+      "sites": 70,
+      "native": 70,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2_items.go",
+      "sites": 8,
+      "native": 8,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2_special_sections.go",
+      "sites": 17,
+      "native": 17,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_group_menus_v2_ws.go",
+      "sites": 10,
+      "native": 10,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_menu_visibility.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_menus.go",
+      "sites": 6,
+      "native": 6,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock.go",
+      "sites": 69,
+      "native": 69,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_analytics.go",
+      "sites": 26,
+      "native": 26,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_documents.go",
+      "sites": 34,
+      "native": 34,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_import.go",
+      "sites": 6,
+      "native": 6,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_margin_scopes.go",
+      "sites": 9,
+      "native": 9,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_margin_targets.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_permissions.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_recipes.go",
+      "sites": 29,
+      "native": 29,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_reconciliation.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_stock_suppliers.go",
+      "sites": 17,
+      "native": 17,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_vinos.go",
+      "sites": 7,
+      "native": 7,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_vinos_cutout.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/backoffice_vinos_ws.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/comida.go",
+      "sites": 31,
+      "native": 31,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/group_menus.go",
+      "sites": 14,
+      "native": 14,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/group_menus_party_size.go",
+      "sites": 1,
+      "native": 1,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/menu_public_seo.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/menu_public_seo_handlers.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/menu_section_cta.go",
+      "sites": 2,
+      "native": 2,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/menu_section_dessert_source.go",
+      "sites": 11,
+      "native": 11,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/menu_visibility_admin.go",
+      "sites": 8,
+      "native": 8,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/menu_weekday_availability.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/public_menus.go",
+      "sites": 18,
+      "native": 18,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/special_date_menu_sections.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/special_menu_cta.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/special_menu_group_booking.go",
+      "sites": 3,
+      "native": 3,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/special_menu_principales.go",
+      "sites": 7,
+      "native": 7,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/stock_digest.go",
+      "sites": 4,
+      "native": 4,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    },
+    {
+      "file": "internal/api/wines_v2.go",
+      "sites": 5,
+      "native": 5,
+      "remaining": 0,
+      "remaining_dynamic": 0,
+      "remaining_lines": []
+    }
+  ],
+  "runtime_verified": false,
+  "pg_ready": false,
+  "note_pending_counts": "the 1117 marker pending decisions are the import-proof count; port-phase semantic gaps (behaviour_deltas_pending with new_gap or PENDING status) are tracked separately here and are NOT included in 1117",
+  "behaviour_deltas_pending": [
+    {
+      "sites": [
+        "warehouse/category/item UPDATE ... RowsAffected==0 -> 404"
+      ],
+      "mysql": "changed rows (no clientFoundRows): saving unchanged values returns 0 -> 404 (source behaviour)",
+      "pg": "IS DISTINCT FROM over the full SET tuple (text COLLATE C = MySQL binary record compare; enums cast) with reused positional params",
+      "status": "compile only; preserves source contract incl. its 404-on-unchanged quirk"
+    },
+    {
+      "sites": [
+        "stock_levels ensure-row upserts (transfer/count/movement)"
+      ],
+      "mysql": "ON DUPLICATE KEY UPDATE stock_item_id=VALUES(stock_item_id): no-op, X-locks existing row",
+      "pg": "ON CONFLICT DO UPDATE SET stock_item_id=EXCLUDED.stock_item_id: no-op update that row-locks like MySQL; plan ON UPDATE trigger skips unchanged rows",
+      "status": "compile only; lock behaviour by review"
+    },
+    {
+      "sites": [
+        "INSERT ... SELECT with parameters (default warehouse, unit create, stock_levels from warehouse, count sheet, count lines)"
+      ],
+      "mysql": "parameter types implicit",
+      "pg": "explicit CAST of select-list params (text/integer/bigint/numeric/smallint; enum literal cast) so assignment keeps MySQL strict errors (no silent varchar truncation)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "unit create, count sheet create"
+      ],
+      "mysql": "RowsAffected + LastInsertId",
+      "pg": "sqldb.InsertSelectID: RETURNING id, no row -> n=0 (same 404 path)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "EXISTS(...) / (a OR b) scalar selects scanned into int"
+      ],
+      "mysql": "int 0/1",
+      "pg": "CASE WHEN ... THEN 1 ELSE 0 END",
+      "status": "equivalent by review"
+    },
+    {
+      "sites": [
+        "stock item list/options LIKE"
+      ],
+      "mysql": "name/sku/barcode LIKE under CI collation",
+      "pg": "LOWER(col) COLLATE C LIKE lowered pattern",
+      "status": "pending CI/accent search gap"
+    },
+    {
+      "sites": [
+        "deleted_at/closed_at NOW()"
+      ],
+      "mysql": "statement time fsp0",
+      "pg": "date_trunc(second, statement_timestamp())",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "stock_settings seasonality_profile"
+      ],
+      "mysql": "JSON column text; COALESCE(...,JSON_OBJECT())",
+      "pg": "CAST(COALESCE(jsonb,'{}') AS text); insert CAST(? AS jsonb)",
+      "status": "JSON render class pending"
+    },
+    {
+      "sites": [
+        "qty_base=qty_base+? and factor products (float64 args)"
+      ],
+      "mysql": "double -> decimal(18,4) rounding on assignment",
+      "pg": "float8 param -> numeric -> numeric(18,4) assignment rounding",
+      "status": "by review, manual QA pending"
+    },
+    {
+      "sites": [
+        "ORDER BY name etc."
+      ],
+      "mysql": "utf8mb4 CI collation ordering",
+      "pg": "plan column collation ordering",
+      "status": "pending CI ledger"
+    },
+    {
+      "sites": [
+        "inventory basis"
+      ],
+      "note": "r18+ canonical: helper-internal Exec/QueryRow inside internal/sqldb excluded (helper_internal_calls_excluded), InsertID and InsertSelectID callers counted at their call site with nativeSQL/portableSQL detection. r16/r17 counts included 3/5 helper-internal calls; historical files untouched."
+    },
+    {
+      "sites": [
+        "backoffice_stock.go movement idempotent replay"
+      ],
+      "mysql": "strings.Contains(lower(err), duplicate): any 1062 text; table has only PK(auto id) + uq_stock_movement_idempotency, so effectively that key",
+      "pg": "sqldb.IsUniqueViolationOn(err, uq_stock_movement_idempotency, ix__stock_movements__uq_stock_movement_idempotency): MySQL 1062 naming the key / PG 23505 with plan constraint name",
+      "status": "narrower only for impossible cases (other unique keys / non-1062 texts containing duplicate); by review"
+    },
+    {
+      "sites": [
+        "stock summary coveragePct"
+      ],
+      "mysql": "SUM(decimal(18,4)) / NULLIF(SUM,0) -> scale 4+div_precision_increment(4, production-verified) = 8, rounded, then *100",
+      "pg": "ROUND(a/NULLIF(b,0), 8)*100; LEAST/GREATEST args COALESCEd so PG NULL-ignoring LEAST is not reached",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "stock valuation + items export avg cost"
+      ],
+      "mysql": "SUM(qty(18,4)*avg(18,6)) scale 10 / SUM(qty) -> scale 14",
+      "pg": "ROUND(.../SUM(qty), 14)",
+      "status": "compile only; export with no levels gives NULL avg -> float scan error on BOTH (source behaviour)"
+    },
+    {
+      "sites": [
+        "stock expiring GROUP BY"
+      ],
+      "mysql": "no ONLY_FULL_GROUP_BY; correlated subquery uses ungrouped m.restaurant_id",
+      "pg": "GROUP BY adds m.restaurant_id (fixed to one value by WHERE m.restaurant_id = ?, so groups identical); outer MIN(m.occurred_at) in subquery allowed",
+      "status": "by review; not ambiguous"
+    },
+    {
+      "sites": [
+        "valuation/export GROUP BY i.id ... with i.restaurant_id in subquery"
+      ],
+      "mysql": "functional",
+      "pg": "PG accepts via stock_items PK functional dependency",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "NOW()/DATE_ADD/DATE_SUB intervals in expiring & export"
+      ],
+      "mysql": "statement time UTC naive",
+      "pg": "date_trunc(second, statement_timestamp()) AT TIME ZONE UTC +/- make_interval / interval 90 days",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "COALESCE(enum,'') and COALESCE(decimal,'')"
+      ],
+      "mysql": "string result",
+      "pg": "CAST(col AS text) first (PG would reject '' for enum/numeric); fixed in movement list and movements export",
+      "status": "compile only; prior domains not re-audited for this pattern - audit item"
+    },
+    {
+      "sites": [
+        "stock documents header/line review UPDATE RowsAffected==0 -> 409/404"
+      ],
+      "mysql": "changed rows: unchanged save returns 0 (source quirk)",
+      "pg": "IS DISTINCT FROM with text COLLATE C and numerics cast to column precision (18,4/18,6/18,2) so MySQL rounding-equal values count unchanged",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "stock documents scan insert IF(?='',NULL,?) / NULLIF(?,'') into date"
+      ],
+      "mysql": "IF / NULLIF string->date implicit",
+      "pg": "CASE WHEN CAST(? AS text)='' ...; CAST(NULLIF(CAST(? AS text),'') AS date); raw_extraction CAST jsonb",
+      "status": "compile only; invalid date strings: MySQL strict error vs PG cast error (both error)"
+    },
+    {
+      "sites": [
+        "supplier alias lookup ORDER BY supplier_code=? DESC"
+      ],
+      "mysql": "NULL comparison sorts last in DESC",
+      "pg": "(...) DESC NULLS LAST",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "file_path IS NOT NULL AND ... scanned into int/bool"
+      ],
+      "mysql": "int 0/1",
+      "pg": "CASE ... THEN 1 ELSE 0 END",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "timestamptz scanned into time.Time (created_at)"
+      ],
+      "mysql": "parseTime, loc UTC -> UTC location in JSON",
+      "pg": "pgx location of decoded timestamptz not verified (may be process Local) -> JSON offset rendering may differ",
+      "status": "NEW global pending check before cutover"
+    },
+    {
+      "sites": [
+        "JSON raw_extraction/seasonality"
+      ],
+      "mysql": "JSON text",
+      "pg": "jsonb text",
+      "status": "JSON render class pending"
+    },
+    {
+      "sites": [
+        "AUDIT COALESCE(col,'') in all ported files (89 files)"
+      ],
+      "result": "136 COALESCE(col,'') occurrences checked against schema column types of every table holding that column name: all text-typed (varchar/char/text) except the 4 already fixed via CAST(... AS text) (stock waste_reason x2, unit_cost, total_cost) and the 2 JSON columns already ::text in backoffice_technical_sheet_link; ambiguous names (status/role/provider/code/source_type) resolved per query table: restaurant_uazapi_instances.status varchar(32), bo_user_restaurants.role varchar(32), pos_payments.provider varchar(64), stock_warehouses.code varchar(32), comida_items.source_type varchar(16), bookings.status varchar(20). Fixed this phase: 0 (none found).",
+      "status": "audit by schema, compile only"
+    },
+    {
+      "sites": [
+        "internal/sqldb OpenPostgres timestamp location"
+      ],
+      "source": "read pgx v5.11.0 pgtype/timestamptz.go: decoded timestamptz uses time.Local unless TimestamptzCodec.ScanLocation is set; timestamp (no tz) and date decode in UTC",
+      "pg": "RuntimeParams timezone=UTC (session) + AfterConnect registers TimestamptzCodec{ScanLocation: time.UTC}",
+      "status": "code-read + compile only; MANUAL JSON timestamp QA required (rendered offsets) before cutover; MySQL path unchanged"
+    },
+    {
+      "sites": [
+        "recipes: production order idempotent replay"
+      ],
+      "mysql": "strings.Contains(err,duplicate); table unique keys: PK, uq_stock_production_idempotency, uq_stock_production_tenant_id(restaurant_id,id auto) -> effectively idempotency key",
+      "pg": "IsUniqueViolationOn(uq_stock_production_idempotency / ix__stock_production_orders__uq_stock_production_idempotency)",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "recipes: labour INSERT ... SELECT RowsAffected==0 -> invalid member"
+      ],
+      "mysql": "implicit param types",
+      "pg": "explicit casts (integer/bigint/numeric/text); assignment to decimal(8,2)/varchar(500) keeps MySQL rounding/strict-length errors",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "recipes: UPDATE ... version=version+1 RowsAffected"
+      ],
+      "mysql": "version always changes -> changed=matched",
+      "pg": "same",
+      "status": "equivalent by review"
+    },
+    {
+      "sites": [
+        "recipes: CONCAT(first,' ',last)"
+      ],
+      "mysql": "NULL if any NULL",
+      "pg": "|| (NULL-propagating)",
+      "status": "equivalent"
+    },
+    {
+      "sites": [
+        "recipes: recipe insert duplicate on uq_stock_recipe_output (generated active_output_item_id)"
+      ],
+      "mysql": "error -> 400",
+      "pg": "error -> 400 (tx aborted, returned)",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "group_menus_v2 part A: menu/section inserts"
+      ],
+      "mysql": "LastInsertId (errors ignored for menu and section ids)",
+      "pg": "sqldb.InsertID RETURNING id (draft menu, snapshot section helper, put-sections new section); RETURNING error now surfaces",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "group_menus_v2 section visibility dynamic UPDATE RowsAffected==0 -> Section not found"
+      ],
+      "mysql": "changed rows: unchanged values return 0 (source quirk)",
+      "pg": "PG-only appended AND ROW(cols) IS DISTINCT FROM ROW(CAST(? AS smallint), CAST(? AS text)) over exactly the SET columns, args duplicated in order; web_placement COLLATE C byte compare",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "group_menus_v2 annotations UPDATE RowsAffected==0 -> Section not found"
+      ],
+      "mysql": "changed rows",
+      "pg": "annotations_json COLLATE C IS DISTINCT FROM CAST($1 AS text) (longtext)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "group_menus_v2 JSON columns (allergens_json, cta_json)"
+      ],
+      "mysql": "JSON text scanned to NullString; inserts/updates from Go JSON strings",
+      "pg": "CAST(json AS text) on read; CAST(? AS jsonb) on write",
+      "status": "JSON render class pending (key order/spacing)"
+    },
+    {
+      "sites": [
+        "group_menus_v2 dynamic list/delete-NOT-IN"
+      ],
+      "mysql": "composed text",
+      "pg": "portableSQL over the whole composed statement (fixed fragments + per-id placeholders)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "group_menus_v2 updated_at/modified_at on update"
+      ],
+      "mysql": "ON UPDATE CURRENT_TIMESTAMP only on changed rows",
+      "pg": "plan trigger (changed-only, transaction time + rounding)",
+      "status": "ON UPDATE time-semantics gap pending (136 tables)"
+    },
+    {
+      "sites": [
+        "group_menus_v2 source anomalies"
+      ],
+      "note": "no SQL in part A references menu_dishes_catalog.name or DIA/FINDE; part B (catalog search/upsert, resolve postres) must be checked for them"
+    },
+    {
+      "sites": [
+        "InsertID vs ignored LastInsertId (part A + part B: draft menu, sections, dishes, catalog dish, slider images, postres menu)"
+      ],
+      "mysql": "ExecContext error is returned/handled; LastInsertId error ignored. go-sql-driver/mysql: Result.LastInsertId returns the OK-packet insert id and never errors after a successful exec, so the ignored error has no reachable case",
+      "pg": "INSERT ... RETURNING id in ONE statement: an execution error is the same genuine statement error MySQL also reported; there is no separate id-retrieval step that could fail independently. A RETURNING with zero rows cannot occur for VALUES inserts",
+      "status": "no externally observable departure identified (by code review); genuine PG errors are NOT swallowed"
+    },
+    {
+      "sites": [
+        "dishes catalog upsert UPDATE RowsAffected==0 -> Dish not found"
+      ],
+      "mysql": "changed rows: unchanged save of an existing dish -> Dish not found (source quirk)",
+      "pg": "IS DISTINCT FROM over (title, description COLLATE C, allergens_json jsonb, default_supplement_enabled smallint, default_supplement_price numeric(10,2)) with reused params",
+      "status": "compile only; JSON equality: MySQL binary JSON compare vs jsonb semantic equality (same for normalized arrays of strings, pending QA)"
+    },
+    {
+      "sites": [
+        "comida_items dishes search"
+      ],
+      "mysql": "nombre/titulo LIKE under utf8mb4_unicode_ci; ORDER BY updated_at DESC (NULL last)",
+      "pg": "LOWER(col) COLLATE C LIKE lowered pattern; updated_at DESC NULLS LAST; alergenos_json cast text",
+      "status": "pending CI/accent search gap"
+    },
+    {
+      "sites": [
+        "comida search updated_at scanned into NullString"
+      ],
+      "mysql": "parseTime UTC time -> RFC3339Nano string",
+      "pg": "timestamptz decoded with ScanLocation UTC (sqldb) -> same RFC3339Nano string",
+      "status": "depends on the UTC ScanLocation fix; manual JSON timestamp QA"
+    },
+    {
+      "sites": [
+        "slider_mode enum"
+      ],
+      "mysql": "COALESCE(enum,'default'); IF(slider_mode IN (...),'both',slider_mode)",
+      "pg": "COALESCE(CAST AS text,'default'); CASE WHEN ... THEN 'both' ELSE slider_mode END (literal resolves to enum)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "group_menus_v2 dynamic dish DELETE NOT IN"
+      ],
+      "mysql": "composed",
+      "pg": "portableSQL whole statement",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "group_menus_v2 part B source anomalies"
+      ],
+      "note": "catalog upsert/search use menu_dishes_catalog.title and comida_items.nombre/titulo (both exist); resolve postres uses legacy_source_table='POSTRES' (menus column exists). No DIA/FINDE or menu_dishes_catalog.name reference in this file."
+    },
+    {
+      "sites": [
+        "slider_ai_generating GREATEST(x-1,0), MAX(position)"
+      ],
+      "mysql": "int",
+      "pg": "same",
+      "status": "equivalent"
+    },
+    {
+      "sites": [
+        "portable audit tooling"
+      ],
+      "note": "r9 flagged 2 false positives (string literal POSTRES matched the mixed-case table identifier POSTRES); r10 strips single-quoted literals before the identifier check only; MySQL-only function check unchanged"
+    },
+    {
+      "sites": [
+        "inventory tooling r11"
+      ],
+      "note": "(1) Exec/Query on a *sql.Stmt from Prepare/PrepareContext in the same function are no longer counted as separate (dynamic) call sites: the SQL is counted once at the Prepare site (prepared_stmt_calls_excluded=3 repo-wide), canonical total 2475 -> 2472. Limitation: purely syntactic (same function, ident assigned from x.Prepare*); a stmt passed across functions would still be counted. (2) portable identifier audit strips comments, then single-quoted literals only when quotes are balanced and no backslash escape is present, else checks the raw text (can only over-report). Limitation: lexical, not a full SQL parser; dollar-quoted strings and identifiers containing quotes are not modelled."
+    },
+    {
+      "sites": [
+        "ws AI generate state UPDATEs RowsAffected==0 -> Dish/Menu not found"
+      ],
+      "mysql": "changed rows: re-request while flags already (1,1)/(1,1,1) returns 0 -> not found (source quirk)",
+      "pg": "AND (flags) IS DISTINCT FROM (1,1[,1])",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "special sections image_state_at / created_at fallback / 5-minute uploading window"
+      ],
+      "mysql": "CURRENT_TIMESTAMP/NOW() statement time fsp0; NOW() - INTERVAL 5 MINUTE",
+      "pg": "date_trunc(second, statement_timestamp()) [- interval 5 minutes] (timestamptz)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "special sections reorder (prepared stmt)"
+      ],
+      "mysql": "tx.PrepareContext + stmt.ExecContext per id",
+      "pg": "Prepare text portable+rebound; same tx/stmt flow",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "items section INSERT ... SELECT MAX(position)+1"
+      ],
+      "mysql": "implicit param types; aggregate SELECT always yields 1 row",
+      "pg": "explicit casts (integer/text) so assignment keeps strict-length errors; InsertID RETURNING id",
+      "status": "compile only; concurrent same-menu inserts can compute the same position on both (no lock in source)"
+    },
+    {
+      "sites": [
+        "items dish INSERT / special section INSERT"
+      ],
+      "mysql": "LastInsertId ignored-error",
+      "pg": "InsertID (single statement; genuine errors surface)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "items position shift UPDATE position = position + 1 WHERE position >= ?"
+      ],
+      "mysql": "no unique on position",
+      "pg": "same",
+      "status": "equivalent"
+    },
+    {
+      "sites": [
+        "inventory tooling r12 portable identifier audit"
+      ],
+      "note": "FLAW FIXED: r11 removed comments with a regex that was not quote-aware, so '--' or '/*' inside a SQL string could delete real remainder (incl. mixed-case table refs) and falsely pass. r12 uses identAuditText, a lexical scan: single-quoted literals ('' escape) blanked, double-quoted/backtick identifiers copied verbatim, '-- ' (dash-dash + whitespace/end, the form both dialects treat as a comment) and /* */ dropped only outside quotes; returns RAW text (fail closed) on backslash inside a literal, unterminated literal/identifier/comment, or '#' outside quotes. MySQL-only function check always runs on raw text. Limits: not a SQL parser; PG dollar quotes/E'' strings not modelled (they stay in the checked text => over-report only)."
+    },
+    {
+      "sites": [
+        "comida base category upserts"
+      ],
+      "mysql": "source = IF(source = 'custom', source, VALUES(source))",
+      "pg": "CASE WHEN <table>.source = 'custom' THEN <table>.source ELSE EXCLUDED.source END",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "comida/postres/wines dynamic UPDATE RowsAffected==0 -> not found"
+      ],
+      "mysql": "changed rows (unchanged save -> not found, source quirk)",
+      "pg": "new helper pgChangedRowsPredicate(sets, setArgs, plan types): ROW(cols) IS DISTINCT FROM ROW(CAST(? AS type)...), text COLLATE C, NULL items as typed NULL; unknown column/shape fails the request (not silent)",
+      "status": "compile only; jsonb semantic vs MySQL binary JSON equality and bytea foto compare by value"
+    },
+    {
+      "sites": [
+        "JSON_CONTAINS allergen filter (comida_items json, POSTRES longtext)"
+      ],
+      "mysql": "JSON_CONTAINS(COALESCE(x, JSON_ARRAY()), JSON_QUOTE(?)); longtext parsed as JSON (invalid -> error)",
+      "pg": "COALESCE(x,'[]'::jsonb) @> to_jsonb(CAST(? AS text)); POSTRES: CAST(COALESCE(alergenos,'[]') AS jsonb)",
+      "status": "equal for flat arrays/scalars; nested arrays differ (MySQL recursive); invalid-JSON error timing/row order may differ"
+    },
+    {
+      "sites": [
+        "comida/postres/wines search LIKE"
+      ],
+      "mysql": "utf8mb4_unicode_ci LIKE",
+      "pg": "LOWER(col) COLLATE C LIKE lowered pattern",
+      "status": "pending CI/accent search gap"
+    },
+    {
+      "sites": [
+        "POSTRES table"
+      ],
+      "note": "exists in source (uppercase table and NUM/DESCRIPCION columns): quoted on PG; NOT a source anomaly. No DIA/FINDE or menu_dishes_catalog.name in comida.go."
+    },
+    {
+      "sites": [
+        "comida list ORDER BY ci.updated_at DESC"
+      ],
+      "mysql": "NULL last in DESC",
+      "pg": "DESC NULLS LAST",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "has_foto boolean expressions scanned into int"
+      ],
+      "mysql": "0/1",
+      "pg": "CASE ... THEN 1 ELSE 0 END",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "comida.go custom category upserts x3 (insert id on ODKU)"
+      ],
+      "grounding": "no LAST_INSERT_ID(id) in these statements (only backoffice_pos.go uses LAST_INSERT_ID(expr)); go-sql-driver/mysql (v1.7.1/1.9.3/1.10.1 in module cache) returns the OK-packet insert_id verbatim, so the value is purely server behaviour on the ODKU update/no-change path, not provable from this repository",
+      "pg": "RETURNING CASE WHEN xmax = 0 THEN id ELSE 0 END: inserted -> id (same as MySQL), conflict -> 0 -> the source fallback lookup getCategoryBySlugOrName (slug OR LOWER(name), LIMIT 1, no ORDER BY) runs exactly as written",
+      "status": "PENDING: equal iff MySQL reports 0 on the ODKU update path; if MySQL reports the existing id, MySQL skips the lookup (slug row) while PG may return a name-matching row. Needs a coordinator read-only/staging probe; not claimed equivalent"
+    },
+    {
+      "sites": [
+        "wines precio float(10,2)"
+      ],
+      "note": "schema-level gap; proposal docs/dbmigrate/plan-revision-proposal-float-md.json (no app rounding applied)"
+    },
+    {
+      "sites": [
+        "backoffice_comida_categories.go isDuplicateKeyErr"
+      ],
+      "mysql": "MySQLError 1062 (any unique key)",
+      "pg": "sqldb.IsUniqueViolation: 1062 or SQLSTATE 23505 (same breadth); before, PG duplicates would have returned 500 instead of 409",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "backoffice_comida_categories.go all 22 sites"
+      ],
+      "note": "all SQL is portable text (plain SELECT/UPDATE/DELETE, FOR UPDATE, IN-lists, COALESCE on varchar, ORDER BY CASE); 10 dynamic compositions (table from fixed map, internal where fragments, generated '?' lists) wrapped with portableSQL once; create uses InsertID; no RowsAffected gates in this file"
+    },
+    {
+      "sites": [
+        "comida categories name/slug equality, ORDER BY name, twin predicate name = ?"
+      ],
+      "mysql": "utf8mb4_unicode_ci (case/accent-insensitive, PAD SPACE)",
+      "pg": "plan column collation",
+      "status": "PENDING CI/accent/PAD SPACE - not accepted as equivalent"
+    },
+    {
+      "sites": [
+        "category ODKU insert-id (comida.go x3)"
+      ],
+      "status": "PROVISIONAL, NOT resolved/equivalent: PG returns 0 on conflict so the source fallback lookup runs; MySQL 8.0.46 OK-packet insert_id on the update/no-change path unproven. Local evidence checked: go-sql-driver/mysql packets.go reads insert_id verbatim; only MariaDB 11.8 docs installed locally (different server, not used as evidence); no MySQL server source. Needs coordinator read-only/staging probe.",
+      "new_gap": true
+    },
+    {
+      "sites": [
+        "stock analytics usage avg_daily"
+      ],
+      "mysql": "SUM(-qty_base decimal(18,4)) / GREATEST(DATEDIFF+1,1) -> scale 4 + div_precision_increment 4 (production-verified) = 8",
+      "pg": "ROUND(SUM(-qty_base) / GREATEST((max::date - min::date)+1, 1), 8); DATEDIFF on datetime = date difference -> CAST(... AS date) subtraction",
+      "status": "compile only; PG computes the quotient at >=16 significant digits before ROUND: a double-rounding difference is possible only when digits 9..16 round to exactly ...5 - not reproducible statically (pending manual numeric QA)",
+      "new_gap": true
+    },
+    {
+      "sites": [
+        "stock analytics usage GROUP BY i.id,u.id"
+      ],
+      "mysql": "no ONLY_FULL_GROUP_BY; item_usage.avg_daily/total_usage selected ungrouped but derived table is grouped by stock_item_id and joined on i.id -> one value per group",
+      "pg": "item_usage.avg_daily,total_usage added to GROUP BY (single value per i.id group -> groups unchanged); i.name,u.factor_to_base,u.label covered by PK functional dependency",
+      "status": "by review, not ambiguous"
+    },
+    {
+      "sites": [
+        "stock analytics CURDATE()-8 WEEK / NOW()-8 WEEK / NOW()-? DAY / effective_at<=NOW()"
+      ],
+      "mysql": "session UTC statement time",
+      "pg": "CAST(statement-UTC AS date) - 56; naive statement-UTC - interval '56 days'; timestamptz statement time - make_interval(days)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "stock_vat_rates UPDATE RowsAffected==0 -> 404"
+      ],
+      "mysql": "changed rows (unchanged save -> 404, source quirk); preceding is_default=0 reset in same tx counted",
+      "pg": "IS DISTINCT FROM over (name COLLATE C, rate numeric(5,2), is_default, is_active)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "stock_ai_entitlements calls UPDATE RowsAffected"
+      ],
+      "mysql": "calls_used always changes when matched",
+      "pg": "same",
+      "status": "equivalent by review"
+    },
+    {
+      "sites": [
+        "upserts stock_ai_entitlements(restaurant_id), stock_affluence_daily(restaurant_id,service_date,service_type)"
+      ],
+      "pg": "ON CONFLICT real keys",
+      "status": "compile only; ON UPDATE time gap pending"
+    },
+    {
+      "sites": [
+        "EXISTS / EXISTS OR EXISTS scalar into int"
+      ],
+      "pg": "CASE WHEN ... THEN 1 ELSE 0 END",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "stock_ai_reports JSON inserts, seasonality reads"
+      ],
+      "pg": "CAST(? AS jsonb) / CAST(COALESCE(jsonb,'{}') AS text)",
+      "status": "JSON render class pending"
+    },
+    {
+      "sites": [
+        "suppliers price summary AVG / recent prices AVG"
+      ],
+      "mysql": "AVG(decimal(18,6)) -> scale 6 + div_precision_increment 4 = 10",
+      "pg": "ROUND(AVG(...), 10)",
+      "status": "compile only; same double-rounding edge class as usage quotient (PG AVG computed at higher scale, then ROUND) - pending numeric QA",
+      "new_gap": true
+    },
+    {
+      "sites": [
+        "suppliers latest price SUBSTRING_INDEX(GROUP_CONCAT(... ORDER BY effective_at DESC,id DESC SEPARATOR '|'),'|',1)+0"
+      ],
+      "mysql": "first element of ordered list, string->double via +0; group_concat_max_len truncation only cuts the tail, never the first element",
+      "pg": "CAST((array_agg(unit_cost_base ORDER BY effective_at DESC,id DESC))[1] AS double precision)",
+      "status": "by review; MySQL decimal->string->double vs PG numeric->double give the same double for decimal(18,6) values (by review, not executed)"
+    },
+    {
+      "sites": [
+        "suppliers create: duplicate name"
+      ],
+      "mysql": "EXISTS pre-check -> 409; INSERT error (incl. a racing duplicate on uq_stock_suppliers) -> 500, no named-unique mapping in source",
+      "pg": "same flow; no unique-error mapping added (source breadth preserved)",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "suppliers PATCH RowsAffected==0 -> 404"
+      ],
+      "mysql": "changed rows (unchanged save -> 404, source quirk)",
+      "pg": "IS DISTINCT FROM over (name COLLATE C, notes COLLATE C, is_active)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "suppliers alias upsert"
+      ],
+      "pg": "ON CONFLICT (restaurant_id,supplier_name,supplier_code,normalized_description) (all NOT NULL)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "public_menus page visibility upsert (dynamic)"
+      ],
+      "mysql": "ODKU on uniq_rest_page_vis_restaurant; col = COALESCE(?, col) reads the existing row",
+      "pg": "ON CONFLICT (restaurant_id) DO UPDATE SET col = COALESCE(?, restaurant_page_visibility.col)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "public_menus JSON reads (cta_json, allergens_json) and slider_mode enum"
+      ],
+      "pg": "CAST AS text",
+      "status": "JSON render class pending"
+    },
+    {
+      "sites": [
+        "public_menus created_at scanned into NullString"
+      ],
+      "mysql": "parseTime UTC -> RFC3339Nano",
+      "pg": "depends on sqldb ScanLocation UTC",
+      "status": "manual JSON timestamp QA"
+    },
+    {
+      "sites": [
+        "public_menus / suppliers ORDER BY name/title"
+      ],
+      "status": "CI/accent ordering pending"
+    },
+    {
+      "sites": [
+        "menus ORDER BY created_at (group_menus x4, backoffice_group_menus list)"
+      ],
+      "mysql": "created_at nullable: NULL first in ASC, last in DESC",
+      "pg": "explicit NULLS FIRST (ASC) / NULLS LAST (DESC) via sqlFragment in the fixed query texts",
+      "status": "by review"
+    },
+    {
+      "sites": [
+        "group_menus dishes enrichment join (dynamic)"
+      ],
+      "mysql": "d.title_snapshot LIKE CONCAT(ci.nombre,' (+%') under utf8mb4_unicode_ci; JSON columns as text",
+      "pg": "d.title_snapshot COLLATE C LIKE (ci.nombre || ' (+%'); CAST(json AS text) x3; ci.nombre wildcard chars behave the same in both",
+      "status": "pending CI/accent search gap (case-sensitive on PG)"
+    },
+    {
+      "sites": [
+        "dessert mirror copy INSERT ... SELECT ... ORDER BY src.position, src.id"
+      ],
+      "mysql": "auto-increment ids assigned in SELECT order",
+      "pg": "explicit param casts; identity assignment follows the SELECT ORDER BY in practice but is not formally guaranteed by PG",
+      "status": "pending: new dish ids order not proven equal (only matters if callers rely on id order; positions are copied explicitly)",
+      "new_gap": true
+    },
+    {
+      "sites": [
+        "backoffice_group_menus rice names LIKE 'arroz%'"
+      ],
+      "mysql": "LOWER(TRIM(categoria)) LIKE 'arroz%' (CI/accent-insensitive)",
+      "pg": "... COLLATE C LIKE 'arroz%'",
+      "status": "pending CI/accent gap"
+    },
+    {
+      "sites": [
+        "menus/dessert/section inserts"
+      ],
+      "pg": "InsertID (single statement)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "price scanned into string"
+      ],
+      "grounding": "pgx v5.11 NumericCodec.DecodeDatabaseSQLValue returns the numeric text (scale preserved, e.g. 12.50), same as MySQL decimal bytes",
+      "status": "by driver-source review"
+    },
+    {
+      "sites": [
+        "created_at/modified_at scanned into NullString"
+      ],
+      "status": "depends on UTC ScanLocation; manual JSON timestamp QA"
+    },
+    {
+      "sites": [
+        "mixed-case identifiers in these 3 files"
+      ],
+      "note": "none: 'POSTRES' appears only as a string value of menus.legacy_source_table (not the POSTRES table); no DIA/FINDE or menu_dishes_catalog.name references"
+    },
+    {
+      "sites": [
+        "admin_menus.go legacy DIA/FINDE CRUD/search (5 dynamic)"
+      ],
+      "note": "SOURCE ANOMALY preserved: table is the fixed literal DIA or FINDE from the route wrappers; neither table exists in exported/live schema -> MySQL and PG both fail; PG quotes \"DIA\"/\"FINDE\"/\"NUM\"/\"DESCRIPCION\"/\"TIPO\" as written, no substitute table; any meaning fix needs separate approval"
+    },
+    {
+      "sites": [
+        "admin_menus.go dish active toggles (v2 id, then legacy_dish_map DIA/table) RowsAffected<=0 -> fallback / 'status already set'"
+      ],
+      "mysql": "changed rows (same value -> 0 -> fallback then message); multi-table UPDATE ... JOIN",
+      "pg": "UPDATE ... FROM legacy_dish_map + AND d.active IS DISTINCT FROM CAST($1 AS smallint) (reused positional params)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "margin scopes ORDER BY FIELD(scope_kind, 4 enum labels)"
+      ],
+      "mysql": "FIELD position (0 if absent)",
+      "pg": "CASE scope_kind WHEN ... THEN 1..4 ELSE 0 END",
+      "status": "equivalent by review (all enum labels listed)"
+    },
+    {
+      "sites": [
+        "margin scopes monetary/pct values"
+      ],
+      "note": "no SQL division/rounding in this file; target/min/max_food_cost_pct decimal(5,2) receive Go float64 params -> assignment rounding to 2 decimals on both (by review, manual QA); margin math stays in Go"
+    },
+    {
+      "sites": [
+        "menu_visibility / special_principales_enabled UPDATE RowsAffected==0 -> existence re-check"
+      ],
+      "mysql": "changed rows",
+      "pg": "matched rows",
+      "status": "equivalent outcome by review: on 0 the source re-checks existence and continues; PG returning 1 for an unchanged row reaches the same continuation"
+    },
+    {
+      "sites": [
+        "special principal add INSERT ... SELECT MAX+1 ON DUPLICATE KEY UPDATE dish_id = dish_id"
+      ],
+      "pg": "explicit casts + ON CONFLICT (section_id, dish_id) DO UPDATE SET dish_id = <table>.dish_id (no-op, row-locks like MySQL)",
+      "status": "compile only; concurrent position computation unlocked in both"
+    },
+    {
+      "sites": [
+        "admin_menus legacy LIKE, menu ordering by label/name"
+      ],
+      "status": "CI/accent pending"
+    },
+    {
+      "sites": [
+        "backoffice_menus.go legacy DIA/FINDE (6 dynamic)"
+      ],
+      "note": "SOURCE ANOMALY preserved: fixed DIA/FINDE route literals; tables absent -> fail on MySQL and PG alike; PG quotes \"DIA\"/\"FINDE\"/\"NUM\"/\"DESCRIPCION\"/\"TIPO\"; no substitute table; no changed-rows predicate for the patch/set-price gates (column types not groundable; set-price RowsAffected==0 -> insert would duplicate PRECIO rows on an unchanged MySQL save, unreachable while tables are absent)"
+    },
+    {
+      "sites": [
+        "backoffice_vinos wine PATCH RowsAffected==0 -> Wine not found"
+      ],
+      "mysql": "changed rows",
+      "pg": "pgChangedRowsPredicate(sets, winesV2PGTypes): precio compared as real vs CAST(? AS real)",
+      "status": "compile only; float(10,2) D-rounding gap means a value MySQL rounds equal may compare distinct on PG (proposal pending)"
+    },
+    {
+      "sites": [
+        "wines insert INSERT ... SELECT MAX(position)+1"
+      ],
+      "pg": "explicit casts (precio CAST AS real: no D=2 rounding - float(10,2) gap) + InsertID (aggregate row always present)",
+      "status": "compile only; float(M,D) gap remains proposal-only"
+    },
+    {
+      "sites": [
+        "menu_weekday_availability COALESCE(m.price,'')"
+      ],
+      "mysql": "decimal -> string, '' when NULL",
+      "pg": "COALESCE(CAST(price AS text),'') (PG would reject '' for numeric); ORDER BY modified_at DESC NULLS LAST",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "weekday upsert"
+      ],
+      "pg": "ON CONFLICT (restaurant_id, menu_id, weekday)",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "wine list/detail selects (backoffice_vinos)"
+      ],
+      "pg": "vinoV2NumSQL() bigint, has_foto CASE, production_type text, reviewed vinoV2From/WhereLegacyNum fragments, rebound once",
+      "status": "compile only"
+    },
+    {
+      "sites": [
+        "generator partial-wrap audit"
+      ],
+      "note": "found and fixed one partial wrap (wines_v2 legacy delete: portableSQL(`...`)+vinoV2WhereLegacyNum left the fragment's '?' unbound on PG); grep audit of all ported files for portableSQL/nativeSQL(`..`)+ident found no other occurrence"
+    },
+    {
+      "sites": [
+        "backoffice_stock_import.go 6"
+      ],
+      "note": "EXISTS->CASE WHEN EXISTS THEN 1 ELSE 0 (int Scan; errors ignored as source). ODKU stock_categories -> ON CONFLICT (restaurant_id,name) DO UPDATE name=EXCLUDED.name (only collidable key). stock_items LastInsertId -> sqldb.InsertID RETURNING id (exec errors same branch). sku/name equality CI collation pending (CI gap)."
+    },
+    {
+      "sites": [
+        "backoffice_dish_same_day_booking.go 5"
+      ],
+      "note": "ODKU -> ON CONFLICT (dish_id,menu_id) (not tenant-scoped, as source unique key) DO UPDATE ... date_modified=date_trunc('second',statement_timestamp()); insert id via RETURNING CASE WHEN xmax=0 THEN id ELSE 0 END: PROVISIONAL, same unproven MySQL ODKU-update LastInsertId gap as category upsert. date_modified timestamp scanned to string: RFC3339 text on both drivers by code reading only (JSON timestamp QA)."
+    },
+    {
+      "sites": [
+        "backoffice_menu_visibility.go 4"
+      ],
+      "note": "INSERT IGNORE -> ON CONFLICT (restaurant_id,menu_key) DO NOTHING: no FK on table, constant values fit widths, so duplicate is the only ignorable case. UPDATE is_active RowsAffected gate keeps MySQL changed-rows via IS DISTINCT FROM CAST($1 AS smallint)."
+    },
+    {
+      "sites": [
+        "backoffice_vinos_ws.go 4 dynamic"
+      ],
+      "note": "Whole final strings wrapped once. NumExpr via sqlFragment(vinoV2NumExpr,vinoV2NumExprPG). 'Wine not found' RowsAffected gate keeps MySQL changed-rows: ROW(ai_requested_img,ai_generating_img) IS DISTINCT FROM ROW(1,1) (source quirk: already-generating wine reports not found, preserved)."
+    },
+    {
+      "sites": [
+        "special_menu_cta.go 4"
+      ],
+      "note": "JSON special_cta read CAST AS text (json.Unmarshal consumer, key order irrelevant), write CAST(? AS jsonb); DATE_FORMAT -> to_char YYYY-MM-DD."
+    },
+    {
+      "sites": [
+        "stock_digest.go 4"
+      ],
+      "note": "GROUP BY nondeterminism FLAGGED: expiring query subquery uses ungrouped m.warehouse_id (MySQL arbitrary row without ONLY_FULL_GROUP_BY); PG uses any_value(m.warehouse_id) = same indeterminate contract, NOT proven same pick for multi-warehouse items. m.restaurant_id/m.stock_item_id -> i.restaurant_id/i.id (join-equal, PK dependent). NOW() on naive datetime -> date_trunc('second',statement_timestamp() AT TIME ZONE 'UTC'); DATE_ADD INTERVAL ? DAY -> CAST(? AS integer)*INTERVAL '1 day'. enum base_unit CAST AS text. Name ordering CI collation pending. No WhatsApp send executed."
+    },
+    {
+      "sites": [
+        "backoffice_comida_ai.go 4"
+      ],
+      "note": "portable (plain flags/ids; source_type CI equality pending). AI/provider code untouched and not run."
+    },
+    {
+      "sites": [
+        "backoffice_dish_same_day_booking.go ODKU insert id"
+      ],
+      "note": "OPEN GAP (not an accepted choice): PG RETURNING CASE WHEN xmax=0 THEN id ELSE 0 END returns 0 on the conflict/update branch; MySQL LastInsertId for an ODKU update without LAST_INSERT_ID(id) unproven. Same gap as category upsert (2 sites)."
+    },
+    {
+      "sites": [
+        "stock_digest.go expiring query"
+      ],
+      "note": "OPEN GAP (not an accepted choice): any_value(m.warehouse_id) is arbitrary and may pick a different warehouse than MySQL's arbitrary non-ONLY_FULL_GROUP_BY row for multi-warehouse items; changes the consumed subtotal and digest text."
+    },
+    {
+      "sites": [
+        "backoffice_stock_reconciliation.go 3"
+      ],
+      "note": "UPDATE..LEFT JOIN derived SUM -> correlated SUM subquery (derived table unique per item+warehouse; same join keys/args). INSERT..SELECT ? -> CAST(? AS integer). OPEN: MySQL multi-table UPDATE share-locks read stock_movements rows, PG does not (concurrency delta)."
+    },
+    {
+      "sites": [
+        "backoffice_stock_margin_targets.go 3 (1 dynamic)"
+      ],
+      "note": "Dynamic table from fixed map (comida_plato_categories/comida_bebida_categories, lowercase, exist); enum scope_kind CAST AS text."
+    },
+    {
+      "sites": [
+        "backoffice_stock_permissions.go 2"
+      ],
+      "note": "ODKU -> ON CONFLICT on PRIMARY (restaurant_id,role_slug,permission_key) only unique key; role_slug CI key equality pending CI gap."
+    },
+    {
+      "sites": [
+        "special_date_menu_sections.go 3"
+      ],
+      "note": "INSERT..SELECT params typed CAST integer/bigint/numeric/smallint. OPEN: float64 adelanto -> decimal(10,2) rounding path differs by driver/server (MySQL binary double param vs pgx numeric text) - float->decimal QA pending (same family as percentage float QA)."
+    },
+    {
+      "sites": [
+        "menu_public_seo_handlers.go 3 (1 dynamic)",
+        "menu_section_cta.go 2",
+        "special_menu_group_booking.go 3"
+      ],
+      "note": "RowsAffected==0 only gates an existence/ownership check -> matched-vs-changed gives identical response, no predicate. SEO 1062 duplicate -> PG IsUniqueViolation same breadth (any unique). cta_json CAST(? AS jsonb)."
+    },
+    {
+      "sites": [
+        "backoffice_comida_counts.go 1"
+      ],
+      "note": "\"POSTRES\" quoted."
+    },
+    {
+      "sites": [
+        "menu_public_seo.go 2",
+        "group_menus_party_size.go 1",
+        "backoffice_vinos_cutout.go 2 dynamic",
+        "backoffice_comida_upload.go 2"
+      ],
+      "note": "portable whole-string wrap; created_at timestamp->time.Time UTC ScanLocation by code reading only; cutout/upload/provider code not run."
+    }
+  ],
+  "syntax_complete": true
+}

@@ -69,10 +69,14 @@ func (s *Server) suppressUnreachableWhatsappTarget(ctx context.Context, restaura
 	if bookingID > 0 {
 		booking = bookingID
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, nativeSQL(`
 		INSERT IGNORE INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
 		VALUES (?, 'whatsapp', ?, ?, ?, 'invalid')
-	`, restaurantID, canonical, booking, reason); err != nil {
+	`, `
+		INSERT INTO campaign_suppressions (restaurant_id, channel, target, booking_id, reason, source)
+		VALUES (?, 'whatsapp', ?, ?, ?, 'invalid')
+		ON CONFLICT (restaurant_id, app.norm(channel), app.norm(target)) DO NOTHING
+	`), restaurantID, canonical, booking, campaignSuppressionReason(reason)); err != nil {
 		log.Printf("[whatsapp][obs][CP-UNREACHABLE-SUPPRESS-FAILED] restaurant=%d target=%s err=%v", restaurantID, canonical, err)
 		return
 	}

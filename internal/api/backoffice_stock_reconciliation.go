@@ -16,7 +16,8 @@ type stockReconciliationDiff struct {
 
 func (s *Server) stockReconciliationDiffs(r *http.Request) ([]stockReconciliationDiff, error) {
 	a, _ := boAuthFromContext(r.Context())
-	rows, err := s.db.QueryContext(r.Context(), `SELECT keys_.stock_item_id,keys_.warehouse_id,COALESCE(l.qty_base,0),COALESCE(m.qty_base,0),COALESCE(l.qty_base,0)-COALESCE(m.qty_base,0) FROM (SELECT stock_item_id,warehouse_id FROM stock_levels WHERE restaurant_id=? UNION SELECT stock_item_id,warehouse_id FROM stock_movements WHERE restaurant_id=?) keys_ LEFT JOIN stock_levels l ON l.restaurant_id=? AND l.stock_item_id=keys_.stock_item_id AND l.warehouse_id=keys_.warehouse_id LEFT JOIN (SELECT stock_item_id,warehouse_id,SUM(qty_base) qty_base FROM stock_movements WHERE restaurant_id=? GROUP BY stock_item_id,warehouse_id) m ON m.stock_item_id=keys_.stock_item_id AND m.warehouse_id=keys_.warehouse_id WHERE ABS(COALESCE(l.qty_base,0)-COALESCE(m.qty_base,0))>0.0001 ORDER BY keys_.stock_item_id,keys_.warehouse_id`, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID)
+	// Portable: UNION, derived tables, decimal SUM/ABS (float64 Scan), non-null ORDER BY keys.
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT keys_.stock_item_id,keys_.warehouse_id,COALESCE(l.qty_base,0),COALESCE(m.qty_base,0),COALESCE(l.qty_base,0)-COALESCE(m.qty_base,0) FROM (SELECT stock_item_id,warehouse_id FROM stock_levels WHERE restaurant_id=? UNION SELECT stock_item_id,warehouse_id FROM stock_movements WHERE restaurant_id=?) keys_ LEFT JOIN stock_levels l ON l.restaurant_id=? AND l.stock_item_id=keys_.stock_item_id AND l.warehouse_id=keys_.warehouse_id LEFT JOIN (SELECT stock_item_id,warehouse_id,SUM(qty_base) qty_base FROM stock_movements WHERE restaurant_id=? GROUP BY stock_item_id,warehouse_id) m ON m.stock_item_id=keys_.stock_item_id AND m.warehouse_id=keys_.warehouse_id WHERE ABS(COALESCE(l.qty_base,0)-COALESCE(m.qty_base,0))>0.0001 ORDER BY keys_.stock_item_id,keys_.warehouse_id`), a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID, a.ActiveRestaurantID)
 	if err != nil {
 		return nil, err
 	}
@@ -53,11 +54,17 @@ func (s *Server) handleBOStockReconciliationRebuild(w http.ResponseWriter, r *ht
 		return
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(r.Context(), `UPDATE stock_levels l LEFT JOIN (SELECT stock_item_id,warehouse_id,SUM(qty_base) qty_base FROM stock_movements WHERE restaurant_id=? GROUP BY stock_item_id,warehouse_id) m ON m.stock_item_id=l.stock_item_id AND m.warehouse_id=l.warehouse_id SET l.qty_base=COALESCE(m.qty_base,0),l.version=l.version+1 WHERE l.restaurant_id=?`, a.ActiveRestaurantID, a.ActiveRestaurantID); err != nil {
+	// PG has no UPDATE ... LEFT JOIN: the grouped derived table yields at most
+	// one row per (item, warehouse), so a correlated SUM is the same value
+	// (same join keys: item + warehouse, movements filtered by tenant). Arg
+	// order unchanged. Lock delta: MySQL's multi-table UPDATE also share-locks
+	// the movement rows it reads; PG reads them unlocked (pending review).
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`UPDATE stock_levels l LEFT JOIN (SELECT stock_item_id,warehouse_id,SUM(qty_base) qty_base FROM stock_movements WHERE restaurant_id=? GROUP BY stock_item_id,warehouse_id) m ON m.stock_item_id=l.stock_item_id AND m.warehouse_id=l.warehouse_id SET l.qty_base=COALESCE(m.qty_base,0),l.version=l.version+1 WHERE l.restaurant_id=?`, `UPDATE stock_levels l SET qty_base=COALESCE((SELECT SUM(mv.qty_base) FROM stock_movements mv WHERE mv.restaurant_id=? AND mv.stock_item_id=l.stock_item_id AND mv.warehouse_id=l.warehouse_id),0),version=l.version+1 WHERE l.restaurant_id=?`), a.ActiveRestaurantID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error rebuilding stock")
 		return
 	}
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) SELECT ?,m.stock_item_id,m.warehouse_id,SUM(m.qty_base) FROM stock_movements m LEFT JOIN stock_levels l ON l.restaurant_id=m.restaurant_id AND l.stock_item_id=m.stock_item_id AND l.warehouse_id=m.warehouse_id WHERE m.restaurant_id=? AND l.stock_item_id IS NULL GROUP BY m.stock_item_id,m.warehouse_id`, a.ActiveRestaurantID, a.ActiveRestaurantID); err != nil {
+	// PG: a bare parameter in an INSERT ... SELECT list resolves to text, so it is typed (restaurant_id int).
+	if _, err = tx.ExecContext(r.Context(), nativeSQL(`INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) SELECT ?,m.stock_item_id,m.warehouse_id,SUM(m.qty_base) FROM stock_movements m LEFT JOIN stock_levels l ON l.restaurant_id=m.restaurant_id AND l.stock_item_id=m.stock_item_id AND l.warehouse_id=m.warehouse_id WHERE m.restaurant_id=? AND l.stock_item_id IS NULL GROUP BY m.stock_item_id,m.warehouse_id`, `INSERT INTO stock_levels (restaurant_id,stock_item_id,warehouse_id,qty_base) SELECT CAST(? AS integer),m.stock_item_id,m.warehouse_id,SUM(m.qty_base) FROM stock_movements m LEFT JOIN stock_levels l ON l.restaurant_id=m.restaurant_id AND l.stock_item_id=m.stock_item_id AND l.warehouse_id=m.warehouse_id WHERE m.restaurant_id=? AND l.stock_item_id IS NULL GROUP BY m.stock_item_id,m.warehouse_id`), a.ActiveRestaurantID, a.ActiveRestaurantID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error rebuilding stock")
 		return
 	}

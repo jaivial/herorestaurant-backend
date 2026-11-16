@@ -21,6 +21,7 @@ import (
 
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/lib/specialmenuimage"
+	"preactvillacarmen/internal/sqldb"
 )
 
 var boAdHexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -507,7 +508,7 @@ func (s *Server) readBOAd(ctx context.Context, restaurantID int, adID int64) (bo
 	var contentRaw, ctasRaw, layoutRaw, canvasRaw, designRaw []byte
 	var statusRaw sql.NullString
 	var startedAt, createdAt, updatedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json, design_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, adID, restaurantID).
+	err := s.db.QueryRowContext(ctx, nativeSQL(`SELECT id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json, design_json, image_generation_status, image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`, `SELECT id, name, active, starts_at, ends_at, CAST(content_json AS text), CAST(ctas_json AS text), CAST(layout_json AS text), CAST(canvas_json AS text), CAST(design_json AS text), CAST(image_generation_status AS text), image_generation_started_at, created_at, updated_at FROM restaurant_ads WHERE id = ? AND restaurant_id = ? LIMIT 1`), adID, restaurantID).
 		Scan(&ad.ID, &ad.Name, &active, &startsAt, &endsAt, &contentRaw, &ctasRaw, &layoutRaw, &canvasRaw, &designRaw, &statusRaw, &startedAt, &createdAt, &updatedAt)
 	if err != nil {
 		return ad, err
@@ -615,14 +616,14 @@ func (s *Server) handleBOAdsList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id FROM restaurant_ads WHERE restaurant_id = ? ORDER BY updated_at DESC, id DESC`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT id FROM restaurant_ads WHERE restaurant_id = ? ORDER BY updated_at DESC, id DESC`, `SELECT id FROM restaurant_ads WHERE restaurant_id = ? ORDER BY updated_at DESC NULLS LAST, id DESC`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ads")
 		return
 	}
 	defer rows.Close()
 	ads := make([]boAd, 0)
-	blockedRows, blockedErr := s.db.QueryContext(r.Context(), `SELECT id, name, starts_at, ends_at FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND starts_at IS NOT NULL AND ends_at IS NOT NULL ORDER BY starts_at, id`, a.ActiveRestaurantID)
+	blockedRows, blockedErr := s.db.QueryContext(r.Context(), portableSQL(`SELECT id, name, starts_at, ends_at FROM restaurant_ads WHERE restaurant_id = ? AND active = 1 AND starts_at IS NOT NULL AND ends_at IS NOT NULL ORDER BY starts_at, id`), a.ActiveRestaurantID)
 	if blockedErr != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error loading ad schedules")
 		return
@@ -696,20 +697,21 @@ func (s *Server) updateBOAd(ctx context.Context, restaurantID int, adID int64, i
 		designRaw, _ = json.Marshal(normalized.Design)
 	}
 	if adID <= 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json, design_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw, designRaw)
+		id, err := sqldb.InsertID(ctx, sqlDialect, s.db, nativeSQL(`INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json, design_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, `INSERT INTO restaurant_ads (restaurant_id, name, active, starts_at, ends_at, content_json, ctas_json, layout_json, canvas_json, design_json) VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb), CAST(? AS jsonb))`), "id", restaurantID, normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw, designRaw)
 		if err != nil {
 			return boAd{}, err
 		}
-		id, _ := res.LastInsertId()
 		return s.readBOAd(ctx, restaurantID, id)
 	}
-	query := `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ?, canvas_json = ? WHERE id = ? AND restaurant_id = ?`
+	// RowsAffected==0 only triggers an existence re-read: matched vs changed
+	// counts give the same response.
+	query := nativeSQL(`UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ?, canvas_json = ? WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = CAST(? AS jsonb), ctas_json = CAST(? AS jsonb), layout_json = CAST(? AS jsonb), canvas_json = CAST(? AS jsonb) WHERE id = ? AND restaurant_id = ?`)
 	args := []any{normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw, adID, restaurantID}
 	if designRaw != nil {
-		query = `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ?, canvas_json = ?, design_json = ? WHERE id = ? AND restaurant_id = ?`
+		query = nativeSQL(`UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = ?, ctas_json = ?, layout_json = ?, canvas_json = ?, design_json = ? WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_ads SET name = ?, active = ?, starts_at = ?, ends_at = ?, content_json = CAST(? AS jsonb), ctas_json = CAST(? AS jsonb), layout_json = CAST(? AS jsonb), canvas_json = CAST(? AS jsonb), design_json = CAST(? AS jsonb) WHERE id = ? AND restaurant_id = ?`)
 		args = []any{normalized.Name, boolToTinyint(normalized.Active), normalized.StartsAt, normalized.EndsAt, contentRaw, ctasRaw, layoutRaw, canvasRaw, designRaw, adID, restaurantID}
 	}
-	res, err := s.db.ExecContext(ctx, query, args...)
+	res, err := s.db.ExecContext(ctx, selectedSQL(query), args...)
 	if err != nil {
 		return boAd{}, err
 	}
@@ -793,7 +795,7 @@ func (s *Server) handleBOAdsDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Invalid ad id"})
 		return
 	}
-	res, err := s.db.ExecContext(r.Context(), `DELETE FROM restaurant_ads WHERE id = ? AND restaurant_id = ?`, adID, a.ActiveRestaurantID)
+	res, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM restaurant_ads WHERE id = ? AND restaurant_id = ?`), adID, a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteError(w, 500, "Error deleting ad")
 		return
@@ -813,9 +815,9 @@ func (s *Server) setBOAdImageGenerationStatus(ctx context.Context, restaurantID 
 	startedClause := ""
 	args := []any{string(status), adID, restaurantID}
 	if setStartedAt {
-		startedClause = ", image_generation_started_at = NOW()"
+		startedClause = sqlFragment(", image_generation_started_at = NOW()", ", image_generation_started_at = date_trunc('second', statement_timestamp())")
 	}
-	res, err := s.db.ExecContext(ctx, "UPDATE restaurant_ads SET image_generation_status = ?"+startedClause+" WHERE id = ? AND restaurant_id = ?", args...)
+	res, err := s.db.ExecContext(ctx, portableSQL("UPDATE restaurant_ads SET image_generation_status = ?"+startedClause+" WHERE id = ? AND restaurant_id = ?"), args...)
 	if err != nil {
 		slog.Default().Warn("failed to update ad image_generation_status", "ad_id", adID, "restaurant_id", restaurantID, "status", status, "err", err.Error())
 		return
@@ -844,7 +846,7 @@ func (s *Server) persistBOAdImageURL(ctx context.Context, restaurantID int, adID
 
 	var raw []byte
 	if err := tx.QueryRowContext(ctx,
-		`SELECT content_json FROM restaurant_ads WHERE id = ? AND restaurant_id = ? FOR UPDATE`,
+		nativeSQL(`SELECT content_json FROM restaurant_ads WHERE id = ? AND restaurant_id = ? FOR UPDATE`, `SELECT CAST(content_json AS text) FROM restaurant_ads WHERE id = ? AND restaurant_id = ? FOR UPDATE`),
 		adID, restaurantID,
 	).Scan(&raw); err != nil {
 		return err
@@ -872,7 +874,7 @@ func (s *Server) persistBOAdImageURL(ctx context.Context, restaurantID int, adID
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE restaurant_ads SET content_json = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?`,
+		nativeSQL(`UPDATE restaurant_ads SET content_json = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?`, `UPDATE restaurant_ads SET content_json = CAST(? AS jsonb), updated_at = date_trunc('second', statement_timestamp()) WHERE id = ? AND restaurant_id = ?`),
 		patched, adID, restaurantID,
 	); err != nil {
 		return err

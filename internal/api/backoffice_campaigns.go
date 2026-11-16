@@ -19,6 +19,7 @@ import (
 
 	"preactvillacarmen/internal/httpx"
 	"preactvillacarmen/internal/lib/specialmenuimage"
+	"preactvillacarmen/internal/sqldb"
 )
 
 // Campaigns: one markdown body broadcast as email (SMTP of the restaurant) and
@@ -55,6 +56,18 @@ const campaignBookingsAudienceQuery = `
 	GROUP BY customer_name, contact_email, contact_phone
 	ORDER BY MAX(id) DESC`
 
+// campaignBookingsAudienceQueryPG (sqldb_native_pg_v1): CURDATE() is the UTC
+// session date (reservation_date is a DATE), so the window start is the UTC
+// statement date minus ? days. GROUP BY keeps the same three columns; their
+// CI collation decides which spellings fold together and the displayed
+// representative is arbitrary on both engines (CI/PAD SPACE gap pending).
+const campaignBookingsAudienceQueryPG = `
+	SELECT MAX(id), customer_name, COALESCE(contact_email, ''), COALESCE(contact_phone, '')
+	FROM bookings
+	WHERE restaurant_id = ? AND reservation_date >= CAST(statement_timestamp() AT TIME ZONE 'UTC' AS date) - CAST(? AS integer)
+	GROUP BY customer_name, contact_email, contact_phone
+	ORDER BY MAX(id) DESC`
+
 // campaignSuppressionQuery is every do-not-contact target of a restaurant plus
 // the legacy invalid_emails / invalid_phones / no_marketing rows. The legacy
 // tables do not share one collation, so every branch is cast to the same one.
@@ -86,6 +99,38 @@ const campaignSuppressionQuery = `
 		WHERE s.restaurant_id = ? AND s.source IN ('unsubscribe', 'legacy') AND TRIM(COALESCE(b.contact_email, '')) <> ''
 		UNION ALL
 		SELECT 'whatsapp', CONVERT(TRIM(b.contact_phone) USING utf8mb4) COLLATE utf8mb4_unicode_ci
+		FROM campaign_suppressions s JOIN bookings b ON b.id = s.booking_id AND b.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.source IN ('unsubscribe', 'legacy') AND TRIM(COALESCE(b.contact_phone, '')) <> ''
+	) suppressed`
+
+// campaignSuppressionQueryPG is the same seven-branch union. CONVERT(... USING
+// utf8mb4) COLLATE only reconciles MySQL's mixed table collations for the
+// UNION; no comparison/sort happens on the result (Go canonicalizes every
+// row), so PG pins the deterministic "C" collation per branch instead.
+// LOWER/TRIM are the engine's own (non-ASCII case mapping QA pending; Go
+// re-lowercases every target afterwards).
+const campaignSuppressionQueryPG = `
+	SELECT channel, target FROM (
+		SELECT channel, target COLLATE "C" AS target
+		FROM campaign_suppressions WHERE restaurant_id = ?
+		UNION ALL
+		SELECT 'email', LOWER(TRIM(email)) COLLATE "C"
+		FROM invalid_emails WHERE TRIM(COALESCE(email, '')) <> ''
+		UNION ALL
+		SELECT 'whatsapp', TRIM(phone) COLLATE "C"
+		FROM invalid_phones WHERE TRIM(COALESCE(phone, '')) <> ''
+		UNION ALL
+		SELECT 'whatsapp', TRIM(contact_phone) COLLATE "C"
+		FROM no_marketing WHERE TRIM(COALESCE(contact_phone, '')) <> ''
+		UNION ALL
+		SELECT 'email', LOWER(TRIM(contact_email)) COLLATE "C"
+		FROM no_marketing WHERE TRIM(COALESCE(contact_email, '')) <> ''
+		UNION ALL
+		SELECT 'email', LOWER(TRIM(b.contact_email)) COLLATE "C"
+		FROM campaign_suppressions s JOIN bookings b ON b.id = s.booking_id AND b.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND s.source IN ('unsubscribe', 'legacy') AND TRIM(COALESCE(b.contact_email, '')) <> ''
+		UNION ALL
+		SELECT 'whatsapp', TRIM(b.contact_phone) COLLATE "C"
 		FROM campaign_suppressions s JOIN bookings b ON b.id = s.booking_id AND b.restaurant_id = s.restaurant_id
 		WHERE s.restaurant_id = ? AND s.source IN ('unsubscribe', 'legacy') AND TRIM(COALESCE(b.contact_phone, '')) <> ''
 	) suppressed`
@@ -273,8 +318,13 @@ func scanBOCampaign(scan func(dest ...any) error) (boCampaign, error) {
 const boCampaignColumns = `id, coord_id, name, subject, body_markdown, body_html, email_html, theme_json, channels, audience, audience_days, manual_recipients, email_per_minute, whatsapp_per_minute, status,
 	DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i'), DATE_FORMAT(created_at, '%Y-%m-%d %H:%i'), DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i')`
 
+// boCampaignColumnsPG: sent_at is a naive UTC DATETIME; created_at/updated_at
+// are TIMESTAMP (timestamptz) rendered in the UTC session like MySQL.
+const boCampaignColumnsPG = `id, coord_id, name, subject, body_markdown, body_html, email_html, theme_json, channels, audience, audience_days, manual_recipients, email_per_minute, whatsapp_per_minute, status,
+	to_char(sent_at, 'YYYY-MM-DD HH24:MI'), to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'), to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')`
+
 func (s *Server) loadBOCampaign(ctx context.Context, restaurantID int, id int64) (boCampaign, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+boCampaignColumns+` FROM campaigns WHERE restaurant_id = ? AND id = ? LIMIT 1`, restaurantID, id)
+	row := s.db.QueryRowContext(ctx, portableSQL(`SELECT `+sqlFragment(boCampaignColumns, boCampaignColumnsPG)+` FROM campaigns WHERE restaurant_id = ? AND id = ? LIMIT 1`), restaurantID, id)
 	c, err := scanBOCampaign(row.Scan)
 	if err != nil {
 		return boCampaign{}, err
@@ -285,7 +335,8 @@ func (s *Server) loadBOCampaign(ctx context.Context, restaurantID int, id int64)
 
 func (s *Server) campaignStats(ctx context.Context, campaignID int64) (campaignStats, error) {
 	var st campaignStats
-	err := s.db.QueryRowContext(ctx, `
+	// PG: a boolean cannot be SUMmed; CASE gives the same 0/1 per row.
+	err := s.db.QueryRowContext(ctx, nativeSQL(`
 		SELECT COUNT(*),
 		       COALESCE(SUM(status = 'sent'), 0),
 		       COALESCE(SUM(status = 'failed'), 0),
@@ -293,7 +344,15 @@ func (s *Server) campaignStats(ctx context.Context, campaignID int64) (campaignS
 		       COALESCE(SUM(status = 'paused'), 0),
 		       COALESCE(SUM(status = 'skipped'), 0)
 		FROM campaign_recipients WHERE campaign_id = ?
-	`, campaignID).Scan(&st.Total, &st.Sent, &st.Failed, &st.Pending, &st.Paused, &st.Skipped)
+	`, `
+		SELECT COUNT(*),
+		       COALESCE(SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0)
+		FROM campaign_recipients WHERE campaign_id = ?
+	`), campaignID).Scan(&st.Total, &st.Sent, &st.Failed, &st.Pending, &st.Paused, &st.Skipped)
 	return st, err
 }
 
@@ -303,7 +362,7 @@ func (s *Server) handleBOCampaignsList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, 401, "Unauthorized")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT `+boCampaignColumns+` FROM campaigns WHERE restaurant_id = ? ORDER BY updated_at DESC`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT `+sqlFragment(boCampaignColumns, boCampaignColumnsPG)+` FROM campaigns WHERE restaurant_id = ? ORDER BY updated_at DESC`), a.ActiveRestaurantID)
 	if err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error cargando campañas"})
 		return
@@ -361,15 +420,14 @@ func (s *Server) handleBOCampaignCreate(w http.ResponseWriter, r *http.Request) 
 	theme, _ := json.Marshal(in.Theme)
 	manual, _ := json.Marshal(in.ManualRecipients)
 	coordID := "camp-" + uuid.NewString()
-	res, err := s.db.ExecContext(r.Context(), `
+	id, err := sqldb.InsertID(r.Context(), sqlDialect, s.db, portableSQL(`
 		INSERT INTO campaigns (restaurant_id, coord_id, name, subject, body_markdown, body_html, email_html, theme_json, channels, audience, audience_days, manual_recipients, email_per_minute, whatsapp_per_minute, status)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
-	`, a.ActiveRestaurantID, coordID, in.Name, in.Subject, in.BodyMarkdown, nullIfEmpty(in.BodyHTML), nullIfEmpty(in.EmailHTML), string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin)
+	`), "id", a.ActiveRestaurantID, coordID, in.Name, in.Subject, in.BodyMarkdown, nullIfEmpty(in.BodyHTML), nullIfEmpty(in.EmailHTML), string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin)
 	if err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error creando campaña"})
 		return
 	}
-	id, _ := res.LastInsertId()
 	slog.Default().Info("campaign.created", "coord_id", coordID, "campaign_id", id, "restaurant_id", a.ActiveRestaurantID)
 	c, err := s.loadBOCampaign(r.Context(), a.ActiveRestaurantID, id)
 	if err != nil {
@@ -402,11 +460,11 @@ func (s *Server) handleBOCampaignUpdate(w http.ResponseWriter, r *http.Request) 
 	}
 	theme, _ := json.Marshal(in.Theme)
 	manual, _ := json.Marshal(in.ManualRecipients)
-	if _, err := s.db.ExecContext(r.Context(), `
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`
 		UPDATE campaigns SET name = ?, subject = ?, body_markdown = ?, body_html = ?, email_html = ?, theme_json = ?, channels = ?, audience = ?, audience_days = ?, manual_recipients = ?,
 			email_per_minute = ?, whatsapp_per_minute = ?
 		WHERE restaurant_id = ? AND id = ?
-	`, in.Name, in.Subject, in.BodyMarkdown, nullIfEmpty(in.BodyHTML), nullIfEmpty(in.EmailHTML), string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin, a.ActiveRestaurantID, id); err != nil {
+	`), in.Name, in.Subject, in.BodyMarkdown, nullIfEmpty(in.BodyHTML), nullIfEmpty(in.EmailHTML), string(theme), strings.Join(in.Channels, ","), in.Audience, in.AudienceDays, string(manual), in.EmailPerMinute, in.WhatsAppPerMin, a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error guardando campaña"})
 		return
 	}
@@ -429,11 +487,11 @@ func (s *Server) handleBOCampaignDelete(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteJSON(w, 400, map[string]any{"success": false, "message": "Id invalido"})
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `DELETE FROM campaigns WHERE restaurant_id = ? AND id = ?`, a.ActiveRestaurantID, id); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM campaigns WHERE restaurant_id = ? AND id = ?`), a.ActiveRestaurantID, id); err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error borrando campaña"})
 		return
 	}
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ?`, a.ActiveRestaurantID, id)
+	_, _ = s.db.ExecContext(r.Context(), portableSQL(`DELETE FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ?`), a.ActiveRestaurantID, id)
 	httpx.WriteJSON(w, 200, map[string]any{"success": true})
 }
 
@@ -675,6 +733,11 @@ type campaignSuppressionFilter struct {
 }
 
 func (f campaignSuppressionFilter) blocked(channel, target string) bool {
+	// A target the list cannot store exactly can never be suppressed, so it
+	// is never contactable either (repair-ignore1, fail closed).
+	if _, ok := campaignSuppressionKey(channel, target); !ok {
+		return true
+	}
 	if channel == "whatsapp" {
 		return f.phones[campaignCanonicalTarget("whatsapp", target)]
 	}
@@ -686,7 +749,7 @@ func (f campaignSuppressionFilter) blocked(channel, target string) bool {
 // the legacy send scripts used them globally).
 func (s *Server) loadCampaignSuppressionFilter(ctx context.Context, restaurantID int) (campaignSuppressionFilter, error) {
 	f := campaignSuppressionFilter{emails: map[string]bool{}, phones: map[string]bool{}}
-	rows, err := s.db.QueryContext(ctx, campaignSuppressionQuery, restaurantID, restaurantID, restaurantID)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(campaignSuppressionQuery, campaignSuppressionQueryPG), restaurantID, restaurantID, restaurantID)
 	if err != nil {
 		return f, err
 	}
@@ -713,15 +776,14 @@ func (s *Server) loadCampaignSuppressionFilter(ctx context.Context, restaurantID
 func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCampaign) ([]campaignTarget, error) {
 	wantsEmail := campaignHasChannel(c.Channels, "email")
 	wantsWhatsApp := campaignHasChannel(c.Channels, "whatsapp")
-	suppressed, err := s.loadCampaignSuppressionFilter(ctx, restaurantID)
-	if err != nil {
-		return nil, err
-	}
+	// Candidates are collected first so the collation lookup can run batched;
+	// the suppression check and the cap then apply in the original order
+	// (only non-suppressed targets count toward campaignMaxRecipients).
 	seen := map[string]bool{}
-	out := []campaignTarget{}
+	cands := []campaignTarget{}
 	add := func(channel, target, name string, bookingID int64) {
 		target = strings.TrimSpace(target)
-		if target == "" || len(out) >= campaignMaxRecipients {
+		if target == "" {
 			return
 		}
 		if channel == "whatsapp" {
@@ -738,15 +800,32 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 		if target == "" {
 			return
 		}
-		if suppressed.blocked(channel, target) {
-			return
-		}
 		key := channel + "|" + campaignCanonicalTarget(channel, target)
 		if seen[key] {
 			return
 		}
 		seen[key] = true
-		out = append(out, campaignTarget{Channel: channel, Target: target, Name: strings.TrimSpace(name), BookingID: bookingID})
+		cands = append(cands, campaignTarget{Channel: channel, Target: target, Name: strings.TrimSpace(name), BookingID: bookingID})
+	}
+	finish := func() ([]campaignTarget, error) {
+		probes := make([]campaignProbe, 0, len(cands))
+		for _, t := range cands {
+			probes = append(probes, campaignProbe{t.Channel, t.Target})
+		}
+		suppressed, err := s.loadCampaignSuppressionFilterFor(ctx, restaurantID, probes)
+		if err != nil {
+			return nil, err
+		}
+		out := []campaignTarget{}
+		for _, t := range cands {
+			if len(out) >= campaignMaxRecipients {
+				break
+			}
+			if !suppressed.blocked(t.Channel, t.Target) {
+				out = append(out, t)
+			}
+		}
+		return out, nil
 	}
 
 	if c.Audience == "manual" {
@@ -761,12 +840,12 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 				add("whatsapp", raw, "", 0)
 			}
 		}
-		return out, nil
+		return finish()
 	}
 
 	// The newest booking per contact is the traceability anchor stored with
 	// each recipient row (campaign id + booking id + channel).
-	rows, err := s.db.QueryContext(ctx, campaignBookingsAudienceQuery, restaurantID, c.AudienceDays)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(campaignBookingsAudienceQuery, campaignBookingsAudienceQueryPG), restaurantID, c.AudienceDays)
 	if err != nil {
 		return nil, err
 	}
@@ -784,7 +863,10 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 			add("whatsapp", phone, name, bookingID)
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return finish()
 }
 
 // campaignLedgerByTarget indexes the already-materialized recipients of a
@@ -795,7 +877,7 @@ func (s *Server) campaignAudience(ctx context.Context, restaurantID int, c boCam
 // report an inflated "new" count because the ledger could not be read.
 func (s *Server) campaignLedgerByTarget(ctx context.Context, campaignID int64) (map[string]bool, error) {
 	ledger := map[string]bool{}
-	rows, err := s.db.QueryContext(ctx, `SELECT channel, target FROM campaign_recipients WHERE campaign_id = ?`, campaignID)
+	rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT channel, target FROM campaign_recipients WHERE campaign_id = ?`), campaignID)
 	if err != nil {
 		return nil, err
 	}
@@ -988,7 +1070,7 @@ func (s *Server) campaignRestaurantBaseURL(ctx context.Context, restaurantID int
 	}
 	baseURL := ""
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT domain FROM restaurant_domains WHERE restaurant_id = ? ORDER BY is_primary DESC, id ASC`,
+		portableSQL(`SELECT domain FROM restaurant_domains WHERE restaurant_id = ? ORDER BY is_primary DESC, id ASC`),
 		restaurantID,
 	)
 	if err == nil {
@@ -1021,7 +1103,11 @@ func (s *Server) sendCampaignWhatsAppText(ctx context.Context, restaurantID int,
 		return errors.New("whatsapp no configurado")
 	}
 	if err := s.sendWhatsAppTextTracked(ctx, restaurantID, gw, num, text, "backoffice_member_message"); err != nil {
-		_ = s.enqueueWhatsAppDelivery(ctx, restaurantID, "campaign", fmt.Sprintf("%s|%s", coordID, num), num, whatsappOutboxPayload{Text: text}, err)
+		if qErr := s.enqueueWhatsAppDelivery(ctx, restaurantID, "campaign", fmt.Sprintf("%s|%s", coordID, num), num, whatsappOutboxPayload{Text: text}, err); qErr != nil {
+			// Not queued: the caller still gets the send error (recipient
+			// marked failed); logged without the recipient (repair-suppression2).
+			slog.Default().Warn("campaign.whatsapp.outbox_enqueue_failed", "coord_id", coordID, "restaurant_id", restaurantID, "err", qErr.Error())
+		}
 		return err
 	}
 	return nil
@@ -1183,10 +1269,32 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 	}
 	queued, insertFailed := 0, 0
 	for _, t := range targets {
-		res, err := s.db.ExecContext(r.Context(), `
-			INSERT IGNORE INTO campaign_recipients (campaign_id, restaurant_id, channel, target, name, booking_id, status)
+		// INSERT IGNORE breadth on this table (no FK, generated id): the
+		// uq_campaign_target duplicate (campaign_id, channel, target) and
+		// over-width target/name, which MySQL truncates to varchar(190)
+		// characters with a warning and still inserts (bookings emails/names
+		// are varchar(255); manual targets are unbounded). The PG branch
+		// keeps both explicitly: LEFT(...,190) on exactly those two columns
+		// and ON CONFLICT on that key only; RowsAffected stays 0 on a
+		// duplicate. Any other error now surfaces (counted as insert_errors).
+		// repair-ignore3: target is never cut (a cut target is another
+		// recipient): the audience already excludes unstorable targets
+		// (campaignSuppressionKey, fail closed) and this re-checks. The
+		// display name keeps the explicit 190-character cut, now in Go
+		// (rune-safe) for both dialects. Duplicate = only no-op.
+		if _, fits := campaignSuppressionKey(t.Channel, t.Target); !fits {
+			insertFailed++
+			continue
+		}
+		res, err := s.db.ExecContext(r.Context(), nativeSQL(`
+			INSERT INTO campaign_recipients (campaign_id, restaurant_id, channel, target, name, booking_id, status)
 			VALUES (?, ?, ?, ?, ?, ?, 'pending')
-		`, c.ID, a.ActiveRestaurantID, t.Channel, t.Target, t.Name, nullIfZeroInt64(t.BookingID))
+			ON DUPLICATE KEY UPDATE target = target
+		`, `
+			INSERT INTO campaign_recipients (campaign_id, restaurant_id, channel, target, name, booking_id, status)
+			VALUES (?, ?, ?, CAST(? AS text), CAST(? AS text), ?, 'pending')
+			ON CONFLICT (campaign_id, app.norm(channel), app.norm(target)) DO NOTHING
+		`), c.ID, a.ActiveRestaurantID, t.Channel, t.Target, utf8RuneCut(t.Name, 190), nullIfZeroInt64(t.BookingID))
 		if err != nil {
 			insertFailed++
 			slog.Default().Warn("campaign.send.insert_failed", "coord_id", c.CoordID, "campaign_id", c.ID, "channel", t.Channel, "err", err.Error())
@@ -1196,7 +1304,7 @@ func (s *Server) handleBOCampaignSend(w http.ResponseWriter, r *http.Request) {
 			queued++
 		}
 	}
-	_, _ = s.db.ExecContext(r.Context(), `UPDATE campaigns SET status = 'sending' WHERE id = ?`, c.ID)
+	_, _ = s.db.ExecContext(r.Context(), portableSQL(`UPDATE campaigns SET status = 'sending' WHERE id = ?`), c.ID)
 	slog.Default().Info("campaign.send.started", "coord_id", c.CoordID, "campaign_id", c.ID, "restaurant_id", a.ActiveRestaurantID, "targets", len(targets), "queued_new", queued, "insert_errors", insertFailed)
 	if !campaignRunners.start(c.ID) {
 		httpx.WriteJSON(w, 409, map[string]any{"success": false, "message": "La campaña ya se esta enviando"})
@@ -1238,7 +1346,10 @@ func (s *Server) runCampaignSend(ctx context.Context, restaurantID int, campaign
 	supReadFails := 0
 run:
 	for {
-		rows, err := s.db.QueryContext(ctx, `SELECT id, channel, target, name, COALESCE(booking_id, 0) FROM campaign_recipients WHERE campaign_id = ? AND status = 'pending' ORDER BY id LIMIT 50`, campaignID)
+		// No DB claim in the source (no FOR UPDATE / SKIP LOCKED): exclusivity
+		// is the in-process campaignRunners map only, identical on PG. Two
+		// processes could double-send on either engine.
+		rows, err := s.db.QueryContext(ctx, portableSQL(`SELECT id, channel, target, name, COALESCE(booking_id, 0) FROM campaign_recipients WHERE campaign_id = ? AND status = 'pending' ORDER BY id LIMIT 50`), campaignID)
 		if err != nil {
 			break
 		}
@@ -1259,13 +1370,13 @@ run:
 		}
 		for _, p := range batch {
 			if p.t.Channel == "email" && s.campaignEmailBreakerTripped(ctx, restaurantID, campaignID, c.CoordID) {
-				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'paused', error = 'corte por rebotes' WHERE id = ? AND status = 'pending'`, p.id)
+				_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_recipients SET status = 'paused', error = 'corte por rebotes' WHERE id = ? AND status = 'pending'`), p.id)
 				continue
 			}
 			// Re-read the do-not-contact list right before each delivery: a
 			// recipient that unsubscribes after the audience snapshot (the run
 			// can last hours at WhatsApp pacing) must never get the message.
-			sup, supErr := s.loadCampaignSuppressionFilter(ctx, restaurantID)
+			sup, supErr := s.loadCampaignSuppressionFilterFor(ctx, restaurantID, []campaignProbe{{p.t.Channel, p.t.Target}})
 			if supErr != nil {
 				supReadFails++
 				slog.Default().Warn("campaign.delivery.suppression_read_failed", "coord_id", c.CoordID, "campaign_id", campaignID, "recipient_id", p.id, "consecutive", supReadFails, "err", supErr.Error())
@@ -1279,7 +1390,7 @@ run:
 			}
 			supReadFails = 0
 			if sup.blocked(p.t.Channel, p.t.Target) {
-				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'skipped', error = 'baja' WHERE id = ?`, p.id)
+				_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_recipients SET status = 'skipped', error = 'baja' WHERE id = ?`), p.id)
 				slog.Default().Info("campaign.delivery.skipped_unsubscribed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID)
 				continue
 			}
@@ -1303,13 +1414,13 @@ run:
 						s.suppressUnreachableWhatsappTarget(ctx, restaurantID, p.t.Target, p.t.BookingID, "no esta en WhatsApp: "+truncate(sendErr.Error(), 200))
 					}
 				}
-				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`, truncate(sendErr.Error(), 500), p.id)
+				_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaign_recipients SET status = 'failed', error = ? WHERE id = ?`), truncate(sendErr.Error(), 500), p.id)
 				if p.t.Channel == "email" {
 					s.scheduleCampaignEmailRetry(ctx, p.id, sendErr.Error())
 				}
 				slog.Default().Warn("campaign.delivery.failed", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID, "err", sendErr.Error())
 			} else {
-				_, _ = s.db.ExecContext(ctx, `UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = NOW() WHERE id = ?`, p.id)
+				_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = NOW() WHERE id = ?`, `UPDATE campaign_recipients SET status = 'sent', error = NULL, sent_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE id = ?`), p.id)
 				slog.Default().Info("campaign.delivery.sent", "coord_id", c.CoordID, "campaign_id", campaignID, "channel", p.t.Channel, "booking_id", p.t.BookingID)
 			}
 			if p.t.Channel == "whatsapp" {
@@ -1332,14 +1443,14 @@ run:
 		// is never reported as sent. Any other residual pending keeps the
 		// 'sending' resumable semantic of a dead/interrupted runner.
 		var cutRows int
-		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = ? AND status = 'paused' AND error = 'corte por rebotes'`, campaignID).Scan(&cutRows)
+		_ = s.db.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = ? AND status = 'paused' AND error = 'corte por rebotes'`), campaignID).Scan(&cutRows)
 		if cutRows > 0 {
-			_, _ = s.db.ExecContext(ctx, `UPDATE campaigns SET status = 'draft' WHERE id = ?`, campaignID)
+			_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE campaigns SET status = 'draft' WHERE id = ?`), campaignID)
 		}
 		slog.Default().Warn("campaign.send.interrupted", "coord_id", c.CoordID, "campaign_id", campaignID, "sent", st.Sent, "failed", st.Failed, "paused", st.Paused, "pending", st.Pending, "bounce_cut", cutRows > 0)
 		return
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE campaigns SET status = 'sent', sent_at = NOW() WHERE id = ?`, campaignID)
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE campaigns SET status = 'sent', sent_at = NOW() WHERE id = ?`, `UPDATE campaigns SET status = 'sent', sent_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE id = ?`), campaignID)
 	slog.Default().Info("campaign.send.finished", "coord_id", c.CoordID, "campaign_id", campaignID, "sent", st.Sent, "failed", st.Failed, "skipped", st.Skipped)
 }
 
@@ -1393,18 +1504,13 @@ func (s *Server) handleBOCampaignResume(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteJSON(w, 404, map[string]any{"success": false, "message": "Campaña no encontrada"})
 		return
 	}
-	sup, err := s.loadCampaignSuppressionFilter(r.Context(), a.ActiveRestaurantID)
-	if err != nil {
-		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo comprobar la lista de bajas"})
-		return
-	}
 	query := `SELECT id, channel, target FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ? AND status = 'paused'`
 	args := []any{a.ActiveRestaurantID, c.ID}
 	if channel != "" {
 		query += ` AND channel = ?`
 		args = append(args, channel)
 	}
-	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(query), args...)
 	if err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error leyendo destinatarios pausados"})
 		return
@@ -1422,13 +1528,23 @@ func (s *Server) handleBOCampaignResume(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	rows.Close()
+	probes := make([]campaignProbe, 0, len(paused))
+	for _, p := range paused {
+		probes = append(probes, campaignProbe{p.channel, p.target})
+	}
+	sup, err := s.loadCampaignSuppressionFilterFor(r.Context(), a.ActiveRestaurantID, probes)
+	if err != nil {
+		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "No se pudo comprobar la lista de bajas"})
+		return
+	}
 	requeued, skipped := 0, 0
 	for _, p := range paused {
 		// Exact counters: RowsAffected, not err == nil — a concurrent update
 		// can leave the statement succeeding on zero rows, and the reported
 		// statistics must count only what the DB actually changed.
 		if sup.blocked(p.channel, p.target) {
-			res, err := s.db.ExecContext(r.Context(), `UPDATE campaign_recipients SET status = 'skipped', error = 'baja comprobada al reanudar' WHERE id = ? AND status = 'paused'`, p.id)
+			// paused -> skipped/pending always changes the row: matched == changed.
+			res, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE campaign_recipients SET status = 'skipped', error = 'baja comprobada al reanudar' WHERE id = ? AND status = 'paused'`), p.id)
 			if err == nil {
 				if n, _ := res.RowsAffected(); n > 0 {
 					skipped++
@@ -1436,7 +1552,7 @@ func (s *Server) handleBOCampaignResume(w http.ResponseWriter, r *http.Request) 
 			}
 			continue
 		}
-		res, err := s.db.ExecContext(r.Context(), `UPDATE campaign_recipients SET status = 'pending', error = NULL WHERE id = ? AND status = 'paused'`, p.id)
+		res, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE campaign_recipients SET status = 'pending', error = NULL WHERE id = ? AND status = 'paused'`), p.id)
 		if err == nil {
 			if n, _ := res.RowsAffected(); n > 0 {
 				requeued++
@@ -1451,7 +1567,7 @@ func (s *Server) handleBOCampaignResume(w http.ResponseWriter, r *http.Request) 
 		"requeued", requeued, "skipped", skipped, "ack", ack)
 	running := false
 	if requeued > 0 {
-		_, _ = s.db.ExecContext(r.Context(), `UPDATE campaigns SET status = 'sending' WHERE id = ?`, c.ID)
+		_, _ = s.db.ExecContext(r.Context(), portableSQL(`UPDATE campaigns SET status = 'sending' WHERE id = ?`), c.ID)
 		if campaignRunners.start(c.ID) {
 			running = true
 			go func() {
@@ -1485,15 +1601,16 @@ func (s *Server) handleBOCampaignRecipients(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
-	query := `SELECT id, channel, target, name, COALESCE(booking_id, 0), status, COALESCE(error, ''), COALESCE(DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i'), '')
-		FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ?`
+	query := sqlFragment(`SELECT id, channel, target, name, COALESCE(booking_id, 0), status, COALESCE(error, ''), COALESCE(DATE_FORMAT(sent_at, '%Y-%m-%d %H:%i'), '')
+		FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ?`, `SELECT id, channel, target, name, COALESCE(booking_id, 0), status, COALESCE(error, ''), COALESCE(to_char(sent_at, 'YYYY-MM-DD HH24:MI'), '')
+		FROM campaign_recipients WHERE restaurant_id = ? AND campaign_id = ?`)
 	args := []any{a.ActiveRestaurantID, id}
 	if status == "sent" || status == "failed" || status == "pending" || status == "paused" || status == "skipped" {
 		query += ` AND status = ?`
 		args = append(args, status)
 	}
 	query += ` ORDER BY id DESC LIMIT 500`
-	rows, err := s.db.QueryContext(r.Context(), query, args...)
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(query), args...)
 	if err != nil {
 		httpx.WriteJSON(w, 500, map[string]any{"success": false, "message": "Error cargando destinatarios"})
 		return
@@ -1577,21 +1694,23 @@ func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Req
 		"whatsapp_invalido":   `source NOT IN ('unsubscribe', 'legacy', 'pending_verify') AND channel = 'whatsapp'`,
 	} {
 		var n int
-		_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM campaign_suppressions WHERE restaurant_id = ? AND `+w, a.ActiveRestaurantID).Scan(&n)
+		_ = s.db.QueryRowContext(r.Context(), portableSQL(`SELECT COUNT(*) FROM campaign_suppressions WHERE restaurant_id = ? AND `+w), a.ActiveRestaurantID).Scan(&n)
 		counts[k] = n
 	}
 	var total int
-	if err := s.db.QueryRowContext(r.Context(), `
+	if err := s.db.QueryRowContext(r.Context(), portableSQL(`
 		SELECT COUNT(*) FROM campaign_suppressions s
 		WHERE s.restaurant_id = ? AND `+kindWhere+`
-	`, a.ActiveRestaurantID).Scan(&total); err != nil {
+	`), a.ActiveRestaurantID).Scan(&total); err != nil {
 		slog.Default().Warn("campaign.unsubscribed.count_failed", "coord_id", campaignUnsubscribedCoordID,
 			"restaurant_id", a.ActiveRestaurantID, "err", err.Error())
 		httpx.WriteError(w, http.StatusInternalServerError, "No se pudo listar las bajas")
 		return
 	}
 
-	rows, err := s.db.QueryContext(r.Context(), `
+	// PG: DATE(timestamp) in the UTC session -> AT TIME ZONE 'UTC' then date;
+	// created_at is nullable, MySQL DESC puts NULLs last -> NULLS LAST.
+	rows, err := s.db.QueryContext(r.Context(), portableSQL(sqlFragment(`
 		SELECT s.booking_id,
 		       COALESCE(NULLIF(TRIM(b.customer_name), ''), '')        AS customer_name,
 		       COALESCE(NULLIF(TRIM(s.target), ''), '')               AS target,
@@ -1602,10 +1721,24 @@ func (s *Server) handleBOCampaignUnsubscribed(w http.ResponseWriter, r *http.Req
 		       COALESCE(b.party_size, 0)                              AS party_size
 		FROM campaign_suppressions s
 		LEFT JOIN bookings b ON b.id = s.booking_id AND b.restaurant_id = s.restaurant_id
-		WHERE s.restaurant_id = ? AND `+kindWhere+`
+		WHERE s.restaurant_id = ? AND `, `
+		SELECT s.booking_id,
+		       COALESCE(NULLIF(TRIM(b.customer_name), ''), '')        AS customer_name,
+		       COALESCE(NULLIF(TRIM(s.target), ''), '')               AS target,
+		       s.channel,
+		       COALESCE(NULLIF(TRIM(s.reason), ''), '')               AS reason,
+		       s.created_at,
+		       COALESCE(b.reservation_date, CAST(s.created_at AT TIME ZONE 'UTC' AS date)) AS reservation_date,
+		       COALESCE(b.party_size, 0)                              AS party_size
+		FROM campaign_suppressions s
+		LEFT JOIN bookings b ON b.id = s.booking_id AND b.restaurant_id = s.restaurant_id
+		WHERE s.restaurant_id = ? AND `)+kindWhere+sqlFragment(`
 		ORDER BY s.created_at DESC, s.id DESC
 		LIMIT ? OFFSET ?
-	`, a.ActiveRestaurantID, campaignUnsubscribedPageSize, offset)
+	`, `
+		ORDER BY s.created_at DESC NULLS LAST, s.id DESC
+		LIMIT ? OFFSET ?
+	`)), a.ActiveRestaurantID, campaignUnsubscribedPageSize, offset)
 	if err != nil {
 		slog.Default().Warn("campaign.unsubscribed.list_failed", "coord_id", campaignUnsubscribedCoordID,
 			"restaurant_id", a.ActiveRestaurantID, "err", err.Error())
