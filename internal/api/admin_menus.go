@@ -31,6 +31,10 @@ func (s *Server) handleUpdateDishForTable(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
+		return
+	}
 
 	if err := parseLegacyForm(r, 1<<20); err != nil {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]any{
@@ -437,6 +441,16 @@ func (s *Server) handleSearchDishesByTable(w http.ResponseWriter, r *http.Reques
 			"status":      "error",
 			"success":     false,
 			"message":     "Search term not provided.",
+			"matchingIds": []int{},
+		})
+		return
+	}
+
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status":      "success",
+			"success":     true,
+			"message":     "Search completed.",
 			"matchingIds": []int{},
 		})
 		return

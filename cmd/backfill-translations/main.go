@@ -185,6 +185,15 @@ func backfillSimple(ctx context.Context, db *sql.DB, tr *translator, restaurantI
 }
 
 func backfillMenuTable(ctx context.Context, db *sql.DB, tr *translator, restaurantID int, dry bool, table string) int {
+	// Legacy DIA/FINDE are retired (absent in production): skip instead of failing.
+	var n int
+	if err := db.QueryRowContext(ctx, nativeSQL(
+		"SELECT COUNT(*) FROM information_schema.tables WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?"),
+		table).Scan(&n); err == nil && n == 0 {
+		fmt.Printf("%s: table absent, skipped\n", table)
+		return 0
+	}
 	rows, err := db.QueryContext(ctx, nativeSQL("SELECT NUM, COALESCE(DESCRIPCION,''), COALESCE(TIPO,'') FROM "+table+" WHERE restaurant_id = ?", `SELECT "NUM", COALESCE("DESCRIPCION",''), COALESCE("TIPO",'') FROM `+pgIdent(table)+" WHERE restaurant_id = ?"), restaurantID)
 	if err != nil {
 		fmt.Printf("%s query: %v\n", table, err)
