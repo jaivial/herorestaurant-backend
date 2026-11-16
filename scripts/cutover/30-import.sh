@@ -31,7 +31,7 @@ say "== 1 schema + export (host binary, MySQL unix socket, consistent snapshot, 
 run "$D" -mode schema -db "$DB" -out "$R/schema.json"
 run bash -c "'$D' -mode export -db '$DB' -dir '$R/export' > '$R/export.summary.json'"
 say "== 2 independent reference (MySQL CLI: HEX(CAST(col AS BINARY)); generator as in rehearsal-desktop.sh gensql)"
-run bash -c "python3 '$W/scripts/cutover/gensql.py' '$R/schema.json' independent > '$R/independent.sql' && ${MYSQL_CLI:?} < '$R/independent.sql' > '$R/independent.ndjson' && chmod 600 '$R/independent.ndjson'"
+run bash -c "python3 '$W/scripts/cutover/gensql.py' '$R/schema.json' independent > '$R/independent.sql' && ${MYSQL_CLI:?} -N -B --raw '$DB' < '$R/independent.sql' > '$R/independent.ndjson' && chmod 600 '$R/independent.ndjson'"
 stop_if "$D" -mode crosscheck -dir "$R/export" -independent "$R/independent.ndjson"
 say "== 3 plan (native) + pgcompat"
 stop_if "$D" -mode plan -schema "$R/schema.json" -out "$R/plan" -view-override "$W/docs/dbmigrate/view-overrides.json" -storage-override "$W/docs/dbmigrate/storage-overrides.json"
