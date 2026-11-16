@@ -6,8 +6,9 @@
 //   - lint (always, no DB): app.norm misuse, ON CONFLICT targets vs the
 //     native inventory/schema, norm function vs the ux__ index of the column;
 //
-//   - prepare (-prepare, DSN from PG_DSN, never printed): PREPARE + DEALLOCATE
-//     of every complete static DML/SELECT inside one READ ONLY transaction that
+//   - prepare (-prepare, DSN from PG_DSN, never printed; or -emit-psql /
+//     -psql-result through docker exec psql): EXPLAIN (GENERIC_PLAN) (plans,
+//     so ON CONFLICT 42P10 is caught; PREPARE alone is not) of every complete static DML/SELECT inside one READ ONLY transaction that
 //     is always rolled back. Nothing else is ever sent.
 //
 //     pgnative-sqlcheck [-root .] [-inventory docs/pgnative/native-ddl-inventory.tsv] [-schema schema.json] [-prepare] [-out report.tsv]
@@ -48,11 +49,21 @@ func main() {
 	schemaFile := flag.String("schema", "", "optional schema.json (PK/raw unique targets for ON CONFLICT)")
 	prepare := flag.Bool("prepare", false, "PREPARE every complete statement against PG_DSN (read-only tx, rolled back)")
 	out := flag.String("out", "", "TSV report file (default stdout)")
+	planFile := flag.String("plan", "", "optional migration plan.sql: every PK/UNIQUE constraint and unique index becomes a valid ON CONFLICT target (any other target is flagged)")
+	emitPsql := flag.String("emit-psql", "", "write a psql script that PREPAREs every complete site (read-only tx, rolled back) and exit; run it with psql -X -f and feed the output to -psql-result")
+	psqlResult := flag.String("psql-result", "", "comma-separated psql outputs of the -emit-psql script (one per search_path run): report per-site OK/ERROR+SQLSTATE")
 	flag.Parse()
 
 	sites := collect(*root)
 	ux := loadInventory(*inv)
 	raw := loadSchemaKeys(*schemaFile)
+	if *planFile != "" {
+		raw = loadPlanKeys(*planFile, raw)
+	}
+	if *emitPsql != "" {
+		die(os.WriteFile(*emitPsql, []byte(psqlScript(sites)), 0o644))
+		return
+	}
 	var finds []finding
 	seen := map[string]bool{}
 	for _, s := range sites {
@@ -67,6 +78,25 @@ func main() {
 	if *prepare {
 		res = prepareAll(sites)
 	}
+	if *psqlResult != "" {
+		// Several outputs (one per search_path run, e.g. public and
+		// bot_context): a site fails only if it fails in every run.
+		for i, p := range strings.Split(*psqlResult, ",") {
+			b, err := os.ReadFile(p)
+			die(err)
+			r := parsePsqlResult(sites, string(b))
+			if i == 0 {
+				res = r
+				continue
+			}
+			for k := range res {
+				if r[k] == "" {
+					delete(res, k)
+				}
+			}
+		}
+		*prepare = true
+	}
 	w := os.Stdout
 	if *out != "" {
 		f, err := os.Create(*out)
@@ -76,25 +106,25 @@ func main() {
 	}
 	bw := bufio.NewWriter(w)
 	defer bw.Flush()
-	fmt.Fprintln(bw, "pos\thelper\tkind\tdetail")
+	fmt.Fprintln(bw, "pos\thelper\tkind\tdetail\tsql")
 	var skipped, ok, failed int
 	for _, s := range sites {
 		switch {
 		case s.Skip != "":
 			skipped++
-			fmt.Fprintf(bw, "%s\t%s\tSKIPPED\t%s\n", s.Pos, s.Helper, s.Skip)
+			fmt.Fprintf(bw, "%s\t%s\tSKIPPED\t%s\t%s\n", s.Pos, s.Helper, s.Skip, oneLine(s.SQL))
 		case *prepare:
 			if e := res[s.Pos+"|"+s.SQL]; e == "" {
 				ok++
-				fmt.Fprintf(bw, "%s\t%s\tok\t\n", s.Pos, s.Helper)
+				fmt.Fprintf(bw, "%s\t%s\tok\t\t%s\n", s.Pos, s.Helper, oneLine(s.SQL))
 			} else {
 				failed++
-				fmt.Fprintf(bw, "%s\t%s\terror\t%s\n", s.Pos, s.Helper, oneLine(e))
+				fmt.Fprintf(bw, "%s\t%s\terror\t%s\t%s\n", s.Pos, s.Helper, oneLine(e), oneLine(s.SQL))
 			}
 		}
 	}
 	for _, f := range finds {
-		fmt.Fprintf(bw, "%s\tlint\t%s\t%s\n", f.Pos, f.Kind, oneLine(f.Detail))
+		fmt.Fprintf(bw, "%s\tlint\t%s\t%s\t\n", f.Pos, f.Kind, oneLine(f.Detail))
 	}
 	fmt.Fprintf(os.Stderr, "{\"sites\":%d,\"skipped\":%d,\"prepared_ok\":%d,\"prepare_errors\":%d,\"lint_hits\":%d}\n", len(sites), skipped, ok, failed, len(finds))
 }
@@ -122,12 +152,50 @@ func collect(root string) []site {
 			if err != nil {
 				return nil
 			}
+			taken := map[token.Pos]bool{}
 			ast.Inspect(f, func(n ast.Node) bool {
-				// Any bare literal mentioning app.norm / ON CONFLICT is linted too
-				// (pieces of dynamically assembled SQL); never prepared.
+				// Dialect branches (pgnative_sqlcheck_v2): every complete string
+				// expression inside the PG arm of `if <...Postgres...> {}` or a
+				// `case ...Postgres:` is a PG site, e.g.
+				// `if st.Postgres { q = "... ON CONFLICT ..." }`.
+				if ifs, ok := n.(*ast.IfStmt); ok {
+					thenPG, elsePG := pgBranch(ifs.Cond)
+					if thenPG {
+						out = append(out, branchSites(fset, ifs.Body, taken)...)
+						if ifs.Else != nil {
+							markLits(ifs.Else, taken) // MySQL/SQLite arm: never PG
+						}
+					}
+					if elsePG && ifs.Else != nil {
+						out = append(out, branchSites(fset, ifs.Else, taken)...)
+						markLits(ifs.Body, taken)
+					}
+					return true
+				}
+				if cc, ok := n.(*ast.CaseClause); ok {
+					for _, e := range cc.List {
+						if mentionsPG(e) {
+							for _, st := range cc.Body {
+								out = append(out, branchSites(fset, st, taken)...)
+							}
+							break
+						}
+					}
+					return true
+				}
+				// Any bare literal mentioning app.norm / ON CONFLICT is linted; a
+				// complete PG-only statement (ON CONFLICT / RETURNING / EXCLUDED.)
+				// is prepared too, wherever it lives.
 				if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-					if v, err := strconv.Unquote(lit.Value); err == nil && (strings.Contains(v, "app.norm") || strings.Contains(strings.ToUpper(v), "ON CONFLICT")) {
-						out = append(out, site{Pos: fset.Position(lit.Pos()).String(), Helper: "literal", SQL: v, Skip: "literal piece (lint only)"})
+					if taken[lit.Pos()] {
+						return true
+					}
+					if v, err := strconv.Unquote(lit.Value); err == nil && (strings.Contains(v, "app.norm") || pgOnlyRE.MatchString(v)) {
+						s := site{Pos: fset.Position(lit.Pos()).String(), Helper: "literal", SQL: v, Skip: "literal piece (lint only)"}
+						if pgOnlyRE.MatchString(v) && skipReason(v, "literal") == "" {
+							s.Helper, s.Skip = "pgliteral", ""
+						}
+						out = append(out, s)
 					}
 					return true
 				}
@@ -144,13 +212,23 @@ func collect(root string) []site {
 					return true
 				}
 				arg := call.Args[idx]
+				if id.Name == "nativeSQL" || id.Name == "sqlFragment" {
+					markLits(call.Args[0], taken) // the MySQL arm is never PG
+				}
 				if c, isCall := arg.(*ast.CallExpr); isCall {
-					if inner, ok := c.Fun.(*ast.Ident); ok && pgArg[inner.Name] >= 0 && (inner.Name == "nativeSQL" || inner.Name == "sqlFragment") {
+					if inner, ok := c.Fun.(*ast.Ident); ok && (inner.Name == "nativeSQL" || inner.Name == "sqlFragment") {
 						return true // portableSQL(nativeSQL(...)): the inner call is collected itself
 					}
 				}
+				if lit, isLit := arg.(*ast.BasicLit); isLit && taken[lit.Pos()] {
+					return true // literal of a non-PG dialect arm
+				}
+				if _, isIdent := arg.(*ast.Ident); isIdent {
+					return true // selectedSQL(q): q is resolved by the pgbranch/pgliteral sites
+				}
 				s := site{Pos: fset.Position(arg.Pos()).String(), Helper: id.Name}
 				if v, ok := constString(arg); ok {
+					markLits(arg, taken)
 					s.SQL = v
 					s.Skip = skipReason(v, id.Name)
 				} else {
@@ -186,6 +264,98 @@ func constString(e ast.Expr) (string, bool) {
 		return a + b, ok1 && ok2
 	}
 	return "", false
+}
+
+// pgOnlyRE: syntax that only exists on the PG side of a dialect switch.
+var pgOnlyRE = regexp.MustCompile(`(?i)\bON\s+CONFLICT\b|\bRETURNING\b|\bEXCLUDED\.`)
+
+var pgNameRE = regexp.MustCompile(`(?i)postgres|^pg$|^ispg$|^usepg$`)
+
+// mentionsPG: the expression names Postgres (sqldb.Postgres, st.Postgres,
+// isPostgres(), pg, DriverPostgres ...).
+func mentionsPG(e ast.Expr) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && pgNameRE.MatchString(id.Name) {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// pgBranch: which arm of `if cond` runs on PG. `x == Postgres`, `x.Postgres`,
+// `a && x.Postgres` -> then; `x != Postgres`, `!x.Postgres` -> else. `||`
+// and anything else is ignored (conservative: no false PG sites).
+func pgBranch(cond ast.Expr) (thenPG, elsePG bool) {
+	switch c := cond.(type) {
+	case *ast.ParenExpr:
+		return pgBranch(c.X)
+	case *ast.UnaryExpr:
+		if c.Op == token.NOT {
+			if _, isBin := c.X.(*ast.BinaryExpr); !isBin && mentionsPG(c.X) {
+				return false, true
+			}
+		}
+	case *ast.BinaryExpr:
+		switch c.Op {
+		case token.EQL:
+			return mentionsPG(c.X) || mentionsPG(c.Y), false
+		case token.NEQ:
+			return false, mentionsPG(c.X) || mentionsPG(c.Y)
+		case token.LAND:
+			a, _ := pgBranch(c.X)
+			b, _ := pgBranch(c.Y)
+			return a || b, false
+		}
+	case *ast.Ident, *ast.SelectorExpr, *ast.CallExpr:
+		return mentionsPG(c), false
+	}
+	return false, false
+}
+
+// branchSites collects every constant DML string expression under n.
+func branchSites(fset *token.FileSet, n ast.Node, taken map[token.Pos]bool) []site {
+	var out []site
+	ast.Inspect(n, func(m ast.Node) bool {
+		e, ok := m.(ast.Expr)
+		if !ok {
+			return true
+		}
+		switch x := e.(type) {
+		case *ast.BasicLit:
+		case *ast.BinaryExpr:
+			if x.Op != token.ADD {
+				return true
+			}
+		default:
+			return true
+		}
+		v, ok := constString(e)
+		if !ok {
+			if _, isBin := e.(*ast.BinaryExpr); isBin {
+				markLits(e, taken) // "... FROM "+seq: dynamic, never a site
+				return false
+			}
+			return true
+		}
+		if taken[e.Pos()] || !dmlRE.MatchString(v) {
+			return false
+		}
+		markLits(e, taken)
+		out = append(out, site{Pos: fset.Position(e.Pos()).String(), Helper: "pgbranch", SQL: v, Skip: skipReason(v, "pgbranch")})
+		return false
+	})
+	return out
+}
+
+func markLits(e ast.Node, taken map[token.Pos]bool) {
+	ast.Inspect(e, func(m ast.Node) bool {
+		if l, ok := m.(*ast.BasicLit); ok {
+			taken[l.Pos()] = true
+		}
+		return true
+	})
 }
 
 var dmlRE = regexp.MustCompile(`(?is)^\s*(SELECT|INSERT|UPDATE|DELETE|WITH)\b`)
@@ -245,24 +415,127 @@ func prepareAll(sites []site) map[string]string {
 	die(err)
 	defer tx.Rollback() // always: nothing is ever committed
 	res := map[string]string{}
-	for i, s := range sites {
+	for _, s := range sites {
 		if s.Skip != "" {
 			continue
 		}
-		name := fmt.Sprintf("pgnc_%d", i)
+
 		if _, err := tx.ExecContext(ctx, "SAVEPOINT pgnc"); err != nil {
 			die(err)
 		}
-		_, err := tx.ExecContext(ctx, "PREPARE "+name+" AS "+rebind(s.SQL))
+		rows, err := tx.QueryContext(ctx, explainSQL(s.SQL))
+		if err == nil {
+			for rows.Next() {
+			}
+			err = rows.Err()
+			rows.Close()
+		}
 		if err != nil {
 			res[s.Pos+"|"+s.SQL] = err.Error()
 			_, _ = tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT pgnc")
 			continue
 		}
-		_, _ = tx.ExecContext(ctx, "DEALLOCATE "+name)
 		_, _ = tx.ExecContext(ctx, "RELEASE SAVEPOINT pgnc")
 	}
 	return res
+}
+
+// --- psql mode (no DSN needed: docker exec ... psql -X -f) ----------------
+
+// explainSQL: EXPLAIN (GENERIC_PLAN) (PG >= 16) parses, analyses AND plans
+// the statement with $n parameters, without executing it. PREPARE alone is
+// NOT enough: ON CONFLICT arbiter inference (42P10) runs in the planner, so a
+// conflict target that matches no unique index PREPAREs fine and only fails
+// at EXECUTE (the bot_inbound_queue cutover rollback).
+func explainSQL(q string) string {
+	return "EXPLAIN (GENERIC_PLAN, COSTS OFF) " + strings.TrimRight(strings.TrimSpace(rebind(q)), ";")
+}
+
+// psqlScript: one READ ONLY transaction, always rolled back; per site a
+// marker line, SAVEPOINT, EXPLAIN (GENERIC_PLAN), ROLLBACK TO. VERBOSITY
+// verbose prints "ERROR:  <SQLSTATE>: msg".
+func psqlScript(sites []site) string {
+	var b strings.Builder
+	b.WriteString("\\set ON_ERROR_STOP off\n\\set VERBOSITY verbose\n\\set SHOW_CONTEXT never\nSET client_min_messages = warning;\nBEGIN READ ONLY;\n")
+	for i, s := range sites {
+		if s.Skip != "" {
+			continue
+		}
+		fmt.Fprintf(&b, "\\warn @@site %d\nSAVEPOINT pgnc;\n%s;\nROLLBACK TO SAVEPOINT pgnc;\n", i, explainSQL(s.SQL))
+	}
+	b.WriteString("\\warn @@end\nROLLBACK;\n")
+	return b.String()
+}
+
+var psqlErrRE = regexp.MustCompile(`(?m)^(?:psql:[^\n]*?)?ERROR:\s+([0-9A-Z]{5}): ([^\n]*)`)
+
+// parsePsqlResult maps the first ERROR after each "@@site i" marker to site i
+// (DEALLOCATE/ROLLBACK noise after a failed PREPARE is ignored). A site whose
+// marker is missing is reported as not run.
+func parsePsqlResult(sites []site, out string) map[string]string {
+	res := map[string]string{}
+	chunks := strings.Split(out, "@@site ")
+	seen := map[int]bool{}
+	for _, c := range chunks[1:] {
+		nl := strings.IndexByte(c, '\n')
+		if nl < 0 {
+			nl = len(c)
+		}
+		i, err := strconv.Atoi(strings.TrimSpace(c[:nl]))
+		if err != nil || i < 0 || i >= len(sites) {
+			continue
+		}
+		seen[i] = true
+		if m := psqlErrRE.FindStringSubmatch(c[nl:]); m != nil {
+			res[sites[i].Pos+"|"+sites[i].SQL] = m[1] + ": " + m[2]
+		}
+	}
+	for i, s := range sites {
+		if s.Skip == "" && !seen[i] {
+			res[s.Pos+"|"+s.SQL] = "NOTRUN: no psql output for this site"
+		}
+	}
+	return res
+}
+
+var (
+	planTableRE  = regexp.MustCompile(`^CREATE TABLE "([^"]+)"`)
+	planConstrRE = regexp.MustCompile(`CONSTRAINT "[^"]+" (?:PRIMARY KEY|UNIQUE) \((.*)\)`)
+	planUxRE     = regexp.MustCompile(`^CREATE UNIQUE INDEX "[^"]+" ON "([^"]+)" \((.*)\);$`)
+)
+
+// loadPlanKeys adds the PG unique keys of plan.sql (constraints and unique
+// expression indexes, items normalised like ON CONFLICT targets).
+func loadPlanKeys(p string, into map[string][]map[string]bool) map[string][]map[string]bool {
+	if into == nil {
+		into = map[string][]map[string]bool{}
+	}
+	f, err := os.Open(p)
+	die(err)
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	table := ""
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if m := planTableRE.FindStringSubmatch(line); m != nil {
+			table = m[1]
+			continue
+		}
+		if table != "" {
+			if m := planConstrRE.FindStringSubmatch(line); m != nil {
+				into[table] = append(into[table], setOf(splitTop(m[1])))
+			}
+			if strings.HasPrefix(line, ");") {
+				table = ""
+			}
+		}
+		if m := planUxRE.FindStringSubmatch(line); m != nil {
+			into[m[1]] = append(into[m[1]], setOf(splitTop(m[2])))
+		}
+	}
+	die(sc.Err())
+	return into
 }
 
 // --- lint -----------------------------------------------------------------
@@ -483,7 +756,10 @@ func lint(s site, ux map[string][]uxIndex, raw map[string][]map[string]bool) []f
 			matched = matched || sameSet(got, k)
 		}
 		hasNorm := strings.Contains(q[open:end], "app.norm")
-		if !matched && (hasNorm || raw != nil) {
+		// A table with no known key (e.g. bot_context tables created by
+		// botstore.Init, absent from plan.sql) is left to the EXPLAIN gate.
+		known := len(ux[table]) > 0 || len(raw[table]) > 0
+		if !matched && (hasNorm || raw != nil) && (known || hasNorm) {
 			add("b_on_conflict", table+" ("+strings.TrimSpace(q[open+1:end])+")")
 		}
 	}

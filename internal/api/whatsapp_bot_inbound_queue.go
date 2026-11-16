@@ -37,6 +37,9 @@ const (
 
 // botInboundEnqueue persists one accepted inbound message. Best effort: a
 // failure must never block the live turn, it is logged instead.
+// botInboundEnqueuePG is the PG twin of the enqueue (pg_runtime_sql_audit_v1).
+const botInboundEnqueuePG = `INSERT INTO bot_inbound_queue (restaurant_id, chat_key, message_id, payload_json) VALUES (?, ?, ?, ?) ON CONFLICT (restaurant_id, app.norm_ascii(message_id::text)) DO NOTHING`
+
 func (s *Server) botInboundEnqueue(ctx context.Context, restaurantID int, chatKey string, msg botWebhookMessage) {
 	st := s.botStateDB()
 	if st.DB == nil || strings.TrimSpace(msg.MessageID) == "" {
@@ -57,7 +60,11 @@ func (s *Server) botInboundEnqueue(ctx context.Context, restaurantID int, chatKe
 		return
 	}
 	if st.Postgres {
-		q = `INSERT INTO bot_inbound_queue (restaurant_id, chat_key, message_id, payload_json) VALUES (?, ?, ?, ?) ON CONFLICT (restaurant_id, message_id) DO NOTHING`
+		// The conflict target must repeat the expression of the PG unique
+		// index ux__bot_inbound_queue__uq_inbound_msg (restaurant_id,
+		// app.norm_ascii(message_id::text)); a plain (restaurant_id,
+		// message_id) target fails arbiter inference with SQLSTATE 42P10.
+		q = botInboundEnqueuePG
 	}
 	if _, err := st.ExecContext(ctx, selectedSQL(q), restaurantID, chatKey, msg.MessageID, string(payload)); /* q chosen by st.Postgres */ err != nil {
 		botCheckpoint("wa_bot_inbound_queue_v1", "restaurant_id=%d enqueue_error err=%v", restaurantID, err)
