@@ -9,7 +9,11 @@
 source "$(dirname "$0")/lib.sh"
 guard "GO import"
 # MYSQL_DSN: from the environment, else from $CUTOVER_DIR/mysql-dsn.env (0600, MYSQL_DSN=...; never printed)
-if [[ -z "${MYSQL_DSN:-}" && -r "$CUTOVER_DIR/mysql-dsn.env" ]]; then set -a; source "$CUTOVER_DIR/mysql-dsn.env"; set +a; say "MYSQL_DSN loaded from $CUTOVER_DIR/mysql-dsn.env"; fi
+# parsed, not sourced: the DSN holds unquoted "(" ")" (unix(...)) that bash cannot source
+if [[ -z "${MYSQL_DSN:-}" && -r "$CUTOVER_DIR/mysql-dsn.env" ]]; then
+	MYSQL_DSN=$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?MYSQL_DSN=//p' "$CUTOVER_DIR/mysql-dsn.env" | head -1 | sed -E "s/^'(.*)'\$/\1/; s/^\"(.*)\"\$/\1/")
+	export MYSQL_DSN; say "MYSQL_DSN loaded from $CUTOVER_DIR/mysql-dsn.env"
+fi
 : "${MYSQL_DSN:?unix-socket DSN, e.g. villacarmen:<pw>@unix(/var/run/mysqld/mysqld.sock)/newvillacarmen?information_schema_stats_expiry=0 (REQUIRED param: else MySQL 8 stats cache gives NULL AUTO_INCREMENT; from a 0600 file, never argv history)}"
 DB=${MYSQL_DB:-newvillacarmen}
 PG_C=${PG_CONTAINER:-newvillacarmen-pg-prod}; PG_V=${PG_VOLUME:-newvillacarmen-pg-prod-data}; PG_PORT=${PG_PORT:-55432}
