@@ -1495,6 +1495,9 @@ func (s *Server) handleMenuFinde(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) fetchMenuByTable(r *http.Request, table string) (MenuResponse, error) {
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		return MenuResponse{Success: true, Entrantes: []Dish{}, Principales: []Dish{}, Arroces: []Dish{}}, nil
+	}
 	entrantes, err := s.fetchDishes(r, table, "ENTRANTE")
 	if err != nil {
 		return MenuResponse{}, err
