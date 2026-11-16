@@ -14,7 +14,10 @@ import (
 // allergen/intolerance/ingredient question is answered server-side with an AI
 // notice + the restaurant contact card, before the model runs.
 
-var botAllergenIntentRe = regexp.MustCompile(`\b(?:alerg\w*|intoleran\w*|celiac\w*|gluten|lactosa|ingredientes?|caldos?|proteinas? de (?:la )?(?:vaca|leche|huevo)|trazas|frutos secos|allerg\w*|ingredients?|broth)\b`)
+// wa_bot_allergen_handoff_v2 (2026-11-16 A/B): also the 14 EU allergens by
+// name, diets ("vegano", "no come pescado", "sin cerdo") and "apto para": the
+// model recommended rices as "safe" for a guest who does not eat fish.
+var botAllergenIntentRe = regexp.MustCompile(`\b(?:alerg\w*|intoleran\w*|celiac\w*|gluten|lactosa|lacteos?|ingredientes?|caldos?|proteinas? de (?:la )?(?:vaca|leche|huevo)|trazas|frutos secos|sulfit\w*|crustace\w*|moluscos|cacahuetes?|sesamo|altramuc\w*|altramuz|fructosa|histamina|vegan[oa]s?|vegetarian[oa]s?|apt[oa]s? para|(?:no|ni|sin) (?:\w+ ){0,2}(?:pescados?|mariscos?|carnes?|cerdo|huevos?|leche)|(?:lleva|llevan|contiene|contienen) (?:\w+ ){0,2}(?:mariscos?|pescados?|almendras?|nuez|nueces|avellanas?|pistachos?|anacardos?|apio|mostaza|soja|huevos?|leche|cerdo|carne)|no (?:puede|pueden|podemos|puedo) (?:comer|tomar)|no (?:come|comen|como|tolera|toleran)|allerg\w*|ingredients?|broth|shellfish|peanuts?|nuts|dairy|lactose|vegans?|vegetarians?|suitable for|sulph?ites?)\b`)
 
 // botBookingNoteRe matches a request to write the allergy into the booking
 // comments: that follow-up belongs to the agent (it has the tools), otherwise
