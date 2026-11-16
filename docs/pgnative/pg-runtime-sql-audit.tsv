@@ -709,8 +709,8 @@ internal/api/instatic_manager.go:763	comida_items	SELECT	OK
 internal/api/instatic_manager.go:947	site_builder_domain_mappings	INSERT+ON_CONFLICT	OK	
 internal/api/instatic_manager.go:957	restaurant_domains	INSERT+ON_CONFLICT	OK	
 internal/api/instatic_proxy.go:146	restaurant_domains	SELECT	OK	
-internal/api/instatic_proxy.go:151	site_builder_domain_mappings	SELECT	ERROR 42703	not PG-specific / known: site_builder_domain_mappings has no restaurant_id in prod schema (both dialects)
-internal/api/instatic_proxy.go:161	restaurants	SELECT	OK	
+internal/api/instatic_proxy.go:152	site_builder_domain_mappings	SELECT	ERROR 42703 (before fix; OK after)	JOIN site_builder_sites ON s.id = m.site_id for restaurant_id (both dialects; column never existed)
+internal/api/instatic_proxy.go:162	restaurants	SELECT	OK	
 internal/api/invoice_numbering.go:165	invoices	SELECT	OK	
 internal/api/invoice_numbering.go:235	restaurant_invoice_settings	INSERT+ON_CONFLICT	OK	
 internal/api/invoice_numbering.go:280	invoice_date	SELECT	OK	
@@ -1038,3 +1038,10 @@ internal/db/onupdate_gate.go:75	pg_attribute	SELECT	OK
 internal/db/onupdate_gate.go:86	pg_trigger	SELECT	OK	
 internal/sqldb/sqldb.go:311		SELECT	OK	
 internal/sqldb/sqldb.go:325		SELECT	OK	
+internal/api/booking_notification_settings.go:62	booking_notification_settings	INSERT+ON_CONFLICT	ERROR pgx encode bool->int2 (before fix; OK after)	Go bool args -> boolToInt (send_* are smallint); found by runtime smoke 2026-11-16 (PUT /api/admin/booking-notifications 500)
+internal/api/cafes_page_seo.go:136	restaurant_page_visibility	INSERT+ON_CONFLICT (DYNAMIC)	OK (manual: ON CONFLICT (restaurant_id) = unique ix__restaurant_page_visibility__uniq_rest_page_vis_restaurant (restaurant_id), plain column, prod snapshot 2026-11-15)	
+internal/api/public_menus.go:449	restaurant_page_visibility	INSERT+ON_CONFLICT (DYNAMIC)	OK (manual: ON CONFLICT (restaurant_id) = unique ix__restaurant_page_visibility__uniq_rest_page_vis_restaurant (restaurant_id), prod snapshot 2026-11-15)	
+internal/api/whatsapp_bot_config_admin.go:584	mesas_de_dos|mesas_de_tres	INSERT+ON_CONFLICT (DYNAMIC)	OK (manual: ON CONFLICT (restaurant_id, "reservationDate") = unique ix__mesas_de_{dos,tres}__uniq_..._restaurant_date (restaurant_id, "reservationDate"), prod snapshot 2026-11-15)	
+internal/api/whatsapp_bot_special_date_adelanto.go:98	special_date_menu_sections	INSERT+ON_CONFLICT (DYNAMIC)	OK (manual: ON CONFLICT (special_date_menu_id, section_id) = unique ix__special_date_menu_sections__uq_special_date_menu_section, prod snapshot 2026-11-15)	
+internal/api/widget_routes.go:262	widget_settings	INSERT+ON_CONFLICT (DYNAMIC)	OK (manual: ON CONFLICT (restaurant_id) = pk__widget_settings (restaurant_id), prod snapshot 2026-11-15)	
+(sweep) internal cmd ON CONFLICT	*	INSERT+ON_CONFLICT	OK: 154 literal targets match a plain unique index/PK of prod snapshot 2026-11-15 (runtime-smoke-onconflict.py); 5 DYNAMIC checked by hand above; pg-prepare-all.sh EXPLAIN GENERIC_PLAN 2121 planned, 0 x 42P10	

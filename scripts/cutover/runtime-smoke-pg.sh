@@ -366,7 +366,7 @@ psql "$CONN" -AtF $'\t' -c "SELECT schemaname||'.'||relname, n_tup_ins, n_tup_up
 # except 23505/23503 (unique/FK violation) raised while a request was in
 # flight that the handler answered with a 4xx (expected for the *-dup bodies).
 # Each error lists the request(s) in flight when PG logged it (by timestamp).
-KNOWN_PG='relation "(DIA|FINDE)" does not exist|column "restaurant_id" does not exist.*site_builder_domain_mappings|column "draft_html_content" of relation "restaurant_websites"|column "(metadata_json|sort_order)" of relation "restaurant_areas"|column "pos_pin_hash" does not exist'
+KNOWN_PG='relation "(DIA|FINDE)" does not exist|column "draft_html_content" of relation "restaurant_websites"|column "(metadata_json|sort_order)" of relation "restaurant_areas"|column "pos_pin_hash" does not exist'
 python3 -I - "$RUN/pg.log" "$KNOWN_PG" "$RUN/requests.tsv" >"$RUN/pg-errors.tsv" <<'PY'
 import collections, datetime, re, sys
 lines = open(sys.argv[1], errors="replace").read().splitlines()
