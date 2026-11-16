@@ -1,6 +1,6 @@
 # GraphRAG QA manual — restaurantes 901 / 902 (scratch padnat1, solo loopback)
 
-NO ejecutado por el worker. Lo ejecuta el coordinador dentro del contenedor scratch padnat1 (network none), sin producción, sin kraken y sin tocar ~/neo4j-rust-data ni su token. Nunca imprimas tokens ni DSN.
+Ejecutada el 16-nov en desktop (resultado: docs/graphrag/result-qa-20261116.md). Lo ejecuta el coordinador dentro del contenedor scratch padnat1 (network none), sin producción, sin kraken y sin tocar ~/neo4j-rust-data ni su token. Nunca imprimas tokens ni DSN.
 
 ## 0. Binarios dentro del contenedor
 Copiar al contenedor (`docker cp`, en /tmp/qa-graph/):
@@ -58,7 +58,7 @@ export VC_GRAPHRAG=1
 
 ## 5. Reinicio, resync y borrado
 - **Reinicio:** matar los dos procesos y relanzarlos con el mismo comando. Las consultas del paso 4 dan el mismo resultado (persistencia WAL).
-- **Resync:** `UPDATE comida_items SET active=0 WHERE restaurant_id=901 AND nombre='Paella Zafiro Norte';` y después `./graph-ingest -restaurant-id 901 -apply -resync` → deleted=1. La query "paella zafiro" en 901 da hits=0. 902 sin cambios.
+- **Resync:** `UPDATE comida_items SET active=0 WHERE restaurant_id=901 AND nombre='Paella Zafiro Norte';` y después `./graph-ingest -restaurant-id 901 -apply -resync` → deleted=1. La query "paella" en 901 da hits=0 ("paella zafiro" sigue dando el Albariño Zafiro por "zafiro", es correcto). 902 sin cambios.
 - **Borrado de una instancia:**
   1. parar g902;
   2. mover g902/data a g902/data.qa-removed;

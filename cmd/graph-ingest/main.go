@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -35,6 +36,7 @@ import (
 // node is one graph document.
 type node struct {
 	UID, Kind, Label, Title, Body string
+	Tags                          string // strongest ranking field: kind aliases, wine type, menu section
 	Price                         string
 	Parent                        string // uid of the container (edge Parent -[Rel]-> node)
 	Rel                           string
@@ -45,18 +47,23 @@ func main() {
 	reg := flag.String("registry", graphrag.RegistryPath(), "server-side registry")
 	apply := flag.Bool("apply", false, "write to the graph (default dry-run)")
 	resync := flag.Bool("resync", false, "with -apply: delete this restaurant's nodes not present in PG")
-	query := flag.String("query", "", "manual QA: run the bot retrieval (graphrag.Query, VC_GRAPHRAG=1) for this restaurant and print uid/kind/title of the hits")
+	query := flag.String("query", "", "manual QA: run exactly the bot's graph retrieval (graphrag.BotSnippets, VC_GRAPHRAG=1) for this restaurant and print the chunks the bot would prepend")
 	flag.Parse()
 	if *rid <= 0 {
 		fail("refusing: -restaurant-id is required")
 	}
 	if *query != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		hits := graphrag.Query(ctx, *rid, *query, 10)
+		hits, err := graphrag.BotSnippets(context.Background(), *rid, *query)
 		fmt.Printf("query: restaurant=%d text_len=%d hits=%d enabled=%v\n", *rid, len(*query), len(hits), graphrag.Enabled())
+		if err != nil {
+			fmt.Printf("query: no snippets: %v\n", err)
+		}
 		for _, h := range hits {
-			fmt.Printf("hit uid=%s kind=%s score=%d title=%q\n", h.UID, h.Kind, h.Score, h.Title)
+			body := []rune(h.Body)
+			if len(body) > 240 {
+				body = append(body[:240], '…')
+			}
+			fmt.Printf("hit id=graph:%s kind=%s score=%.2f title=%q body=%q\n", h.UID, h.Kind, h.Score, h.Title, string(body))
 		}
 		return
 	}
@@ -135,7 +142,41 @@ func readPG(ctx context.Context, rid int) ([]node, error) {
 	if tx.QueryRowContext(ctx, `SELECT direccion, telefono, email, website FROM restaurant_info WHERE restaurant_id = $1`, rid).Scan(&dir, &tel, &mail, &site) == nil {
 		body = join(body, "Dirección: "+dir.String, "Teléfono: "+tel.String, "Email: "+mail.String, "Web: "+site.String)
 	}
-	add(node{UID: ru, Kind: "restaurant", Label: "Restaurant", Title: name.String, Body: body})
+	add(node{UID: ru, Kind: "restaurant", Label: "Restaurant", Title: name.String, Body: body, Tags: "restaurante ubicación dirección contacto teléfono"})
+	// Weekly schedule (bookable service slots) + open/closed exceptions of the next 60 days.
+	var mode, morning, night, weekdays sql.NullString
+	if tx.QueryRowContext(ctx, `SELECT opening_mode, morning_hours_json, night_hours_json, weekday_open_json FROM restaurant_reservation_defaults WHERE restaurant_id = $1`, rid).
+		Scan(&mode, &morning, &night, &weekdays) == nil {
+		var open, closed []string
+		var wk map[string]bool
+		_ = json.Unmarshal([]byte(weekdays.String), &wk)
+		for _, d := range [][2]string{{"monday", "lunes"}, {"tuesday", "martes"}, {"wednesday", "miércoles"}, {"thursday", "jueves"}, {"friday", "viernes"}, {"saturday", "sábado"}, {"sunday", "domingo"}} {
+			if v, ok := wk[d[0]]; ok && v {
+				open = append(open, d[1])
+			} else if ok {
+				closed = append(closed, d[1])
+			}
+		}
+		var exc []string
+		rows, err := tx.QueryContext(ctx, `SELECT to_char(date, 'YYYY-MM-DD'), is_open FROM restaurant_days WHERE restaurant_id = $1 AND date BETWEEN current_date AND current_date + 60 ORDER BY date`, rid)
+		if err != nil {
+			return nil, fmt.Errorf("restaurant_days: %w", err)
+		}
+		for rows.Next() {
+			var d string
+			var isOpen int
+			if err := rows.Scan(&d, &isOpen); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("restaurant_days: %w", err)
+			}
+			exc = append(exc, esDate(d)+map[bool]string{true: " abierto", false: " cerrado"}[isOpen == 1])
+		}
+		rows.Close()
+		add(node{UID: uid(rid, "hours", "weekly"), Kind: "hours", Label: "OpeningHours", Title: "Horario habitual",
+			Body: join("Abre: "+strings.Join(open, ", "), "Cierra: "+strings.Join(closed, ", "), "Turnos de comida: "+plain(morning.String),
+				"Turnos de cena: "+plain(night.String), "Servicio: "+mode.String, "Excepciones próximas: "+strings.Join(exc, "; ")),
+			Tags: "horario hora abrir abre abren abierto cerrado cierre día", Parent: ru, Rel: "HAS_HOURS"})
+	}
 
 	q := func(query string, scan func(*sql.Rows) error) error {
 		rows, err := tx.QueryContext(ctx, query, rid)
@@ -156,7 +197,7 @@ func readPG(ctx context.Context, rid int) ([]node, error) {
 		if err := r.Scan(&id, &ft, &nm); err != nil {
 			return err
 		}
-		add(node{UID: uid(rid, "category", strconv.FormatInt(id, 10)), Kind: "category", Label: "Category", Title: nm.String, Body: "Categoría de " + ft.String, Parent: ru, Rel: "HAS_CATEGORY"})
+		add(node{UID: uid(rid, "category", strconv.FormatInt(id, 10)), Kind: "category", Label: "Category", Title: nm.String, Body: "Categoría de " + ft.String, Tags: "carta " + ft.String, Parent: ru, Rel: "HAS_CATEGORY"})
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("comida_categories: %w", err)
@@ -175,8 +216,8 @@ func readPG(ctx context.Context, rid int) ([]node, error) {
 		}
 		title := firstNonEmpty(ti.String, nm.String)
 		add(node{UID: uid(rid, "dish", strconv.FormatInt(id, 10)), Kind: "dish", Label: "Dish", Title: title,
-			Body:  join(nm.String, desc.String, "Tipo: "+st.String, "Categoría: "+catName.String, "Precio: "+price.String, "Suplemento: "+sup.String, "Alérgenos: "+alg.String),
-			Price: price.String, Parent: parent, Rel: rel})
+			Body: join(unless(nm.String, title), desc.String, "Tipo: "+st.String, "Categoría: "+catName.String, "Precio: "+price.String, "Suplemento: "+sup.String, "Alérgenos: "+plain(alg.String)),
+			Tags: "carta plato " + st.String + " " + catName.String, Price: price.String, Parent: parent, Rel: rel})
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("comida_items: %w", err)
@@ -187,7 +228,7 @@ func readPG(ctx context.Context, rid int) ([]node, error) {
 		if err := r.Scan(&id, &d, &alg); err != nil {
 			return err
 		}
-		add(node{UID: uid(rid, "dessert", strconv.FormatInt(id, 10)), Kind: "dessert", Label: "Dessert", Title: d.String, Body: join(d.String, "Alérgenos: "+alg.String), Parent: ru, Rel: "OFFERS"})
+		add(node{UID: uid(rid, "dessert", strconv.FormatInt(id, 10)), Kind: "dessert", Label: "Dessert", Title: d.String, Body: join("Alérgenos: " + plain(alg.String)), Tags: "postre", Parent: ru, Rel: "OFFERS"})
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("POSTRES: %w", err)
@@ -198,8 +239,9 @@ func readPG(ctx context.Context, rid int) ([]node, error) {
 		if err := r.Scan(&id, &tipo, &nm, &ti, &price, &desc, &alg); err != nil {
 			return err
 		}
-		add(node{UID: uid(rid, "drink", strconv.FormatInt(id, 10)), Kind: "drink", Label: "Drink", Title: firstNonEmpty(ti.String, nm.String),
-			Body: join(nm.String, desc.String, "Tipo: "+tipo.String, "Precio: "+price.String, "Alérgenos: "+alg.String), Price: price.String, Parent: ru, Rel: "OFFERS"})
+		title := firstNonEmpty(ti.String, nm.String)
+		add(node{UID: uid(rid, "drink", strconv.FormatInt(id, 10)), Kind: "drink", Label: "Drink", Title: title,
+			Body: join(unless(nm.String, title), desc.String, "Tipo: "+tipo.String, "Precio: "+price.String, "Alérgenos: "+plain(alg.String)), Tags: "bebida " + tipo.String, Price: price.String, Parent: ru, Rel: "OFFERS"})
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("BEBIDAS: %w", err)
@@ -213,8 +255,8 @@ func readPG(ctx context.Context, rid int) ([]node, error) {
 			return err
 		}
 		add(node{UID: uid(rid, "wine", strconv.FormatInt(id, 10)), Kind: "wine", Label: "Wine", Title: nm.String,
-			Body:  join(nm.String, desc.String, "Tipo: "+tipo.String, "Bodega: "+bod.String, "D.O.: "+do.String, "Graduación: "+grad.String, "Añada: "+anyo.String, "Precio: "+price.String),
-			Price: price.String, Parent: ru, Rel: "OFFERS"})
+			Body: join(desc.String, "Tipo: "+tipo.String, "Bodega: "+bod.String, "D.O.: "+do.String, "Graduación: "+grad.String, "Añada: "+anyo.String, "Precio botella: "+price.String),
+			Tags: "vino " + tipo.String, Price: price.String, Parent: ru, Rel: "OFFERS"})
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("group_menu_wines_v2: %w", err)
@@ -227,23 +269,29 @@ func readPG(ctx context.Context, rid int) ([]node, error) {
 			return err
 		}
 		add(node{UID: uid(rid, "menu", strconv.FormatInt(id, 10)), Kind: "menu", Label: "Menu", Title: t.String,
-			Body:  join("Precio: "+price.String, "Mínimo comensales: "+minp.String, "Entrantes: "+ent.String, "Principales: "+pri.String, "Postre: "+pos.String, "Bebida: "+bev.String, com.String, "FAQ: "+faq.String),
-			Price: price.String, Parent: ru, Rel: "OFFERS"})
+			Body: join("Precio por persona: "+price.String, "Mínimo comensales: "+minp.String, "Entrantes: "+plain(ent.String), "Principales: "+plain(pri.String),
+				"Postre: "+plain(pos.String), "Bebida: "+plain(bev.String), plain(com.String), "FAQ: "+faq.String),
+			Tags: "menú", Price: price.String, Parent: ru, Rel: "OFFERS"})
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("menus: %w", err)
 	}
-	if err := q(`SELECT d.id, d.menu_id, d.title_snapshot, d.description_snapshot, CAST(d.allergens_json AS text), CAST(d.price AS text), COALESCE(s.title, '')
-		FROM group_menu_section_dishes_v2 d LEFT JOIN group_menu_sections_v2 s ON s.id = d.section_id AND s.restaurant_id = d.restaurant_id
+	// Only dishes of the published menus read above (no draft/inactive menus).
+	if err := q(`SELECT d.id, d.menu_id, d.title_snapshot, d.description_snapshot, CAST(d.allergens_json AS text), CAST(d.price AS text), COALESCE(s.title, ''),
+		COALESCE(m.menu_title, ''), CAST(m.price AS text)
+		FROM group_menu_section_dishes_v2 d
+		JOIN menus m ON m.id = d.menu_id AND m.restaurant_id = d.restaurant_id AND m.active = 1 AND COALESCE(m.is_draft, 0) = 0
+		LEFT JOIN group_menu_sections_v2 s ON s.id = d.section_id AND s.restaurant_id = d.restaurant_id
 		WHERE d.restaurant_id = $1 AND d.active = 1`, func(r *sql.Rows) error {
 		var id, menuID int64
-		var t, desc, alg, price, sec sql.NullString
-		if err := r.Scan(&id, &menuID, &t, &desc, &alg, &price, &sec); err != nil {
+		var t, desc, alg, price, sec, menuTitle, menuPrice sql.NullString
+		if err := r.Scan(&id, &menuID, &t, &desc, &alg, &price, &sec, &menuTitle, &menuPrice); err != nil {
 			return err
 		}
 		add(node{UID: uid(rid, "menudish", strconv.FormatInt(id, 10)), Kind: "menudish", Label: "MenuDish", Title: t.String,
-			Body:   join(t.String, desc.String, "Sección: "+sec.String, "Alérgenos: "+alg.String, "Suplemento: "+price.String),
-			Parent: uid(rid, "menu", strconv.FormatInt(menuID, 10)), Rel: "HAS_DISH"})
+			Body: join(unless(desc.String, t.String), "Menú: "+menuTitle.String, "Precio del menú por persona: "+menuPrice.String, "Sección: "+sec.String,
+				"Alérgenos: "+plain(alg.String), "Suplemento: "+price.String),
+			Tags: sec.String, Parent: uid(rid, "menu", strconv.FormatInt(menuID, 10)), Rel: "HAS_DISH"})
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("group_menu_section_dishes_v2: %w", err)
@@ -255,8 +303,8 @@ func readPG(ctx context.Context, rid int) ([]node, error) {
 		if err := r.Scan(&id, &d, &h, &mode); err != nil {
 			return err
 		}
-		add(node{UID: uid(rid, "hours", strconv.FormatInt(id, 10)), Kind: "hours", Label: "OpeningHours", Title: "Horario " + d.String,
-			Body: join("Fecha: "+d.String, "Horas: "+h.String, "Modo: "+mode.String), Parent: ru, Rel: "HAS_HOURS"})
+		add(node{UID: uid(rid, "hours", strconv.FormatInt(id, 10)), Kind: "hours", Label: "OpeningHours", Title: "Turnos del " + esDate(d.String),
+			Body: join("Fecha: "+d.String, "Horas: "+plain(h.String), "Modo: "+mode.String), Tags: "fecha", Parent: ru, Rel: "HAS_HOURS"})
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("openinghours: %w", err)
@@ -277,7 +325,27 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
-// join keeps only parts with content after their "Label: " prefix.
+var months = []string{"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"}
+
+// esDate renders YYYY-MM-DD as "31 de diciembre de 2026" (what customers type).
+func esDate(d string) string {
+	t, err := time.Parse("2006-01-02", d)
+	if err != nil {
+		return d
+	}
+	return strconv.Itoa(t.Day()) + " de " + months[t.Month()-1] + " de " + strconv.Itoa(t.Year())
+}
+
+// unless returns s, or "" when it repeats other (avoids title echoes in body).
+func unless(s, other string) string {
+	if strings.EqualFold(strings.TrimSpace(s), strings.TrimSpace(other)) {
+		return ""
+	}
+	return s
+}
+
+// join keeps only parts with content after their "Label: " prefix; zero
+// amounts and empty JSON ("0.00", "[]", "{}") count as no content.
 func join(parts ...string) string {
 	var keep []string
 	for _, p := range parts {
@@ -285,15 +353,66 @@ func join(parts ...string) string {
 		if i := strings.Index(p, ": "); i >= 0 {
 			v = p[i+2:]
 		}
-		if strings.TrimSpace(v) != "" {
-			keep = append(keep, strings.TrimSpace(p))
+		v = strings.TrimSpace(v)
+		if f, err := strconv.ParseFloat(v, 64); (err == nil && f == 0) || v == "" || v == "[]" || v == "{}" || v == "null" {
+			continue
 		}
+		keep = append(keep, strings.TrimSpace(p))
 	}
 	return strings.Join(keep, " | ")
 }
 
+// plain flattens a JSON list/object into readable text ("a; b"); {"items":[...]}
+// keeps only the items; false/null/empty values are dropped, true keeps its
+// key. Non-JSON input is returned as is.
+func plain(s string) string {
+	var v any
+	if json.Unmarshal([]byte(s), &v) != nil {
+		return s
+	}
+	var walk func(any) string
+	walk = func(v any) string {
+		switch x := v.(type) {
+		case string:
+			return strings.TrimSpace(strings.ReplaceAll(x, "_", " "))
+		case float64:
+			return strconv.FormatFloat(x, 'f', -1, 64)
+		case []any:
+			var out []string
+			for _, e := range x {
+				if t := walk(e); t != "" {
+					out = append(out, t)
+				}
+			}
+			return strings.Join(out, "; ")
+		case map[string]any:
+			if it, ok := x["items"]; ok {
+				return walk(it)
+			}
+			keys := make([]string, 0, len(x))
+			for k := range x {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			var out []string
+			for _, k := range keys {
+				if b, ok := x[k].(bool); ok {
+					if b {
+						out = append(out, strings.ReplaceAll(k, "_", " "))
+					}
+				} else if t := walk(x[k]); t != "" {
+					out = append(out, t)
+				}
+			}
+			return strings.Join(out, "; ")
+		}
+		return ""
+	}
+	return walk(v)
+}
+
 func hashOf(n node) string {
-	h := sha256.Sum256([]byte(strings.Join([]string{n.Kind, n.Title, n.Body, n.Price, n.Parent, n.Rel}, "|")))
+	h := sha256.Sum256([]byte(strings.Join([]string{n.Kind, n.Title, n.Body, n.Tags, n.Price, n.Parent, n.Rel}, "|")))
 	return hex.EncodeToString(h[:])
 }
 
@@ -324,14 +443,14 @@ func sync(ctx context.Context, in *graphrag.Instance, rid int, nodes []node, res
 	for _, n := range nodes {
 		want[n.UID] = true
 		h := hashOf(n)
-		p := map[string]any{"u": n.UID, "r": rid, "k": n.Kind, "t": n.Title, "b": n.Body, "p": n.Price, "h": h}
+		p := map[string]any{"u": n.UID, "r": rid, "k": n.Kind, "t": n.Title, "b": n.Body, "g": n.Tags, "p": n.Price, "h": h}
 		old, ok := have[n.UID]
 		switch {
 		case !ok:
-			sts = append(sts, graphrag.Statement{Cypher: "CREATE (n:Doc:" + n.Label + " {uid: $u, restaurant_id: $r, kind: $k, title: $t, body: $b, price: $p, hash: $h})", Params: p})
+			sts = append(sts, graphrag.Statement{Cypher: "CREATE (n:Doc:" + n.Label + " {uid: $u, restaurant_id: $r, kind: $k, title: $t, body: $b, tags: $g, price: $p, hash: $h})", Params: p})
 			created++
 		case old != h:
-			sts = append(sts, graphrag.Statement{Cypher: "MATCH (n:Doc {uid: $u, restaurant_id: $r}) SET n.kind = $k, n.title = $t, n.body = $b, n.price = $p, n.hash = $h", Params: p})
+			sts = append(sts, graphrag.Statement{Cypher: "MATCH (n:Doc {uid: $u, restaurant_id: $r}) SET n.kind = $k, n.title = $t, n.body = $b, n.tags = $g, n.price = $p, n.hash = $h", Params: p})
 			updated++
 		default:
 			continue

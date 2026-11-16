@@ -336,10 +336,9 @@ func (s *Server) botRetrieveKnowledge(ctx context.Context, restaurantID int, rou
 	if !graphrag.Enabled() {
 		return base
 	}
-	gctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
+	snippets, _ := graphrag.BotSnippets(ctx, restaurantID, text)
 	var out []botKnowledgeChunk
-	for _, sn := range graphrag.Query(gctx, restaurantID, text, 4) {
+	for _, sn := range snippets {
 		out = append(out, botKnowledgeChunk{ID: "graph:" + sn.UID, Title: sn.Title, Body: sn.Body})
 	}
 	botCheckpoint("wa_bot_graphrag_v1", "restaurant_id=%d text_len=%d graph_hits=%d", restaurantID, len(text), len(out))
