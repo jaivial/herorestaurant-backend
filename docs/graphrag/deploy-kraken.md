@@ -1,6 +1,6 @@
 # GraphRAG en Kraken — receta de despliegue (una instancia neo4j-rust por restaurante)
 
-Estado: receta, NO aplicada. Probada en desktop el 16-nov con copia del PG de producción (ver `result-qa-20261116.md`).
+Estado: APLICADA en Kraken el 16-nov (restaurantes 1 y 343, puertos 27100-27103, rol PG `graphrag_ro`, timer `graphrag-resync.timer`, `VC_GRAPHRAG=1` en `newvillacarmen-backend-prod`). Ver `docs/pgnative/result-cutover-20261116.md`.
 Nunca imprimas tokens ni el DSN. Todo es loopback y nada se expone por nginx.
 
 ## 0. Modelo
@@ -71,10 +71,10 @@ Al reiniciar la instancia los datos se conservan (WAL); probado en el QA.
 `/home/jaime/graphrag/ingest.env` (0600). No lo imprimas:
 ```
 DB_DRIVER=postgres
-PG_DSN=host=127.0.0.1 port=55432 dbname=newvillacarmen_business user=<rol de lectura> password=<...> sslmode=disable
+PG_DSN=postgres://graphrag_ro:<password>@127.0.0.1:55432/newvillacarmen_business?sslmode=disable
 VC_GRAPHRAG_REGISTRY=/home/jaime/graphrag/registry.tsv
 ```
-graph-ingest solo lee el PG, en una transacción READ ONLY que se revierte. Si hay un rol de solo lectura, úsalo.
+Usa la forma URL (sin espacios): el fichero se carga con `. ingest.env` y un DSN `host=... port=...` con espacios se rompe al hacer source (visto en Kraken). graph-ingest solo lee el PG, en una transacción READ ONLY que se revierte. Si hay un rol de solo lectura, úsalo.
 ```sh
 set -a; . /home/jaime/graphrag/ingest.env; set +a
 G=/home/jaime/graphrag/bin/graph-ingest
