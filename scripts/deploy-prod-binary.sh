@@ -53,7 +53,8 @@ L0=$(my -N -e "$Q" 2>/dev/null)
 for i in $(seq 1 400); do L=$(my -N -e "$Q" 2>/dev/null); [ "$L" != "$L0" ] && { echo "   nuevo envio WA $L, recreo ya"; break; }; sleep 1; done
 echo "== 4) recrear =="
 sudo -n docker stop "$NAME" >/dev/null; sudo -n docker rename "$NAME" "$OLD"
-sudo -n docker run -d --name "$NAME" --network host --restart unless-stopped --env-file "$ENVFILE" -v "$VOLUME:/var/lib/herorestaurant" "$NEW_IMG" >/dev/null
+GRAPHRAG_DIR=${GRAPHRAG_DIR:-/home/jaime/graphrag}; GR_MOUNT=(); [[ -d "$GRAPHRAG_DIR" ]] && GR_MOUNT=(-v "$GRAPHRAG_DIR:$GRAPHRAG_DIR:ro")
+sudo -n docker run -d --name "$NAME" --network host --restart unless-stopped --env-file "$ENVFILE" -v "$VOLUME:/var/lib/herorestaurant" "${GR_MOUNT[@]}" "$NEW_IMG" >/dev/null
 rollback(){ echo "!! rollback"; sudo -n docker rm -f "$NAME" >/dev/null 2>&1||true; sudo -n docker rename "$OLD" "$NAME"; sudo -n docker start "$NAME" >/dev/null; exit 1; }
 for v in DB_NAME DB_HOST DB_PORT PORT; do sudo -n docker inspect "$NAME" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -q "^$v=" || rollback; done
 ok=0; for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 && { ok=1; echo "   health OK ${i}s"; break; }; sleep 1; done

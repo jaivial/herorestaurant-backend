@@ -33,7 +33,10 @@ run docker image inspect "$IMAGE" -f '{{.Id}}'
 run docker stop -t 30 "$NAME"
 run docker rename "$NAME" "$NAME-mysql-precutover"
 START_AT=$(date -Iseconds)   # PG may take writes from here on: this is SWITCH_AT
-run docker run -d --name "$NAME" --network host --restart unless-stopped --env-file "$NEW" -v "$VOLUME:/var/lib/herorestaurant" "$IMAGE"
+# GraphRAG registry + tokens (docs/graphrag/deploy-kraken.md): mounted read-only when present
+GRAPHRAG_DIR=${GRAPHRAG_DIR:-/home/jaime/graphrag}
+GR_MOUNT=(); [[ -d "$GRAPHRAG_DIR" ]] && GR_MOUNT=(-v "$GRAPHRAG_DIR:$GRAPHRAG_DIR:ro")
+run docker run -d --name "$NAME" --network host --restart unless-stopped --env-file "$NEW" -v "$VOLUME:/var/lib/herorestaurant" "${GR_MOUNT[@]}" "$IMAGE"
 # healthz must answer 200 within 90 s; "Connection refused" while the server
 # boots is expected and silenced. No 200 -> STOP (no SWITCH_AT) -> 90-rollback.
 run bash -c "for i in \$(seq 45); do [ \"\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)\" = 200 ] && echo 'healthz 200' && exit 0; sleep 2; done; docker logs --tail 30 $NAME 2>&1 | sed -E 's#(postgres(ql)?://)[^ ]*#\1***#g'; exit 1" || die "healthz not 200 within 90 s: do NOT continue; 90-rollback.sh with SWITCH_AT=$START_AT (container may have taken traffic)"

@@ -9,6 +9,8 @@ description = "Documented placeholders, example templates and test fixtures"
 paths = [
   '''(?i)(^|/)\.env(\.[a-z0-9]+)?\.example$''',
   '''(?i)(^|/)\.env\.prod\.example$''',
+  # FALSE POSITIVE generic-api-key: long PG index names (ix__<table>__uq_...) in a DBA verification script.
+  '''(^|/)docs/dbmigrate/ci-ai-retire-vitess28\.sql$''',
 ]
 regexes = [
   '''ChangeMe[A-Za-z0-9!@#_-]*''',
