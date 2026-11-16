@@ -44,6 +44,13 @@ func (s *Server) handleBOMenuTableGet(w http.ResponseWriter, r *http.Request, ta
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"menu":    map[string]any{"table": table, "price": nil, "dishes": []boMenuDish{}},
+		})
+		return
+	}
 
 	restaurantID := a.ActiveRestaurantID
 
@@ -136,6 +143,10 @@ func (s *Server) handleBOMenuDishCreate(w http.ResponseWriter, r *http.Request, 
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
+		return
+	}
 
 	var req boMenuDishCreateRequest
 	if err := readJSONBody(r, &req); err != nil {
@@ -224,6 +235,10 @@ func (s *Server) handleBOMenuDishPatch(w http.ResponseWriter, r *http.Request, t
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
 		return
 	}
 
@@ -340,6 +355,10 @@ func (s *Server) handleBOMenuDishDelete(w http.ResponseWriter, r *http.Request, 
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
+		return
+	}
 
 	idStr := strings.TrimSpace(chi.URLParam(r, "id"))
 	id, err := strconv.Atoi(idStr)
@@ -389,6 +408,10 @@ func (s *Server) handleBOMenuSetPrice(w http.ResponseWriter, r *http.Request, ta
 	a, ok := boAuthFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	if !s.legacyMenuTableExists(r.Context(), table) {
+		writeLegacyMenuGone(w)
 		return
 	}
 

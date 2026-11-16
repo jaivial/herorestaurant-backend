@@ -721,11 +721,13 @@ func (s *Server) allDishesExistForTenant(ctx context.Context, restaurantID int, 
 		}
 		return rows.Err()
 	}
-	if err := lookup("DIA", "NUM"); err != nil {
-		return false, err
-	}
-	if err := lookup("FINDE", "NUM"); err != nil {
-		return false, err
+	for _, table := range []string{"DIA", "FINDE"} {
+		if !s.legacyMenuTableExists(ctx, table) {
+			continue // retired legacy table: not an error, menu_dishes_catalog still counts
+		}
+		if err := lookup(table, "NUM"); err != nil {
+			return false, err
+		}
 	}
 	if err := lookup("menu_dishes_catalog", "id"); err != nil {
 		return false, err

@@ -12,8 +12,6 @@ const carteItemFields = `{nombre:string (obligatorio al crear), precio:number �
 
 const vinoFields = `{tipo:"TINTO"|"BLANCO"|"ROSADO"|"CAVA"|… (obligatorio al crear), nombre (obligatorio), bodega (obligatorio), precio:number>0 (obligatorio), descripcion, denominacion_origen, graduacion:number, anyo:string, active:boolean}. En PATCH todos opcionales.`
 
-const menuDishFields = `{descripcion:string (nombre del plato, obligatorio al crear), tipo:"ENTRANTE"|"PRINCIPAL"|"ARROZ" (obligatorio al crear), alergenos:[string], active:boolean}. En PATCH todos opcionales.`
-
 const sectionDishFields = `{id?:id del plato existente (omitido = nuevo), catalog_dish_id?:id del catálogo (admin_get_dishes_catalog_search), title (obligatorio), description, description_enabled:boolean, allergens:[string], supplement_enabled:boolean, supplement_price:number|null, price:number|null (solo a la carta), active:boolean, apply_to_catalog:boolean}`
 
 const legacyGroupMenuFields = `{menu_title (obligatorio), menu_subtitle, price:number>0 (obligatorio), active:boolean, min_party_size:int, main_dishes_limit:boolean, main_dishes_limit_number:int, included_coffee:boolean, entrantes:[string], principales:{titulo_principales:string, items:[string]}, postre:[string], beverage:{type, price_per_person, has_supplement, supplement_price}, comments:[string]}`
@@ -37,20 +35,11 @@ var menusBodiesEs = map[string]string{
 	"DELETE /vinos/{id}":          `Sin body. Elimina el vino.`,
 	"POST /dishes-catalog/upsert": `Crea (sin id) o edita (con id) un plato del catálogo compartido de los menús v2: {id?, title (obligatorio), description, allergens:[string], default_supplement_enabled:boolean, default_supplement_price:number|null}.`,
 	// Categorías.
-	"POST /comida/categorias":         `{name (obligatorio, ≤120), foodType:"platos"|"bebidas"|"vinos"|"cafes"|"postres" o vacío/"global", global?:boolean, active?:boolean}. Rechaza nombres que ya existen en un ámbito solapado.`,
-	"PATCH /comida/categorias/{id}":   `{name?, foodType?, global?, active?:boolean}. Solo categorías editables (id>0 de admin_get_comida_categorias).`,
-	"DELETE /comida/categorias/{id}":  `Sin body. Solo categorías editables.`,
-	"POST /comida/platos/categorias":  `Categoría legacy de platos: {name (obligatorio), label?, slug?}.`,
-	"POST /comida/bebidas/categorias": `Categoría legacy de bebidas: {name (obligatorio), label?, slug?}.`,
-	// Menú del día / fin de semana (tablas DIA y FINDE).
-	"POST /menus/dia/dishes":             `Añade un plato al menú del día. ` + menuDishFields,
-	"PATCH /menus/dia/dishes/{id}":       `Edita un plato del menú del día. ` + menuDishFields,
-	"DELETE /menus/dia/dishes/{id}":      `Sin body. Quita el plato del menú del día.`,
-	"POST /menus/dia/price":              `{price:"12.50" (string con el precio del menú del día)}.`,
-	"POST /menus/finde/dishes":           `Añade un plato al menú de fin de semana. ` + menuDishFields,
-	"PATCH /menus/finde/dishes/{id}":     `Edita un plato del menú de fin de semana. ` + menuDishFields,
-	"DELETE /menus/finde/dishes/{id}":    `Sin body. Quita el plato del menú de fin de semana.`,
-	"POST /menus/finde/price":            `{price:"25.00" (string con el precio del menú de fin de semana)}.`,
+	"POST /comida/categorias":            `{name (obligatorio, ≤120), foodType:"platos"|"bebidas"|"vinos"|"cafes"|"postres" o vacío/"global", global?:boolean, active?:boolean}. Rechaza nombres que ya existen en un ámbito solapado.`,
+	"PATCH /comida/categorias/{id}":      `{name?, foodType?, global?, active?:boolean}. Solo categorías editables (id>0 de admin_get_comida_categorias).`,
+	"DELETE /comida/categorias/{id}":     `Sin body. Solo categorías editables.`,
+	"POST /comida/platos/categorias":     `Categoría legacy de platos: {name (obligatorio), label?, slug?}.`,
+	"POST /comida/bebidas/categorias":    `Categoría legacy de bebidas: {name (obligatorio), label?, slug?}.`,
 	"POST /menu-visibility":              `{menuKey:"menudeldia"|"menufindesemana", isActive:boolean}.`,
 	"PATCH /restaurant/pages/visibility": `Solo lo que cambia: {cafe_page_active, bebidas_page_active, postres_page_active, vinos_page_active: boolean; cafes_web_placement, bebidas_web_placement, postres_web_placement, vinos_web_placement: "inside_menus"|"independent_section"}.`,
 	// Menús de grupo legacy (/app/menus antiguo).

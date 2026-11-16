@@ -231,7 +231,10 @@ func scanRoutes(lines []string, mount string, taken map[string]bool, sources map
 			}
 			method, path, handler := strings.ToUpper(m[2]), m[3], handlerName(m[4])
 			if !contains(gates, "s.requireBOSession") || (skipHdlRe.MatchString(handler) && !keepHdlRe.MatchString(handler)) ||
-				path == "/login" || path == "/logout" || strings.HasPrefix(path, "/assistant/") || strings.HasSuffix(path, "/ws") {
+				path == "/login" || path == "/logout" || strings.HasPrefix(path, "/assistant/") || strings.HasSuffix(path, "/ws") ||
+				// Legacy DIA/FINDE tables no longer exist in production (MySQL nor PG);
+				// the bot must never reach them (16-nov: admin_get_menus_finde -> 500).
+				strings.HasPrefix(path, "/menus/dia") || strings.HasPrefix(path, "/menus/finde") {
 				continue
 			}
 			for _, g := range stack {
