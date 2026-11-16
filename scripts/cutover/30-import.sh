@@ -40,6 +40,8 @@ stop_if "$D" -mode pgcompat -dir "$R/export" -plan "$R/plan"
 say "== 4 orphan allowlist bound to this export (counts are enforced by import: exactly 1/726/3/1)"
 run bash -c "python3 -c 'import json,sys; a=json.load(open(sys.argv[1])); a[\"schema_sha256\"]=json.load(open(sys.argv[2]))[\"schema_sha256\"]; print(json.dumps(a,indent=1))' '$W/docs/dbmigrate/staging-orphan-allowlist.json' '$R/export/manifest.json' > '$R/orphan-allowlist.json'"
 say "== 5 NEW PG (container + volume never reused)"
+# a socket dir left by an earlier PG (owned by uid 70, stale .s.PGSQL lock) is moved aside, never reused
+[[ -e "$CUTOVER_DIR/pgsock" ]] && run sudo -n mv "$CUTOVER_DIR/pgsock" "$CUTOVER_DIR/pgsock.old-$TS"
 run install -d -m 700 "$CUTOVER_DIR/pgsock"
 run docker volume create "$PG_V"
 run docker run -d --name "$PG_C" --restart unless-stopped --memory 6g --cpus 2 -p 127.0.0.1:$PG_PORT:5432 -v "$PG_V":/var/lib/postgresql/data -v "$CUTOVER_DIR/pgsock":/var/run/postgresql --env-file "$CUTOVER_DIR/pg.env" "${PG_IMAGE:-postgres:17-alpine}"
