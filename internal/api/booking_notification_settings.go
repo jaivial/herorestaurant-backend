@@ -74,7 +74,7 @@ func (s *Server) saveBookingNotificationSettings(ctx context.Context, restaurant
 			send_confirmation = EXCLUDED.send_confirmation,
 			send_reconfirmation = EXCLUDED.send_reconfirmation,
 			reconfirmation_days_before = EXCLUDED.reconfirmation_days_before
-	`), restaurantID, in.SendConfirmation, in.SendReconfirmation, in.ReconfirmationDaysBefore)
+	`), restaurantID, boolToInt(in.SendConfirmation), boolToInt(in.SendReconfirmation), in.ReconfirmationDaysBefore)
 	return err
 }
 
@@ -107,6 +107,7 @@ func (s *Server) handleBOBookingNotificationsPut(w http.ResponseWriter, r *http.
 	}
 	input.ReconfirmationDaysBefore = clampReconfirmationDays(input.ReconfirmationDaysBefore)
 	if err := s.saveBookingNotificationSettings(r.Context(), a.ActiveRestaurantID, input); err != nil {
+		log.Printf("%s.settings.save_failed restaurant=%d err=%v", bookingNotifCoordinationID, a.ActiveRestaurantID, err)
 		httpx.WriteError(w, http.StatusInternalServerError, "Error guardando notificaciones de reserva")
 		return
 	}

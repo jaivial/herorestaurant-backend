@@ -14,7 +14,6 @@ internal/api/backoffice_pos_pin.go:182	pos_pin_hash absent from prod schema (bot
 internal/api/backoffice_pos_pin.go:189	pos_pin_hash absent from prod schema (both dialects)
 internal/api/backoffice_pos_pin.go:245	pos_pin_hash absent from prod schema (both dialects)
 internal/api/backoffice_stock_documents.go:680	pre-existing bug on both dialects: 14 columns, 15 values (MySQL 1136 too)
-internal/api/instatic_proxy.go:151	site_builder_domain_mappings has no restaurant_id in prod schema (both dialects)
 internal/api/modifications_api.go:603	modification_history has no created_at/restaurant_id in prod schema (both dialects)
 internal/api/modifications_api.go:684	modification_history has no restaurant_id in prod schema (both dialects)
 internal/api/modifications_api.go:757	modification_history has no restaurant_id in prod schema (both dialects)

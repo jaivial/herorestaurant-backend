@@ -148,7 +148,8 @@ func (s *Server) serveRestaurantSiteIfHost(w http.ResponseWriter, r *http.Reques
 		resolved = true
 	}
 	if !resolved {
-		err = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT restaurant_id FROM site_builder_domain_mappings WHERE domain=? LIMIT 1`, `SELECT restaurant_id FROM site_builder_domain_mappings WHERE app.norm_ascii(domain) = app.norm_ascii(?) LIMIT 1`), host).Scan(&restaurantID)
+		// site_builder_domain_mappings has no restaurant_id: resolve it through its site.
+		err = s.db.QueryRowContext(r.Context(), nativeSQL(`SELECT s.restaurant_id FROM site_builder_domain_mappings m JOIN site_builder_sites s ON s.id = m.site_id WHERE m.domain=? LIMIT 1`, `SELECT s.restaurant_id FROM site_builder_domain_mappings m JOIN site_builder_sites s ON s.id = m.site_id WHERE app.norm_ascii(m.domain) = app.norm_ascii(?) LIMIT 1`), host).Scan(&restaurantID)
 		if err == nil && restaurantID > 0 {
 			resolved = true
 		}
