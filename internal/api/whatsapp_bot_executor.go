@@ -123,6 +123,21 @@ func (s *Server) botExecuteTool(ctx context.Context, restaurantID int, msg botWe
 		botCheckpoint("wa_bot_special_bookings_staff_only_v1", "restaurant_id=%d tool=%s denied", restaurantID, name)
 		return botJSON(map[string]any{"error": "esta consulta solo está disponible para el equipo del restaurante.", "terminal": true}), nil
 	}
+	// Coordination id: wa_bot_tool_input_coercion_v1 - every custom tool gets
+	// its model-built input normalized against its own declared schema before
+	// the typed decoders run (quoted numbers/booleans/arrays). One shared
+	// coercion, no per-tool lenient decoders.
+	if schema, known := botToolInputSchemas()[name]; known {
+		coerced, changed, cerr := botCoerceToolInput(schema, input)
+		if cerr != nil {
+			botCheckpoint("wa_bot_tool_input_coercion_v1", "restaurant_id=%d tool=%s error=%q", restaurantID, name, cerr.Error())
+			return botJSON(map[string]any{"error": cerr.Error()}), nil
+		}
+		if changed {
+			botCheckpoint("wa_bot_tool_input_coercion_v1", "restaurant_id=%d tool=%s coerced=true", restaurantID, name)
+			input = coerced
+		}
+	}
 	switch name {
 	case "send_message":
 		return s.botToolSendMessage(ctx, restaurantID, msg, input)
