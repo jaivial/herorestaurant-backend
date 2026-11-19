@@ -36,6 +36,18 @@ func (s *Server) assistantExecuteTool(ctx context.Context, restaurantID int, nam
 			return "", fmt.Errorf("autenticación requerida para %s", name)
 		}
 	}
+	// Coordination id: wa_bot_tool_input_coercion_v1 - the same schema-driven
+	// coercion the WhatsApp bot applies, here for every Forky tool: the
+	// registry schema is the one the model sees.
+	if t, known := assistantToolLookup(name); known && len(t.Schema) > 0 {
+		coerced, changed, cerr := botCoerceToolInput(t.Schema, input)
+		if cerr != nil {
+			return "", cerr
+		}
+		if changed {
+			input = coerced
+		}
+	}
 	started := time.Now()
 	out, err := s.assistantExecuteToolUnsafe(ctx, restaurantID, name, input)
 	// Tool calls are auditable even when the underlying operation fails. Secrets
