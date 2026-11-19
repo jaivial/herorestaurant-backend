@@ -130,17 +130,20 @@ func botCoerceSchemaValue(schema json.RawMessage, value any, path string) (any, 
 	case "integer", "number":
 		switch v := value.(type) {
 		case float64:
-			if typ == "integer" && v != math.Trunc(v) {
+			if typ == "integer" && (v != math.Trunc(v) || v > math.MaxInt64 || v < math.MinInt64) {
 				return nil, false, botCoerceTypeError(path, botCoerceTypeLabel(typ), value)
 			}
 			return value, false, nil
 		case string:
-			f, perr := botParseFlexibleNumber(v)
+			// A price string may carry its €; an id or a count may not: for
+			// integers nothing is stripped beyond spaces, so "52€" or "1,234"
+			// is a clear error, never a silently different id or quantity.
+			f, perr := botParseFlexibleNumber(v, typ == "number")
 			if perr != nil {
 				return nil, false, botCoerceTypeError(path, botCoerceTypeLabel(typ), value)
 			}
 			if typ == "integer" {
-				if f != math.Trunc(f) {
+				if f != math.Trunc(f) || f > math.MaxInt64 || f < math.MinInt64 {
 					return nil, false, botCoerceTypeError(path, botCoerceTypeLabel(typ), value)
 				}
 				return int64(f), true, nil
@@ -261,10 +264,17 @@ func botCoerceTypeError(path, expected string, value any) error {
 	return fmt.Errorf("el parámetro %q debe ser %s y llegó %s; corrige el tipo y vuelve a llamar", path, expected, got)
 }
 
-// botParseFlexibleNumber accepts "12.5", "12,5" and "12 €" besides plain
-// JSON-number strings. An empty string is an error here, not a zero.
-func botParseFlexibleNumber(s string) (float64, error) {
-	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "€"))
+// botParseFlexibleNumber accepts "12.5", "12,5" and (only when allowCurrency,
+// i.e. for number-typed prices) "12 €". The comma is the decimal separator,
+// the Spanish-locale convention the existing flexBool/flexFloat panel decoders
+// already use; thousand separators are not supported, so "1,234" parses as
+// 1.234 and an integer field rejects it instead of turning it into 1 or 1234.
+// An empty string is an error here, not a zero.
+func botParseFlexibleNumber(s string, allowCurrency bool) (float64, error) {
+	s = strings.TrimSpace(s)
+	if allowCurrency {
+		s = strings.TrimSpace(strings.TrimSuffix(s, "€"))
+	}
 	s = strings.ReplaceAll(s, ",", ".")
 	if s == "" {
 		return 0, fmt.Errorf("número vacío")
