@@ -139,10 +139,24 @@ func (s *Server) botPipelineSpecialDateFacts(ctx context.Context, restaurantID i
 // old conversation resumed with a new topic is not blocked forever.
 const botHandoffTTL = 7 * 24 * time.Hour
 
+// botHandoffResolvingSources: outbound messages sent by the team or the
+// booking system that close an open human topic (wa_bot_handoff_resolved_v1).
+var botHandoffResolvingSources = []string{"booking_confirmation", "booking_reconfirmation", "manual_whatsapp", "backoffice_member_message", "restaurant_notification"}
+
 func (s *Server) botPipelineHandoffFact(ctx context.Context, restaurantID int, sender string) map[string]any {
 	h, err := s.botConversation.GetHandoff(ctx, restaurantID, sender)
 	// A cleared event loop is a marker, not an open handoff (wa_bot_event_menu_sticky_v1).
 	if err != nil || h == nil || h.Reason == botReasonEventCleared || time.Since(time.UnixMilli(h.UpdatedAt)) > botHandoffTTL {
+		return nil
+	}
+	// Coordination id: wa_bot_handoff_resolved_v1 - once the team acted on the
+	// conversation after the topic was opened (booking confirmation, manual
+	// WhatsApp, backoffice message...), the topic is resolved. Keeping it open
+	// made a NEW request (prod 2026-11-23: "la reserva podria ser para las
+	// 14.30?") count as a repeat, so it was never forwarded to the group.
+	if s.botConversation.HasOutboundSince(ctx, restaurantID, sender, h.UpdatedAt, botHandoffResolvingSources) {
+		_ = s.botConversation.ClearHandoff(ctx, restaurantID, sender)
+		botCheckpoint("wa_bot_handoff_resolved_v1", "restaurant_id=%d sender=%s cleared=true", restaurantID, sender)
 		return nil
 	}
 	return map[string]any{"topic": h.Topic, "reason": h.Reason, "repeats": h.Repeats}

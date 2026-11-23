@@ -362,6 +362,23 @@ func (s *botConversationStore) ClearHandoff(ctx context.Context, restaurantID in
 	return err
 }
 
+// HasOutboundSince reports whether an assistant message with one of sources
+// was stored for the conversation after sinceMs (wa_bot_handoff_resolved_v1).
+func (s *botConversationStore) HasOutboundSince(ctx context.Context, restaurantID int, userPhone string, sinceMs int64, sources []string) bool {
+	if s == nil || s.db == nil || len(sources) == 0 {
+		return false
+	}
+	args := []any{restaurantID, digitsOnly(userPhone), sinceMs}
+	ph := make([]string, len(sources))
+	for i, src := range sources {
+		ph[i] = "?"
+		args = append(args, src)
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM conversation_messages WHERE restaurant_id=? AND user_phone=? AND role='assistant' AND created_at_ms>? AND source IN (`+strings.Join(ph, ",")+`)`, args...).Scan(&n)
+	return err == nil && n > 0
+}
+
 // botManagementRequest is one issue already forwarded to management.
 type botManagementRequest struct {
 	ID        int64  `json:"id"`
