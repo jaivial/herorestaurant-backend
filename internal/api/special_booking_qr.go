@@ -127,6 +127,7 @@ func (s *Server) handleBOBookingQR(w http.ResponseWriter, r *http.Request) {
 // broadcastBookingChanged tells open backoffice pages (booking QR detail) that
 // a booking changed so they refetch it. Coordination id: special_booking_qr_v1
 func (s *Server) broadcastBookingChanged(restaurantID int, bookingID int64, action string) {
+	s.notifyHourSplitChanged(restaurantID) // hour_split_realtime_v1: occupancy streams
 	s.broadcastBOGlobal(restaurantID, "booking", map[string]any{
 		"type":          action, // booking_created | booking_updated | booking_cancelled
 		"restaurant_id": restaurantID,

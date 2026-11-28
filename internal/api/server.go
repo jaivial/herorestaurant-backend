@@ -842,6 +842,7 @@ func (s *Server) Routes() http.Handler {
 
 		// By-hour client split configuration (toggle + per-hour percentages).
 		r.With(s.requireBOSession, reservasGate).Get("/config/hour-split", s.handleBOConfigHourSplitGet)
+		r.With(s.requireBOSession, reservasGate).Get("/config/hour-split/stream", s.handleBOConfigHourSplitStream) // hour_split_realtime_v1
 		r.With(s.requireBOSession, reservasGate).Post("/config/hour-split", s.handleBOConfigHourSplitSet)
 		r.With(s.requireBOSession, reservasGate).Post("/config/hour-split-percentages", s.handleBOConfigHourSplitPercentagesSet)
 

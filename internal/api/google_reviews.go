@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"preactvillacarmen/internal/sqldb"
 	"strings"
 	"sync"
 	"time"
@@ -77,9 +78,9 @@ func (s *Server) loadGoogleBusiness(ctx context.Context, restaurantID int) (goog
 	cfg := googleBusinessConfig{RestaurantID: restaurantID, AutoPublishMinStars: 0, Formality: "tu", SyncEnabled: true}
 	var enc sql.NullString
 	var last sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT google_email, refresh_token_encrypted, account_name, location_name, location_title,
+	err := s.db.QueryRowContext(ctx, portableSQL(`SELECT google_email, refresh_token_encrypted, account_name, location_name, location_title,
 		auto_publish_min_stars, formality, signature, complaint_contact, sync_enabled, last_sync_at, last_sync_error
-		FROM restaurant_google_business WHERE restaurant_id = ?`, restaurantID).
+		FROM restaurant_google_business WHERE restaurant_id = ?`), restaurantID).
 		Scan(&cfg.Email, &enc, &cfg.Account, &cfg.Location, &cfg.LocationTitle, &cfg.AutoPublishMinStars, &cfg.Formality,
 			&cfg.Signature, &cfg.ComplaintContact, &cfg.SyncEnabled, &last, &cfg.LastSyncError)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -132,7 +133,7 @@ func (s *Server) googleReviewsSync(ctx context.Context, restaurantID int) (googl
 	if err != nil {
 		errText = truncateRunes(err.Error(), 480)
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE restaurant_google_business SET last_sync_at = UTC_TIMESTAMP(), last_sync_error = ? WHERE restaurant_id = ?`, errText, restaurantID)
+	_, _ = s.db.ExecContext(ctx, nativeSQL(`UPDATE restaurant_google_business SET last_sync_at = UTC_TIMESTAMP(), last_sync_error = ? WHERE restaurant_id = ?`, `UPDATE restaurant_google_business SET last_sync_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), last_sync_error = ? WHERE restaurant_id = ?`), errText, restaurantID)
 	slog.Default().Info("google_reviews.sync", "coord_id", "google_reviews_ai_v1", "restaurant_id", restaurantID,
 		"imported", sum.Imported, "new", sum.New, "drafted", sum.Drafted, "published", sum.Published, "pending", sum.Pending, "err", errText)
 	if err == nil && (sum.New > 0 || sum.Published > 0) {
@@ -171,8 +172,9 @@ func (s *Server) googleReviewsSyncRun(ctx context.Context, cfg googleBusinessCon
 		return sum, err
 	}
 	if cfg.AutoPublishMinStars > 0 {
-		rows, err := s.db.QueryContext(ctx, `SELECT id, reply FROM google_reviews WHERE restaurant_id = ? AND status = 'draft'
-			AND error = '' AND star_rating >= ? AND review_created_at >= UTC_TIMESTAMP() - INTERVAL ? DAY`,
+		rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT id, reply FROM google_reviews WHERE restaurant_id = ? AND status = 'draft'
+			AND error = '' AND star_rating >= ? AND review_created_at >= UTC_TIMESTAMP() - INTERVAL ? DAY`, `SELECT id, reply FROM google_reviews WHERE restaurant_id = ? AND status = 'draft'
+			AND error = '' AND star_rating >= ? AND review_created_at >= (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') - (? * INTERVAL '1 day')`),
 			cfg.RestaurantID, cfg.AutoPublishMinStars, googleReviewsAutoPublishDays)
 		if err != nil {
 			return sum, err
@@ -195,7 +197,7 @@ func (s *Server) googleReviewsSyncRun(ctx context.Context, cfg googleBusinessCon
 			}
 		}
 	}
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM google_reviews WHERE restaurant_id = ? AND status IN ('pending','draft')`, cfg.RestaurantID).Scan(&sum.Pending)
+	_ = s.db.QueryRowContext(ctx, portableSQL(`SELECT COUNT(*) FROM google_reviews WHERE restaurant_id = ? AND status IN ('pending','draft')`), cfg.RestaurantID).Scan(&sum.Pending)
 	return sum, nil
 }
 
@@ -210,13 +212,32 @@ func (s *Server) googleReviewUpsert(ctx context.Context, restaurantID int, rv go
 	if googleReply != "" {
 		status = "published"
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO google_reviews
+	if sqlDialect == sqldb.Postgres {
+		// PG: ON CONFLICT reports 1 row for insert and update alike, so the
+		// "new" flag comes from xmax = 0 (row created by this statement).
+		var inserted bool
+		err := s.db.QueryRowContext(ctx, pgOnlySQL(`INSERT INTO google_reviews
+		(restaurant_id, review_name, reviewer_name, star_rating, comment, review_created_at, review_updated_at, reply, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)
+		ON CONFLICT (review_name) DO UPDATE SET reviewer_name = EXCLUDED.reviewer_name, star_rating = EXCLUDED.star_rating,
+		  comment = EXCLUDED.comment, review_updated_at = EXCLUDED.review_updated_at,
+		  reply = CASE WHEN EXCLUDED.status = 'published' THEN EXCLUDED.reply WHEN google_reviews.status = 'published' THEN NULL ELSE google_reviews.reply END,
+		  status = CASE WHEN EXCLUDED.status = 'published' THEN 'published' WHEN google_reviews.status = 'published' THEN 'pending' ELSE google_reviews.status END
+		RETURNING (xmax = 0)`),
+			restaurantID, rv.Name, strings.TrimSpace(rv.Reviewer.DisplayName), googleStarRatings[rv.StarRating],
+			strings.TrimSpace(rv.Comment), googleParseTime(rv.CreateTime), googleParseTime(rv.UpdateTime), googleReply, status).Scan(&inserted)
+		if err != nil {
+			return false, err
+		}
+		return inserted && googleReply == "", nil
+	}
+	res, err := s.db.ExecContext(ctx, mysqlOnlySQL(`INSERT INTO google_reviews
 		(restaurant_id, review_name, reviewer_name, star_rating, comment, review_created_at, review_updated_at, reply, status)
 		VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)
 		ON DUPLICATE KEY UPDATE reviewer_name = VALUES(reviewer_name), star_rating = VALUES(star_rating),
 		  comment = VALUES(comment), review_updated_at = VALUES(review_updated_at),
 		  reply = IF(VALUES(status) = 'published', VALUES(reply), IF(status = 'published', NULL, reply)),
-		  status = IF(VALUES(status) = 'published', 'published', IF(status = 'published', 'pending', status))`,
+		  status = IF(VALUES(status) = 'published', 'published', IF(status = 'published', 'pending', status))`),
 		restaurantID, rv.Name, strings.TrimSpace(rv.Reviewer.DisplayName), googleStarRatings[rv.StarRating],
 		strings.TrimSpace(rv.Comment), googleParseTime(rv.CreateTime), googleParseTime(rv.UpdateTime), googleReply, status)
 	if err != nil {
@@ -238,8 +259,9 @@ func googleParseTime(v string) any {
 
 // googleReviewsDraftPending writes a draft for the newest pending reviews.
 func (s *Server) googleReviewsDraftPending(ctx context.Context, cfg googleBusinessConfig, limit int) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM google_reviews WHERE restaurant_id = ? AND status = 'pending'
-		ORDER BY review_created_at DESC LIMIT ?`, cfg.RestaurantID, limit)
+	rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT id FROM google_reviews WHERE restaurant_id = ? AND status = 'pending'
+		ORDER BY review_created_at DESC LIMIT ?`, `SELECT id FROM google_reviews WHERE restaurant_id = ? AND status = 'pending'
+		ORDER BY review_created_at DESC NULLS LAST LIMIT ?`), cfg.RestaurantID, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -262,7 +284,7 @@ func (s *Server) googleReviewsDraftPending(ctx context.Context, cfg googleBusine
 }
 
 func (s *Server) loadGoogleReview(ctx context.Context, restaurantID int, id int64) (googleReviewRow, error) {
-	return scanGoogleReview(s.db.QueryRowContext(ctx, `SELECT `+googleReviewColumns+` FROM google_reviews WHERE id = ? AND restaurant_id = ?`, id, restaurantID).Scan)
+	return scanGoogleReview(s.db.QueryRowContext(ctx, portableSQL(`SELECT `+googleReviewColumns+` FROM google_reviews WHERE id = ? AND restaurant_id = ?`), id, restaurantID).Scan)
 }
 
 const googleReviewColumns = `id, reviewer_name, star_rating, comment, review_created_at, reply, status, error, published_at`
@@ -350,7 +372,7 @@ func (s *Server) googleReviewDraft(ctx context.Context, cfg googleBusinessConfig
 		text = assistantCleanseReply(text)
 		note = "Revisa el texto antes de publicarlo: la IA devolvió caracteres extraños."
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE google_reviews SET reply = ?, status = 'draft', error = ? WHERE id = ? AND restaurant_id = ? AND status <> 'published'`,
+	if _, err := s.db.ExecContext(ctx, portableSQL(`UPDATE google_reviews SET reply = ?, status = 'draft', error = ? WHERE id = ? AND restaurant_id = ? AND status <> 'published'`),
 		text, note, id, cfg.RestaurantID); err != nil {
 		return "", err
 	}
@@ -413,15 +435,15 @@ func (s *Server) googleReviewPublish(ctx context.Context, cfg googleBusinessConf
 		return errors.New("La respuesta está vacía")
 	}
 	var name string
-	if err := s.db.QueryRowContext(ctx, `SELECT review_name FROM google_reviews WHERE id = ? AND restaurant_id = ?`, id, cfg.RestaurantID).Scan(&name); err != nil {
+	if err := s.db.QueryRowContext(ctx, portableSQL(`SELECT review_name FROM google_reviews WHERE id = ? AND restaurant_id = ?`), id, cfg.RestaurantID).Scan(&name); err != nil {
 		return err
 	}
 	if err := googlePutReply(ctx, accessToken, name, text); err != nil {
-		_, _ = s.db.ExecContext(ctx, `UPDATE google_reviews SET reply = ?, status = 'draft', error = ? WHERE id = ? AND restaurant_id = ?`, text, truncateRunes(err.Error(), 480), id, cfg.RestaurantID)
+		_, _ = s.db.ExecContext(ctx, portableSQL(`UPDATE google_reviews SET reply = ?, status = 'draft', error = ? WHERE id = ? AND restaurant_id = ?`), text, truncateRunes(err.Error(), 480), id, cfg.RestaurantID)
 		slog.Default().Warn("google_reviews.publish_failed", "coord_id", "google_reviews_ai_v1", "restaurant_id", cfg.RestaurantID, "review_id", id, "err", err.Error())
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE google_reviews SET reply = ?, status = 'published', error = '', published_at = UTC_TIMESTAMP() WHERE id = ? AND restaurant_id = ?`, text, id, cfg.RestaurantID)
+	_, err := s.db.ExecContext(ctx, nativeSQL(`UPDATE google_reviews SET reply = ?, status = 'published', error = '', published_at = UTC_TIMESTAMP() WHERE id = ? AND restaurant_id = ?`, `UPDATE google_reviews SET reply = ?, status = 'published', error = '', published_at = (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') WHERE id = ? AND restaurant_id = ?`), text, id, cfg.RestaurantID)
 	slog.Default().Info("google_reviews.published", "coord_id", "google_reviews_ai_v1", "restaurant_id", cfg.RestaurantID, "review_id", id)
 	return err
 }
@@ -455,9 +477,11 @@ func (s *Server) runGoogleReviewsLoop(ctx context.Context) {
 			if time.Now().In(boMadridTZ).Hour() != s.cfg.GoogleReviewsSyncHour || !s.googleOAuthConfigured() {
 				continue
 			}
-			rows, err := s.db.QueryContext(ctx, `SELECT restaurant_id FROM restaurant_google_business
+			rows, err := s.db.QueryContext(ctx, nativeSQL(`SELECT restaurant_id FROM restaurant_google_business
 				WHERE sync_enabled = 1 AND refresh_token_encrypted IS NOT NULL AND location_name <> ''
-				AND (last_sync_at IS NULL OR last_sync_at < UTC_TIMESTAMP() - INTERVAL 20 HOUR)`)
+				AND (last_sync_at IS NULL OR last_sync_at < UTC_TIMESTAMP() - INTERVAL 20 HOUR)`, `SELECT restaurant_id FROM restaurant_google_business
+				WHERE sync_enabled = 1 AND refresh_token_encrypted IS NOT NULL AND location_name <> ''
+				AND (last_sync_at IS NULL OR last_sync_at < (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC') - INTERVAL '20 hours')`))
 			if err != nil {
 				continue
 			}
