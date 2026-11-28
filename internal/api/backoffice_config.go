@@ -1485,6 +1485,7 @@ func (s *Server) handleBOConfigDailyLimitSet(w http.ResponseWriter, r *http.Requ
 		httpx.WriteError(w, http.StatusInternalServerError, "Error actualizando reservation_manager")
 		return
 	}
+	s.notifyHourSplitChanged(restaurantID) // bookings_realtime_v1: limit counters
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

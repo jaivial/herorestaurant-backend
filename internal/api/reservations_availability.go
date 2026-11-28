@@ -183,6 +183,7 @@ func (s *Server) handleUpdateDailyLimit(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
+	s.notifyHourSplitChanged(restaurantID) // bookings_realtime_v1
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
