@@ -308,6 +308,7 @@ func (s *Server) Routes() http.Handler {
 		r.With(s.requireBOSession, menusGate).Get("/comida/counts", s.handleBOComidaCounts)
 
 		r.With(s.requireBOSession, reservasGate).Get("/calendar", s.handleBOCalendarMonth)
+		r.With(s.requireBOSession, reservasGate).Get("/bookings/stream", s.handleBOBookingsStream) // bookings_realtime_v1
 
 		r.With(s.requireBOSession, reservasGate).Get("/bookings", s.handleBOBookingsList)
 		r.With(s.requireBOSession, reservasGate).Get("/bookings/search", s.handleBOBookingsSearch)
