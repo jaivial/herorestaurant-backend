@@ -357,46 +357,11 @@ func (s *Server) handleBOConfigHourSplitGet(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	enabled, source, err := s.resolveHourSplitEnabled(r.Context(), restaurantID, date)
+	// Coordination id: hour_split_realtime_v1 - same snapshot as the stream.
+	resp, err := s.hourSplitSnapshot(r.Context(), r, restaurantID, date)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando hour-split")
 		return
-	}
-
-	activeHours, err := s.getOpeningHoursForDate(r, date)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando horarios")
-		return
-	}
-	sortServiceHours(activeHours)
-
-	percentages, _, err := s.loadHourPercentages(r.Context(), restaurantID, date, activeHours)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando porcentajes")
-		return
-	}
-
-	dailyLimit := s.dailyLimitFor(r, restaurantID, date)
-
-	bookingsByHour, totalPeople, err := s.fetchBookingsByHourHHMM(r, date)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "Error consultando reservas")
-		return
-	}
-
-	hourlyCapacities := percentagesToPeople(percentages, dailyLimit)
-
-	resp := map[string]any{
-		"success":          true,
-		"date":             date,
-		"enabled":          enabled,
-		"source":           source,
-		"dailyLimit":       dailyLimit,
-		"totalPeople":      totalPeople,
-		"activeHours":      activeHours,
-		"percentages":      percentages,
-		"hourlyCapacities": hourlyCapacities,
-		"bookingsByHour":   bookingsByHour,
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
@@ -453,6 +418,7 @@ func (s *Server) handleBOConfigHourSplitSet(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	s.notifyHourSplitChanged(restaurantID) // hour_split_realtime_v1
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"date":    date,
@@ -524,6 +490,7 @@ func (s *Server) handleBOConfigHourSplitPercentagesSet(w http.ResponseWriter, r 
 		return
 	}
 
+	s.notifyHourSplitChanged(restaurantID) // hour_split_realtime_v1
 	dailyLimit := s.dailyLimitFor(r, restaurantID, date)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":          true,
