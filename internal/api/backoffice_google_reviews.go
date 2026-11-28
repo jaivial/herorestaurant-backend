@@ -128,12 +128,15 @@ func (s *Server) handleBOGoogleReviewsSettings(w http.ResponseWriter, r *http.Re
 	if in.Formality != "usted" {
 		in.Formality = "tu"
 	}
-	if _, err := s.db.ExecContext(r.Context(), `INSERT INTO restaurant_google_business
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO restaurant_google_business
 		(restaurant_id, auto_publish_min_stars, formality, signature, complaint_contact, sync_enabled) VALUES (?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE auto_publish_min_stars = VALUES(auto_publish_min_stars), formality = VALUES(formality),
-		signature = VALUES(signature), complaint_contact = VALUES(complaint_contact), sync_enabled = VALUES(sync_enabled)`,
+		signature = VALUES(signature), complaint_contact = VALUES(complaint_contact), sync_enabled = VALUES(sync_enabled)`, `INSERT INTO restaurant_google_business
+		(restaurant_id, auto_publish_min_stars, formality, signature, complaint_contact, sync_enabled) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (restaurant_id) DO UPDATE SET auto_publish_min_stars = EXCLUDED.auto_publish_min_stars, formality = EXCLUDED.formality,
+		signature = EXCLUDED.signature, complaint_contact = EXCLUDED.complaint_contact, sync_enabled = EXCLUDED.sync_enabled`),
 		a.ActiveRestaurantID, in.AutoPublishMinStars, in.Formality, truncateRunes(strings.TrimSpace(in.Signature), 160),
-		truncateRunes(strings.TrimSpace(in.ComplaintContact), 255), in.SyncEnabled); err != nil {
+		truncateRunes(strings.TrimSpace(in.ComplaintContact), 255), boolToInt(in.SyncEnabled)); err != nil {
 		boJSONError(w, http.StatusInternalServerError, "Error guardando los ajustes")
 		return
 	}
@@ -193,12 +196,17 @@ func (s *Server) handleBOGoogleReviewsOAuthCallback(w http.ResponseWriter, r *ht
 	} else if lerr != nil {
 		boLogGoogleReviews("locations_failed", a.ActiveRestaurantID, lerr.Error())
 	}
-	if _, err := s.db.ExecContext(r.Context(), `INSERT INTO restaurant_google_business
+	if _, err := s.db.ExecContext(r.Context(), nativeSQL(`INSERT INTO restaurant_google_business
 		(restaurant_id, google_email, refresh_token_encrypted, account_name, location_name, location_title, connected_at, last_sync_error)
 		VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), '')
 		ON DUPLICATE KEY UPDATE google_email = VALUES(google_email), refresh_token_encrypted = VALUES(refresh_token_encrypted),
 		account_name = VALUES(account_name), location_name = VALUES(location_name), location_title = VALUES(location_title),
-		connected_at = VALUES(connected_at), last_sync_error = ''`,
+		connected_at = VALUES(connected_at), last_sync_error = ''`, `INSERT INTO restaurant_google_business
+		(restaurant_id, google_email, refresh_token_encrypted, account_name, location_name, location_title, connected_at, last_sync_error)
+		VALUES (?, ?, ?, ?, ?, ?, (date_trunc('second', statement_timestamp()) AT TIME ZONE 'UTC'), '')
+		ON CONFLICT (restaurant_id) DO UPDATE SET google_email = EXCLUDED.google_email, refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
+		account_name = EXCLUDED.account_name, location_name = EXCLUDED.location_name, location_title = EXCLUDED.location_title,
+		connected_at = EXCLUDED.connected_at, last_sync_error = ''`),
 		a.ActiveRestaurantID, googleIDTokenEmail(tok.IDToken), enc, account, location, title); err != nil {
 		back("error:db")
 		return
@@ -234,8 +242,8 @@ func (s *Server) handleBOGoogleReviewsSetLocation(w http.ResponseWriter, r *http
 		boJSONError(w, http.StatusBadRequest, "Ficha no válida")
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `UPDATE restaurant_google_business SET account_name = ?, location_name = ?, location_title = ?
-		WHERE restaurant_id = ? AND refresh_token_encrypted IS NOT NULL`, in.Account, in.Name, truncateRunes(in.Title, 255), a.ActiveRestaurantID); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE restaurant_google_business SET account_name = ?, location_name = ?, location_title = ?
+		WHERE restaurant_id = ? AND refresh_token_encrypted IS NOT NULL`), in.Account, in.Name, truncateRunes(in.Title, 255), a.ActiveRestaurantID); err != nil {
 		boJSONError(w, http.StatusInternalServerError, "Error guardando la ficha")
 		return
 	}
@@ -247,8 +255,8 @@ func (s *Server) handleBOGoogleReviewsDisconnect(w http.ResponseWriter, r *http.
 	if cfg, err := s.loadGoogleBusiness(r.Context(), a.ActiveRestaurantID); err == nil && cfg.connected() {
 		googleRevoke(r.Context(), cfg.RefreshToken)
 	}
-	if _, err := s.db.ExecContext(r.Context(), `UPDATE restaurant_google_business SET refresh_token_encrypted = NULL, google_email = '',
-		account_name = '', location_name = '', location_title = '' WHERE restaurant_id = ?`, a.ActiveRestaurantID); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE restaurant_google_business SET refresh_token_encrypted = NULL, google_email = '',
+		account_name = '', location_name = '', location_title = '' WHERE restaurant_id = ?`), a.ActiveRestaurantID); err != nil {
 		boJSONError(w, http.StatusInternalServerError, "Error desconectando")
 		return
 	}
@@ -284,8 +292,9 @@ func (s *Server) handleBOGoogleReviewsList(w http.ResponseWriter, r *http.Reques
 	case "all":
 		where = "1 = 1"
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT `+googleReviewColumns+` FROM google_reviews WHERE restaurant_id = ? AND `+where+`
-		ORDER BY review_created_at DESC LIMIT 100`, a.ActiveRestaurantID)
+	rows, err := s.db.QueryContext(r.Context(), nativeSQL(`SELECT `+googleReviewColumns+` FROM google_reviews WHERE restaurant_id = ? AND `+where+`
+		ORDER BY review_created_at DESC LIMIT 100`, `SELECT `+googleReviewColumns+` FROM google_reviews WHERE restaurant_id = ? AND `+where+`
+		ORDER BY review_created_at DESC NULLS LAST LIMIT 100`), a.ActiveRestaurantID)
 	if err != nil {
 		boJSONError(w, http.StatusInternalServerError, "Error cargando reseñas")
 		return
@@ -298,7 +307,7 @@ func (s *Server) handleBOGoogleReviewsList(w http.ResponseWriter, r *http.Reques
 	}
 	_ = rows.Close()
 	counts := map[string]int{}
-	if crow, err := s.db.QueryContext(r.Context(), `SELECT status, COUNT(*) FROM google_reviews WHERE restaurant_id = ? GROUP BY status`, a.ActiveRestaurantID); err == nil {
+	if crow, err := s.db.QueryContext(r.Context(), portableSQL(`SELECT status, COUNT(*) FROM google_reviews WHERE restaurant_id = ? GROUP BY status`), a.ActiveRestaurantID); err == nil {
 		for crow.Next() {
 			var st string
 			var n int
@@ -350,7 +359,7 @@ func (s *Server) handleBOGoogleReviewAction(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	case "skip":
-		if _, err := s.db.ExecContext(r.Context(), `UPDATE google_reviews SET status = 'skipped' WHERE id = ? AND restaurant_id = ? AND status <> 'published'`, id, a.ActiveRestaurantID); err != nil {
+		if _, err := s.db.ExecContext(r.Context(), portableSQL(`UPDATE google_reviews SET status = 'skipped' WHERE id = ? AND restaurant_id = ? AND status <> 'published'`), id, a.ActiveRestaurantID); err != nil {
 			boJSONError(w, http.StatusInternalServerError, "Error descartando")
 			return
 		}
